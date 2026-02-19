@@ -437,7 +437,7 @@ This section defines the wire formats for PipeStream frames. All multi-octet int
 
 | Value | Name        | Layer | Description                            |
 |-------|-------------|-------|----------------------------------------|
-| 0x0   | UNSPECIFIED | -     | Proto3 default / heartbeat signal      |
+| 0x0   | UNSPECIFIED | -     | Protobuf default / heartbeat signal      |
 | 0x1   | PENDING     | 0     | Entity announced, not yet transmitting |
 | 0x2   | PROCESSING  | 0     | Entity transmission in progress        |
 | 0x3   | COMPLETE    | 0     | Entity successfully processed          |
@@ -795,17 +795,19 @@ message CompletionPolicy {
 }
 
 enum CompletionMode {
-  COMPLETION_MODE_STRICT = 0;       // All children MUST complete
-  COMPLETION_MODE_LENIENT = 1;      // Continue with partial results
-  COMPLETION_MODE_BEST_EFFORT = 2;  // Complete with whatever succeeds
-  COMPLETION_MODE_QUORUM = 3;       // Need min_success_ratio
+  COMPLETION_MODE_UNSPECIFIED = 0;  // Default; treat as STRICT
+  COMPLETION_MODE_STRICT = 1;       // All children MUST complete
+  COMPLETION_MODE_LENIENT = 2;      // Continue with partial results
+  COMPLETION_MODE_BEST_EFFORT = 3;  // Complete with whatever succeeds
+  COMPLETION_MODE_QUORUM = 4;       // Need min_success_ratio
 }
 
 enum FailureAction {
-  FAILURE_ACTION_FAIL = 0;         // Propagate failure up
-  FAILURE_ACTION_SKIP = 1;         // Skip, continue with siblings
-  FAILURE_ACTION_RETRY = 2;        // Retry up to max_retries
-  FAILURE_ACTION_DEFER = 3;        // Create claim check, continue
+  FAILURE_ACTION_UNSPECIFIED = 0;  // Default; treat as FAIL
+  FAILURE_ACTION_FAIL = 1;         // Propagate failure up
+  FAILURE_ACTION_SKIP = 2;         // Skip, continue with siblings
+  FAILURE_ACTION_RETRY = 3;        // Retry up to max_retries
+  FAILURE_ACTION_DEFER = 4;        // Create claim check, continue
 }
 ```
 
@@ -987,7 +989,7 @@ When using FileStorageReference with encryption:
 
 | Value | Name | Layer | Description |
 |-------|------|-------|-------------|
-| 0x0 | UNSPECIFIED | - | Proto3 default / heartbeat |
+| 0x0 | UNSPECIFIED | - | Protobuf default / heartbeat |
 | 0x1 | PENDING | 0 | Entity announced |
 | 0x2 | PROCESSING | 0 | In progress |
 | 0x3 | COMPLETE | 0 | Success |
@@ -1260,6 +1262,10 @@ package pipestream.data.v1;
 
 import "google/protobuf/any.proto";
 import "google/protobuf/struct.proto";
+
+// All enums in this file are CLOSED to ensure that receivers reject unknown
+// values, which is critical for consistent processing in distributed pipelines.
+option features.enum_type = CLOSED;
 
 // PipeDoc is the root document entity that flows through the PipeStream
 // pipeline. It aggregates every data layer -- raw blobs, semantic analysis
