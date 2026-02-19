@@ -709,7 +709,7 @@ Every PipeStream entity is represented as a PipeDoc message:
 
 ```protobuf
 message FileStorageReference {
-  string provider = 1;           // "s3", "azure", "gcs", "minio"
+  string provider = 1;           // Storage provider identifier
   string bucket = 2;             // Bucket/container name
   string key = 3;                // Object key/path
   string region = 4;             // Optional region hint
@@ -823,7 +823,7 @@ enum FailureAction {
 | Type | Description |
 |------|-------------|
 | INDEX | Search engine integration (Elasticsearch, Solr, etc.) |
-| STORAGE | Blob storage persistence (S3, Azure, GCS) |
+| STORAGE | Blob storage persistence (Object stores, Cloud storage) |
 | NOTIFICATION | Webhook/messaging triggers |
 
 ---
@@ -1344,7 +1344,7 @@ message Blob {
     bytes data = 3;
 
     // Cloud-agnostic pointer to the binary data stored in an external
-    // object store (S3, Azure Blob, GCS, MinIO, etc.).
+    // object store (e.g., a cloud-based or on-premises object bucket).
     FileStorageReference storage_ref = 4;
   }
 
@@ -1368,10 +1368,10 @@ message Blob {
 }
 
 // FileStorageReference is a cloud-agnostic pointer to an object stored in a
-// remote object store. It supports AWS S3, Azure Blob Storage, Google Cloud
-// Storage, MinIO, and any S3-compatible provider.
+// remote object store. It supports standard object storage providers using
+// bucket and key semantics.
 message FileStorageReference {
-  // Storage provider identifier (e.g., "s3", "azure-blob", "gcs", "minio").
+  // Storage provider identifier (e.g., "provider-name").
   string provider = 1;
 
   // Bucket or container name in the target object store.

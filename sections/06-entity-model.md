@@ -101,7 +101,7 @@ The OwnershipContext message tracks ownership for security, auditing, and access
 |-------|------|-------------|-------------|
 | account_id | string | REQUIRED | Account that owns this document. |
 | datasource_id | string | REQUIRED | DataSource (account + connector type binding) that produced this document. Deterministic: hash(account_id + connector_id). |
-| connector_id | string | OPTIONAL | Connector type that created this document (e.g., "s3", "file-crawler"). |
+| connector_id | string | OPTIONAL | Connector type that created this document (e.g., "object-store", "file-crawler"). |
 
 ### 6.2. Four Layers
 
@@ -155,8 +155,8 @@ Each Blob within a BlobBag contains:
 | blob_id | string | REQUIRED | Unique identifier for this blob. |
 | drive_id | string | REQUIRED | Drive/bucket identifier where this blob belongs. |
 | data | bytes | CONDITIONAL | Inline binary data for small files or sensitive content. Mutually exclusive with storage_ref. |
-| storage_ref | FileStorageReference | CONDITIONAL | Reference to external S3 storage for large files. Mutually exclusive with data. |
-| mime_type | string | OPTIONAL | MIME type of the blob content. Implementations SHOULD populate this field. |
+| storage_ref | FileStorageReference | CONDITIONAL | Reference to external object storage for large files. Mutually exclusive with data. |
+| mime_type | string | OPTIONAL | MIME type of the blob content. |
 | filename | string | OPTIONAL | Original filename if available. |
 | encoding | string | OPTIONAL | Character encoding for text-based blobs. |
 | size_bytes | int64 | REQUIRED | Size of the blob content in bytes. |
@@ -170,9 +170,9 @@ For blobs stored externally, the FileStorageReference message provides:
 
 | Field | Type | Requirement | Description |
 |-------|------|-------------|-------------|
-| drive_name | string | REQUIRED | Drive name mapping to S3 bucket name. |
+| drive_name | string | REQUIRED | Drive name mapping to the remote storage bucket. |
 | object_key | string | REQUIRED | Object path/key within the bucket. |
-| version_id | string | OPTIONAL | S3 version ID if versioning is enabled. |
+| version_id | string | OPTIONAL | Object version ID if versioning is enabled. |
 
 ##### 6.2.1.4. Checksum Types
 

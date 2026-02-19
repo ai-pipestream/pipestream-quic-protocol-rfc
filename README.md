@@ -23,8 +23,8 @@ PipeStream enables the decomposition ("vaporization") of documents into constitu
 - **32-bit word-aligned frames** for efficient parsing
 - **Four data layers**: BlobBag, SemanticLayer, ParsedData, CustomEntity
 - **Cursor-based Entity ID recycling** (TCP sliding window pattern)
-- **Cloud-agnostic storage**: Supports S3, Azure Blob, GCS, MinIO
-- **Encryption key abstraction**: AWS KMS, Azure KeyVault, GCP KMS, HashiCorp Vault
+- **Cloud-agnostic storage**: Supports standard object storage providers
+- **Encryption key abstraction**: Master-key envelope encryption with provider abstraction
 
 ## Repository Structure
 

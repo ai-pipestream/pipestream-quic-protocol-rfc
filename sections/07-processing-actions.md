@@ -1066,12 +1066,10 @@ Storage sinks persist entities to blob storage or filesystems:
    }
 
    Storage Backend:
-     0x01: S3_COMPATIBLE
-     0x02: AZURE_BLOB
-     0x03: GCS
-     0x04: LOCAL_FILESYSTEM
-     0x05: HDFS
-     0x06-0x7F: Reserved
+     0x01: OBJECT_STORE
+     0x02: LOCAL_FILESYSTEM
+     0x03: DISTRIBUTED_FILESYSTEM
+     0x04-0x7F: Reserved
      0x80-0xFF: Custom
 
    Storage Class:
