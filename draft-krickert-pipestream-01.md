@@ -1038,304 +1038,798 @@ Examples:
 ### A.1. Protocol-Level Messages
 
 ```protobuf
+// Copyright 2026 PipeStream Authors
+//
+// PipeStream Protocol - IETF draft protocol for recursive entity streaming
+// over QUIC. Defines the wire-format messages for Layers 0-2 of the
+// PipeStream architecture: core streaming, recursive scoping, and resilience.
+
 syntax = "proto3";
+
 package pipestream.protocol.v1;
 
 import "google/protobuf/any.proto";
 
 // Capabilities describes the feature set supported by a PipeStream endpoint.
-// Exchanged during the CONNECT handshake to negotiate protocol layers and limits.
+// Exchanged during the CONNECT handshake so that both sides can negotiate
+// which protocol layers and resource limits apply to the session.
 message Capabilities {
-  bool layer0_core = 1;            // Layer 0 (Core) support. MUST be true.
-  bool layer1_recursive = 2;       // Layer 1 (Recursive) scoping support.
-  bool layer2_resilience = 3;      // Layer 2 (Resilience) yield/claim support.
-  uint32 max_scope_depth = 4;      // Max nested scope depth. Default 8.
-  uint32 max_entities_per_scope = 5; // Max entities per scope. Default 1,048,576.
-  uint32 max_window_size = 6;      // Max active entity IDs in cursor window.
+  // Whether the endpoint supports Layer 0 (core entity streaming).
+  bool layer0_core = 1;
+
+  // Whether the endpoint supports Layer 1 (recursive scoping and vaporization).
+  bool layer1_recursive = 2;
+
+  // Whether the endpoint supports Layer 2 (resilience, yield, and claim-check).
+  bool layer2_resilience = 3;
+
+  // Maximum nesting depth allowed for recursive scopes.
+  uint32 max_scope_depth = 4;
+
+  // Maximum number of entities permitted within a single scope.
+  uint32 max_entities_per_scope = 5;
+
+  // Maximum flow-control window size, in number of entities, that the
+  // endpoint is willing to buffer before requiring acknowledgement.
+  uint32 max_window_size = 6;
 }
 
-// EntityHeader is sent at the beginning of each entity stream.
+// EntityHeader is sent at the beginning of each entity stream to describe
+// the payload that follows. It carries identity, lineage, content metadata,
+// optional chunking information, and the completion policy that governs
+// how partial failures of this entity are handled.
 message EntityHeader {
-  uint32 entity_id = 1;            // Scope-local ID (20-bit, 1 to 1,048,573).
-  uint32 parent_id = 2;            // Parent entity ID, or 0 for root entities.
-  uint32 scope_id = 3;             // Scope ID for Layer 1. 0 if Layer 1 not used.
-  uint32 layer = 4;                // Data layer (0=Blob, 1=Semantic, 2=Parsed, 3=Custom).
-  string content_type = 5;         // MIME type of the entity payload.
-  uint64 payload_length = 6;       // Total payload length in bytes.
-  bytes checksum = 7;              // SHA-256 checksum of the complete payload.
-  map<string, string> metadata = 8; // Application-defined key-value metadata.
-  ChunkInfo chunk_info = 9;        // Chunking info (omitted for single-frame entities).
-  CompletionPolicy completion_policy = 10; // Layer 2 failure handling policy.
+  // Unique identifier for this entity within the session.
+  uint32 entity_id = 1;
+
+  // Identifier of the parent entity that spawned this entity, or zero if
+  // this entity is a root-level entity with no parent.
+  uint32 parent_id = 2;
+
+  // Identifier of the scope to which this entity belongs. Scopes group
+  // related entities for recursive processing and completion tracking.
+  uint32 scope_id = 3;
+
+  // Protocol layer at which this entity was created (0, 1, or 2).
+  uint32 layer = 4;
+
+  // MIME content type of the entity payload (e.g. "application/json").
+  string content_type = 5;
+
+  // Length in bytes of the complete entity payload, before any chunking.
+  uint64 payload_length = 6;
+
+  // Integrity checksum of the complete entity payload, used to verify
+  // that the reassembled payload matches what the sender transmitted.
+  bytes checksum = 7;
+
+  // Arbitrary key-value metadata attached to this entity by the producer.
+  map<string, string> metadata = 8;
+
+  // Chunking information for this entity. Present only when the payload
+  // is split across multiple frames.
+  ChunkInfo chunk_info = 9;
+
+  // Completion policy that governs retry, timeout, and failure behavior
+  // for this entity. Applies at Layer 2 (resilience).
+  CompletionPolicy completion_policy = 10;
 }
 
-// ChunkInfo describes chunking when a payload spans multiple frames.
+// ChunkInfo describes how a single entity payload is divided into ordered
+// chunks when it is too large to send in a single frame.
 message ChunkInfo {
-  uint32 total_chunks = 1;         // Total chunks in the entity payload.
-  uint32 chunk_index = 2;          // Zero-based index of this chunk.
-  uint64 chunk_offset = 3;         // Byte offset within the complete payload.
+  // Total number of chunks that make up the complete entity payload.
+  uint32 total_chunks = 1;
+
+  // Zero-based index of this chunk within the sequence.
+  uint32 chunk_index = 2;
+
+  // Byte offset within the complete payload where this chunk begins.
+  uint64 chunk_offset = 3;
 }
 
-// CompletionPolicy governs Layer 2 partial failure handling during vaporize/rejoin.
+// CompletionPolicy controls Layer 2 resilience behavior for an entity or
+// scope. It specifies how strictly all children must complete, how many
+// retries are attempted, and what action to take on timeout or failure.
 message CompletionPolicy {
-  CompletionMode mode = 1;         // Success criteria for child completion.
-  uint32 max_retries = 2;          // Max retry attempts. Default 3.
-  uint32 retry_delay_ms = 3;       // Delay between retries in ms. Default 1000.
-  uint32 timeout_ms = 4;           // Max wait time in ms. Default 300000.
-  float min_success_ratio = 5;     // Min success ratio for QUORUM mode (0.0-1.0).
-  FailureAction on_timeout = 6;    // Action when timeout expires.
-  FailureAction on_failure = 7;    // Action when a child fails.
+  // Mode that determines how child-entity completion is evaluated.
+  CompletionMode mode = 1;
+
+  // Maximum number of retry attempts before the failure action is taken.
+  uint32 max_retries = 2;
+
+  // Delay in milliseconds between successive retry attempts.
+  uint32 retry_delay_ms = 3;
+
+  // Maximum time in milliseconds to wait for completion before the
+  // timeout action is triggered.
+  uint32 timeout_ms = 4;
+
+  // Minimum ratio of successful children (0.0 to 1.0) required for the
+  // QUORUM completion mode to consider the scope complete.
+  float min_success_ratio = 5;
+
+  // Action to take when the timeout expires before completion.
+  FailureAction on_timeout = 6;
+
+  // Action to take when a child entity reports a terminal failure.
+  FailureAction on_failure = 7;
 }
 
-// CompletionMode defines success criteria for vaporize/rejoin operations.
+// CompletionMode specifies the strategy used to decide whether a scope
+// has completed successfully based on its children's statuses.
 enum CompletionMode {
-  COMPLETION_MODE_UNSPECIFIED = 0;  // Unspecified; treat as STRICT.
-  COMPLETION_MODE_STRICT = 1;       // ALL children must succeed.
-  COMPLETION_MODE_LENIENT = 2;      // Continue despite failures.
-  COMPLETION_MODE_BEST_EFFORT = 3;  // No completeness guarantees.
-  COMPLETION_MODE_QUORUM = 4;       // min_success_ratio of children must succeed.
+  // Default unspecified value. Implementations should treat this as STRICT.
+  COMPLETION_MODE_UNSPECIFIED = 0;
+
+  // All children must complete successfully for the scope to succeed.
+  COMPLETION_MODE_STRICT = 1;
+
+  // The scope succeeds if at least one child completes successfully;
+  // failures in other children are tolerated.
+  COMPLETION_MODE_LENIENT = 2;
+
+  // The scope always succeeds regardless of individual child outcomes,
+  // recording whatever results are available.
+  COMPLETION_MODE_BEST_EFFORT = 3;
+
+  // The scope succeeds when the ratio of successful children meets or
+  // exceeds the min_success_ratio threshold.
+  COMPLETION_MODE_QUORUM = 4;
 }
 
-// FailureAction defines what to do when a child entity fails or times out.
+// FailureAction specifies what a processor should do when an entity or
+// scope encounters an error or timeout condition.
 enum FailureAction {
-  FAILURE_ACTION_UNSPECIFIED = 0;   // Unspecified; treat as FAIL.
-  FAILURE_ACTION_FAIL = 1;          // Propagate failure to parent immediately.
-  FAILURE_ACTION_SKIP = 2;          // Skip failed child, continue siblings.
-  FAILURE_ACTION_RETRY = 3;         // Retry up to max_retries times.
-  FAILURE_ACTION_DEFER = 4;         // Defer via claim check for later processing.
+  // Default unspecified value. Implementations should treat this as FAIL.
+  FAILURE_ACTION_UNSPECIFIED = 0;
+
+  // Propagate the failure immediately, aborting the scope.
+  FAILURE_ACTION_FAIL = 1;
+
+  // Skip the failed entity and continue processing remaining siblings.
+  FAILURE_ACTION_SKIP = 2;
+
+  // Retry the failed entity up to the configured max_retries limit.
+  FAILURE_ACTION_RETRY = 3;
+
+  // Defer the failed entity for later reprocessing via a claim check.
+  FAILURE_ACTION_DEFER = 4;
 }
 
-// EntityStatus represents entity lifecycle state on the ledger stream.
-// Encoded as 4-bit values (0x0-0xC) in the 32-bit ledger frame wire format.
+// EntityStatus represents the lifecycle state of an entity as tracked
+// on the ledger stream. Transitions follow the PipeStream state machine.
 enum EntityStatus {
-  ENTITY_STATUS_UNSPECIFIED = 0;    // Proto3 default. Must not appear in ledger frames.
-  ENTITY_STATUS_PENDING = 1;        // Registered, processing not started.
-  ENTITY_STATUS_PROCESSING = 2;     // Currently being processed.
-  ENTITY_STATUS_COMPLETE = 3;       // Processing completed successfully.
-  ENTITY_STATUS_FAILED = 4;         // Processing failed with error.
-  ENTITY_STATUS_CHECKPOINT = 5;     // Reached a synchronization barrier.
-  ENTITY_STATUS_VAPORIZING = 6;     // Being decomposed into children.
-  ENTITY_STATUS_AGGREGATING = 7;    // Children being reassembled into parent.
-  ENTITY_STATUS_YIELDED = 8;        // Paused via yield token (Layer 2).
-  ENTITY_STATUS_DEFERRED = 9;       // Deferred via claim check (Layer 2).
-  ENTITY_STATUS_RETRYING = 10;      // Being retried after failure (Layer 2).
-  ENTITY_STATUS_SKIPPED = 11;       // Skipped via SKIP failure action (Layer 2).
-  ENTITY_STATUS_ABANDONED = 12;     // Abandoned after exhausting retries (Layer 2).
+  // Default unspecified value. Must not appear in well-formed ledger frames.
+  ENTITY_STATUS_UNSPECIFIED = 0;
+
+  // The entity has been registered but processing has not yet started.
+  ENTITY_STATUS_PENDING = 1;
+
+  // The entity is currently being processed by a downstream consumer.
+  ENTITY_STATUS_PROCESSING = 2;
+
+  // The entity has been processed successfully.
+  ENTITY_STATUS_COMPLETE = 3;
+
+  // The entity encountered a terminal failure.
+  ENTITY_STATUS_FAILED = 4;
+
+  // The entity has reached a checkpoint barrier and is waiting for
+  // sibling entities to catch up.
+  ENTITY_STATUS_CHECKPOINT = 5;
+
+  // The entity is being vaporized (decomposed) into child entities
+  // within a recursive scope.
+  ENTITY_STATUS_VAPORIZING = 6;
+
+  // The entity's child results are being aggregated back into the
+  // parent scope after recursive processing.
+  ENTITY_STATUS_AGGREGATING = 7;
+
+  // The entity has yielded processing and holds a yield token for
+  // later resumption (Layer 2).
+  ENTITY_STATUS_YIELDED = 8;
+
+  // The entity has been deferred via a claim check for asynchronous
+  // reprocessing at a later time (Layer 2).
+  ENTITY_STATUS_DEFERRED = 9;
+
+  // The entity is being retried after a transient failure (Layer 2).
+  ENTITY_STATUS_RETRYING = 10;
+
+  // The entity was skipped due to a SKIP failure action policy.
+  ENTITY_STATUS_SKIPPED = 11;
+
+  // The entity was abandoned after exhausting all retry and deferral
+  // options. No further processing will be attempted.
+  ENTITY_STATUS_ABANDONED = 12;
 }
 
 // LedgerFrame is sent on the ledger stream (QUIC Stream 0) to report
-// entity status transitions.
+// status transitions for individual entities. The ledger provides a
+// global, ordered view of entity lifecycle events across all scopes.
 message LedgerFrame {
-  uint32 entity_id = 1;            // Entity whose status is being reported.
-  uint32 scope_id = 2;             // Scope of the entity. 0 if Layer 1 not used.
-  EntityStatus status = 3;         // Current lifecycle status.
-  google.protobuf.Any extended_data = 4; // Extension data when E flag is set.
+  // Identifier of the entity whose status is being reported.
+  uint32 entity_id = 1;
+
+  // Scope to which the entity belongs.
+  uint32 scope_id = 2;
+
+  // Current lifecycle status of the entity.
+  EntityStatus status = 3;
+
+  // Optional extension data associated with this status transition,
+  // encoded as a protobuf Any for forward compatibility.
+  google.protobuf.Any extended_data = 4;
 }
 
-// CheckpointFrame creates a synchronization barrier on the ledger stream.
+// CheckpointFrame defines a synchronization barrier. When a checkpoint
+// is issued, all entities within the scope must reach this point before
+// processing may continue past it. This ensures consistency across
+// parallel entity streams.
 message CheckpointFrame {
-  string checkpoint_id = 1;        // Unique checkpoint ID within the session.
-  uint64 sequence_number = 2;      // Monotonically increasing sequence number.
-  uint32 flags = 3;                // Bitfield: bit 0=MANDATORY, bit 1=SCOPE_LOCAL.
-  uint32 timeout_ms = 4;           // Max wait time. Default 30000.
+  // Unique identifier for this checkpoint, scoped to the session.
+  string checkpoint_id = 1;
+
+  // Monotonically increasing sequence number used to order checkpoints
+  // and detect gaps.
+  uint64 sequence_number = 2;
+
+  // Bitfield of checkpoint flags (reserved for future protocol extensions).
+  uint32 flags = 3;
+
+  // Maximum time in milliseconds to wait for all entities to reach the
+  // checkpoint before it is considered timed out.
+  uint32 timeout_ms = 4;
 }
 
-// PartsLedgerEntry tracks parent-child relationships from vaporization.
+// PartsLedgerEntry tracks parent-child relationships created during
+// entity vaporization (decomposition). It records which child entities
+// were spawned from a parent and their individual completion statuses,
+// enabling the aggregation phase to reassemble results.
 message PartsLedgerEntry {
-  uint32 parent_id = 1;            // Entity ID of vaporized parent.
-  uint32 scope_id = 2;             // Scope of the vaporization.
-  repeated uint32 children_ids = 3; // Child entity IDs, in order.
-  repeated EntityStatus children_status = 4; // Status of each child (parallel array).
-  CompletionPolicy policy = 5;     // Policy governing child completion.
-  uint64 created_at = 6;           // Unix timestamp (microseconds) of creation.
+  // Identifier of the parent entity that was vaporized into children.
+  uint32 parent_id = 1;
+
+  // Scope in which the vaporization occurred.
+  uint32 scope_id = 2;
+
+  // Ordered list of child entity identifiers produced by vaporization.
+  repeated uint32 children_ids = 3;
+
+  // Status of each child entity, positionally corresponding to children_ids.
+  repeated EntityStatus children_status = 4;
+
+  // Completion policy governing how child results are aggregated and
+  // when the parent may be considered complete.
+  CompletionPolicy policy = 5;
+
+  // Timestamp (Unix epoch microseconds) when the vaporization occurred
+  // and child entities were created.
+  uint64 created_at = 6;
 }
 
-// YieldToken allows a Layer 2 processor to pause and resume entity processing.
+// YieldToken allows a Layer 2 processor to pause processing of an entity
+// and resume it later. The token captures the reason for yielding, an
+// opaque continuation state, and validation data to ensure consistency
+// when the entity is resumed.
 message YieldToken {
-  YieldReason reason = 1;          // Why processing is being paused.
-  bytes continuation_state = 2;    // Opaque state for resumption.
-  StoppingPointValidation validation = 3; // Consistency validation data.
+  // Reason the processor is yielding control of this entity.
+  YieldReason reason = 1;
+
+  // Opaque continuation state that the processor will need to resume
+  // work on this entity. The contents are processor-defined.
+  bytes continuation_state = 2;
+
+  // Validation data used to verify that the entity state has not
+  // changed between yield and resume.
+  StoppingPointValidation validation = 3;
 }
 
-// YieldReason describes why processing is being paused.
+// YieldReason describes why a processor chose to yield processing of
+// an entity rather than completing it immediately.
 enum YieldReason {
-  YIELD_REASON_UNSPECIFIED = 0;         // Unspecified yield reason.
-  YIELD_REASON_EXTERNAL_CALL = 1;       // Waiting for external service call.
-  YIELD_REASON_RATE_LIMITED = 2;        // Rate limited by downstream.
-  YIELD_REASON_AWAITING_SIBLING = 3;    // Waiting for a sibling entity.
-  YIELD_REASON_AWAITING_APPROVAL = 4;   // Waiting for human/system approval.
-  YIELD_REASON_RESOURCE_BUSY = 5;       // Required resource unavailable.
+  // Default unspecified value. Must not appear in well-formed yield tokens.
+  YIELD_REASON_UNSPECIFIED = 0;
+
+  // The processor has been rate-limited and must back off before
+  // continuing work on this entity.
+  YIELD_REASON_RATE_LIMITED = 1;
+
+  // The processor is waiting for a sibling entity to reach a certain
+  // state before it can continue.
+  YIELD_REASON_AWAITING_SIBLING = 2;
+
+  // The processor requires human or external approval before proceeding
+  // with the next stage of processing.
+  YIELD_REASON_AWAITING_APPROVAL = 3;
+
+  // A shared resource required by the processor is currently busy or
+  // locked by another operation.
+  YIELD_REASON_RESOURCE_BUSY = 4;
+
+  // The processor needs to make an external call (e.g. network request)
+  // and does not want to hold the stream open while waiting.
+  YIELD_REASON_EXTERNAL_CALL = 5;
 }
 
-// ClaimCheck is a Layer 2 deferred-processing receipt for async reprocessing.
+// ClaimCheck is a Layer 2 deferred-processing reference. When an entity
+// cannot be completed immediately, a claim check is issued so that the
+// entity can be reclaimed and processed asynchronously at a later time.
 message ClaimCheck {
-  uint64 claim_id = 1;             // Unique claim check ID.
-  uint32 entity_id = 2;            // Deferred entity ID.
-  uint32 scope_id = 3;             // Scope of the deferred entity.
-  uint64 expiry_timestamp = 4;     // Expiry time (Unix microseconds). Default 24h.
-  StoppingPointValidation validation = 5; // State at point of deferral.
+  // Unique identifier for this claim check within the session.
+  uint64 claim_id = 1;
+
+  // Identifier of the entity that has been deferred.
+  uint32 entity_id = 2;
+
+  // Scope to which the deferred entity belongs.
+  uint32 scope_id = 3;
+
+  // Unix epoch timestamp (in microseconds) after which this claim check
+  // expires and the entity may be considered abandoned.
+  uint64 expiry_timestamp = 4;
+
+  // Validation data that must be checked when the claim is redeemed to
+  // ensure the entity state is still consistent.
+  StoppingPointValidation validation = 5;
 }
 
-// StoppingPointValidation captures processing state at yield/defer for
-// consistency verification upon resumption.
+// StoppingPointValidation captures a snapshot of processing progress at
+// the moment an entity is yielded or deferred. When the entity is later
+// resumed, these fields are checked to confirm that no state corruption
+// or unexpected changes occurred during the pause.
 message StoppingPointValidation {
-  bytes state_checksum = 1;        // SHA-256 of processor state at stop.
-  uint64 bytes_processed = 2;      // Payload bytes consumed before stop.
-  uint32 children_complete = 3;    // Children completed at stop.
-  uint32 children_total = 4;       // Total children expected.
-  bool is_resumable = 5;           // Whether resumption is supported.
-  string checkpoint_ref = 6;       // Most recent satisfied checkpoint.
+  // Checksum of the processor's internal state at the stopping point,
+  // used to detect tampering or corruption.
+  bytes state_checksum = 1;
+
+  // Total number of payload bytes the processor had consumed when it
+  // stopped, enabling position-based resumption.
+  uint64 bytes_processed = 2;
+
+  // Number of child entities that had completed at the stopping point.
+  uint32 children_complete = 3;
+
+  // Total number of child entities expected, allowing the validator to
+  // confirm no children were added or removed during the pause.
+  uint32 children_total = 4;
+
+  // Whether the processor's state supports resumption. If false, the
+  // entity must be reprocessed from the beginning.
+  bool is_resumable = 5;
+
+  // Reference to the most recent checkpoint that the entity had passed
+  // at the time of stopping, for cross-referencing with the ledger.
+  string checkpoint_ref = 6;
 }
 
-// ScopeDigest is a Layer 1 summary of scope completion with Merkle root.
+// ScopeDigest is a Layer 1 summary of a completed scope. It provides
+// aggregate counters and a Merkle root hash that covers all entity
+// outcomes within the scope, enabling efficient integrity verification
+// without replaying the full ledger.
 message ScopeDigest {
-  uint32 scope_id = 1;             // Scope being summarized.
-  uint64 entities_processed = 2;   // Total entities processed in scope.
-  uint64 entities_succeeded = 3;   // Entities completed successfully.
-  uint64 entities_failed = 4;      // Entities that failed.
-  uint64 entities_deferred = 5;    // Entities deferred via claim checks.
-  bytes merkle_root = 6;           // Merkle root over (entity_id, status) pairs.
+  // Identifier of the scope being summarized.
+  uint32 scope_id = 1;
+
+  // Total number of entities that were processed in this scope,
+  // regardless of outcome.
+  uint64 entities_processed = 2;
+
+  // Number of entities that completed successfully.
+  uint64 entities_succeeded = 3;
+
+  // Number of entities that terminated with a failure status.
+  uint64 entities_failed = 4;
+
+  // Number of entities that were deferred via claim checks and have
+  // not yet been reclaimed.
+  uint64 entities_deferred = 5;
+
+  // Merkle root hash computed over all entity outcomes in the scope,
+  // providing a single cryptographic digest for integrity verification.
+  bytes merkle_root = 6;
 }
 ```
 
 ### A.2. Entity Data Messages
 
 ```protobuf
-// === PipeDoc ===
+// PipeStream Data Model
+//
+// Defines the core document representation for the PipeStream ingestion and
+// processing pipeline. A PipeDoc carries raw binary payloads (Layer 0),
+// semantic chunks with embeddings (Layer 1), and structured parsed output
+// (Layer 2) through every stage of the pipeline.
 
+syntax = "proto3";
+
+package pipestream.data.v1;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/struct.proto";
+
+// PipeDoc is the root document entity that flows through the PipeStream
+// pipeline. It aggregates every data layer -- raw blobs, semantic analysis
+// results, and structured parsed metadata -- under a single deterministic
+// document identifier.
 message PipeDoc {
+  // Globally unique document identifier. When a DocIdDerivation strategy is
+  // configured, this value is computed deterministically from the source
+  // content so that duplicate ingestion is idempotent.
   string doc_id = 1;
+
+  // Discovery metadata used by search and retrieval systems to index the
+  // document (title, keywords, description, and custom fields).
   SearchMetadata search_metadata = 2;
+
+  // Layer 0 payload container holding one or more raw binary blobs. Each
+  // blob may be stored inline or referenced via cloud storage.
   BlobBag blob_bag = 3;
+
+  // Arbitrary strongly-typed structured data attached to the document.
+  // Encoded as google.protobuf.Any to allow pipeline stages to pass
+  // domain-specific messages without altering the core schema.
   google.protobuf.Any structured_data = 4;
+
+  // Layer 2 parsed metadata produced by one or more parser stages. The map
+  // key is the parser identifier, allowing multiple parsers to contribute
+  // non-overlapping metadata to the same document.
   map<string, ParsedMetadata> parsed_metadata = 5;
+
+  // Layer 1 semantic processing results containing chunked content,
+  // vector embeddings, and NLP annotations generated by semantic analysis
+  // pipeline stages.
   SemanticProcessingResult semantic_result = 6;
+
+  // Multi-tenant ownership and access-control context. Optional because
+  // single-tenant deployments may not require access control.
   optional OwnershipContext ownership = 7;
+
+  // Strategy descriptor that explains how doc_id was derived. Optional
+  // because externally assigned identifiers do not need a derivation record.
   optional DocIdDerivation doc_id_derivation = 8;
 }
 
-// === Layer 0: BlobBag ===
+// ============================================================================
+// Layer 0: BlobBag -- Raw binary data storage
+// ============================================================================
 
+// BlobBag is the Layer 0 container for raw binary data. It holds either a
+// single blob or a collection of blobs and supports both inline byte
+// payloads and cloud storage references.
 message BlobBag {
+  // Selector between a single blob and a multi-blob collection. Exactly one
+  // must be set.
   oneof blob_data {
+    // A single binary blob payload.
     Blob blob = 1;
+
+    // A collection of binary blob payloads.
     Blobs blobs = 2;
   }
 }
 
+// Blobs is a simple wrapper that holds a repeated list of Blob messages,
+// used when a document contains more than one binary payload.
 message Blobs {
+  // Ordered list of binary blob payloads belonging to the parent document.
   repeated Blob blobs = 1;
 }
 
+// Blob represents a single binary payload. Content may be stored inline as
+// raw bytes or externalized to cloud object storage via a
+// FileStorageReference. The field-number gap between 6 and 8 is intentional
+// and must be preserved for wire-format compatibility.
 message Blob {
+  // Unique identifier for this blob within the document.
   string blob_id = 1;
+
+  // Logical drive or volume identifier grouping related blobs (e.g., an
+  // ingest source name or storage partition).
   string drive_id = 2;
+
+  // The binary content of the blob, provided either inline or by reference.
   oneof content {
+    // Raw binary data stored inline within the protobuf message.
     bytes data = 3;
+
+    // Cloud-agnostic pointer to the binary data stored in an external
+    // object store (S3, Azure Blob, GCS, MinIO, etc.).
     FileStorageReference storage_ref = 4;
   }
+
+  // IANA media type of the blob content (e.g., "application/pdf",
+  // "image/png"). Optional when the type is unknown at ingestion time.
   optional string mime_type = 5;
+
+  // Original filename of the ingested content, if available.
   optional string filename = 6;
+
+  // NOTE: Field number 7 is intentionally skipped to preserve wire-format
+  // compatibility with earlier revisions of the schema.
+
+  // Size of the blob content in bytes. A value of zero indicates that the
+  // size has not been computed yet.
   int64 size_bytes = 8;
+
+  // Hex-encoded checksum of the blob content, used for integrity
+  // verification. Optional when no checksum has been computed.
   optional string checksum = 9;
+
+  // Algorithm used to compute the checksum value.
   ChecksumType checksum_type = 10;
 }
 
+// FileStorageReference is a cloud-agnostic pointer to an object stored in a
+// remote object store. It supports AWS S3, Azure Blob Storage, Google Cloud
+// Storage, MinIO, and any S3-compatible provider.
 message FileStorageReference {
+  // Storage provider identifier (e.g., "s3", "azure-blob", "gcs", "minio").
   string provider = 1;
+
+  // Bucket or container name in the target object store.
   string bucket = 2;
+
+  // Object key (path) within the bucket that identifies the stored object.
   string key = 3;
+
+  // Cloud region where the bucket resides (e.g., "us-east-1",
+  // "westeurope"). May be empty for region-agnostic providers.
   string region = 4;
+
+  // Provider-specific attributes such as storage class, content encoding,
+  // or custom metadata headers.
   map<string, string> attrs = 5;
+
+  // Encryption metadata describing how the stored object is encrypted at
+  // rest, including the key provider and wrapped data-encryption key.
   EncryptionMetadata encryption = 6;
 }
 
+// EncryptionMetadata describes the encryption envelope applied to a stored
+// object. It provides a key-management abstraction that supports AWS KMS,
+// Azure Key Vault, Google Cloud KMS, HashiCorp Vault, and custom providers.
 message EncryptionMetadata {
+  // Encryption algorithm identifier (e.g., "AES-256-GCM", "AES-256-CBC").
   string algorithm = 1;
+
+  // Key management provider that owns the master key (e.g., "aws-kms",
+  // "azure-keyvault", "gcp-kms", "hashicorp-vault").
   string key_provider = 2;
+
+  // Provider-specific identifier for the master encryption key used to
+  // wrap the data encryption key.
   string key_id = 3;
+
+  // Data encryption key wrapped (encrypted) by the master key. The
+  // recipient must unwrap this key via the key_provider before decrypting
+  // the object content.
   bytes wrapped_key = 4;
+
+  // Initialization vector (nonce) used by the encryption algorithm.
   bytes iv = 5;
+
+  // Additional authenticated data (AAD) or encryption context key-value
+  // pairs required by the key provider for key unwrapping.
   map<string, string> context = 6;
 }
 
+// ChecksumType enumerates the supported hash algorithms for blob integrity
+// verification.
 enum ChecksumType {
+  // Default value indicating that no checksum algorithm has been specified.
   CHECKSUM_TYPE_UNSPECIFIED = 0;
+
+  // MD5 message-digest algorithm (128-bit hash).
   CHECKSUM_TYPE_MD5 = 1;
+
+  // SHA-1 secure hash algorithm (160-bit hash).
   CHECKSUM_TYPE_SHA1 = 2;
+
+  // SHA-256 secure hash algorithm (256-bit hash).
   CHECKSUM_TYPE_SHA256 = 3;
+
+  // SHA-512 secure hash algorithm (512-bit hash).
   CHECKSUM_TYPE_SHA512 = 4;
 }
 
-// === Layer 1: SemanticLayer ===
+// ============================================================================
+// Layer 1: SemanticLayer -- Chunked content with embeddings and NLP
+// ============================================================================
 
+// SemanticProcessingResult holds the output of Layer 1 semantic analysis,
+// including chunked text segments, their vector embeddings, and any NLP
+// annotations produced during processing.
 message SemanticProcessingResult {
+  // Ordered list of semantic chunks produced by the chunking strategy.
   repeated SemanticChunk chunks = 1;
+
+  // Identifier of the chunking strategy used to segment the source content
+  // (e.g., "sliding-window-512", "sentence-boundary").
   string chunking_strategy = 2;
+
+  // Arbitrary key-value metadata about the processing run, such as model
+  // version, processing duration, or pipeline stage name.
   map<string, string> processing_metadata = 3;
 }
 
+// SemanticChunk represents a single segment of the document produced by a
+// chunking strategy. Each chunk carries its text, vector embedding, and
+// any NLP annotations that apply to its span.
 message SemanticChunk {
+  // Unique identifier for this chunk within the document.
   string chunk_id = 1;
+
+  // Zero-based ordinal position of this chunk in the document's chunk
+  // sequence.
   int64 chunk_number = 2;
+
+  // Text content and corresponding vector embedding for this chunk.
   ChunkEmbedding embedding_info = 3;
+
+  // Flexible metadata associated with this chunk, stored as protobuf Value
+  // types to accommodate heterogeneous data (strings, numbers, booleans).
   map<string, google.protobuf.Value> metadata = 4;
+
+  // NLP annotations (named entities, POS tags, sentiment, etc.) that fall
+  // within this chunk's character span.
   repeated NLPAnnotation annotations = 5;
 }
 
+// ChunkEmbedding pairs the textual content of a chunk with its dense vector
+// embedding and records the embedding model and character offsets into the
+// original document.
 message ChunkEmbedding {
+  // Plain-text content of the chunk that was embedded.
   string text_content = 1;
+
+  // Dense vector embedding of the text content, produced by the model
+  // identified in model_id.
   repeated float vector = 2;
+
+  // Identifier of the embedding model used to generate the vector (e.g.,
+  // "text-embedding-ada-002", "e5-large-v2"). Optional when the model is
+  // recorded elsewhere in pipeline metadata.
   optional string model_id = 3;
+
+  // Zero-based character offset in the original document where this chunk
+  // begins. Optional when offset tracking is not required.
   optional int32 original_char_start_offset = 4;
+
+  // Zero-based character offset in the original document where this chunk
+  // ends (exclusive). Optional when offset tracking is not required.
   optional int32 original_char_end_offset = 5;
 }
 
+// NLPAnnotation captures a single natural language processing annotation
+// over a character span within a chunk, such as a named entity, part-of-
+// speech tag, or sentiment label.
 message NLPAnnotation {
-  string type = 1;              // "NER", "POS", "SENTIMENT", etc.
-  string label = 2;             // "PERSON", "ORG", "POSITIVE", etc.
+  // Annotation category (e.g., "NER", "POS", "SENTIMENT", "RELATION").
+  string type = 1;
+
+  // Annotation label within the category (e.g., "PERSON", "ORG",
+  // "POSITIVE", "VERB").
+  string label = 2;
+
+  // Zero-based character offset where the annotated span begins within the
+  // chunk text.
   int32 start_offset = 3;
+
+  // Zero-based character offset where the annotated span ends (exclusive)
+  // within the chunk text.
   int32 end_offset = 4;
+
+  // Model confidence score for this annotation, in the range [0.0, 1.0].
   float confidence = 5;
+
+  // Additional annotation-specific attributes (e.g., linked entity URI,
+  // dependency relation type, or normalization form).
   map<string, string> attributes = 6;
 }
 
-// === Layer 2: ParsedData ===
+// ============================================================================
+// Layer 2: ParsedData -- Structured extracted data
+// ============================================================================
 
+// ParsedMetadata holds the structured output produced by a single parser
+// stage. It contains extracted key-value fields, tabular data, and the
+// parser's raw output for debugging or reprocessing.
 message ParsedMetadata {
+  // Identifier of the parser that produced this metadata (e.g.,
+  // "tika-1.28", "custom-invoice-parser").
   string parser_id = 1;
+
+  // Extracted key-value fields produced by the parser. Values are stored as
+  // protobuf Value types to support strings, numbers, booleans, and nested
+  // structures.
   map<string, google.protobuf.Value> fields = 2;
+
+  // Tabular data extracted from the document (e.g., HTML tables, CSV
+  // sections, spreadsheet sheets).
   repeated TableData tables = 3;
+
+  // Raw textual output from the parser before field extraction, useful for
+  // debugging or downstream reprocessing.
   string raw_output = 4;
 }
 
+// TableData represents a single extracted table with column headers and
+// rows of cell values.
 message TableData {
+  // Unique identifier for this table within the parsed metadata.
   string table_id = 1;
+
+  // Ordered list of column header names for the table.
   repeated string headers = 2;
+
+  // Ordered list of data rows in the table.
   repeated TableRow rows = 3;
 }
 
+// TableRow represents a single row within an extracted table.
 message TableRow {
+  // Ordered list of cell values corresponding to the table's column
+  // headers. Each cell value is stored as a string.
   repeated string cells = 1;
 }
 
-// === Supporting Types ===
+// ============================================================================
+// Supporting Types
+// ============================================================================
 
+// SearchMetadata carries discovery metadata that search and retrieval
+// systems use to index, rank, and present the document in query results.
 message SearchMetadata {
+  // Human-readable title of the document.
   string title = 1;
+
+  // Keywords or tags associated with the document for search indexing.
   repeated string keywords = 2;
+
+  // Brief textual description or abstract of the document's content.
   string description = 3;
+
+  // Arbitrary custom fields for domain-specific search facets or filters.
   map<string, string> custom_fields = 4;
 }
 
+// OwnershipContext provides multi-tenant access control metadata for the
+// document. It identifies the owning tenant, the individual owner, and an
+// access control list of principals authorized to read or modify the
+// document.
 message OwnershipContext {
+  // Identifier of the tenant that owns this document in a multi-tenant
+  // deployment.
   string tenant_id = 1;
+
+  // Identifier of the individual user or service account that owns this
+  // document.
   string owner_id = 2;
+
+  // Access control list of principal identifiers (user IDs, group IDs, or
+  // role names) that are granted access to this document.
   repeated string acl = 3;
 }
 
+// DocIdDerivation describes the deterministic strategy used to generate the
+// document's doc_id from its content or metadata. This allows the pipeline
+// to detect and deduplicate identical documents across ingestion runs.
 message DocIdDerivation {
+  // Name of the derivation strategy (e.g., "content-hash",
+  // "field-composite", "external-id").
   string strategy = 1;
+
+  // Dot-delimited path to the source field whose value is hashed or used
+  // as the document identifier (e.g., "blob_bag.blob.checksum",
+  // "search_metadata.title").
   string source_field = 2;
+
+  // Hash algorithm applied to the source field value to produce the
+  // doc_id (e.g., "SHA-256", "MD5"). Empty when the strategy does not
+  // involve hashing.
   string hash_algorithm = 3;
 }
 ```
