@@ -61,10 +61,10 @@ The checksum is represented as a 32-octet value and MUST be included in the Enti
 ```
 Entity Frame with Integrity Check {
   Frame Type (i) = 0x60,
-  Entity ID (i),
-  Parent ID (i),
-  Layer Depth (i),
-  Payload Length (i),
+  Entity ID (20),
+  Parent ID (20),
+  Layer (4),
+  Payload Length (64),
   Checksum (256),
   Payload (..),
 }
@@ -91,8 +91,8 @@ The signature MUST be computed using one of the following algorithms:
 
 The signature covers the following fields, concatenated in order:
 
-1. Entity ID (8 octets, big-endian)
-2. Parent ID (8 octets, big-endian)
+1. Entity ID (4 octets, big-endian)
+2. Parent ID (4 octets, big-endian)
 3. Layer Depth (4 octets, big-endian)
 4. Payload Checksum (32 octets)
 
@@ -308,17 +308,21 @@ This document establishes a new IANA registry for PipeStream frame types.
 
 | Value | Frame Type Name | Reference |
 |-------|-----------------|-----------|
-| 0x50 | LEDGER | [this document], Section 5 |
-| 0x51 | CHECKPOINT | [this document], Section 6 |
-| 0x52 | LEDGER_ACK | [this document], Section 5 |
-| 0x53 | CHECKPOINT_ACK | [this document], Section 6 |
-| 0x54 | LEDGER_DIGEST | [this document], Section 9.2.3 |
-| 0x55-0x5F | Reserved for Ledger Operations | [this document] |
-| 0x60 | ENTITY | [this document], Section 4 |
-| 0x61 | ENTITY_START | [this document], Section 4 |
-| 0x62 | ENTITY_CONTINUATION | [this document], Section 4 |
-| 0x63 | ENTITY_END | [this document], Section 4 |
-| 0x64-0x6F | Reserved for Entity Operations | [this document] |
+| 0x50 | LEDGER | [this document], Section 5.1 |
+| 0x51 | CHECKPOINT | [this document] |
+| 0x52 | LEDGER_ACK | [this document] |
+| 0x53 | CHECKPOINT_ACK | [this document] |
+| 0x54 | SCOPE_DIGEST | [this document] |
+| 0x55 | BARRIER | [this document] |
+| 0x56 | SCOPE_OPEN | [this document] |
+| 0x57 | SCOPE_CLOSE | [this document] |
+| 0x60 | ENTITY | [this document] |
+| 0x61 | ENTITY_START | [this document] |
+| 0x62 | ENTITY_CONTINUATION | [this document] |
+| 0x63 | ENTITY_END | [this document] |
+| 0x70 | CLAIM_CHECK_QUERY | [this document] |
+| 0x71 | CLAIM_CHECK_RESPONSE | [this document] |
+| 0x72 | COMPLETION_POLICY | [this document] |
 
 #### 10.2.2 Provisional Registrations
 
@@ -356,15 +360,19 @@ This document establishes a new IANA registry for PipeStream entity status codes
 
 | Value | Status Code Name | Description | Reference |
 |-------|------------------|-------------|-----------|
-| 0x00 | PENDING | Entity received, awaiting processing | [this document], Section 5 |
-| 0x01 | PROCESSING | Entity processing in progress | [this document], Section 5 |
-| 0x02 | COMPLETE | Entity processing completed successfully | [this document], Section 5 |
-| 0x03 | FAILED | Entity processing failed | [this document], Section 5 |
-| 0x04 | CHECKPOINT | Entity state saved to checkpoint | [this document], Section 6 |
-| 0x05 | VAPORIZING | Entity is being decomposed into child entities | [this document], Section 4 |
-| 0x06 | AGGREGATING | Child entities being combined into parent result | [this document], Section 4 |
-| 0x07 | SUSPENDED | Processing temporarily suspended | [this document], Section 6 |
-| 0x08-0x0F | Reserved | Reserved for future standards use | [this document] |
+| 0x0 | PENDING | Entity announced, not yet transmitting | [this document] |
+| 0x1 | PROCESSING | Entity transmission in progress | [this document] |
+| 0x2 | COMPLETE | Entity successfully processed | [this document] |
+| 0x3 | FAILED | Entity processing failed | [this document] |
+| 0x4 | CHECKPOINT | Synchronization barrier | [this document] |
+| 0x5 | VAPORIZING | Decomposing into children | [this document] |
+| 0x6 | AGGREGATING | Rejoining children | [this document] |
+| 0x7 | YIELDED | Paused with continuation token | [this document] |
+| 0x8 | DEFERRED | Detached with claim check | [this document] |
+| 0x9 | RETRYING | Retry in progress | [this document] |
+| 0xA | SKIPPED | Intentionally skipped (lenient mode) | [this document] |
+| 0xB | ABANDONED | Timed out, cursor advanced past | [this document] |
+| 0xC-0xF | Reserved | Reserved for future use | [this document] |
 
 #### 10.3.2 Status Code Semantics
 
@@ -384,26 +392,21 @@ This document establishes a new IANA registry for PipeStream error codes.
 
 **Initial Contents**:
 
-| Value | Error Code Name | Description | Reference |
-|-------|-----------------|-------------|-----------|
-| 0x00 | PIPESTREAM_NO_ERROR | Graceful shutdown, no error | [this document] |
-| 0x01 | PIPESTREAM_INTERNAL_ERROR | Implementation-specific error | [this document] |
-| 0x02 | PIPESTREAM_IDLE_TIMEOUT | Connection closed due to inactivity | [this document] |
-| 0x03 | PIPESTREAM_LEDGER_RESET | Ledger state must be reset | [this document], Section 5 |
-| 0x04 | PIPESTREAM_INTEGRITY_ERROR | Entity checksum verification failed | [this document], Section 9.2.1 |
-| 0x05 | PIPESTREAM_ENTITY_INVALID | Entity frame format invalid | [this document], Section 4 |
-| 0x06 | PIPESTREAM_ENTITY_TOO_LARGE | Entity exceeds size limit | [this document], Section 9.3 |
-| 0x07 | PIPESTREAM_DEPTH_EXCEEDED | Vaporization depth limit exceeded | [this document], Section 9.3.1 |
-| 0x08 | PIPESTREAM_ENTITY_LIMIT_EXCEEDED | Entity count limit exceeded | [this document], Section 9.3.2 |
-| 0x09 | PIPESTREAM_CHECKPOINT_INVALID | Checkpoint frame format invalid | [this document], Section 6 |
-| 0x0A | PIPESTREAM_CHECKPOINT_NOT_FOUND | Referenced checkpoint does not exist | [this document], Section 6 |
-| 0x0B | PIPESTREAM_CHECKPOINT_EXPIRED | Checkpoint has expired | [this document], Section 9.3.3 |
-| 0x0C | PIPESTREAM_CHECKPOINT_RATE_EXCEEDED | Checkpoint creation rate exceeded | [this document], Section 9.2.4 |
-| 0x0D | PIPESTREAM_FLOW_CONTROL | Backpressure due to resource limits | [this document], Section 9.3.4 |
-| 0x0E | PIPESTREAM_AUTHENTICATION_FAILED | Entity or checkpoint authentication failed | [this document], Section 9.2 |
-| 0x0F | PIPESTREAM_UNAUTHORIZED | Operation not permitted | [this document], Section 9 |
-| 0x10 | PIPESTREAM_VERSION_MISMATCH | Protocol version not supported | [this document] |
-| 0x11 | PIPESTREAM_EXTENSION_ERROR | Extension processing error | [this document], Section 10.5 |
+| Value | Name | Description |
+|-------|------|-------------|
+| 0x00 | PIPESTREAM_NO_ERROR | Graceful shutdown |
+| 0x01 | PIPESTREAM_INTERNAL_ERROR | Implementation error |
+| 0x02 | PIPESTREAM_IDLE_TIMEOUT | Idle timeout |
+| 0x03 | PIPESTREAM_LEDGER_RESET | Ledger must reset |
+| 0x04 | PIPESTREAM_INTEGRITY_ERROR | Checksum failed |
+| 0x05 | PIPESTREAM_ENTITY_INVALID | Invalid format |
+| 0x06 | PIPESTREAM_ENTITY_TOO_LARGE | Size exceeded |
+| 0x07 | PIPESTREAM_DEPTH_EXCEEDED | Scope depth exceeded |
+| 0x08 | PIPESTREAM_WINDOW_EXCEEDED | Window full |
+| 0x09 | PIPESTREAM_SCOPE_INVALID | Invalid scope |
+| 0x0A | PIPESTREAM_CLAIM_EXPIRED | Claim check expired |
+| 0x0B | PIPESTREAM_CLAIM_NOT_FOUND | Claim check not found |
+| 0x0C | PIPESTREAM_LAYER_UNSUPPORTED | Protocol layer not supported |
 | 0x12-0x3F | Reserved | Reserved for future standards use | [this document] |
 
 #### 10.4.2 Error Code Usage

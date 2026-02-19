@@ -14,6 +14,8 @@ This document specifies PipeStream, a recursive entity streaming protocol design
 
 The protocol employs a dual-stream architecture consisting of a data stream for entity payload transmission and a ledger stream for tracking entity completion status and maintaining consistency. PipeStream defines four hierarchical data layers for entity representation: BlobBag for raw binary data, SemanticLayer for annotated content with metadata, ParsedData for structured extracted information, and CustomEntity for application-specific extensions.
 
+PipeStream is organized into three protocol layers: Layer 0 (Core) provides basic streaming with vaporize/rejoin semantics; Layer 1 (Recursive) adds hierarchical scoping and digest propagation; Layer 2 (Resilience) adds yield/resume, claim checks, and completion policies. Implementations MUST support Layer 0 and MAY support Layers 1 and 2.
+
 To ensure consistency across distributed processing pipelines, PipeStream implements checkpoint blocking, whereby processing nodes MUST synchronize at defined points before proceeding. This mechanism guarantees that all constituent parts of a vaporized document are successfully processed before reassembly operations commence.
 
 ---
@@ -140,7 +142,24 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
     A Parts Ledger entry is created atomically when an Entity is vaporized and MUST be transmitted on the Ledger Stream before any sub-entities are transmitted on the Data Stream. A Parts Ledger entry is "resolved" when all constituent sub-entities have reached "completed" status, at which point a rejoin operation MAY proceed.
 
-### 2.4. Routing and Distribution
+**Scope**
+:   A hierarchical namespace for Entity IDs. Each scope maintains its own Entity ID space, cursor, and Parts Ledger. Scopes enable collections to contain documents, documents to contain parts, and parts to contain jobs, each with independent ID management. (Protocol Layer 1)
+
+**Cursor**
+:   A pointer to the lowest unresolved Entity ID within a scope. Entity IDs behind the cursor are considered resolved and MAY be recycled. The cursor enables efficient ID space management without global coordination.
+
+### 2.4. Resilience Mechanisms (Protocol Layer 2)
+
+**Yield**
+:   A temporary pause in Entity processing, typically due to external dependencies (API calls, rate limiting, human approval). A yielded Entity carries a continuation token enabling resumption without reprocessing.
+
+**Claim Check**
+:   A detached reference to a deferred Entity that can be queried or resumed independently, potentially in a different session. Claim checks enable asynchronous processing patterns and retry queues.
+
+**Completion Policy**
+:   A configuration specifying how to handle partial failures during vaporization. Policies include STRICT (all must succeed), LENIENT (continue with partial results), BEST_EFFORT (complete with whatever succeeds), and QUORUM (require minimum success ratio).
+
+### 2.5. Routing and Distribution
 
 **WorkerMap**
 :   A routing table that specifies how Entities should be distributed across processing nodes during vaporization. The WorkerMap defines:
@@ -151,18 +170,24 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
     When vaporizing an Entity, the originating node SHOULD consult the WorkerMap to determine the destination for each sub-entity. The WorkerMap MAY be distributed via the Ledger Stream to ensure all nodes maintain a consistent routing view. Updates to the WorkerMap MUST be applied at checkpoint boundaries to prevent routing inconsistencies during active processing.
 
-### 2.5. Data Representation
+**Barrier**
+:   A synchronization point scoped to a specific subtree. Unlike checkpoints which are global, barriers block only entities dependent on a specific parent's descendants. (Protocol Layer 1)
+
+**Scope Digest**
+:   A cryptographic summary (Merkle root) of all Entity statuses within a completed scope, propagated to parent scopes for efficient verification. (Protocol Layer 1)
+
+### 2.6. Data Representation
 
 **Layer**
 :   One of four defined representations for Entity payload data. Layers provide a progression from raw binary data to structured semantic information, enabling processing nodes to operate at the appropriate level of abstraction. The four Layers, in order of increasing semantic richness, are:
 
-    1. **BlobBag**: Raw binary data with minimal metadata. A BlobBag Entity contains an uninterpreted byte sequence and MUST include a media type identifier. BlobBag is the entry point for documents ingested into the pipeline and the exit point for final output. Processing nodes that operate on BlobBag Entities perform format conversion, compression, or other byte-level transformations.
+    0. **BlobBag**: Raw binary data with minimal metadata. A BlobBag Entity contains an uninterpreted byte sequence and MUST include a media type identifier. BlobBag is the entry point for documents ingested into the pipeline and the exit point for final output. Processing nodes that operate on BlobBag Entities perform format conversion, compression, or other byte-level transformations.
 
-    2. **SemanticLayer**: Annotated content with structural and semantic metadata. A SemanticLayer Entity contains the document content plus annotations identifying semantic elements (headings, paragraphs, tables, figures, etc.). SemanticLayer preserves the original content while adding a metadata overlay that enables semantic-aware processing. SemanticLayer Entities MUST be convertible back to BlobBag without information loss in the primary content (annotations MAY be discarded).
+    1. **SemanticLayer**: Annotated content with structural and semantic metadata. A SemanticLayer Entity contains the document content plus annotations identifying semantic elements (headings, paragraphs, tables, figures, etc.). SemanticLayer preserves the original content while adding a metadata overlay that enables semantic-aware processing. SemanticLayer Entities MUST be convertible back to BlobBag without information loss in the primary content (annotations MAY be discarded).
 
-    3. **ParsedData**: Structured information extracted from document content. A ParsedData Entity contains data elements extracted during analysis (named entities, relationships, classifications, summaries, etc.) represented in a structured format. ParsedData represents derived information and is not generally reversible to the original document content. ParsedData Entities MAY reference their source SemanticLayer or BlobBag Entities.
+    2. **ParsedData**: Structured information extracted from document content. A ParsedData Entity contains data elements extracted during analysis (named entities, relationships, classifications, summaries, etc.) represented in a structured format. ParsedData represents derived information and is not generally reversible to the original document content. ParsedData Entities MAY reference their source SemanticLayer or BlobBag Entities.
 
-    4. **CustomEntity**: Application-specific extension Layer for specialized processing requirements. CustomEntity payloads MUST include a type identifier registered with the pipeline configuration. The semantics of CustomEntity Layers are defined by the registering application and are opaque to the core PipeStream protocol. Implementations MUST support forwarding CustomEntity Entities even when unable to interpret their contents.
+    3. **CustomEntity**: Application-specific extension Layer for specialized processing requirements. CustomEntity payloads MUST include a type identifier registered with the pipeline configuration. The semantics of CustomEntity Layers are defined by the registering application and are opaque to the core PipeStream protocol. Implementations MUST support forwarding CustomEntity Entities even when unable to interpret their contents.
 
     An Entity MUST be associated with exactly one Layer at any point in time. Transformation between Layers is a processing operation that produces a new Entity; the original Entity's Layer is immutable.
 

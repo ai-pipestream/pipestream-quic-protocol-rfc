@@ -187,9 +187,10 @@ After successful capability negotiation and authentication, the client MAY submi
    ENTITY_SUBMIT Frame {
      Type (8) = 0x10,
      Length (32),
-     Entity ID (128),
-     Parent ID (128),              ; 0 if root entity
-     Layer Type (8),
+     Entity ID (20),               ; Scope-local ID
+     Parent ID (20),               ; 0 if root entity
+     Scope ID (12),                ; Layer 1
+     Layer Type (4),
      Priority (8),
      Flags (16),
      Metadata Length (32),
@@ -214,8 +215,9 @@ The server MUST acknowledge entity submission:
    ENTITY_ACK Frame {
      Type (8) = 0x11,
      Length (32),
-     Entity ID (128),
-     Status (8),
+     Entity ID (20),
+     Status (4),
+     Reserved (8),
      Assigned Worker ID (64),
      Estimated Processing Time (32),  ; milliseconds, 0 = unknown
      Queue Position (32),             ; 0 = immediate processing
@@ -357,7 +359,7 @@ Implementations MUST NOT permit transitions that move "down" the layer hierarchy
    PARSE_REQUEST Frame {
      Type (8) = 0x20,
      Length (32),
-     Entity ID (128),
+     Entity ID (20),
      Source Layer (8),
      Target Layer (8),
      Parser ID (32),
@@ -391,7 +393,7 @@ The Parts Ledger is a metadata structure that tracks the relationship between pa
 ```
    Parts Ledger {
      Ledger ID (128),
-     Parent Entity ID (128),
+     Parent Entity ID (20),
      Creation Timestamp (64),
      Total Parts (32),
      Completed Parts (32),
@@ -402,7 +404,7 @@ The Parts Ledger is a metadata structure that tracks the relationship between pa
 
    Parts Index Entry {
      Part Number (32),
-     Child Entity ID (128),
+     Child Entity ID (20),
      Offset in Parent (64),
      Length in Parent (64),
      State (8),
@@ -435,7 +437,7 @@ The Parts Ledger is a metadata structure that tracks the relationship between pa
    LEDGER_CREATE Frame {
      Type (8) = 0x21,
      Length (32),
-     Parent Entity ID (128),
+     Parent Entity ID (20),
      Expected Parts (32),
      Ledger Options (16),
    }
@@ -502,8 +504,8 @@ Each entity MUST carry relationship metadata:
 
 ```
    Relationship Metadata {
-     Parent ID (128),              ; 0 for root entities
-     Root ID (128),                ; Original document ID
+     Parent ID (20),               ; 0 for root entities
+     Root ID (20),                 ; Original document ID
      Depth (8),                    ; Distance from root
      Sibling Index (32),           ; Position among siblings
      Total Siblings (32),          ; At time of vaporization
@@ -598,14 +600,14 @@ Implementations MUST track current depth and MUST refuse to parse when `Current 
      Length (32),
      Request ID (64),
      Status (8),
-     Original Entity ID (128),
+     Original Entity ID (20),
      Child Count (32),
      Ledger ID (128),
      Child Summaries (..),
    }
 
    Child Summary {
-     Child Entity ID (128),
+     Child Entity ID (20),
      Target Layer (8),
      Estimated Size (64),
      Content Type Length (8),
@@ -700,7 +702,7 @@ Layer enrichment adds computed or derived data to an entity without changing its
      Request ID (64),
      Mode (8),
      Input Count (32),
-     Input Entity IDs (128) ...,
+     Input Entity IDs (20) ...,
      Output Layer (8),
      Processor ID (32),
      Processor Config Length (16),
@@ -808,7 +810,7 @@ PROCESS actions MUST report progress for operations exceeding 1 second duration:
      Type (8) = 0x33,
      Length (32),
      Request ID (64),
-     Entity ID (128),
+     Entity ID (20),
      Phase (8),
      Progress Numerator (64),
      Progress Denominator (64),
@@ -855,7 +857,7 @@ Progress reports SHOULD be sent at least every 5 seconds during active processin
      Type (8) = 0x3F,
      Length (32),
      Request ID (64),
-     Entity ID (128),
+     Entity ID (20),
      Error Category (8),
      Error Code (32),
      Retryable (1),
@@ -990,7 +992,7 @@ Servers MUST cache the result of idempotent operations for at least the configur
      Length (32),
      Request ID (64),
      Status (8),
-     Output Entity ID (128),
+     Output Entity ID (20),
      Output Layer (8),
      Enrichments Applied (16),
      Processing Duration (32),    ; milliseconds
@@ -1115,7 +1117,7 @@ Notification sinks trigger webhooks or messaging systems:
      Type (8) = 0x40,
      Length (32),
      Request ID (64),
-     Entity ID (128),
+     Entity ID (20),
      Sink Count (8),
      Sink Configs (..),
      Completion Requirements (..),
@@ -1143,7 +1145,7 @@ Notification sinks trigger webhooks or messaging systems:
      Type (8) = 0x41,
      Length (32),
      Request ID (64),
-     Entity ID (128),
+     Entity ID (20),
      Index Config (..),
      Document ID Length (32),
      Document ID (..),           ; May differ from Entity ID
@@ -1185,7 +1187,7 @@ Notification sinks trigger webhooks or messaging systems:
      Type (8) = 0x43,
      Length (32),
      Request ID (64),
-     Entity ID (128),
+     Entity ID (20),
      Storage Config (..),
      Object Key Length (32),
      Object Key (..),
@@ -1238,7 +1240,7 @@ Notification sinks trigger webhooks or messaging systems:
      Type (8) = 0x45,
      Length (32),
      Request ID (64),
-     Entity ID (128),
+     Entity ID (20),
      Notification Config (..),
      Payload (..),
    }
@@ -1294,7 +1296,7 @@ Upon successful completion of all configured sinks, the worker MUST send a compl
      Type (8) = 0x47,
      Length (32),
      Request ID (64),
-     Entity ID (128),
+     Entity ID (20),
      Status (8),
      Sinks Completed (8),
      Sinks Failed (8),
@@ -1319,7 +1321,7 @@ When an entity and all its descendants have completed:
    PIPELINE_COMPLETE Frame {
      Type (8) = 0x48,
      Length (32),
-     Root Entity ID (128),
+     Root Entity ID (20),
      Total Entities Processed (64),
      Total Entities Failed (64),
      Start Timestamp (64),
@@ -1373,7 +1375,7 @@ When an entity and all its descendants have completed:
    CLEANUP_REQUEST Frame {
      Type (8) = 0x49,
      Length (32),
-     Entity ID (128),
+     Entity ID (20),
      Cleanup Scope (8),
      Cascade (1),
      Force (1),
@@ -1502,7 +1504,7 @@ State shared across actions within a pipeline:
 ```
    Pipeline Context {
      Pipeline ID (128),
-     Root Entity ID (128),
+     Root Entity ID (20),
      Current Depth (8),
      Checkpoint Sequence (64),
      Accumulated Metadata (..),

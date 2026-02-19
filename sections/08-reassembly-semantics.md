@@ -6,75 +6,74 @@ The Parts Ledger is a distributed data structure that maintains the hierarchical
 
 ### 8.1.1 Ledger Entry Structure
 
-Each Parts Ledger entry SHALL contain the following fields:
+Each Parts Ledger entry SHALL contain the following fields (as defined in `PartsLedgerEntry` protobuf):
 
 ```
 Parts Ledger Entry {
-    Parent ID (64),
+    Parent ID (20),
+    Scope ID (32),
     Child Count (16),
-    Children IDs (64) ...,
-    Completion Status (8) ...,
-    Checkpoint Scope (32),
+    Children IDs (20) ...,
+    Children Status (4) ...,
+    Completion Policy (Layer 2),
     Creation Timestamp (64),
     Resolution State (8),
-    Flags (8),
 }
 ```
 
 Field definitions:
 
-Parent ID (64 bits):
-: The unique identifier of the parent entity that was vaporized. A value of 0x0000000000000000 indicates a root entity with no parent.
+Parent ID (20 bits):
+: The identifier of the parent entity that was vaporized.
+
+Scope ID (32 bits):
+: The identifier of the scope in which the vaporization occurred.
 
 Child Count (16 bits):
-: The number of child entities produced by vaporization. This value MUST be set at ledger entry creation and MUST NOT be modified thereafter. Maximum value is 65535 children per vaporization operation.
+: The number of child entities produced by vaporization.
 
 Children IDs (variable):
-: An array of 64-bit entity identifiers, one for each child. The array length MUST equal Child Count. Children SHOULD be ordered by their emission sequence.
+: An array of 20-bit entity identifiers, one for each child.
 
-Completion Status (variable):
-: An array of 8-bit status codes, one for each child. The array length MUST equal Child Count. Status values are defined in Section 8.1.2.
+Children Status (variable):
+: An array of 4-bit status codes (EntityStatus), one for each child.
 
-Checkpoint Scope (32 bits):
-: The identifier of the innermost checkpoint scope containing this ledger entry. A value of 0x00000000 indicates global scope (no enclosing checkpoint).
+Completion Policy (Layer 2):
+: The policy governing failure handling and success criteria for this decomposition.
 
 Creation Timestamp (64 bits):
-: Microseconds since the UNIX epoch when this ledger entry was created. Used for timeout calculations and orphan detection.
+: Microseconds since the UNIX epoch when this ledger entry was created.
 
 Resolution State (8 bits):
-: The current state of the ledger entry. Values defined in Section 8.1.3.
-
-Flags (8 bits):
-: Bit flags for entry metadata:
-  - Bit 0: PARTIAL_FAILURE_ALLOWED - Entry MAY resolve with some failed children
-  - Bit 1: ORDERED_REJOIN - Children MUST rejoin in emission order
-  - Bit 2: CHECKPOINT_BOUNDARY - Entry marks a checkpoint boundary
-  - Bits 3-7: Reserved, MUST be zero
+: The current state of the ledger entry (ResolutionState).
 
 ### 8.1.2 Completion Status Codes
 
 Each child entity SHALL have one of the following completion status values:
 
-| Value | Name | Description |
-|-------|------|-------------|
-| 0x00 | PENDING | Child has not yet completed |
-| 0x01 | COMPLETE | Child completed successfully |
-| 0x02 | FAILED | Child processing failed |
-| 0x03 | TIMEOUT | Child exceeded processing deadline |
-| 0x04 | CANCELLED | Child was explicitly cancelled |
-| 0x05 | ORPHANED | Child was orphaned (parent terminated) |
-| 0x06-0xFF | Reserved | Reserved for future use |
+| Value | Name | Layer | Description |
+|-------|------|-------|-------------|
+| 0x0 | PENDING | 0 | Entity announced, not yet transmitting |
+| 0x1 | PROCESSING | 0 | Entity transmission in progress |
+| 0x2 | COMPLETE | 0 | Entity successfully processed |
+| 0x3 | FAILED | 0 | Entity processing failed |
+| 0x4 | CHECKPOINT | 0 | Synchronization barrier |
+| 0x5 | VAPORIZING | 0 | Decomposing into children |
+| 0x6 | AGGREGATING | 0 | Rejoining children |
+| 0x7 | YIELDED | 2 | Paused with continuation token |
+| 0x8 | DEFERRED | 2 | Detached with claim check |
+| 0x9 | RETRYING | 2 | Retry in progress |
+| 0xA | SKIPPED | 2 | Intentionally skipped (lenient mode) |
+| 0xB | ABANDONED | 2 | Timed out, cursor advanced past |
 
 ### 8.1.3 Resolution States
 
 | Value | Name | Description |
 |-------|------|-------------|
-| 0x00 | ACTIVE | Entry is active, awaiting child completion |
-| 0x01 | RESOLVED | All children reached terminal state |
-| 0x02 | REJOINING | Rejoin operation in progress |
-| 0x03 | REJOINED | Rejoin completed successfully |
-| 0x04 | FAILED | Entry resolution failed |
-| 0x05-0xFF | Reserved | Reserved for future use |
+| 0x0 | ACTIVE | Entry is active, awaiting child completion |
+| 0x1 | RESOLVED | All children reached terminal state |
+| 0x2 | PARTIAL | Some children failed/skipped (policy met) |
+| 0x3 | FAILED | Entry resolution failed |
 
 ### 8.1.4 Ledger Frame Format
 
@@ -161,7 +160,7 @@ Checkpoint Frame {
     Sequence Number (64),
     Timeout (32),
     Dependent Count (16),
-    Dependent IDs (64) ...,
+    Dependent IDs (20) ...,
 }
 ```
 
@@ -361,7 +360,7 @@ Checkpoint Failure Frame {
     Failure Reason (8),
     Checkpoint ID (32),
     Failed Entity Count (16),
-    Failed Entity IDs (64) ...,
+    Failed Entity IDs (20) ...,
     Recovery Hint (8),
     Diagnostic Data Length (16),
     Diagnostic Data (..),
@@ -815,8 +814,8 @@ When a DAG violation is detected, implementations MUST emit a violation frame:
 DAG Violation Frame {
     Frame Type (8) = 0x53,
     Violation Type (8),
-    Entity A (64),
-    Entity B (64),
+    Entity A (20),
+    Entity B (20),
     Diagnostic Info Length (16),
     Diagnostic Info (..),
 }

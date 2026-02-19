@@ -573,10 +573,10 @@ message PipeDoc {
   SemanticProcessingResult semantic_result = 6;
 
   // Ownership tracking for multi-tenant environments.
-  optional OwnershipContext ownership = 7;
+  OwnershipContext ownership = 7;
 
   // Derivation method for the doc_id (for auditability).
-  optional DocIdDerivation doc_id_derivation = 8;
+  DocIdDerivation doc_id_derivation = 8;
 }
 ```
 
@@ -632,16 +632,16 @@ message Blob {
   }
 
   // MIME type of the blob content.
-  optional string mime_type = 5;
+  string mime_type = 5;
 
   // Original filename if available.
-  optional string filename = 6;
+  string filename = 6;
 
   // Size of the blob content in bytes.
   int64 size_bytes = 8;
 
   // Checksum value for integrity verification.
-  optional string checksum = 9;
+  string checksum = 9;
 
   // Type of checksum algorithm used.
   ChecksumType checksum_type = 10;
@@ -768,13 +768,13 @@ message ChunkEmbedding {
   repeated float vector = 2;
 
   // Identifier for the model that generated this embedding.
-  optional string model_id = 3;
+  string model_id = 3;
 
   // Character offset where chunk starts in original document.
-  optional int32 original_char_start_offset = 4;
+  int32 original_char_start_offset = 4;
 
   // Character offset where chunk ends in original document.
-  optional int32 original_char_end_offset = 5;
+  int32 original_char_end_offset = 5;
 }
 ```
 

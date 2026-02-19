@@ -35,18 +35,28 @@ PipeStream MUST be implemented over QUIC [RFC9000] to leverage:
 - TLS 1.3 security by default
 - Connection migration capabilities
 
-### 3.1.6 Multi-Layer Data Representation
+### 3.1.6. Multi-Layer Data Representation
 
 The protocol MUST support four distinct data representation layers to accommodate varying processing requirements:
 
 | Layer | Name       | Description                                    |
 |-------|------------|------------------------------------------------|
-| 0     | RAW        | Unprocessed binary octets                      |
-| 1     | PARSED     | Structurally parsed representation             |
-| 2     | ENRICHED   | Semantically annotated representation          |
-| 3     | NORMALIZED | Canonicalized output representation            |
+| 0     | BlobBag    | Raw binary data with minimal metadata          |
+| 1     | SemanticLayer | Annotated content with semantic metadata      |
+| 2     | ParsedData | Structured extracted information               |
+| 3     | CustomEntity | Application-specific extension Layer          |
 
-Implementations MAY support any subset of layers but MUST support at least Layer 0 (RAW).
+### 3.1.7. Protocol Layering
+
+PipeStream is organized into three protocol layers to accommodate varying deployment requirements:
+
+| Protocol Layer | Name | Description |
+|----------------|------|-------------|
+| Layer 0 | Core | Basic streaming, vaporize/rejoin, checkpoint |
+| Layer 1 | Recursive | Hierarchical scopes, digest propagation, barriers |
+| Layer 2 | Resilience | Yield/resume, claim checks, completion policies |
+
+Implementations MUST support Layer 0. Support for Layers 1 and 2 is OPTIONAL and negotiated during connection establishment.
 
 ## 3.2 Architecture Summary
 
@@ -96,29 +106,38 @@ The Ledger Stream MUST be allocated as QUIC Stream ID 0 and serves as the contro
 
 #### 3.2.2.1 Ledger Frame Format
 
-Each ledger frame is exactly 3 octets:
+Each basic ledger frame is exactly 4 octets (32 bits), word-aligned:
 
 ```
- 0                   1                   2
- 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|         Entity ID (16 bits)       |  Status   |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |E|C|              Entity ID (20 bits)         |Stat |  Flags  |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
 Figure 2: Ledger Frame Format
 
-- **Entity ID (16 bits):** Unique identifier for the entity within the connection scope. Implementations MUST assign Entity IDs sequentially starting from 0. The value 0xFFFF is reserved for connection-level control messages.
+- **E (1 bit):** Extended frame flag.
+- **C (1 bit):** Cursor update flag.
+- **Entity ID (20 bits):** Unique identifier for the entity within the scope.
+- **Stat (4 bits):** Current lifecycle state of the entity.
+- **Flags (6 bits):** Reserved.
 
-- **Status (8 bits):** Current lifecycle state of the entity, encoded as follows:
-
-| Value | Status     | Description                                      |
-|-------|------------|--------------------------------------------------|
-| 0x00  | PENDING    | Entity announced, payload not yet transmitted    |
-| 0x01  | PROCESSING | Entity payload transmission in progress          |
-| 0x02  | COMPLETE   | Entity successfully processed                    |
-| 0x03  | FAILED     | Entity processing failed                         |
-| 0x04  | CHECKPOINT | Synchronization barrier (see Section 3.2.4)      |
+| Value | Status     | Layer | Description                                      |
+|-------|------------|-------|--------------------------------------------------|
+| 0x0   | PENDING    | 0     | Entity announced, payload not yet transmitted    |
+| 0x1   | PROCESSING | 0     | Entity payload transmission in progress          |
+| 0x2   | COMPLETE   | 0     | Entity successfully processed                    |
+| 0x3   | FAILED     | 0     | Entity processing failed                         |
+| 0x4   | CHECKPOINT | 0     | Synchronization barrier                          |
+| 0x5   | VAPORIZING | 0     | Decomposing into children                        |
+| 0x6   | AGGREGATING| 0     | Rejoining children                               |
+| 0x7   | YIELDED    | 2     | Paused with continuation token                   |
+| 0x8   | DEFERRED   | 2     | Detached with claim check                        |
+| 0x9   | RETRYING   | 2     | Retry in progress                                |
+| 0xA   | SKIPPED    | 2     | Intentionally skipped                            |
+| 0xB   | ABANDONED  | 2     | Timed out, cursor advanced past                  |
 
 Implementations MUST process ledger frames in order. A receiver MUST NOT process an entity payload until a corresponding PENDING or PROCESSING status has been received on the Ledger Stream.
 

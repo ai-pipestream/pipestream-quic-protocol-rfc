@@ -111,29 +111,29 @@ The PipeStream entity model supports four distinct data layers. A single entity 
 +------------------------------------------------------------------+
 |                          PipeDoc                                 |
 |  +------------------------------------------------------------+  |
-|  |  Layer 1: BlobBag (Raw Binary Data)                        |  |
+|  |  Layer 0: BlobBag (Raw Binary Data)                        |  |
 |  |  - Original document bytes                                  |  |
 |  |  - Images, attachments, embedded files                      |  |
 |  +------------------------------------------------------------+  |
 |  +------------------------------------------------------------+  |
-|  |  Layer 2: SemanticLayer (Semantic Chunks)                  |  |
+|  |  Layer 1: SemanticLayer (Semantic Chunks)                  |  |
 |  |  - SemanticProcessingResult with SemanticChunks            |  |
 |  |  - Text segments with vector embeddings                     |  |
 |  +------------------------------------------------------------+  |
 |  +------------------------------------------------------------+  |
-|  |  Layer 3: ParsedData (Structured Extraction)               |  |
+|  |  Layer 2: ParsedData (Structured Extraction)               |  |
 |  |  - ParsedMetadata from various parsers                      |  |
 |  |  - JSON/key-value representation                            |  |
 |  +------------------------------------------------------------+  |
 |  +------------------------------------------------------------+  |
-|  |  Layer 4: CustomEntity (Extension Point)                   |  |
+|  |  Layer 3: CustomEntity (Extension Point)                   |  |
 |  |  - structured_data as google.protobuf.Any                  |  |
 |  |  - Domain-specific protobuf payloads                        |  |
 |  +------------------------------------------------------------+  |
 +------------------------------------------------------------------+
 ```
 
-#### 6.2.1. Layer 1: BlobBag (Raw Binary Data)
+#### 6.2.1. Layer 0: BlobBag (Raw Binary Data)
 
 The BlobBag layer provides storage for raw binary data associated with an entity. This layer is designed for original document bytes, images, attachments, and any other binary content that requires parsing or processing.
 
@@ -198,7 +198,7 @@ The BlobBag layer is designed for:
 - Multi-part document assembly
 - Binary content that requires downstream parsing
 
-#### 6.2.2. Layer 2: SemanticLayer (Structured Semantic Chunks)
+#### 6.2.2. Layer 1: SemanticLayer (Structured Semantic Chunks)
 
 The SemanticLayer provides structured semantic chunking and vector embedding capabilities. This layer enables vector search, semantic similarity matching, and retrieval-augmented generation (RAG) workflows.
 
@@ -260,7 +260,7 @@ The SemanticLayer is designed for:
 - Multi-model embedding support (different embedding models for different use cases)
 - Chunk-level retrieval with offset tracking for source attribution
 
-#### 6.2.3. Layer 3: ParsedData (Extracted Structured Data)
+#### 6.2.3. Layer 2: ParsedData (Extracted Structured Data)
 
 The ParsedData layer stores structured data extracted by document parsers. This layer supports multiple parsers operating on the same document, with results stored under parser-specific keys.
 
@@ -295,7 +295,7 @@ The ParsedData layer is designed for:
 - Multi-parser workflows with incremental enrichment
 - Audit trails for parsing operations
 
-#### 6.2.4. Layer 4: CustomEntity (Extension Point)
+#### 6.2.4. Layer 3: CustomEntity (Extension Point)
 
 The CustomEntity layer provides an extension point for domain-specific data that does not fit into the standard entity model. This layer enables arbitrary protobuf payloads to be attached to entities.
 

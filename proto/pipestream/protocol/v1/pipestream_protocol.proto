@@ -3,43 +3,60 @@
 // PipeStream Protocol - IETF draft protocol for recursive entity streaming
 // over QUIC. Defines the wire-format messages for Layers 0-2 of the
 // PipeStream architecture: core streaming, recursive scoping, and resilience.
+//
+// Edition 2023 is used for closed enums (critical for wire-protocol safety)
+// and implicit field presence (distinguishing "not set" from zero values).
+// In this edition, all fields have explicit presence by default, making the
+// 'optional' keyword unnecessary.
 
-syntax = "proto3";
+edition = "2023";
 
 package pipestream.protocol.v1;
 
 import "google/protobuf/any.proto";
+
+// All enums in this file are CLOSED. Unknown enum values received on the wire
+// MUST be rejected. This is essential because status codes are encoded as
+// 4-bit values in the ledger frame wire format; accepting unknown values
+// could cause undefined behavior in state machines and cursor advancement.
+option features.enum_type = CLOSED;
 
 // Capabilities describes the feature set supported by a PipeStream endpoint.
 // Exchanged during the CONNECT handshake so that both sides can negotiate
 // which protocol layers and resource limits apply to the session.
 message Capabilities {
   // Whether the endpoint supports Layer 0 (core entity streaming).
+  // MUST always be true; Layer 0 support is mandatory.
   bool layer0_core = 1;
 
   // Whether the endpoint supports Layer 1 (recursive scoping and vaporization).
   bool layer1_recursive = 2;
 
   // Whether the endpoint supports Layer 2 (resilience, yield, and claim-check).
+  // Requires Layer 1 support; if layer1_recursive is false, this MUST be false.
   bool layer2_resilience = 3;
 
   // Maximum nesting depth allowed for recursive scopes.
+  // Default is 8. Range 1-7 (constrained by 3-bit Dep field in scoped frame).
   uint32 max_scope_depth = 4;
 
   // Maximum number of entities permitted within a single scope.
+  // Default is 1,048,576 (2^20), matching the 20-bit entity ID space.
   uint32 max_entities_per_scope = 5;
 
   // Maximum flow-control window size, in number of entities, that the
-  // endpoint is willing to buffer before requiring acknowledgement.
+  // endpoint is willing to buffer before requiring cursor advancement.
+  // Default is 524,288 (2^19).
   uint32 max_window_size = 6;
 }
 
 // EntityHeader is sent at the beginning of each entity stream to describe
 // the payload that follows. It carries identity, lineage, content metadata,
-// optional chunking information, and the completion policy that governs
-// how partial failures of this entity are handled.
+// chunking information, and the completion policy that governs how partial
+// failures of this entity's children are handled.
 message EntityHeader {
-  // Unique identifier for this entity within the session.
+  // Scope-local entity identifier (20-bit, range 1 to 1,048,573).
+  // Assigned by the sender using a cursor-based circular buffer.
   uint32 entity_id = 1;
 
   // Identifier of the parent entity that spawned this entity, or zero if
@@ -48,19 +65,22 @@ message EntityHeader {
 
   // Identifier of the scope to which this entity belongs. Scopes group
   // related entities for recursive processing and completion tracking.
+  // Set to 0 when Layer 1 is not negotiated.
   uint32 scope_id = 3;
 
-  // Protocol layer at which this entity was created (0, 1, or 2).
+  // Data layer of this entity's payload (0=BlobBag, 1=Semantic, 2=Parsed,
+  // 3=Custom).
   uint32 layer = 4;
 
-  // MIME content type of the entity payload (e.g. "application/json").
+  // MIME content type of the entity payload (e.g. "application/json",
+  // "application/x-protobuf").
   string content_type = 5;
 
   // Length in bytes of the complete entity payload, before any chunking.
   uint64 payload_length = 6;
 
-  // Integrity checksum of the complete entity payload, used to verify
-  // that the reassembled payload matches what the sender transmitted.
+  // SHA-256 integrity checksum of the complete entity payload (32 bytes).
+  // Receivers MUST verify this before processing.
   bytes checksum = 7;
 
   // Arbitrary key-value metadata attached to this entity by the producer.
@@ -71,7 +91,7 @@ message EntityHeader {
   ChunkInfo chunk_info = 9;
 
   // Completion policy that governs retry, timeout, and failure behavior
-  // for this entity. Applies at Layer 2 (resilience).
+  // for this entity's children. Applies at Layer 2 (resilience).
   CompletionPolicy completion_policy = 10;
 }
 
@@ -91,18 +111,24 @@ message ChunkInfo {
 // CompletionPolicy controls Layer 2 resilience behavior for an entity or
 // scope. It specifies how strictly all children must complete, how many
 // retries are attempted, and what action to take on timeout or failure.
+//
+// With Edition 2023 field presence, "not set" is distinguishable from zero.
+// When not set, implementations MUST use the documented defaults.
 message CompletionPolicy {
   // Mode that determines how child-entity completion is evaluated.
   CompletionMode mode = 1;
 
   // Maximum number of retry attempts before the failure action is taken.
+  // Default: 3. A value of 0 means no retries.
   uint32 max_retries = 2;
 
   // Delay in milliseconds between successive retry attempts.
+  // Default: 1000.
   uint32 retry_delay_ms = 3;
 
   // Maximum time in milliseconds to wait for completion before the
-  // timeout action is triggered.
+  // timeout action is triggered. Default: 300000 (5 minutes).
+  // A value of 0 means no timeout.
   uint32 timeout_ms = 4;
 
   // Minimum ratio of successful children (0.0 to 1.0) required for the
@@ -118,8 +144,9 @@ message CompletionPolicy {
 
 // CompletionMode specifies the strategy used to decide whether a scope
 // has completed successfully based on its children's statuses.
+// CLOSED enum: unknown values MUST be rejected on the wire.
 enum CompletionMode {
-  // Default unspecified value. Implementations should treat this as STRICT.
+  // Default unspecified value. Implementations MUST treat this as STRICT.
   COMPLETION_MODE_UNSPECIFIED = 0;
 
   // All children must complete successfully for the scope to succeed.
@@ -140,8 +167,9 @@ enum CompletionMode {
 
 // FailureAction specifies what a processor should do when an entity or
 // scope encounters an error or timeout condition.
+// CLOSED enum: unknown values MUST be rejected on the wire.
 enum FailureAction {
-  // Default unspecified value. Implementations should treat this as FAIL.
+  // Default unspecified value. Implementations MUST treat this as FAIL.
   FAILURE_ACTION_UNSPECIFIED = 0;
 
   // Propagate the failure immediately, aborting the scope.
@@ -158,9 +186,13 @@ enum FailureAction {
 }
 
 // EntityStatus represents the lifecycle state of an entity as tracked
-// on the ledger stream. Transitions follow the PipeStream state machine.
+// on the ledger stream. Encoded as 4-bit values (0x0-0xC) in the 32-bit
+// ledger frame wire format. Transitions follow the PipeStream state machine.
+// CLOSED enum: unknown status values on the wire MUST cause a
+// PIPESTREAM_INTEGRITY_ERROR (0x04).
 enum EntityStatus {
-  // Default unspecified value. Must not appear in well-formed ledger frames.
+  // Default unspecified value. Used as heartbeat signal on the wire (0x0).
+  // MUST NOT appear in well-formed ledger frames for real entities.
   ENTITY_STATUS_UNSPECIFIED = 0;
 
   // The entity has been registered but processing has not yet started.
@@ -206,6 +238,27 @@ enum EntityStatus {
   ENTITY_STATUS_ABANDONED = 12;
 }
 
+// ResolutionState tracks the completion state of a Parts Ledger entry.
+// CLOSED enum: unknown values MUST be rejected.
+enum ResolutionState {
+  // Default unspecified value.
+  RESOLUTION_STATE_UNSPECIFIED = 0;
+
+  // Vaporization is active; children are still being processed.
+  RESOLUTION_STATE_ACTIVE = 1;
+
+  // All children completed according to the completion policy.
+  RESOLUTION_STATE_RESOLVED = 2;
+
+  // Some children failed or were skipped, but the policy allowed
+  // partial completion (LENIENT, BEST_EFFORT, or QUORUM met).
+  RESOLUTION_STATE_PARTIAL = 3;
+
+  // The vaporization failed; too many children failed to meet the
+  // completion policy requirements.
+  RESOLUTION_STATE_FAILED = 4;
+}
+
 // LedgerFrame is sent on the ledger stream (QUIC Stream 0) to report
 // status transitions for individual entities. The ledger provides a
 // global, ordered view of entity lifecycle events across all scopes.
@@ -214,20 +267,22 @@ message LedgerFrame {
   uint32 entity_id = 1;
 
   // Scope to which the entity belongs.
+  // Set to 0 when Layer 1 is not negotiated.
   uint32 scope_id = 2;
 
   // Current lifecycle status of the entity.
   EntityStatus status = 3;
 
   // Optional extension data associated with this status transition,
-  // encoded as a protobuf Any for forward compatibility.
+  // encoded as a protobuf Any for forward compatibility. Carried when
+  // the E (extension) flag is set in the wire-format ledger frame.
   google.protobuf.Any extended_data = 4;
 }
 
 // CheckpointFrame defines a synchronization barrier. When a checkpoint
-// is issued, all entities within the scope must reach this point before
-// processing may continue past it. This ensures consistency across
-// parallel entity streams.
+// is issued, all entities within the scope must reach a terminal state
+// before processing may continue past it. This ensures consistency
+// across parallel entity streams.
 message CheckpointFrame {
   // Unique identifier for this checkpoint, scoped to the session.
   string checkpoint_id = 1;
@@ -236,11 +291,13 @@ message CheckpointFrame {
   // and detect gaps.
   uint64 sequence_number = 2;
 
-  // Bitfield of checkpoint flags (reserved for future protocol extensions).
+  // Bitfield of checkpoint flags.
+  // Bit 0: MANDATORY (must block processing).
+  // Bit 1: SCOPE_LOCAL (applies only within the current scope).
   uint32 flags = 3;
 
   // Maximum time in milliseconds to wait for all entities to reach the
-  // checkpoint before it is considered timed out.
+  // checkpoint before it is considered timed out. Default: 30000.
   uint32 timeout_ms = 4;
 }
 
@@ -268,6 +325,9 @@ message PartsLedgerEntry {
   // Timestamp (Unix epoch microseconds) when the vaporization occurred
   // and child entities were created.
   uint64 created_at = 6;
+
+  // Current resolution state of this Parts Ledger entry.
+  ResolutionState state = 7;
 }
 
 // YieldToken allows a Layer 2 processor to pause processing of an entity
@@ -289,29 +349,30 @@ message YieldToken {
 
 // YieldReason describes why a processor chose to yield processing of
 // an entity rather than completing it immediately.
+// CLOSED enum: unknown values MUST be rejected on the wire.
 enum YieldReason {
-  // Default unspecified value. Must not appear in well-formed yield tokens.
+  // Default unspecified value. MUST NOT appear in well-formed yield tokens.
   YIELD_REASON_UNSPECIFIED = 0;
-
-  // The processor has been rate-limited and must back off before
-  // continuing work on this entity.
-  YIELD_REASON_RATE_LIMITED = 1;
-
-  // The processor is waiting for a sibling entity to reach a certain
-  // state before it can continue.
-  YIELD_REASON_AWAITING_SIBLING = 2;
-
-  // The processor requires human or external approval before proceeding
-  // with the next stage of processing.
-  YIELD_REASON_AWAITING_APPROVAL = 3;
-
-  // A shared resource required by the processor is currently busy or
-  // locked by another operation.
-  YIELD_REASON_RESOURCE_BUSY = 4;
 
   // The processor needs to make an external call (e.g. network request)
   // and does not want to hold the stream open while waiting.
-  YIELD_REASON_EXTERNAL_CALL = 5;
+  YIELD_REASON_EXTERNAL_CALL = 1;
+
+  // The processor has been rate-limited and must back off before
+  // continuing work on this entity.
+  YIELD_REASON_RATE_LIMITED = 2;
+
+  // The processor is waiting for a sibling entity to reach a certain
+  // state before it can continue.
+  YIELD_REASON_AWAITING_SIBLING = 3;
+
+  // The processor requires human or external approval before proceeding
+  // with the next stage of processing.
+  YIELD_REASON_AWAITING_APPROVAL = 4;
+
+  // A shared resource required by the processor is currently busy or
+  // locked by another operation.
+  YIELD_REASON_RESOURCE_BUSY = 5;
 }
 
 // ClaimCheck is a Layer 2 deferred-processing reference. When an entity
@@ -329,6 +390,7 @@ message ClaimCheck {
 
   // Unix epoch timestamp (in microseconds) after which this claim check
   // expires and the entity may be considered abandoned.
+  // Default: 86,400,000,000 (24 hours).
   uint64 expiry_timestamp = 4;
 
   // Validation data that must be checked when the claim is redeemed to
@@ -341,8 +403,8 @@ message ClaimCheck {
 // resumed, these fields are checked to confirm that no state corruption
 // or unexpected changes occurred during the pause.
 message StoppingPointValidation {
-  // Checksum of the processor's internal state at the stopping point,
-  // used to detect tampering or corruption.
+  // SHA-256 checksum of the processor's internal state at the stopping
+  // point, used to detect tampering or corruption.
   bytes state_checksum = 1;
 
   // Total number of payload bytes the processor had consumed when it

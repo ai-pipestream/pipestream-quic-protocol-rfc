@@ -1,16 +1,26 @@
+// Copyright 2026 PipeStream Authors
+//
 // PipeStream Data Model
 //
 // Defines the core document representation for the PipeStream ingestion and
 // processing pipeline. A PipeDoc carries raw binary payloads (Layer 0),
 // semantic chunks with embeddings (Layer 1), and structured parsed output
 // (Layer 2) through every stage of the pipeline.
+//
+// Edition 2023 is used to leverage closed enums for wire-format safety and
+// consistent field presence semantics. In this edition, all fields have
+// explicit presence by default, making the 'optional' keyword unnecessary.
 
-syntax = "proto3";
+edition = "2023";
 
 package pipestream.data.v1;
 
 import "google/protobuf/any.proto";
 import "google/protobuf/struct.proto";
+
+// All enums in this file are CLOSED to ensure that receivers reject unknown
+// values, which is critical for consistent processing in distributed pipelines.
+option features.enum_type = CLOSED;
 
 // PipeDoc is the root document entity that flows through the PipeStream
 // pipeline. It aggregates every data layer -- raw blobs, semantic analysis
@@ -45,13 +55,11 @@ message PipeDoc {
   // pipeline stages.
   SemanticProcessingResult semantic_result = 6;
 
-  // Multi-tenant ownership and access-control context. Optional because
-  // single-tenant deployments may not require access control.
-  optional OwnershipContext ownership = 7;
+  // Multi-tenant ownership and access-control context.
+  OwnershipContext ownership = 7;
 
-  // Strategy descriptor that explains how doc_id was derived. Optional
-  // because externally assigned identifiers do not need a derivation record.
-  optional DocIdDerivation doc_id_derivation = 8;
+  // Strategy descriptor that explains how doc_id was derived.
+  DocIdDerivation doc_id_derivation = 8;
 }
 
 // ============================================================================
@@ -82,8 +90,7 @@ message Blobs {
 
 // Blob represents a single binary payload. Content may be stored inline as
 // raw bytes or externalized to cloud object storage via a
-// FileStorageReference. The field-number gap between 6 and 8 is intentional
-// and must be preserved for wire-format compatibility.
+// FileStorageReference.
 message Blob {
   // Unique identifier for this blob within the document.
   string blob_id = 1;
@@ -103,22 +110,19 @@ message Blob {
   }
 
   // IANA media type of the blob content (e.g., "application/pdf",
-  // "image/png"). Optional when the type is unknown at ingestion time.
-  optional string mime_type = 5;
+  // "image/png").
+  string mime_type = 5;
 
   // Original filename of the ingested content, if available.
-  optional string filename = 6;
-
-  // NOTE: Field number 7 is intentionally skipped to preserve wire-format
-  // compatibility with earlier revisions of the schema.
+  string filename = 6;
 
   // Size of the blob content in bytes. A value of zero indicates that the
   // size has not been computed yet.
   int64 size_bytes = 8;
 
   // Hex-encoded checksum of the blob content, used for integrity
-  // verification. Optional when no checksum has been computed.
-  optional string checksum = 9;
+  // verification.
+  string checksum = 9;
 
   // Algorithm used to compute the checksum value.
   ChecksumType checksum_type = 10;
@@ -251,18 +255,16 @@ message ChunkEmbedding {
   // identified in model_id.
   repeated float vector = 2;
 
-  // Identifier of the embedding model used to generate the vector (e.g.,
-  // "text-embedding-ada-002", "e5-large-v2"). Optional when the model is
-  // recorded elsewhere in pipeline metadata.
-  optional string model_id = 3;
+  // Identifier of the embedding model used to generate the vector.
+  string model_id = 3;
 
   // Zero-based character offset in the original document where this chunk
-  // begins. Optional when offset tracking is not required.
-  optional int32 original_char_start_offset = 4;
+  // begins.
+  int32 original_char_start_offset = 4;
 
   // Zero-based character offset in the original document where this chunk
-  // ends (exclusive). Optional when offset tracking is not required.
-  optional int32 original_char_end_offset = 5;
+  // ends (exclusive).
+  int32 original_char_end_offset = 5;
 }
 
 // NLPAnnotation captures a single natural language processing annotation
