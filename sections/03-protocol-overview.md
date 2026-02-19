@@ -133,11 +133,12 @@ Figure 2: Ledger Frame Format
 | 0x4   | CHECKPOINT | 0     | Synchronization barrier                          |
 | 0x5   | VAPORIZING | 0     | Decomposing into children                        |
 | 0x6   | AGGREGATING| 0     | Rejoining children                               |
-| 0x7   | YIELDED    | 2     | Paused with continuation token                   |
-| 0x8   | DEFERRED   | 2     | Detached with claim check                        |
-| 0x9   | RETRYING   | 2     | Retry in progress                                |
-| 0xA   | SKIPPED    | 2     | Intentionally skipped                            |
-| 0xB   | ABANDONED  | 2     | Timed out, cursor advanced past                  |
+| 0x7   | Reserved   | -     | Reserved                                         |
+| 0x8   | YIELDED    | 2     | Paused with continuation token                   |
+| 0x9   | DEFERRED   | 2     | Detached with claim check                        |
+| 0xA   | RETRYING   | 2     | Retry in progress                                |
+| 0xB   | SKIPPED    | 2     | Intentionally skipped                            |
+| 0xC   | ABANDONED  | 2     | Timed out, cursor advanced past                  |
 
 Implementations MUST process ledger frames in order. A receiver MUST NOT process an entity payload until a corresponding PENDING or PROCESSING status has been received on the Ledger Stream.
 

@@ -280,12 +280,13 @@ The status field (4 bits) indicates the current processing state of an entity:
 | 0x4   | CHECKPOINT  | 0     | Synchronization barrier                |
 | 0x5   | VAPORIZING  | 0     | Decomposing into children              |
 | 0x6   | AGGREGATING | 0     | Rejoining children                     |
-| 0x7   | YIELDED     | 2     | Paused with continuation token         |
-| 0x8   | DEFERRED    | 2     | Detached with claim check              |
-| 0x9   | RETRYING    | 2     | Retry in progress                      |
-| 0xA   | SKIPPED     | 2     | Intentionally skipped (lenient mode)   |
-| 0xB   | ABANDONED   | 2     | Timed out, cursor advanced past        |
-| 0xC-0xF | Reserved  | -     | Reserved for future use                |
+| 0x7   | Reserved    | -     | Reserved                               |
+| 0x8   | YIELDED     | 2     | Paused with continuation token         |
+| 0x9   | DEFERRED    | 2     | Detached with claim check              |
+| 0xA   | RETRYING    | 2     | Retry in progress                      |
+| 0xB   | SKIPPED     | 2     | Intentionally skipped (lenient mode)   |
+| 0xC   | ABANDONED   | 2     | Timed out, cursor advanced past        |
+| 0xD-0xF | Reserved  | -     | Reserved for future use                |
 
 #### 5.1.4. Reserved Entity ID Values
 
@@ -301,7 +302,52 @@ Frames with Entity ID 0xFFFFF apply to the entire connection. Status codes for c
 
 #### 5.1.5. Extended Ledger Frames (E=1)
 
-When E=1, additional data follows the basic 4-octet frame. The format of the extended data depends on the Stat field and negotiated capabilities (e.g., Yield Token for YIELDED).
+The format of the extended data depends on the Stat field and negotiated capabilities.
+
+##### 5.1.5.1. Yield Frame (Status = 0x8)
+
+When Status = YIELDED (0x8) and E=1:
+
+```
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |1|C|              Entity ID (20)              |1000 |  Flags  |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   | Yield Reason  |         Token Length (12 bits)               |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                                                               |
+   |                  Yield Token (variable)                       |
+   |                  (up to 4095 bytes)                           |
+   |                                                               |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+   Yield Reason (4 bits):
+     0x1 = EXTERNAL_CALL     (waiting on external service)
+     0x2 = RATE_LIMITED      (voluntary throttle)
+     0x3 = AWAITING_SIBLING  (waiting for specific sibling)
+     0x4 = AWAITING_APPROVAL (human/workflow gate)
+     0x5 = RESOURCE_BUSY     (semaphore/lock)
+     0x0, 0x6-0xF = Reserved
+```
+
+##### 5.1.5.2. Claim Check Frame (Status = 0x9)
+
+When Status = DEFERRED (0x9) and E=1:
+
+```
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |1|C|              Entity ID (20)              |1001 |  Flags  |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                                                               |
+   |                    Claim Check ID (64 bits)                   |
+   |                                                               |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                    Expiry Timestamp (32 bits)                 |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
 
 #### 5.1.6. Cursor Update Extension (C=1)
 

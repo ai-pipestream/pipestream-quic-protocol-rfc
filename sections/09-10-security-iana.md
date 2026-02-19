@@ -367,12 +367,13 @@ This document establishes a new IANA registry for PipeStream entity status codes
 | 0x4 | CHECKPOINT | Synchronization barrier | [this document] |
 | 0x5 | VAPORIZING | Decomposing into children | [this document] |
 | 0x6 | AGGREGATING | Rejoining children | [this document] |
-| 0x7 | YIELDED | Paused with continuation token | [this document] |
-| 0x8 | DEFERRED | Detached with claim check | [this document] |
-| 0x9 | RETRYING | Retry in progress | [this document] |
-| 0xA | SKIPPED | Intentionally skipped (lenient mode) | [this document] |
-| 0xB | ABANDONED | Timed out, cursor advanced past | [this document] |
-| 0xC-0xF | Reserved | Reserved for future use | [this document] |
+| 0x7 | Reserved | Reserved | [this document] |
+| 0x8 | YIELDED | Paused with continuation token | [this document] |
+| 0x9 | DEFERRED | Detached with claim check | [this document] |
+| 0xA | RETRYING | Retry in progress | [this document] |
+| 0xB | SKIPPED | Intentionally skipped (lenient mode) | [this document] |
+| 0xC | ABANDONED | Timed out, cursor advanced past | [this document] |
+| 0xD-0xF | Reserved | Reserved for future use | [this document] |
 
 #### 10.3.2 Status Code Semantics
 
