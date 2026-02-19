@@ -13,7 +13,7 @@ This section defines the core protocol messages used for capability negotiation,
 The Capabilities message is exchanged during CONNECT to negotiate supported protocol layers and operational limits. Peers negotiate down to common capabilities. If Layer 2 is requested but Layer 1 is not supported, Layer 2 MUST be disabled.
 
 ```protobuf
-// Copyright 2026 PipeStream Authors
+// Copyright 2026 PipeStream AI
 //
 // PipeStream Protocol - IETF draft protocol for recursive entity streaming
 // over QUIC. Defines the wire-format messages for Layers 0-2 of the

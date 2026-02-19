@@ -577,4 +577,6 @@ Examples:
 
 ## Authors' Addresses
 
-[To be completed]
+Kristian Rickert
+PipeStream AI
+Email: kristian.rickert@pipestream.ai

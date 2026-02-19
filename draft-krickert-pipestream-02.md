@@ -18,14 +18,14 @@ keyword:
  - consistency
 venue:
   group: Individual
-  mail: krickert@example.com
+  mail: kristian.rickert@pipestream.ai
   github: ai-pipestream/pipestream-quic-protocol-rfc
 
 author:
  -
-    fullname: Kevin Rickert
-    organization: PipeStream Authors
-    email: krickert@example.com
+    fullname: Kristian Rickert
+    organization: PipeStream AI
+    email: kristian.rickert@pipestream.ai
 
 --- abstract
 

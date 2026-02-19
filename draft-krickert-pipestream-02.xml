@@ -9,10 +9,10 @@
   <front>
     <title abbrev="PipeStream">PipeStream: A Recursive Entity Streaming Protocol for Distributed Processing over QUIC</title>
     <seriesInfo name="Internet-Draft" value="draft-krickert-pipestream-02"/>
-    <author fullname="Kevin Rickert" initials="K." surname="Rickert">
-      <organization>PipeStream Authors</organization>
+    <author fullname="Kristian Rickert" initials="K." surname="Rickert">
+      <organization>PipeStream AI</organization>
       <address>
-        <email>krickert@example.com</email>
+        <email>kristian.rickert@pipestream.ai</email>
       </address>
     </author>
     <date year="2026" month="February" day="19"/>
