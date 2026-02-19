@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE rfc [
+  <!ENTITY nbsp    "&#160;">
+  <!ENTITY zwsp    "&#8203;">
+  <!ENTITY nbhy    "&#8209;">
+  <!ENTITY wj      "&#8288;">
+]>
+<rfc xmlns:xi="http://www.w3.org/2001/XInclude" submissionType="IETF" category="std" consensus="true" docName="draft-krickert-pipestream-02" number="" ipr="trust200902" obsolutes="" updates="" submissionType="IETF" xml:lang="en" tocInclude="true" tocDepth="4" symRefs="true" sortRefs="true" version="3">
+  <front>
+    <title abbrev="PipeStream">PipeStream: A Recursive Entity Streaming Protocol for Distributed Processing over QUIC</title>
+    <seriesInfo name="Internet-Draft" value="draft-krickert-pipestream-02"/>
+    <author fullname="Kevin Rickert" initials="K." surname="Rickert">
+      <organization>PipeStream Authors</organization>
+      <address>
+        <email>krickert@example.com</email>
+      </address>
+    </author>
+    <date year="2026" month="February" day="19"/>
+    <area>Applications and Real-Time</Area>
+    <workgroup>Individual Submission</workgroup>
+    <keyword>quic</keyword>
+    <keyword>streaming</keyword>
+    <keyword>recursive</keyword>
+    <keyword>document-processing</keyword>
+    <abstract>
+      <t>This document specifies PipeStream, a recursive entity streaming protocol designed for distributed document processing over QUIC transport. PipeStream enables the decomposition ("vaporization") of documents into constituent entities, their transmission across distributed processing nodes, and subsequent reassembly ("rejoining") at destination endpoints. The protocol employs a dual-stream architecture consisting of a bit-packed ledger stream for high-frequency state coordination and multiplexed entity streams for payload transmission.</t>
+    </abstract>
+  </front>
+  <middle>
+    <section anchor="introduction">
+      <name>Introduction</name>
+      <section anchor="problem-statement">
+        <name>Problem Statement</name>
+        <t>Distributed document processing pipelines face significant challenges when handling large, complex documents that require multiple stages of transformation, analysis, and enrichment. Traditional approaches require entire documents to be buffered in memory, processed sequentially, and transmitted in their entirety between stages. This introduces substantial latency and memory exhaustion risks.</t>
+        <t>Modern workflows demand the ability to process documents incrementally, distribute load across heterogeneous nodes, and maintain strict consistency across parallel processing paths where document parts may themselves be decomposed recursively.</t>
+      </section>
+      <section anchor="protocol-overview">
+        <name>Protocol Overview</name>
+        <t>PipeStream addresses these challenges by treating documents as recursive compositions of Entities. It leverages QUIC [RFC9000] to provide native multiplexing and low-latency delivery. The protocol is organized into three layers:</t>
+        <ul>
+          <li>Layer 0 (Core): Basic streaming, checkpoints, and vaporization/rejoin semantics.</li>
+          <li>Layer 1 (Recursive): Hierarchical scoping, Merkle-based digest propagation, and barriers.</li>
+          <li>Layer 2 (Resilience): Yield/resume mechanics, claim checks, and completion policies.</li>
+        </ul>
+      </section>
+    </section>
+    <section anchor="terminology">
+      <name>Terminology</name>
+      <dl>
+        <dt>Entity:</dt>
+        <dd>The fundamental unit of data. Represents either a complete document or a constituent part. Entities are immutable once created.</dd>
+        <dt>Vaporize:</dt>
+        <dd>The operation of decomposing an Entity into N constituent sub-entities for parallel processing.</dd>
+        <dt>Rejoin:</dt>
+        <dd>The inverse of vaporization; reassembling N sub-entities back into a single parent based on a completion policy.</dd>
+        <dt>Ledger:</dt>
+        <dd>The control plane transmitted on Stream 0, tracking Entity completion status using bit-packed frames.</dd>
+        <dt>Cursor:</dt>
+        <dd>A pointer to the lowest unresolved Entity ID within a scope, enabling sliding-window ID recycling.</dd>
+      </dl>
+    </section>
+    <section anchor="quic-mapping">
+      <name>QUIC Stream Mapping</name>
+      <section anchor="ledger-stream">
+        <name>Ledger Stream (Stream 0)</name>
+        <t>The Ledger Stream MUST use QUIC Stream ID 0 (client-initiated bidirectional). Both endpoints transmit 32-bit word-aligned frames on this stream to coordinate state.</t>
+      </section>
+      <section anchor="entity-streams">
+        <name>Entity Streams (Streams 2+)</name>
+        <t>Entity Streams MUST be unidirectional. Each stream carries exactly one Entity payload.</t>
+        <ul>
+          <li>Client-Initiated: Stream IDs 2, 6, 10... (4n + 2)</li>
+          <li>Server-Initiated: Stream IDs 3, 7, 11... (4n + 3)</li>
+        </ul>
+      </section>
+    </section>
+    <section anchor="wire-format">
+      <name>Wire Format</name>
+      <section anchor="ledger-frame">
+        <name>Ledger Frame (Stream 0)</name>
+        <t>Ledger frames are 4 octets (32 bits) in length:</t>
+        <artwork align="center">
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |E|C|              Entity ID (20 bits)         |Stat |  Flags  |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        </artwork>
+        <dl>
+          <dt>E (1 bit):</dt>
+          <dd>Extended frame flag.</dd>
+          <dt>C (1 bit):</dt>
+          <dd>Cursor update flag.</dd>
+          <dt>Entity ID (20 bits):</dt>
+          <dd>Scope-local identifier.</dd>
+          <dt>Stat (4 bits):</dt>
+          <dd>Status code (0x0=PENDING, 0x1=PROCESSING, 0x2=COMPLETE, 0x3=FAILED, 0x8=YIELDED, 0x9=DEFERRED).</dd>
+        </dl>
+      </section>
+      <section anchor="entity-header">
+        <name>Entity Header (Streams 2+)</name>
+        <t>Every Entity stream MUST begin with a length-prefixed Protobuf EntityHeader defined in Appendix A. This header carries MIME types, checksums, and the parent-child relationship needed for reassembly.</t>
+      </section>
+    </section>
+    <section anchor="consistency">
+      <name>Consistency and Flow Control</name>
+      <section anchor="checkpoint-blocking">
+        <name>Checkpoint Blocking</name>
+        <t>Checkpoints are synchronization points where all Entities with an ID less than the checkpoint MUST reach a terminal state before processing proceeds. This ensures that side effects are committed in order.</t>
+      </section>
+      <section anchor="windowing">
+        <name>Application Windowing</name>
+        <t>PipeStream implements a sliding window using the 20-bit Entity ID space. Senders MUST NOT allocate a new ID if (ID - Cursor) % 2^20 exceeds the negotiated max_window_size. Implementations MUST NOT depend on QUIC flow control for application-level windowing.</t>
+      </section>
+    </section>
+    <section anchor="security">
+      <name>Security Considerations</name>
+      <t>Implementations MUST enforce max_scope_depth (default: 8) to prevent recursive "zip-bomb" attacks. Every Entity stream MUST include a SHA-256 checksum in the header, which receivers MUST verify before marking completion.</t>
+    </section>
+    <section anchor="iana">
+      <name>IANA Considerations</name>
+      <t>This document registers the ALPN ID "pipestream/1". The default UDP port is 8443.</t>
+    </section>
+  </middle>
+  <back>
+    <references>
+      <name>Normative References</name>
+      <xi:include href="https://www.rfc-editor.org/refs/bibxml/reference.RFC.2119.xml"/>
+      <xi:include href="https://www.rfc-editor.org/refs/bibxml/reference.RFC.8174.xml"/>
+      <xi:include href="https://www.rfc-editor.org/refs/bibxml/reference.RFC.9000.xml"/>
+    </references>
+    <section anchor="appendix-proto">
+      <name>Protobuf Definitions</name>
+      <sourcecode type="protobuf" markers="true">
+edition = "2023";
+package pipestream.protocol.v1;
+
+option features.enum_type = CLOSED;
+
+message EntityHeader {
+  uint32 entity_id = 1;
+  uint32 parent_id = 2;
+  uint32 scope_id = 3;
+  uint32 layer = 4;
+  string content_type = 5;
+  uint64 payload_length = 6;
+  bytes checksum = 7;
+  map<string, string> metadata = 8;
+  ChunkInfo chunk_info = 9;
+  CompletionPolicy completion_policy = 10;
+}
+
+enum EntityStatus {
+  ENTITY_STATUS_UNSPECIFIED = 0;
+  ENTITY_STATUS_PENDING = 1;
+  ENTITY_STATUS_PROCESSING = 2;
+  ENTITY_STATUS_COMPLETE = 3;
+  ENTITY_STATUS_FAILED = 4;
+  ENTITY_STATUS_CHECKPOINT = 5;
+  ENTITY_STATUS_VAPORIZING = 6;
+  ENTITY_STATUS_AGGREGATING = 7;
+  ENTITY_STATUS_YIELDED = 8;
+  ENTITY_STATUS_DEFERRED = 9;
+  ENTITY_STATUS_RETRYING = 10;
+  ENTITY_STATUS_SKIPPED = 11;
+  ENTITY_STATUS_ABANDONED = 12;
+}
+      </sourcecode>
+    </section>
+  </back>
+</rfc>
