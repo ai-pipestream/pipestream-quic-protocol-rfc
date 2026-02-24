@@ -45,7 +45,7 @@ Modern workflows demand the ability to process documents incrementally, distribu
 
 PipeStream addresses these challenges by treating documents as recursive compositions of **Entities**. It leverages **QUIC [RFC9000]** to provide native multiplexing and low-latency delivery. The protocol is organized into three layers:
 
-*   **Layer 0 (Core):** Basic streaming, checkpoints, and vaporization/rejoin semantics.
+*   **Layer 0 (Core):** Basic streaming, checkpoints, and dematerialization/rematerialization semantics.
 *   **Layer 1 (Recursive):** Hierarchical scoping, Merkle-based digest propagation, and barriers.
 *   **Layer 2 (Resilience):** Yield/resume mechanics, claim checks, and completion policies.
 
@@ -56,11 +56,11 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 Entity:
 : The fundamental unit of data. Represents either a complete document or a constituent part. Entities are immutable once created.
 
-Vaporize:
+Dematerialize:
 : The operation of decomposing an Entity into N constituent sub-entities for parallel processing.
 
-Rejoin:
-: The inverse of vaporization; reassembling N sub-entities back into a single parent based on a completion policy.
+Rematerialize:
+: The inverse of dematerialization; reassembling N sub-entities back into a single parent based on a completion policy.
 
 Ledger:
 : The control plane transmitted on Stream 0, tracking Entity completion status using bit-packed frames.
@@ -104,11 +104,11 @@ Entity ID (20 bits):
 : Scope-local identifier.
 
 Stat (4 bits):
-: Status code (0x0=PENDING, 0x1=PROCESSING, 0x2=COMPLETE, 0x3=FAILED, 0x8=YIELDED, 0x9=DEFERRED).
+: Status code (0x0=UNSPECIFIED, 0x1=PENDING, 0x2=PROCESSING, 0x3=COMPLETE, 0x4=FAILED, 0x5=CHECKPOINT, 0x6=DEMATERIALIZING, 0x7=REMATERIALIZING, 0x8=YIELDED, 0x9=DEFERRED, 0xA=RETRYING, 0xB=SKIPPED, 0xC=ABANDONED).
 
 ### 4.2. Entity Header (Streams 2+)
 
-Every Entity stream MUST begin with a length-prefixed Protobuf **EntityHeader** defined in Appendix A. This header carries MIME types, checksums, and the parent-child relationship needed for reassembly.
+Every Entity stream MUST begin with a length-prefixed Protobuf **EntityHeader** defined in Appendix A. This header carries MIME types, checksums, and the parent-child relationship needed for rematerialization.
 
 # Consistency and Flow Control
 
@@ -124,9 +124,9 @@ PipeStream implements a sliding window using the 20-bit Entity ID space.
 
 # Security Considerations
 
-### 6.1. Vaporization Depth
+### 6.1. Dematerialization Depth
 
-To prevent recursive "zip-bomb" attacks, implementations MUST enforce `max_scope_depth` (default: 8). Vaporization exceeding this limit MUST result in a `PIPESTREAM_DEPTH_EXCEEDED` error.
+To prevent recursive "zip-bomb" attacks, implementations MUST enforce `max_scope_depth` (default: 8). Dematerialization exceeding this limit MUST result in a `PIPESTREAM_DEPTH_EXCEEDED` error.
 
 ### 6.2. Payload Integrity
 
@@ -144,7 +144,7 @@ The default UDP port for PipeStream is 8443 (subject to formal assignment).
 
 # Implementation Status
 
-The PipeStream protocol is currently implemented in the **PipeStream Application Suite**, providing a reference for recursive document vaporization and reassembly in distributed cloud environments.
+The PipeStream protocol is currently implemented in the **PipeStream Application Suite**, providing a reference for recursive document dematerialization and rematerialization in distributed cloud environments.
 
 --- back
 
@@ -178,8 +178,8 @@ enum EntityStatus {
   ENTITY_STATUS_COMPLETE = 3;
   ENTITY_STATUS_FAILED = 4;
   ENTITY_STATUS_CHECKPOINT = 5;
-  ENTITY_STATUS_VAPORIZING = 6;
-  ENTITY_STATUS_AGGREGATING = 7;
+  ENTITY_STATUS_DEMATERIALIZING = 6;
+  ENTITY_STATUS_REMATERIALIZING = 7;
   ENTITY_STATUS_YIELDED = 8;
   ENTITY_STATUS_DEFERRED = 9;
   ENTITY_STATUS_RETRYING = 10;

@@ -12,7 +12,7 @@ PipeStream MUST enable true streaming document processing where entities are tra
 
 ### 3.1.2 Recursive Decomposition
 
-The protocol MUST support recursive decomposition of entities, wherein a single input entity MAY produce zero, one, or many output entities. This capability, termed "vaporization," enables document parsing operations where a single document entity becomes multiple component entities (e.g., a PDF document decomposing into page entities, which further decompose into paragraph and image entities).
+The protocol MUST support recursive decomposition of entities, wherein a single input entity MAY produce zero, one, or many output entities. This capability, termed "dematerialization," enables document parsing operations where a single document entity becomes multiple component entities (e.g., a PDF document decomposing into page entities, which further decompose into paragraph and image entities).
 
 ### 3.1.3 Checkpoint Consistency
 
@@ -255,9 +255,9 @@ Implementations MUST support all four actions. Workers MAY implement any combina
 
 Workers MAY perform cardinality-changing operations on entities:
 
-#### 3.3.2.1 Vaporization (1:N)
+#### 3.3.2.1 Dematerialization (1:N)
 
-A single input entity produces multiple output entities. The output entities MUST include a `parent_id` field referencing the input entity. Vaporization is commonly used in PARSE operations.
+A single input entity produces multiple output entities. The output entities MUST include a `parent_id` field referencing the input entity. Dematerialization is commonly used in PARSE operations.
 
 ```
                         +-> Entity 1a (parent_id=1)
@@ -267,11 +267,11 @@ Entity 1 --[PARSE]------+-> Entity 1b (parent_id=1)
                         +-> Entity 1c (parent_id=1)
 ```
 
-Figure 5: Vaporization Operation
+Figure 5: Dematerialization Operation
 
-#### 3.3.2.2 Rejoin (N:1)
+#### 3.3.2.2 Rematerialization (N:1)
 
-Multiple input entities are combined into a single output entity. The output entity SHOULD include metadata referencing all input entities. Rejoin operations MUST respect checkpoint boundaries; entities from different checkpoint epochs MUST NOT be rejoined.
+Multiple input entities are combined into a single output entity. The output entity SHOULD include metadata referencing all input entities. Rematerialization operations MUST respect checkpoint boundaries; entities from different checkpoint epochs MUST NOT be rematerialized.
 
 ```
 Entity 1a --+
@@ -281,7 +281,7 @@ Entity 1b --+--[PROCESS]--> Entity 1' (sources=[1a,1b,1c])
 Entity 1c --+
 ```
 
-Figure 6: Rejoin Operation
+Figure 6: Rematerialization Operation
 
 ### 3.3.3 Pipeline Flow
 
@@ -295,7 +295,7 @@ The following diagram illustrates a complete pipeline flow:
 +----------+     +---------+     +-----------+     +--------+
      |                |                |                |
      v                v                v                v
- Open QUIC       Vaporize         Transform         Consume
+ Open QUIC      Dematerialize     Transform         Consume
  Connection      Entities         Payloads          Output
      |                |                |                |
      v                v                v                v

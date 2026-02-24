@@ -29,7 +29,7 @@ message Capabilities {
   // MUST always be true; Layer 0 support is mandatory.
   bool layer0_core = 1;
 
-  // Whether the endpoint supports Layer 1 (recursive scoping and vaporization).
+  // Whether the endpoint supports Layer 1 (recursive scoping and dematerialization).
   bool layer1_recursive = 2;
 
   // Whether the endpoint supports Layer 2 (resilience, yield, and claim-check).
@@ -211,13 +211,13 @@ enum EntityStatus {
   // sibling entities to catch up.
   ENTITY_STATUS_CHECKPOINT = 5;
 
-  // The entity is being vaporized (decomposed) into child entities
+  // The entity is being dematerialized (decomposed) into child entities
   // within a recursive scope.
-  ENTITY_STATUS_VAPORIZING = 6;
+  ENTITY_STATUS_DEMATERIALIZING = 6;
 
-  // The entity's child results are being aggregated back into the
-  // parent scope after recursive processing.
-  ENTITY_STATUS_AGGREGATING = 7;
+  // The entity's child results are being rematerialized (aggregated) back
+  // into the parent scope after recursive processing.
+  ENTITY_STATUS_REMATERIALIZING = 7;
 
   // The entity has yielded processing and holds a yield token for
   // later resumption (Layer 2).
@@ -302,27 +302,27 @@ message CheckpointFrame {
 }
 
 // PartsLedgerEntry tracks parent-child relationships created during
-// entity vaporization (decomposition). It records which child entities
+// entity dematerialization (decomposition). It records which child entities
 // were spawned from a parent and their individual completion statuses,
-// enabling the aggregation phase to reassemble results.
+// enabling the rematerialization phase to synthesize results.
 message PartsLedgerEntry {
-  // Identifier of the parent entity that was vaporized into children.
+  // Identifier of the parent entity that was dematerialized into children.
   uint32 parent_id = 1;
 
-  // Scope in which the vaporization occurred.
+  // Scope in which the dematerialization occurred.
   uint32 scope_id = 2;
 
-  // Ordered list of child entity identifiers produced by vaporization.
+  // Ordered list of child entity identifiers produced by dematerialization.
   repeated uint32 children_ids = 3;
 
   // Status of each child entity, positionally corresponding to children_ids.
   repeated EntityStatus children_status = 4;
 
-  // Completion policy governing how child results are aggregated and
+  // Completion policy governing how child results are rematerialized and
   // when the parent may be considered complete.
   CompletionPolicy policy = 5;
 
-  // Timestamp (Unix epoch microseconds) when the vaporization occurred
+  // Timestamp (Unix epoch microseconds) when the dematerialization occurred
   // and child entities were created.
   uint64 created_at = 6;
 
@@ -333,7 +333,7 @@ message PartsLedgerEntry {
 // YieldToken allows a Layer 2 processor to pause processing of an entity
 // and resume it later. The token captures the reason for yielding, an
 // opaque continuation state, and validation data to ensure consistency
-// when the entity is resumed.
+// when the entity is rematerialized.
 message YieldToken {
   // Reason the processor is yielding control of this entity.
   YieldReason reason = 1;

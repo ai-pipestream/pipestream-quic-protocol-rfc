@@ -10,13 +10,13 @@
 
 ## Abstract
 
-This document specifies PipeStream, a recursive entity streaming protocol designed for distributed document processing over QUIC transport. PipeStream enables the decomposition ("vaporization") of documents into constituent entities, their transmission across distributed processing nodes, and subsequent reassembly ("rejoining") at destination endpoints.
+This document specifies PipeStream, a recursive entity streaming protocol designed for distributed document processing over QUIC transport. PipeStream enables the decomposition ("dematerialization") of documents into constituent entities, their transmission across distributed processing nodes, and subsequent reassembly ("rematerialization") at destination endpoints.
 
 The protocol employs a dual-stream architecture consisting of a data stream for entity payload transmission and a ledger stream for tracking entity completion status and maintaining consistency. PipeStream defines four hierarchical data layers for entity representation: BlobBag for raw binary data, SemanticLayer for annotated content with metadata, ParsedData for structured extracted information, and CustomEntity for application-specific extensions.
 
-PipeStream is organized into three protocol layers: Layer 0 (Core) provides basic streaming with vaporize/rejoin semantics; Layer 1 (Recursive) adds hierarchical scoping and digest propagation; Layer 2 (Resilience) adds yield/resume, claim checks, and completion policies. Implementations MUST support Layer 0 and MAY support Layers 1 and 2.
+PipeStream is organized into three protocol layers: Layer 0 (Core) provides basic streaming with dematerialization/rematerialization semantics; Layer 1 (Recursive) adds hierarchical scoping and digest propagation; Layer 2 (Resilience) adds yield/resume, claim checks, and completion policies. Implementations MUST support Layer 0 and MAY support Layers 1 and 2.
 
-To ensure consistency across distributed processing pipelines, PipeStream implements checkpoint blocking, whereby processing nodes MUST synchronize at defined points before proceeding. This mechanism guarantees that all constituent parts of a vaporized document are successfully processed before reassembly operations commence.
+To ensure consistency across distributed processing pipelines, PipeStream implements checkpoint blocking, whereby processing nodes MUST synchronize at defined points before proceeding. This mechanism guarantees that all constituent parts of a dematerialized document are successfully processed before rematerialization operations commence.
 
 ---
 
@@ -74,7 +74,7 @@ PipeStream employs a dual-stream design:
 
 ### 1.3. Design Philosophy
 
-The PipeStream design philosophy may be understood through analogy to the "Star Trek Transporter" concept: a document is "vaporized" at the source into its constituent entities, these entities are transmitted and processed through the distributed pipeline, and finally the entities are "reassembled" at the destination to reconstitute the complete processed document.
+The PipeStream design philosophy may be understood through analogy to the "Star Trek Transporter" concept: a document is "dematerialized" at the source into its constituent entities, these entities are transmitted and processed through the distributed pipeline, and finally the entities are "rematerialized" at the destination to reconstitute the complete processed document.
 
 This approach provides several advantages:
 
@@ -108,39 +108,39 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 ### 2.2. Decomposition and Reassembly
 
-**Vaporize**
-:   The operation of decomposing a document or Entity into multiple constituent Entities for parallel or distributed processing. When an Entity is vaporized, the originating node MUST create a Parts Ledger entry recording the identifiers of all resulting sub-entities. The vaporization operation is recursive; a sub-entity produced by vaporization MAY itself be vaporized, creating a tree of decomposition. Vaporization SHOULD be performed according to semantic boundaries within the document (e.g., chapters, sections, paragraphs) when such boundaries are discernible.
+**Dematerialize**
+:   The operation of decomposing a document or Entity into multiple constituent Entities for parallel or distributed processing. When an Entity is dematerialized, the originating node MUST create a Parts Ledger entry recording the identifiers of all resulting sub-entities. The dematerialization operation is recursive; a sub-entity produced by dematerialization MAY itself be dematerialized, creating a tree of decomposition. Dematerialization SHOULD be performed according to semantic boundaries within the document (e.g., chapters, sections, paragraphs) when such boundaries are discernible.
 
-**Rejoin**
-:   The operation of reassembling multiple Entities back into a single composite Entity or Document. A rejoin operation MUST NOT proceed until all constituent Entities listed in the corresponding Parts Ledger entry have been received and processed. The rejoin operation is the inverse of vaporization; for any vaporization that produces N sub-entities, a corresponding rejoin MUST consume exactly those N sub-entities. The semantics of combining Entity payloads during rejoin are Layer-specific and defined in Section 6.
+**Rematerialize**
+:   The operation of reassembling multiple Entities back into a single composite Entity or Document. A rematerialize operation MUST NOT proceed until all constituent Entities listed in the corresponding Parts Ledger entry have been received and processed. The rematerialize operation is the inverse of dematerialization; for any dematerialization that produces N sub-entities, a corresponding rematerialize MUST consume exactly those N sub-entities. The semantics of combining Entity payloads during rematerialize are Layer-specific and defined in Section 6.
 
 ### 2.3. Consistency Mechanisms
 
 **Checkpoint**
 :   A synchronization point in the processing pipeline where all in-flight Entities MUST reach a consistent state before processing may continue. When a checkpoint is declared, all processing nodes MUST complete their current Entity operations and report completion via the Ledger Stream. No new Entities SHALL be accepted for processing until the checkpoint has been satisfied. Checkpoints provide consistency boundaries that enable:
-    - Guaranteed completion of all pending vaporize/rejoin operations
+    - Guaranteed completion of all pending dematerialize/rematerialize operations
     - Consistent state snapshots for fault recovery
     - Backpressure propagation through the pipeline
 
-    A checkpoint is considered "satisfied" when all Parts Ledger entries created before the checkpoint have been resolved (all constituent Entities processed and rejoined).
+    A checkpoint is considered "satisfied" when all Parts Ledger entries created before the checkpoint have been resolved (all constituent Entities processed and rematerialized).
 
 **Ledger**
 :   The control stream that tracks Entity completion status throughout the processing pipeline. The Ledger is transmitted on a dedicated QUIC stream parallel to the data stream, enabling control information to flow independently of Entity payloads. The Ledger carries:
     - Entity lifecycle events (created, processing, completed, failed)
-    - Parts Ledger updates for vaporization tracking
+    - Parts Ledger updates for dematerialization tracking
     - Checkpoint declarations and acknowledgments
     - Error and retry notifications
 
-    All nodes participating in a PipeStream pipeline MUST maintain a consistent view of the Ledger. The Ledger provides the consistency guarantees that enable safe vaporization and rejoin operations across distributed nodes.
+    All nodes participating in a PipeStream pipeline MUST maintain a consistent view of the Ledger. The Ledger provides the consistency guarantees that enable safe dematerialize and rematerialize operations across distributed nodes.
 
 **Parts Ledger**
-:   A data structure within the Ledger that tracks the relationship between a composite Entity and its constituent sub-entities produced by vaporization. Each Parts Ledger entry contains:
-    - The identifier of the parent Entity that was vaporized
+:   A data structure within the Ledger that tracks the relationship between a composite Entity and its constituent sub-entities produced by dematerialization. Each Parts Ledger entry contains:
+    - The identifier of the parent Entity that was dematerialized
     - An ordered list of identifiers for all sub-entities produced
     - The completion status of each sub-entity
-    - The checkpoint scope within which the vaporization occurred
+    - The checkpoint scope within which the dematerialization occurred
 
-    A Parts Ledger entry is created atomically when an Entity is vaporized and MUST be transmitted on the Ledger Stream before any sub-entities are transmitted on the Data Stream. A Parts Ledger entry is "resolved" when all constituent sub-entities have reached "completed" status, at which point a rejoin operation MAY proceed.
+    A Parts Ledger entry is created atomically when an Entity is dematerialized and MUST be transmitted on the Ledger Stream before any sub-entities are transmitted on the Data Stream. A Parts Ledger entry is "resolved" when all constituent sub-entities have reached "completed" status, at which point a rematerialize operation MAY proceed.
 
 **Scope**
 :   A hierarchical namespace for Entity IDs. Each scope maintains its own Entity ID space, cursor, and Parts Ledger. Scopes enable collections to contain documents, documents to contain parts, and parts to contain jobs, each with independent ID management. (Protocol Layer 1)
@@ -157,18 +157,18 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 :   A detached reference to a deferred Entity that can be queried or resumed independently, potentially in a different session. Claim checks enable asynchronous processing patterns and retry queues.
 
 **Completion Policy**
-:   A configuration specifying how to handle partial failures during vaporization. Policies include STRICT (all must succeed), LENIENT (continue with partial results), BEST_EFFORT (complete with whatever succeeds), and QUORUM (require minimum success ratio).
+:   A configuration specifying how to handle partial failures during dematerialization. Policies include STRICT (all must succeed), LENIENT (continue with partial results), BEST_EFFORT (complete with whatever succeeds), and QUORUM (require minimum success ratio).
 
 ### 2.5. Routing and Distribution
 
 **WorkerMap**
-:   A routing table that specifies how Entities should be distributed across processing nodes during vaporization. The WorkerMap defines:
+:   A routing table that specifies how Entities should be distributed across processing nodes during dematerialization. The WorkerMap defines:
     - Available worker nodes and their capabilities
     - Routing predicates based on Entity properties (type, size, Layer)
     - Load balancing policies for distributing sub-entities
     - Affinity rules for co-locating related Entities
 
-    When vaporizing an Entity, the originating node SHOULD consult the WorkerMap to determine the destination for each sub-entity. The WorkerMap MAY be distributed via the Ledger Stream to ensure all nodes maintain a consistent routing view. Updates to the WorkerMap MUST be applied at checkpoint boundaries to prevent routing inconsistencies during active processing.
+    When dematerializing an Entity, the originating node SHOULD consult the WorkerMap to determine the destination for each sub-entity. The WorkerMap MAY be distributed via the Ledger Stream to ensure all nodes maintain a consistent routing view. Updates to the WorkerMap MUST be applied at checkpoint boundaries to prevent routing inconsistencies during active processing.
 
 **Barrier**
 :   A synchronization point scoped to a specific subtree. Unlike checkpoints which are global, barriers block only entities dependent on a specific parent's descendants. (Protocol Layer 1)
@@ -194,10 +194,10 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 ### 2.6. Additional Terms
 
 **Pipeline**
-:   A configured sequence of processing stages through which Entities flow. A Pipeline defines the processing topology, including available transformations, vaporization points, rejoin points, and checkpoint locations.
+:   A configured sequence of processing stages through which Entities flow. A Pipeline defines the processing topology, including available transformations, dematerialization points, rematerialize points, and checkpoint locations.
 
 **Stage**
-:   A single processing step within a Pipeline. Each Stage receives Entities, performs transformations, and emits Entities (possibly vaporized or at a different Layer) to subsequent Stages.
+:   A single processing step within a Pipeline. Each Stage receives Entities, performs transformations, and emits Entities (possibly dematerialized or at a different Layer) to subsequent Stages.
 
 **Flow Control**
 :   The mechanism by which PipeStream regulates the rate of Entity transmission to prevent overwhelming downstream processors. Flow control operates at both the QUIC transport level and the application level via checkpoint blocking and Ledger-based backpressure signals.

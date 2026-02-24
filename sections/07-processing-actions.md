@@ -20,7 +20,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
                                          ▼
                     ┌─────────────────────────────────────────────┐
                     │                   PARSE                     │
-                    │        (Vaporization: 1:N possible)         │
+                    │     (Dematerialization: 1:N possible)       │
                     └─────────────────────────────────────────────┘
                                          │
                            ┌─────────────┼─────────────┐
@@ -305,26 +305,26 @@ Upon receiving GOAWAY, the peer MUST NOT initiate new streams but MUST complete 
 
 ### 7.3.1. Purpose
 
-The PARSE action performs document structure analysis and serves as the primary vaporization point in PipeStream, enabling 1:N decomposition of complex documents into constituent entities. This action transforms opaque data (BlobBag layer) into structured representations (SemanticLayer or ParsedData layer).
+The PARSE action performs document structure analysis and serves as the primary dematerialization point in PipeStream, enabling 1:N decomposition of complex documents into constituent entities. This action transforms opaque data (BlobBag layer) into structured representations (SemanticLayer or ParsedData layer).
 
-### 7.3.2. Vaporization Semantics
+### 7.3.2. Dematerialization Semantics
 
-#### 7.3.2.1. Vaporization Definition
+#### 7.3.2.1. Dematerialization Definition
 
-Vaporization is the controlled decomposition of a single input entity into multiple output entities while maintaining referential integrity and processing lineage. The PARSE action MAY produce:
+Dematerialization is the controlled decomposition of a single input entity into multiple output entities while maintaining referential integrity and processing lineage. The PARSE action MAY produce:
 
 - **1:1 Mapping**: Single input produces single output (simple documents)
 - **1:N Mapping**: Single input produces multiple outputs (compound documents)
 - **1:0 Mapping**: Single input produces no outputs (filtered/empty documents)
 
-#### 7.3.2.2. Vaporization Constraints
+#### 7.3.2.2. Dematerialization Constraints
 
-The following constraints MUST be observed during vaporization:
+The following constraints MUST be observed during dematerialization:
 
 1. All child entities MUST reference the parent entity ID
 2. Child entity IDs MUST be deterministically derivable from parent ID and content hash
 3. The sum of child entity sizes SHOULD NOT exceed 10x the parent size
-4. Vaporization depth (recursive parsing) MUST NOT exceed the configured maximum (default: 16)
+4. Dematerialization depth (recursive parsing) MUST NOT exceed the configured maximum (default: 16)
 
 ```
    Entity ID Derivation:
@@ -365,10 +365,10 @@ Implementations MUST NOT permit transitions that move "down" the layer hierarchy
      Parser ID (32),
      Parser Config Length (16),
      Parser Config (..),
-     Vaporization Hints (..),
+     Dematerialization Hints (..),
    }
 
-   Vaporization Hints {
+   Dematerialization Hints {
      Expected Child Count (32),      ; 0 = unknown
      Max Depth (8),
      Preserve Ordering (1),
@@ -381,9 +381,9 @@ Implementations MUST NOT permit transitions that move "down" the layer hierarchy
 
 #### 7.3.4.1. Ledger Purpose
 
-The Parts Ledger is a metadata structure that tracks the relationship between parent entities and their vaporized children. It serves as the authoritative record for:
+The Parts Ledger is a metadata structure that tracks the relationship between parent entities and their dematerialized children. It serves as the authoritative record for:
 
-- Reconstitution (rejoining child entities)
+- Rematerialization (rejoining child entities)
 - Progress tracking
 - Failure recovery
 - Audit and lineage
@@ -417,7 +417,7 @@ The Parts Ledger is a metadata structure that tracks the relationship between pa
      0x02: COMPLETE
      0x03: PARTIAL_FAILURE
      0x04: FAILED
-     0x05: RECONSTITUTING
+     0x05: REMATERIALIZING
 
    Part State:
      0x00: PENDING
@@ -478,7 +478,7 @@ PipeStream maintains a directed acyclic graph (DAG) of entity relationships:
                       │   (BlobBag Layer)   │
                       │   Entity: 0xA1B2... │
                       └──────────┬──────────┘
-                                 │ PARSE (vaporize)
+                                 │ PARSE (dematerialize)
                     ┌────────────┼────────────┐
                     ▼            ▼            ▼
              ┌──────────┐ ┌──────────┐ ┌──────────┐
@@ -486,7 +486,7 @@ PipeStream maintains a directed acyclic graph (DAG) of entity relationships:
              │ Semantic │ │ Semantic │ │ Semantic │
              │ 0xC3D4...│ │ 0xE5F6...│ │ 0x1728...│
              └────┬─────┘ └──────────┘ └────┬─────┘
-                  │ PARSE (vaporize)        │
+                  │ PARSE (dematerialize)   │
             ┌─────┴─────┐             ┌─────┴─────┐
             ▼           ▼             ▼           ▼
        ┌────────┐ ┌────────┐    ┌────────┐ ┌────────┐
@@ -495,7 +495,7 @@ PipeStream maintains a directed acyclic graph (DAG) of entity relationships:
        │Parsed  │ │Parsed  │    │Parsed  │ │BlobBag │
        └────────┘ └────────┘    └────────┘ └────────┘
 
-          Figure 5: Entity Relationship DAG After Vaporization
+          Figure 5: Entity Relationship DAG After Dematerialization
 ```
 
 #### 7.3.5.2. Relationship Metadata
@@ -508,7 +508,7 @@ Each entity MUST carry relationship metadata:
      Root ID (20),                 ; Original document ID
      Depth (8),                    ; Distance from root
      Sibling Index (32),           ; Position among siblings
-     Total Siblings (32),          ; At time of vaporization
+     Total Siblings (32),          ; At time of dematerialization
      Ledger ID (128),              ; Tracking ledger reference
    }
 ```
@@ -564,7 +564,7 @@ Implementations MUST track current depth and MUST refuse to parse when `Current 
                   ▼                      │
          ┌─────────────────┐             │
          │                 │ Parse Error │
-         │   VAPORIZING    │─────────────┘
+         │ DEMATERIALIZING │─────────────┘
          │                 │
          └────────┬────────┘
                   │ Children Created
@@ -627,7 +627,7 @@ Implementations MUST track current depth and MUST refuse to parse when `Current 
 
 ### 7.4.1. Purpose
 
-The PROCESS action performs content transformation on entities, supporting both 1:1 transformations (enrichment, conversion) and N:1 operations (rejoin, aggregation). This action operates primarily within a single layer or performs layer enrichment.
+The PROCESS action performs content transformation on entities, supporting both 1:1 transformations (enrichment, conversion) and N:1 operations (rematerialize, aggregation). This action operates primarily within a single layer or performs layer enrichment.
 
 ### 7.4.2. Processing Modes
 
@@ -647,19 +647,19 @@ In transformation mode, a single input entity produces a single output entity. T
    └─────────────────┘                └─────────────────┘
 ```
 
-#### 7.4.2.2. Rejoin Mode (N:1)
+#### 7.4.2.2. Rematerialize Mode (N:1)
 
-In rejoin mode, multiple input entities (typically siblings from a vaporization) are merged into a single output entity. This is the inverse of vaporization.
+In rematerialize mode, multiple input entities (typically siblings from a dematerialization) are merged into a single output entity. This is the inverse of dematerialization.
 
 ```
-   Processing Mode: REJOIN (N:1)
+   Processing Mode: REMATERIALIZE (N:1)
 
    ┌───────────┐
    │  Child 1  │───┐
    │  Parsed   │   │
    └───────────┘   │
                    │   PROCESS
-   ┌───────────┐   │   (rejoin)    ┌─────────────────┐
+   ┌───────────┐   │   (rematerialize) ┌─────────────────┐
    │  Child 2  │───┼─────────────► │ Merged Entity   │
    │  Parsed   │   │               │ SemanticLayer   │
    └───────────┘   │               └─────────────────┘
@@ -669,7 +669,7 @@ In rejoin mode, multiple input entities (typically siblings from a vaporization)
    │  Parsed   │
    └───────────┘
 
-               Figure 7: REJOIN Processing Mode
+               Figure 7: REMATERIALIZE Processing Mode
 ```
 
 ### 7.4.3. Layer Enrichment
@@ -710,95 +710,94 @@ Layer enrichment adds computed or derived data to an entity without changing its
      Enrichment Requests (..),
    }
 
-   Mode Values:
-     0x00: TRANSFORM
-     0x01: REJOIN
-     0x02: AGGREGATE (N:1 with reduction)
-     0x03: PASSTHROUGH (metadata only)
-
-   Enrichment Request {
-     Enrichment Type (16),
-     Priority (8),
-     Config Length (16),
-     Config (..),
-   }
-
-   Enrichment Types:
-     0x0001: EMBEDDING_VECTOR
-     0x0002: NAMED_ENTITY_RECOGNITION
-     0x0003: CLASSIFICATION
-     0x0004: SUMMARIZATION
-     0x0005: LANGUAGE_DETECTION
-     0x0006: SENTIMENT_ANALYSIS
-     0x0007-0x7FFF: Reserved
-     0x8000-0xFFFF: Application-defined
-```
-
-### 7.4.4. Rejoin Operations
-
-#### 7.4.4.1. Rejoin Semantics
-
-Rejoin operations MUST satisfy the following requirements:
-
-1. All input entities MUST share the same Parent ID (siblings only)
-2. All input entities MUST be in terminal state (COMPLETE or FAILED)
-3. The Ledger MUST indicate all parts are accounted for
-4. The output entity ID SHOULD be derivable from input IDs
-
-#### 7.4.4.2. Rejoin Strategies
-
-```
-   Rejoin Strategy {
-     Strategy Type (8),
-     Ordering (8),
-     Conflict Resolution (8),
-     Missing Part Policy (8),
-   }
-
-   Strategy Type:
-     0x00: CONCATENATE      ; Sequential combination
-     0x01: MERGE            ; Deep merge of structures
-     0x02: REDUCE           ; Apply reduction function
-     0x03: SELECT           ; Choose best candidate
-
-   Ordering:
-     0x00: ORIGINAL         ; By sibling index
-     0x01: COMPLETION_TIME  ; By processing completion
-     0x02: CUSTOM           ; Application-defined
-
-   Conflict Resolution:
-     0x00: FIRST_WINS       ; Keep first value
-     0x01: LAST_WINS        ; Keep last value
-     0x02: MERGE_ARRAYS     ; Combine array values
-     0x03: ERROR            ; Fail on conflict
-
-   Missing Part Policy:
-     0x00: FAIL             ; Require all parts
-     0x01: SKIP             ; Proceed without missing
-     0x02: PLACEHOLDER      ; Insert placeholder values
-```
-
-#### 7.4.4.3. Rejoin Coordination
-
-```
-   REJOIN_READY Frame {
-     Type (8) = 0x31,
-     Length (32),
-     Ledger ID (128),
-     Ready Parts Bitmap (..),
-     Total Ready (32),
-     Total Expected (32),
-   }
-
-   REJOIN_INITIATE Frame {
-     Type (8) = 0x32,
-     Length (32),
-     Ledger ID (128),
-     Strategy (..),
-     Timeout (32),
-   }
-```
-
+      Mode Values:
+        0x00: TRANSFORM
+        0x01: REMATERIALIZE
+        0x02: AGGREGATE (N:1 with reduction)
+        0x03: PASSTHROUGH (metadata only)
+   
+      Enrichment Request {
+        Enrichment Type (16),
+        Priority (8),
+        Config Length (16),
+        Config (..),
+      }
+   
+      Enrichment Types:
+        0x0001: EMBEDDING_VECTOR
+        0x0002: NAMED_ENTITY_RECOGNITION
+        0x0003: CLASSIFICATION
+        0x0004: SUMMARIZATION
+        0x0005: LANGUAGE_DETECTION
+        0x0006: SENTIMENT_ANALYSIS
+        0x0007-0x7FFF: Reserved
+        0x8000-0xFFFF: Application-defined
+   ```
+   
+   ### 7.4.4. Rematerialize Operations
+   
+   #### 7.4.4.1. Rematerialize Semantics
+   
+   Rematerialize operations MUST satisfy the following requirements:
+   
+   1. All input entities MUST share the same Parent ID (siblings only)
+   2. All input entities MUST be in terminal state (COMPLETE or FAILED)
+   3. The Ledger MUST indicate all parts are accounted for
+   4. The output entity ID SHOULD be derivable from input IDs
+   
+   #### 7.4.4.2. Rematerialize Strategies
+   
+   ```
+      Rematerialize Strategy {
+        Strategy Type (8),
+        Ordering (8),
+        Conflict Resolution (8),
+        Missing Part Policy (8),
+      }
+   
+      Strategy Type:
+        0x00: CONCATENATE      ; Sequential combination
+        0x01: MERGE            ; Deep merge of structures
+        0x02: REDUCE           ; Apply reduction function
+        0x03: SELECT           ; Choose best candidate
+   
+      Ordering:
+        0x00: ORIGINAL         ; By sibling index
+        0x01: COMPLETION_TIME  ; By processing completion
+        0x02: CUSTOM           ; Application-defined
+   
+      Conflict Resolution:
+        0x00: FIRST_WINS       ; Keep first value
+        0x01: LAST_WINS        ; Keep last value
+        0x02: MERGE_ARRAYS     ; Combine array values
+        0x03: ERROR            ; Fail on conflict
+   
+      Missing Part Policy:
+        0x00: FAIL             ; Require all parts
+        0x01: SKIP             ; Proceed without missing
+        0x02: PLACEHOLDER      ; Insert placeholder values
+   ```
+   
+   #### 7.4.4.3. Rematerialize Coordination
+   
+   ```
+      REMATERIALIZE_READY Frame {
+        Type (8) = 0x31,
+        Length (32),
+        Ledger ID (128),
+        Ready Parts Bitmap (..),
+        Total Ready (32),
+        Total Expected (32),
+      }
+   
+      REMATERIALIZE_INITIATE Frame {
+        Type (8) = 0x32,
+        Length (32),
+        Ledger ID (128),
+        Strategy (..),
+        Timeout (32),
+      }
+   ```
 ### 7.4.5. Progress Reporting
 
 #### 7.4.5.1. Progress Model
@@ -916,7 +915,7 @@ Servers MUST cache the result of idempotent operations for at least the configur
    │   Mode              │   Guarantee                              │
    ├─────────────────────┼──────────────────────────────────────────┤
    │   TRANSFORM         │   Same input always produces same output │
-   │   REJOIN            │   Repeatable given same complete inputs  │
+   │   REMATERIALIZE     │   Repeatable given same complete inputs  │
    │   AGGREGATE         │   Deterministic reduction function       │
    │   PASSTHROUGH       │   Always idempotent                      │
    └─────────────────────┴──────────────────────────────────────────┘
@@ -1004,7 +1003,7 @@ Servers MUST cache the result of idempotent operations for at least the configur
      0x01: PARTIAL_SUCCESS
      0x02: CACHED_RESULT
      0x03: TRANSFORM_ERROR
-     0x04: REJOIN_INCOMPLETE
+     0x04: REMATERIALIZE_INCOMPLETE
      0x05: ENRICHMENT_FAILED
      0x06: TIMEOUT
 ```
@@ -1313,7 +1312,7 @@ Upon successful completion of all configured sinks, the worker MUST send a compl
 
 #### 7.5.7.2. Pipeline Completion
 
-When an entity and all its descendants have completed:
+When an entity and all its descendants have completed rematerialization:
 
 ```
    PIPELINE_COMPLETE Frame {

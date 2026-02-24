@@ -2,7 +2,7 @@
 
 ## 8.1 Parts Ledger
 
-The Parts Ledger is a distributed data structure that maintains the hierarchical relationships between vaporized entities and their constituent parts. Each processing node MUST maintain a local Parts Ledger for entities within its processing scope.
+The Parts Ledger is a distributed data structure that maintains the hierarchical relationships between dematerialized entities and their constituent parts. Each processing node MUST maintain a local Parts Ledger for entities within its processing scope.
 
 ### 8.1.1 Ledger Entry Structure
 
@@ -24,13 +24,13 @@ Parts Ledger Entry {
 Field definitions:
 
 Parent ID (20 bits):
-: The identifier of the parent entity that was vaporized.
+: The identifier of the parent entity that was dematerialized.
 
 Scope ID (32 bits):
-: The identifier of the scope in which the vaporization occurred.
+: The identifier of the scope in which the dematerialization occurred.
 
 Child Count (16 bits):
-: The number of child entities produced by vaporization.
+: The number of child entities produced by dematerialization.
 
 Children IDs (variable):
 : An array of 20-bit entity identifiers, one for each child.
@@ -143,7 +143,7 @@ A Parts Ledger entry SHALL be considered resolved when one of the following cond
 Upon resolution, implementations MUST:
 
 1. Update the Resolution State to RESOLVED
-2. Enqueue the entry for rejoin processing (Section 8.3)
+2. Enqueue the entry for rematerialize processing (Section 8.3)
 3. Notify any blocked checkpoints (Section 8.2)
 
 ## 8.2 Checkpoint Blocking
@@ -380,7 +380,7 @@ Failure Reason codes:
 
 ## 8.3 Eventual Consistency (Fibonacci Heap)
 
-Due to the distributed nature of PipeStream processing, child entities MAY complete out of order. This section specifies the mechanism for efficiently tracking completion status and triggering rejoins when all children of a vaporized entity have completed.
+Due to the distributed nature of PipeStream processing, child entities MAY complete out of order. This section specifies the mechanism for efficiently tracking completion status and triggering rematerializations when all children of a dematerialized entity have completed.
 
 ### 8.3.1 Out-of-Order Entity Arrival Handling
 
@@ -396,7 +396,7 @@ Implementations MUST handle out-of-order completion notifications:
 
 ### 8.3.2 Priority Queue Structure
 
-Implementations SHALL use a priority queue to efficiently track which Parts Ledger entries are ready for rejoin. This specification RECOMMENDS a Fibonacci heap due to its O(1) amortized decrease-key operation.
+Implementations SHALL use a priority queue to efficiently track which Parts Ledger entries are ready for rematerialization. This specification RECOMMENDS a Fibonacci heap due to its O(1) amortized decrease-key operation.
 
 Priority Queue Properties:
 
@@ -437,13 +437,13 @@ Fibonacci Heap Node Structure:
 
 Priority Calculation:
 
-The priority SHALL be calculated such that entries closer to completion have LOWER priority values (min-heap behavior triggers rejoin on extract-min):
+The priority SHALL be calculated such that entries closer to completion have LOWER priority values (min-heap behavior triggers rematerialize on extract-min):
 
 ```
 priority = target_count - completion_count
 ```
 
-When priority reaches 0, the entry is ready for rejoin and will be at the top of the heap.
+When priority reaches 0, the entry is ready for rematerialize and will be at the top of the heap.
 
 ### 8.3.4 Bubble-Up on Completion
 
@@ -470,10 +470,10 @@ procedure ON_CHILD_COMPLETE(parent_id, child_id, status):
     heap_node.completion_count := heap_node.completion_count + 1
     new_priority := heap_node.target_count - heap_node.completion_count
 
-    DECREASE_KEY(rejoin_heap, heap_node, new_priority)
+    DECREASE_KEY(rematerialize_heap, heap_node, new_priority)
 
     if new_priority = 0:
-        // Entry is now ready for rejoin - will be at heap root
+        // Entry is now ready for rematerialize - will be at heap root
         SIGNAL_REJOIN_READY()
 
 procedure DECREASE_KEY(heap, node, new_priority):
@@ -510,18 +510,18 @@ procedure CASCADING_CUT(heap, node):
 
 ### 8.3.5 Rejoin Triggering on Extract-Min
 
-The rejoin processor continuously monitors the heap and triggers rejoins:
+The rematerialize processor continuously monitors the heap and triggers rematerializes:
 
 ```
 procedure REJOIN_PROCESSOR():
     loop:
-        WAIT_FOR(rejoin_heap.min.priority = 0 OR shutdown_signal)
+        WAIT_FOR(rematerialize_heap.min.priority = 0 OR shutdown_signal)
 
         if shutdown_signal:
             break
 
-        while rejoin_heap IS NOT EMPTY AND rejoin_heap.min.priority = 0:
-            node := EXTRACT_MIN(rejoin_heap)
+        while rematerialize_heap IS NOT EMPTY AND rematerialize_heap.min.priority = 0:
+            node := EXTRACT_MIN(rematerialize_heap)
             ledger_entry := node.ledger_entry_ref
 
             if VALIDATE_REJOIN_PRECONDITIONS(ledger_entry):
@@ -560,7 +560,7 @@ procedure VALIDATE_REJOIN_PRECONDITIONS(ledger_entry):
             if status != COMPLETE:
                 return FALSE
 
-    // Verify checkpoint scope allows rejoin
+    // Verify checkpoint scope allows rematerialize
     if NOT CHECKPOINT_SCOPE_ALLOWS_REJOIN(ledger_entry.checkpoint_scope):
         return FALSE
 
@@ -676,9 +676,9 @@ Chain Properties:
 
 2. Chains MAY be arbitrarily deep, limited only by implementation resources.
 
-3. Rejoining MUST proceed bottom-up: leaf entities rejoin first, then their parents, recursively up to the root.
+3. Rejoining MUST proceed bottom-up: leaf entities rematerialize first, then their parents, recursively up to the root.
 
-4. A parent entity MUST NOT rejoin until ALL of its children have rejoined.
+4. A parent entity MUST NOT rematerialize until ALL of its children have rematerializeed.
 
 Resolution Order:
 
@@ -757,7 +757,7 @@ procedure HANDLE_ORPHAN(completion):
 
 ### 8.4.5 Cycle Prevention (DAG Enforcement)
 
-The parent-child relationship graph MUST form a Directed Acyclic Graph (DAG). Cycles would cause infinite rejoin loops and MUST be prevented.
+The parent-child relationship graph MUST form a Directed Acyclic Graph (DAG). Cycles would cause infinite rematerialize loops and MUST be prevented.
 
 Prevention Mechanisms:
 
@@ -837,7 +837,7 @@ The following pseudocode presents the complete reassembly algorithm integrating 
 ```
 // Global state
 parts_ledger := HashMap<ParentID, LedgerEntry>
-rejoin_heap := FibonacciHeap<HeapNode>
+rematerialize_heap := FibonacciHeap<HeapNode>
 heap_node_index := HashMap<ParentID, HeapNode>
 checkpoint_registry := HashMap<CheckpointID, Checkpoint>
 orphan_buffer := List<BufferedCompletion>
@@ -880,7 +880,7 @@ procedure ON_VAPORIZE(parent_entity, child_entities):
         priority: ledger_entry.child_count,  // Far from completion
     }
 
-    INSERT(rejoin_heap, heap_node)
+    INSERT(rematerialize_heap, heap_node)
     heap_node_index[parent_entity.id] := heap_node
 
     // Now safe to emit children
@@ -913,22 +913,22 @@ procedure ON_ENTITY_COMPLETION(entity_id, parent_id, status):
     heap_node := heap_node_index[parent_id]
     heap_node.completion_count := heap_node.completion_count + 1
     new_priority := heap_node.target_count - heap_node.completion_count
-    DECREASE_KEY(rejoin_heap, heap_node, new_priority)
+    DECREASE_KEY(rematerialize_heap, heap_node, new_priority)
 
     // Check checkpoint notifications
     NOTIFY_CHECKPOINT_PROGRESS(entity_id)
 
 procedure REJOIN_PROCESSOR():
     loop:
-        // Wait for entry ready for rejoin
-        WAIT_FOR(rejoin_heap.min.priority = 0 OR shutdown)
+        // Wait for entry ready for rematerialize
+        WAIT_FOR(rematerialize_heap.min.priority = 0 OR shutdown)
 
         if shutdown:
             break
 
         // Process all ready entries
-        while rejoin_heap.min IS NOT NULL AND rejoin_heap.min.priority = 0:
-            node := EXTRACT_MIN(rejoin_heap)
+        while rematerialize_heap.min IS NOT NULL AND rematerialize_heap.min.priority = 0:
+            node := EXTRACT_MIN(rematerialize_heap)
             ledger_entry := node.ledger_entry_ref
             parent_id := ledger_entry.parent_id
 
@@ -943,20 +943,20 @@ procedure REJOIN_PROCESSOR():
             // Check for recursive dependencies
             for each child_id in ledger_entry.children_ids:
                 if child_id IN parts_ledger:
-                    // Child is also a parent, must rejoin first
+                    // Child is also a parent, must rematerialize first
                     child_ledger := parts_ledger[child_id]
                     if child_ledger.resolution_state != REJOINED:
                         // Re-queue parent, child not ready
                         REQUEUE_AFTER_CHILD(node, child_id)
                         continue
 
-            // Execute rejoin
+            // Execute rematerialize
             ledger_entry.resolution_state := REJOINING
             SEND_LEDGER_FRAME(RESOLVE, parent_id, REJOINING)
 
-            rejoined_entity := EXECUTE_REJOIN_OPERATION(ledger_entry)
+            rematerializeed_entity := EXECUTE_REJOIN_OPERATION(ledger_entry)
 
-            if rejoined_entity IS NOT NULL:
+            if rematerializeed_entity IS NOT NULL:
                 ledger_entry.resolution_state := REJOINED
                 SEND_LEDGER_FRAME(RESOLVE, parent_id, REJOINED)
 
@@ -986,17 +986,17 @@ procedure EXECUTE_REJOIN_OPERATION(ledger_entry):
         else if ledger_entry.flags.PARTIAL_FAILURE_ALLOWED:
             child_results.append(NULL)  // Placeholder for failed child
         else:
-            return NULL  // Cannot rejoin with failures
+            return NULL  // Cannot rematerialize with failures
 
     // Reconstruct parent entity
     if ledger_entry.flags.ORDERED_REJOIN:
         // Children must be combined in emission order
-        rejoined := ORDERED_COMBINE(child_results)
+        rematerializeed := ORDERED_COMBINE(child_results)
     else:
         // Children can be combined in any order
-        rejoined := UNORDERED_COMBINE(child_results)
+        rematerializeed := UNORDERED_COMBINE(child_results)
 
-    return rejoined
+    return rematerializeed
 ```
 
 ## 8.6 Security Considerations
