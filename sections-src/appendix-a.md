@@ -2,17 +2,18 @@
 
 ## Protocol-Level Messages
 
-::: sourcecode protobuf
+::: sourcecode {type="protobuf"}
 // Copyright 2026 PipeStream AI
 //
-// PipeStream Protocol - IETF draft protocol for recursive entity streaming
-// over QUIC. Defines the wire-format messages for Layers 0-2 of the
-// PipeStream architecture: core streaming, recursive scoping, and resilience.
+// PipeStream Protocol - IETF draft protocol for recursive entity
+// streaming over QUIC. Defines the wire-format messages for Layers 0-2
+// of the PipeStream architecture: core streaming, recursive scoping,
+// and resilience.
 //
-// Edition 2023 is used for closed enums (critical for wire-protocol safety)
-// and implicit field presence (distinguishing "not set" from zero values).
-// In this edition, all fields have explicit presence by default, making the
-// 'optional' keyword unnecessary.
+// Edition 2023 is used for closed enums (critical for wire-protocol
+// safety) and implicit field presence (distinguishing "not set" from
+// zero values). In this edition, all fields have explicit presence
+// by default, making the 'optional' keyword unnecessary.
 
 edition = "2023";
 
@@ -20,18 +21,28 @@ package pipestream.protocol.v1;
 
 import "google/protobuf/any.proto";
 
-// All enums in this file are CLOSED.
+// All enums in this file are CLOSED. Unknown enum values received on
+// the wire MUST be rejected. This is essential because status codes
+// are encoded as 4-bit values in the status frame wire format;
+// accepting unknown values could cause undefined behavior in state
+// machines and cursor advancement.
 option features.enum_type = CLOSED;
 
-// Capabilities describes the feature set supported by a PipeStream endpoint.
+// Capabilities describes the feature set supported by a PipeStream
+// endpoint. Exchanged during the CONNECT handshake so that both
+// sides can negotiate which protocol layers and resource limits
+// apply to the session.
 message Capabilities {
   // Whether the endpoint supports Layer 0 (core entity streaming).
   bool layer0_core = 1;
 
-  // Whether the endpoint supports Layer 1 (recursive scoping and dehydration).
+  // Whether the endpoint supports Layer 1 (recursive scoping and
+  // dehydration).
   bool layer1_recursive = 2;
 
-  // Whether the endpoint supports Layer 2 (resilience, yield, and claim-check).
+  // Whether the endpoint supports Layer 2 (resilience, yield, and
+  // claim-check). Requires Layer 1 support; if layer1_recursive is
+  // false, this MUST be false.
   bool layer2_resilience = 3;
 
   // Maximum nesting depth allowed for recursive scopes.
@@ -45,7 +56,11 @@ message Capabilities {
   uint32 max_window_size = 6;
 }
 
-// EntityHeader is sent at the beginning of each entity stream.
+// EntityHeader is sent at the beginning of each entity stream to
+// describe the payload that follows. It carries identity, lineage,
+// content metadata, chunking information, and the completion policy
+// that governs how partial failures of this entity's children are
+// handled.
 message EntityHeader {
   // Scope-local entity identifier.
   uint32 entity_id = 1;
@@ -62,7 +77,8 @@ message EntityHeader {
   // MIME content type.
   string content_type = 5;
 
-  // Payload length in bytes.
+  // Length in bytes of the complete entity payload, before any
+  // chunking.
   uint64 payload_length = 6;
 
   // SHA-256 integrity checksum.
@@ -312,7 +328,8 @@ message PipeDoc {
   OwnershipContext ownership = 3;
 }
 
-// OwnershipContext defines multi-tenancy and access control for entities.
+// OwnershipContext defines multi-tenancy and access control for
+// entities.
 message OwnershipContext {
   // Entity owner identifier.
   string owner_id = 1;

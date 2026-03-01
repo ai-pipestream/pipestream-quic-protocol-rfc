@@ -23,7 +23,7 @@ The window size is computed as `(last_assigned - cursor) mod 0xFFFFFFFD`. If `wi
 
 Each Assembly Manifest entry tracks:
 
-::: sourcecode protobuf
+~~~~ protobuf
 message AssemblyManifestEntry {
   uint32 parent_id = 1;
   uint32 scope_id = 2;           // Layer 1
@@ -41,7 +41,7 @@ enum ResolutionState {
   RESOLUTION_STATE_PARTIAL = 3;      // Some children failed/skipped
   RESOLUTION_STATE_FAILED = 4;
 }
-:::
+~~~~
 
 ## Checkpoint Blocking
 
@@ -53,7 +53,7 @@ A checkpoint is satisfied when:
 
 CheckpointFrame (Section 6.6 / Appendix A) carries both:
 
-::: sourcecode protobuf
+~~~~ protobuf
 message CheckpointFrame {
   string checkpoint_id = 1;
   uint64 sequence_number = 2;
@@ -62,7 +62,7 @@ message CheckpointFrame {
   uint32 flags = 5;
   uint32 timeout_ms = 6;
 }
-:::
+~~~~
 
 - `checkpoint_id`: an opaque identifier for logging and correlation.
 - `checkpoint_entity_id`: the numeric ordering key used for barrier evaluation.
@@ -100,7 +100,7 @@ Implementations MAY choose any data structure that satisfies these complexity re
 
 When yielding or deferring, include validation:
 
-::: sourcecode protobuf
+~~~~ protobuf
 message StoppingPointValidation {
   bytes state_checksum = 1;      // Hash of processing state
   uint64 bytes_processed = 2;    // Progress marker
@@ -109,4 +109,4 @@ message StoppingPointValidation {
   bool is_resumable = 5;
   string checkpoint_ref = 6;
 }
-:::
+~~~~

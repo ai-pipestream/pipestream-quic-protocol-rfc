@@ -23,7 +23,7 @@ Each PipeDoc carries entity payload in one of four data layers:
 
 ## Cloud-Agnostic Storage Reference
 
-::: sourcecode protobuf
+::: sourcecode {type="protobuf"}
 message FileStorageReference {
   string provider = 1;           // Storage provider identifier
   string bucket = 2;             // Bucket/container name
@@ -35,7 +35,8 @@ message FileStorageReference {
 
 message EncryptionMetadata {
   string algorithm = 1;          // "AES-256-GCM", "AES-256-CBC"
-  string key_provider = 2;       // "aws-kms", "azure-keyvault", "gcp-kms", "vault"
+  string key_provider = 2;       // "aws-kms", "azure-keyvault",
+                                 // "gcp-kms", "vault"
   string key_id = 3;             // Key ARN/URI/ID
   bytes wrapped_key = 4;         // Optional: client-side encrypted DEK
   bytes iv = 5;                  // Initialization vector

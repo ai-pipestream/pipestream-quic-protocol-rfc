@@ -6,7 +6,7 @@ This section defines the protocol-level operations that PipeStream endpoints per
 
 A PipeStream session proceeds through four sequential actions:
 
-::: artwork
+~~~~
                 +---------------------------------------------+
                 |           PipeStream Action Flow            |
                 +---------------------------------------------+
@@ -37,7 +37,7 @@ A PipeStream session proceeds through four sequential actions:
                 |                   SINK                      |
                 |          (Terminal Consumption)             |
                 +---------------------------------------------+
-:::
+~~~~
 
 | Phase | Action | Cardinality | Description |
 |-------|--------|-------------|-------------|
@@ -62,7 +62,7 @@ Immediately after QUIC handshake, peers exchange Capabilities messages on Stream
 
 The PARSE action performs dehydration with optional completion policy:
 
-::: sourcecode protobuf
+~~~~ protobuf
 message CompletionPolicy {
   CompletionMode mode = 1;
   uint32 max_retries = 2;        // Default: 3
@@ -88,7 +88,7 @@ enum FailureAction {
   FAILURE_ACTION_RETRY = 3;        // Retry up to max_retries
   FAILURE_ACTION_DEFER = 4;        // Create claim check, continue
 }
-:::
+~~~~
 
 ## PROCESS Action
 
