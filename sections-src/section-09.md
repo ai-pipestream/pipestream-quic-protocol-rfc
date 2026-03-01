@@ -54,9 +54,16 @@ enum ResolutionState {
 
 A checkpoint is satisfied when:
 
-1. All entities with IDs less than checkpoint ID (considering circular wrap) have reached terminal state.
-2. All Assembly Manifest entries within the scope have been resolved.
-3. All nested checkpoints have been satisfied.
+1. All entities in the checkpoint scope with IDs less than `checkpoint_entity_id` (considering circular wrap) have reached terminal state.
+2. All Assembly Manifest entries within the checkpoint scope have been resolved.
+3. All nested checkpoints within the checkpoint scope have been satisfied.
+
+CheckpointFrame (Section 6.6 / Appendix A) carries both:
+
+- `checkpoint_id`: an opaque identifier for logging and correlation.
+- `checkpoint_entity_id`: the numeric ordering key used for barrier evaluation.
+
+Implementations MUST use `checkpoint_entity_id` (not `checkpoint_id`) when evaluating Condition 1.
 
 ### 9.4. Scope Digest Propagation (Layer 1)
 

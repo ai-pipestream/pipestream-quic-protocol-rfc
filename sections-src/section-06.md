@@ -111,12 +111,6 @@ When Protocol Layer 1 is negotiated, a scope completion is summarized:
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |  Type (0x54)  |  Flags (8)      |        Scope ID (16)        |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
-   Flags (8 bits):
-      Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
-
-   Scope ID (16 bits):
-      Identifier of the scope being summarized.
    |                    Entities Processed (32)                    |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                    Entities Succeeded (32)                    |
@@ -130,6 +124,12 @@ When Protocol Layer 1 is negotiated, a scope completion is summarized:
    |                                                               |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
+
+Flags (8 bits):
+:   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
+
+Scope ID (16 bits):
+:   Identifier of the scope being summarized.
 
 The SCOPE_DIGEST frame is 52 octets total. The Scope ID MUST match the 16-bit identifier defined in Section 6.2.1.
 
@@ -154,6 +154,8 @@ The SCOPE_DIGEST frame is 52 octets total. The Scope ID MUST match the 16-bit id
 ### 6.5. Yield and Claim Check Extensions (Layer 2)
 
 When E=1 in a status frame, extension data follows. The length of extension data is determined by the Status code.
+
+If E=1 is set for a Status code that does not define an extension layout in this specification (or a negotiated extension), the receiver MUST treat the frame as malformed and fail processing with PIPESTREAM_ENTITY_INVALID (0x05).
 
 #### 6.5.1. Yield Extension (Stat = 0x8)
 

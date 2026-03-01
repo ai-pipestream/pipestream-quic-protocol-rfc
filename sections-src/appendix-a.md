@@ -103,8 +103,10 @@ enum EntityStatus {
 message CheckpointFrame {
   string checkpoint_id = 1;
   uint64 sequence_number = 2;
-  uint32 flags = 3;
-  uint32 timeout_ms = 4;
+  uint32 checkpoint_entity_id = 3;  // Numeric ordering key for barrier evaluation
+  uint32 scope_id = 4;              // Scope to which this checkpoint applies
+  uint32 flags = 5;
+  uint32 timeout_ms = 6;
 }
 
 // AssemblyManifestEntry tracks parent-child relationships.

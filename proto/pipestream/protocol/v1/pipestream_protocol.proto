@@ -297,14 +297,22 @@ message CheckpointFrame {
   // and detect gaps.
   uint64 sequence_number = 2;
 
+  // Numeric ordering key used for barrier evaluation. Entities in this
+  // scope with IDs lower than this value (modulo circular ID rules)
+  // must reach terminal state before the checkpoint is satisfied.
+  uint32 checkpoint_entity_id = 3;
+
+  // Scope to which this checkpoint applies.
+  uint32 scope_id = 4;
+
   // Bitfield of checkpoint flags.
   // Bit 0: MANDATORY (must block processing).
   // Bit 1: SCOPE_LOCAL (applies only within the current scope).
-  uint32 flags = 3;
+  uint32 flags = 5;
 
   // Maximum time in milliseconds to wait for all entities to reach the
   // checkpoint before it is considered timed out. Default: 30000.
-  uint32 timeout_ms = 4;
+  uint32 timeout_ms = 6;
 }
 
 // AssemblyManifestEntry tracks parent-child relationships created during
