@@ -41,7 +41,7 @@ The Status Frame reports lifecycle transitions for entities.
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |  Type (0x50)  | Stat(4)|E|C|Dph(3)|      Flags (15 bits)      |
+   |  Type (0x50)  |Stat(4)|E|C|Dph(3)|      Flags (15 bits)      |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                       Entity ID (32 bits)                     |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -59,7 +59,7 @@ E (1 bit):
 C (1 bit):
 :   Cursor update flag. A 4-octet cursor value follows (Section 6.2.3).
 
-D (3 bits):
+Dph (3 bits):
 :   Explicit scope nesting depth (0-7). 0=Root. Layer 1.
 
 Flags (15 bits):
@@ -277,17 +277,17 @@ Entity frames carry the actual document entity data on Entity Streams.
 
 ~~~~
 
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   +---------------------------+
    |    Header Length (4)      |   4 octets, big-endian uint32
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                                                               |
+   +---------------------------+
+   |                           |
    |    Header (Protobuf)      |   Variable length
-   |                                                               |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                                                               |
+   |                           |
+   +---------------------------+
+   |                           |
    |    Payload                |   Variable length (per header)
-   |                                                               |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                           |
+   +---------------------------+
 ~~~~
 {: type="ascii-art"}
 
@@ -316,7 +316,6 @@ message EntityHeader {
   CompletionPolicy completion_policy = 10; // Layer 2: failure handling
 }
 ~~~~
-{: type="ascii-art"}
 
 ### Checksum Algorithm
 
