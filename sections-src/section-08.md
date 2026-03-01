@@ -4,38 +4,14 @@ This section defines the protocol-level operations that PipeStream endpoints per
 
 ### 8.1. Overview
 
-```
-                +---------------------------------------------+
-                |           PipeStream Action Flow            |
-                +---------------------------------------------+
-                                     |
-                                     v
-                +---------------------------------------------+
-                |                  CONNECT                    |
-                |    (Session + Capability Negotiation)       |
-                +---------------------------------------------+
-                                     |
-                                     v
-                +---------------------------------------------+
-                |                   PARSE                     |
-                |        (Dehydration: 1:N possible)         |
-                +---------------------------------------------+
-                                     |
-                       +-------------+-------------+
-                       v             v             v
-                +-----------+ +-----------+ +-----------+
-                |  PROCESS  | |  PROCESS  | |  PROCESS  |
-                |   (1:1)   | |   (1:1)   | |   (N:1)   |
-                +-----------+ +-----------+ +-----------+
-                       |             |             |
-                       +-------------+-------------+
-                                     |
-                                     v
-                +---------------------------------------------+
-                |                   SINK                      |
-                |          (Terminal Consumption)             |
-                +---------------------------------------------+
-```
+A PipeStream session proceeds through four sequential actions:
+
+| Phase | Action | Cardinality | Description |
+|-------|--------|-------------|-------------|
+| 1 | CONNECT | 1:1 | Session establishment and capability negotiation |
+| 2 | PARSE | 1:N | Dehydration: decompose input into entities |
+| 3 | PROCESS | 1:1 or N:1 | Transform, rehydrate, aggregate, or pass through entities (parallel) |
+| 4 | SINK | N:1 | Terminal consumption: index, store, or notify |
 
 ### 8.2. CONNECT Action
 
@@ -43,9 +19,7 @@ The CONNECT action establishes the session with capability negotiation.
 
 #### 8.2.1. ALPN Identifier
 
-```
-   ALPN Protocol ID: "pipestream/1"
-```
+ALPN Protocol ID: `pipestream/1`
 
 #### 8.2.2. Capability Exchange
 

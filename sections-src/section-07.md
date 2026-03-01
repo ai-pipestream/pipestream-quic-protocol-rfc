@@ -12,28 +12,14 @@ Every PipeStream entity is represented as a PipeDoc message:
 
 ### 7.2. Four Data Layers
 
-```
-+------------------------------------------------------------------+
-|                          PipeDoc                                 |
-|  +------------------------------------------------------------+  |
-|  |  Layer 0: BlobBag (Raw Binary Data)                        |  |
-|  |  - Original document bytes, images, attachments            |  |
-|  +------------------------------------------------------------+  |
-|  +------------------------------------------------------------+  |
-|  |  Layer 1: SemanticLayer (Semantic Chunks)                  |  |
-|  |  - Text segments with vector embeddings                     |  |
-|  |  - NLP annotations, NER, classifications                    |  |
-|  +------------------------------------------------------------+  |
-|  +------------------------------------------------------------+  |
-|  |  Layer 2: ParsedData (Structured Extraction)               |  |
-|  |  - Key-value pairs, tables, structured fields               |  |
-|  +------------------------------------------------------------+  |
-|  +------------------------------------------------------------+  |
-|  |  Layer 3: CustomEntity (Extension Point)                   |  |
-|  |  - Domain-specific protobuf via google.protobuf.Any        |  |
-|  +------------------------------------------------------------+  |
-+------------------------------------------------------------------+
-```
+Each PipeDoc carries entity payload in one of four data layers:
+
+| Layer | Name | Content |
+|-------|------|---------|
+| 0 | BlobBag | Raw binary data: original document bytes, images, attachments |
+| 1 | SemanticLayer | Annotated content: text segments with vector embeddings, NLP annotations, NER, classifications |
+| 2 | ParsedData | Structured extraction: key-value pairs, tables, structured fields |
+| 3 | CustomEntity | Extension point: domain-specific protobuf via `google.protobuf.Any` |
 
 ### 7.3. Cloud-Agnostic Storage Reference
 

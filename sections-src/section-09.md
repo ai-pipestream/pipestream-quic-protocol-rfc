@@ -2,22 +2,15 @@
 
 ### 9.1. Entity ID Lifecycle and Cursor
 
-Entity IDs are managed using a cursor-based recycling scheme:
+Entity IDs are managed using a cursor-based circular recycling scheme within the 32-bit ID space. The ID space is divided into three logical regions relative to the current `cursor` and `last_assigned` pointers:
 
-```
-   Entity ID Space (32-bit circular buffer):
+| Region | ID Range | Description |
+|--------|----------|-------------|
+| Recyclable | IDs behind `cursor` | Resolved entities; IDs may be reused |
+| In-flight | `cursor` to `last_assigned` | Active entities (PENDING, PROCESSING, etc.) |
+| Free | Beyond `last_assigned` | Available for new entity assignment |
 
-                       cursor (lowest unresolved)
-                           │
-      recyclable           │         in-flight
-     <---------------      ▼      --------------->
-     [...completed...]│[PENDING][PROCESSING][PENDING][...]│...free...
-                      ^                                    ^
-                   cursor                             last_assigned
-
-   Window Size = (last_assigned - cursor) mod 0xFFFFFFFD
-   If window_size >= max_window → backpressure
-```
+The window size is computed as `(last_assigned - cursor) mod 0xFFFFFFFD`. If `window_size >= max_window`, the sender MUST apply backpressure and stop assigning new IDs until the cursor advances.
 
 **Rules:**
 1. `new_id = (last_assigned + 1) % 0xFFFFFFFD`

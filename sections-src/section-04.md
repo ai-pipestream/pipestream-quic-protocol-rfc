@@ -42,29 +42,12 @@ The protocol MUST support four distinct data representation layers:
 
 ### 4.2. Architecture Summary
 
-```
-+------------------+                              +------------------+
-|                  |        QUIC Connection       |                  |
-|     Client       |<---------------------------->|     Server       |
-|   (Producer)     |                              |   (Consumer)     |
-|                  |                              |                  |
-+--------+---------+                              +--------+---------+
-         |                                                 |
-         |  +-------------------------------------------+  |
-         |  |            QUIC Connection                |  |
-         |  |  +-------------------------------------+  |  |
-         |  |  |  Stream 0: Control (Control Plane)  |  |  |
-         |  |  |  [STATUS][STATUS][STATUS]...        |  |  |
-         |  |  +-------------------------------------+  |  |
-         |  |                                           |  |
-         |  |  +-------------------------------------+  |  |
-         |  |  |  Stream 2+: Entity (Data Plane)    |  |  |
-         |  |  |  [HEADER][PAYLOAD]                 |  |  |
-         |  |  +-------------------------------------+  |  |
-         |  +-------------------------------------------+  |
-         |                                                 |
-         +-------------------------------------------------+
-```
+PipeStream uses a dual-stream architecture within a single QUIC connection between a Client (Producer) and Server (Consumer):
+
+| Stream | Type | Plane | Content |
+|--------|------|-------|---------|
+| Stream 0 | Bidirectional | Control | STATUS, SCOPE_DIGEST, BARRIER, CAPABILITIES, CHECKPOINT |
+| Streams 2+ | Unidirectional | Data | Entity frames (Header + Payload) |
 
 Figure 1: PipeStream Dual-Stream Architecture
 

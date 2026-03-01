@@ -24,37 +24,19 @@ The Control Stream carries bit-packed control frames. STATUS frames are 12 octet
 
 #### 5.1.4. Heartbeat Mechanism
 
-To maintain session liveness:
+To maintain session liveness, an endpoint sends a STATUS frame with all fields set to their heartbeat values:
 
-```
-    0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |  Type (0x50)  |  Stat (0) |0|0| Depth (0) |    Flags (0)      |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |             Entity ID = 0xFFFFFFFF (CONNECTION_LEVEL)         |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |        Scope ID (0x0000)        |      Reserved (16 bits)     |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
-   Type = 0x50 (STATUS)
-   :   Frame type identifier.
-
-   Stat = 0x0 (UNSPECIFIED)
-   :   Status code used as a heartbeat signal.
-
-   Entity ID = 0xFFFFFFFF (CONNECTION_LEVEL)
-   :   Reserved identifier for connection-wide messages.
-
-   Scope ID = 0x0000
-   :   Root scope identifier.
-
-   Depth = 0
-   :   Root depth level.
-
-   E=0, C=0, Flags=0
-   :   Control flags and reserved bits MUST be zero.
-```
+| Field | Value | Description |
+|-------|-------|-------------|
+| Type | 0x50 | STATUS frame |
+| Stat | 0x0 (UNSPECIFIED) | Heartbeat signal |
+| E | 0 | No extension data |
+| C | 0 | No cursor update |
+| D | 0 | Root depth |
+| Flags | 0 | Reserved bits zero |
+| Entity ID | 0xFFFFFFFF | CONNECTION_LEVEL reserved identifier |
+| Scope ID | 0x0000 | Root scope |
+| Reserved | 0x0000 | MUST be zero |
 
 When no status updates have been transmitted for KEEPALIVE_TIMEOUT (default: 30 seconds), an endpoint SHOULD send a heartbeat frame. If no data is received on Stream 0 for 3 * KEEPALIVE_TIMEOUT, the connection SHOULD be closed with PIPESTREAM_IDLE_TIMEOUT (0x02).
 
@@ -66,13 +48,10 @@ Entity Streams carry the actual document entity payloads.
 
 Entity Streams MUST be unidirectional streams:
 
-```
-   Client-Initiated Unidirectional Streams:
-   Stream IDs: 2, 6, 10, 14, ... (4n + 2 where n >= 0)
-
-   Server-Initiated Unidirectional Streams:
-   Stream IDs: 3, 7, 11, 15, ... (4n + 3 where n >= 0)
-```
+| Direction | Stream ID Formula | Examples |
+|-----------|-------------------|----------|
+| Client-Initiated | 4n + 2 (n >= 0) | 2, 6, 10, 14, ... |
+| Server-Initiated | 4n + 3 (n >= 0) | 3, 7, 11, 15, ... |
 
 #### 5.2.2. One Entity Per Stream
 

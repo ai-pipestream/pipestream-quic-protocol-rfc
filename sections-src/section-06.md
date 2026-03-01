@@ -144,20 +144,14 @@ Layer 2 statuses (`YIELDED`, `DEFERRED`, `RETRYING`, `SKIPPED`, `ABANDONED`) MUS
 
 `FAILED` is terminal in Layer 0-only operation. When Layer 2 is active, `FAILED` MAY transition to `RETRYING` or `SKIPPED` only if the effective Completion Policy allows it.
 
-##### 6.2.4.2. State Diagram (Informative)
+##### 6.2.4.2. Terminal States
 
-```
-PENDING -> PROCESSING -> COMPLETE
-   |          |   |  \-> CHECKPOINT -> PROCESSING
-   |          |   \----> DEHYDRATING -> REHYDRATING -> COMPLETE
-   |          \--------> FAILED --(L2 policy)--> RETRYING -> PROCESSING
-   |                                 |                    \-> FAILED
-   \--------------------------------> FAILED --(L2 policy)--> SKIPPED
-
-PROCESSING --(L2)--> YIELDED  -> PROCESSING
-PROCESSING --(L2)--> DEFERRED -> PROCESSING
-YIELDED/DEFERRED/RETRYING ----> ABANDONED
-```
+| State | Terminal? | Notes |
+|-------|-----------|-------|
+| COMPLETE | Yes | Successful completion |
+| SKIPPED | Yes | Layer 2 policy skip |
+| ABANDONED | Yes | Timeout or exhausted retries |
+| FAILED | Layer 0: Yes | Layer 2: may transition to RETRYING or SKIPPED per policy |
 
 ##### 6.2.4.3. Error Handling
 
