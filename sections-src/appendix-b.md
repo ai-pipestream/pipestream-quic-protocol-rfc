@@ -2,18 +2,18 @@
 
 | Feature | Layer 0 | Layer 1 | Layer 2 |
 |---------|---------|---------|---------|
-| Unified status frame (96-bit base) | ✓ | ✓ | ✓ |
-| Entity streaming | ✓ | ✓ | ✓ |
-| PENDING/PROCESSING/COMPLETE/FAILED | ✓ | ✓ | ✓ |
-| Checkpoint blocking | ✓ | ✓ | ✓ |
-| Assembly Manifest | ✓ | ✓ | ✓ |
-| Cursor-based ID recycling | ✓ | ✓ | ✓ |
-| Scoped status fields (Scope ID, depth) | | ✓ | ✓ |
-| Hierarchical scopes | | ✓ | ✓ |
-| Scope digest (Merkle) | | ✓ | ✓ |
-| Barrier (subtree sync) | | ✓ | ✓ |
-| YIELDED status | | | ✓ |
-| DEFERRED status | | | ✓ |
-| Claim checks | | | ✓ |
-| Completion policies | | | ✓ |
-| SKIPPED/ABANDONED statuses | | | ✓ |
+| Unified status frame (96-bit base) | X | X | X |
+| Entity streaming | X | X | X |
+| PENDING/PROCESSING/COMPLETE/FAILED | X | X | X |
+| Checkpoint blocking | X | X | X |
+| Assembly Manifest | X | X | X |
+| Cursor-based ID recycling | X | X | X |
+| Scoped status fields (Scope ID, depth) | | X | X |
+| Hierarchical scopes | | X | X |
+| Scope digest (Merkle) | | X | X |
+| Barrier (subtree sync) | | X | X |
+| YIELDED status | | | X |
+| DEFERRED status | | | X |
+| Claim checks | | | X |
+| Completion policies | | | X |
+| SKIPPED/ABANDONED statuses | | | X |

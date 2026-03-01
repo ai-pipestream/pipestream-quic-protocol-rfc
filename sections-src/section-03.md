@@ -21,7 +21,7 @@ All implementations MUST support Layer 0.
 
 Layer 1 adds hierarchical processing capabilities:
 
-- Scoped Entity ID namespaces (collection → document → part → job)
+- Scoped Entity ID namespaces (collection -> document -> part -> job)
 - Explicit Depth tracking in status frames
 - SCOPE_DIGEST for Merkle-based subtree completion
 - BARRIER for subtree-scoped synchronization

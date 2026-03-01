@@ -15,7 +15,7 @@ The window size is computed as `(last_assigned - cursor) mod 0xFFFFFFFD`. If `wi
 **Rules:**
 1. `new_id = (last_assigned + 1) % 0xFFFFFFFD`
 2. If `new_id == 0`, `new_id = 1` (skip reserved NULL_ENTITY)
-3. If `(new_id - cursor) % 0xFFFFFFFD >= max_window` → STOP, apply backpressure
+3. If `(new_id - cursor) % 0xFFFFFFFD >= max_window` -> STOP, apply backpressure
 4. On COMPLETE/FAILED: mark resolved; if `entity_id == cursor`, advance cursor
 5. IDs behind cursor are implicitly recyclable
 

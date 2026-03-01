@@ -25,7 +25,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 :   The operation of reassembling multiple Entities back into a single composite Entity or Document. A rehydrate operation MUST NOT proceed until all constituent Entities listed in the corresponding Assembly Manifest entry have been received and processed (or handled according to the Completion Policy). Rehydration transitions data from a fluid state back to a solid state.
 
 **Solid State**
-:   A document or Entity that exists as a complete, stored record — either at rest in storage or as a single root Entity entering or exiting a pipeline. Contrast with "fluid state".
+:   A document or Entity that exists as a complete, stored record -- either at rest in storage or as a single root Entity entering or exiting a pipeline. Contrast with "fluid state".
 
 **Fluid State**
 :   A document that has been decomposed into multiple in-flight Entities being processed in parallel across distributed nodes. A document is in the fluid state between dehydration and rehydration. Contrast with "solid state".
