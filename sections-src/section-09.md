@@ -13,6 +13,7 @@ Entity IDs are managed using a cursor-based circular recycling scheme within the
 The window size is computed as `(last_assigned - cursor) mod 0xFFFFFFFD`. If `window_size >= max_window`, the sender MUST apply backpressure and stop assigning new IDs until the cursor advances.
 
 **Rules:**
+
 1. `new_id = (last_assigned + 1) % 0xFFFFFFFD`
 2. If `new_id == 0`, `new_id = 1` (skip reserved NULL_ENTITY)
 3. If `(new_id - cursor) % 0xFFFFFFFD >= max_window` -> STOP, apply backpressure
