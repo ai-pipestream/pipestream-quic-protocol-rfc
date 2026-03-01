@@ -2,7 +2,7 @@
 
 ## Protocol-Level Messages
 
-::: sourcecode {type="protobuf"}
+~~~~ protobuf
 // Copyright 2026 PipeStream AI
 //
 // PipeStream Protocol - IETF draft protocol for recursive entity
@@ -382,4 +382,4 @@ message EncryptionMetadata {
   // Additional encryption context.
   map<string, string> context = 6;
 }
-:::
+~~~~

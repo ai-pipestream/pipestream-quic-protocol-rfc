@@ -36,17 +36,19 @@ The following fixed-size frame types are defined by this document:
 
 The Status Frame reports lifecycle transitions for entities.
 
-::: artwork {type="ascii-art"}
+~~~~
+
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |  Type (0x50)  | Stat(4)|E|C|D|      Flags (15 bits)          |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |                       Entity ID (32 bits)                     |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |        Scope ID (16 bits)       |      Reserved (16 bits)     |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-:::
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |  Type (0x50)  | Stat(4)|E|C|D|       Flags (15 bits)         |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                       Entity ID (32 bits)                     |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |        Scope ID (16 bits)       |      Reserved (16 bits)     |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+~~~~
+{: type="ascii-art"}
 
 Stat (4 bits):
 :   Status code (see Section 6.2.2).
@@ -96,13 +98,15 @@ The base STATUS frame is 12 octets. When C=1, a 4-octet cursor value follows (to
 
 When C=1, a 4-octet cursor update follows the status frame:
 
-::: artwork {type="ascii-art"}
+~~~~
+
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                  New Cursor Value (32 bits)                   |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-:::
+~~~~
+{: type="ascii-art"}
 
 New Cursor Value (32 bits):
 :   The numeric value of the new cursor. Entities with IDs lower than this value (modulo circular ID rules) are considered resolved and their IDs MAY be recycled.
@@ -111,7 +115,8 @@ New Cursor Value (32 bits):
 
 When Protocol Layer 1 is negotiated, a scope completion is summarized:
 
-::: artwork {type="ascii-art"}
+~~~~
+
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -137,7 +142,8 @@ When Protocol Layer 1 is negotiated, a scope completion is summarized:
    |                    Merkle Root (256 bits)                     |
    |                                                               |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-:::
+~~~~
+{: type="ascii-art"}
 
 Flags (8 bits):
 :   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
@@ -164,7 +170,8 @@ The SCOPE_DIGEST frame is 68 octets total. The Scope ID MUST match the 16-bit id
 
 ## Barrier Frame (0x55)
 
-::: artwork {type="ascii-art"}
+~~~~
+
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -172,7 +179,8 @@ The SCOPE_DIGEST frame is 68 octets total. The Scope ID MUST match the 16-bit id
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                    Parent Entity ID (32 bits)                 |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-:::
+~~~~
+{: type="ascii-art"}
 
 S (1 bit):
 :   Status (0 = waiting, 1 = released).
@@ -194,7 +202,8 @@ If E=1 is set for a Status code that does not define an extension layout in this
 
 ### Yield Extension (Stat = 0x8)
 
-::: artwork {type="ascii-art"}
+~~~~
+
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -204,7 +213,8 @@ If E=1 is set for a Status code that does not define an extension layout in this
    |                  Yield Token (variable)                       |
    |                                                               |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-:::
+~~~~
+{: type="ascii-art"}
 
 Yield Reason (8 bits):
 :   The reason for yielding (see Section 6.5.1.1).
@@ -228,7 +238,8 @@ Yield Token (variable):
 
 ### Claim Check Extension (Stat = 0x9)
 
-::: artwork {type="ascii-art"}
+~~~~
+
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -240,7 +251,8 @@ Yield Token (variable):
    |                Expiry Timestamp (64 bits, Unix micros)        |
    |                                                               |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-:::
+~~~~
+{: type="ascii-art"}
 
 Claim Check ID (64 bits):
 :   A cryptographically secure random identifier for the claim.
@@ -263,19 +275,21 @@ Entity frames carry the actual document entity data on Entity Streams.
 
 ### Entity Frame Structure
 
-::: artwork {type="ascii-art"}
-   +---------------------------+
+~~~~
+
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |    Header Length (4)      |   4 octets, big-endian uint32
-   +---------------------------+
-   |                           |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                                                               |
    |    Header (Protobuf)      |   Variable length
-   |                           |
-   +---------------------------+
-   |                           |
+   |                                                               |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                                                               |
    |    Payload                |   Variable length (per header)
-   |                           |
-   +---------------------------+
-:::
+   |                                                               |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+~~~~
+{: type="ascii-art"}
 
 Header Length (4 octets):
 :   The length of the Protobuf-encoded EntityHeader in bytes.
@@ -288,7 +302,7 @@ Payload (variable):
 
 ### Entity Header (Protobuf)
 
-::: sourcecode {type="protobuf"}
+~~~~ protobuf
 message EntityHeader {
   uint32 entity_id = 1;         // Scope-local identifier
   uint32 parent_id = 2;         // 0 for root entities
@@ -301,7 +315,8 @@ message EntityHeader {
   ChunkInfo chunk_info = 9;
   CompletionPolicy completion_policy = 10; // Layer 2: failure handling
 }
-:::
+~~~~
+{: type="ascii-art"}
 
 ### Checksum Algorithm
 

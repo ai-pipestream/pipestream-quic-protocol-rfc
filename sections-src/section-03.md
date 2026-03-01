@@ -46,7 +46,7 @@ Layer 2 is OPTIONAL and requires Layer 1. Implementations advertise Layer 2 supp
 
 During CONNECT, endpoints exchange supported capabilities:
 
-::: sourcecode {type="protobuf"}
+~~~~ protobuf
 message Capabilities {
   bool layer0_core = 1;           // Always true
   bool layer1_recursive = 2;      // Scoped IDs, digests
@@ -56,6 +56,6 @@ message Capabilities {
                                       // (2^32-2)
   uint32 max_window_size = 6;     // Default: 2,147,483,648 (2^31)
 }
-:::
+~~~~
 
 Peers negotiate down to common capabilities. If Layer 2 is requested but Layer 1 is not supported, Layer 2 MUST be disabled.
