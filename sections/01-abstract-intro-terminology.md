@@ -10,13 +10,13 @@
 
 ## Abstract
 
-This document specifies PipeStream, a recursive entity streaming protocol designed for distributed document processing over QUIC transport. PipeStream enables the decomposition ("dematerialization") of documents into constituent entities, their transmission across distributed processing nodes, and subsequent reassembly ("rematerialization") at destination endpoints.
+This document specifies PipeStream, a recursive entity streaming protocol designed for distributed document processing over QUIC transport. PipeStream enables the decomposition ("dehydration") of documents into constituent entities, their transmission across distributed processing nodes, and subsequent reassembly ("rehydration") at destination endpoints.
 
-The protocol employs a dual-stream architecture consisting of a data stream for entity payload transmission and a ledger stream for tracking entity completion status and maintaining consistency. PipeStream defines four hierarchical data layers for entity representation: BlobBag for raw binary data, SemanticLayer for annotated content with metadata, ParsedData for structured extracted information, and CustomEntity for application-specific extensions.
+The protocol employs a dual-stream architecture consisting of a data stream for entity payload transmission and a control stream for tracking entity completion status and maintaining consistency. PipeStream defines four hierarchical data layers for entity representation: BlobBag for raw binary data, SemanticLayer for annotated content with metadata, ParsedData for structured extracted information, and CustomEntity for application-specific extensions.
 
-PipeStream is organized into three protocol layers: Layer 0 (Core) provides basic streaming with dematerialization/rematerialization semantics; Layer 1 (Recursive) adds hierarchical scoping and digest propagation; Layer 2 (Resilience) adds yield/resume, claim checks, and completion policies. Implementations MUST support Layer 0 and MAY support Layers 1 and 2.
+PipeStream is organized into three protocol layers: Layer 0 (Core) provides basic streaming with dehydration/rehydration semantics; Layer 1 (Recursive) adds hierarchical scoping and digest propagation; Layer 2 (Resilience) adds yield/resume, claim checks, and completion policies. Implementations MUST support Layer 0 and MAY support Layers 1 and 2.
 
-To ensure consistency across distributed processing pipelines, PipeStream implements checkpoint blocking, whereby processing nodes MUST synchronize at defined points before proceeding. This mechanism guarantees that all constituent parts of a dematerialized document are successfully processed before rematerialization operations commence.
+To ensure consistency across distributed processing pipelines, PipeStream implements checkpoint blocking, whereby processing nodes MUST synchronize at defined points before proceeding. This mechanism guarantees that all constituent parts of a dehydrated document are successfully processed before rehydration operations commence.
 
 ---
 
@@ -64,17 +64,17 @@ Current approaches based on batch processing and store-and-forward architectures
 
 PipeStream addresses these challenges by defining a streaming protocol that enables incremental processing with strong consistency guarantees. The protocol is built upon QUIC [RFC9000] transport, leveraging its native support for multiplexed streams, low-latency connection establishment, and reliable delivery semantics.
 
-The fundamental innovation of PipeStream is its treatment of documents as recursive compositions of entities. A document MAY be decomposed into multiple entities, each of which MAY itself be further decomposed, creating a tree structure of processing tasks. This recursive decomposition enables fine-grained parallelism while the protocol's ledger mechanism ensures that all branches of the decomposition tree are tracked and synchronized.
+The fundamental innovation of PipeStream is its treatment of documents as recursive compositions of entities. A document MAY be decomposed into multiple entities, each of which MAY itself be further decomposed, creating a tree structure of processing tasks. This recursive decomposition enables fine-grained parallelism while the protocol's control stream mechanism ensures that all branches of the decomposition tree are tracked and synchronized.
 
 PipeStream employs a dual-stream design:
 
 1. **Data Stream**: Carries entity payloads through the processing pipeline. Entities flow through this stream with minimal buffering, enabling low-latency incremental processing.
 
-2. **Ledger Stream**: Carries control information tracking the status of entity decomposition and reassembly. The ledger ensures that all parts of a vaporized document are accounted for before reassembly proceeds.
+2. **Control Stream**: Carries control information tracking the status of entity decomposition and reassembly. The control stream ensures that all parts of a dehydrated document are accounted for before reassembly proceeds.
 
 ### 1.3. Design Philosophy
 
-The PipeStream design philosophy may be understood through analogy to the "Star Trek Transporter" concept: a document is "dematerialized" at the source into its constituent entities, these entities are transmitted and processed through the distributed pipeline, and finally the entities are "rematerialized" at the destination to reconstitute the complete processed document.
+The PipeStream design philosophy may be understood through analogy to a scatter-gather pattern: a document is "dehydrated" at the source into its constituent entities (scattered), these entities are transmitted and processed through the distributed pipeline, and finally the entities are "rehydrated" at the destination to reconstitute the complete processed document (gathered).
 
 This approach provides several advantages:
 
@@ -90,7 +90,7 @@ This approach provides several advantages:
 
 ### 1.4. Scope
 
-This document specifies the PipeStream protocol including message formats, state machines, error handling, and the interaction between data and ledger streams. The document defines the four standard data layers but does not mandate specific processing semantics, which are left to application-layer specifications.
+This document specifies the PipeStream protocol including message formats, state machines, error handling, and the interaction between data and control streams. The document defines the four standard data layers but does not mandate specific processing semantics, which are left to application-layer specifications.
 
 ---
 
@@ -101,49 +101,49 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 ### 2.1. Protocol Entities
 
 **Entity**
-:   The fundamental unit of data flowing through a PipeStream pipeline. An Entity represents either a complete document or a constituent part of a decomposed document. Each Entity possesses a unique identifier within its processing context and carries payload data in one of the four defined Layer formats. Entities are immutable once created; transformations produce new Entities rather than modifying existing ones. An Entity MAY be marked as "composite," indicating that it is itself composed of sub-entities that must be tracked via the Parts Ledger.
+:   The fundamental unit of data flowing through a PipeStream pipeline. An Entity represents either a complete document or a constituent part of a decomposed document. Each Entity possesses a unique identifier within its processing context and carries payload data in one of the four defined Layer formats. Entities are immutable once created; transformations produce new Entities rather than modifying existing ones. An Entity MAY be marked as "composite," indicating that it is itself composed of sub-entities that must be tracked via the Assembly Manifest.
 
 **Document**
-:   A logical unit of content submitted to a PipeStream pipeline for processing. A Document enters the pipeline as a single root Entity and MAY be decomposed into multiple Entities during processing. The Document is considered complete when its root Entity (or the rejoined result of its decomposition) exits the pipeline.
+:   A logical unit of content submitted to a PipeStream pipeline for processing. A Document enters the pipeline as a single root Entity and MAY be decomposed into multiple Entities during processing. The Document is considered complete when its root Entity (or the rehydrated result of its decomposition) exits the pipeline.
 
 ### 2.2. Decomposition and Reassembly
 
-**Dematerialize**
-:   The operation of decomposing a document or Entity into multiple constituent Entities for parallel or distributed processing. When an Entity is dematerialized, the originating node MUST create a Parts Ledger entry recording the identifiers of all resulting sub-entities. The dematerialization operation is recursive; a sub-entity produced by dematerialization MAY itself be dematerialized, creating a tree of decomposition. Dematerialization SHOULD be performed according to semantic boundaries within the document (e.g., chapters, sections, paragraphs) when such boundaries are discernible.
+**Dehydrate**
+:   The operation of decomposing a document or Entity into multiple constituent Entities for parallel or distributed processing. When an Entity is dehydrated, the originating node MUST create an Assembly Manifest entry recording the identifiers of all resulting sub-entities. The dehydration operation is recursive; a sub-entity produced by dehydration MAY itself be dehydrated, creating a tree of decomposition. Dehydration SHOULD be performed according to semantic boundaries within the document (e.g., chapters, sections, paragraphs) when such boundaries are discernible.
 
-**Rematerialize**
-:   The operation of reassembling multiple Entities back into a single composite Entity or Document. A rematerialize operation MUST NOT proceed until all constituent Entities listed in the corresponding Parts Ledger entry have been received and processed. The rematerialize operation is the inverse of dematerialization; for any dematerialization that produces N sub-entities, a corresponding rematerialize MUST consume exactly those N sub-entities. The semantics of combining Entity payloads during rematerialize are Layer-specific and defined in Section 6.
+**Rehydrate**
+:   The operation of reassembling multiple Entities back into a single composite Entity or Document. A rehydrate operation MUST NOT proceed until all constituent Entities listed in the corresponding Assembly Manifest entry have been received and processed. The rehydrate operation is the inverse of dehydration; for any dehydration that produces N sub-entities, a corresponding rehydrate MUST consume exactly those N sub-entities. The semantics of combining Entity payloads during rehydrate are Layer-specific and defined in Section 6.
 
 ### 2.3. Consistency Mechanisms
 
 **Checkpoint**
-:   A synchronization point in the processing pipeline where all in-flight Entities MUST reach a consistent state before processing may continue. When a checkpoint is declared, all processing nodes MUST complete their current Entity operations and report completion via the Ledger Stream. No new Entities SHALL be accepted for processing until the checkpoint has been satisfied. Checkpoints provide consistency boundaries that enable:
-    - Guaranteed completion of all pending dematerialize/rematerialize operations
+:   A synchronization point in the processing pipeline where all in-flight Entities MUST reach a consistent state before processing may continue. When a checkpoint is declared, all processing nodes MUST complete their current Entity operations and report completion via the Control Stream. No new Entities SHALL be accepted for processing until the checkpoint has been satisfied. Checkpoints provide consistency boundaries that enable:
+    - Guaranteed completion of all pending dehydrate/rehydrate operations
     - Consistent state snapshots for fault recovery
     - Backpressure propagation through the pipeline
 
-    A checkpoint is considered "satisfied" when all Parts Ledger entries created before the checkpoint have been resolved (all constituent Entities processed and rematerialized).
+    A checkpoint is considered "satisfied" when all Assembly Manifest entries created before the checkpoint have been resolved (all constituent Entities processed and rehydrated).
 
-**Ledger**
-:   The control stream that tracks Entity completion status throughout the processing pipeline. The Ledger is transmitted on a dedicated QUIC stream parallel to the data stream, enabling control information to flow independently of Entity payloads. The Ledger carries:
+**Control Stream**
+:   The control stream that tracks Entity completion status throughout the processing pipeline. The control stream is transmitted on a dedicated QUIC stream parallel to the data stream, enabling control information to flow independently of Entity payloads. The control stream carries:
     - Entity lifecycle events (created, processing, completed, failed)
-    - Parts Ledger updates for dematerialization tracking
+    - Assembly Manifest updates for dehydration tracking
     - Checkpoint declarations and acknowledgments
     - Error and retry notifications
 
-    All nodes participating in a PipeStream pipeline MUST maintain a consistent view of the Ledger. The Ledger provides the consistency guarantees that enable safe dematerialize and rematerialize operations across distributed nodes.
+    All nodes participating in a PipeStream pipeline MUST maintain a consistent view of the control stream. The control stream provides the consistency guarantees that enable safe dehydrate and rehydrate operations across distributed nodes.
 
-**Parts Ledger**
-:   A data structure within the Ledger that tracks the relationship between a composite Entity and its constituent sub-entities produced by dematerialization. Each Parts Ledger entry contains:
-    - The identifier of the parent Entity that was dematerialized
+**Assembly Manifest**
+:   A data structure within the control stream that tracks the relationship between a composite Entity and its constituent sub-entities produced by dehydration. Each Assembly Manifest entry contains:
+    - The identifier of the parent Entity that was dehydrated
     - An ordered list of identifiers for all sub-entities produced
     - The completion status of each sub-entity
-    - The checkpoint scope within which the dematerialization occurred
+    - The checkpoint scope within which the dehydration occurred
 
-    A Parts Ledger entry is created atomically when an Entity is dematerialized and MUST be transmitted on the Ledger Stream before any sub-entities are transmitted on the Data Stream. A Parts Ledger entry is "resolved" when all constituent sub-entities have reached "completed" status, at which point a rematerialize operation MAY proceed.
+    An Assembly Manifest entry is created atomically when an Entity is dehydrated and MUST be transmitted on the Control Stream before any sub-entities are transmitted on the Data Stream. An Assembly Manifest entry is "resolved" when all constituent sub-entities have reached "completed" status, at which point a rehydrate operation MAY proceed.
 
 **Scope**
-:   A hierarchical namespace for Entity IDs. Each scope maintains its own Entity ID space, cursor, and Parts Ledger. Scopes enable collections to contain documents, documents to contain parts, and parts to contain jobs, each with independent ID management. (Protocol Layer 1)
+:   A hierarchical namespace for Entity IDs. Each scope maintains its own Entity ID space, cursor, and Assembly Manifest. Scopes enable collections to contain documents, documents to contain parts, and parts to contain jobs, each with independent ID management. (Protocol Layer 1)
 
 **Cursor**
 :   A pointer to the lowest unresolved Entity ID within a scope. Entity IDs behind the cursor are considered resolved and MAY be recycled. The cursor enables efficient ID space management without global coordination.
@@ -157,18 +157,18 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 :   A detached reference to a deferred Entity that can be queried or resumed independently, potentially in a different session. Claim checks enable asynchronous processing patterns and retry queues.
 
 **Completion Policy**
-:   A configuration specifying how to handle partial failures during dematerialization. Policies include STRICT (all must succeed), LENIENT (continue with partial results), BEST_EFFORT (complete with whatever succeeds), and QUORUM (require minimum success ratio).
+:   A configuration specifying how to handle partial failures during dehydration. Policies include STRICT (all must succeed), LENIENT (continue with partial results), BEST_EFFORT (complete with whatever succeeds), and QUORUM (require minimum success ratio).
 
 ### 2.5. Routing and Distribution
 
 **WorkerMap**
-:   A routing table that specifies how Entities should be distributed across processing nodes during dematerialization. The WorkerMap defines:
+:   A routing table that specifies how Entities should be distributed across processing nodes during dehydration. The WorkerMap defines:
     - Available worker nodes and their capabilities
     - Routing predicates based on Entity properties (type, size, Layer)
     - Load balancing policies for distributing sub-entities
     - Affinity rules for co-locating related Entities
 
-    When dematerializing an Entity, the originating node SHOULD consult the WorkerMap to determine the destination for each sub-entity. The WorkerMap MAY be distributed via the Ledger Stream to ensure all nodes maintain a consistent routing view. Updates to the WorkerMap MUST be applied at checkpoint boundaries to prevent routing inconsistencies during active processing.
+    When dehydrating an Entity, the originating node SHOULD consult the WorkerMap to determine the destination for each sub-entity. The WorkerMap MAY be distributed via the Control Stream to ensure all nodes maintain a consistent routing view. Updates to the WorkerMap MUST be applied at checkpoint boundaries to prevent routing inconsistencies during active processing.
 
 **Barrier**
 :   A synchronization point scoped to a specific subtree. Unlike checkpoints which are global, barriers block only entities dependent on a specific parent's descendants. (Protocol Layer 1)
@@ -194,13 +194,13 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 ### 2.6. Additional Terms
 
 **Pipeline**
-:   A configured sequence of processing stages through which Entities flow. A Pipeline defines the processing topology, including available transformations, dematerialization points, rematerialize points, and checkpoint locations.
+:   A configured sequence of processing stages through which Entities flow. A Pipeline defines the processing topology, including available transformations, dehydration points, rehydrate points, and checkpoint locations.
 
 **Stage**
-:   A single processing step within a Pipeline. Each Stage receives Entities, performs transformations, and emits Entities (possibly dematerialized or at a different Layer) to subsequent Stages.
+:   A single processing step within a Pipeline. Each Stage receives Entities, performs transformations, and emits Entities (possibly dehydrated or at a different Layer) to subsequent Stages.
 
 **Flow Control**
-:   The mechanism by which PipeStream regulates the rate of Entity transmission to prevent overwhelming downstream processors. Flow control operates at both the QUIC transport level and the application level via checkpoint blocking and Ledger-based backpressure signals.
+:   The mechanism by which PipeStream regulates the rate of Entity transmission to prevent overwhelming downstream processors. Flow control operates at both the QUIC transport level and the application level via checkpoint blocking and control-stream-based backpressure signals.
 
 ---
 

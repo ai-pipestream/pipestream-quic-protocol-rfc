@@ -12,7 +12,7 @@ PipeStream inherits its transport security properties from QUIC [RFC 9000] and T
 
 The security properties inherited from QUIC include:
 
-- **Confidentiality**: All PipeStream frames, including Ledger frames, Checkpoint frames, and Entity frames, are encrypted using AEAD algorithms negotiated during the TLS handshake.
+- **Confidentiality**: All PipeStream frames, including Status frames, Checkpoint frames, and Entity frames, are encrypted using AEAD algorithms negotiated during the TLS handshake.
 
 - **Integrity**: The QUIC packet protection mechanism provides integrity protection for all transmitted data.
 
@@ -44,7 +44,7 @@ QUIC connection migration allows endpoints to change their network addresses whi
 When a connection migrates, implementations MUST:
 
 1. Validate the new path before sending Entity payloads on it
-2. Maintain the integrity of any in-progress vaporization operations
+2. Maintain the integrity of any in-progress dehydration operations
 3. Ensure that Checkpoint state remains consistent across migration events
 4. Rate-limit migration events to prevent denial-of-service attacks
 
@@ -74,7 +74,7 @@ Receiving implementations MUST verify the checksum before processing the Entity 
 
 1. Discard the Entity payload
 2. Send a PIPESTREAM_INTEGRITY_ERROR to the peer
-3. Update the Parts Ledger entry for this Entity to FAILED status
+3. Update the Assembly Manifest entry for this Entity to FAILED status
 4. Log the integrity failure for security analysis
 
 Implementations SHOULD consider repeated integrity failures from a peer as a potential attack indicator and MAY terminate the connection after a configurable threshold of failures.
@@ -98,9 +98,9 @@ The signature covers the following fields, concatenated in order:
 
 Implementations MUST maintain a registry of trusted signing keys and MUST reject Entities signed by untrusted keys. Key management and distribution is outside the scope of this specification but SHOULD follow established practices such as those defined in [RFC 7517] for JSON Web Keys.
 
-#### 9.2.3 Parts Ledger Tampering Prevention
+#### 9.2.3 Assembly Manifest Tampering Prevention
 
-The Parts Ledger maintains authoritative state about Entity processing progress. Tampering with the Parts Ledger could cause:
+The Assembly Manifest maintains authoritative state about Entity processing progress. Tampering with the Assembly Manifest could cause:
 
 - Processing of already-processed Entities (waste of resources)
 - Skipping of unprocessed Entities (data loss)
@@ -109,23 +109,23 @@ The Parts Ledger maintains authoritative state about Entity processing progress.
 
 To prevent tampering, implementations MUST:
 
-1. **Authenticate Ledger Updates**: All Ledger frame updates MUST originate from authenticated peers. Implementations MUST verify the connection-level authentication before accepting Ledger updates.
+1. **Authenticate Status Frame Updates**: All Status Frame updates MUST originate from authenticated peers. Implementations MUST verify the connection-level authentication before accepting status frame updates.
 
-2. **Maintain Update Sequence Numbers**: Each Ledger update MUST include a monotonically increasing sequence number. Implementations MUST reject updates with sequence numbers less than or equal to the last accepted update.
+2. **Maintain Update Sequence Numbers**: Each status frame update MUST include a monotonically increasing sequence number. Implementations MUST reject updates with sequence numbers less than or equal to the last accepted update.
 
-3. **Validate State Transitions**: Implementations MUST enforce valid state transitions as defined in Section 5 of this specification. Invalid state transitions MUST be rejected with PIPESTREAM_LEDGER_RESET.
+3. **Validate State Transitions**: Implementations MUST enforce valid state transitions as defined in Section 5 of this specification. Invalid state transitions MUST be rejected with PIPESTREAM_CONTROL_RESET.
 
-4. **Compute Ledger Digests**: Implementations SHOULD periodically compute and exchange cryptographic digests of Ledger state to detect divergence. The digest MUST be computed as:
+4. **Compute Control Stream Digests**: Implementations SHOULD periodically compute and exchange cryptographic digests of control stream state to detect divergence. The digest MUST be computed as:
 
 ```
-Ledger_Digest = SHA-256(Entry_1 || Entry_2 || ... || Entry_n)
+Control_Stream_Digest = SHA-256(Entry_1 || Entry_2 || ... || Entry_n)
 ```
 
 Where entries are serialized in Entity ID order.
 
 #### 9.2.4 Checkpoint Manipulation Attacks
 
-Checkpoints provide recovery points for long-running vaporization operations. An attacker who can manipulate Checkpoint state could:
+Checkpoints provide recovery points for long-running dehydration operations. An attacker who can manipulate Checkpoint state could:
 
 - Cause infinite processing loops by reverting to old Checkpoints
 - Cause data loss by advancing past incomplete processing
@@ -133,43 +133,43 @@ Checkpoints provide recovery points for long-running vaporization operations. An
 
 Implementations MUST protect against these attacks by:
 
-1. **Authenticating Checkpoint Operations**: Only the endpoint that initiated a vaporization operation SHOULD be able to create or restore Checkpoints for that operation. Checkpoint frames MUST include an authentication tag derived from the session keys.
+1. **Authenticating Checkpoint Operations**: Only the endpoint that initiated a dehydration operation SHOULD be able to create or restore Checkpoints for that operation. Checkpoint frames MUST include an authentication tag derived from the session keys.
 
 2. **Limiting Checkpoint Frequency**: Implementations MUST enforce a minimum interval between Checkpoint creation operations. The default minimum interval SHOULD be 1 second. Implementations receiving Checkpoint requests more frequently than the configured limit MUST reject them with PIPESTREAM_CHECKPOINT_RATE_EXCEEDED.
 
 3. **Validating Checkpoint Consistency**: Before restoring from a Checkpoint, implementations MUST verify that the Checkpoint state is consistent with any Entities that have been fully processed. Implementations MUST NOT restore to a Checkpoint that would re-process an Entity whose results have already been committed.
 
-4. **Limiting Checkpoint History**: Implementations MUST limit the number of retained Checkpoints. The default limit SHOULD be 16 Checkpoints per vaporization session. Implementations MUST delete the oldest Checkpoint when this limit is exceeded.
+4. **Limiting Checkpoint History**: Implementations MUST limit the number of retained Checkpoints. The default limit SHOULD be 16 Checkpoints per dehydration session. Implementations MUST delete the oldest Checkpoint when this limit is exceeded.
 
 ### 9.3 Resource Exhaustion
 
 Distributed document processing systems are susceptible to resource exhaustion attacks. This section defines requirements for preventing such attacks.
 
-#### 9.3.1 Vaporization Depth Limits
+#### 9.3.1 Dehydration Depth Limits
 
-Recursive Entity vaporization can create deeply nested processing hierarchies. Without limits, an attacker could craft documents that vaporize into arbitrarily deep structures, exhausting stack space or other resources.
+Recursive Entity dehydration can create deeply nested processing hierarchies. Without limits, an attacker could craft documents that dehydrate into arbitrarily deep structures, exhausting stack space or other resources.
 
-Implementations MUST enforce a maximum vaporization depth. The default maximum depth MUST be 32 layers. Implementations MAY allow configuration of a different limit but MUST NOT allow configuration above 256 layers.
+Implementations MUST enforce a maximum dehydration depth. The default maximum depth MUST be 32 layers. Implementations MAY allow configuration of a different limit but MUST NOT allow configuration above 256 layers.
 
 When an Entity would exceed the maximum depth, implementations MUST:
 
-1. Reject the vaporization operation
-2. Set the Entity status to FAILED in the Parts Ledger
+1. Reject the dehydration operation
+2. Set the Entity status to FAILED in the Assembly Manifest
 3. Include the error code PIPESTREAM_DEPTH_EXCEEDED in the failure indication
 4. Continue processing other Entities that do not exceed the depth limit
 
-Implementations SHOULD emit a warning when vaporization depth exceeds 16 layers, as this may indicate a maliciously crafted document or a misconfigured processor.
+Implementations SHOULD emit a warning when dehydration depth exceeds 16 layers, as this may indicate a maliciously crafted document or a misconfigured processor.
 
 #### 9.3.2 Entity Count Limits
 
-An attacker could attempt to exhaust memory or processing resources by creating an excessive number of Entities within a single vaporization session.
+An attacker could attempt to exhaust memory or processing resources by creating an excessive number of Entities within a single dehydration session.
 
 Implementations MUST enforce a maximum Entity count per session. The default maximum SHOULD be 1,000,000 Entities. Implementations MAY configure higher limits based on available resources but MUST document the resource implications.
 
 The Entity count limit applies to the total number of Entities created during a session, including:
 
 - Top-level Entities received from peers
-- Child Entities created through vaporization
+- Child Entities created through dehydration
 - Entities in any processing state (PENDING, PROCESSING, COMPLETE, or FAILED)
 
 When the Entity limit is reached, implementations MUST:
@@ -189,15 +189,15 @@ When a Checkpoint timeout expires:
 
 1. The Checkpoint MUST be deleted
 2. Associated Entity state MAY be deleted if no other Checkpoint references it
-3. If the associated vaporization session is still active, a warning SHOULD be logged
+3. If the associated dehydration session is still active, a warning SHOULD be logged
 
 Implementations SHOULD provide mechanisms for extending Checkpoint timeouts for legitimate long-running operations. Such extensions MUST be authenticated and MUST NOT exceed the maximum timeout.
 
 #### 9.3.4 Memory Bounds for Pending Entries
 
-The Parts Ledger may contain entries for Entities in PENDING state awaiting processing. Without bounds, an attacker could submit Entities faster than they can be processed, exhausting memory.
+The Assembly Manifest may contain entries for Entities in PENDING state awaiting processing. Without bounds, an attacker could submit Entities faster than they can be processed, exhausting memory.
 
-Implementations MUST enforce a maximum size for pending Ledger entries. This limit SHOULD be expressed in terms of both:
+Implementations MUST enforce a maximum size for pending control stream entries. This limit SHOULD be expressed in terms of both:
 
 - Maximum number of PENDING entries (default: 10,000)
 - Maximum total bytes of PENDING entry metadata (default: 100 MB)
@@ -238,7 +238,7 @@ The time required to process an Entity may reveal information about its contents
 
 - Documents containing certain patterns may take longer to parse
 - Encryption or decryption of sensitive sections may have measurable timing
-- Vaporization into more child Entities takes longer than simple processing
+- Dehydration into more child Entities takes longer than simple processing
 
 Implementations SHOULD NOT make security decisions based on timing of remote processing operations. Implementations that process sensitive documents SHOULD consider:
 
@@ -247,21 +247,21 @@ Implementations SHOULD NOT make security decisions based on timing of remote pro
 3. Batching status updates to obscure individual processing times
 4. Using dedicated resources to avoid timing variation from resource contention
 
-#### 9.4.3 Ledger Stream Information Leakage
+#### 9.4.3 Control Stream Information Leakage
 
-The Parts Ledger stream reveals detailed information about processing progress:
+The control stream reveals detailed information about processing progress:
 
 - The rate of status updates reveals processing speed
 - The pattern of FAILED statuses may reveal document characteristics
 - The Checkpoint pattern reveals processing structure
 
-In multi-tenant deployments, implementations MUST ensure that Ledger information for one tenant is not visible to other tenants. This requires:
+In multi-tenant deployments, implementations MUST ensure that control stream information for one tenant is not visible to other tenants. This requires:
 
 1. Separate QUIC connections or streams for each tenant
-2. Authentication and authorization of all Ledger access
-3. Encryption of Ledger state at rest if stored persistently
+2. Authentication and authorization of all control stream access
+3. Encryption of control stream state at rest if stored persistently
 
-Implementations SHOULD provide configuration options to reduce Ledger verbosity for privacy-sensitive deployments, including:
+Implementations SHOULD provide configuration options to reduce control stream verbosity for privacy-sensitive deployments, including:
 
 - Aggregated status updates rather than per-Entity updates
 - Delayed status updates to obscure timing
@@ -308,9 +308,9 @@ This document establishes a new IANA registry for PipeStream frame types.
 
 | Value | Frame Type Name | Reference |
 |-------|-----------------|-----------|
-| 0x50 | LEDGER | [this document], Section 5.1 |
+| 0x50 | STATUS | [this document], Section 5.1 |
 | 0x51 | CHECKPOINT | [this document] |
-| 0x52 | LEDGER_ACK | [this document] |
+| 0x52 | STATUS_ACK | [this document] |
 | 0x53 | CHECKPOINT_ACK | [this document] |
 | 0x54 | SCOPE_DIGEST | [this document] |
 | 0x55 | BARRIER | [this document] |
@@ -365,8 +365,8 @@ This document establishes a new IANA registry for PipeStream entity status codes
 | 0x2 | COMPLETE | Entity successfully processed | [this document] |
 | 0x3 | FAILED | Entity processing failed | [this document] |
 | 0x4 | CHECKPOINT | Synchronization barrier | [this document] |
-| 0x5 | VAPORIZING | Decomposing into children | [this document] |
-| 0x6 | AGGREGATING | Rejoining children | [this document] |
+| 0x5 | DEHYDRATING | Decomposing into children | [this document] |
+| 0x6 | REHYDRATING | Rehydrating children | [this document] |
 | 0x7 | Reserved | Reserved | [this document] |
 | 0x8 | YIELDED | Paused with continuation token | [this document] |
 | 0x9 | DEFERRED | Detached with claim check | [this document] |
@@ -398,7 +398,7 @@ This document establishes a new IANA registry for PipeStream error codes.
 | 0x00 | PIPESTREAM_NO_ERROR | Graceful shutdown |
 | 0x01 | PIPESTREAM_INTERNAL_ERROR | Implementation error |
 | 0x02 | PIPESTREAM_IDLE_TIMEOUT | Idle timeout |
-| 0x03 | PIPESTREAM_LEDGER_RESET | Ledger must reset |
+| 0x03 | PIPESTREAM_CONTROL_RESET | Control stream must reset |
 | 0x04 | PIPESTREAM_INTEGRITY_ERROR | Checksum failed |
 | 0x05 | PIPESTREAM_ENTITY_INVALID | Invalid format |
 | 0x06 | PIPESTREAM_ENTITY_TOO_LARGE | Size exceeded |
@@ -441,13 +441,13 @@ This document establishes a new IANA registry for PipeStream extension types.
 | Value | Extension Type Name | Applicable Frames | Reference |
 |-------|---------------------|-------------------|-----------|
 | 0x00 | Reserved | N/A | [this document] |
-| 0x01 | PARTS_LEDGER | LEDGER | [this document], Section 5 |
+| 0x01 | ASSEMBLY_MANIFEST | STATUS | [this document], Section 5 |
 | 0x02 | CHECKPOINT | CHECKPOINT | [this document], Section 6 |
 | 0x03 | ENTITY_SIGNATURE | ENTITY | [this document], Section 9.2.2 |
 | 0x04 | ENTITY_COMPRESSION | ENTITY | [this document] |
-| 0x05 | LEDGER_ENCRYPTION | LEDGER | [this document], Section 9.4.3 |
-| 0x06 | PRIORITY | ENTITY, LEDGER | [this document] |
-| 0x07 | TRACE | ENTITY, LEDGER, CHECKPOINT | [this document] |
+| 0x05 | STATUS_ENCRYPTION | STATUS | [this document], Section 9.4.3 |
+| 0x06 | PRIORITY | ENTITY, STATUS | [this document] |
+| 0x07 | TRACE | ENTITY, STATUS, CHECKPOINT | [this document] |
 | 0x08-0x1F | Reserved | N/A | [this document] |
 
 #### 10.5.2 Extension Frame Format
@@ -467,17 +467,17 @@ Extension {
 }
 ```
 
-#### 10.5.3 Parts Ledger Extension (0x01)
+#### 10.5.3 Assembly Manifest Extension (0x01)
 
-The Parts Ledger Extension carries additional metadata for Ledger entries:
+The Assembly Manifest Extension carries additional metadata for status frame entries:
 
 ```
-Parts Ledger Extension Data {
+Assembly Manifest Extension Data {
   Entry Count (i),
   Entries (..) ...,
 }
 
-Parts Ledger Entry {
+Assembly Manifest Entry {
   Entity ID (i),
   Parent ID (i),
   Status Code (8),
@@ -488,7 +488,7 @@ Parts Ledger Entry {
 }
 ```
 
-This extension MUST only be attached to LEDGER frames. Implementations MUST support this extension.
+This extension MUST only be attached to STATUS frames. Implementations MUST support this extension.
 
 #### 10.5.4 Checkpoint Extension (0x02)
 
@@ -500,7 +500,7 @@ Checkpoint Extension Data {
   Creation Timestamp (64),
   Expiry Timestamp (64),
   Entity Count (i),
-  Ledger Digest (256),
+  Control Stream Digest (256),
   Application Data Length (i),
   Application Data (..),
 }

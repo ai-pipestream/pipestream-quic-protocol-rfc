@@ -6,7 +6,7 @@ PipeStream organizes its protobuf messages into two categories: protocol-level m
 
 ## A.1 Protocol-Level Messages
 
-This section defines the core protocol messages used for capability negotiation, entity transport, framing, ledger tracking, and coordination in PipeStream.
+This section defines the core protocol messages used for capability negotiation, entity transport, framing, control stream tracking, and coordination in PipeStream.
 
 ### A.1.1 Capabilities
 
@@ -37,7 +37,7 @@ message Capabilities {
   // Whether the endpoint supports Layer 0 (core entity streaming).
   bool layer0_core = 1;
 
-  // Whether the endpoint supports Layer 1 (recursive scoping and vaporization).
+  // Whether the endpoint supports Layer 1 (recursive scoping and dehydration).
   bool layer1_recursive = 2;
 
   // Whether the endpoint supports Layer 2 (resilience, yield, and claim-check).
@@ -144,8 +144,8 @@ enum EntityStatus {
   ENTITY_STATUS_COMPLETE = 3;
   ENTITY_STATUS_FAILED = 4;
   ENTITY_STATUS_CHECKPOINT = 5;
-  ENTITY_STATUS_VAPORIZING = 6;
-  ENTITY_STATUS_AGGREGATING = 7;
+  ENTITY_STATUS_DEHYDRATING = 6;
+  ENTITY_STATUS_REHYDRATING = 7;
   ENTITY_STATUS_YIELDED = 8;
   ENTITY_STATUS_DEFERRED = 9;
   ENTITY_STATUS_RETRYING = 10;
@@ -166,11 +166,11 @@ enum ResolutionState {
 }
 ```
 
-### A.1.7 LedgerFrame
+### A.1.7 StatusFrame
 
 ```protobuf
-// LedgerFrame is sent on the ledger stream.
-message LedgerFrame {
+// StatusFrame is sent on the control stream.
+message StatusFrame {
   uint32 entity_id = 1;
   uint32 scope_id = 2;
   EntityStatus status = 3;
@@ -190,11 +190,11 @@ message CheckpointFrame {
 }
 ```
 
-### A.1.9 PartsLedgerEntry
+### A.1.9 AssemblyManifestEntry
 
 ```protobuf
-// PartsLedgerEntry tracks parent-child relationships.
-message PartsLedgerEntry {
+// AssemblyManifestEntry tracks parent-child relationships.
+message AssemblyManifestEntry {
   uint32 parent_id = 1;
   uint32 scope_id = 2;
   repeated uint32 children_ids = 3;

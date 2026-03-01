@@ -74,7 +74,7 @@ Each Section within a DocOutline contains:
 | depth | int32 | REQUIRED | Nesting depth where 0 is top level. |
 | heading_level | int32 | REQUIRED | Heading level (HTML h1=1, Markdown #=1, 0 if unknown). |
 | href | string | OPTIONAL | Relative link or fragment identifier if applicable. |
-| parent_id | string | OPTIONAL | Parent section identifier for hierarchical navigation. Used for vaporized parts referencing their parent entity. |
+| parent_id | string | OPTIONAL | Parent section identifier for hierarchical navigation. Used for dehydrated parts referencing their parent entity. |
 | order_index | int32 | REQUIRED | Preorder position index within the document. |
 | tags | repeated string | OPTIONAL | Classification tags (e.g., "chapter", "appendix", "figure", "table", "nav"). |
 | font_size_rel | float | OPTIONAL | Relative font size (0.0-1.0) if inferred from styling. |

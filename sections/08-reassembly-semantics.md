@@ -1,15 +1,15 @@
 # Section 8: Reassembly Semantics
 
-## 8.1 Parts Ledger
+## 8.1 Assembly Manifest
 
-The Parts Ledger is a distributed data structure that maintains the hierarchical relationships between dematerialized entities and their constituent parts. Each processing node MUST maintain a local Parts Ledger for entities within its processing scope.
+The Assembly Manifest is a distributed data structure that maintains the hierarchical relationships between dehydrated entities and their constituent parts. Each processing node MUST maintain a local Assembly Manifest for entities within its processing scope.
 
-### 8.1.1 Ledger Entry Structure
+### 8.1.1 Manifest Entry Structure
 
-Each Parts Ledger entry SHALL contain the following fields (as defined in `PartsLedgerEntry` protobuf):
+Each Assembly Manifest entry SHALL contain the following fields (as defined in `AssemblyManifestEntry` protobuf):
 
 ```
-Parts Ledger Entry {
+Assembly Manifest Entry {
     Parent ID (20),
     Scope ID (32),
     Child Count (16),
@@ -24,13 +24,13 @@ Parts Ledger Entry {
 Field definitions:
 
 Parent ID (20 bits):
-: The identifier of the parent entity that was dematerialized.
+: The identifier of the parent entity that was dehydrated.
 
 Scope ID (32 bits):
-: The identifier of the scope in which the dematerialization occurred.
+: The identifier of the scope in which the dehydration occurred.
 
 Child Count (16 bits):
-: The number of child entities produced by dematerialization.
+: The number of child entities produced by dehydration.
 
 Children IDs (variable):
 : An array of 20-bit entity identifiers, one for each child.
@@ -42,10 +42,10 @@ Completion Policy (Layer 2):
 : The policy governing failure handling and success criteria for this decomposition.
 
 Creation Timestamp (64 bits):
-: Microseconds since the UNIX epoch when this ledger entry was created.
+: Microseconds since the UNIX epoch when this manifest entry was created.
 
 Resolution State (8 bits):
-: The current state of the ledger entry (ResolutionState).
+: The current state of the manifest entry (ResolutionState).
 
 ### 8.1.2 Completion Status Codes
 
@@ -58,8 +58,8 @@ Each child entity SHALL have one of the following completion status values:
 | 0x2 | COMPLETE | 0 | Entity successfully processed |
 | 0x3 | FAILED | 0 | Entity processing failed |
 | 0x4 | CHECKPOINT | 0 | Synchronization barrier |
-| 0x5 | VAPORIZING | 0 | Decomposing into children |
-| 0x6 | AGGREGATING | 0 | Rejoining children |
+| 0x5 | DEHYDRATING | 0 | Decomposing into children |
+| 0x6 | REHYDRATING | 0 | Rehydrating children |
 | 0x7 | Reserved | - | Reserved |
 | 0x8 | YIELDED | 2 | Paused with continuation token |
 | 0x9 | DEFERRED | 2 | Detached with claim check |
@@ -76,12 +76,12 @@ Each child entity SHALL have one of the following completion status values:
 | 0x2 | PARTIAL | Some children failed/skipped (policy met) |
 | 0x3 | FAILED | Entry resolution failed |
 
-### 8.1.4 Ledger Frame Format
+### 8.1.4 Status Frame Format
 
-Parts Ledger updates are transmitted using extended 3-byte frames with the following structure:
+Assembly Manifest updates are transmitted using extended 3-byte frames with the following structure:
 
 ```
-Ledger Frame {
+Status Frame {
     Frame Type (8) = 0x50,
     Frame Flags (8),
     Extended Length (16),
@@ -100,37 +100,37 @@ Operation codes:
 
 | Value | Name | Semantics |
 |-------|------|-----------|
-| 0x01 | CREATE | Create new ledger entry |
+| 0x01 | CREATE | Create new manifest entry |
 | 0x02 | UPDATE_STATUS | Update child completion status |
 | 0x03 | RESOLVE | Mark entry as resolved |
-| 0x04 | DELETE | Remove ledger entry |
-| 0x05 | QUERY | Request ledger entry state |
-| 0x06 | SYNC | Synchronize ledger state |
+| 0x04 | DELETE | Remove manifest entry |
+| 0x05 | QUERY | Request manifest entry state |
+| 0x06 | SYNC | Synchronize manifest state |
 
 ### 8.1.5 Atomicity Requirements
 
 Implementations MUST satisfy the following atomicity requirements:
 
-1. A Parts Ledger entry MUST be created and acknowledged before any child entity is emitted. Failure to observe this requirement MAY result in orphaned children.
+1. An Assembly Manifest entry MUST be created and acknowledged before any child entity is emitted. Failure to observe this requirement MAY result in orphaned children.
 
-2. The creation of a ledger entry and the emission of the first child entity SHOULD be performed as an atomic operation where the underlying transport supports such semantics.
+2. The creation of a manifest entry and the emission of the first child entity SHOULD be performed as an atomic operation where the underlying transport supports such semantics.
 
 3. If atomicity cannot be guaranteed, implementations MUST use the following two-phase protocol:
 
 ```
-Phase 1: Create ledger entry with PENDING state
+Phase 1: Create manifest entry with PENDING state
 Phase 2: Await CREATE acknowledgment
 Phase 3: Emit child entities
-Phase 4: Update ledger entry to ACTIVE state
+Phase 4: Update manifest entry to ACTIVE state
 ```
 
-4. If a failure occurs between Phase 1 and Phase 3, the ledger entry MUST be garbage collected after the timeout specified in Section 8.2.5.
+4. If a failure occurs between Phase 1 and Phase 3, the manifest entry MUST be garbage collected after the timeout specified in Section 8.2.5.
 
-5. Multiple concurrent updates to the same ledger entry MUST be serialized. Implementations MAY use optimistic concurrency control with version vectors or pessimistic locking.
+5. Multiple concurrent updates to the same manifest entry MUST be serialized. Implementations MAY use optimistic concurrency control with version vectors or pessimistic locking.
 
 ### 8.1.6 Resolution Conditions
 
-A Parts Ledger entry SHALL be considered resolved when one of the following conditions is met:
+An Assembly Manifest entry SHALL be considered resolved when one of the following conditions is met:
 
 1. ALL children have Completion Status of COMPLETE (successful resolution)
 
@@ -143,7 +143,7 @@ A Parts Ledger entry SHALL be considered resolved when one of the following cond
 Upon resolution, implementations MUST:
 
 1. Update the Resolution State to RESOLVED
-2. Enqueue the entry for rematerialize processing (Section 8.3)
+2. Enqueue the entry for rehydrate processing (Section 8.3)
 3. Notify any blocked checkpoints (Section 8.2)
 
 ## 8.2 Checkpoint Blocking
@@ -243,7 +243,7 @@ A checkpoint SHALL be considered satisfied when ALL of the following conditions 
 
 2. If Dependent IDs are specified, all listed entities have reached a terminal completion state.
 
-3. All Parts Ledger entries within the checkpoint's scope have been resolved.
+3. All Assembly Manifest entries within the checkpoint's scope have been resolved.
 
 4. All nested checkpoints within this checkpoint's scope have been satisfied.
 
@@ -300,7 +300,7 @@ Implementations MUST implement timeout handling to prevent indefinite blocking:
 
 3. Timeout Actions for SOFT_CHECKPOINT:
    - Mark all PENDING entities as TIMEOUT
-   - Resolve all affected Parts Ledger entries
+   - Resolve all affected Assembly Manifest entries
    - Satisfy the checkpoint with partial completion status
    - Emit CHECKPOINT_PARTIAL_SATISFACTION notification
 
@@ -319,9 +319,9 @@ procedure ON_CHECKPOINT_TIMEOUT(checkpoint):
         for each entity_id in checkpoint.pending_entities:
             SET_ENTITY_STATUS(entity_id, TIMEOUT)
 
-        for each ledger_entry in GET_LEDGER_ENTRIES(checkpoint.scope_id):
-            if ledger_entry.resolution_state = ACTIVE:
-                FORCE_RESOLVE_LEDGER_ENTRY(ledger_entry, TIMEOUT)
+        for each manifest_entry in GET_MANIFEST_ENTRIES(checkpoint.scope_id):
+            if manifest_entry.resolution_state = ACTIVE:
+                FORCE_RESOLVE_MANIFEST_ENTRY(manifest_entry, TIMEOUT)
 
         SATISFY_CHECKPOINT_PARTIAL(checkpoint)
 
@@ -352,7 +352,7 @@ When a checkpoint fails, implementations MUST follow this recovery procedure:
 
 4. State Cleanup:
    - Release blocked entities (with appropriate error status)
-   - Clean up Parts Ledger entries for failed scope
+   - Clean up Assembly Manifest entries for failed scope
    - Free resources held for checkpoint
 
 ```
@@ -380,7 +380,7 @@ Failure Reason codes:
 
 ## 8.3 Eventual Consistency (Fibonacci Heap)
 
-Due to the distributed nature of PipeStream processing, child entities MAY complete out of order. This section specifies the mechanism for efficiently tracking completion status and triggering rematerializations when all children of a dematerialized entity have completed.
+Due to the distributed nature of PipeStream processing, child entities MAY complete out of order. This section specifies the mechanism for efficiently tracking completion status and triggering rehydrations when all children of a dehydrated entity have completed.
 
 ### 8.3.1 Out-of-Order Entity Arrival Handling
 
@@ -388,20 +388,20 @@ Implementations MUST handle out-of-order completion notifications:
 
 1. Each completion notification MUST be idempotent; duplicate notifications for the same entity MUST be safely ignored.
 
-2. Completion notifications MUST include sufficient information to locate the relevant Parts Ledger entry (parent_id or ledger entry reference).
+2. Completion notifications MUST include sufficient information to locate the relevant Assembly Manifest entry (parent_id or manifest entry reference).
 
 3. Implementations MUST NOT assume any ordering of completion notifications, even for children emitted in sequence.
 
-4. Completion notifications received before the corresponding ledger entry exists MUST be buffered for a grace period (minimum 30 seconds) before being discarded as orphans.
+4. Completion notifications received before the corresponding manifest entry exists MUST be buffered for a grace period (minimum 30 seconds) before being discarded as orphans.
 
 ### 8.3.2 Priority Queue Structure
 
-Implementations SHALL use a priority queue to efficiently track which Parts Ledger entries are ready for rematerialization. This specification RECOMMENDS a Fibonacci heap due to its O(1) amortized decrease-key operation.
+Implementations SHALL use a priority queue to efficiently track which Assembly Manifest entries are ready for rehydration. This specification RECOMMENDS a Fibonacci heap due to its O(1) amortized decrease-key operation.
 
 Priority Queue Properties:
 
 - Key: Number of completed children (completion_count)
-- Value: Reference to Parts Ledger entry
+- Value: Reference to Assembly Manifest entry
 - Ordering: Entries with completion_count equal to child_count have highest priority
 
 The Fibonacci heap provides the following complexity guarantees:
@@ -422,9 +422,9 @@ For PipeStream, the "decrease-key" operation is repurposed as an "increase-compl
 Fibonacci Heap Node Structure:
 
     FibHeapNode {
-        ledger_entry_ref: Reference to Parts Ledger Entry,
+        manifest_entry_ref: Reference to Assembly Manifest Entry,
         completion_count: Integer,
-        target_count: Integer (equal to ledger_entry.child_count),
+        target_count: Integer (equal to manifest_entry.child_count),
         priority: Float (computed as target_count - completion_count),
         parent: FibHeapNode reference,
         child: FibHeapNode reference,
@@ -437,13 +437,13 @@ Fibonacci Heap Node Structure:
 
 Priority Calculation:
 
-The priority SHALL be calculated such that entries closer to completion have LOWER priority values (min-heap behavior triggers rematerialize on extract-min):
+The priority SHALL be calculated such that entries closer to completion have LOWER priority values (min-heap behavior triggers rehydrate on extract-min):
 
 ```
 priority = target_count - completion_count
 ```
 
-When priority reaches 0, the entry is ready for rematerialize and will be at the top of the heap.
+When priority reaches 0, the entry is ready for rehydrate and will be at the top of the heap.
 
 ### 8.3.4 Bubble-Up on Completion
 
@@ -451,30 +451,30 @@ When a child entity completes, the following procedure updates the heap:
 
 ```
 procedure ON_CHILD_COMPLETE(parent_id, child_id, status):
-    ledger_entry := parts_ledger[parent_id]
-    if ledger_entry IS NULL:
+    manifest_entry := assembly_manifest[parent_id]
+    if manifest_entry IS NULL:
         BUFFER_ORPHAN_COMPLETION(parent_id, child_id, status)
         return
 
-    child_index := FIND_CHILD_INDEX(ledger_entry, child_id)
+    child_index := FIND_CHILD_INDEX(manifest_entry, child_id)
     if child_index = -1:
         ERROR("Unknown child entity")
         return
 
-    if ledger_entry.completion_status[child_index] != PENDING:
+    if manifest_entry.completion_status[child_index] != PENDING:
         return  // Already completed, idempotent handling
 
-    ledger_entry.completion_status[child_index] := status
+    manifest_entry.completion_status[child_index] := status
 
     heap_node := heap_node_index[parent_id]
     heap_node.completion_count := heap_node.completion_count + 1
     new_priority := heap_node.target_count - heap_node.completion_count
 
-    DECREASE_KEY(rematerialize_heap, heap_node, new_priority)
+    DECREASE_KEY(rehydrate_heap, heap_node, new_priority)
 
     if new_priority = 0:
-        // Entry is now ready for rematerialize - will be at heap root
-        SIGNAL_REJOIN_READY()
+        // Entry is now ready for rehydrate - will be at heap root
+        SIGNAL_REHYDRATE_READY()
 
 procedure DECREASE_KEY(heap, node, new_priority):
     if new_priority > node.priority:
@@ -508,26 +508,26 @@ procedure CASCADING_CUT(heap, node):
             CASCADING_CUT(heap, parent)
 ```
 
-### 8.3.5 Rejoin Triggering on Extract-Min
+### 8.3.5 Rehydrate Triggering on Extract-Min
 
-The rematerialize processor continuously monitors the heap and triggers rematerializes:
+The rehydrate processor continuously monitors the heap and triggers rehydrations:
 
 ```
-procedure REJOIN_PROCESSOR():
+procedure REHYDRATE_PROCESSOR():
     loop:
-        WAIT_FOR(rematerialize_heap.min.priority = 0 OR shutdown_signal)
+        WAIT_FOR(rehydrate_heap.min.priority = 0 OR shutdown_signal)
 
         if shutdown_signal:
             break
 
-        while rematerialize_heap IS NOT EMPTY AND rematerialize_heap.min.priority = 0:
-            node := EXTRACT_MIN(rematerialize_heap)
-            ledger_entry := node.ledger_entry_ref
+        while rehydrate_heap IS NOT EMPTY AND rehydrate_heap.min.priority = 0:
+            node := EXTRACT_MIN(rehydrate_heap)
+            manifest_entry := node.manifest_entry_ref
 
-            if VALIDATE_REJOIN_PRECONDITIONS(ledger_entry):
-                EXECUTE_REJOIN(ledger_entry)
+            if VALIDATE_REHYDRATE_PRECONDITIONS(manifest_entry):
+                EXECUTE_REHYDRATE(manifest_entry)
             else:
-                HANDLE_REJOIN_FAILURE(ledger_entry)
+                HANDLE_REHYDRATE_FAILURE(manifest_entry)
 
 procedure EXTRACT_MIN(heap):
     min_node := heap.min
@@ -548,20 +548,20 @@ procedure EXTRACT_MIN(heap):
 
     return min_node
 
-procedure VALIDATE_REJOIN_PRECONDITIONS(ledger_entry):
+procedure VALIDATE_REHYDRATE_PRECONDITIONS(manifest_entry):
     // All children must have terminal status
-    for each status in ledger_entry.completion_status:
+    for each status in manifest_entry.completion_status:
         if status = PENDING:
             return FALSE
 
     // Check PARTIAL_FAILURE_ALLOWED flag
-    if NOT ledger_entry.flags.PARTIAL_FAILURE_ALLOWED:
-        for each status in ledger_entry.completion_status:
+    if NOT manifest_entry.flags.PARTIAL_FAILURE_ALLOWED:
+        for each status in manifest_entry.completion_status:
             if status != COMPLETE:
                 return FALSE
 
-    // Verify checkpoint scope allows rematerialize
-    if NOT CHECKPOINT_SCOPE_ALLOWS_REJOIN(ledger_entry.checkpoint_scope):
+    // Verify checkpoint scope allows rehydrate
+    if NOT CHECKPOINT_SCOPE_ALLOWS_REHYDRATE(manifest_entry.checkpoint_scope):
         return FALSE
 
     return TRUE
@@ -590,7 +590,7 @@ procedure ENFORCE_MEMORY_BOUNDS():
         if candidate IS NOT NULL:
             EVICT_ENTRY(candidate)
             LOG_WARNING("Evicted pending entry due to memory pressure",
-                        candidate.ledger_entry_ref.parent_id)
+                        candidate.manifest_entry_ref.parent_id)
         else:
             // All entries are close to completion, apply backpressure
             APPLY_UPSTREAM_BACKPRESSURE()
@@ -605,27 +605,27 @@ procedure FIND_EVICTION_CANDIDATE():
         return NULL
 
     return MIN_BY(candidates,
-        entry -> entry.ledger_entry_ref.creation_timestamp)
+        entry -> entry.manifest_entry_ref.creation_timestamp)
 ```
 
 5. Memory Accounting: Each heap node requires approximately:
    - Fixed overhead: 96 bytes (pointers, counters, flags)
-   - Ledger reference: 8 bytes
+   - Manifest reference: 8 bytes
    - Total per entry: ~104 bytes minimum
 
    Implementations SHOULD reserve additional memory for heap restructuring operations.
 
 ## 8.4 Parent Reference Resolution
 
-Parent references establish the hierarchical structure of vaporized entities and enable proper reassembly.
+Parent references establish the hierarchical structure of dehydrated entities and enable proper reassembly.
 
 ### 8.4.1 Parent ID Field Semantics
 
 The parent_id field in entity metadata SHALL be interpreted as follows:
 
-1. The parent_id references the entity that was vaporized to produce this entity.
+1. The parent_id references the entity that was dehydrated to produce this entity.
 
-2. The parent_id MUST correspond to a valid Parts Ledger entry, except for root entities.
+2. The parent_id MUST correspond to a valid Assembly Manifest entry, except for root entities.
 
 3. The parent_id is immutable once set; it MUST NOT be modified during entity lifecycle.
 
@@ -633,7 +633,7 @@ The parent_id field in entity metadata SHALL be interpreted as follows:
 
 ### 8.4.2 Root Entity Identification
 
-Root entities are top-level entities that were not produced by vaporization. Root entities SHALL be identified by one of the following:
+Root entities are top-level entities that were not produced by dehydration. Root entities SHALL be identified by one of the following:
 
 1. Null Parent: parent_id = 0x0000000000000000
 
@@ -647,27 +647,27 @@ procedure IS_ROOT_ENTITY(entity):
 ```
 
 Root entities:
-- Do NOT require a Parts Ledger entry (they have no parent to track them)
-- MAY be vaporized to produce children (becoming internal nodes)
+- Do NOT require an Assembly Manifest entry (they have no parent to track them)
+- MAY be dehydrated to produce children (becoming internal nodes)
 - Represent the entry points of document processing pipelines
 
-### 8.4.3 Recursive Vaporization Chains
+### 8.4.3 Recursive Dehydration Chains
 
-Entities MAY be vaporized recursively, creating chains of parent-child relationships:
+Entities MAY be dehydrated recursively, creating chains of parent-child relationships:
 
 ```
 Document (Root)
     |
-    +--vaporize--> Section 1
+    +--dehydrate--> Section 1
     |                  |
-    |                  +--vaporize--> Paragraph 1.1
+    |                  +--dehydrate--> Paragraph 1.1
     |                  |                  |
-    |                  |                  +--vaporize--> Sentence 1.1.1
-    |                  |                  +--vaporize--> Sentence 1.1.2
+    |                  |                  +--dehydrate--> Sentence 1.1.1
+    |                  |                  +--dehydrate--> Sentence 1.1.2
     |                  |
-    |                  +--vaporize--> Paragraph 1.2
+    |                  +--dehydrate--> Paragraph 1.2
     |
-    +--vaporize--> Section 2
+    +--dehydrate--> Section 2
 ```
 
 Chain Properties:
@@ -676,14 +676,14 @@ Chain Properties:
 
 2. Chains MAY be arbitrarily deep, limited only by implementation resources.
 
-3. Rejoining MUST proceed bottom-up: leaf entities rematerialize first, then their parents, recursively up to the root.
+3. Rehydrating MUST proceed bottom-up: leaf entities rehydrate first, then their parents, recursively up to the root.
 
-4. A parent entity MUST NOT rematerialize until ALL of its children have rematerializeed.
+4. A parent entity MUST NOT rehydrate until ALL of its children have rehydrated.
 
 Resolution Order:
 
 ```
-procedure DETERMINE_REJOIN_ORDER(root_id):
+procedure DETERMINE_REHYDRATE_ORDER(root_id):
     order := []
     visited := {}
 
@@ -697,9 +697,9 @@ procedure POST_ORDER_TRAVERSE(entity_id, order, visited):
 
     visited.add(entity_id)
 
-    ledger_entry := parts_ledger[entity_id]
-    if ledger_entry IS NOT NULL:
-        for each child_id in ledger_entry.children_ids:
+    manifest_entry := assembly_manifest[entity_id]
+    if manifest_entry IS NOT NULL:
+        for each child_id in manifest_entry.children_ids:
             POST_ORDER_TRAVERSE(child_id, order, visited)
 
     order.append(entity_id)
@@ -711,11 +711,11 @@ Orphaned entities are children whose parent cannot be located or has been termin
 
 Detection Conditions:
 
-1. A completion notification references a parent_id with no corresponding Parts Ledger entry, AND the grace period (30 seconds) has elapsed.
+1. A completion notification references a parent_id with no corresponding Assembly Manifest entry, AND the grace period (30 seconds) has elapsed.
 
 2. A parent entity is explicitly terminated (CANCELLED, FAILED) before all children complete.
 
-3. A Parts Ledger entry is evicted due to memory pressure while children are still processing.
+3. An Assembly Manifest entry is evicted due to memory pressure while children are still processing.
 
 Handling Procedure:
 
@@ -729,8 +729,8 @@ procedure HANDLE_ORPHAN(completion):
     orphan_id := completion.child_id
     claimed_parent := completion.parent_id
 
-    // Attempt to locate parent in distributed ledger
-    remote_entry := QUERY_REMOTE_LEDGERS(claimed_parent)
+    // Attempt to locate parent in distributed manifest
+    remote_entry := QUERY_REMOTE_MANIFESTS(claimed_parent)
 
     if remote_entry IS NOT NULL:
         // Parent found on remote node, forward completion
@@ -757,15 +757,15 @@ procedure HANDLE_ORPHAN(completion):
 
 ### 8.4.5 Cycle Prevention (DAG Enforcement)
 
-The parent-child relationship graph MUST form a Directed Acyclic Graph (DAG). Cycles would cause infinite rematerialize loops and MUST be prevented.
+The parent-child relationship graph MUST form a Directed Acyclic Graph (DAG). Cycles would cause infinite rehydrate loops and MUST be prevented.
 
 Prevention Mechanisms:
 
 1. Monotonic ID Assignment: If entity IDs are assigned monotonically, children MUST have IDs greater than their parent. This trivially prevents cycles.
 
-2. Depth Tracking: Each entity carries a depth counter; children have depth = parent.depth + 1. Implementations MUST reject vaporization that would create children with depth exceeding a maximum (default: 1024).
+2. Depth Tracking: Each entity carries a depth counter; children have depth = parent.depth + 1. Implementations MUST reject dehydration that would create children with depth exceeding a maximum (default: 1024).
 
-3. Ancestry Verification: Before creating a Parts Ledger entry, verify the parent is not a descendant of any proposed child.
+3. Ancestry Verification: Before creating an Assembly Manifest entry, verify the parent is not a descendant of any proposed child.
 
 ```
 procedure VERIFY_DAG_PROPERTY(parent_id, proposed_children):
@@ -788,22 +788,22 @@ procedure GET_ANCESTORS(entity_id):
 
     while current != 0 AND current NOT IN ancestors:
         ancestors.add(current)
-        ledger_entry := FIND_LEDGER_ENTRY_FOR_CHILD(current)
+        manifest_entry := FIND_MANIFEST_ENTRY_FOR_CHILD(current)
 
-        if ledger_entry IS NULL:
+        if manifest_entry IS NULL:
             break
 
-        current := ledger_entry.parent_id
+        current := manifest_entry.parent_id
 
     return ancestors
 
-procedure VAPORIZE_WITH_DAG_CHECK(parent_id, children):
+procedure DEHYDRATE_WITH_DAG_CHECK(parent_id, children):
     if NOT VERIFY_DAG_PROPERTY(parent_id, children):
-        ABORT_VAPORIZATION("DAG violation")
+        ABORT_DEHYDRATION("DAG violation")
         return
 
-    // Proceed with vaporization
-    CREATE_LEDGER_ENTRY(parent_id, children)
+    // Proceed with dehydration
+    CREATE_MANIFEST_ENTRY(parent_id, children)
     EMIT_CHILDREN(children)
 ```
 
@@ -836,26 +836,26 @@ The following pseudocode presents the complete reassembly algorithm integrating 
 
 ```
 // Global state
-parts_ledger := HashMap<ParentID, LedgerEntry>
-rematerialize_heap := FibonacciHeap<HeapNode>
+assembly_manifest := HashMap<ParentID, ManifestEntry>
+rehydrate_heap := FibonacciHeap<HeapNode>
 heap_node_index := HashMap<ParentID, HeapNode>
 checkpoint_registry := HashMap<CheckpointID, Checkpoint>
 orphan_buffer := List<BufferedCompletion>
 
 procedure INITIALIZE_REASSEMBLY_SUBSYSTEM():
-    START_REJOIN_PROCESSOR_THREAD()
+    START_REHYDRATE_PROCESSOR_THREAD()
     START_ORPHAN_DETECTOR_THREAD()
     START_MEMORY_MONITOR_THREAD()
 
-procedure ON_VAPORIZE(parent_entity, child_entities):
+procedure ON_DEHYDRATE(parent_entity, child_entities):
     // Validate DAG property
     child_ids := [child.id for child in child_entities]
     if NOT VERIFY_DAG_PROPERTY(parent_entity.id, child_ids):
-        ABORT_VAPORIZATION("DAG violation")
+        ABORT_DEHYDRATION("DAG violation")
         return ERROR
 
-    // Create ledger entry atomically before emitting children
-    ledger_entry := LedgerEntry {
+    // Create manifest entry atomically before emitting children
+    manifest_entry := ManifestEntry {
         parent_id: parent_entity.id,
         child_count: LENGTH(child_entities),
         children_ids: child_ids,
@@ -863,24 +863,24 @@ procedure ON_VAPORIZE(parent_entity, child_entities):
         checkpoint_scope: CURRENT_CHECKPOINT_SCOPE(),
         creation_timestamp: CURRENT_TIME_MICROS(),
         resolution_state: ACTIVE,
-        flags: parent_entity.vaporization_flags,
+        flags: parent_entity.dehydration_flags,
     }
 
-    // Persist ledger entry
-    SEND_LEDGER_FRAME(CREATE, ledger_entry)
-    AWAIT_LEDGER_ACK()
+    // Persist manifest entry
+    SEND_STATUS_FRAME(CREATE, manifest_entry)
+    AWAIT_STATUS_ACK()
 
-    parts_ledger[parent_entity.id] := ledger_entry
+    assembly_manifest[parent_entity.id] := manifest_entry
 
     // Create heap node for tracking
     heap_node := HeapNode {
-        ledger_entry_ref: ledger_entry,
+        manifest_entry_ref: manifest_entry,
         completion_count: 0,
-        target_count: ledger_entry.child_count,
-        priority: ledger_entry.child_count,  // Far from completion
+        target_count: manifest_entry.child_count,
+        priority: manifest_entry.child_count,  // Far from completion
     }
 
-    INSERT(rematerialize_heap, heap_node)
+    INSERT(rehydrate_heap, heap_node)
     heap_node_index[parent_entity.id] := heap_node
 
     // Now safe to emit children
@@ -891,123 +891,123 @@ procedure ON_VAPORIZE(parent_entity, child_entities):
 
 procedure ON_ENTITY_COMPLETION(entity_id, parent_id, status):
     // Check for orphan condition
-    if parent_id NOT IN parts_ledger:
+    if parent_id NOT IN assembly_manifest:
         BUFFER_ORPHAN_COMPLETION(parent_id, entity_id, status)
         return
 
-    ledger_entry := parts_ledger[parent_id]
+    manifest_entry := assembly_manifest[parent_id]
 
     // Find and update child status (idempotent)
-    child_index := FIND_INDEX(ledger_entry.children_ids, entity_id)
+    child_index := FIND_INDEX(manifest_entry.children_ids, entity_id)
     if child_index = -1:
         LOG_ERROR("Unknown child", entity_id, parent_id)
         return
 
-    if ledger_entry.completion_status[child_index] != PENDING:
+    if manifest_entry.completion_status[child_index] != PENDING:
         return  // Already completed
 
-    ledger_entry.completion_status[child_index] := status
-    SEND_LEDGER_FRAME(UPDATE_STATUS, parent_id, child_index, status)
+    manifest_entry.completion_status[child_index] := status
+    SEND_STATUS_FRAME(UPDATE_STATUS, parent_id, child_index, status)
 
     // Update heap
     heap_node := heap_node_index[parent_id]
     heap_node.completion_count := heap_node.completion_count + 1
     new_priority := heap_node.target_count - heap_node.completion_count
-    DECREASE_KEY(rematerialize_heap, heap_node, new_priority)
+    DECREASE_KEY(rehydrate_heap, heap_node, new_priority)
 
     // Check checkpoint notifications
     NOTIFY_CHECKPOINT_PROGRESS(entity_id)
 
-procedure REJOIN_PROCESSOR():
+procedure REHYDRATE_PROCESSOR():
     loop:
-        // Wait for entry ready for rematerialize
-        WAIT_FOR(rematerialize_heap.min.priority = 0 OR shutdown)
+        // Wait for entry ready for rehydrate
+        WAIT_FOR(rehydrate_heap.min.priority = 0 OR shutdown)
 
         if shutdown:
             break
 
         // Process all ready entries
-        while rematerialize_heap.min IS NOT NULL AND rematerialize_heap.min.priority = 0:
-            node := EXTRACT_MIN(rematerialize_heap)
-            ledger_entry := node.ledger_entry_ref
-            parent_id := ledger_entry.parent_id
+        while rehydrate_heap.min IS NOT NULL AND rehydrate_heap.min.priority = 0:
+            node := EXTRACT_MIN(rehydrate_heap)
+            manifest_entry := node.manifest_entry_ref
+            parent_id := manifest_entry.parent_id
 
             // Remove from index
             DELETE heap_node_index[parent_id]
 
             // Validate preconditions
-            if NOT VALIDATE_REJOIN_PRECONDITIONS(ledger_entry):
-                HANDLE_REJOIN_FAILURE(ledger_entry)
+            if NOT VALIDATE_REHYDRATE_PRECONDITIONS(manifest_entry):
+                HANDLE_REHYDRATE_FAILURE(manifest_entry)
                 continue
 
             // Check for recursive dependencies
-            for each child_id in ledger_entry.children_ids:
-                if child_id IN parts_ledger:
-                    // Child is also a parent, must rematerialize first
-                    child_ledger := parts_ledger[child_id]
-                    if child_ledger.resolution_state != REJOINED:
+            for each child_id in manifest_entry.children_ids:
+                if child_id IN assembly_manifest:
+                    // Child is also a parent, must rehydrate first
+                    child_manifest := assembly_manifest[child_id]
+                    if child_manifest.resolution_state != REHYDRATED:
                         // Re-queue parent, child not ready
                         REQUEUE_AFTER_CHILD(node, child_id)
                         continue
 
-            // Execute rematerialize
-            ledger_entry.resolution_state := REJOINING
-            SEND_LEDGER_FRAME(RESOLVE, parent_id, REJOINING)
+            // Execute rehydrate
+            manifest_entry.resolution_state := REHYDRATING
+            SEND_STATUS_FRAME(RESOLVE, parent_id, REHYDRATING)
 
-            rematerializeed_entity := EXECUTE_REJOIN_OPERATION(ledger_entry)
+            rehydrated_entity := EXECUTE_REHYDRATE_OPERATION(manifest_entry)
 
-            if rematerializeed_entity IS NOT NULL:
-                ledger_entry.resolution_state := REJOINED
-                SEND_LEDGER_FRAME(RESOLVE, parent_id, REJOINED)
+            if rehydrated_entity IS NOT NULL:
+                manifest_entry.resolution_state := REHYDRATED
+                SEND_STATUS_FRAME(RESOLVE, parent_id, REHYDRATED)
 
                 // Notify parent's parent (if any)
                 grandparent_id := FIND_GRANDPARENT(parent_id)
                 if grandparent_id != 0:
                     ON_ENTITY_COMPLETION(parent_id, grandparent_id, COMPLETE)
 
-                // Clean up ledger entry after grace period
+                // Clean up manifest entry after grace period
                 SCHEDULE_CLEANUP(parent_id, CLEANUP_GRACE_PERIOD)
             else:
-                ledger_entry.resolution_state := FAILED
-                SEND_LEDGER_FRAME(RESOLVE, parent_id, FAILED)
-                HANDLE_REJOIN_FAILURE(ledger_entry)
+                manifest_entry.resolution_state := FAILED
+                SEND_STATUS_FRAME(RESOLVE, parent_id, FAILED)
+                HANDLE_REHYDRATE_FAILURE(manifest_entry)
 
-procedure EXECUTE_REJOIN_OPERATION(ledger_entry):
+procedure EXECUTE_REHYDRATE_OPERATION(manifest_entry):
     // Gather child results
     child_results := []
 
-    for i := 0 to ledger_entry.child_count - 1:
-        child_id := ledger_entry.children_ids[i]
-        status := ledger_entry.completion_status[i]
+    for i := 0 to manifest_entry.child_count - 1:
+        child_id := manifest_entry.children_ids[i]
+        status := manifest_entry.completion_status[i]
 
         if status = COMPLETE:
             result := FETCH_ENTITY_RESULT(child_id)
             child_results.append(result)
-        else if ledger_entry.flags.PARTIAL_FAILURE_ALLOWED:
+        else if manifest_entry.flags.PARTIAL_FAILURE_ALLOWED:
             child_results.append(NULL)  // Placeholder for failed child
         else:
-            return NULL  // Cannot rematerialize with failures
+            return NULL  // Cannot rehydrate with failures
 
     // Reconstruct parent entity
-    if ledger_entry.flags.ORDERED_REJOIN:
+    if manifest_entry.flags.ORDERED_REHYDRATE:
         // Children must be combined in emission order
-        rematerializeed := ORDERED_COMBINE(child_results)
+        rehydrated := ORDERED_COMBINE(child_results)
     else:
         // Children can be combined in any order
-        rematerializeed := UNORDERED_COMBINE(child_results)
+        rehydrated := UNORDERED_COMBINE(child_results)
 
-    return rematerializeed
+    return rehydrated
 ```
 
 ## 8.6 Security Considerations
 
 Implementations MUST consider the following security aspects:
 
-1. Parts Ledger entries SHOULD be protected from unauthorized modification. Access control mechanisms are implementation-defined.
+1. Assembly Manifest entries SHOULD be protected from unauthorized modification. Access control mechanisms are implementation-defined.
 
 2. Parent ID spoofing could allow an attacker to inject results into unrelated reassembly operations. Implementations SHOULD validate that completion notifications originate from authorized processors.
 
-3. Resource exhaustion attacks via excessive vaporization depth or breadth MUST be mitigated through configurable limits.
+3. Resource exhaustion attacks via excessive dehydration depth or breadth MUST be mitigated through configurable limits.
 
 4. Checkpoint timeout manipulation could be used for denial-of-service. Implementations SHOULD enforce minimum timeout values.
 
@@ -1017,7 +1017,7 @@ This section defines frame types that should be registered with IANA:
 
 | Frame Type | Value | Specification |
 |------------|-------|---------------|
-| LEDGER | 0x50 | Section 8.1.4 |
+| STATUS | 0x50 | Section 8.1.4 |
 | CHECKPOINT | 0x51 | Section 8.2.1 |
 | CHECKPOINT_FAILED | 0x52 | Section 8.2.6 |
 | DAG_VIOLATION | 0x53 | Section 8.4.5 |

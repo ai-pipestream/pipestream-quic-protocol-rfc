@@ -12,7 +12,7 @@ PipeStream MUST enable true streaming document processing where entities are tra
 
 ### 3.1.2 Recursive Decomposition
 
-The protocol MUST support recursive decomposition of entities, wherein a single input entity MAY produce zero, one, or many output entities. This capability, termed "dematerialization," enables document parsing operations where a single document entity becomes multiple component entities (e.g., a PDF document decomposing into page entities, which further decompose into paragraph and image entities).
+The protocol MUST support recursive decomposition of entities, wherein a single input entity MAY produce zero, one, or many output entities. This capability, termed "dehydration," enables document parsing operations where a single document entity becomes multiple component entities (e.g., a PDF document decomposing into page entities, which further decompose into paragraph and image entities).
 
 ### 3.1.3 Checkpoint Consistency
 
@@ -20,7 +20,7 @@ PipeStream MUST provide checkpoint blocking semantics to maintain processing con
 
 ### 3.1.4 Control and Data Plane Separation
 
-The protocol MUST maintain strict separation between the control plane (ledger) and the data plane (entities). This separation enables:
+The protocol MUST maintain strict separation between the control plane (control stream) and the data plane (entities). This separation enables:
 
 - Independent scaling of coordination and data transfer
 - Lightweight status tracking without payload inspection
@@ -52,7 +52,7 @@ PipeStream is organized into three protocol layers to accommodate varying deploy
 
 | Protocol Layer | Name | Description |
 |----------------|------|-------------|
-| Layer 0 | Core | Basic streaming, vaporize/rejoin, checkpoint |
+| Layer 0 | Core | Basic streaming, dehydrate/rehydrate, checkpoint |
 | Layer 1 | Recursive | Hierarchical scopes, digest propagation, barriers |
 | Layer 2 | Resilience | Yield/resume, claim checks, completion policies |
 
@@ -75,8 +75,8 @@ PipeStream employs a dual-stream architecture that separates entity lifecycle ma
          |  +-------------------------------------------+  |
          |  |            QUIC Connection                |  |
          |  |  +-------------------------------------+  |  |
-         |  |  |  Stream 0: Ledger (Control Plane)  |  |  |
-         |  |  |  [STATUS][STATUS][STATUS]...       |  |  |
+         |  |  |  Stream 0: Control (Control Plane)  |  |  |
+         |  |  |  [STATUS][STATUS][STATUS]...        |  |  |
          |  |  +-------------------------------------+  |  |
          |  |                                           |  |
          |  |  +-------------------------------------+  |  |
@@ -100,13 +100,13 @@ PipeStream employs a dual-stream architecture that separates entity lifecycle ma
 
 Figure 1: PipeStream Dual-Stream Architecture
 
-### 3.2.2 Ledger Stream (Stream 0)
+### 3.2.2 Control Stream (Stream 0)
 
-The Ledger Stream MUST be allocated as QUIC Stream ID 0 and serves as the control plane for entity lifecycle management. This stream carries lightweight status frames that track entity state transitions without transmitting payload data.
+The Control Stream MUST be allocated as QUIC Stream ID 0 and serves as the control plane for entity lifecycle management. This stream carries lightweight status frames that track entity state transitions without transmitting payload data.
 
-#### 3.2.2.1 Ledger Frame Format
+#### 3.2.2.1 Status Frame Format
 
-Each basic ledger frame is exactly 4 octets (32 bits), word-aligned:
+Each basic status frame is exactly 4 octets (32 bits), word-aligned:
 
 ```
     0                   1                   2                   3
@@ -116,7 +116,7 @@ Each basic ledger frame is exactly 4 octets (32 bits), word-aligned:
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-Figure 2: Ledger Frame Format
+Figure 2: Status Frame Format
 
 - **E (1 bit):** Extended frame flag.
 - **C (1 bit):** Cursor update flag.
@@ -131,8 +131,8 @@ Figure 2: Ledger Frame Format
 | 0x2   | COMPLETE   | 0     | Entity successfully processed                    |
 | 0x3   | FAILED     | 0     | Entity processing failed                         |
 | 0x4   | CHECKPOINT | 0     | Synchronization barrier                          |
-| 0x5   | VAPORIZING | 0     | Decomposing into children                        |
-| 0x6   | AGGREGATING| 0     | Rejoining children                               |
+| 0x5   | DEHYDRATING | 0    | Decomposing into children                        |
+| 0x6   | REHYDRATING| 0     | Rehydrating children                             |
 | 0x7   | Reserved   | -     | Reserved                                         |
 | 0x8   | YIELDED    | 2     | Paused with continuation token                   |
 | 0x9   | DEFERRED   | 2     | Detached with claim check                        |
@@ -140,16 +140,16 @@ Figure 2: Ledger Frame Format
 | 0xB   | SKIPPED    | 2     | Intentionally skipped                            |
 | 0xC   | ABANDONED  | 2     | Timed out, cursor advanced past                  |
 
-Implementations MUST process ledger frames in order. A receiver MUST NOT process an entity payload until a corresponding PENDING or PROCESSING status has been received on the Ledger Stream.
+Implementations MUST process status frames in order. A receiver MUST NOT process an entity payload until a corresponding PENDING or PROCESSING status has been received on the Control Stream.
 
-#### 3.2.2.2 Ledger Stream Properties
+#### 3.2.2.2 Control Stream Properties
 
-The Ledger Stream has the following properties:
+The Control Stream has the following properties:
 
-- The Ledger Stream MUST be bidirectional to support acknowledgment of status transitions.
-- Implementations SHOULD prioritize Ledger Stream frames over Entity Stream frames to ensure timely coordination.
-- The Ledger Stream MUST remain open for the duration of the QUIC connection.
-- Flow control on the Ledger Stream SHOULD be configured to prevent backpressure from blocking status updates.
+- The Control Stream MUST be bidirectional to support acknowledgment of status transitions.
+- Implementations SHOULD prioritize Control Stream frames over Entity Stream frames to ensure timely coordination.
+- The Control Stream MUST remain open for the duration of the QUIC connection.
+- Flow control on the Control Stream SHOULD be configured to prevent backpressure from blocking status updates.
 
 ### 3.2.3 Entity Streams (Streams 1+)
 
@@ -186,19 +186,19 @@ Figure 3: Entity Frame Format
 Each Entity Stream follows this lifecycle:
 
 1. Sender opens a new unidirectional QUIC stream
-2. Sender transmits PENDING status on Ledger Stream
+2. Sender transmits PENDING status on Control Stream
 3. Sender transmits entity frame on Entity Stream
-4. Sender updates status to PROCESSING on Ledger Stream
+4. Sender updates status to PROCESSING on Control Stream
 5. Sender closes the stream upon payload completion
-6. Sender transmits terminal status (COMPLETE or FAILED) on Ledger Stream
+6. Sender transmits terminal status (COMPLETE or FAILED) on Control Stream
 
-Receivers MUST correlate Entity Stream data with Ledger Stream status using the Entity ID present in both.
+Receivers MUST correlate Entity Stream data with Control Stream status using the Entity ID present in both.
 
 #### 3.2.3.3 Stream Allocation
 
 Implementations MUST use the following stream allocation scheme:
 
-- Stream 0: Ledger Stream (bidirectional, client-initiated)
+- Stream 0: Control Stream (bidirectional, client-initiated)
 - Streams 1, 5, 9, ...: Client-initiated entity streams (unidirectional)
 - Streams 3, 7, 11, ...: Server-initiated entity streams (unidirectional)
 
@@ -206,12 +206,12 @@ This allocation follows QUIC stream ID encoding where the two least significant 
 
 ### 3.2.4 Checkpoint Semantics
 
-Checkpoints provide synchronization barriers within the entity stream. When a CHECKPOINT status frame is transmitted on the Ledger Stream:
+Checkpoints provide synchronization barriers within the entity stream. When a CHECKPOINT status frame is transmitted on the Control Stream:
 
 1. The checkpoint MUST include a unique Entity ID (checkpoint identifier)
 2. All entities with Entity IDs less than the checkpoint identifier MUST reach a terminal state before the checkpoint is considered satisfied
 3. Entities with Entity IDs greater than the checkpoint identifier MUST NOT be marked COMPLETE until the checkpoint is satisfied
-4. Receivers MUST acknowledge checkpoint satisfaction on the Ledger Stream
+4. Receivers MUST acknowledge checkpoint satisfaction on the Control Stream
 
 ```
 Timeline:
@@ -245,7 +245,7 @@ PipeStream defines a processing pipeline model wherein entities flow through a d
 | Action  | Description                                           |
 |---------|-------------------------------------------------------|
 | CONNECT | Establish connection and initiate entity stream       |
-| PARSE   | Decompose entity structure (may vaporize)             |
+| PARSE   | Decompose entity structure (may dehydrate)            |
 | PROCESS | Transform entity content (1:1 transformation)         |
 | SINK    | Terminal consumption of entity                        |
 
@@ -255,9 +255,9 @@ Implementations MUST support all four actions. Workers MAY implement any combina
 
 Workers MAY perform cardinality-changing operations on entities:
 
-#### 3.3.2.1 Dematerialization (1:N)
+#### 3.3.2.1 Dehydration (1:N)
 
-A single input entity produces multiple output entities. The output entities MUST include a `parent_id` field referencing the input entity. Dematerialization is commonly used in PARSE operations.
+A single input entity produces multiple output entities. The output entities MUST include a `parent_id` field referencing the input entity. Dehydration is commonly used in PARSE operations.
 
 ```
                         +-> Entity 1a (parent_id=1)
@@ -267,11 +267,11 @@ Entity 1 --[PARSE]------+-> Entity 1b (parent_id=1)
                         +-> Entity 1c (parent_id=1)
 ```
 
-Figure 5: Dematerialization Operation
+Figure 5: Dehydration Operation
 
-#### 3.3.2.2 Rematerialization (N:1)
+#### 3.3.2.2 Rehydration (N:1)
 
-Multiple input entities are combined into a single output entity. The output entity SHOULD include metadata referencing all input entities. Rematerialization operations MUST respect checkpoint boundaries; entities from different checkpoint epochs MUST NOT be rematerialized.
+Multiple input entities are combined into a single output entity. The output entity SHOULD include metadata referencing all input entities. Rehydration operations MUST respect checkpoint boundaries; entities from different checkpoint epochs MUST NOT be rehydrated.
 
 ```
 Entity 1a --+
@@ -281,7 +281,7 @@ Entity 1b --+--[PROCESS]--> Entity 1' (sources=[1a,1b,1c])
 Entity 1c --+
 ```
 
-Figure 6: Rematerialization Operation
+Figure 6: Rehydration Operation
 
 ### 3.3.3 Pipeline Flow
 
@@ -295,18 +295,18 @@ The following diagram illustrates a complete pipeline flow:
 +----------+     +---------+     +-----------+     +--------+
      |                |                |                |
      v                v                v                v
- Open QUIC      Dematerialize     Transform         Consume
+ Open QUIC       Dehydrate        Transform         Consume
  Connection      Entities         Payloads          Output
      |                |                |                |
      v                v                v                v
 +----------+     +---------+     +-----------+     +--------+
-| Ledger:  |     | Ledger: |     | Ledger:   |     | Ledger:|
+| Control: |     | Control:|     | Control:  |     |Control:|
 | PENDING  |     | PENDING |     | PROCESSING|     |COMPLETE|
 |          |     | (N new) |     |           |     |        |
 +----------+     +---------+     +-----------+     +--------+
 ```
 
-Figure 7: Pipeline Action Flow with Ledger Updates
+Figure 7: Pipeline Action Flow with Control Stream Updates
 
 ### 3.3.4 Worker DAG Topology
 
@@ -352,7 +352,7 @@ Figure 8: Example Worker DAG Topology
 A PipeStream connection follows this lifecycle:
 
 1. **Establishment:** Client initiates QUIC connection with ALPN identifier "pipestream/1"
-2. **Ledger Initialization:** Client opens Stream 0 as bidirectional Ledger Stream
+2. **Control Stream Initialization:** Client opens Stream 0 as bidirectional Control Stream
 3. **Capability Exchange:** Client and server exchange supported layers and actions
 4. **Entity Streaming:** Entities are transmitted per Sections 3.2.2 and 3.2.3
 5. **Termination:** Connection closes via QUIC CONNECTION_CLOSE or application-level shutdown
@@ -363,7 +363,7 @@ Implementations MUST use the ALPN identifier "pipestream/1" during TLS negotiati
 
 Errors are communicated through:
 
-1. **Entity-level:** FAILED status on Ledger Stream with optional error code
+1. **Entity-level:** FAILED status on Control Stream with optional error code
 2. **Stream-level:** QUIC RESET_STREAM or STOP_SENDING frames
 3. **Connection-level:** QUIC CONNECTION_CLOSE with application error code
 

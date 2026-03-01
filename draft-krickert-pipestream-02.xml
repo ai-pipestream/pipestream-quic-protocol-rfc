@@ -5,7 +5,7 @@
   <!ENTITY nbhy    "&#8209;">
   <!ENTITY wj      "&#8288;">
 ]>
-<rfc xmlns:xi="http://www.w3.org/2001/XInclude" submissionType="IETF" category="std" consensus="true" docName="draft-krickert-pipestream-02" number="" ipr="trust200902" obsolutes="" updates="" submissionType="IETF" xml:lang="en" tocInclude="true" tocDepth="4" symRefs="true" sortRefs="true" version="3">
+<rfc xmlns:xi="http://www.w3.org/2001/XInclude" submissionType="IETF" category="std" consensus="true" docName="draft-krickert-pipestream-02" number="" ipr="trust200902" obsolutes="" updates="" xml:lang="en" tocInclude="true" tocDepth="4" symRefs="true" sortRefs="true" version="3">
   <front>
     <title abbrev="PipeStream">PipeStream: A Recursive Entity Streaming Protocol for Distributed Processing over QUIC</title>
     <seriesInfo name="Internet-Draft" value="draft-krickert-pipestream-02"/>
@@ -15,15 +15,15 @@
         <email>kristian.rickert@pipestream.ai</email>
       </address>
     </author>
-    <date year="2026" month="February" day="19"/>
-    <area>Applications and Real-Time</Area>
+    <date year="2026" month="March" day="01"/>
+    <area>Applications and Real-Time</area>
     <workgroup>Individual Submission</workgroup>
     <keyword>quic</keyword>
     <keyword>streaming</keyword>
     <keyword>recursive</keyword>
     <keyword>document-processing</keyword>
     <abstract>
-      <t>This document specifies PipeStream, a recursive entity streaming protocol designed for distributed document processing over QUIC transport. PipeStream enables the decomposition ("vaporization") of documents into constituent entities, their transmission across distributed processing nodes, and subsequent reassembly ("rejoining") at destination endpoints. The protocol employs a dual-stream architecture consisting of a bit-packed ledger stream for high-frequency state coordination and multiplexed entity streams for payload transmission.</t>
+      <t>This document specifies PipeStream, a recursive entity streaming protocol designed for distributed document processing over QUIC transport. PipeStream implements a scatter-gather pattern where documents are "dehydrated" (scattered) into constituent entities, processed in parallel across distributed nodes, and "rehydrated" (gathered) at destination endpoints. The protocol employs a dual-stream architecture consisting of a bit-packed control stream for high-frequency status coordination and multiplexed entity streams for payload transmission.</t>
     </abstract>
   </front>
   <middle>
@@ -38,7 +38,7 @@
         <name>Protocol Overview</name>
         <t>PipeStream addresses these challenges by treating documents as recursive compositions of Entities. It leverages QUIC [RFC9000] to provide native multiplexing and low-latency delivery. The protocol is organized into three layers:</t>
         <ul>
-          <li>Layer 0 (Core): Basic streaming, checkpoints, and vaporization/rejoin semantics.</li>
+          <li>Layer 0 (Core): Basic streaming, checkpoints, and dehydrate/rehydrate semantics.</li>
           <li>Layer 1 (Recursive): Hierarchical scoping, Merkle-based digest propagation, and barriers.</li>
           <li>Layer 2 (Resilience): Yield/resume mechanics, claim checks, and completion policies.</li>
         </ul>
@@ -49,21 +49,23 @@
       <dl>
         <dt>Entity:</dt>
         <dd>The fundamental unit of data. Represents either a complete document or a constituent part. Entities are immutable once created.</dd>
-        <dt>Vaporize:</dt>
-        <dd>The operation of decomposing an Entity into N constituent sub-entities for parallel processing.</dd>
-        <dt>Rejoin:</dt>
-        <dd>The inverse of vaporization; reassembling N sub-entities back into a single parent based on a completion policy.</dd>
-        <dt>Ledger:</dt>
-        <dd>The control plane transmitted on Stream 0, tracking Entity completion status using bit-packed frames.</dd>
+        <dt>Dehydrate:</dt>
+        <dd>The operation of decomposing an Entity into N constituent sub-entities for parallel processing (the "scatter" phase).</dd>
+        <dt>Rehydrate:</dt>
+        <dd>The inverse of dehydration; reassembling N sub-entities back into a single parent based on a completion policy (the "gather" phase).</dd>
+        <dt>Control Stream:</dt>
+        <dd>The control plane transmitted on Stream 0, tracking Entity completion status using bit-packed status frames.</dd>
+        <dt>Assembly Manifest:</dt>
+        <dd>A data structure within the Control Stream tracking parent-child relationships created during dehydration.</dd>
         <dt>Cursor:</dt>
         <dd>A pointer to the lowest unresolved Entity ID within a scope, enabling sliding-window ID recycling.</dd>
       </dl>
     </section>
     <section anchor="quic-mapping">
       <name>QUIC Stream Mapping</name>
-      <section anchor="ledger-stream">
-        <name>Ledger Stream (Stream 0)</name>
-        <t>The Ledger Stream MUST use QUIC Stream ID 0 (client-initiated bidirectional). Both endpoints transmit 32-bit word-aligned frames on this stream to coordinate state.</t>
+      <section anchor="control-stream">
+        <name>Control Stream (Stream 0)</name>
+        <t>The Control Stream MUST use QUIC Stream ID 0 (client-initiated bidirectional). Both endpoints transmit 32-bit word-aligned status frames on this stream to coordinate state.</t>
       </section>
       <section anchor="entity-streams">
         <name>Entity Streams (Streams 2+)</name>
@@ -76,9 +78,9 @@
     </section>
     <section anchor="wire-format">
       <name>Wire Format</name>
-      <section anchor="ledger-frame">
-        <name>Ledger Frame (Stream 0)</name>
-        <t>Ledger frames are 4 octets (32 bits) in length:</t>
+      <section anchor="status-frame">
+        <name>Status Frame (Stream 0)</name>
+        <t>Status frames are 4 octets (32 bits) in length:</t>
         <artwork align="center">
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -94,12 +96,12 @@
           <dt>Entity ID (20 bits):</dt>
           <dd>Scope-local identifier.</dd>
           <dt>Stat (4 bits):</dt>
-          <dd>Status code (0x0=PENDING, 0x1=PROCESSING, 0x2=COMPLETE, 0x3=FAILED, 0x8=YIELDED, 0x9=DEFERRED).</dd>
+          <dd>Status code (0x0=UNSPECIFIED, 0x1=PENDING, 0x2=PROCESSING, 0x3=COMPLETE, 0x4=FAILED, 0x5=CHECKPOINT, 0x6=DEHYDRATING, 0x7=REHYDRATING, 0x8=YIELDED, 0x9=DEFERRED).</dd>
         </dl>
       </section>
       <section anchor="entity-header">
         <name>Entity Header (Streams 2+)</name>
-        <t>Every Entity stream MUST begin with a length-prefixed Protobuf EntityHeader defined in Appendix A. This header carries MIME types, checksums, and the parent-child relationship needed for reassembly.</t>
+        <t>Every Entity stream MUST begin with a length-prefixed Protobuf EntityHeader defined in Appendix A. This header carries MIME types, checksums, and the parent-child relationship needed for rehydration.</t>
       </section>
     </section>
     <section anchor="consistency">
@@ -145,7 +147,7 @@ message EntityHeader {
   string content_type = 5;
   uint64 payload_length = 6;
   bytes checksum = 7;
-  map<string, string> metadata = 8;
+  map&lt;string, string&gt; metadata = 8;
   ChunkInfo chunk_info = 9;
   CompletionPolicy completion_policy = 10;
 }
@@ -157,8 +159,8 @@ enum EntityStatus {
   ENTITY_STATUS_COMPLETE = 3;
   ENTITY_STATUS_FAILED = 4;
   ENTITY_STATUS_CHECKPOINT = 5;
-  ENTITY_STATUS_VAPORIZING = 6;
-  ENTITY_STATUS_AGGREGATING = 7;
+  ENTITY_STATUS_DEHYDRATING = 6;
+  ENTITY_STATUS_REHYDRATING = 7;
   ENTITY_STATUS_YIELDED = 8;
   ENTITY_STATUS_DEFERRED = 9;
   ENTITY_STATUS_RETRYING = 10;

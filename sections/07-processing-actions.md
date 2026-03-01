@@ -20,7 +20,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
                                          ▼
                     ┌─────────────────────────────────────────────┐
                     │                   PARSE                     │
-                    │     (Dematerialization: 1:N possible)       │
+                    │       (Dehydration: 1:N possible)            │
                     └─────────────────────────────────────────────┘
                                          │
                            ┌─────────────┼─────────────┐
@@ -305,26 +305,26 @@ Upon receiving GOAWAY, the peer MUST NOT initiate new streams but MUST complete 
 
 ### 7.3.1. Purpose
 
-The PARSE action performs document structure analysis and serves as the primary dematerialization point in PipeStream, enabling 1:N decomposition of complex documents into constituent entities. This action transforms opaque data (BlobBag layer) into structured representations (SemanticLayer or ParsedData layer).
+The PARSE action performs document structure analysis and serves as the primary dehydration point in PipeStream, enabling 1:N decomposition of complex documents into constituent entities. This action transforms opaque data (BlobBag layer) into structured representations (SemanticLayer or ParsedData layer).
 
-### 7.3.2. Dematerialization Semantics
+### 7.3.2. Dehydration Semantics
 
-#### 7.3.2.1. Dematerialization Definition
+#### 7.3.2.1. Dehydration Definition
 
-Dematerialization is the controlled decomposition of a single input entity into multiple output entities while maintaining referential integrity and processing lineage. The PARSE action MAY produce:
+Dehydration is the controlled decomposition of a single input entity into multiple output entities while maintaining referential integrity and processing lineage. The PARSE action MAY produce:
 
 - **1:1 Mapping**: Single input produces single output (simple documents)
 - **1:N Mapping**: Single input produces multiple outputs (compound documents)
 - **1:0 Mapping**: Single input produces no outputs (filtered/empty documents)
 
-#### 7.3.2.2. Dematerialization Constraints
+#### 7.3.2.2. Dehydration Constraints
 
-The following constraints MUST be observed during dematerialization:
+The following constraints MUST be observed during dehydration:
 
 1. All child entities MUST reference the parent entity ID
 2. Child entity IDs MUST be deterministically derivable from parent ID and content hash
 3. The sum of child entity sizes SHOULD NOT exceed 10x the parent size
-4. Dematerialization depth (recursive parsing) MUST NOT exceed the configured maximum (default: 16)
+4. Dehydration depth (recursive parsing) MUST NOT exceed the configured maximum (default: 16)
 
 ```
    Entity ID Derivation:
@@ -365,40 +365,40 @@ Implementations MUST NOT permit transitions that move "down" the layer hierarchy
      Parser ID (32),
      Parser Config Length (16),
      Parser Config (..),
-     Dematerialization Hints (..),
+     Dehydration Hints (..),
    }
 
-   Dematerialization Hints {
+   Dehydration Hints {
      Expected Child Count (32),      ; 0 = unknown
      Max Depth (8),
      Preserve Ordering (1),
-     Generate Ledger (1),
+     Generate Manifest (1),
      Reserved (6),
    }
 ```
 
-### 7.3.4. Parts Ledger
+### 7.3.4. Assembly Manifest
 
-#### 7.3.4.1. Ledger Purpose
+#### 7.3.4.1. Manifest Purpose
 
-The Parts Ledger is a metadata structure that tracks the relationship between parent entities and their dematerialized children. It serves as the authoritative record for:
+The Assembly Manifest is a metadata structure that tracks the relationship between parent entities and their dehydrated children. It serves as the authoritative record for:
 
-- Rematerialization (rejoining child entities)
+- Rehydration (rehydrating child entities)
 - Progress tracking
 - Failure recovery
 - Audit and lineage
 
-#### 7.3.4.2. Ledger Structure
+#### 7.3.4.2. Manifest Structure
 
 ```
-   Parts Ledger {
-     Ledger ID (128),
+   Assembly Manifest {
+     Manifest ID (128),
      Parent Entity ID (20),
      Creation Timestamp (64),
      Total Parts (32),
      Completed Parts (32),
      Failed Parts (32),
-     Ledger State (8),
+     Manifest State (8),
      Parts Index (..),
    }
 
@@ -411,13 +411,13 @@ The Parts Ledger is a metadata structure that tracks the relationship between pa
      Checksum (64),
    }
 
-   Ledger State:
+   Manifest State:
      0x00: INITIALIZING
      0x01: ACTIVE
      0x02: COMPLETE
      0x03: PARTIAL_FAILURE
      0x04: FAILED
-     0x05: REMATERIALIZING
+     0x05: REHYDRATING
 
    Part State:
      0x00: PENDING
@@ -428,34 +428,34 @@ The Parts Ledger is a metadata structure that tracks the relationship between pa
      0x05: FAILED
      0x06: RETRYING
 
-              Figure 4: Parts Ledger Data Structures
+              Figure 4: Assembly Manifest Data Structures
 ```
 
-#### 7.3.4.3. Ledger Operations
+#### 7.3.4.3. Manifest Operations
 
 ```
-   LEDGER_CREATE Frame {
+   MANIFEST_CREATE Frame {
      Type (8) = 0x21,
      Length (32),
      Parent Entity ID (20),
      Expected Parts (32),
-     Ledger Options (16),
+     Manifest Options (16),
    }
 
-   LEDGER_UPDATE Frame {
+   MANIFEST_UPDATE Frame {
      Type (8) = 0x22,
      Length (32),
-     Ledger ID (128),
+     Manifest ID (128),
      Update Type (8),
      Part Number (32),
      New State (8),
      Additional Data (..),
    }
 
-   LEDGER_QUERY Frame {
+   MANIFEST_QUERY Frame {
      Type (8) = 0x23,
      Length (32),
-     Ledger ID (128),
+     Manifest ID (128),
      Query Type (8),
    }
 
@@ -478,7 +478,7 @@ PipeStream maintains a directed acyclic graph (DAG) of entity relationships:
                       │   (BlobBag Layer)   │
                       │   Entity: 0xA1B2... │
                       └──────────┬──────────┘
-                                 │ PARSE (dematerialize)
+                                 │ PARSE (dehydrate)
                     ┌────────────┼────────────┐
                     ▼            ▼            ▼
              ┌──────────┐ ┌──────────┐ ┌──────────┐
@@ -486,7 +486,7 @@ PipeStream maintains a directed acyclic graph (DAG) of entity relationships:
              │ Semantic │ │ Semantic │ │ Semantic │
              │ 0xC3D4...│ │ 0xE5F6...│ │ 0x1728...│
              └────┬─────┘ └──────────┘ └────┬─────┘
-                  │ PARSE (dematerialize)   │
+                  │ PARSE (dehydrate)       │
             ┌─────┴─────┐             ┌─────┴─────┐
             ▼           ▼             ▼           ▼
        ┌────────┐ ┌────────┐    ┌────────┐ ┌────────┐
@@ -495,7 +495,7 @@ PipeStream maintains a directed acyclic graph (DAG) of entity relationships:
        │Parsed  │ │Parsed  │    │Parsed  │ │BlobBag │
        └────────┘ └────────┘    └────────┘ └────────┘
 
-          Figure 5: Entity Relationship DAG After Dematerialization
+          Figure 5: Entity Relationship DAG After Dehydration
 ```
 
 #### 7.3.5.2. Relationship Metadata
@@ -508,8 +508,8 @@ Each entity MUST carry relationship metadata:
      Root ID (20),                 ; Original document ID
      Depth (8),                    ; Distance from root
      Sibling Index (32),           ; Position among siblings
-     Total Siblings (32),          ; At time of dematerialization
-     Ledger ID (128),              ; Tracking ledger reference
+     Total Siblings (32),          ; At time of dehydration
+     Manifest ID (128),              ; Tracking manifest reference
    }
 ```
 
@@ -564,17 +564,17 @@ Implementations MUST track current depth and MUST refuse to parse when `Current 
                   ▼                      │
          ┌─────────────────┐             │
          │                 │ Parse Error │
-         │ DEMATERIALIZING │─────────────┘
+         │ DEHYDRATING │─────────────┘
          │                 │
          └────────┬────────┘
                   │ Children Created
                   ▼
          ┌─────────────────┐
          │                 │
-         │ LEDGER_CREATING │
+         │MANIFEST_CREATING│
          │                 │
          └────────┬────────┘
-                  │ Ledger Populated
+                  │ Manifest Populated
                   ▼
          ┌─────────────────┐
          │                 │
@@ -602,7 +602,7 @@ Implementations MUST track current depth and MUST refuse to parse when `Current 
      Status (8),
      Original Entity ID (20),
      Child Count (32),
-     Ledger ID (128),
+     Manifest ID (128),
      Child Summaries (..),
    }
 
@@ -627,7 +627,7 @@ Implementations MUST track current depth and MUST refuse to parse when `Current 
 
 ### 7.4.1. Purpose
 
-The PROCESS action performs content transformation on entities, supporting both 1:1 transformations (enrichment, conversion) and N:1 operations (rematerialize, aggregation). This action operates primarily within a single layer or performs layer enrichment.
+The PROCESS action performs content transformation on entities, supporting both 1:1 transformations (enrichment, conversion) and N:1 operations (rehydrate, aggregation). This action operates primarily within a single layer or performs layer enrichment.
 
 ### 7.4.2. Processing Modes
 
@@ -647,19 +647,19 @@ In transformation mode, a single input entity produces a single output entity. T
    └─────────────────┘                └─────────────────┘
 ```
 
-#### 7.4.2.2. Rematerialize Mode (N:1)
+#### 7.4.2.2. Rehydrate Mode (N:1)
 
-In rematerialize mode, multiple input entities (typically siblings from a dematerialization) are merged into a single output entity. This is the inverse of dematerialization.
+In rehydrate mode, multiple input entities (typically siblings from a dehydration) are merged into a single output entity. This is the inverse of dehydration.
 
 ```
-   Processing Mode: REMATERIALIZE (N:1)
+   Processing Mode: REHYDRATE (N:1)
 
    ┌───────────┐
    │  Child 1  │───┐
    │  Parsed   │   │
    └───────────┘   │
                    │   PROCESS
-   ┌───────────┐   │   (rematerialize) ┌─────────────────┐
+   ┌───────────┐   │   (rehydrate)      ┌─────────────────┐
    │  Child 2  │───┼─────────────► │ Merged Entity   │
    │  Parsed   │   │               │ SemanticLayer   │
    └───────────┘   │               └─────────────────┘
@@ -669,7 +669,7 @@ In rematerialize mode, multiple input entities (typically siblings from a demate
    │  Parsed   │
    └───────────┘
 
-               Figure 7: REMATERIALIZE Processing Mode
+               Figure 7: REHYDRATE Processing Mode
 ```
 
 ### 7.4.3. Layer Enrichment
@@ -712,7 +712,7 @@ Layer enrichment adds computed or derived data to an entity without changing its
 
       Mode Values:
         0x00: TRANSFORM
-        0x01: REMATERIALIZE
+        0x01: REHYDRATE
         0x02: AGGREGATE (N:1 with reduction)
         0x03: PASSTHROUGH (metadata only)
    
@@ -734,21 +734,21 @@ Layer enrichment adds computed or derived data to an entity without changing its
         0x8000-0xFFFF: Application-defined
    ```
    
-   ### 7.4.4. Rematerialize Operations
-   
-   #### 7.4.4.1. Rematerialize Semantics
-   
-   Rematerialize operations MUST satisfy the following requirements:
-   
+   ### 7.4.4. Rehydrate Operations
+
+   #### 7.4.4.1. Rehydrate Semantics
+
+   Rehydrate operations MUST satisfy the following requirements:
+
    1. All input entities MUST share the same Parent ID (siblings only)
    2. All input entities MUST be in terminal state (COMPLETE or FAILED)
-   3. The Ledger MUST indicate all parts are accounted for
+   3. The Assembly Manifest MUST indicate all parts are accounted for
    4. The output entity ID SHOULD be derivable from input IDs
-   
-   #### 7.4.4.2. Rematerialize Strategies
-   
+
+   #### 7.4.4.2. Rehydrate Strategies
+
    ```
-      Rematerialize Strategy {
+      Rehydrate Strategy {
         Strategy Type (8),
         Ordering (8),
         Conflict Resolution (8),
@@ -778,22 +778,22 @@ Layer enrichment adds computed or derived data to an entity without changing its
         0x02: PLACEHOLDER      ; Insert placeholder values
    ```
    
-   #### 7.4.4.3. Rematerialize Coordination
-   
+   #### 7.4.4.3. Rehydrate Coordination
+
    ```
-      REMATERIALIZE_READY Frame {
+      REHYDRATE_READY Frame {
         Type (8) = 0x31,
         Length (32),
-        Ledger ID (128),
+        Manifest ID (128),
         Ready Parts Bitmap (..),
         Total Ready (32),
         Total Expected (32),
       }
    
-      REMATERIALIZE_INITIATE Frame {
+      REHYDRATE_INITIATE Frame {
         Type (8) = 0x32,
         Length (32),
-        Ledger ID (128),
+        Manifest ID (128),
         Strategy (..),
         Timeout (32),
       }
@@ -915,7 +915,7 @@ Servers MUST cache the result of idempotent operations for at least the configur
    │   Mode              │   Guarantee                              │
    ├─────────────────────┼──────────────────────────────────────────┤
    │   TRANSFORM         │   Same input always produces same output │
-   │   REMATERIALIZE     │   Repeatable given same complete inputs  │
+   │   REHYDRATE         │   Repeatable given same complete inputs  │
    │   AGGREGATE         │   Deterministic reduction function       │
    │   PASSTHROUGH       │   Always idempotent                      │
    └─────────────────────┴──────────────────────────────────────────┘
@@ -941,7 +941,7 @@ Servers MUST cache the result of idempotent operations for at least the configur
                   │ Cache Miss
                   ▼
          ┌─────────────────┐
-         │                 │     Mode = REJOIN
+         │                 │     Mode = REHYDRATE
          │  MODE_ROUTING   │─────────────────────┐
          │                 │                     │
          └────────┬────────┘                     │
@@ -1003,7 +1003,7 @@ Servers MUST cache the result of idempotent operations for at least the configur
      0x01: PARTIAL_SUCCESS
      0x02: CACHED_RESULT
      0x03: TRANSFORM_ERROR
-     0x04: REMATERIALIZE_INCOMPLETE
+     0x04: REHYDRATE_INCOMPLETE
      0x05: ENRICHMENT_FAILED
      0x06: TIMEOUT
 ```
@@ -1312,7 +1312,7 @@ Upon successful completion of all configured sinks, the worker MUST send a compl
 
 #### 7.5.7.2. Pipeline Completion
 
-When an entity and all its descendants have completed rematerialization:
+When an entity and all its descendants have completed rehydration:
 
 ```
    PIPELINE_COMPLETE Frame {
@@ -1344,7 +1344,7 @@ When an entity and all its descendants have completed rematerialization:
                     ┌─────────────────┼─────────────────┐
                     ▼                 ▼                 ▼
              ┌──────────┐      ┌──────────┐      ┌──────────┐
-             │  Entity  │      │  Ledger  │      │  Cache   │
+             │  Entity  │      │ Manifest │      │  Cache   │
              │   Data   │      │   Data   │      │  Entry   │
              └────┬─────┘      └────┬─────┘      └────┬─────┘
                   │                 │                 │
@@ -1382,7 +1382,7 @@ When an entity and all its descendants have completed rematerialization:
    Cleanup Scope:
      0x00: ENTITY_ONLY       ; Just this entity
      0x01: WITH_CHILDREN     ; Entity and descendants
-     0x02: LEDGER_ONLY       ; Just the ledger
+     0x02: MANIFEST_ONLY     ; Just the manifest
      0x03: FULL_CLEANUP      ; All associated resources
 ```
 
@@ -1397,7 +1397,7 @@ Implementations MUST release resources according to the following schedule:
    │   Resource       │   Release Condition                        │
    ├──────────────────┼────────────────────────────────────────────┤
    │   Entity Payload │   After successful SINK_COMPLETE           │
-   │   Parts Ledger   │   After PIPELINE_COMPLETE or 24h timeout   │
+   │ Assembly Manifest │   After PIPELINE_COMPLETE or 24h timeout   │
    │   Idempotency    │   After configured TTL (default 1h)        │
    │   Progress Data  │   After entity terminal state              │
    │   Connection     │   After GOAWAY + drain complete            │

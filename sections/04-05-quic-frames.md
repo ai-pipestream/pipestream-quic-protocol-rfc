@@ -2,13 +2,13 @@
 
 ## Section 4: QUIC Stream Mapping
 
-### 4.1. Ledger Stream (Stream 0)
+### 4.1. Control Stream (Stream 0)
 
-The Ledger Stream provides the control plane for PipeStream operations, carrying status updates and synchronization information between endpoints.
+The Control Stream provides the control plane for PipeStream operations, carrying status updates and synchronization information between endpoints.
 
 #### 4.1.1. Stream Identification
 
-The Ledger Stream MUST use QUIC Stream ID 0, which per [RFC 9000] Section 2.1 is a client-initiated bidirectional stream. Both client and server transmit ledger frames on this single bidirectional stream.
+The Control Stream MUST use QUIC Stream ID 0, which per [RFC 9000] Section 2.1 is a client-initiated bidirectional stream. Both client and server transmit status frames on this single bidirectional stream.
 
 ```
    +------------------+
@@ -27,27 +27,27 @@ The Ledger Stream MUST use QUIC Stream ID 0, which per [RFC 9000] Section 2.1 is
 
 #### 4.1.2. Stream Properties
 
-Implementations MUST adhere to the following requirements for the Ledger Stream:
+Implementations MUST adhere to the following requirements for the Control Stream:
 
 1. The client MUST open Stream 0 before any Entity Streams.
 
 2. Stream 0 MUST remain open for the duration of the PipeStream session.
 
-3. Stream 0 MUST NOT carry entity payload data; it is reserved exclusively for ledger frames.
+3. Stream 0 MUST NOT carry entity payload data; it is reserved exclusively for status frames.
 
-4. Implementations SHOULD assign the Ledger Stream higher priority than Entity Streams using QUIC priority mechanisms [RFC 9218].
+4. Implementations SHOULD assign the Control Stream higher priority than Entity Streams using QUIC priority mechanisms [RFC 9218].
 
 #### 4.1.3. Flow Control Considerations
 
-The Ledger Stream carries small, fixed-size frames (4 octets each for basic frames). Implementations MUST ensure adequate flow control credits are maintained:
+The Control Stream carries small, fixed-size frames (4 octets each for basic frames). Implementations MUST ensure adequate flow control credits are maintained:
 
-- The initial MAX_STREAM_DATA for Stream 0 SHOULD be at least 8192 octets, allowing approximately 2048 ledger frames before requiring credit updates.
+- The initial MAX_STREAM_DATA for Stream 0 SHOULD be at least 8192 octets, allowing approximately 2048 status frames before requiring credit updates.
 
-- Implementations SHOULD NOT block Entity Stream transmission due to Ledger Stream flow control exhaustion.
+- Implementations SHOULD NOT block Entity Stream transmission due to Control Stream flow control exhaustion.
 
 #### 4.1.4. Keep-Alive and Heartbeat Mechanisms
 
-To maintain session liveness and detect connection failures, PipeStream defines a heartbeat mechanism on the Ledger Stream:
+To maintain session liveness and detect connection failures, PipeStream defines a heartbeat mechanism on the Control Stream:
 
 ```
    Heartbeat Frame (4 octets):
@@ -59,7 +59,7 @@ To maintain session liveness and detect connection failures, PipeStream defines 
 
 The following requirements apply:
 
-1. When no ledger updates have been transmitted for a duration exceeding the KEEPALIVE_TIMEOUT (default: 30 seconds), an endpoint SHOULD send a heartbeat frame.
+1. When no status updates have been transmitted for a duration exceeding the KEEPALIVE_TIMEOUT (default: 30 seconds), an endpoint SHOULD send a heartbeat frame.
 
 2. Heartbeat frames use the reserved Entity ID 0xFFFFF with status PENDING (0x0).
 
@@ -71,7 +71,7 @@ The following requirements apply:
 
 #### 4.1.5. Error Handling
 
-If Stream 0 is reset by either endpoint, the PipeStream session MUST be considered terminated. Implementations MUST close the QUIC connection with application error code PIPESTREAM_LEDGER_RESET (0x02).
+If Stream 0 is reset by either endpoint, the PipeStream session MUST be considered terminated. Implementations MUST close the QUIC connection with application error code PIPESTREAM_CONTROL_RESET (0x02).
 
 ### 4.2. Entity Streams (Streams 2+)
 
@@ -132,7 +132,7 @@ The lifecycle of an Entity Stream follows this state machine:
                                 |
                     Open Stream |
                     Send PENDING|
-                    to Ledger   |
+                    on Ctrl Strm|
                                 v
                           +------------+
                           |   OPEN     |
@@ -141,7 +141,7 @@ The lifecycle of an Entity Stream follows this state machine:
                     First frame |
                     transmitted |
                     PROCESSING  |
-                    to Ledger   |
+                    on Ctrl Strm|
                                 v
                           +------------+
                           | TRANSMIT   |<----+
@@ -156,7 +156,7 @@ The lifecycle of an Entity Stream follows this state machine:
                   |          |
       FIN stream  |          | RESET_STREAM
       COMPLETE    |          | FAILED
-      to Ledger   |          | to Ledger
+      on Ctrl Strm|          | on Ctrl Strm
                   v          v
               +----------------+
               |    CLOSED      |
@@ -165,22 +165,22 @@ The lifecycle of an Entity Stream follows this state machine:
 
 The following requirements apply to Entity Stream lifecycle:
 
-1. Before opening an Entity Stream, the sender MUST transmit a ledger frame with status PENDING (0x00) for that entity_id.
+1. Before opening an Entity Stream, the sender MUST transmit a status frame with status PENDING (0x00) for that entity_id.
 
-2. Upon transmitting the first byte of entity data, the sender MUST transmit a ledger frame with status PROCESSING (0x01).
+2. Upon transmitting the first byte of entity data, the sender MUST transmit a status frame with status PROCESSING (0x01).
 
-3. Upon successful completion (stream closed with FIN), the sender MUST transmit a ledger frame with status COMPLETE (0x02).
+3. Upon successful completion (stream closed with FIN), the sender MUST transmit a status frame with status COMPLETE (0x02).
 
-4. If the stream is reset (RESET_STREAM frame), the sender MUST transmit a ledger frame with status FAILED (0x03).
+4. If the stream is reset (RESET_STREAM frame), the sender MUST transmit a status frame with status FAILED (0x03).
 
-5. A receiver that resets an Entity Stream (STOP_SENDING) SHOULD expect a corresponding FAILED status on the Ledger Stream.
+5. A receiver that resets an Entity Stream (STOP_SENDING) SHOULD expect a corresponding FAILED status on the Control Stream.
 
 #### 4.2.4. Entity ID to Stream Correlation
 
-The correlation between Entity Streams and ledger updates is established through the entity_id field:
+The correlation between Entity Streams and status updates is established through the entity_id field:
 
 ```
-   Ledger Stream (Stream 0)         Entity Streams
+   Control Stream (Stream 0)         Entity Streams
    +------------------------+       +------------------------+
    | entity_id=0x0001       |       | Stream 2               |
    | status=PENDING         |  +--> | entity_id=0x0001       |
@@ -205,15 +205,15 @@ Implementations MUST track the mapping between entity_id values and their corres
 
 1. Multiple Entity Streams MAY be open concurrently. The maximum number of concurrent streams is governed by QUIC transport parameters (initial_max_streams_uni).
 
-2. Ledger updates for different entities MAY arrive out of order relative to entity payload receipt due to QUIC's per-stream ordering guarantees.
+2. Status updates for different entities MAY arrive out of order relative to entity payload receipt due to QUIC's per-stream ordering guarantees.
 
-3. Implementations MUST be prepared to receive ledger updates (e.g., PROCESSING) before the corresponding Entity Stream data arrives.
+3. Implementations MUST be prepared to receive status updates (e.g., PROCESSING) before the corresponding Entity Stream data arrives.
 
 4. For recursive entities (entities with parent_id referencing another entity), implementations SHOULD ensure the parent entity's stream is opened before child entity streams, though this is NOT REQUIRED.
 
 #### 4.2.6. Priority
 
-Entity Streams SHOULD be assigned lower priority than the Ledger Stream. Among Entity Streams:
+Entity Streams SHOULD be assigned lower priority than the Control Stream. Among Entity Streams:
 
 - Implementations MAY assign equal priority to all Entity Streams.
 - Implementations MAY prioritize based on entity layer (lower layer = higher priority).
@@ -227,13 +227,13 @@ Priority signaling SHOULD use the Extensible Priority scheme defined in [RFC 921
 
 This section defines the wire formats for PipeStream frames. All multi-octet integer fields are encoded in network byte order (big-endian) unless otherwise specified.
 
-### 5.1. Ledger Frames
+### 5.1. Status Frames
 
-Ledger frames are fixed-size control messages transmitted on Stream 0. They provide lightweight status updates for entity processing coordination.
+Status frames are fixed-size control messages transmitted on Stream 0. They provide lightweight status updates for entity processing coordination.
 
-#### 5.1.1. Basic Ledger Frame Format
+#### 5.1.1. Basic Status Frame Format
 
-A basic ledger frame is exactly 4 octets (32 bits), word-aligned:
+A basic status frame is exactly 4 octets (32 bits), word-aligned:
 
 ```
     0                   1                   2                   3
@@ -278,8 +278,8 @@ The status field (4 bits) indicates the current processing state of an entity:
 | 0x2   | COMPLETE    | 0     | Entity successfully processed          |
 | 0x3   | FAILED      | 0     | Entity processing failed               |
 | 0x4   | CHECKPOINT  | 0     | Synchronization barrier                |
-| 0x5   | VAPORIZING  | 0     | Decomposing into children              |
-| 0x6   | AGGREGATING | 0     | Rejoining children                     |
+| 0x5   | DEHYDRATING | 0     | Dehydrating into children              |
+| 0x6   | REHYDRATING | 0     | Rehydrating children                   |
 | 0x7   | Reserved    | -     | Reserved                               |
 | 0x8   | YIELDED     | 2     | Paused with continuation token         |
 | 0x9   | DEFERRED    | 2     | Detached with claim check              |
@@ -300,7 +300,7 @@ The status field (4 bits) indicates the current processing state of an entity:
 
 Frames with Entity ID 0xFFFFF apply to the entire connection. Status codes for connection-level frames may have different semantics (e.g., 0x0 for Heartbeat).
 
-#### 5.1.5. Extended Ledger Frames (E=1)
+#### 5.1.5. Extended Status Frames (E=1)
 
 The format of the extended data depends on the Stat field and negotiated capabilities.
 
@@ -450,7 +450,7 @@ The Protobuf schema for the header is:
 
 - MUST be a non-zero unsigned integer in the range 1-1,048,573 (0x00001-0xFFFFD).
 - MUST be unique within its scope for the sending direction.
-- MUST correspond to the entity_id used in ledger frame updates for this entity.
+- MUST correspond to the entity_id used in status frame updates for this entity.
 
 ##### 5.2.3.2. parent_id (Field 2)
 
