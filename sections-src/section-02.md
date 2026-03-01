@@ -1,8 +1,8 @@
-## 2. Terminology
+# Terminology
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in BCP 14 {{RFC2119}} {{RFC8174}} when, and only when, they appear in all capitals, as shown here.
 
-### 2.1. Protocol Entities
+## Protocol Entities
 
 **Entity**
 :   The fundamental unit of data flowing through a PipeStream pipeline. An Entity represents either a complete document or a constituent part of a decomposed document. Each Entity possesses a unique identifier within its processing scope and carries payload data in one of the four defined Layer formats. Entities are immutable once created; transformations produce new Entities rather than modifying existing ones.
@@ -13,7 +13,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 **Scope**
 :   A hierarchical namespace for Entity IDs. Each scope maintains its own Entity ID space, cursor, and Assembly Manifest. Scopes enable collections to contain documents, documents to contain parts, and parts to contain jobs, each with independent ID management. (Protocol Layer 1)
 
-### 2.2. Dehydration and Rehydration
+## Dehydration and Rehydration
 
 **Scatter-Gather**
 :   The distributed processing pattern implemented by PipeStream. A single input is "scattered" (dehydrated) into multiple parts for parallel processing, and the results are "gathered" (rehydrated) back into a single output. PipeStream extends classical scatter-gather with recursive nesting: any scattered part may itself be scattered further.
@@ -30,7 +30,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 **Fluid State**
 :   A document that has been decomposed into multiple in-flight Entities being processed in parallel across distributed nodes. A document is in the fluid state between dehydration and rehydration. Contrast with "solid state".
 
-### 2.3. Consistency Mechanisms
+## Consistency Mechanisms
 
 **Checkpoint**
 :   A synchronization point in the processing pipeline where all in-flight Entities MUST reach a consistent state before processing may continue. A checkpoint is considered "satisfied" when all Assembly Manifest entries created before the checkpoint have been resolved.
@@ -47,7 +47,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 **Cursor**
 :   A pointer to the lowest unresolved Entity ID within a scope. Entity IDs behind the cursor are considered resolved and MAY be recycled. The cursor enables efficient ID space management without global coordination.
 
-### 2.4. Resilience Mechanisms (Protocol Layer 2)
+## Resilience Mechanisms (Protocol Layer 2)
 
 **Yield**
 :   A temporary pause in Entity processing, typically due to external dependencies (API calls, rate limiting, human approval). A yielded Entity carries a continuation token enabling resumption without reprocessing.
@@ -58,7 +58,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 **Completion Policy**
 :   A configuration specifying how to handle partial failures during dehydration. Policies include STRICT (all must succeed), LENIENT (continue with partial results), BEST_EFFORT (complete with whatever succeeds), and QUORUM (require minimum success ratio).
 
-### 2.5. Data Representation
+## Data Representation
 
 **Data Layer**
 :   One of four defined representations for Entity payload data:
@@ -68,10 +68,16 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
     3. **ParsedData**: Structured information extracted from document content
     4. **CustomEntity**: Application-specific extension Layer
 
-### 2.6. Additional Terms
+## Additional Terms
 
 **Pipeline**
 :   A configured sequence of processing stages through which Entities flow.
+
+**Processor**
+:   A node in the mesh that performs operations on entities (e.g., transformation, dehydration, or rehydration).
+
+**Sink**
+:   A terminal stage in a pipeline where rehydrated documents are persisted or delivered to an external system.
 
 **Stage**
 :   A single processing step within a Pipeline.

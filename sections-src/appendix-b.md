@@ -1,4 +1,4 @@
-## Appendix B: Protocol Layer Capability Matrix
+# Protocol Layer Capability Matrix
 
 | Feature | Layer 0 | Layer 1 | Layer 2 |
 |---------|---------|---------|---------|

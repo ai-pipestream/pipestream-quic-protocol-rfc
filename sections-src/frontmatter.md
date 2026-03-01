@@ -27,6 +27,13 @@ author:
     organization: PipeStream AI
     email: kristian.rickert@pipestream.ai
 
+normative:
+  RFC2119:
+  RFC8174:
+  RFC9000:
+  RFC8446:
+  RFC8126:
+
 informative:
   FIPS-180-4:
     title: "Secure Hash Standard (SHS)"

@@ -1,6 +1,6 @@
-## 1. Introduction
+# Introduction
 
-### 1.1. Problem Statement
+## Problem Statement
 
 Distributed document processing pipelines face significant challenges when handling large, complex documents that require multiple stages of transformation, analysis, and enrichment. Traditional batch processing approaches require entire documents to be loaded into memory, processed sequentially, and transmitted in their entirety between processing stages. This methodology introduces substantial latency, excessive memory consumption, and poor utilization of distributed computing resources.
 
@@ -15,7 +15,7 @@ Modern document processing workflows increasingly demand the ability to:
 
 Current approaches based on batch processing and store-and-forward architectures are inefficient for large documents and fail to exploit the inherent parallelism available in distributed processing environments. Furthermore, existing streaming protocols do not provide the consistency semantics required for document processing where the integrity of the rehydrated output depends on the successful processing of all constituent parts.
 
-### 1.2. PipeStream Overview
+## PipeStream Overview
 
 PipeStream addresses these challenges by defining a streaming protocol that enables incremental processing with strong consistency guarantees. The protocol is built upon QUIC {{RFC9000}} transport, leveraging its native support for multiplexed streams, low-latency connection establishment, and reliable delivery semantics.
 
@@ -27,7 +27,7 @@ PipeStream employs a dual-stream design:
 
 2. **Control Stream**: Carries control information tracking the status of entity decomposition and rehydration. The control stream ensures that all parts of a dehydrated document are accounted for before rehydration proceeds.
 
-### 1.3. Design Philosophy
+## Design Philosophy
 
 PipeStream implements a recursive scatter-gather pattern {{?scatter-gather=DOI.10.1007/978-1-4612-1260-6}} over QUIC streams. A document is "dehydrated" (scattered) at the source into constituent entities, these entities are transmitted and processed in parallel across distributed pipeline stages, and finally the entities are "rehydrated" (gathered) at the destination to reconstitute the complete processed document. The checkpoint blocking mechanism (Section 9.3) provides barrier synchronization semantics analogous to the barrier pattern in parallel computing.
 
@@ -43,7 +43,7 @@ This approach provides several advantages:
 
 - **Consistency**: The checkpoint blocking mechanism ensures that rehydration operations proceed only when all constituent parts have been successfully processed.
 
-### 1.4. Protocol Layering
+## Protocol Layering
 
 PipeStream is organized into three protocol layers to accommodate varying deployment requirements:
 
@@ -55,6 +55,6 @@ PipeStream is organized into three protocol layers to accommodate varying deploy
 
 Implementations MUST support Layer 0. Support for Layers 1 and 2 is OPTIONAL and negotiated during connection establishment.
 
-### 1.5. Scope
+## Scope
 
 This document specifies the PipeStream protocol including message formats, state machines, error handling, and the interaction between data and control streams. The document defines the four standard data layers but does not mandate specific processing semantics, which are left to application-layer specifications.

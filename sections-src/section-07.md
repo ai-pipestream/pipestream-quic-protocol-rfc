@@ -1,6 +1,6 @@
-## 7. Entity Model
+# Entity Model
 
-### 7.1. Core Fields
+## Core Fields
 
 Every PipeStream entity is represented as a PipeDoc message:
 
@@ -10,7 +10,7 @@ Every PipeStream entity is represented as a PipeDoc message:
 | entity_id | uint32 | REQUIRED | Scope-local identifier |
 | ownership | OwnershipContext | OPTIONAL | Multi-tenancy tracking |
 
-### 7.2. Four Data Layers
+## Four Data Layers
 
 Each PipeDoc carries entity payload in one of four data layers:
 
@@ -21,7 +21,7 @@ Each PipeDoc carries entity payload in one of four data layers:
 | 2 | ParsedData | Structured extraction: key-value pairs, tables, structured fields |
 | 3 | CustomEntity | Extension point: domain-specific protobuf via `google.protobuf.Any` |
 
-### 7.3. Cloud-Agnostic Storage Reference
+## Cloud-Agnostic Storage Reference
 
 ```protobuf
 message FileStorageReference {

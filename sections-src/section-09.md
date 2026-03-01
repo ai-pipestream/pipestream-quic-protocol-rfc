@@ -1,6 +1,6 @@
-## 9. Rehydration Semantics
+# Rehydration Semantics
 
-### 9.1. Entity ID Lifecycle and Cursor
+## Entity ID Lifecycle and Cursor
 
 Entity IDs are managed using a cursor-based circular recycling scheme within the 32-bit ID space. The ID space is divided into three logical regions relative to the current `cursor` and `last_assigned` pointers:
 
@@ -19,7 +19,7 @@ The window size is computed as `(last_assigned - cursor) mod 0xFFFFFFFD`. If `wi
 4. On COMPLETE/FAILED: mark resolved; if `entity_id == cursor`, advance cursor
 5. IDs behind cursor are implicitly recyclable
 
-### 9.2. Assembly Manifest
+## Assembly Manifest
 
 Each Assembly Manifest entry tracks:
 
@@ -43,7 +43,7 @@ enum ResolutionState {
 }
 ```
 
-### 9.3. Checkpoint Blocking
+## Checkpoint Blocking
 
 A checkpoint is satisfied when:
 
@@ -75,7 +75,7 @@ For circular comparison in Condition 1, implementations MUST use the same modulo
 
 An entity ID `a` is considered "less than checkpoint_entity_id `b`" iff `is_before(a, b)` is true.
 
-### 9.4. Scope Digest Propagation (Layer 1)
+## Scope Digest Propagation (Layer 1)
 
 When a scope completes, the endpoint MUST compute a Scope Digest and propagate it to the parent scope via a SCOPE_DIGEST frame (Section 6.3).
 
@@ -90,13 +90,13 @@ The Merkle root in the Scope Digest is computed as follows:
 
 This construction is deterministic: any two implementations processing the same set of entity statuses MUST produce the same Merkle root.
 
-### 9.5. Rehydration Readiness Tracking
+## Rehydration Readiness Tracking
 
 Implementations MUST track Assembly Manifest resolution order using a mechanism that provides O(1) insertion and amortized O(log n) minimum extraction. The tracking mechanism MUST support efficient decrease-key operations to handle out-of-order status updates.
 
 Implementations MAY choose any data structure that satisfies these complexity requirements. See the companion document `REFERENCE_IMPLEMENTATION.md` for a recommended approach using a Fibonacci heap.
 
-### 9.6. Stopping Point Validation (Layer 2)
+## Stopping Point Validation (Layer 2)
 
 When yielding or deferring, include validation:
 

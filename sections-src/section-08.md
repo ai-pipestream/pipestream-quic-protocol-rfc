@@ -1,8 +1,8 @@
-## 8. Protocol Operations
+# Protocol Operations
 
 This section defines the protocol-level operations that PipeStream endpoints perform during a session. These operations describe the phases of a PipeStream session lifecycle, from connection establishment through entity processing to terminal consumption.
 
-### 8.1. Overview
+## Overview
 
 A PipeStream session proceeds through four sequential actions:
 
@@ -13,19 +13,19 @@ A PipeStream session proceeds through four sequential actions:
 | 3 | PROCESS | 1:1 or N:1 | Transform, rehydrate, aggregate, or pass through entities (parallel) |
 | 4 | SINK | N:1 | Terminal consumption: index, store, or notify |
 
-### 8.2. CONNECT Action
+## CONNECT Action
 
 The CONNECT action establishes the session with capability negotiation.
 
-#### 8.2.1. ALPN Identifier
+### ALPN Identifier
 
 ALPN Protocol ID: `pipestream/1`
 
-#### 8.2.2. Capability Exchange
+### Capability Exchange
 
 Immediately after QUIC handshake, peers exchange Capabilities messages on Stream 0.
 
-### 8.3. PARSE Action
+## PARSE Action
 
 The PARSE action performs dehydration with optional completion policy:
 
@@ -57,7 +57,7 @@ enum FailureAction {
 }
 ```
 
-### 8.4. PROCESS Action
+## PROCESS Action
 
 | Mode | Description |
 |------|-------------|
@@ -66,7 +66,7 @@ enum FailureAction {
 | AGGREGATE | N:1 with reduction function |
 | PASSTHROUGH | Metadata-only modification |
 
-### 8.5. SINK Action
+## SINK Action
 
 | Type | Description |
 |------|-------------|

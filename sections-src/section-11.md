@@ -1,14 +1,14 @@
-## 11. IANA Considerations
+# IANA Considerations
 
 This document requests the creation of several new registries and one ALPN identifier registration. All registries defined in this section use the "Expert Review" policy {{RFC8126}} for new assignments.
 
-### 11.1. ALPN Identifier Registration
+## ALPN Identifier Registration
 
 | Protocol | Identification Sequence | Reference |
 |----------|------------------------|-----------|
-| PipeStream Version 1 | "pipestream/1" | [this document] |
+| PipeStream Version 1 | "pipestream/1" | RFC &rfc.number; |
 
-### 11.2. PipeStream Frame Type Registry
+## PipeStream Frame Type Registry
 
 IANA is requested to create the "PipeStream Frame Types" registry. Values are categorized into Fixed (type-sized, no length prefix) frames in 0x50-0x7F and Variable (4-octet length prefix) frames in 0x80-0xFF. Values 0xC0-0xFF are reserved for private use.
 
@@ -17,12 +17,12 @@ IANA is requested to create the "PipeStream Frame Types" registry. Values are ca
 | 0x50 | STATUS | Fixed | 12 octets base | 0 | Section 6.2 |
 | 0x54 | SCOPE_DIGEST | Fixed | 68 octets | 1 | Section 6.3 |
 | 0x55 | BARRIER | Fixed | 8 octets | 1 | Section 6.4 |
-| 0x56-0x7F | Reserved | Fixed | - | - | [this document] |
+| 0x56-0x7F | Reserved | Fixed | - | - | RFC &rfc.number; |
 | 0x80 | CAPABILITIES | Var | Length-prefixed | 0 | Section 3.4 |
 | 0x81 | CHECKPOINT | Var | Length-prefixed | 0 | Section 9.3 |
-| 0x82-0xBF | Reserved | Var | - | - | [this document] |
+| 0x82-0xBF | Reserved | Var | - | - | RFC &rfc.number; |
 
-### 11.3. PipeStream Status Code Registry
+## PipeStream Status Code Registry
 
 IANA is requested to create the "PipeStream Status Codes" registry. Status codes are 4-bit values (0x0-0xF). Values 0xD-0xF are reserved for future Standards Action.
 
@@ -42,7 +42,7 @@ IANA is requested to create the "PipeStream Status Codes" registry. Status codes
 | 0xB | SKIPPED | 2 | Intentionally skipped |
 | 0xC | ABANDONED | 2 | Timed out |
 
-### 11.4. PipeStream Error Code Registry
+## PipeStream Error Code Registry
 
 IANA is requested to create the "PipeStream Error Codes" registry. Values in the range 0x00-0x3F are assigned by Expert Review. Values in the range 0x40-0xFF are reserved for private use.
 
@@ -62,7 +62,7 @@ IANA is requested to create the "PipeStream Error Codes" registry. Values in the
 | 0x0B | PIPESTREAM_CLAIM_NOT_FOUND | Claim check not found |
 | 0x0C | PIPESTREAM_LAYER_UNSUPPORTED | Protocol layer not supported |
 
-### 11.5. URI Scheme Registration
+## URI Scheme Registration
 
 The `session-id` segment identifies application context for detached or resumable resources (for example, Layer 2 yield/claim-check flows). PipeStream Layer 0 streaming semantics do not depend on this URI scheme.
 

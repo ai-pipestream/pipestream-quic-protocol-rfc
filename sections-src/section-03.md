@@ -1,13 +1,13 @@
-## 3. Protocol Layers
+# Protocol Layers
 
 PipeStream defines three protocol layers that build upon each other. This layered approach allows simple deployments to use only the core protocol while complex deployments can leverage advanced features.
 
-### 3.1. Layer 0: Core Protocol
+## Layer 0: Core Protocol
 
 Layer 0 provides the fundamental streaming capabilities:
 
 - Unified Control Frame (UCF) header (1-octet type)
-- Status frame (12-octet base bit-packed frame)
+- Status frame (8-octet bit-packed frame)
 - Entity frame (header + payload)
 - Status codes: PENDING, PROCESSING, COMPLETE, FAILED, CHECKPOINT
 - Assembly Manifest for parent-child tracking
@@ -17,7 +17,7 @@ Layer 0 provides the fundamental streaming capabilities:
 
 All implementations MUST support Layer 0.
 
-### 3.2. Layer 1: Recursive Extension
+## Layer 1: Recursive Extension
 
 Layer 1 adds hierarchical processing capabilities:
 
@@ -29,7 +29,7 @@ Layer 1 adds hierarchical processing capabilities:
 
 Layer 1 is OPTIONAL. Implementations advertise Layer 1 support during capability negotiation.
 
-### 3.3. Layer 2: Resilience Extension
+## Layer 2: Resilience Extension
 
 Layer 2 adds fault tolerance and async processing:
 
@@ -37,12 +37,12 @@ Layer 2 adds fault tolerance and async processing:
 - DEFERRED status with claim checks
 - RETRYING, SKIPPED, ABANDONED statuses
 - Completion policies (STRICT, LENIENT, BEST_EFFORT, QUORUM)
-- Claim check extensions and deferred processing tokens
+- Claim check query/response frames
 - Stopping point validation
 
 Layer 2 is OPTIONAL and requires Layer 1. Implementations advertise Layer 2 support during capability negotiation.
 
-### 3.4. Capability Negotiation
+## Capability Negotiation
 
 During CONNECT, endpoints exchange supported capabilities:
 

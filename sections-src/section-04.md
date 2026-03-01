@@ -1,26 +1,26 @@
-## 4. Protocol Overview
+# Protocol Overview
 
 This section provides a high-level overview of the PipeStream protocol architecture, design principles, and operational model.
 
-### 4.1. Design Goals
+## Design Goals
 
-#### 4.1.1. True Streaming Processing
+### True Streaming Processing
 
 PipeStream MUST enable true streaming document processing where entities are transmitted and processed incrementally as they become available. Implementations MUST NOT buffer complete documents before initiating transmission.
 
-#### 4.1.2. Recursive Decomposition
+### Recursive Decomposition
 
 The protocol MUST support recursive decomposition of entities, wherein a single input entity MAY produce zero, one, or many output entities.
 
-#### 4.1.3. Checkpoint Consistency
+### Checkpoint Consistency
 
 PipeStream MUST provide checkpoint blocking semantics to maintain processing consistency across distributed workers.
 
-#### 4.1.4. Control and Data Plane Separation
+### Control and Data Plane Separation
 
 The protocol MUST maintain strict separation between the control plane (control stream) and the data plane (entities).
 
-#### 4.1.5. QUIC Foundation
+### QUIC Foundation
 
 PipeStream MUST be implemented over QUIC {{RFC9000}} to leverage:
 
@@ -29,7 +29,7 @@ PipeStream MUST be implemented over QUIC {{RFC9000}} to leverage:
 - TLS 1.3 security by default
 - Connection migration capabilities
 
-#### 4.1.6. Multi-Layer Data Representation
+### Multi-Layer Data Representation
 
 The protocol MUST support four distinct data representation layers:
 
@@ -40,7 +40,7 @@ The protocol MUST support four distinct data representation layers:
 | 2     | ParsedData | Structured extracted information               |
 | 3     | CustomEntity | Application-specific extension               |
 
-### 4.2. Architecture Summary
+## Architecture Summary
 
 PipeStream uses a dual-stream architecture within a single QUIC connection between a Client (Producer) and Server (Consumer):
 
@@ -49,9 +49,7 @@ PipeStream uses a dual-stream architecture within a single QUIC connection betwe
 | Stream 0 | Bidirectional | Control | STATUS, SCOPE_DIGEST, BARRIER, CAPABILITIES, CHECKPOINT |
 | Streams 2+ | Unidirectional | Data | Entity frames (Header + Payload) |
 
-Figure 1: PipeStream Dual-Stream Architecture
-
-### 4.3. Connection Lifecycle
+## Connection Lifecycle
 
 A PipeStream connection follows this lifecycle:
 

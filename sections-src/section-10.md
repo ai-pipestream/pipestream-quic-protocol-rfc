@@ -1,10 +1,10 @@
-## 10. Security Considerations
+# Security Considerations
 
-### 10.1. Transport Security
+## Transport Security
 
 PipeStream inherits security from QUIC {{RFC9000}} and TLS 1.3 {{RFC8446}}. All connections MUST use TLS 1.3 or later. Implementations MUST NOT provide mechanisms to disable encryption.
 
-### 10.2. Entity Payload Integrity
+## Entity Payload Integrity
 
 Each Entity MUST include a SHA-256 checksum in its EntityHeader. 
 
@@ -17,7 +17,7 @@ If a checksum verification fails, the implementation MUST:
 
 Implementations that require immediate consistency SHOULD buffer the entire entity and verify the checksum before initiating processing.
 
-### 10.3. Resource Exhaustion
+## Resource Exhaustion
 
 | Limit | Default | Description |
 |-------|---------|-------------|
@@ -29,7 +29,7 @@ Implementations that require immediate consistency SHOULD buffer the entire enti
 
 Implementations MUST enforce all resource limits listed above. Exceeding any limit MUST result in the corresponding error code (see Section 11.4). Implementations SHOULD allow operators to configure stricter limits than the defaults shown here.
 
-### 10.4. Amplification Attacks
+## Amplification Attacks
 
 A single dehydration operation can produce an arbitrary number of child entities from a small input, creating a potential amplification vector. To mitigate this:
 
@@ -41,7 +41,7 @@ A single dehydration operation can produce an arbitrary number of child entities
 
 4. The backpressure mechanism (Section 9.1) provides a natural throttle: when the in-flight window fills, no new Entity IDs can be assigned until existing entities complete and the cursor advances. Implementations MUST NOT bypass backpressure for dehydration-generated entities.
 
-### 10.5. Privacy Considerations
+## Privacy Considerations
 
 PipeStream entity headers and control stream frames carry metadata that may reveal information about the documents being processed, even when payloads are encrypted at the application layer:
 
@@ -53,9 +53,9 @@ PipeStream entity headers and control stream frames carry metadata that may reve
 
 4. **Identifiers**: The `doc_id` field in PipeDoc (Section 7.1) and filenames in BlobBag entries are application-layer data but may be logged by intermediate processing nodes. Implementations SHOULD provide mechanisms to redact or pseudonymize identifiers at pipeline boundaries.
 
-### 10.6. Replay and Token Reuse
+## Replay and Token Reuse
 
-#### 10.6.1. Yield Token Replay
+### Yield Token Replay
 
 Yield tokens (Section 6.5.1) contain opaque continuation state that enables resumption of paused entity processing. A replayed yield token could cause an entity to be processed multiple times or to resume from a stale state. To prevent this:
 
@@ -65,7 +65,7 @@ Yield tokens (Section 6.5.1) contain opaque continuation state that enables resu
 
 3. The StoppingPointValidation (Section 9.6) provides integrity checking at resume time. Implementations MUST verify the `state_checksum` field before accepting a resumed entity. If the checksum does not match the current state, the resumption MUST be rejected and the entity MUST be reprocessed from the beginning.
 
-#### 10.6.2. Claim Check Replay
+### Claim Check Replay
 
 Claim checks (Section 6.5.2) are long-lived references that can be redeemed in different sessions. To prevent misuse:
 
@@ -75,7 +75,7 @@ Claim checks (Section 6.5.2) are long-lived references that can be redeemed in d
 
 3. Claim check IDs MUST be generated using a cryptographically secure random number generator to prevent guessing.
 
-### 10.7. Encryption Key Management
+## Encryption Key Management
 
 When using FileStorageReference with encryption:
 
