@@ -27,7 +27,7 @@ The following fixed-size frame types are defined by this document:
 | Type | Name | Total Size | Notes |
 |------|------|------------|-------|
 | 0x50 | STATUS | 12 octets (base) | 16 octets when C=1; larger when E=1 with extension data |
-| 0x54 | SCOPE_DIGEST | 52 octets | Includes 32-octet Merkle root |
+| 0x54 | SCOPE_DIGEST | 72 octets | Includes 32-octet Merkle root and 64-bit counters |
 | 0x55 | BARRIER | 8 octets | No variable extension |
 
 ### 6.2. Status Frames (Layer 0)
@@ -38,30 +38,30 @@ The Status Frame reports lifecycle transitions for entities.
 
 ```
     0                   1                   2                   3
+    0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |  Type (0x50)  |  Stat (4) |E|C| Depth (3) |    Flags (15 bits)    |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                       Entity ID (32 bits)                     |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |        Scope ID (16 bits)       |      Reserved (16 bits)     |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-```
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |  Type (0x50)  | Stat(4)|E|C|D|      Flags (15 bits)          |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |                       Entity ID (32 bits)                     |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |        Scope ID (16 bits)       |      Reserved (16 bits)     |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-Stat (4 bits):
-:   Status code (see Section 6.2.2).
+    Stat (4 bits):
+      Status code (see Section 6.2.2).
 
-E (1 bit):
-:   Extended frame flag. Additional extension data follows (Section 6.5).
+    E (1 bit):
+      Extended frame flag. Additional extension data follows (Section 6.5).
 
-C (1 bit):
-:   Cursor update flag. A 4-octet cursor value follows (Section 6.2.3).
+    C (1 bit):
+      Cursor update flag. A 4-octet cursor value follows (Section 6.2.3).
 
-Depth (3 bits):
-:   Explicit scope nesting depth (0-7). 0=Root. Layer 1.
+    D (3 bits):
+      Explicit scope nesting depth (0-7). 0=Root. Layer 1.
 
-Flags (15 bits):
-:   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
+    Flags (15 bits):
+      Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
 
 Entity ID (32 bits):
 :   Unsigned integer identifying the entity.
@@ -117,13 +117,21 @@ When Protocol Layer 1 is negotiated, a scope completion is summarized:
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |  Type (0x54)  |  Flags (8)      |        Scope ID (16)        |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                    Entities Processed (32)                    |
+   |                                                               |
+   |                   Entities Processed (64 bits)                |
+   |                                                               |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                    Entities Succeeded (32)                    |
+   |                                                               |
+   |                   Entities Succeeded (64 bits)                |
+   |                                                               |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                    Entities Failed (32)                       |
+   |                                                               |
+   |                    Entities Failed (64 bits)                  |
+   |                                                               |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                    Entities Deferred (32)                     |
+   |                                                               |
+   |                    Entities Deferred (64 bits)                |
+   |                                                               |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                                                               |
    |                    Merkle Root (256 bits)                     |
@@ -137,22 +145,22 @@ Flags (8 bits):
 Scope ID (16 bits):
 :   Identifier of the scope being summarized.
 
-Entities Processed (32 bits):
+Entities Processed (64 bits):
 :   The total number of entities that were processed within the scope.
 
-Entities Succeeded (32 bits):
+Entities Succeeded (64 bits):
 :   The number of entities that reached a terminal success state.
 
-Entities Failed (32 bits):
+Entities Failed (64 bits):
 :   The number of entities that reached a terminal failure state.
 
-Entities Deferred (32 bits):
+Entities Deferred (64 bits):
 :   The number of entities that were deferred via claim checks.
 
 Merkle Root (256 bits):
 :   The SHA-256 Merkle root covering all entity statuses in the scope (see Section 9.4).
 
-The SCOPE_DIGEST frame is 52 octets total. The Scope ID MUST match the 16-bit identifier defined in Section 6.2.1.
+The SCOPE_DIGEST frame is 72 octets total. The Scope ID MUST match the 16-bit identifier defined in Section 6.2.1.
 
 ### 6.4. Barrier Frame (0x55)
 

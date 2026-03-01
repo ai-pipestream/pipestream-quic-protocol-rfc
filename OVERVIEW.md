@@ -15,7 +15,7 @@ Unlike traditional pipelines that rely on a central orchestrator, PipeStream is 
 
 ## 3. Dual-Stream Architecture
 PipeStream separates the **Control Plane** from the **Data Plane** at the stream level:
-*   **Control Stream (Stream 0):** Bit-packed, 32-bit word-aligned status frames for high-frequency status coordination. It acts as the "Header" for the entire document-process.
+*   **Control Stream (Stream 0):** Bit-packed, 96-bit (12-octet) status frames for high-frequency status coordination. It acts as the "Header" for the entire document-process.
 *   **Entity Streams (Streams 2+):** Protobuf-encoded **EntityHeaders** followed by raw binary payloads. This ensures data isolation and prevents head-of-line blocking.
 
 ## 4. Hierarchy & AI Data Model

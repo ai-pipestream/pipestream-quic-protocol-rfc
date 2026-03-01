@@ -99,6 +99,14 @@ enum EntityStatus {
   ENTITY_STATUS_ABANDONED = 12;
 }
 
+// StatusFrame is the Protobuf representation of a status transition.
+message StatusFrame {
+  uint32 entity_id = 1;
+  uint32 scope_id = 2;
+  EntityStatus status = 3;
+  google.protobuf.Any extended_data = 4;
+}
+
 // CheckpointFrame (Protobuf, Type 0x81)
 message CheckpointFrame {
   string checkpoint_id = 1;
@@ -168,5 +176,40 @@ message ScopeDigest {
   uint64 entities_failed = 4;
   uint64 entities_deferred = 5;
   bytes merkle_root = 6;
+}
+
+// PipeDoc represents the top-level document envelope for an entity.
+message PipeDoc {
+  string doc_id = 1;
+  uint32 entity_id = 2;
+  OwnershipContext ownership = 3;
+}
+
+// OwnershipContext defines mult-tenancy and access control for entities.
+message OwnershipContext {
+  string owner_id = 1;
+  string group_id = 2;
+  repeated string scopes = 3;
+}
+
+// FileStorageReference provides a location for data stored in cloud or local
+// storage, rather than carried in the entity stream.
+message FileStorageReference {
+  string provider = 1;
+  string bucket = 2;
+  string key = 3;
+  string region = 4;
+  map<string, string> attrs = 5;
+  EncryptionMetadata encryption = 6;
+}
+
+// EncryptionMetadata defines encryption parameters for stored data.
+message EncryptionMetadata {
+  string algorithm = 1;
+  string key_provider = 2;
+  string key_id = 3;
+  bytes wrapped_key = 4;
+  bytes iv = 5;
+  map<string, string> context = 6;
 }
 ```

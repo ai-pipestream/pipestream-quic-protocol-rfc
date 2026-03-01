@@ -467,3 +467,43 @@ message ScopeDigest {
   // providing a single cryptographic digest for integrity verification.
   bytes merkle_root = 6;
 }
+
+// PipeDoc represents the top-level document envelope for an entity.
+message PipeDoc {
+  // Unique document identifier (UUID recommended).
+  string doc_id = 1;
+
+  // Identifier of the entity represented by this document.
+  uint32 entity_id = 2;
+
+  // Multi-tenancy and access control context.
+  OwnershipContext ownership = 3;
+}
+
+// OwnershipContext defines mult-tenancy and access control for entities.
+message OwnershipContext {
+  string owner_id = 1;
+  string group_id = 2;
+  repeated string scopes = 3;
+}
+
+// FileStorageReference provides a location for data stored in cloud or local
+// storage, rather than carried in the entity stream.
+message FileStorageReference {
+  string provider = 1;           // Storage provider identifier (e.g. "s3", "blob")
+  string bucket = 2;             // Bucket/container name
+  string key = 3;                // Object key/path
+  string region = 4;             // Optional region hint
+  map<string, string> attrs = 5; // Provider-specific attributes
+  EncryptionMetadata encryption = 6;
+}
+
+// EncryptionMetadata defines encryption parameters for stored data.
+message EncryptionMetadata {
+  string algorithm = 1;          // e.g. "AES-256-GCM"
+  string key_provider = 2;       // e.g. "aws-kms", "vault"
+  string key_id = 3;             // Key identifier
+  bytes wrapped_key = 4;         // Optional DEK
+  bytes iv = 5;                  // Initialization vector
+  map<string, string> context = 6; // Additional context
+}

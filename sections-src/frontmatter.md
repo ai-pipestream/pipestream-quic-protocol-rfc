@@ -5,7 +5,7 @@ docname: draft-krickert-pipestream-00
 category: std
 submissiontype: IETF
 number:
-date: 2026-02-24
+date: 2026-03-01
 consensus: true
 v: 3
 area: "Applications and Real-Time"
