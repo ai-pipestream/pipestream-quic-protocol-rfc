@@ -37,31 +37,27 @@ The following fixed-size frame types are defined by this document:
 The Status Frame reports lifecycle transitions for entities.
 
 ```
-    0                   1                   2                   3
-    0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |  Type (0x50)  | Stat(4)|E|C|D|      Flags (15 bits)          |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |                       Entity ID (32 bits)                     |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |        Scope ID (16 bits)       |      Reserved (16 bits)     |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+Octet 0      : Type (0x50)
+Octets 1-3   : Stat(4) | E(1) | C(1) | D(3) | Flags(15)
+Octets 4-7   : Entity ID (32 bits)
+Octets 8-9   : Scope ID (16 bits)
+Octets 10-11 : Reserved (16 bits)
+```
 
-    Stat (4 bits):
-      Status code (see Section 6.2.2).
+Stat (4 bits):
+:   Status code (see Section 6.2.2).
 
-    E (1 bit):
-      Extended frame flag. Additional extension data follows (Section 6.5).
+E (1 bit):
+:   Extended frame flag. Additional extension data follows (Section 6.5).
 
-    C (1 bit):
-      Cursor update flag. A 4-octet cursor value follows (Section 6.2.3).
+C (1 bit):
+:   Cursor update flag. A 4-octet cursor value follows (Section 6.2.3).
 
-    D (3 bits):
-      Explicit scope nesting depth (0-7). 0=Root. Layer 1.
+D (3 bits):
+:   Explicit scope nesting depth (0-7). 0=Root. Layer 1.
 
-    Flags (15 bits):
-      Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
+Flags (15 bits):
+:   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
 
 Entity ID (32 bits):
 :   Unsigned integer identifying the entity.
@@ -97,46 +93,75 @@ The base STATUS frame is 12 octets. When C=1, a 4-octet cursor value follows (to
 When C=1, a 4-octet cursor update follows the status frame:
 
 ```
-    0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                  New Cursor Value (32 bits)                   |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+Octets 0-3 : New Cursor Value (32 bits)
 ```
 
 New Cursor Value (32 bits):
 :   The numeric value of the new cursor. Entities with IDs lower than this value (modulo circular ID rules) are considered resolved and their IDs MAY be recycled.
+
+#### 6.2.4. Entity Status State Machine
+
+Status updates for a given `(scope_id, entity_id)` pair form a finite-state machine. Senders MUST emit only legal transitions. Receivers MUST enforce the transition rules in this section.
+
+`UNSPECIFIED (0x0)` is reserved for heartbeat/connection signaling and MUST NOT be used as a lifecycle state for real entities.
+
+Layer 2 statuses (`YIELDED`, `DEFERRED`, `RETRYING`, `SKIPPED`, `ABANDONED`) MUST NOT appear unless Layer 2 has been negotiated (Section 3.4). If received without Layer 2 negotiation, the receiver MUST fail with `PIPESTREAM_LAYER_UNSUPPORTED (0x0C)`.
+
+##### 6.2.4.1. Legal Transitions
+
+| Current State | Next State(s) | Conditions |
+|---------------|---------------|------------|
+| UNSPECIFIED | - | Heartbeat only; not a real entity lifecycle state |
+| PENDING | PROCESSING, FAILED | Initial activation or immediate failure |
+| PROCESSING | COMPLETE, FAILED, CHECKPOINT, DEHYDRATING | Core transitions |
+| PROCESSING | YIELDED, DEFERRED | Layer 2 negotiated |
+| CHECKPOINT | PROCESSING | Barrier satisfied; resume processing |
+| DEHYDRATING | REHYDRATING, FAILED | Child decomposition complete or failure |
+| REHYDRATING | COMPLETE, FAILED | Gather complete or failure |
+| YIELDED | PROCESSING, FAILED, ABANDONED | Resume, terminal failure, or expiry/abort (Layer 2) |
+| DEFERRED | PROCESSING, FAILED, ABANDONED | Claim redeemed, terminal failure, or expiry/abort (Layer 2) |
+| FAILED | RETRYING, SKIPPED | Only when Layer 2 policy permits retry/skip |
+| RETRYING | PROCESSING, FAILED, SKIPPED, ABANDONED | Retry attempt, failure, policy skip, or timeout/abort |
+| COMPLETE | - | Terminal |
+| SKIPPED | - | Terminal |
+| ABANDONED | - | Terminal |
+
+`FAILED` is terminal in Layer 0-only operation. When Layer 2 is active, `FAILED` MAY transition to `RETRYING` or `SKIPPED` only if the effective Completion Policy allows it.
+
+##### 6.2.4.2. State Diagram (Informative)
+
+```
+PENDING -> PROCESSING -> COMPLETE
+   |          |   |  \-> CHECKPOINT -> PROCESSING
+   |          |   \----> DEHYDRATING -> REHYDRATING -> COMPLETE
+   |          \--------> FAILED --(L2 policy)--> RETRYING -> PROCESSING
+   |                                 |                    \-> FAILED
+   \--------------------------------> FAILED --(L2 policy)--> SKIPPED
+
+PROCESSING --(L2)--> YIELDED  -> PROCESSING
+PROCESSING --(L2)--> DEFERRED -> PROCESSING
+YIELDED/DEFERRED/RETRYING ----> ABANDONED
+```
+
+##### 6.2.4.3. Error Handling
+
+For a given `(scope_id, entity_id)`, a transition not listed in Table 6.2.4.1 is invalid. Receivers MUST treat such transitions as protocol violations and fail processing with `PIPESTREAM_ENTITY_INVALID (0x05)`.
+
+Status frames for a given `(scope_id, entity_id)` MUST be processed in Control Stream order.
 
 ### 6.3. Scope Digest Frame (0x54)
 
 When Protocol Layer 1 is negotiated, a scope completion is summarized:
 
 ```
-    0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |  Type (0x54)  |  Flags (8)      |        Scope ID (16)        |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                                                               |
-   |                   Entities Processed (64 bits)                |
-   |                                                               |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                                                               |
-   |                   Entities Succeeded (64 bits)                |
-   |                                                               |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                                                               |
-   |                    Entities Failed (64 bits)                  |
-   |                                                               |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                                                               |
-   |                    Entities Deferred (64 bits)                |
-   |                                                               |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                                                               |
-   |                    Merkle Root (256 bits)                     |
-   |                                                               |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+Octet 0      : Type (0x54)
+Octet 1      : Flags (8 bits)
+Octets 2-3   : Scope ID (16 bits)
+Octets 4-11  : Entities Processed (64 bits)
+Octets 12-19 : Entities Succeeded (64 bits)
+Octets 20-27 : Entities Failed (64 bits)
+Octets 28-35 : Entities Deferred (64 bits)
+Octets 36-67 : Merkle Root (256 bits)
 ```
 
 Flags (8 bits):
@@ -165,13 +190,10 @@ The SCOPE_DIGEST frame is 68 octets total. The Scope ID MUST match the 16-bit id
 ### 6.4. Barrier Frame (0x55)
 
 ```
-    0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |  Type (0x55)  |S|  Reserved (7) |        Barrier ID (16)      |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                    Parent Entity ID (32 bits)                 |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+Octet 0    : Type (0x55)
+Octet 1    : S(1) | Reserved(7)
+Octets 2-3 : Barrier ID (16 bits)
+Octets 4-7 : Parent Entity ID (32 bits)
 ```
 
 S (1 bit):
@@ -195,15 +217,9 @@ If E=1 is set for a Status code that does not define an extension layout in this
 #### 6.5.1. Yield Extension (Stat = 0x8)
 
 ```
-    0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   | Yield Reason  |           Token Length (24 bits)              |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                                                               |
-   |                  Yield Token (variable)                       |
-   |                                                               |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+Octet 0        : Yield Reason (8 bits)
+Octets 1-3     : Token Length (24 bits)
+Octets 4-(N+3) : Yield Token (N octets, where N = Token Length)
 ```
 
 Yield Reason (8 bits):
@@ -229,17 +245,8 @@ Yield Token (variable):
 #### 6.5.2. Claim Check Extension (Stat = 0x9)
 
 ```
-    0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                                                               |
-   |                    Claim Check ID (64 bits)                   |
-   |                                                               |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                                                               |
-   |                Expiry Timestamp (64 bits, Unix micros)        |
-   |                                                               |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+Octets 0-7  : Claim Check ID (64 bits)
+Octets 8-15 : Expiry Timestamp (64 bits, Unix micros)
 ```
 
 Claim Check ID (64 bits):
@@ -264,17 +271,9 @@ Entity frames carry the actual document entity data on Entity Streams.
 #### 6.7.1. Entity Frame Structure
 
 ```
-   +---------------------------+
-   |    Header Length (4)      |   4 octets, big-endian uint32
-   +---------------------------+
-   |                           |
-   |    Header (Protobuf)      |   Variable length
-   |                           |
-   +---------------------------+
-   |                           |
-   |    Payload                |   Variable length (per header)
-   |                           |
-   +---------------------------+
+Octets 0-3      : Header Length (4 octets, big-endian uint32)
+Octets 4-(3+H)  : Header (Protobuf), where H = Header Length
+Octets (4+H)-.. : Payload (variable length per header)
 ```
 
 Header Length (4 octets):
