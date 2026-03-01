@@ -480,7 +480,7 @@ message PipeDoc {
   OwnershipContext ownership = 3;
 }
 
-// OwnershipContext defines mult-tenancy and access control for entities.
+// OwnershipContext defines multi-tenancy and access control for entities.
 message OwnershipContext {
   // Unique identifier of the entity owner.
   string owner_id = 1;

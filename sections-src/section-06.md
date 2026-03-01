@@ -27,7 +27,7 @@ The following fixed-size frame types are defined by this document:
 | Type | Name | Total Size | Notes |
 |------|------|------------|-------|
 | 0x50 | STATUS | 12 octets (base) | 16 octets when C=1; larger when E=1 with extension data |
-| 0x54 | SCOPE_DIGEST | 72 octets | Includes 32-octet Merkle root and 64-bit counters |
+| 0x54 | SCOPE_DIGEST | 68 octets | Includes 32-octet Merkle root and 64-bit counters |
 | 0x55 | BARRIER | 8 octets | No variable extension |
 
 ### 6.2. Status Frames (Layer 0)
@@ -160,7 +160,7 @@ Entities Deferred (64 bits):
 Merkle Root (256 bits):
 :   The SHA-256 Merkle root covering all entity statuses in the scope (see Section 9.4).
 
-The SCOPE_DIGEST frame is 72 octets total. The Scope ID MUST match the 16-bit identifier defined in Section 6.2.1.
+The SCOPE_DIGEST frame is 68 octets total. The Scope ID MUST match the 16-bit identifier defined in Section 6.2.1.
 
 ### 6.4. Barrier Frame (0x55)
 
