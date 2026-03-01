@@ -187,7 +187,7 @@ If E=1 is set for a Status code that does not define an extension layout in this
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   | Yield Reason  |         Token Length (20 bits)                |
+   | Yield Reason  |           Token Length (24 bits)              |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                                                               |
    |                  Yield Token (variable)                       |
@@ -195,11 +195,11 @@ If E=1 is set for a Status code that does not define an extension layout in this
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-Yield Reason (4 bits):
+Yield Reason (8 bits):
 :   The reason for yielding (see Section 6.5.1.1).
 
-Token Length (20 bits):
-:   The length of the Yield Token in bytes.
+Token Length (24 bits):
+:   The length of the Yield Token in bytes (maximum 16,777,215).
 
 Yield Token (variable):
 :   The opaque continuation state.
@@ -213,7 +213,7 @@ Yield Token (variable):
 | 0x3 | AWAITING_SIBLING | Waiting for specific sibling |
 | 0x4 | AWAITING_APPROVAL | Human/workflow gate |
 | 0x5 | RESOURCE_BUSY | Semaphore/lock |
-| 0x0, 0x6-0xF | Reserved | Reserved for future use |
+| 0x0, 0x06-0xFF | Reserved | Reserved for future use |
 
 #### 6.5.2. Claim Check Extension (Stat = 0x9)
 

@@ -160,8 +160,8 @@ message StoppingPointValidation {
   string checkpoint_ref = 6;
 }
 
-// ScopeDigest (Fixed Frame 0x54 carries this info, but logic uses this structure)
-message ScopeDigestData {
+// ScopeDigest is a Layer 1 summary of a completed scope (Fixed Frame 0x54).
+message ScopeDigest {
   uint32 scope_id = 1;
   uint64 entities_processed = 2;
   uint64 entities_succeeded = 3;
