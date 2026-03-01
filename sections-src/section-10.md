@@ -59,7 +59,7 @@ PipeStream entity headers and control stream frames carry metadata that may reve
 
 Yield tokens (Section 6.5.1) contain opaque continuation state that enables resumption of paused entity processing. A replayed yield token could cause an entity to be processed multiple times or to resume from a stale state. To prevent this:
 
-1. Implementations MUST associate each yield token with a unique session identifier and Entity ID. A yield token MUST be rejected if presented in a session other than the one that issued it, unless the token was explicitly transferred via a claim check.
+1. Implementations MUST associate each yield token with a stable application context identifier (for example, a session identifier) and Entity ID. In Layer 0-only operation, this context MAY be implicit in the active transport connection. For Layer 2 resumptions that can occur across reconnects or different nodes, the context identifier MUST remain stable across transport connections. A yield token MUST be rejected if presented in a different context than the one that issued it, unless the token was explicitly transferred via a claim check.
 
 2. Implementations MUST invalidate a yield token after it has been consumed for resumption. A second resumption attempt with the same token MUST be rejected.
 

@@ -40,6 +40,12 @@ To maintain session liveness, an endpoint sends a STATUS frame with all fields s
 
 When no status updates have been transmitted for KEEPALIVE_TIMEOUT (default: 30 seconds), an endpoint SHOULD send a heartbeat frame. If no data is received on Stream 0 for 3 * KEEPALIVE_TIMEOUT, the connection SHOULD be closed with PIPESTREAM_IDLE_TIMEOUT (0x02).
 
+#### 5.1.5. Transport Session vs. Application Session Context
+
+QUIC (and HTTP/3 when used as a substrate) already provides transport-level streaming semantics: ordered byte delivery per stream, multiplexing, and flow control. Therefore, Layer 0 PipeStream operation does not require a separate application-level `session_id`; connection and stream identifiers are sufficient for in-band streaming.
+
+An application-level session context is required only for workflows that outlive a single transport connection, such as Layer 2 yield/resume and claim-check redemption across reconnects or different processing nodes. Implementations MAY represent this context with a `session_id` or an equivalent stable context identifier.
+
 ### 5.2. Entity Streams (Streams 2+)
 
 Entity Streams carry the actual document entity payloads.
