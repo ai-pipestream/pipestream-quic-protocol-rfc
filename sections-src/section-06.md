@@ -44,6 +44,18 @@ Octets 8-9   : Scope ID (16 bits)
 Octets 10-11 : Reserved (16 bits)
 ```
 
+| Bit Range | Field | Notes |
+|-----------|-------|-------|
+| 0-7 | Type | `0x50` for STATUS |
+| 8-11 | Stat | 4-bit status code |
+| 12 | E | Extension flag |
+| 13 | C | Cursor update flag |
+| 14-16 | D | Explicit depth (0-7) |
+| 17-31 | Flags | Reserved; MUST be zero when sent |
+| 32-63 | Entity ID | 32-bit entity identifier |
+| 64-79 | Scope ID | 16-bit scope identifier |
+| 80-95 | Reserved | MUST be zero when sent |
+
 Stat (4 bits):
 :   Status code (see Section 6.2.2).
 
@@ -95,6 +107,10 @@ When C=1, a 4-octet cursor update follows the status frame:
 ```
 Octets 0-3 : New Cursor Value (32 bits)
 ```
+
+| Bit Range | Field | Notes |
+|-----------|-------|-------|
+| 0-31 | New Cursor Value | Cursor update value |
 
 New Cursor Value (32 bits):
 :   The numeric value of the new cursor. Entities with IDs lower than this value (modulo circular ID rules) are considered resolved and their IDs MAY be recycled.
@@ -164,6 +180,17 @@ Octets 28-35 : Entities Deferred (64 bits)
 Octets 36-67 : Merkle Root (256 bits)
 ```
 
+| Bit Range | Field | Notes |
+|-----------|-------|-------|
+| 0-7 | Type | `0x54` for SCOPE_DIGEST |
+| 8-15 | Flags | Reserved; MUST be zero when sent |
+| 16-31 | Scope ID | 16-bit scope identifier |
+| 32-95 | Entities Processed | 64-bit counter |
+| 96-159 | Entities Succeeded | 64-bit counter |
+| 160-223 | Entities Failed | 64-bit counter |
+| 224-287 | Entities Deferred | 64-bit counter |
+| 288-543 | Merkle Root | 256-bit SHA-256 Merkle root |
+
 Flags (8 bits):
 :   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
 
@@ -196,6 +223,14 @@ Octets 2-3 : Barrier ID (16 bits)
 Octets 4-7 : Parent Entity ID (32 bits)
 ```
 
+| Bit Range | Field | Notes |
+|-----------|-------|-------|
+| 0-7 | Type | `0x55` for BARRIER |
+| 8 | S | Status bit: 0 waiting, 1 released |
+| 9-15 | Reserved | MUST be zero when sent |
+| 16-31 | Barrier ID | 16-bit barrier identifier |
+| 32-63 | Parent Entity ID | 32-bit parent entity identifier |
+
 S (1 bit):
 :   Status (0 = waiting, 1 = released).
 
@@ -221,6 +256,12 @@ Octet 0        : Yield Reason (8 bits)
 Octets 1-3     : Token Length (24 bits)
 Octets 4-(N+3) : Yield Token (N octets, where N = Token Length)
 ```
+
+| Bit Range | Field | Notes |
+|-----------|-------|-------|
+| 0-7 | Yield Reason | See Section 6.5.1.1 |
+| 8-31 | Token Length | 24-bit unsigned length in octets |
+| 32-(31+8N) | Yield Token | Opaque continuation state |
 
 Yield Reason (8 bits):
 :   The reason for yielding (see Section 6.5.1.1).
@@ -249,6 +290,11 @@ Octets 0-7  : Claim Check ID (64 bits)
 Octets 8-15 : Expiry Timestamp (64 bits, Unix micros)
 ```
 
+| Bit Range | Field | Notes |
+|-----------|-------|-------|
+| 0-63 | Claim Check ID | 64-bit cryptographically random identifier |
+| 64-127 | Expiry Timestamp | 64-bit Unix epoch time in microseconds |
+
 Claim Check ID (64 bits):
 :   A cryptographically secure random identifier for the claim.
 
@@ -275,6 +321,12 @@ Octets 0-3      : Header Length (4 octets, big-endian uint32)
 Octets 4-(3+H)  : Header (Protobuf), where H = Header Length
 Octets (4+H)-.. : Payload (variable length per header)
 ```
+
+| Octet Range | Field | Notes |
+|-------------|-------|-------|
+| 0-3 | Header Length | 32-bit unsigned length of protobuf header |
+| 4-(3+H) | Header | Protobuf `EntityHeader`, `H` octets |
+| (4+H)-.. | Payload | Entity payload bytes |
 
 Header Length (4 octets):
 :   The length of the Protobuf-encoded EntityHeader in bytes.
