@@ -27,7 +27,7 @@ The Status Frame reports lifecycle transitions for entities.
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |  Type (0x50)  |  Stat (4) |E|C|D|        Flags (17 bits)      |
+   |  Type (0x50)  |  Stat (4) |E|C| Depth (3) |    Flags (15 bits)    |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                       Entity ID (32 bits)                     |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -43,18 +43,11 @@ The Status Frame reports lifecycle transitions for entities.
    C (1 bit):
       Cursor update flag. A 4-octet cursor value follows (Section 6.2.3).
 
-   D (1 bit):
-      Depth update flag. If set, the current scope depth is incremented.
+   Depth (3 bits):
+      Explict scope nesting depth (0-7). 0=Root. Layer 1.
 
-   Entity ID (32 bits):
-      Unsigned integer identifying the entity.
-      Range 0x00000001-0xFFFFFFFD for regular entities.
-      0x00000000: NULL_ENTITY (reserved)
-      0xFFFFFFFE: SCOPE_MARKER (Layer 1)
-      0xFFFFFFFF: CONNECTION_LEVEL (heartbeat)
-
-   Scope ID (16 bits):
-      Identifier for the scope to which this entity belongs.
+   Flags (15 bits):
+      Reserved for future use. MUST be zero when sent.
 ```
 
 #### 6.2.2. Status Codes

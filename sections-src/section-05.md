@@ -17,7 +17,7 @@ The Control Stream MUST use QUIC Stream ID 0, which per {{RFC9000}} Section 2.1 
 
 #### 5.1.3. Flow Control Considerations
 
-The Control Stream carries small, fixed-size frames (4 octets each for basic frames). Implementations MUST ensure adequate flow control credits:
+The Control Stream carries small, bit-packed frames (8 octets each for status frames). Implementations MUST ensure adequate flow control credits:
 
 - The initial MAX_STREAM_DATA for Stream 0 SHOULD be at least 8192 octets.
 - Implementations SHOULD NOT block Entity Stream transmission due to Control Stream flow control exhaustion.
@@ -27,18 +27,22 @@ The Control Stream carries small, fixed-size frames (4 octets each for basic fra
 To maintain session liveness:
 
 ```
-   Heartbeat Frame (8 octets):
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1|
+   |  Type (0x50)  |  Stat (0) |0|0| Depth (0) |    Flags (0)      |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0|0 0 0 0|0|0|0 0 0 0 0 0 0 0 0 0|
+   |             Entity ID = 0xFFFFFFFF (CONNECTION_LEVEL)         |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |        Scope ID (0x0000)        |      Reserved (16 bits)     |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
+   Type = 0x50 (STATUS)
+   Stat = 0x0 (UNSPECIFIED, used as heartbeat signal)
    Entity ID = 0xFFFFFFFF (CONNECTION_LEVEL)
    Scope ID = 0x0000
-   Status = 0x0 (UNSPECIFIED, used as heartbeat signal)
-   E=0 (no extended data), C=0 (no cursor update)
-   Flags = 0x000
+   Depth = 0
+   E=0, C=0, Flags=0
 ```
 
 When no status updates have been transmitted for KEEPALIVE_TIMEOUT (default: 30 seconds), an endpoint SHOULD send a heartbeat frame. If no data is received on Stream 0 for 3 * KEEPALIVE_TIMEOUT, the connection SHOULD be closed with PIPESTREAM_IDLE_TIMEOUT (0x02).

@@ -6,7 +6,8 @@ PipeStream defines three protocol layers that build upon each other. This layere
 
 Layer 0 provides the fundamental streaming capabilities:
 
-- Status frame (32-bit, word-aligned)
+- Unified Control Frame (UCF) header (1-octet type)
+- Status frame (8-octet bit-packed frame)
 - Entity frame (header + payload)
 - Status codes: PENDING, PROCESSING, COMPLETE, FAILED, CHECKPOINT
 - Assembly Manifest for parent-child tracking
@@ -21,7 +22,7 @@ All implementations MUST support Layer 0.
 Layer 1 adds hierarchical processing capabilities:
 
 - Scoped Entity ID namespaces (collection → document → part → job)
-- SCOPE_OPEN and SCOPE_CLOSE frames
+- Explicit Depth tracking in status frames
 - SCOPE_DIGEST for Merkle-based subtree completion
 - BARRIER for subtree-scoped synchronization
 - Nested dehydration with depth tracking
