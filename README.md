@@ -6,14 +6,14 @@
 
 ## Overview
 
-PipeStream is a recursive entity streaming protocol designed for high-performance distributed document processing over QUIC transport. It enables the decomposition ("vaporization") of complex documents into constituent entities, their parallel transmission across processing nodes, and subsequent reassembly ("rejoining") with strong consistency guarantees.
+PipeStream is a recursive entity streaming protocol designed for high-performance distributed document processing over QUIC transport. It implements a scatter-gather pattern where documents are "dehydrated" (scattered) into constituent entities, processed in parallel across distributed nodes, and "rehydrated" (gathered) back into complete processed documents with strong consistency guarantees.
 
 The protocol is developed by **PipeStream AI**, an open-source focused organization aimed at creating free tools with the goal of establishing a standard document protocol optimized for AI processing.
 
 ## Key Features
 
-- **Recursive Vaporization**: Decompose documents into hierarchical entities (e.g., Doc -> Section -> Paragraph).
-- **Dual-Stream Architecture**: Separate bit-packed Ledger stream (control) and multiplexed Entity streams (data).
+- **Recursive Dehydration**: Decompose documents into hierarchical entities (e.g., Doc -> Section -> Paragraph).
+- **Dual-Stream Architecture**: Separate bit-packed Control stream (status tracking) and multiplexed Entity streams (data).
 - **Protocol Layering**: Modular Core, Recursive, and Resilience layers.
 - **AI-Optimized Data Model**: Built-in support for semantic chunks, vector embeddings, and NLP annotations.
 - **Edition 2023 Protobuf**: Modern, safe, and extensible header definitions.

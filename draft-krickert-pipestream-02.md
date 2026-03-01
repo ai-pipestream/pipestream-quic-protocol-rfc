@@ -38,13 +38,13 @@ informative:
 
 --- abstract
 
-This document specifies PipeStream, a recursive entity streaming protocol designed for distributed document processing over QUIC transport. PipeStream enables the decomposition ("dematerialization") of documents into constituent entities, their transmission across distributed processing nodes, and subsequent rematerialization at destination endpoints.
+This document specifies PipeStream, a recursive entity streaming protocol designed for distributed document processing over QUIC transport. PipeStream enables the decomposition ("dehydration") of documents into constituent entities, their transmission across distributed processing nodes, and subsequent rehydration at destination endpoints.
 
-The protocol employs a dual-stream architecture consisting of a data stream for entity payload transmission and a ledger stream for tracking entity completion status and maintaining consistency. PipeStream defines four hierarchical data layers for entity representation: BlobBag for raw binary data, SemanticLayer for annotated content with metadata, ParsedData for structured extracted information, and CustomEntity for application-specific extensions.
+The protocol employs a dual-stream architecture consisting of a data stream for entity payload transmission and a control stream for tracking entity completion status and maintaining consistency. PipeStream defines four hierarchical data layers for entity representation: BlobBag for raw binary data, SemanticLayer for annotated content with metadata, ParsedData for structured extracted information, and CustomEntity for application-specific extensions.
 
-PipeStream is organized into three protocol layers: Layer 0 (Core) provides basic streaming with dematerialize/rematerialize semantics; Layer 1 (Recursive) adds hierarchical scoping and digest propagation; Layer 2 (Resilience) adds yield/resume, claim checks, and completion policies. Implementations MUST support Layer 0 and MAY support Layers 1 and 2.
+PipeStream is organized into three protocol layers: Layer 0 (Core) provides basic streaming with dehydrate/rehydrate semantics; Layer 1 (Recursive) adds hierarchical scoping and digest propagation; Layer 2 (Resilience) adds yield/resume, claim checks, and completion policies. Implementations MUST support Layer 0 and MAY support Layers 1 and 2.
 
-To ensure consistency across distributed processing pipelines, PipeStream implements checkpoint blocking, whereby processing nodes MUST synchronize at defined points before proceeding. This mechanism guarantees that all constituent parts of a dematerialized document are successfully processed before rematerialization operations commence.
+To ensure consistency across distributed processing pipelines, PipeStream implements checkpoint blocking, whereby processing nodes MUST synchronize at defined points before proceeding. This mechanism guarantees that all constituent parts of a dehydrated document are successfully processed before rehydration operations commence.
 
 --- middle
 
@@ -63,23 +63,23 @@ Modern document processing workflows increasingly demand the ability to:
 - Support recursive decomposition where document parts may themselves be decomposed
 - Scale from single documents to collections of millions of documents
 
-Current approaches based on batch processing and store-and-forward architectures are inefficient for large documents and fail to exploit the inherent parallelism available in distributed processing environments. Furthermore, existing streaming protocols do not provide the consistency semantics required for document processing where the integrity of the rematerialized output depends on the successful processing of all constituent parts.
+Current approaches based on batch processing and store-and-forward architectures are inefficient for large documents and fail to exploit the inherent parallelism available in distributed processing environments. Furthermore, existing streaming protocols do not provide the consistency semantics required for document processing where the integrity of the rehydrated output depends on the successful processing of all constituent parts.
 
 ### 1.2. PipeStream Overview
 
 PipeStream addresses these challenges by defining a streaming protocol that enables incremental processing with strong consistency guarantees. The protocol is built upon QUIC {{RFC9000}} transport, leveraging its native support for multiplexed streams, low-latency connection establishment, and reliable delivery semantics.
 
-The fundamental innovation of PipeStream is its treatment of documents as recursive compositions of entities. A document MAY be decomposed into multiple entities, each of which MAY itself be further decomposed, creating a tree structure of processing tasks. This recursive decomposition enables fine-grained parallelism while the protocol's ledger mechanism ensures that all branches of the decomposition tree are tracked and synchronized.
+The fundamental innovation of PipeStream is its treatment of documents as recursive compositions of entities. A document MAY be decomposed into multiple entities, each of which MAY itself be further decomposed, creating a tree structure of processing tasks. This recursive decomposition enables fine-grained parallelism while the protocol's control stream mechanism ensures that all branches of the decomposition tree are tracked and synchronized.
 
 PipeStream employs a dual-stream design:
 
 1. **Data Stream**: Carries entity payloads through the processing pipeline. Entities flow through this stream with minimal buffering, enabling low-latency incremental processing.
 
-2. **Ledger Stream**: Carries control information tracking the status of entity decomposition and rematerialization. The ledger ensures that all parts of a dematerialized document are accounted for before rematerialization proceeds.
+2. **Control Stream**: Carries control information tracking the status of entity decomposition and rehydration. The control stream ensures that all parts of a dehydrated document are accounted for before rehydration proceeds.
 
 ### 1.3. Design Philosophy
 
-The PipeStream design philosophy may be understood through analogy to the "Star Trek Transporter" concept: a document is "dematerialized" at the source into its constituent entities, these entities are transmitted and processed through the distributed pipeline, and finally the entities are "rematerialized" at the destination to reconstitute the complete processed document.
+PipeStream implements a recursive scatter-gather pattern over QUIC streams. A document is "dehydrated" (scattered) at the source into constituent entities, these entities are transmitted and processed in parallel across distributed pipeline stages, and finally the entities are "rehydrated" (gathered) at the destination to reconstitute the complete processed document.
 
 This approach provides several advantages:
 
@@ -91,7 +91,7 @@ This approach provides several advantages:
 
 - **Fault Isolation**: Failures in processing individual entities can be detected, reported, and potentially retried without affecting other entities.
 
-- **Consistency**: The checkpoint blocking mechanism ensures that rematerialization operations proceed only when all constituent parts have been successfully processed.
+- **Consistency**: The checkpoint blocking mechanism ensures that rehydration operations proceed only when all constituent parts have been successfully processed.
 
 ### 1.4. Protocol Layering
 
@@ -99,7 +99,7 @@ PipeStream is organized into three protocol layers to accommodate varying deploy
 
 | Protocol Layer | Name | Description |
 |----------------|------|-------------|
-| Layer 0 | Core | Basic streaming, dematerialize/rematerialize, checkpoint |
+| Layer 0 | Core | Basic streaming, dehydrate/rehydrate, checkpoint |
 | Layer 1 | Recursive | Hierarchical scopes, digest propagation, barriers |
 | Layer 2 | Resilience | Yield/resume, claim checks, completion policies |
 
@@ -107,7 +107,7 @@ Implementations MUST support Layer 0. Support for Layers 1 and 2 is OPTIONAL and
 
 ### 1.5. Scope
 
-This document specifies the PipeStream protocol including message formats, state machines, error handling, and the interaction between data and ledger streams. The document defines the four standard data layers but does not mandate specific processing semantics, which are left to application-layer specifications.
+This document specifies the PipeStream protocol including message formats, state machines, error handling, and the interaction between data and control streams. The document defines the four standard data layers but does not mandate specific processing semantics, which are left to application-layer specifications.
 
 ---
 
@@ -121,32 +121,32 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 :   The fundamental unit of data flowing through a PipeStream pipeline. An Entity represents either a complete document or a constituent part of a decomposed document. Each Entity possesses a unique identifier within its processing scope and carries payload data in one of the four defined Layer formats. Entities are immutable once created; transformations produce new Entities rather than modifying existing ones.
 
 **Document**
-:   A logical unit of content submitted to a PipeStream pipeline for processing. A Document enters the pipeline as a single root Entity and MAY be decomposed into multiple Entities during processing. The Document is considered complete when its root Entity (or the rematerialized result of its decomposition) exits the pipeline.
+:   A logical unit of content submitted to a PipeStream pipeline for processing. A Document enters the pipeline as a single root Entity and MAY be decomposed into multiple Entities during processing. The Document is considered complete when its root Entity (or the rehydrated result of its decomposition) exits the pipeline.
 
 **Scope**
-:   A hierarchical namespace for Entity IDs. Each scope maintains its own Entity ID space, cursor, and Parts Ledger. Scopes enable collections to contain documents, documents to contain parts, and parts to contain jobs, each with independent ID management. (Protocol Layer 1)
+:   A hierarchical namespace for Entity IDs. Each scope maintains its own Entity ID space, cursor, and Assembly Manifest. Scopes enable collections to contain documents, documents to contain parts, and parts to contain jobs, each with independent ID management. (Protocol Layer 1)
 
-### 2.2. Decomposition and Rematerialization
+### 2.2. Dehydration and Rehydration
 
-**Dematerialize**
-:   The operation of decomposing a document or Entity into multiple constituent Entities for parallel or distributed processing. When an Entity is dematerialized, the originating node MUST create a Parts Ledger entry recording the identifiers of all resulting sub-entities. The dematerialization operation is recursive; a sub-entity produced by dematerialization MAY itself be dematerialized, creating a tree of decomposition.
+**Dehydrate**
+:   The operation of decomposing a document or Entity into multiple constituent Entities for parallel or distributed processing. When an Entity is dehydrated, the originating node MUST create an Assembly Manifest entry recording the identifiers of all resulting sub-entities. The dehydration operation is recursive; a sub-entity produced by dehydration MAY itself be dehydrated, creating a tree of decomposition.
 
-**Rematerialize**
-:   The operation of rematerializing multiple Entities back into a single composite Entity or Document. A rematerialize operation MUST NOT proceed until all constituent Entities listed in the corresponding Parts Ledger entry have been received and processed (or handled according to the Completion Policy).
+**Rehydrate**
+:   The operation of rehydrating multiple Entities back into a single composite Entity or Document. A rehydrate operation MUST NOT proceed until all constituent Entities listed in the corresponding Assembly Manifest entry have been received and processed (or handled according to the Completion Policy).
 
 ### 2.3. Consistency Mechanisms
 
 **Checkpoint**
-:   A synchronization point in the processing pipeline where all in-flight Entities MUST reach a consistent state before processing may continue. A checkpoint is considered "satisfied" when all Parts Ledger entries created before the checkpoint have been resolved.
+:   A synchronization point in the processing pipeline where all in-flight Entities MUST reach a consistent state before processing may continue. A checkpoint is considered "satisfied" when all Assembly Manifest entries created before the checkpoint have been resolved.
 
 **Barrier**
 :   A synchronization point scoped to a specific subtree. Unlike checkpoints which are global, barriers block only entities dependent on a specific parent's descendants. (Protocol Layer 1)
 
-**Ledger**
-:   The control stream that tracks Entity completion status throughout the processing pipeline. The Ledger is transmitted on a dedicated QUIC stream parallel to the data stream.
+**Control Stream**
+:   The control stream that tracks Entity completion status throughout the processing pipeline. The Control Stream is transmitted on a dedicated QUIC stream parallel to the data streams.
 
-**Parts Ledger**
-:   A data structure within the Ledger that tracks the relationship between a composite Entity and its constituent sub-entities produced by dematerialization.
+**Assembly Manifest**
+:   A data structure within the Control Stream that tracks the relationship between a composite Entity and its constituent sub-entities produced by dehydration.
 
 **Cursor**
 :   A pointer to the lowest unresolved Entity ID within a scope. Entity IDs behind the cursor are considered resolved and MAY be recycled. The cursor enables efficient ID space management without global coordination.
@@ -160,7 +160,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 :   A detached reference to a deferred Entity that can be queried or resumed independently, potentially in a different session. Claim checks enable asynchronous processing patterns and retry queues.
 
 **Completion Policy**
-:   A configuration specifying how to handle partial failures during dematerialization. Policies include STRICT (all must succeed), LENIENT (continue with partial results), BEST_EFFORT (complete with whatever succeeds), and QUORUM (require minimum success ratio).
+:   A configuration specifying how to handle partial failures during dehydration. Policies include STRICT (all must succeed), LENIENT (continue with partial results), BEST_EFFORT (complete with whatever succeeds), and QUORUM (require minimum success ratio).
 
 ### 2.5. Data Representation
 
@@ -193,12 +193,12 @@ PipeStream defines three protocol layers that build upon each other. This layere
 
 Layer 0 provides the fundamental streaming capabilities:
 
-- Ledger frame (32-bit, word-aligned)
+- Status frame (32-bit, word-aligned)
 - Entity frame (header + payload)
 - Status codes: PENDING, PROCESSING, COMPLETE, FAILED, CHECKPOINT
-- Parts Ledger for parent-child tracking
+- Assembly Manifest for parent-child tracking
 - Cursor-based Entity ID recycling
-- Single-level dematerialize/rematerialize
+- Single-level dehydrate/rehydrate
 - Checkpoint blocking
 
 All implementations MUST support Layer 0.
@@ -211,7 +211,7 @@ Layer 1 adds hierarchical processing capabilities:
 - SCOPE_OPEN and SCOPE_CLOSE frames
 - SCOPE_DIGEST for Merkle-based subtree completion
 - BARRIER for subtree-scoped synchronization
-- Nested dematerialization with depth tracking
+- Nested dehydration with depth tracking
 
 Layer 1 is OPTIONAL. Implementations advertise Layer 1 support during capability negotiation.
 
@@ -267,7 +267,7 @@ PipeStream MUST provide checkpoint blocking semantics to maintain processing con
 
 #### 4.1.4. Control and Data Plane Separation
 
-The protocol MUST maintain strict separation between the control plane (ledger) and the data plane (entities).
+The protocol MUST maintain strict separation between the control plane (control stream) and the data plane (entities).
 
 #### 4.1.5. QUIC Foundation
 
@@ -302,8 +302,8 @@ The protocol MUST support four distinct data representation layers:
          |  +-------------------------------------------+  |
          |  |            QUIC Connection                |  |
          |  |  +-------------------------------------+  |  |
-         |  |  |  Stream 0: Ledger (Control Plane)  |  |  |
-         |  |  |  [LEDGER][LEDGER][LEDGER]...       |  |  |
+         |  |  |  Stream 0: Control (Control Plane)  |  |  |
+         |  |  |  [STATUS][STATUS][STATUS]...        |  |  |
          |  |  +-------------------------------------+  |  |
          |  |                                           |  |
          |  |  +-------------------------------------+  |  |
@@ -323,7 +323,7 @@ A PipeStream connection follows this lifecycle:
 
 1. **Establishment:** Client initiates QUIC connection with ALPN identifier "pipestream/1"
 2. **Capability Exchange:** Client and server exchange supported protocol layers and limits
-3. **Ledger Initialization:** Client opens Stream 0 as bidirectional Ledger Stream
+3. **Control Stream Initialization:** Client opens Stream 0 as bidirectional Control Stream
 4. **Entity Streaming:** Entities are transmitted per Sections 5 and 6
 5. **Termination:** Connection closes via QUIC CONNECTION_CLOSE or application-level shutdown
 
@@ -331,27 +331,27 @@ A PipeStream connection follows this lifecycle:
 
 ## 5. QUIC Stream Mapping
 
-### 5.1. Ledger Stream (Stream 0)
+### 5.1. Control Stream (Stream 0)
 
-The Ledger Stream provides the control plane for PipeStream operations.
+The Control Stream provides the control plane for PipeStream operations.
 
 #### 5.1.1. Stream Identification
 
-The Ledger Stream MUST use QUIC Stream ID 0, which per {{RFC9000}} Section 2.1 is a client-initiated bidirectional stream.
+The Control Stream MUST use QUIC Stream ID 0, which per {{RFC9000}} Section 2.1 is a client-initiated bidirectional stream.
 
 #### 5.1.2. Stream Properties
 
 1. The client MUST open Stream 0 before any Entity Streams.
 2. Stream 0 MUST remain open for the duration of the PipeStream session.
 3. Stream 0 MUST NOT carry entity payload data.
-4. Implementations SHOULD assign the Ledger Stream higher priority than Entity Streams.
+4. Implementations SHOULD assign the Control Stream higher priority than Entity Streams.
 
 #### 5.1.3. Flow Control Considerations
 
-The Ledger Stream carries small, fixed-size frames (4 octets each for basic frames). Implementations MUST ensure adequate flow control credits:
+The Control Stream carries small, fixed-size frames (4 octets each for basic frames). Implementations MUST ensure adequate flow control credits:
 
 - The initial MAX_STREAM_DATA for Stream 0 SHOULD be at least 8192 octets.
-- Implementations SHOULD NOT block Entity Stream transmission due to Ledger Stream flow control exhaustion.
+- Implementations SHOULD NOT block Entity Stream transmission due to Control Stream flow control exhaustion.
 
 #### 5.1.4. Heartbeat Mechanism
 
@@ -369,7 +369,7 @@ To maintain session liveness:
    Status = 0x0 (UNSPECIFIED, used as heartbeat signal)
 ```
 
-When no ledger updates have been transmitted for KEEPALIVE_TIMEOUT (default: 30 seconds), an endpoint SHOULD send a heartbeat frame. If no data is received on Stream 0 for 3 * KEEPALIVE_TIMEOUT, the connection SHOULD be closed with PIPESTREAM_IDLE_TIMEOUT (0x02).
+When no status updates have been transmitted for KEEPALIVE_TIMEOUT (default: 30 seconds), an endpoint SHOULD send a heartbeat frame. If no data is received on Stream 0 for 3 * KEEPALIVE_TIMEOUT, the connection SHOULD be closed with PIPESTREAM_IDLE_TIMEOUT (0x02).
 
 ### 5.2. Entity Streams (Streams 2+)
 
@@ -399,9 +399,9 @@ Entity Streams MUST be unidirectional streams:
 
 This section defines the wire formats for PipeStream frames. All multi-octet integer fields are encoded in network byte order (big-endian).
 
-### 6.1. Ledger Frames (Layer 0)
+### 6.1. Status Frames (Layer 0)
 
-#### 6.1.1. Basic Ledger Frame Format (32 bits)
+#### 6.1.1. Basic Status Frame Format (32 bits)
 
 ```
     0                   1                   2                   3
@@ -441,8 +441,8 @@ This section defines the wire formats for PipeStream frames. All multi-octet int
 | 0x3   | COMPLETE    | 0     | Entity successfully processed          |
 | 0x4   | FAILED      | 0     | Entity processing failed               |
 | 0x5   | CHECKPOINT  | 0     | Synchronization barrier                |
-| 0x6   | DEMATERIALIZING  | 0     | Dematerializing into children              |
-| 0x7   | REMATERIALIZING | 0     | Rematerializing children                     |
+| 0x6   | DEHYDRATING  | 0     | Dehydrating into children              |
+| 0x7   | REHYDRATING | 0     | Rehydrating children                     |
 | 0x8   | YIELDED     | 2     | Paused with continuation token         |
 | 0x9   | DEFERRED    | 2     | Detached with claim check              |
 | 0xA   | RETRYING    | 2     | Retry in progress                      |
@@ -470,9 +470,9 @@ The cursor indicates the lowest unresolved Entity ID. IDs below the cursor are c
 | 0xFFFFE | SCOPE_MARKER      | Scope operations (Layer 1)         |
 | 0xFFFFF | CONNECTION_LEVEL  | Connection-wide control messages   |
 
-### 6.2. Scoped Ledger Frame (Layer 1)
+### 6.2. Scoped Status Frame (Layer 1)
 
-When Protocol Layer 1 is negotiated, ledger frames support hierarchical scoping:
+When Protocol Layer 1 is negotiated, status frames support hierarchical scoping:
 
 ```
     0                   1                   2                   3
@@ -530,7 +530,7 @@ When a scope completes, a digest summarizes its processing:
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-The Merkle root is computed as SHA-256 over all child ledger entries in Entity ID order.
+The Merkle root is computed as SHA-256 over all child status entries in Entity ID order.
 
 ### 6.4. Yield Frame (Layer 2)
 
@@ -745,7 +745,7 @@ message EncryptionMetadata {
                                      ▼
                 ┌─────────────────────────────────────────────┐
                 │                   PARSE                     │
-                │        (Dematerialization: 1:N possible)         │
+                │        (Dehydration: 1:N possible)         │
                 └─────────────────────────────────────────────┘
                                      │
                        ┌─────────────┼─────────────┐
@@ -779,7 +779,7 @@ Immediately after QUIC handshake, peers exchange Capabilities messages on Stream
 
 ### 8.3. PARSE Action
 
-The PARSE action performs dematerialization with optional completion policy:
+The PARSE action performs dehydration with optional completion policy:
 
 ```protobuf
 message CompletionPolicy {
@@ -814,7 +814,7 @@ enum FailureAction {
 | Mode | Description |
 |------|-------------|
 | TRANSFORM | 1:1 entity transformation |
-| REMATERIALIZE | N:1 merge of siblings from dematerialization |
+| REHYDRATE | N:1 merge of siblings from dehydration |
 | AGGREGATE | N:1 with reduction function |
 | PASSTHROUGH | Metadata-only modification |
 
@@ -828,7 +828,7 @@ enum FailureAction {
 
 ---
 
-## 9. Rematerialization Semantics
+## 9. Rehydration Semantics
 
 ### 9.1. Entity ID Lifecycle and Cursor
 
@@ -855,12 +855,12 @@ Entity IDs are managed using a cursor-based recycling scheme:
 3. On COMPLETE/FAILED: mark resolved; if `entity_id == cursor`, advance cursor
 4. IDs behind cursor are implicitly recyclable
 
-### 9.2. Parts Ledger
+### 9.2. Assembly Manifest
 
-Each Parts Ledger entry tracks:
+Each Assembly Manifest entry tracks:
 
 ```protobuf
-message PartsLedgerEntry {
+message AssemblyManifestEntry {
   uint32 parent_id = 1;
   uint32 scope_id = 2;           // Layer 1
   repeated uint32 children_ids = 3;
@@ -884,7 +884,7 @@ enum ResolutionState {
 A checkpoint is satisfied when:
 
 1. All entities with IDs less than checkpoint ID have reached terminal state
-2. All Parts Ledger entries within scope have been resolved
+2. All Assembly Manifest entries within scope have been resolved
 3. All nested checkpoints have been satisfied
 
 ### 9.4. Scope Digest Propagation (Layer 1)
@@ -894,11 +894,11 @@ When a scope completes:
 1. Compute Merkle root of all child Entity statuses
 2. Send SCOPE_DIGEST frame to parent scope
 3. Parent can verify subtree integrity with single hash
-4. Full ledger available on request for audit
+4. Full status history available on request for audit
 
 ### 9.5. Eventual Consistency (Fibonacci Heap)
 
-Implementations SHALL use a priority queue (Fibonacci heap recommended) to track which Parts Ledger entries are ready for rematerialization:
+Implementations SHALL use a priority queue (Fibonacci heap recommended) to track which Assembly Manifest entries are ready for rehydration:
 
 | Operation | Amortized Complexity |
 |-----------|---------------------|
@@ -967,9 +967,9 @@ When using FileStorageReference with encryption:
 
 | Value | Frame Type Name | Layer | Reference |
 |-------|-----------------|-------|-----------|
-| 0x50 | LEDGER | 0 | Section 6.1 |
+| 0x50 | STATUS | 0 | Section 6.1 |
 | 0x51 | CHECKPOINT | 0 | Section 9.3 |
-| 0x52 | LEDGER_ACK | 0 | Section 6.1 |
+| 0x52 | STATUS_ACK | 0 | Section 6.1 |
 | 0x53 | CHECKPOINT_ACK | 0 | Section 9.3 |
 | 0x54 | SCOPE_DIGEST | 1 | Section 6.3 |
 | 0x55 | BARRIER | 1 | Section 6.7 |
@@ -993,8 +993,8 @@ When using FileStorageReference with encryption:
 | 0x3 | COMPLETE | 0 | Success |
 | 0x4 | FAILED | 0 | Failed |
 | 0x5 | CHECKPOINT | 0 | Barrier |
-| 0x6 | DEMATERIALIZING | 0 | Dematerializing into children |
-| 0x7 | REMATERIALIZING | 0 | Rematerializing children |
+| 0x6 | DEHYDRATING | 0 | Dehydrating into children |
+| 0x7 | REHYDRATING | 0 | Rehydrating children |
 | 0x8 | YIELDED | 2 | Paused |
 | 0x9 | DEFERRED | 2 | Claim check issued |
 | 0xA | RETRYING | 2 | Retry in progress |
@@ -1009,7 +1009,7 @@ When using FileStorageReference with encryption:
 | 0x00 | PIPESTREAM_NO_ERROR | Graceful shutdown |
 | 0x01 | PIPESTREAM_INTERNAL_ERROR | Implementation error |
 | 0x02 | PIPESTREAM_IDLE_TIMEOUT | Idle timeout |
-| 0x03 | PIPESTREAM_LEDGER_RESET | Ledger must reset |
+| 0x03 | PIPESTREAM_CONTROL_RESET | Control stream must reset |
 | 0x04 | PIPESTREAM_INTEGRITY_ERROR | Checksum failed |
 | 0x05 | PIPESTREAM_ENTITY_INVALID | Invalid format |
 | 0x06 | PIPESTREAM_ENTITY_TOO_LARGE | Size exceeded |
@@ -1063,7 +1063,7 @@ message Capabilities {
   // Whether the endpoint supports Layer 0 (core entity streaming).
   bool layer0_core = 1;
 
-  // Whether the endpoint supports Layer 1 (recursive scoping and dematerialization).
+  // Whether the endpoint supports Layer 1 (recursive scoping and dehydration).
   bool layer1_recursive = 2;
 
   // Whether the endpoint supports Layer 2 (resilience, yield, and claim-check).
@@ -1154,8 +1154,8 @@ enum EntityStatus {
   ENTITY_STATUS_COMPLETE = 3;
   ENTITY_STATUS_FAILED = 4;
   ENTITY_STATUS_CHECKPOINT = 5;
-  ENTITY_STATUS_DEMATERIALIZING = 6;
-  ENTITY_STATUS_REMATERIALIZING = 7;
+  ENTITY_STATUS_DEHYDRATING = 6;
+  ENTITY_STATUS_REHYDRATING = 7;
   ENTITY_STATUS_YIELDED = 8;
   ENTITY_STATUS_DEFERRED = 9;
   ENTITY_STATUS_RETRYING = 10;
@@ -1171,8 +1171,8 @@ enum ResolutionState {
   RESOLUTION_STATE_FAILED = 4;
 }
 
-// LedgerFrame is sent on the ledger stream.
-message LedgerFrame {
+// StatusFrame is sent on the control stream.
+message StatusFrame {
   uint32 entity_id = 1;
   uint32 scope_id = 2;
   EntityStatus status = 3;
@@ -1187,8 +1187,8 @@ message CheckpointFrame {
   uint32 timeout_ms = 4;
 }
 
-// PartsLedgerEntry tracks parent-child relationships.
-message PartsLedgerEntry {
+// AssemblyManifestEntry tracks parent-child relationships.
+message AssemblyManifestEntry {
   uint32 parent_id = 1;
   uint32 scope_id = 2;
   repeated uint32 children_ids = 3;
@@ -1647,13 +1647,13 @@ message DocIdDerivation {
 
 | Feature | Layer 0 | Layer 1 | Layer 2 |
 |---------|---------|---------|---------|
-| Basic ledger frame (32-bit) | ✓ | ✓ | ✓ |
+| Basic status frame (32-bit) | ✓ | ✓ | ✓ |
 | Entity streaming | ✓ | ✓ | ✓ |
 | PENDING/PROCESSING/COMPLETE/FAILED | ✓ | ✓ | ✓ |
 | Checkpoint blocking | ✓ | ✓ | ✓ |
-| Parts Ledger | ✓ | ✓ | ✓ |
+| Assembly Manifest | ✓ | ✓ | ✓ |
 | Cursor-based ID recycling | ✓ | ✓ | ✓ |
-| Scoped ledger frame | | ✓ | ✓ |
+| Scoped status frame | | ✓ | ✓ |
 | Hierarchical scopes | | ✓ | ✓ |
 | Scope digest (Merkle) | | ✓ | ✓ |
 | Barrier (subtree sync) | | ✓ | ✓ |

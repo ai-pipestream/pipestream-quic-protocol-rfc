@@ -17,7 +17,7 @@ import "google/protobuf/any.proto";
 
 // All enums in this file are CLOSED. Unknown enum values received on the wire
 // MUST be rejected. This is essential because status codes are encoded as
-// 4-bit values in the ledger frame wire format; accepting unknown values
+// 4-bit values in the status frame wire format; accepting unknown values
 // could cause undefined behavior in state machines and cursor advancement.
 option features.enum_type = CLOSED;
 
@@ -29,7 +29,7 @@ message Capabilities {
   // MUST always be true; Layer 0 support is mandatory.
   bool layer0_core = 1;
 
-  // Whether the endpoint supports Layer 1 (recursive scoping and dematerialization).
+  // Whether the endpoint supports Layer 1 (recursive scoping and dehydration).
   bool layer1_recursive = 2;
 
   // Whether the endpoint supports Layer 2 (resilience, yield, and claim-check).
@@ -186,13 +186,13 @@ enum FailureAction {
 }
 
 // EntityStatus represents the lifecycle state of an entity as tracked
-// on the ledger stream. Encoded as 4-bit values (0x0-0xC) in the 32-bit
-// ledger frame wire format. Transitions follow the PipeStream state machine.
+// on the control stream. Encoded as 4-bit values (0x0-0xC) in the 32-bit
+// status frame wire format. Transitions follow the PipeStream state machine.
 // CLOSED enum: unknown status values on the wire MUST cause a
 // PIPESTREAM_INTEGRITY_ERROR (0x04).
 enum EntityStatus {
   // Default unspecified value. Used as heartbeat signal on the wire (0x0).
-  // MUST NOT appear in well-formed ledger frames for real entities.
+  // MUST NOT appear in well-formed status frames for real entities.
   ENTITY_STATUS_UNSPECIFIED = 0;
 
   // The entity has been registered but processing has not yet started.
@@ -211,13 +211,13 @@ enum EntityStatus {
   // sibling entities to catch up.
   ENTITY_STATUS_CHECKPOINT = 5;
 
-  // The entity is being dematerialized (decomposed) into child entities
+  // The entity is being dehydrated (decomposed) into child entities
   // within a recursive scope.
-  ENTITY_STATUS_DEMATERIALIZING = 6;
+  ENTITY_STATUS_DEHYDRATING = 6;
 
-  // The entity's child results are being rematerialized (aggregated) back
+  // The entity's child results are being rehydrated (gathered) back
   // into the parent scope after recursive processing.
-  ENTITY_STATUS_REMATERIALIZING = 7;
+  ENTITY_STATUS_REHYDRATING = 7;
 
   // The entity has yielded processing and holds a yield token for
   // later resumption (Layer 2).
@@ -238,13 +238,13 @@ enum EntityStatus {
   ENTITY_STATUS_ABANDONED = 12;
 }
 
-// ResolutionState tracks the completion state of a Parts Ledger entry.
+// ResolutionState tracks the completion state of an Assembly Manifest entry.
 // CLOSED enum: unknown values MUST be rejected.
 enum ResolutionState {
   // Default unspecified value.
   RESOLUTION_STATE_UNSPECIFIED = 0;
 
-  // Vaporization is active; children are still being processed.
+  // Dehydration is active; children are still being processed.
   RESOLUTION_STATE_ACTIVE = 1;
 
   // All children completed according to the completion policy.
@@ -254,15 +254,15 @@ enum ResolutionState {
   // partial completion (LENIENT, BEST_EFFORT, or QUORUM met).
   RESOLUTION_STATE_PARTIAL = 3;
 
-  // The vaporization failed; too many children failed to meet the
+  // The dehydration failed; too many children failed to meet the
   // completion policy requirements.
   RESOLUTION_STATE_FAILED = 4;
 }
 
-// LedgerFrame is sent on the ledger stream (QUIC Stream 0) to report
-// status transitions for individual entities. The ledger provides a
+// StatusFrame is sent on the control stream (QUIC Stream 0) to report
+// status transitions for individual entities. The control stream provides a
 // global, ordered view of entity lifecycle events across all scopes.
-message LedgerFrame {
+message StatusFrame {
   // Identifier of the entity whose status is being reported.
   uint32 entity_id = 1;
 
@@ -275,7 +275,7 @@ message LedgerFrame {
 
   // Optional extension data associated with this status transition,
   // encoded as a protobuf Any for forward compatibility. Carried when
-  // the E (extension) flag is set in the wire-format ledger frame.
+  // the E (extension) flag is set in the wire-format status frame.
   google.protobuf.Any extended_data = 4;
 }
 
@@ -301,39 +301,39 @@ message CheckpointFrame {
   uint32 timeout_ms = 4;
 }
 
-// PartsLedgerEntry tracks parent-child relationships created during
-// entity dematerialization (decomposition). It records which child entities
+// AssemblyManifestEntry tracks parent-child relationships created during
+// entity dehydration (decomposition). It records which child entities
 // were spawned from a parent and their individual completion statuses,
-// enabling the rematerialization phase to synthesize results.
-message PartsLedgerEntry {
-  // Identifier of the parent entity that was dematerialized into children.
+// enabling the rehydration phase to synthesize results.
+message AssemblyManifestEntry {
+  // Identifier of the parent entity that was dehydrated into children.
   uint32 parent_id = 1;
 
-  // Scope in which the dematerialization occurred.
+  // Scope in which the dehydration occurred.
   uint32 scope_id = 2;
 
-  // Ordered list of child entity identifiers produced by dematerialization.
+  // Ordered list of child entity identifiers produced by dehydration.
   repeated uint32 children_ids = 3;
 
   // Status of each child entity, positionally corresponding to children_ids.
   repeated EntityStatus children_status = 4;
 
-  // Completion policy governing how child results are rematerialized and
+  // Completion policy governing how child results are rehydrated and
   // when the parent may be considered complete.
   CompletionPolicy policy = 5;
 
-  // Timestamp (Unix epoch microseconds) when the dematerialization occurred
+  // Timestamp (Unix epoch microseconds) when the dehydration occurred
   // and child entities were created.
   uint64 created_at = 6;
 
-  // Current resolution state of this Parts Ledger entry.
+  // Current resolution state of this Assembly Manifest entry.
   ResolutionState state = 7;
 }
 
 // YieldToken allows a Layer 2 processor to pause processing of an entity
 // and resume it later. The token captures the reason for yielding, an
 // opaque continuation state, and validation data to ensure consistency
-// when the entity is rematerialized.
+// when the entity is rehydrated.
 message YieldToken {
   // Reason the processor is yielding control of this entity.
   YieldReason reason = 1;
@@ -423,14 +423,14 @@ message StoppingPointValidation {
   bool is_resumable = 5;
 
   // Reference to the most recent checkpoint that the entity had passed
-  // at the time of stopping, for cross-referencing with the ledger.
+  // at the time of stopping, for cross-referencing with the control stream.
   string checkpoint_ref = 6;
 }
 
 // ScopeDigest is a Layer 1 summary of a completed scope. It provides
 // aggregate counters and a Merkle root hash that covers all entity
 // outcomes within the scope, enabling efficient integrity verification
-// without replaying the full ledger.
+// without replaying the full control stream.
 message ScopeDigest {
   // Identifier of the scope being summarized.
   uint32 scope_id = 1;
