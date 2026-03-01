@@ -38,11 +38,22 @@ To maintain session liveness:
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
    Type = 0x50 (STATUS)
-   Stat = 0x0 (UNSPECIFIED, used as heartbeat signal)
+   :   Frame type identifier.
+
+   Stat = 0x0 (UNSPECIFIED)
+   :   Status code used as a heartbeat signal.
+
    Entity ID = 0xFFFFFFFF (CONNECTION_LEVEL)
+   :   Reserved identifier for connection-wide messages.
+
    Scope ID = 0x0000
+   :   Root scope identifier.
+
    Depth = 0
+   :   Root depth level.
+
    E=0, C=0, Flags=0
+   :   Control flags and reserved bits MUST be zero.
 ```
 
 When no status updates have been transmitted for KEEPALIVE_TIMEOUT (default: 30 seconds), an endpoint SHOULD send a heartbeat frame. If no data is received on Stream 0 for 3 * KEEPALIVE_TIMEOUT, the connection SHOULD be closed with PIPESTREAM_IDLE_TIMEOUT (0x02).

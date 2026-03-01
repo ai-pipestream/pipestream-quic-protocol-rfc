@@ -60,6 +60,17 @@ A checkpoint is satisfied when:
 
 CheckpointFrame (Section 6.6 / Appendix A) carries both:
 
+```protobuf
+message CheckpointFrame {
+  string checkpoint_id = 1;
+  uint64 sequence_number = 2;
+  uint32 checkpoint_entity_id = 3;
+  uint32 scope_id = 4;
+  uint32 flags = 5;
+  uint32 timeout_ms = 6;
+}
+```
+
 - `checkpoint_id`: an opaque identifier for logging and correlation.
 - `checkpoint_entity_id`: the numeric ordering key used for barrier evaluation.
 

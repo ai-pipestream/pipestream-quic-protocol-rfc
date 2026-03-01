@@ -43,31 +43,31 @@ The Status Frame reports lifecycle transitions for entities.
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |        Scope ID (16 bits)       |      Reserved (16 bits)     |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
-   Stat (4 bits):
-      Status code (see Section 6.2.2).
-
-   E (1 bit):
-      Extended frame flag. Additional extension data follows (Section 6.5).
-
-   C (1 bit):
-      Cursor update flag. A 4-octet cursor value follows (Section 6.2.3).
-
-   Depth (3 bits):
-      Explicit scope nesting depth (0-7). 0=Root. Layer 1.
-
-   Flags (15 bits):
-      Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
-
-   Entity ID (32 bits):
-      Unsigned integer identifying the entity.
-
-   Scope ID (16 bits):
-      Identifier for the scope to which this entity belongs.
-
-   Reserved (16 bits):
-      Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
 ```
+
+Stat (4 bits):
+:   Status code (see Section 6.2.2).
+
+E (1 bit):
+:   Extended frame flag. Additional extension data follows (Section 6.5).
+
+C (1 bit):
+:   Cursor update flag. A 4-octet cursor value follows (Section 6.2.3).
+
+Depth (3 bits):
+:   Explicit scope nesting depth (0-7). 0=Root. Layer 1.
+
+Flags (15 bits):
+:   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
+
+Entity ID (32 bits):
+:   Unsigned integer identifying the entity.
+
+Scope ID (16 bits):
+:   Identifier for the scope to which this entity belongs.
+
+Reserved (16 bits):
+:   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
 
 #### 6.2.2. Status Codes
 
@@ -101,6 +101,9 @@ When C=1, a 4-octet cursor update follows the status frame:
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
+New Cursor Value (32 bits):
+:   The numeric value of the new cursor. Entities with IDs lower than this value (modulo circular ID rules) are considered resolved and their IDs MAY be recycled.
+
 ### 6.3. Scope Digest Frame (0x54)
 
 When Protocol Layer 1 is negotiated, a scope completion is summarized:
@@ -131,6 +134,21 @@ Flags (8 bits):
 Scope ID (16 bits):
 :   Identifier of the scope being summarized.
 
+Entities Processed (32 bits):
+:   The total number of entities that were processed within the scope.
+
+Entities Succeeded (32 bits):
+:   The number of entities that reached a terminal success state.
+
+Entities Failed (32 bits):
+:   The number of entities that reached a terminal failure state.
+
+Entities Deferred (32 bits):
+:   The number of entities that were deferred via claim checks.
+
+Merkle Root (256 bits):
+:   The SHA-256 Merkle root covering all entity statuses in the scope (see Section 9.4).
+
 The SCOPE_DIGEST frame is 52 octets total. The Scope ID MUST match the 16-bit identifier defined in Section 6.2.1.
 
 ### 6.4. Barrier Frame (0x55)
@@ -143,13 +161,19 @@ The SCOPE_DIGEST frame is 52 octets total. The Scope ID MUST match the 16-bit id
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                    Parent Entity ID (32 bits)                 |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
-   S (1 bit):
-      Status (0 = waiting, 1 = released).
-
-   Reserved (7 bits):
-      Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
 ```
+
+S (1 bit):
+:   Status (0 = waiting, 1 = released).
+
+Reserved (7 bits):
+:   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
+
+Barrier ID (16 bits):
+:   Identifier for the barrier within the scope.
+
+Parent Entity ID (32 bits):
+:   The identifier of the parent entity whose sub-tree is blocked by this barrier.
 
 ### 6.5. Yield and Claim Check Extensions (Layer 2)
 
@@ -171,6 +195,26 @@ If E=1 is set for a Status code that does not define an extension layout in this
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
+Yield Reason (4 bits):
+:   The reason for yielding (see Section 6.5.1.1).
+
+Token Length (20 bits):
+:   The length of the Yield Token in bytes.
+
+Yield Token (variable):
+:   The opaque continuation state.
+
+##### 6.5.1.1. Yield Reason Codes
+
+| Value | Name | Description |
+|-------|------|-------------|
+| 0x1 | EXTERNAL_CALL | Waiting on external service |
+| 0x2 | RATE_LIMITED | Voluntary throttle |
+| 0x3 | AWAITING_SIBLING | Waiting for specific sibling |
+| 0x4 | AWAITING_APPROVAL | Human/workflow gate |
+| 0x5 | RESOURCE_BUSY | Semaphore/lock |
+| 0x0, 0x6-0xF | Reserved | Reserved for future use |
+
 #### 6.5.2. Claim Check Extension (Stat = 0x9)
 
 ```
@@ -184,6 +228,12 @@ If E=1 is set for a Status code that does not define an extension layout in this
    |                    Expiry Timestamp (32 bits)                 |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
+
+Claim Check ID (64 bits):
+:   A cryptographically secure random identifier for the claim.
+
+Expiry Timestamp (32 bits):
+:   Unix epoch timestamp (in seconds) when the claim expires.
 
 ### 6.6. Protobuf-Encoded Messages (0x80-0xAF)
 
@@ -213,3 +263,33 @@ Entity frames carry the actual document entity data on Entity Streams.
    |                           |
    +---------------------------+
 ```
+
+Header Length (4 octets):
+:   The length of the Protobuf-encoded EntityHeader in bytes.
+
+Header (Protobuf):
+:   The serialized EntityHeader message (see Section 6.7.2).
+
+Payload (variable):
+:   The raw entity data.
+
+#### 6.7.2. Entity Header (Protobuf)
+
+```protobuf
+message EntityHeader {
+  uint32 entity_id = 1;         // Scope-local identifier
+  uint32 parent_id = 2;         // 0 for root entities
+  uint32 scope_id = 3;          // Layer 1: scope identifier
+  uint32 layer = 4;             // Data layer (0-3)
+  string content_type = 5;      // MIME type
+  uint64 payload_length = 6;
+  bytes checksum = 7;           // SHA-256 (32 bytes)
+  map<string, string> metadata = 8;
+  ChunkInfo chunk_info = 9;
+  CompletionPolicy completion_policy = 10; // Layer 2: failure handling
+}
+```
+
+#### 6.7.3. Checksum Algorithm
+
+PipeStream uses SHA-256 {{FIPS-180-4}} for payload integrity verification. The checksum MUST be exactly 32 octets.
