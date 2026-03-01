@@ -79,7 +79,7 @@ PipeStream employs a dual-stream design:
 
 ### 1.3. Design Philosophy
 
-PipeStream implements a recursive scatter-gather pattern over QUIC streams. A document is "dehydrated" (scattered) at the source into constituent entities, these entities are transmitted and processed in parallel across distributed pipeline stages, and finally the entities are "rehydrated" (gathered) at the destination to reconstitute the complete processed document.
+PipeStream implements a recursive scatter-gather pattern {{?scatter-gather=DOI.10.1007/978-1-4612-1260-6}} over QUIC streams. A document is "dehydrated" (scattered) at the source into constituent entities, these entities are transmitted and processed in parallel across distributed pipeline stages, and finally the entities are "rehydrated" (gathered) at the destination to reconstitute the complete processed document. The checkpoint blocking mechanism (Section 9.3) provides barrier synchronization semantics analogous to the barrier pattern in parallel computing.
 
 This approach provides several advantages:
 
@@ -128,11 +128,20 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 ### 2.2. Dehydration and Rehydration
 
-**Dehydrate**
-:   The operation of decomposing a document or Entity into multiple constituent Entities for parallel or distributed processing. When an Entity is dehydrated, the originating node MUST create an Assembly Manifest entry recording the identifiers of all resulting sub-entities. The dehydration operation is recursive; a sub-entity produced by dehydration MAY itself be dehydrated, creating a tree of decomposition.
+**Scatter-Gather**
+:   The distributed processing pattern implemented by PipeStream. A single input is "scattered" (dehydrated) into multiple parts for parallel processing, and the results are "gathered" (rehydrated) back into a single output. PipeStream extends classical scatter-gather with recursive nesting: any scattered part may itself be scattered further.
 
-**Rehydrate**
-:   The operation of rehydrating multiple Entities back into a single composite Entity or Document. A rehydrate operation MUST NOT proceed until all constituent Entities listed in the corresponding Assembly Manifest entry have been received and processed (or handled according to the Completion Policy).
+**Dehydrate (Scatter)**
+:   The operation of decomposing a document or Entity into multiple constituent Entities for parallel or distributed processing. When an Entity is dehydrated, the originating node MUST create an Assembly Manifest entry recording the identifiers of all resulting sub-entities. The dehydration operation is recursive; a sub-entity produced by dehydration MAY itself be dehydrated, creating a tree of decomposition. Dehydration transitions data from a solid state (a single stored record) to a fluid state (multiple in-flight entities).
+
+**Rehydrate (Gather)**
+:   The operation of reassembling multiple Entities back into a single composite Entity or Document. A rehydrate operation MUST NOT proceed until all constituent Entities listed in the corresponding Assembly Manifest entry have been received and processed (or handled according to the Completion Policy). Rehydration transitions data from a fluid state back to a solid state.
+
+**Solid State**
+:   A document or Entity that exists as a complete, stored record — either at rest in storage or as a single root Entity entering or exiting a pipeline. Contrast with "fluid state".
+
+**Fluid State**
+:   A document that has been decomposed into multiple in-flight Entities being processed in parallel across distributed nodes. A document is in the fluid state between dehydration and rehydration. Contrast with "solid state".
 
 ### 2.3. Consistency Mechanisms
 
@@ -238,8 +247,8 @@ message Capabilities {
   bool layer1_recursive = 2;      // Scoped IDs, digests
   bool layer2_resilience = 3;     // Yield, claim checks
   uint32 max_scope_depth = 4;     // Default: 8
-  uint32 max_entities_per_scope = 5;  // Default: 1,048,576 (2^20)
-  uint32 max_window_size = 6;     // Default: 524,288 (2^19)
+  uint32 max_entities_per_scope = 5;  // Default: 4,294,967,294 (2^32-2)
+  uint32 max_window_size = 6;     // Default: 2,147,483,648 (2^31)
 }
 ```
 
@@ -358,15 +367,18 @@ The Control Stream carries small, fixed-size frames (4 octets each for basic fra
 To maintain session liveness:
 
 ```
-   Heartbeat Frame (4 octets):
+   Heartbeat Frame (8 octets):
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |0|0|1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1|0 0 0 0|0 0 0 0 0 0|
+   |1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1|
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |E|C|<-- Entity ID = 0xFFFFF (20 bits) -->|Stat=0| Flags=0    |
+   |0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0|0 0 0 0|0|0|0 0 0 0 0 0 0 0 0 0|
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-   E=0 (no extended data), C=0 (no cursor update)
-   Entity ID = 0xFFFFF (CONNECTION_LEVEL)
+   Entity ID = 0xFFFFFFFF (CONNECTION_LEVEL)
+   Scope ID = 0x0000
    Status = 0x0 (UNSPECIFIED, used as heartbeat signal)
+   E=0 (no extended data), C=0 (no cursor update)
+   Flags = 0x000
 ```
 
 When no status updates have been transmitted for KEEPALIVE_TIMEOUT (default: 30 seconds), an endpoint SHOULD send a heartbeat frame. If no data is received on Stream 0 for 3 * KEEPALIVE_TIMEOUT, the connection SHOULD be closed with PIPESTREAM_IDLE_TIMEOUT (0x02).
@@ -401,35 +413,48 @@ This section defines the wire formats for PipeStream frames. All multi-octet int
 
 ### 6.1. Status Frames (Layer 0)
 
-#### 6.1.1. Basic Status Frame Format (32 bits)
+#### 6.1.1. Status Frame Format (64 bits)
 
 ```
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |E|C|              Entity ID (20 bits)         |Stat |  Flags  |
+   |                       Entity ID (32 bits)                     |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |        Scope ID (16 bits)       | Stat  |E|C|   Flags (10)   |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-   E (1 bit):
-      Extended frame flag. When set, additional data follows the
-      basic 4-octet frame.
+   Entity ID (32 bits):
+      Unsigned integer identifying the entity.
+      Range 0x00000001-0xFFFFFFFD for regular entities.
+      0x00000000: NULL_ENTITY (reserved; MUST NOT be used)
+      0xFFFFFFFE: SCOPE_MARKER (Layer 1)
+      0xFFFFFFFF: CONNECTION_LEVEL (heartbeat, shutdown)
 
-   C (1 bit):
-      Cursor update flag. When set, a 3-octet cursor value follows.
-
-   Entity ID (20 bits):
-      Unsigned integer identifying the entity within the current scope.
-      Range 0x00000-0xFFFFD for regular entities.
-      0xFFFFE: SCOPE_MARKER (Layer 1)
-      0xFFFFF: CONNECTION_LEVEL (heartbeat, shutdown)
+   Scope ID (16 bits):
+      Identifier for the scope to which this entity belongs.
+      Layer 0 implementations set this to 0x0000 (root scope).
+      Layer 1 uses this field for hierarchical scope tracking.
 
    Stat (4 bits):
       Status code (see Section 6.1.2).
 
-   Flags (6 bits):
-      Reserved for future use. MUST be zero when sent.
-      Receivers MUST ignore non-zero flags.
+   E (1 bit):
+      Extended frame flag. When set, additional data follows the
+      basic 8-octet frame.
+
+   C (1 bit):
+      Cursor update flag. When set, a 4-octet cursor value follows.
+
+   Flags (10 bits):
+      Bit 0: Scope is root of a new document (Layer 1)
+      Bit 1: Fail-fast on first child failure (Layer 1)
+      Bits 2-4: Scope depth (0-7; Layer 1, default 0)
+      Bits 5-9: Reserved. MUST be zero when sent.
+      Receivers MUST ignore non-zero reserved flags.
 ```
+
+This unified 64-bit frame replaces both the Layer 0 basic frame and the Layer 1 scoped frame from earlier protocol versions. Layer 0 implementations set Scope ID to zero and ignore scope-related flag bits. Layer 1 implementations populate the Scope ID and depth fields to enable hierarchical scope tracking within the same frame format.
 
 #### 6.1.2. Status Codes
 
@@ -452,59 +477,37 @@ This section defines the wire formats for PipeStream frames. All multi-octet int
 
 #### 6.1.3. Cursor Update Extension
 
-When C=1, a 3-octet cursor update follows:
+When C=1, a 4-octet cursor update follows the status frame:
 
 ```
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |        New Cursor Value (20 bits)    |Reserv |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                  New Cursor Value (32 bits)                   |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
 The cursor indicates the lowest unresolved Entity ID. IDs below the cursor are considered resolved and MAY be recycled.
 
 #### 6.1.4. Reserved Entity ID Values
 
-| Value   | Name              | Purpose                            |
-|---------|-------------------|------------------------------------|
-| 0x00000 | NULL_ENTITY       | Reserved; MUST NOT be used         |
-| 0xFFFFE | SCOPE_MARKER      | Scope operations (Layer 1)         |
-| 0xFFFFF | CONNECTION_LEVEL  | Connection-wide control messages   |
+| Value      | Name              | Purpose                            |
+|------------|-------------------|------------------------------------|
+| 0x00000000 | NULL_ENTITY       | Reserved; MUST NOT be used         |
+| 0xFFFFFFFE | SCOPE_MARKER      | Scope operations (Layer 1)         |
+| 0xFFFFFFFF | CONNECTION_LEVEL  | Connection-wide control messages   |
 
-### 6.2. Scoped Status Frame (Layer 1)
+### 6.2. Scoped Status Frames (Layer 1)
 
-When Protocol Layer 1 is negotiated, status frames support hierarchical scoping:
+When Protocol Layer 1 is negotiated, the unified 64-bit status frame (Section 6.1.1) carries hierarchical scope information:
 
-```
-    0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |E|Dep|    Scope ID (12 bits)   | Local ID (10) |Stat | Flags  |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+- **Scope ID (16 bits)**: Identifies the scope within the session. Derived from parent path hash. Allows 65,536 concurrent scopes across all depth levels.
 
-   E (1 bit):
-      Extended frame flag (same as Layer 0).
+- **Depth (Flags bits 2-4)**: Encodes the scope nesting depth. 0=root/collection, 1=document, 2=part, etc. Maximum depth of 7 (negotiated, default: 7).
 
-   Dep (3 bits):
-      Scope depth. 0=root/collection, 1=document, 2=part, etc.
-      Maximum depth of 7 (negotiated, default: 7).
+- **Scope root flag (Flags bit 0)**: Indicates that this scope is the root of a new document decomposition.
 
-   Scope ID (12 bits):
-      Identifier for the current scope. Derived from parent path hash.
-      Allows 4,096 concurrent scopes per depth level.
-
-   Local ID (10 bits):
-      Entity ID within this scope. Allows 1,024 entities per scope
-      before requiring cursor advancement.
-
-   Stat (4 bits):
-      Status code (same as Layer 0, see Section 6.1.2).
-
-   Flags (2 bits):
-      Bit 0: Scope is root of a new document
-      Bit 1: Reserved
-```
-
-Total: 1 + 3 + 12 + 10 + 4 + 2 = 32 bits (word-aligned).
+Layer 1 implementations MUST populate the Scope ID and depth fields for all status frames within hierarchical scopes. Layer 0 implementations set Scope ID to 0x0000 and depth to 0.
 
 ### 6.3. Scope Digest Frame (Layer 1)
 
@@ -534,19 +537,21 @@ The Merkle root is computed as SHA-256 over all child status entries in Entity I
 
 ### 6.4. Yield Frame (Layer 2)
 
-When Status = YIELDED (0x8) and E=1:
+When Status = YIELDED (0x8) and E=1, the yield extension follows the 8-octet status frame:
 
 ```
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |1|C|              Entity ID (20)              |1000 |  Flags  |
+   |                       Entity ID (32)                          |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   | Yield Reason  |         Token Length (12 bits)               |
+   |        Scope ID (16)            |1000 |1|C|   Flags (10)     |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   | Yield Reason  |         Token Length (20 bits)                |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                                                               |
    |                  Yield Token (variable)                       |
-   |                  (up to 4095 bytes)                           |
+   |                  (up to 1,048,575 bytes)                      |
    |                                                               |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
@@ -561,13 +566,15 @@ When Status = YIELDED (0x8) and E=1:
 
 ### 6.5. Claim Check Frame (Layer 2)
 
-When Status = DEFERRED (0x9) and E=1:
+When Status = DEFERRED (0x9) and E=1, the claim check extension follows the 8-octet status frame:
 
 ```
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |1|C|              Entity ID (20)              |1001 |  Flags  |
+   |                       Entity ID (32)                          |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |        Scope ID (16)            |1001 |1|C|   Flags (10)     |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                                                               |
    |                    Claim Check ID (64 bits)                   |
@@ -599,7 +606,7 @@ The Claim Check ID can be used to query status or trigger retry in any session.
    |                    Claim Check ID (64 bits)                   |
    |                                                               |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |              Result Entity ID (20 bits)              |Reserv |
+   |                  Result Entity ID (32 bits)                   |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
@@ -611,16 +618,11 @@ The Claim Check ID can be used to query status or trigger retry in any session.
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    | Frame Type = 0x55 (BARRIER)   |B|      Barrier ID (15 bits)  |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                Parent Entity ID (20 bits)              |Flags|
+   |                    Parent Entity ID (32 bits)                 |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
    B (1 bit):
       Barrier satisfied (0 = waiting, 1 = released)
-
-   Flags (6 bits):
-      Bit 0: Include parent itself
-      Bit 1: Fail-fast on first child failure
-      Bit 2-5: Reserved
 ```
 
 ### 6.8. Entity Frames
@@ -647,7 +649,7 @@ Entity frames carry the actual document entity data on Entity Streams.
 
 ```protobuf
 message EntityHeader {
-  uint32 entity_id = 1;         // 20-bit local ID
+  uint32 entity_id = 1;         // Scope-local identifier
   uint32 parent_id = 2;         // 0 for root entities
   uint32 scope_id = 3;          // Layer 1: scope identifier
   uint32 layer = 4;             // Data layer (0-3)
@@ -675,7 +677,7 @@ Every PipeStream entity is represented as a PipeDoc message:
 | Field | Type | Requirement | Description |
 |-------|------|-------------|-------------|
 | doc_id | string | REQUIRED | Unique document identifier (UUID recommended) |
-| entity_id | uint32 | REQUIRED | Scope-local identifier (20-bit) |
+| entity_id | uint32 | REQUIRED | Scope-local identifier |
 | ownership | OwnershipContext | OPTIONAL | Multi-tenancy tracking |
 
 ### 7.2. Four Data Layers
@@ -727,7 +729,9 @@ message EncryptionMetadata {
 
 ---
 
-## 8. Processing Actions
+## 8. Protocol Operations
+
+This section defines the protocol-level operations that PipeStream endpoints perform during a session. These operations describe the phases of a PipeStream session lifecycle, from connection establishment through entity processing to terminal consumption.
 
 ### 8.1. Overview
 
@@ -835,7 +839,7 @@ enum FailureAction {
 Entity IDs are managed using a cursor-based recycling scheme:
 
 ```
-   Entity ID Space (20-bit circular buffer):
+   Entity ID Space (32-bit circular buffer):
 
                        cursor (lowest unresolved)
                            │
@@ -889,23 +893,22 @@ A checkpoint is satisfied when:
 
 ### 9.4. Scope Digest Propagation (Layer 1)
 
-When a scope completes:
+When a scope completes, the endpoint MUST compute a Scope Digest and propagate it to the parent scope via a SCOPE_DIGEST frame (Section 6.3).
 
-1. Compute Merkle root of all child Entity statuses
-2. Send SCOPE_DIGEST frame to parent scope
-3. Parent can verify subtree integrity with single hash
-4. Full status history available on request for audit
+The Merkle root in the Scope Digest is computed as follows:
 
-### 9.5. Eventual Consistency (Fibonacci Heap)
+1. For each entity in the scope, ordered by Entity ID (ascending), construct a leaf value by concatenating the 4-byte big-endian Entity ID with the 1-byte status code.
+2. Compute SHA-256 over each leaf to produce leaf hashes.
+3. Build a binary Merkle tree by repeatedly hashing pairs of sibling nodes: `SHA-256(left || right)`. If the number of nodes at any level is odd, the last node is promoted without hashing.
+4. The root of this tree is the `merkle_root` value in the SCOPE_DIGEST frame.
 
-Implementations SHALL use a priority queue (Fibonacci heap recommended) to track which Assembly Manifest entries are ready for rehydration:
+This construction is deterministic: any two implementations processing the same set of entity statuses MUST produce the same Merkle root. The parent scope MAY use the Merkle root to verify subtree integrity with a single hash comparison. Full status history remains available on request for audit.
 
-| Operation | Amortized Complexity |
-|-----------|---------------------|
-| Insert | O(1) |
-| Find-min | O(1) |
-| Extract-min | O(log n) |
-| Decrease-key | O(1) |
+### 9.5. Rehydration Readiness Tracking
+
+Implementations MUST track Assembly Manifest resolution order using a mechanism that provides O(1) insertion and amortized O(log n) minimum extraction. The tracking mechanism MUST support efficient decrease-key operations to handle out-of-order status updates.
+
+Implementations MAY choose any data structure that satisfies these complexity requirements. See the companion document `REFERENCE_IMPLEMENTATION.md` for a recommended approach using a Fibonacci heap with pseudocode and amortized complexity analysis.
 
 ### 9.6. Stopping Point Validation (Layer 2)
 
@@ -932,30 +935,81 @@ PipeStream inherits security from QUIC {{RFC9000}} and TLS 1.3 {{RFC8446}}. All 
 
 ### 10.2. Entity Payload Integrity
 
-Each Entity MUST include a SHA-256 checksum. Receivers MUST verify before processing.
+Each Entity MUST include a SHA-256 checksum. Receivers MUST verify the checksum before processing the entity payload. Entities with invalid checksums MUST be rejected with PIPESTREAM_INTEGRITY_ERROR (0x04). Implementations MUST NOT process any portion of an entity payload before checksum verification succeeds.
 
 ### 10.3. Resource Exhaustion
 
 | Limit | Default | Description |
 |-------|---------|-------------|
 | Max scope depth | 8 | Prevents recursive bombs |
-| Max entities per scope | 1,048,576 | Memory bounds |
-| Max window size | 524,288 | Backpressure threshold |
+| Max entities per scope | 4,294,967,294 | Memory bounds |
+| Max window size | 2,147,483,648 | Backpressure threshold |
 | Checkpoint timeout | 3600s | Prevents stuck state |
 | Claim check expiry | 86400s | Garbage collection |
 
-### 10.4. Encryption Key Management
+Implementations MUST enforce all resource limits listed above. Exceeding any limit MUST result in the corresponding error code (see Section 11.4). Implementations SHOULD allow operators to configure stricter limits than the defaults shown here.
+
+### 10.4. Amplification Attacks
+
+A single dehydration operation can produce an arbitrary number of child entities from a small input, creating a potential amplification vector. To mitigate this:
+
+1. Implementations MUST enforce the max_entities_per_scope limit negotiated during capability exchange (Section 3.4). Any dehydration that would exceed this limit MUST be rejected.
+
+2. Implementations MUST enforce the max_scope_depth limit. A dehydration chain deeper than this limit MUST be rejected with PIPESTREAM_DEPTH_EXCEEDED (0x07).
+
+3. Implementations SHOULD enforce a configurable ratio between input entity size and total child entity count. A recommended default is no more than 1,000 children per megabyte of parent payload.
+
+4. The backpressure mechanism (Section 9.1) provides a natural throttle: when the in-flight window fills, no new Entity IDs can be assigned until existing entities complete and the cursor advances. Implementations MUST NOT bypass backpressure for dehydration-generated entities.
+
+### 10.5. Privacy Considerations
+
+PipeStream entity headers and control stream frames carry metadata that may reveal information about the documents being processed, even when payloads are encrypted at the application layer:
+
+1. **Document structure leakage**: The number of child entities produced by dehydration, the scope depth, and the Entity ID assignment pattern may reveal the structure of the document being processed (e.g., a document that dehydrates into 50 children is likely a multi-page document). Implementations that require structural privacy SHOULD pad dehydration counts or use fixed decomposition granularity.
+
+2. **Metadata in headers**: The `content_type`, `metadata` map, and `payload_length` fields in EntityHeader (Section 6.8.2) are transmitted in cleartext within the QUIC-encrypted stream. Implementations that require metadata confidentiality beyond transport encryption SHOULD encrypt EntityHeader fields at the application layer and use an opaque content_type such as `application/octet-stream`.
+
+3. **Traffic analysis**: The timing and size of status frames on the Control Stream may correlate with document processing patterns. Implementations operating in privacy-sensitive environments SHOULD send status frames at fixed intervals with padding to obscure processing timing.
+
+4. **Identifiers**: The `doc_id` field in PipeDoc (Section 7.1) and filenames in BlobBag entries are application-layer data but may be logged by intermediate processing nodes. Implementations SHOULD provide mechanisms to redact or pseudonymize identifiers at pipeline boundaries.
+
+### 10.6. Replay and Token Reuse
+
+#### 10.6.1. Yield Token Replay
+
+Yield tokens (Section 6.4) contain opaque continuation state that enables resumption of paused entity processing. A replayed yield token could cause an entity to be processed multiple times or to resume from a stale state. To prevent this:
+
+1. Implementations MUST associate each yield token with a unique session identifier and Entity ID. A yield token MUST be rejected if presented in a session other than the one that issued it, unless the token was explicitly transferred via a claim check.
+
+2. Implementations MUST invalidate a yield token after it has been consumed for resumption. A second resumption attempt with the same token MUST be rejected.
+
+3. The StoppingPointValidation (Section 9.6) provides integrity checking at resume time. Implementations MUST verify the `state_checksum` field before accepting a resumed entity. If the checksum does not match the current state, the resumption MUST be rejected and the entity MUST be reprocessed from the beginning.
+
+#### 10.6.2. Claim Check Replay
+
+Claim checks (Section 6.5) are long-lived references that can be redeemed in different sessions. To prevent misuse:
+
+1. Each claim check carries an `expiry_timestamp`. Implementations MUST reject expired claim checks.
+
+2. Implementations MUST track redeemed claim check IDs and reject duplicate redemptions. The tracking state MUST persist for at least the claim check expiry duration.
+
+3. Claim check IDs MUST be generated using a cryptographically secure random number generator to prevent guessing.
+
+### 10.7. Encryption Key Management
 
 When using FileStorageReference with encryption:
 
-1. Key IDs MUST reference keys in approved providers
-2. Wrapped keys MUST use approved envelope encryption
-3. Key rotation MUST be supported via key_id versioning
-4. Implementations MUST NOT log key material
+1. Key IDs MUST reference keys in approved providers.
+2. Wrapped keys MUST use approved envelope encryption.
+3. Key rotation MUST be supported via key_id versioning.
+4. Implementations MUST NOT log key material.
+5. Implementations MUST NOT include unwrapped data encryption keys in EntityHeader metadata or Control Stream frames.
 
 ---
 
 ## 11. IANA Considerations
+
+This document requests the creation of several new registries and one ALPN identifier registration. All registries defined in this section use the "Expert Review" policy {{RFC8126}} for new assignments. The designated expert(s) should verify that proposed values do not conflict with existing assignments, that the semantics are clearly documented, and that the proposed protocol layer is appropriate for the value.
 
 ### 11.1. ALPN Identifier Registration
 
@@ -964,6 +1018,8 @@ When using FileStorageReference with encryption:
 | PipeStream Version 1 | "pipestream/1" | [this document] |
 
 ### 11.2. PipeStream Frame Type Registry
+
+IANA is requested to create the "PipeStream Frame Types" registry with the following initial entries. Values in the range 0x00-0x7F are assigned by Expert Review. Values in the range 0x80-0xFF are reserved for private use.
 
 | Value | Frame Type Name | Layer | Reference |
 |-------|-----------------|-------|-----------|
@@ -985,6 +1041,8 @@ When using FileStorageReference with encryption:
 
 ### 11.3. PipeStream Status Code Registry
 
+IANA is requested to create the "PipeStream Status Codes" registry with the following initial entries. Status codes are 4-bit values (0x0-0xF). Values 0x0-0xC are defined by this document. Values 0xD-0xF are reserved for future Standards Action.
+
 | Value | Name | Layer | Description |
 |-------|------|-------|-------------|
 | 0x0 | UNSPECIFIED | - | Protobuf default / heartbeat |
@@ -1003,6 +1061,8 @@ When using FileStorageReference with encryption:
 | 0xD-0xF | Reserved | - | Reserved for future use |
 
 ### 11.4. PipeStream Error Code Registry
+
+IANA is requested to create the "PipeStream Error Codes" registry with the following initial entries. Values in the range 0x00-0x3F are assigned by Expert Review. Values in the range 0x40-0xFF are reserved for private use.
 
 | Value | Name | Description |
 |-------|------|-------------|
@@ -1647,13 +1707,13 @@ message DocIdDerivation {
 
 | Feature | Layer 0 | Layer 1 | Layer 2 |
 |---------|---------|---------|---------|
-| Basic status frame (32-bit) | ✓ | ✓ | ✓ |
+| Unified status frame (64-bit) | ✓ | ✓ | ✓ |
 | Entity streaming | ✓ | ✓ | ✓ |
 | PENDING/PROCESSING/COMPLETE/FAILED | ✓ | ✓ | ✓ |
 | Checkpoint blocking | ✓ | ✓ | ✓ |
 | Assembly Manifest | ✓ | ✓ | ✓ |
 | Cursor-based ID recycling | ✓ | ✓ | ✓ |
-| Scoped status frame | | ✓ | ✓ |
+| Scoped status fields (Scope ID, depth) | | ✓ | ✓ |
 | Hierarchical scopes | | ✓ | ✓ |
 | Scope digest (Merkle) | | ✓ | ✓ |
 | Barrier (subtree sync) | | ✓ | ✓ |

@@ -37,16 +37,17 @@ message Capabilities {
   bool layer2_resilience = 3;
 
   // Maximum nesting depth allowed for recursive scopes.
-  // Default is 8. Range 1-7 (constrained by 3-bit Dep field in scoped frame).
+  // Default is 8. Range 0-7 (constrained by 3-bit depth field in status frame flags).
   uint32 max_scope_depth = 4;
 
   // Maximum number of entities permitted within a single scope.
-  // Default is 1,048,576 (2^20), matching the 20-bit entity ID space.
+  // Default is 4,294,967,294 (2^32-2), matching the 32-bit entity ID space
+  // (excluding reserved values NULL_ENTITY and CONNECTION_LEVEL).
   uint32 max_entities_per_scope = 5;
 
   // Maximum flow-control window size, in number of entities, that the
   // endpoint is willing to buffer before requiring cursor advancement.
-  // Default is 524,288 (2^19).
+  // Default is 2,147,483,648 (2^31).
   uint32 max_window_size = 6;
 }
 
@@ -55,8 +56,10 @@ message Capabilities {
 // chunking information, and the completion policy that governs how partial
 // failures of this entity's children are handled.
 message EntityHeader {
-  // Scope-local entity identifier (20-bit, range 1 to 1,048,573).
+  // Scope-local entity identifier (32-bit, range 1 to 0xFFFFFFFD).
   // Assigned by the sender using a cursor-based circular buffer.
+  // Reserved values: 0x00000000 (NULL_ENTITY), 0xFFFFFFFE (SCOPE_MARKER),
+  // 0xFFFFFFFF (CONNECTION_LEVEL).
   uint32 entity_id = 1;
 
   // Identifier of the parent entity that spawned this entity, or zero if
@@ -186,7 +189,7 @@ enum FailureAction {
 }
 
 // EntityStatus represents the lifecycle state of an entity as tracked
-// on the control stream. Encoded as 4-bit values (0x0-0xC) in the 32-bit
+// on the control stream. Encoded as 4-bit values (0x0-0xC) in the 64-bit
 // status frame wire format. Transitions follow the PipeStream state machine.
 // CLOSED enum: unknown status values on the wire MUST cause a
 // PIPESTREAM_INTEGRITY_ERROR (0x04).

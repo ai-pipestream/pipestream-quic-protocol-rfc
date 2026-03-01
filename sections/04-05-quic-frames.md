@@ -39,9 +39,9 @@ Implementations MUST adhere to the following requirements for the Control Stream
 
 #### 4.1.3. Flow Control Considerations
 
-The Control Stream carries small, fixed-size frames (4 octets each for basic frames). Implementations MUST ensure adequate flow control credits are maintained:
+The Control Stream carries small, fixed-size frames (8 octets each for basic frames). Implementations MUST ensure adequate flow control credits are maintained:
 
-- The initial MAX_STREAM_DATA for Stream 0 SHOULD be at least 8192 octets, allowing approximately 2048 status frames before requiring credit updates.
+- The initial MAX_STREAM_DATA for Stream 0 SHOULD be at least 8192 octets, allowing approximately 1024 status frames before requiring credit updates.
 
 - Implementations SHOULD NOT block Entity Stream transmission due to Control Stream flow control exhaustion.
 
@@ -50,18 +50,21 @@ The Control Stream carries small, fixed-size frames (4 octets each for basic fra
 To maintain session liveness and detect connection failures, PipeStream defines a heartbeat mechanism on the Control Stream:
 
 ```
-   Heartbeat Frame (4 octets):
+   Heartbeat Frame (8 octets):
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |0|0|1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1|0 0 0 0|0 0 0 0 0 0|
+   |                   Entity ID = 0xFFFFFFFF (32 bits)            |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |E|C|<-- Entity ID = 0xFFFFF (20 bits) -->|Stat=0| Flags=0    |
+   |        Scope ID (16 bits)       | Stat=0|E|C|   Flags (10)   |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
 The following requirements apply:
 
 1. When no status updates have been transmitted for a duration exceeding the KEEPALIVE_TIMEOUT (default: 30 seconds), an endpoint SHOULD send a heartbeat frame.
 
-2. Heartbeat frames use the reserved Entity ID 0xFFFFF with status PENDING (0x0).
+2. Heartbeat frames use the reserved Entity ID 0xFFFFFFFF with status PENDING (0x0).
 
 3. Upon receiving a heartbeat, an endpoint MAY respond with a corresponding heartbeat frame, though this is NOT REQUIRED.
 
@@ -233,39 +236,44 @@ Status frames are fixed-size control messages transmitted on Stream 0. They prov
 
 #### 5.1.1. Basic Status Frame Format
 
-A basic status frame is exactly 4 octets (32 bits), word-aligned:
+A basic status frame is exactly 8 octets (64 bits), word-aligned:
 
 ```
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |E|C|              Entity ID (20 bits)         |Stat |  Flags  |
+   |                       Entity ID (32 bits)                     |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |        Scope ID (16 bits)       | Stat  |E|C|   Flags (10)   |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-   E (1 bit):
-      Extended frame flag. When set, additional data follows the
-      basic 4-octet frame.
-
-   C (1 bit):
-      Cursor update flag. When set, a 3-octet cursor value follows.
-
-   Entity ID (20 bits):
+   Entity ID (32 bits):
       Unsigned integer identifying the entity within the current scope.
-      Range 0x00000-0xFFFFD for regular entities.
-      0xFFFFE: SCOPE_MARKER (Layer 1)
-      0xFFFFF: CONNECTION_LEVEL (heartbeat, shutdown)
+      Range 0x00000001-0xFFFFFFFD for regular entities.
+      0xFFFFFFFE: SCOPE_MARKER (Layer 1)
+      0xFFFFFFFF: CONNECTION_LEVEL (heartbeat, shutdown)
+
+   Scope ID (16 bits):
+      Identifies the scope to which this status applies (Layer 1).
 
    Stat (4 bits):
       Status code (see Section 5.1.3).
 
-   Flags (6 bits):
+   E (1 bit):
+      Extended frame flag. When set, additional data follows the
+      basic 8-octet frame.
+
+   C (1 bit):
+      Cursor update flag. When set, a 4-octet cursor value follows.
+
+   Flags (10 bits):
       Reserved for future use. MUST be zero when sent.
       Receivers MUST ignore non-zero flags.
 ```
 
 #### 5.1.2. Entity ID Encoding
 
-The Entity ID field is a 20-bit unsigned integer. Within a basic frame, it occupies the last 4 bits of the first octet, all of the second octet, and the first 8 bits of the third octet.
+The Entity ID field is a 32-bit unsigned integer occupying the first four octets of the status frame.
 
 #### 5.1.3. Status Code Encoding
 
@@ -290,15 +298,15 @@ The status field (4 bits) indicates the current processing state of an entity:
 
 #### 5.1.4. Reserved Entity ID Values
 
-| Value   | Name              | Purpose                            |
-|---------|-------------------|------------------------------------|
-| 0x00000 | NULL_ENTITY       | Reserved; MUST NOT be used         |
-| 0xFFFFE | SCOPE_MARKER      | Scope operations (Layer 1)         |
-| 0xFFFFF | CONNECTION_LEVEL  | Connection-wide control messages   |
+| Value      | Name              | Purpose                            |
+|------------|-------------------|------------------------------------|
+| 0x00000000 | NULL_ENTITY       | Reserved; MUST NOT be used         |
+| 0xFFFFFFFE | SCOPE_MARKER      | Scope operations (Layer 1)         |
+| 0xFFFFFFFF | CONNECTION_LEVEL  | Connection-wide control messages   |
 
-##### 5.1.4.1. CONNECTION_LEVEL Frames (0xFFFFF)
+##### 5.1.4.1. CONNECTION_LEVEL Frames (0xFFFFFFFF)
 
-Frames with Entity ID 0xFFFFF apply to the entire connection. Status codes for connection-level frames may have different semantics (e.g., 0x0 for Heartbeat).
+Frames with Entity ID 0xFFFFFFFF apply to the entire connection. Status codes for connection-level frames may have different semantics (e.g., 0x0 for Heartbeat).
 
 #### 5.1.5. Extended Status Frames (E=1)
 
@@ -312,7 +320,9 @@ When Status = YIELDED (0x8) and E=1:
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |1|C|              Entity ID (20)              |1000 |  Flags  |
+   |                       Entity ID (32)                          |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |        Scope ID (16 bits)       |1000 |E|C|   Flags (10)   |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    | Yield Reason  |         Token Length (12 bits)               |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -339,7 +349,9 @@ When Status = DEFERRED (0x9) and E=1:
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |1|C|              Entity ID (20)              |1001 |  Flags  |
+   |                       Entity ID (32)                          |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |        Scope ID (16 bits)       |1001 |E|C|   Flags (10)   |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                                                               |
    |                    Claim Check ID (64 bits)                   |
@@ -351,12 +363,12 @@ When Status = DEFERRED (0x9) and E=1:
 
 #### 5.1.6. Cursor Update Extension (C=1)
 
-When C=1, a 3-octet cursor update follows the basic (or extended) frame:
+When C=1, a 4-octet cursor update follows the basic (or extended) frame:
 
 ```
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |        New Cursor Value (20 bits)    |Reserv |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |        New Cursor Value (32 bits)                              |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
 The cursor indicates the lowest unresolved Entity ID. IDs below the cursor are considered resolved and MAY be recycled.
@@ -412,7 +424,7 @@ The Protobuf schema for the header is:
    syntax = "proto3";
 
    message EntityHeader {
-       // Scope-local entity identifier (20-bit)
+       // Scope-local entity identifier (32-bit)
        uint32 entity_id = 1;
 
        // Entity ID of the parent entity (0 if root-level)
@@ -448,7 +460,7 @@ The Protobuf schema for the header is:
 
 ##### 5.2.3.1. entity_id (Field 1)
 
-- MUST be a non-zero unsigned integer in the range 1-1,048,573 (0x00001-0xFFFFD).
+- MUST be a non-zero unsigned integer in the range 1-4,294,967,293 (0x00000001-0xFFFFFFFD).
 - MUST be unique within its scope for the sending direction.
 - MUST correspond to the entity_id used in status frame updates for this entity.
 

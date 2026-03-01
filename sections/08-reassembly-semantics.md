@@ -10,10 +10,10 @@ Each Assembly Manifest entry SHALL contain the following fields (as defined in `
 
 ```
 Assembly Manifest Entry {
-    Parent ID (20),
+    Parent ID (32),
     Scope ID (32),
     Child Count (16),
-    Children IDs (20) ...,
+    Children IDs (32) ...,
     Children Status (4) ...,
     Completion Policy (Layer 2),
     Creation Timestamp (64),
@@ -23,7 +23,7 @@ Assembly Manifest Entry {
 
 Field definitions:
 
-Parent ID (20 bits):
+Parent ID (32 bits):
 : The identifier of the parent entity that was dehydrated.
 
 Scope ID (32 bits):
@@ -33,7 +33,7 @@ Child Count (16 bits):
 : The number of child entities produced by dehydration.
 
 Children IDs (variable):
-: An array of 20-bit entity identifiers, one for each child.
+: An array of 32-bit entity identifiers, one for each child.
 
 Children Status (variable):
 : An array of 4-bit status codes (EntityStatus), one for each child.
@@ -161,7 +161,7 @@ Checkpoint Frame {
     Sequence Number (64),
     Timeout (32),
     Dependent Count (16),
-    Dependent IDs (20) ...,
+    Dependent IDs (32) ...,
 }
 ```
 
@@ -188,7 +188,7 @@ Dependent Count (16 bits):
 : Number of specific entity IDs that must complete (0 for sequence-based checkpoints).
 
 Dependent IDs (variable):
-: Array of 64-bit entity IDs that must complete for explicit dependency checkpoints.
+: Array of 32-bit entity IDs that must complete for explicit dependency checkpoints.
 
 ### 8.2.2 Blocking Semantics
 
@@ -361,7 +361,7 @@ Checkpoint Failure Frame {
     Failure Reason (8),
     Checkpoint ID (32),
     Failed Entity Count (16),
-    Failed Entity IDs (20) ...,
+    Failed Entity IDs (32) ...,
     Recovery Hint (8),
     Diagnostic Data Length (16),
     Diagnostic Data (..),
@@ -378,11 +378,9 @@ Failure Reason codes:
 | 0x04 | NETWORK_PARTITION |
 | 0x05 | INTERNAL_ERROR |
 
-## 8.3 Eventual Consistency (Fibonacci Heap)
+## 8.3 Rehydration Readiness Tracking
 
-Due to the distributed nature of PipeStream processing, child entities MAY complete out of order. This section specifies the mechanism for efficiently tracking completion status and triggering rehydrations when all children of a dehydrated entity have completed.
-
-### 8.3.1 Out-of-Order Entity Arrival Handling
+Implementations MUST track Assembly Manifest resolution order using a mechanism that provides O(1) insertion and amortized O(log n) minimum extraction. The tracking mechanism MUST support efficient decrease-key operations to handle out-of-order status updates.
 
 Implementations MUST handle out-of-order completion notifications:
 
@@ -394,226 +392,7 @@ Implementations MUST handle out-of-order completion notifications:
 
 4. Completion notifications received before the corresponding manifest entry exists MUST be buffered for a grace period (minimum 30 seconds) before being discarded as orphans.
 
-### 8.3.2 Priority Queue Structure
-
-Implementations SHALL use a priority queue to efficiently track which Assembly Manifest entries are ready for rehydration. This specification RECOMMENDS a Fibonacci heap due to its O(1) amortized decrease-key operation.
-
-Priority Queue Properties:
-
-- Key: Number of completed children (completion_count)
-- Value: Reference to Assembly Manifest entry
-- Ordering: Entries with completion_count equal to child_count have highest priority
-
-The Fibonacci heap provides the following complexity guarantees:
-
-| Operation | Amortized Complexity |
-|-----------|---------------------|
-| Insert | O(1) |
-| Find-min | O(1) |
-| Extract-min | O(log n) |
-| Decrease-key | O(1) |
-| Merge | O(1) |
-
-For PipeStream, the "decrease-key" operation is repurposed as an "increase-completion-count" operation, which maintains heap ordering by moving entries toward the root as they approach full completion.
-
-### 8.3.3 Completion Count Tracking
-
-```
-Fibonacci Heap Node Structure:
-
-    FibHeapNode {
-        manifest_entry_ref: Reference to Assembly Manifest Entry,
-        completion_count: Integer,
-        target_count: Integer (equal to manifest_entry.child_count),
-        priority: Float (computed as target_count - completion_count),
-        parent: FibHeapNode reference,
-        child: FibHeapNode reference,
-        left: FibHeapNode reference,
-        right: FibHeapNode reference,
-        degree: Integer,
-        marked: Boolean,
-    }
-```
-
-Priority Calculation:
-
-The priority SHALL be calculated such that entries closer to completion have LOWER priority values (min-heap behavior triggers rehydrate on extract-min):
-
-```
-priority = target_count - completion_count
-```
-
-When priority reaches 0, the entry is ready for rehydrate and will be at the top of the heap.
-
-### 8.3.4 Bubble-Up on Completion
-
-When a child entity completes, the following procedure updates the heap:
-
-```
-procedure ON_CHILD_COMPLETE(parent_id, child_id, status):
-    manifest_entry := assembly_manifest[parent_id]
-    if manifest_entry IS NULL:
-        BUFFER_ORPHAN_COMPLETION(parent_id, child_id, status)
-        return
-
-    child_index := FIND_CHILD_INDEX(manifest_entry, child_id)
-    if child_index = -1:
-        ERROR("Unknown child entity")
-        return
-
-    if manifest_entry.completion_status[child_index] != PENDING:
-        return  // Already completed, idempotent handling
-
-    manifest_entry.completion_status[child_index] := status
-
-    heap_node := heap_node_index[parent_id]
-    heap_node.completion_count := heap_node.completion_count + 1
-    new_priority := heap_node.target_count - heap_node.completion_count
-
-    DECREASE_KEY(rehydrate_heap, heap_node, new_priority)
-
-    if new_priority = 0:
-        // Entry is now ready for rehydrate - will be at heap root
-        SIGNAL_REHYDRATE_READY()
-
-procedure DECREASE_KEY(heap, node, new_priority):
-    if new_priority > node.priority:
-        ERROR("New priority must be less than current priority")
-        return
-
-    node.priority := new_priority
-    parent := node.parent
-
-    if parent IS NOT NULL AND node.priority < parent.priority:
-        CUT(heap, node, parent)
-        CASCADING_CUT(heap, parent)
-
-    if node.priority < heap.min.priority:
-        heap.min := node
-
-procedure CUT(heap, node, parent):
-    REMOVE_FROM_CHILD_LIST(parent, node)
-    parent.degree := parent.degree - 1
-    ADD_TO_ROOT_LIST(heap, node)
-    node.parent := NULL
-    node.marked := FALSE
-
-procedure CASCADING_CUT(heap, node):
-    parent := node.parent
-    if parent IS NOT NULL:
-        if node.marked = FALSE:
-            node.marked := TRUE
-        else:
-            CUT(heap, node, parent)
-            CASCADING_CUT(heap, parent)
-```
-
-### 8.3.5 Rehydrate Triggering on Extract-Min
-
-The rehydrate processor continuously monitors the heap and triggers rehydrations:
-
-```
-procedure REHYDRATE_PROCESSOR():
-    loop:
-        WAIT_FOR(rehydrate_heap.min.priority = 0 OR shutdown_signal)
-
-        if shutdown_signal:
-            break
-
-        while rehydrate_heap IS NOT EMPTY AND rehydrate_heap.min.priority = 0:
-            node := EXTRACT_MIN(rehydrate_heap)
-            manifest_entry := node.manifest_entry_ref
-
-            if VALIDATE_REHYDRATE_PRECONDITIONS(manifest_entry):
-                EXECUTE_REHYDRATE(manifest_entry)
-            else:
-                HANDLE_REHYDRATE_FAILURE(manifest_entry)
-
-procedure EXTRACT_MIN(heap):
-    min_node := heap.min
-
-    if min_node IS NOT NULL:
-        // Add children to root list
-        for each child in min_node.children:
-            ADD_TO_ROOT_LIST(heap, child)
-            child.parent := NULL
-
-        REMOVE_FROM_ROOT_LIST(heap, min_node)
-
-        if min_node = min_node.right:
-            heap.min := NULL
-        else:
-            heap.min := min_node.right
-            CONSOLIDATE(heap)
-
-    return min_node
-
-procedure VALIDATE_REHYDRATE_PRECONDITIONS(manifest_entry):
-    // All children must have terminal status
-    for each status in manifest_entry.completion_status:
-        if status = PENDING:
-            return FALSE
-
-    // Check PARTIAL_FAILURE_ALLOWED flag
-    if NOT manifest_entry.flags.PARTIAL_FAILURE_ALLOWED:
-        for each status in manifest_entry.completion_status:
-            if status != COMPLETE:
-                return FALSE
-
-    // Verify checkpoint scope allows rehydrate
-    if NOT CHECKPOINT_SCOPE_ALLOWS_REHYDRATE(manifest_entry.checkpoint_scope):
-        return FALSE
-
-    return TRUE
-```
-
-### 8.3.6 Memory Bounds for Pending Entries
-
-To prevent unbounded memory growth, implementations MUST enforce limits on pending entries:
-
-1. Maximum Pending Entries: Implementations MUST support a configurable maximum number of pending heap entries. The default SHOULD be 1,000,000 entries.
-
-2. Maximum Entry Age: Entries that have been pending for longer than the maximum age MUST be eligible for eviction. The default maximum age SHOULD be 3,600 seconds (1 hour).
-
-3. Memory Pressure Response: When approaching memory limits, implementations SHOULD:
-   - Apply backpressure to upstream producers
-   - Evict oldest entries (LRU)
-   - Log warnings for monitoring
-
-4. Eviction Procedure:
-```
-procedure ENFORCE_MEMORY_BOUNDS():
-    while heap.size > MAX_PENDING_ENTRIES OR MEMORY_PRESSURE_HIGH():
-        // Find oldest entry that is not close to completion
-        candidate := FIND_EVICTION_CANDIDATE()
-
-        if candidate IS NOT NULL:
-            EVICT_ENTRY(candidate)
-            LOG_WARNING("Evicted pending entry due to memory pressure",
-                        candidate.manifest_entry_ref.parent_id)
-        else:
-            // All entries are close to completion, apply backpressure
-            APPLY_UPSTREAM_BACKPRESSURE()
-            break
-
-procedure FIND_EVICTION_CANDIDATE():
-    // Prefer entries that are far from completion and old
-    candidates := FILTER(heap.entries,
-        entry -> entry.completion_count < entry.target_count / 2)
-
-    if candidates IS EMPTY:
-        return NULL
-
-    return MIN_BY(candidates,
-        entry -> entry.manifest_entry_ref.creation_timestamp)
-```
-
-5. Memory Accounting: Each heap node requires approximately:
-   - Fixed overhead: 96 bytes (pointers, counters, flags)
-   - Manifest reference: 8 bytes
-   - Total per entry: ~104 bytes minimum
-
-   Implementations SHOULD reserve additional memory for heap restructuring operations.
+Implementations MAY choose any data structure that satisfies these complexity requirements. See the companion document `REFERENCE_IMPLEMENTATION.md` for a recommended approach using a Fibonacci heap with pseudocode and amortized complexity analysis.
 
 ## 8.4 Parent Reference Resolution
 
@@ -815,8 +594,8 @@ When a DAG violation is detected, implementations MUST emit a violation frame:
 DAG Violation Frame {
     Frame Type (8) = 0x53,
     Violation Type (8),
-    Entity A (20),
-    Entity B (20),
+    Entity A (32),
+    Entity B (32),
     Diagnostic Info Length (16),
     Diagnostic Info (..),
 }

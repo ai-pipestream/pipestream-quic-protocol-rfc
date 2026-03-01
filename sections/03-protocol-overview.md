@@ -106,23 +106,26 @@ The Control Stream MUST be allocated as QUIC Stream ID 0 and serves as the contr
 
 #### 3.2.2.1 Status Frame Format
 
-Each basic status frame is exactly 4 octets (32 bits), word-aligned:
+Each basic status frame is exactly 8 octets (64 bits), word-aligned:
 
 ```
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |E|C|              Entity ID (20 bits)         |Stat |  Flags  |
+   |                       Entity ID (32 bits)                     |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |        Scope ID (16 bits)       | Stat  |E|C|   Flags (10)   |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
 Figure 2: Status Frame Format
 
+- **Entity ID (32 bits):** Unique identifier for the entity within the scope.
+- **Scope ID (16 bits):** Hierarchical scope identifier for recursive decomposition.
+- **Stat (4 bits):** Current lifecycle state of the entity.
 - **E (1 bit):** Extended frame flag.
 - **C (1 bit):** Cursor update flag.
-- **Entity ID (20 bits):** Unique identifier for the entity within the scope.
-- **Stat (4 bits):** Current lifecycle state of the entity.
-- **Flags (6 bits):** Reserved.
+- **Flags (10 bits):** Reserved.
 
 | Value | Status     | Layer | Description                                      |
 |-------|------------|-------|--------------------------------------------------|
