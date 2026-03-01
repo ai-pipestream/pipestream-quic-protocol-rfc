@@ -482,28 +482,55 @@ message PipeDoc {
 
 // OwnershipContext defines mult-tenancy and access control for entities.
 message OwnershipContext {
+  // Unique identifier of the entity owner.
   string owner_id = 1;
+
+  // Unique identifier of the group with access to the entity.
   string group_id = 2;
+
+  // List of access scopes or roles associated with the entity.
   repeated string scopes = 3;
 }
 
 // FileStorageReference provides a location for data stored in cloud or local
 // storage, rather than carried in the entity stream.
 message FileStorageReference {
-  string provider = 1;           // Storage provider identifier (e.g. "s3", "blob")
-  string bucket = 2;             // Bucket/container name
-  string key = 3;                // Object key/path
-  string region = 4;             // Optional region hint
-  map<string, string> attrs = 5; // Provider-specific attributes
+  // Storage provider identifier (e.g. "s3", "blob", "gcs").
+  string provider = 1;
+
+  // Name of the bucket or container where the file is stored.
+  string bucket = 2;
+
+  // Object key or path within the bucket.
+  string key = 3;
+
+  // Optional region hint for the storage provider.
+  string region = 4;
+
+  // Provider-specific attributes or metadata for the storage reference.
+  map<string, string> attrs = 5;
+
+  // Encryption metadata for the stored file, if encrypted.
   EncryptionMetadata encryption = 6;
 }
 
 // EncryptionMetadata defines encryption parameters for stored data.
 message EncryptionMetadata {
-  string algorithm = 1;          // e.g. "AES-256-GCM"
-  string key_provider = 2;       // e.g. "aws-kms", "vault"
-  string key_id = 3;             // Key identifier
-  bytes wrapped_key = 4;         // Optional DEK
-  bytes iv = 5;                  // Initialization vector
-  map<string, string> context = 6; // Additional context
+  // Encryption algorithm used (e.g. "AES-256-GCM").
+  string algorithm = 1;
+
+  // Identifier of the key provider (e.g. "aws-kms", "vault").
+  string key_provider = 2;
+
+  // Identifier or URI of the encryption key.
+  string key_id = 3;
+
+  // Optional client-side wrapped Data Encryption Key (DEK).
+  bytes wrapped_key = 4;
+
+  // Initialization vector used for encryption.
+  bytes iv = 5;
+
+  // Additional encryption context for the key provider.
+  map<string, string> context = 6;
 }
