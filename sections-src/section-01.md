@@ -29,7 +29,7 @@ PipeStream employs a dual-stream design:
 
 ## Design Philosophy
 
-PipeStream implements a recursive scatter-gather pattern {{?scatter-gather=DOI.10.1007/978-1-4612-1260-6}} over QUIC streams. A document is "dehydrated" (scattered) at the source into constituent entities, these entities are transmitted and processed in parallel across distributed pipeline stages, and finally the entities are "rehydrated" (gathered) at the destination to reconstitute the complete processed document. The checkpoint blocking mechanism (Section 9.3) provides barrier synchronization semantics analogous to the barrier pattern in parallel computing.
+PipeStream implements a recursive scatter-gather pattern {{scatter-gather}} over QUIC streams. A document is "dehydrated" (scattered) at the source into constituent entities, these entities are transmitted and processed in parallel across distributed pipeline stages, and finally the entities are "rehydrated" (gathered) at the destination to reconstitute the complete processed document. The checkpoint blocking mechanism (Section 9.3) provides barrier synchronization semantics analogous to the barrier pattern in parallel computing.
 
 This approach provides several advantages:
 

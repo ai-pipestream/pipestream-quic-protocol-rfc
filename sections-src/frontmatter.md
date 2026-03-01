@@ -42,5 +42,13 @@ informative:
     date: 2015-08
     seriesinfo:
       FIPS: PUB 180-4
+  scatter-gather:
+    title: "The Scatter-Gather Design Pattern"
+    author:
+      - ins: "D. Lea"
+        name: "Doug Lea"
+    date: 1996
+    seriesinfo:
+      DOI: 10.1007/978-1-4612-1260-6
 
 --- abstract

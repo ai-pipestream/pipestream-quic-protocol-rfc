@@ -6,7 +6,7 @@ This document requests the creation of several new registries and one ALPN ident
 
 | Protocol | Identification Sequence | Reference |
 |----------|------------------------|-----------|
-| PipeStream Version 1 | "pipestream/1" | RFC &rfc.number; |
+| PipeStream Version 1 | "pipestream/1" | this document |
 
 ## PipeStream Frame Type Registry
 
@@ -17,10 +17,10 @@ IANA is requested to create the "PipeStream Frame Types" registry. Values are ca
 | 0x50 | STATUS | Fixed | 12 octets base | 0 | Section 6.2 |
 | 0x54 | SCOPE_DIGEST | Fixed | 68 octets | 1 | Section 6.3 |
 | 0x55 | BARRIER | Fixed | 8 octets | 1 | Section 6.4 |
-| 0x56-0x7F | Reserved | Fixed | - | - | RFC &rfc.number; |
+| 0x56-0x7F | Reserved | Fixed | - | - | this document |
 | 0x80 | CAPABILITIES | Var | Length-prefixed | 0 | Section 3.4 |
 | 0x81 | CHECKPOINT | Var | Length-prefixed | 0 | Section 9.3 |
-| 0x82-0xBF | Reserved | Var | - | - | RFC &rfc.number; |
+| 0x82-0xBF | Reserved | Var | - | - | this document |
 
 ## PipeStream Status Code Registry
 
