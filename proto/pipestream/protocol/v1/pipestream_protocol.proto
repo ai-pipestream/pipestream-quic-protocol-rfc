@@ -191,8 +191,9 @@ enum FailureAction {
 }
 
 // EntityStatus represents the lifecycle state of an entity as tracked
-// on the control stream. Encoded as 4-bit values (0x0-0xC) in the 64-bit
-// status frame wire format. Transitions follow the PipeStream state machine.
+// on the control stream. Encoded as 4-bit values (0x0-0xC) in the 96-bit
+// (12-octet) status frame wire format. Transitions follow the PipeStream
+// state machine.
 // CLOSED enum: unknown status values on the wire MUST cause a
 // PIPESTREAM_INTEGRITY_ERROR (0x04).
 enum EntityStatus {
