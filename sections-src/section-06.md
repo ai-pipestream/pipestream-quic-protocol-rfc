@@ -41,7 +41,7 @@ The Status Frame reports lifecycle transitions for entities.
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |  Type (0x50)  |Stat(4)|E|C|Dph(3)|      Flags (15 bits)      |
+   |  Type (0x50)  |Stat(4)|E|C|D(3) |      Flags (15 bits)      |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                       Entity ID (32 bits)                     |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -59,7 +59,7 @@ E (1 bit):
 C (1 bit):
 :   Cursor update flag. A 4-octet cursor value follows (Section 6.2.3).
 
-Dph (3 bits):
+D (3 bits):
 :   Explicit scope nesting depth (0-7). 0=Root. Layer 1.
 
 Flags (15 bits):
