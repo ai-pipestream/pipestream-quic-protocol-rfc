@@ -24,7 +24,7 @@ Implementations that require immediate consistency SHOULD buffer the entire enti
 | Max scope depth | 7 | Prevents recursive bombs (8 levels: 0-7) |
 | Max entities per scope | 4,294,967,294 | Memory bounds |
 | Max window size | 2,147,483,648 | Backpressure threshold |
-| Checkpoint timeout | 3600s | Prevents stuck state |
+| Checkpoint timeout | 30s | Prevents stuck state |
 | Claim check expiry | 86400s | Garbage collection |
 
 Implementations MUST enforce all resource limits listed above. Exceeding any limit MUST result in the corresponding error code (see Section 11.4). Implementations SHOULD allow operators to configure stricter limits than the defaults shown here.

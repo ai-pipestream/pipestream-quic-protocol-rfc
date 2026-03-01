@@ -12,8 +12,8 @@ Every message on Stream 0 MUST begin with a 1-octet Frame Type.
 
 | Value | Frame Class | Length Encoding | Description |
 |-------|-------------|-----------------|-------------|
-| 0x50-0x5F | Fixed | No length prefix | Bit-packed control frames with type-defined sizes |
-| 0x80-0xAF | Variable | 4-octet Length + N | Variable-size Protobuf-encoded control messages |
+| 0x50-0x7F | Fixed | No length prefix | Bit-packed control frames with type-defined sizes |
+| 0x80-0xFF | Variable | 4-octet Length + N | Variable-size Protobuf-encoded control messages |
 
 For Fixed frames, the receiver determines frame size from the Frame Type value. For Variable frames, the Type is followed by a 4-octet unsigned integer (big-endian) indicating the length of the Protobuf message that follows.
 
@@ -248,7 +248,7 @@ Claim Check ID (64 bits):
 Expiry Timestamp (64 bits):
 :   Unix epoch timestamp in microseconds when the claim expires.
 
-### 6.6. Protobuf-Encoded Messages (0x80-0xAF)
+### 6.6. Protobuf-Encoded Messages (0x80-0xFF)
 
 Messages in this range are preceded by a 4-octet length field.
 
