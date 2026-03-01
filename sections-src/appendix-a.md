@@ -147,7 +147,7 @@ message ClaimCheck {
   uint64 claim_id = 1;
   uint32 entity_id = 2;
   uint32 scope_id = 3;
-  uint64 expiry_timestamp = 4;
+  uint64 expiry_timestamp = 4;      // Unix epoch timestamp in microseconds
   StoppingPointValidation validation = 5;
 }
 

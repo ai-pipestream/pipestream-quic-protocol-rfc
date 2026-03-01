@@ -69,7 +69,7 @@ Yield tokens (Section 6.5.1) contain opaque continuation state that enables resu
 
 Claim checks (Section 6.5.2) are long-lived references that can be redeemed in different sessions. To prevent misuse:
 
-1. Each claim check carries an `expiry_timestamp`. Implementations MUST reject expired claim checks.
+1. Each claim check carries an `expiry_timestamp` (Unix epoch microseconds). Implementations MUST reject expired claim checks.
 
 2. Implementations MUST track redeemed claim check IDs and reject duplicate redemptions. The tracking state MUST persist for at least the claim check expiry duration.
 

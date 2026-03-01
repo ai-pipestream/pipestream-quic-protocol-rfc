@@ -17,6 +17,9 @@ Every message on Stream 0 MUST begin with a 1-octet Frame Type.
 
 For Fixed frames, the receiver determines frame size from the Frame Type value. For Variable frames, the Type is followed by a 4-octet unsigned integer (big-endian) indicating the length of the Protobuf message that follows.
 
+Variable-frame Length (32 bits):
+:   The payload length in octets, excluding the 1-octet Type and the 4-octet Length field. Receivers MUST reject lengths greater than 16,777,215 octets (16 MiB - 1) with PIPESTREAM_ENTITY_TOO_LARGE (0x06).
+
 #### 6.1.2. Fixed Frame Sizes
 
 The following fixed-size frame types are defined by this document:
@@ -225,15 +228,17 @@ Yield Token (variable):
    |                    Claim Check ID (64 bits)                   |
    |                                                               |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                    Expiry Timestamp (32 bits)                 |
+   |                                                               |
+   |                Expiry Timestamp (64 bits, Unix micros)        |
+   |                                                               |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
 Claim Check ID (64 bits):
 :   A cryptographically secure random identifier for the claim.
 
-Expiry Timestamp (32 bits):
-:   Unix epoch timestamp (in seconds) when the claim expires.
+Expiry Timestamp (64 bits):
+:   Unix epoch timestamp in microseconds when the claim expires.
 
 ### 6.6. Protobuf-Encoded Messages (0x80-0xAF)
 

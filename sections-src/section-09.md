@@ -76,6 +76,12 @@ message CheckpointFrame {
 
 Implementations MUST use `checkpoint_entity_id` (not `checkpoint_id`) when evaluating Condition 1.
 
+For circular comparison in Condition 1, implementations MUST use the same modulo ordering as cursor management. Define `MAX = 0xFFFFFFFD` and:
+
+`is_before(a, b) = ((b - a + MAX) % MAX) < (MAX / 2)`
+
+An entity ID `a` is considered "less than checkpoint_entity_id `b`" iff `is_before(a, b)` is true.
+
 ### 9.4. Scope Digest Propagation (Layer 1)
 
 When a scope completes, the endpoint MUST compute a Scope Digest and propagate it to the parent scope via a SCOPE_DIGEST frame (Section 6.3).
