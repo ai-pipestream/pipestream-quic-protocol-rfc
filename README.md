@@ -11,7 +11,7 @@ PipeStream is a recursive entity streaming protocol designed for high-performanc
 ## Key Features
 
 - **Recursive Dehydration/Rehydration**: Decompose documents into hierarchical entities (Doc → Section → Paragraph) and reassemble them after distributed processing.
-- **Unified Control Plane (Stream 0)**: A 64-bit bit-packed Control Stream with a 1-octet Type header (UCF) for status tracking.
+- **Unified Control Plane (Stream 0)**: A UCF-framed Control Stream with type-defined fixed frames (STATUS is 96-bit base) and length-prefixed variable messages.
 - **Protocol Layering**: Three modular layers — Layer 0 (Core), Layer 1 (Recursive), Layer 2 (Resilience).
 - **AI-Optimized Data Model**: Four data layers with built-in support for semantic chunks, vector embeddings, NLP annotations, and structured parsed metadata.
 - **Stateless Depth Tracking**: Explicit 3-bit depth fields in status frames for robust hierarchical synchronization.

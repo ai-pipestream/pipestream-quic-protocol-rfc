@@ -10,12 +10,22 @@ To support mixed content (bit-packed frames and Protobuf messages) on the Contro
 
 Every message on Stream 0 MUST begin with a 1-octet Frame Type.
 
-| Value | Frame Class | Payload Length | Description |
-|-------|-------------|----------------|-------------|
-| 0x50-0x5F | Fixed-8 | 7 octets | Fixed-size bit-packed status/control frames |
-| 0x80-0xAF | Variable | 4-octet Length + N | Variable-size Protobuf-encoded messages |
+| Value | Frame Class | Length Encoding | Description |
+|-------|-------------|-----------------|-------------|
+| 0x50-0x5F | Fixed | No length prefix | Bit-packed control frames with type-defined sizes |
+| 0x80-0xAF | Variable | 4-octet Length + N | Variable-size Protobuf-encoded control messages |
 
-For Fixed-size frames, the total frame length is 8 octets (Type + 7 payload octets). For Variable-size frames, the Type is followed by a 4-octet unsigned integer (big-endian) indicating the length of the Protobuf message that follows.
+For Fixed frames, the receiver determines frame size from the Frame Type value. For Variable frames, the Type is followed by a 4-octet unsigned integer (big-endian) indicating the length of the Protobuf message that follows.
+
+#### 6.1.2. Fixed Frame Sizes
+
+The following fixed-size frame types are defined by this document:
+
+| Type | Name | Total Size | Notes |
+|------|------|------------|-------|
+| 0x50 | STATUS | 12 octets (base) | 16 octets when C=1; larger when E=1 with extension data |
+| 0x54 | SCOPE_DIGEST | 52 octets | Includes 32-octet Merkle root |
+| 0x55 | BARRIER | 8 octets | No variable extension |
 
 ### 6.2. Status Frames (Layer 0)
 
@@ -44,7 +54,7 @@ The Status Frame reports lifecycle transitions for entities.
       Cursor update flag. A 4-octet cursor value follows (Section 6.2.3).
 
    Depth (3 bits):
-      Explict scope nesting depth (0-7). 0=Root. Layer 1.
+      Explicit scope nesting depth (0-7). 0=Root. Layer 1.
 
    Flags (15 bits):
       Reserved for future use. MUST be zero when sent.
@@ -67,6 +77,8 @@ The Status Frame reports lifecycle transitions for entities.
 | 0xA   | RETRYING    | 2     | Retry in progress                      |
 | 0xB   | SKIPPED     | 2     | Intentionally skipped                  |
 | 0xC   | ABANDONED   | 2     | Timed out                              |
+
+The base STATUS frame is 12 octets. When C=1, a 4-octet cursor value follows (total 16 octets before any E=1 extension data). When E=1, additional extension bytes follow as defined in Section 6.5.
 
 #### 6.2.3. Cursor Update Extension
 
@@ -104,7 +116,7 @@ When Protocol Layer 1 is negotiated, a scope completion is summarized:
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-The Scope ID MUST match the 16-bit identifier defined in Section 6.2.1.
+The SCOPE_DIGEST frame is 52 octets total. The Scope ID MUST match the 16-bit identifier defined in Section 6.2.1.
 
 ### 6.4. Barrier Frame (0x55)
 

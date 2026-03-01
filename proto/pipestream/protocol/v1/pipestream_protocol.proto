@@ -83,7 +83,9 @@ message EntityHeader {
   uint64 payload_length = 6;
 
   // SHA-256 integrity checksum of the complete entity payload (32 bytes).
-  // Receivers MUST verify this before processing.
+  // Receivers MUST verify this before committing terminal output.
+  // Incremental pre-verification processing is allowed for streaming
+  // implementations, but MUST be rolled back on checksum failure.
   bytes checksum = 7;
 
   // Arbitrary key-value metadata attached to this entity by the producer.
