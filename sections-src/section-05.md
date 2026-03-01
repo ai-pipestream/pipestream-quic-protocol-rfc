@@ -17,7 +17,7 @@ The Control Stream MUST use QUIC Stream ID 0, which per {{RFC9000}} Section 2.1 
 
 #### 5.1.3. Flow Control Considerations
 
-The Control Stream carries small, bit-packed frames (8 octets each for status frames). Implementations MUST ensure adequate flow control credits:
+The Control Stream carries bit-packed control frames. STATUS frames are 12 octets base (16 with cursor extension), and additional fixed/variable UCF frames may be present. Implementations MUST ensure adequate flow control credits:
 
 - The initial MAX_STREAM_DATA for Stream 0 SHOULD be at least 8192 octets.
 - Implementations SHOULD NOT block Entity Stream transmission due to Control Stream flow control exhaustion.

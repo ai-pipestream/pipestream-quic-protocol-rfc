@@ -10,17 +10,17 @@ This document requests the creation of several new registries and one ALPN ident
 
 ### 11.2. PipeStream Frame Type Registry
 
-IANA is requested to create the "PipeStream Frame Types" registry. Values are categorized into Fixed-size (0x50-0x7F) and Variable-size (0x80-0xFF) frames. Values 0xC0-0xFF are reserved for private use.
+IANA is requested to create the "PipeStream Frame Types" registry. Values are categorized into Fixed (type-sized, no length prefix) frames in 0x50-0x7F and Variable (4-octet length prefix) frames in 0x80-0xFF. Values 0xC0-0xFF are reserved for private use.
 
-| Value | Frame Type Name | Class | Layer | Reference |
-|-------|-----------------|-------|-------|-----------|
-| 0x50 | STATUS | Fixed | 0 | Section 6.2 |
-| 0x54 | SCOPE_DIGEST | Fixed | 1 | Section 6.3 |
-| 0x55 | BARRIER | Fixed | 1 | Section 6.4 |
-| 0x56-0x7F | Reserved | Fixed | - | [this document] |
-| 0x80 | CAPABILITIES | Var | 0 | Section 3.4 |
-| 0x81 | CHECKPOINT | Var | 0 | Section 9.3 |
-| 0x82-0xBF | Reserved | Var | - | [this document] |
+| Value | Frame Type Name | Class | Size | Layer | Reference |
+|-------|-----------------|-------|------|-------|-----------|
+| 0x50 | STATUS | Fixed | 12 octets base | 0 | Section 6.2 |
+| 0x54 | SCOPE_DIGEST | Fixed | 52 octets | 1 | Section 6.3 |
+| 0x55 | BARRIER | Fixed | 8 octets | 1 | Section 6.4 |
+| 0x56-0x7F | Reserved | Fixed | - | - | [this document] |
+| 0x80 | CAPABILITIES | Var | Length-prefixed | 0 | Section 3.4 |
+| 0x81 | CHECKPOINT | Var | Length-prefixed | 0 | Section 9.3 |
+| 0x82-0xBF | Reserved | Var | - | - | [this document] |
 
 ### 11.3. PipeStream Status Code Registry
 

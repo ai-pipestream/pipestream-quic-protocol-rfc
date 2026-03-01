@@ -47,7 +47,7 @@ PipeStream entity headers and control stream frames carry metadata that may reve
 
 1. **Document structure leakage**: The number of child entities produced by dehydration, the scope depth, and the Entity ID assignment pattern may reveal the structure of the document being processed (e.g., a document that dehydrates into 50 children is likely a multi-page document). Implementations that require structural privacy SHOULD pad dehydration counts or use fixed decomposition granularity.
 
-2. **Metadata in headers**: The `content_type`, `metadata` map, and `payload_length` fields in EntityHeader (Section 6.8.2) are transmitted in cleartext within the QUIC-encrypted stream. Implementations that require metadata confidentiality beyond transport encryption SHOULD encrypt EntityHeader fields at the application layer and use an opaque content_type such as `application/octet-stream`.
+2. **Metadata in headers**: The `content_type`, `metadata` map, and `payload_length` fields in EntityHeader (Section 6.7) are transmitted in cleartext within the QUIC-encrypted stream. Implementations that require metadata confidentiality beyond transport encryption SHOULD encrypt EntityHeader fields at the application layer and use an opaque content_type such as `application/octet-stream`.
 
 3. **Traffic analysis**: The timing and size of status frames on the Control Stream may correlate with document processing patterns. Implementations operating in privacy-sensitive environments SHOULD send status frames at fixed intervals with padding to obscure processing timing.
 
@@ -57,7 +57,7 @@ PipeStream entity headers and control stream frames carry metadata that may reve
 
 #### 10.6.1. Yield Token Replay
 
-Yield tokens (Section 6.4) contain opaque continuation state that enables resumption of paused entity processing. A replayed yield token could cause an entity to be processed multiple times or to resume from a stale state. To prevent this:
+Yield tokens (Section 6.5.1) contain opaque continuation state that enables resumption of paused entity processing. A replayed yield token could cause an entity to be processed multiple times or to resume from a stale state. To prevent this:
 
 1. Implementations MUST associate each yield token with a unique session identifier and Entity ID. A yield token MUST be rejected if presented in a session other than the one that issued it, unless the token was explicitly transferred via a claim check.
 
@@ -67,7 +67,7 @@ Yield tokens (Section 6.4) contain opaque continuation state that enables resump
 
 #### 10.6.2. Claim Check Replay
 
-Claim checks (Section 6.5) are long-lived references that can be redeemed in different sessions. To prevent misuse:
+Claim checks (Section 6.5.2) are long-lived references that can be redeemed in different sessions. To prevent misuse:
 
 1. Each claim check carries an `expiry_timestamp`. Implementations MUST reject expired claim checks.
 
