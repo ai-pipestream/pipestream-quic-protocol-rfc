@@ -57,7 +57,16 @@ The Status Frame reports lifecycle transitions for entities.
       Explicit scope nesting depth (0-7). 0=Root. Layer 1.
 
    Flags (15 bits):
-      Reserved for future use. MUST be zero when sent.
+      Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
+
+   Entity ID (32 bits):
+      Unsigned integer identifying the entity.
+
+   Scope ID (16 bits):
+      Identifier for the scope to which this entity belongs.
+
+   Reserved (16 bits):
+      Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
 ```
 
 #### 6.2.2. Status Codes
@@ -102,6 +111,12 @@ When Protocol Layer 1 is negotiated, a scope completion is summarized:
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |  Type (0x54)  |  Flags (8)      |        Scope ID (16)        |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+   Flags (8 bits):
+      Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
+
+   Scope ID (16 bits):
+      Identifier of the scope being summarized.
    |                    Entities Processed (32)                    |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                    Entities Succeeded (32)                    |
@@ -131,6 +146,9 @@ The SCOPE_DIGEST frame is 52 octets total. The Scope ID MUST match the 16-bit id
 
    S (1 bit):
       Status (0 = waiting, 1 = released).
+
+   Reserved (7 bits):
+      Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
 ```
 
 ### 6.5. Yield and Claim Check Extensions (Layer 2)
