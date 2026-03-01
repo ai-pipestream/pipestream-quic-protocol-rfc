@@ -66,11 +66,11 @@ IANA is requested to create the "PipeStream Error Codes" registry. Values in the
 
 The `session-id` segment identifies application context for detached or resumable resources (for example, Layer 2 yield/claim-check flows). PipeStream Layer 0 streaming semantics do not depend on this URI scheme.
 
-```
+::: artwork
 pipestream-URI = "pipestream://" authority "/" session-id \["/" scope-path\] \["/" entity-id\]
 
 scope-path = scope-id *("." scope-id)
-```
+:::
 
 Examples:
 - `pipestream://processor.example.com/a1b2c3d4`

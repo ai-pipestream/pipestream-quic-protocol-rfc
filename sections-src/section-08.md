@@ -6,6 +6,39 @@ This section defines the protocol-level operations that PipeStream endpoints per
 
 A PipeStream session proceeds through four sequential actions:
 
+::: artwork
+                +---------------------------------------------+
+                |           PipeStream Action Flow            |
+                +---------------------------------------------+
+                                     |
+                                     v
+                +---------------------------------------------+
+                |                  CONNECT                    |
+                |    (Session + Capability Negotiation)       |
+                +---------------------------------------------+
+                                     |
+                                     v
+                +---------------------------------------------+
+                |                   PARSE                     |
+                |        (Dehydration: 1:N possible)         |
+                +---------------------------------------------+
+                                     |
+                       +-------------+-------------+
+                       v             v             v
+                +-----------+ +-----------+ +-----------+
+                |  PROCESS  | |  PROCESS  | |  PROCESS  |
+                |   (1:1)   | |   (1:1)   | |   (N:1)   |
+                +-----------+ +-----------+ +-----------+
+                       |             |             |
+                       +-------------+-------------+
+                                     |
+                                     v
+                +---------------------------------------------+
+                |                   SINK                      |
+                |          (Terminal Consumption)             |
+                +---------------------------------------------+
+:::
+
 | Phase | Action | Cardinality | Description |
 |-------|--------|-------------|-------------|
 | 1 | CONNECT | 1:1 | Session establishment and capability negotiation |
@@ -29,7 +62,7 @@ Immediately after QUIC handshake, peers exchange Capabilities messages on Stream
 
 The PARSE action performs dehydration with optional completion policy:
 
-```protobuf
+::: sourcecode protobuf
 message CompletionPolicy {
   CompletionMode mode = 1;
   uint32 max_retries = 2;        // Default: 3
@@ -55,7 +88,7 @@ enum FailureAction {
   FAILURE_ACTION_RETRY = 3;        // Retry up to max_retries
   FAILURE_ACTION_DEFER = 4;        // Create claim check, continue
 }
-```
+:::
 
 ## PROCESS Action
 

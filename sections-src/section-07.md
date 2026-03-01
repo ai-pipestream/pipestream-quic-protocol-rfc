@@ -23,7 +23,7 @@ Each PipeDoc carries entity payload in one of four data layers:
 
 ## Cloud-Agnostic Storage Reference
 
-```protobuf
+::: sourcecode protobuf
 message FileStorageReference {
   string provider = 1;           // Storage provider identifier
   string bucket = 2;             // Bucket/container name
@@ -41,4 +41,4 @@ message EncryptionMetadata {
   bytes iv = 5;                  // Initialization vector
   map<string, string> context = 6; // Encryption context
 }
-```
+:::

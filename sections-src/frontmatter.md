@@ -16,10 +16,10 @@ keyword:
  - recursive
  - document-processing
  - consistency
+github: ai-pipestream/pipestream-quic-protocol-rfc
 venue:
   group: Individual
   mail: kristian.rickert@pipestream.ai
-  github: ai-pipestream/pipestream-quic-protocol-rfc
 
 author:
  -
