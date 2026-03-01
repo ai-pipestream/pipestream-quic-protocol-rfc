@@ -7,10 +7,9 @@
 //
 // PipeStream Protocol - IETF draft protocol for recursive entity streaming
 // over QUIC. Defines the wire-format messages for Layers 0-2 of the
-// PipeStream architecture: core streaming, recursive scoping, and resilience.
+// PipeStream architecture.
 //
-// Edition 2023 is used for closed enums (critical for wire-protocol safety)
-// and implicit field presence (distinguishing "not set" from zero values).
+// Edition 2023 is used for closed enums and implicit field presence.
 
 edition = "2023";
 
@@ -18,22 +17,17 @@ package pipestream.protocol.v1;
 
 import "google/protobuf/any.proto";
 
-// All enums in this file are CLOSED. Unknown enum values received on the wire
-// MUST be rejected.
+// All enums in this file are CLOSED.
 option features.enum_type = CLOSED;
 
 // Capabilities describes the feature set supported by a PipeStream endpoint.
 message Capabilities {
-  // Whether the endpoint supports Layer 0 (core entity streaming).
   bool layer0_core = 1;
-
-  // Whether the endpoint supports Layer 1 (recursive scoping and dehydration).
   bool layer1_recursive = 2;
-
-  // Whether the endpoint supports Layer 2 (resilience, yield, and claim-check).
   bool layer2_resilience = 3;
 
   // Maximum nesting depth allowed for recursive scopes.
+  // Default is 7 (8 levels: 0-7).
   uint32 max_scope_depth = 4;
 
   // Maximum number of entities permitted within a single scope.
@@ -45,45 +39,24 @@ message Capabilities {
 
 // EntityHeader is sent at the beginning of each entity stream.
 message EntityHeader {
-  // Unique identifier for this entity within the session.
   uint32 entity_id = 1;
-
-  // Identifier of the parent entity that spawned this entity.
   uint32 parent_id = 2;
-
-  // Identifier of the scope to which this entity belongs.
   uint32 scope_id = 3;
-
-  // Protocol layer at which this entity was created (0, 1, or 2).
   uint32 layer = 4;
-
-  // MIME content type of the entity payload.
   string content_type = 5;
-
-  // Length in bytes of the complete entity payload.
   uint64 payload_length = 6;
-
-  // Integrity checksum of the complete entity payload.
   bytes checksum = 7;
-
-  // Arbitrary key-value metadata.
   map<string, string> metadata = 8;
-
-  // Chunking information for this entity.
   ChunkInfo chunk_info = 9;
-
-  // Completion policy that governs retry, timeout, and failure behavior.
   CompletionPolicy completion_policy = 10;
 }
 
-// ChunkInfo describes how a single entity payload is divided into ordered chunks.
 message ChunkInfo {
   uint32 total_chunks = 1;
   uint32 chunk_index = 2;
   uint64 chunk_offset = 3;
 }
 
-// CompletionPolicy controls Layer 2 resilience behavior.
 message CompletionPolicy {
   CompletionMode mode = 1;
   uint32 max_retries = 2;
@@ -110,7 +83,6 @@ enum FailureAction {
   FAILURE_ACTION_DEFER = 4;
 }
 
-// EntityStatus represents the lifecycle state of an entity.
 enum EntityStatus {
   ENTITY_STATUS_UNSPECIFIED = 0;
   ENTITY_STATUS_PENDING = 1;
@@ -127,23 +99,7 @@ enum EntityStatus {
   ENTITY_STATUS_ABANDONED = 12;
 }
 
-enum ResolutionState {
-  RESOLUTION_STATE_UNSPECIFIED = 0;
-  RESOLUTION_STATE_ACTIVE = 1;
-  RESOLUTION_STATE_RESOLVED = 2;
-  RESOLUTION_STATE_PARTIAL = 3;
-  RESOLUTION_STATE_FAILED = 4;
-}
-
-// StatusFrame is sent on the control stream.
-message StatusFrame {
-  uint32 entity_id = 1;
-  uint32 scope_id = 2;
-  EntityStatus status = 3;
-  google.protobuf.Any extended_data = 4;
-}
-
-// CheckpointFrame defines a synchronization barrier.
+// CheckpointFrame (Protobuf, Type 0x81)
 message CheckpointFrame {
   string checkpoint_id = 1;
   uint64 sequence_number = 2;
@@ -162,7 +118,14 @@ message AssemblyManifestEntry {
   ResolutionState state = 7;
 }
 
-// YieldToken allows a Layer 2 processor to pause processing.
+enum ResolutionState {
+  RESOLUTION_STATE_UNSPECIFIED = 0;
+  RESOLUTION_STATE_ACTIVE = 1;
+  RESOLUTION_STATE_RESOLVED = 2;
+  RESOLUTION_STATE_PARTIAL = 3;
+  RESOLUTION_STATE_FAILED = 4;
+}
+
 message YieldToken {
   YieldReason reason = 1;
   bytes continuation_state = 2;
@@ -178,7 +141,6 @@ enum YieldReason {
   YIELD_REASON_RESOURCE_BUSY = 5;
 }
 
-// ClaimCheck is a Layer 2 deferred-processing reference.
 message ClaimCheck {
   uint64 claim_id = 1;
   uint32 entity_id = 2;
@@ -187,7 +149,6 @@ message ClaimCheck {
   StoppingPointValidation validation = 5;
 }
 
-// StoppingPointValidation captures a snapshot of processing progress.
 message StoppingPointValidation {
   bytes state_checksum = 1;
   uint64 bytes_processed = 2;
@@ -197,410 +158,13 @@ message StoppingPointValidation {
   string checkpoint_ref = 6;
 }
 
-// ScopeDigest is a Layer 1 summary of a completed scope.
-message ScopeDigest {
+// ScopeDigest (Fixed Frame 0x54 carries this info, but logic uses this structure)
+message ScopeDigestData {
   uint32 scope_id = 1;
   uint64 entities_processed = 2;
   uint64 entities_succeeded = 3;
   uint64 entities_failed = 4;
   uint64 entities_deferred = 5;
   bytes merkle_root = 6;
-}
-```
-
-### A.2. Entity Data Messages
-
-```protobuf
-// PipeStream Data Model
-//
-// Defines the core document representation for the PipeStream ingestion and
-// processing pipeline. A PipeDoc carries raw binary payloads (Layer 0),
-// semantic chunks with embeddings (Layer 1), and structured parsed output
-// (Layer 2) through every stage of the pipeline.
-
-edition = "2023";
-
-package pipestream.data.v1;
-
-import "google/protobuf/any.proto";
-import "google/protobuf/struct.proto";
-
-// All enums in this file are CLOSED to ensure that receivers reject unknown
-// values, which is critical for consistent processing in distributed pipelines.
-option features.enum_type = CLOSED;
-
-// PipeDoc is the root document entity that flows through the PipeStream
-// pipeline. It aggregates every data layer -- raw blobs, semantic analysis
-// results, and structured parsed metadata -- under a single deterministic
-// document identifier.
-message PipeDoc {
-  // Globally unique document identifier. When a DocIdDerivation strategy is
-  // configured, this value is computed deterministically from the source
-  // content so that duplicate ingestion is idempotent.
-  string doc_id = 1;
-
-  // Discovery metadata used by search and retrieval systems to index the
-  // document (title, keywords, description, and custom fields).
-  SearchMetadata search_metadata = 2;
-
-  // Layer 0 payload container holding one or more raw binary blobs. Each
-  // blob may be stored inline or referenced via cloud storage.
-  BlobBag blob_bag = 3;
-
-  // Arbitrary strongly-typed structured data attached to the document.
-  // Encoded as google.protobuf.Any to allow pipeline stages to pass
-  // domain-specific messages without altering the core schema.
-  google.protobuf.Any structured_data = 4;
-
-  // Layer 2 parsed metadata produced by one or more parser stages. The map
-  // key is the parser identifier, allowing multiple parsers to contribute
-  // non-overlapping metadata to the same document.
-  map<string, ParsedMetadata> parsed_metadata = 5;
-
-  // Layer 1 semantic processing results containing chunked content,
-  // vector embeddings, and NLP annotations generated by semantic analysis
-  // pipeline stages.
-  SemanticProcessingResult semantic_result = 6;
-
-  // Multi-tenant ownership and access-control context.
-  OwnershipContext ownership = 7;
-
-  // Strategy descriptor that explains how doc_id was derived.
-  DocIdDerivation doc_id_derivation = 8;
-}
-
-// ============================================================================
-// Layer 0: BlobBag -- Raw binary data storage
-// ============================================================================
-
-// BlobBag is the Layer 0 container for raw binary data. It holds either a
-// single blob or a collection of blobs and supports both inline byte
-// payloads and cloud storage references.
-message BlobBag {
-  // Selector between a single blob and a multi-blob collection. Exactly one
-  // must be set.
-  oneof blob_data {
-    // A single binary blob payload.
-    Blob blob = 1;
-
-    // A collection of binary blob payloads.
-    Blobs blobs = 2;
-  }
-}
-
-// Blobs is a simple wrapper that holds a repeated list of Blob messages,
-// used when a document contains more than one binary payload.
-message Blobs {
-  // Ordered list of binary blob payloads belonging to the parent document.
-  repeated Blob blobs = 1;
-}
-
-// Blob represents a single binary payload. Content may be stored inline as
-// raw bytes or externalized to cloud object storage via a
-// FileStorageReference.
-message Blob {
-  // Unique identifier for this blob within the document.
-  string blob_id = 1;
-
-  // Logical drive or volume identifier grouping related blobs (e.g., an
-  // ingest source name or storage partition).
-  string drive_id = 2;
-
-  // The binary content of the blob, provided either inline or by reference.
-  oneof content {
-    // Raw binary data stored inline within the protobuf message.
-    bytes data = 3;
-
-    // Cloud-agnostic pointer to the binary data stored in an external
-    // object store (e.g., a cloud-based or on-premises object bucket).
-    FileStorageReference storage_ref = 4;
-  }
-
-  // IANA media type of the blob content (e.g., "application/pdf",
-  // "image/png").
-  string mime_type = 5;
-
-  // Original filename of the ingested content, if available.
-  string filename = 6;
-
-  // Size of the blob content in bytes. A value of zero indicates that the
-  // size has not been computed yet.
-  int64 size_bytes = 8;
-
-  // Hex-encoded checksum of the blob content, used for integrity
-  // verification.
-  string checksum = 9;
-
-  // Algorithm used to compute the checksum value.
-  ChecksumType checksum_type = 10;
-}
-
-// FileStorageReference is a cloud-agnostic pointer to an object stored in a
-// remote object store. It supports standard object storage providers using
-// bucket and key semantics.
-message FileStorageReference {
-  // Storage provider identifier (e.g., "provider-name").
-  string provider = 1;
-
-  // Bucket or container name in the target object store.
-  string bucket = 2;
-
-  // Object key (path) within the bucket that identifies the stored object.
-  string key = 3;
-
-  // Cloud region where the bucket resides (e.g., "us-east-1",
-  // "westeurope"). May be empty for region-agnostic providers.
-  string region = 4;
-
-  // Provider-specific attributes such as storage class, content encoding,
-  // or custom metadata headers.
-  map<string, string> attrs = 5;
-
-  // Encryption metadata describing how the stored object is encrypted at
-  // rest, including the key provider and wrapped data-encryption key.
-  EncryptionMetadata encryption = 6;
-}
-
-// EncryptionMetadata describes the encryption envelope applied to a stored
-// object. It provides a key-management abstraction that supports AWS KMS,
-// Azure Key Vault, Google Cloud KMS, HashiCorp Vault, and custom providers.
-message EncryptionMetadata {
-  // Encryption algorithm identifier (e.g., "AES-256-GCM", "AES-256-CBC").
-  string algorithm = 1;
-
-  // Key management provider that owns the master key (e.g., "aws-kms",
-  // "azure-keyvault", "gcp-kms", "hashicorp-vault").
-  string key_provider = 2;
-
-  // Provider-specific identifier for the master encryption key used to
-  // wrap the data encryption key.
-  string key_id = 3;
-
-  // Data encryption key wrapped (encrypted) by the master key. The
-  // recipient must unwrap this key via the key_provider before decrypting
-  // the object content.
-  bytes wrapped_key = 4;
-
-  // Initialization vector (nonce) used by the encryption algorithm.
-  bytes iv = 5;
-
-  // Additional authenticated data (AAD) or encryption context key-value
-  // pairs required by the key provider for key unwrapping.
-  map<string, string> context = 6;
-}
-
-// ChecksumType enumerates the supported hash algorithms for blob integrity
-// verification.
-enum ChecksumType {
-  // Default value indicating that no checksum algorithm has been specified.
-  CHECKSUM_TYPE_UNSPECIFIED = 0;
-
-  // MD5 message-digest algorithm (128-bit hash).
-  CHECKSUM_TYPE_MD5 = 1;
-
-  // SHA-1 secure hash algorithm (160-bit hash).
-  CHECKSUM_TYPE_SHA1 = 2;
-
-  // SHA-256 secure hash algorithm (256-bit hash).
-  CHECKSUM_TYPE_SHA256 = 3;
-
-  // SHA-512 secure hash algorithm (512-bit hash).
-  CHECKSUM_TYPE_SHA512 = 4;
-}
-
-// ============================================================================
-// Layer 1: SemanticLayer -- Chunked content with embeddings and NLP
-// ============================================================================
-
-// SemanticProcessingResult holds the output of Layer 1 semantic analysis,
-// including chunked text segments, their vector embeddings, and any NLP
-// annotations produced during processing.
-message SemanticProcessingResult {
-  // Ordered list of semantic chunks produced by the chunking strategy.
-  repeated SemanticChunk chunks = 1;
-
-  // Identifier of the chunking strategy used to segment the source content
-  // (e.g., "sliding-window-512", "sentence-boundary").
-  string chunking_strategy = 2;
-
-  // Arbitrary key-value metadata about the processing run, such as model
-  // version, processing duration, or pipeline stage name.
-  map<string, string> processing_metadata = 3;
-}
-
-// SemanticChunk represents a single segment of the document produced by a
-// chunking strategy. Each chunk carries its text, vector embedding, and
-// any NLP annotations that apply to its span.
-message SemanticChunk {
-  // Unique identifier for this chunk within the document.
-  string chunk_id = 1;
-
-  // Zero-based ordinal position of this chunk in the document's chunk
-  // sequence.
-  int64 chunk_number = 2;
-
-  // Text content and corresponding vector embedding for this chunk.
-  ChunkEmbedding embedding_info = 3;
-
-  // Flexible metadata associated with this chunk, stored as protobuf Value
-  // types to accommodate heterogeneous data (strings, numbers, booleans).
-  map<string, google.protobuf.Value> metadata = 4;
-
-  // NLP annotations (named entities, POS tags, sentiment, etc.) that fall
-  // within this chunk's character span.
-  repeated NLPAnnotation annotations = 5;
-}
-
-// ChunkEmbedding pairs the textual content of a chunk with its dense vector
-// embedding and records the embedding model and character offsets into the
-// original document.
-message ChunkEmbedding {
-  // Plain-text content of the chunk that was embedded.
-  string text_content = 1;
-
-  // Dense vector embedding of the text content, produced by the model
-  // identified in model_id.
-  repeated float vector = 2;
-
-  // Identifier of the embedding model used to generate the vector.
-  string model_id = 3;
-
-  // Zero-based character offset in the original document where this chunk
-  // begins.
-  int32 original_char_start_offset = 4;
-
-  // Zero-based character offset in the original document where this chunk
-  // ends (exclusive).
-  int32 original_char_end_offset = 5;
-}
-
-// NLPAnnotation captures a single natural language processing annotation
-// over a character span within a chunk, such as a named entity, part-of-
-// speech tag, or sentiment label.
-message NLPAnnotation {
-  // Annotation category (e.g., "NER", "POS", "SENTIMENT", "RELATION").
-  string type = 1;
-
-  // Annotation label within the category (e.g., "PERSON", "ORG",
-  // "POSITIVE", "VERB").
-  string label = 2;
-
-  // Zero-based character offset where the annotated span begins within the
-  // chunk text.
-  int32 start_offset = 3;
-
-  // Zero-based character offset where the annotated span ends (exclusive)
-  // within the chunk text.
-  int32 end_offset = 4;
-
-  // Model confidence score for this annotation, in the range [0.0, 1.0].
-  float confidence = 5;
-
-  // Additional annotation-specific attributes (e.g., linked entity URI,
-  // dependency relation type, or normalization form).
-  map<string, string> attributes = 6;
-}
-
-// ============================================================================
-// Layer 2: ParsedData -- Structured extracted data
-// ============================================================================
-
-// ParsedMetadata holds the structured output produced by a single parser
-// stage. It contains extracted key-value fields, tabular data, and the
-// parser's raw output for debugging or reprocessing.
-message ParsedMetadata {
-  // Identifier of the parser that produced this metadata (e.g.,
-  // "tika-1.28", "custom-invoice-parser").
-  string parser_id = 1;
-
-  // Extracted key-value fields produced by the parser. Values are stored as
-  // protobuf Value types to support strings, numbers, booleans, and nested
-  // structures.
-  map<string, google.protobuf.Value> fields = 2;
-
-  // Tabular data extracted from the document (e.g., HTML tables, CSV
-  // sections, spreadsheet sheets).
-  repeated TableData tables = 3;
-
-  // Raw textual output from the parser before field extraction, useful for
-  // debugging or downstream reprocessing.
-  string raw_output = 4;
-}
-
-// TableData represents a single extracted table with column headers and
-// rows of cell values.
-message TableData {
-  // Unique identifier for this table within the parsed metadata.
-  string table_id = 1;
-
-  // Ordered list of column header names for the table.
-  repeated string headers = 2;
-
-  // Ordered list of data rows in the table.
-  repeated TableRow rows = 3;
-}
-
-// TableRow represents a single row within an extracted table.
-message TableRow {
-  // Ordered list of cell values corresponding to the table's column
-  // headers. Each cell value is stored as a string.
-  repeated string cells = 1;
-}
-
-// ============================================================================
-// Supporting Types
-// ============================================================================
-
-// SearchMetadata carries discovery metadata that search and retrieval
-// systems use to index, rank, and present the document in query results.
-message SearchMetadata {
-  // Human-readable title of the document.
-  string title = 1;
-
-  // Keywords or tags associated with the document for search indexing.
-  repeated string keywords = 2;
-
-  // Brief textual description or abstract of the document's content.
-  string description = 3;
-
-  // Arbitrary custom fields for domain-specific search facets or filters.
-  map<string, string> custom_fields = 4;
-}
-
-// OwnershipContext provides multi-tenant access control metadata for the
-// document. It identifies the owning tenant, the individual owner, and an
-// access control list of principals authorized to read or modify the
-// document.
-message OwnershipContext {
-  // Identifier of the tenant that owns this document in a multi-tenant
-  // deployment.
-  string tenant_id = 1;
-
-  // Identifier of the individual user or service account that owns this
-  // document.
-  string owner_id = 2;
-
-  // Access control list of principal identifiers (user IDs, group IDs, or
-  // role names) that are granted access to this document.
-  repeated string acl = 3;
-}
-
-// DocIdDerivation describes the deterministic strategy used to generate the
-// document's doc_id from its content or metadata. This allows the pipeline
-// to detect and deduplicate identical documents across ingestion runs.
-message DocIdDerivation {
-  // Name of the derivation strategy (e.g., "content-hash",
-  // "field-composite", "external-id").
-  string strategy = 1;
-
-  // Dot-delimited path to the source field whose value is hashed or used
-  // as the document identifier (e.g., "blob_bag.blob.checksum",
-  // "search_metadata.title").
-  string source_field = 2;
-
-  // Hash algorithm applied to the source field value to produce the
-  // doc_id (e.g., "SHA-256", "MD5"). Empty when the strategy does not
-  // involve hashing.
-  string hash_algorithm = 3;
 }
 ```

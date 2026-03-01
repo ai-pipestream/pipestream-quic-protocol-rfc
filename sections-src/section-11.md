@@ -1,6 +1,6 @@
 ## 11. IANA Considerations
 
-This document requests the creation of several new registries and one ALPN identifier registration. All registries defined in this section use the "Expert Review" policy {{RFC8126}} for new assignments. The designated expert(s) should verify that proposed values do not conflict with existing assignments, that the semantics are clearly documented, and that the proposed protocol layer is appropriate for the value.
+This document requests the creation of several new registries and one ALPN identifier registration. All registries defined in this section use the "Expert Review" policy {{RFC8126}} for new assignments.
 
 ### 11.1. ALPN Identifier Registration
 
@@ -10,29 +10,21 @@ This document requests the creation of several new registries and one ALPN ident
 
 ### 11.2. PipeStream Frame Type Registry
 
-IANA is requested to create the "PipeStream Frame Types" registry with the following initial entries. Values in the range 0x00-0x7F are assigned by Expert Review. Values in the range 0x80-0xFF are reserved for private use.
+IANA is requested to create the "PipeStream Frame Types" registry. Values are categorized into Fixed-size (0x50-0x7F) and Variable-size (0x80-0xFF) frames. Values 0xC0-0xFF are reserved for private use.
 
-| Value | Frame Type Name | Layer | Reference |
-|-------|-----------------|-------|-----------|
-| 0x50 | STATUS | 0 | Section 6.1 |
-| 0x51 | CHECKPOINT | 0 | Section 9.3 |
-| 0x52 | STATUS_ACK | 0 | Section 6.1 |
-| 0x53 | CHECKPOINT_ACK | 0 | Section 9.3 |
-| 0x54 | SCOPE_DIGEST | 1 | Section 6.3 |
-| 0x55 | BARRIER | 1 | Section 6.7 |
-| 0x56 | SCOPE_OPEN | 1 | Section 6.2 |
-| 0x57 | SCOPE_CLOSE | 1 | Section 6.2 |
-| 0x60 | ENTITY | 0 | Section 6.8 |
-| 0x61 | ENTITY_START | 0 | Section 6.8 |
-| 0x62 | ENTITY_CONTINUATION | 0 | Section 6.8 |
-| 0x63 | ENTITY_END | 0 | Section 6.8 |
-| 0x70 | CLAIM_CHECK_QUERY | 2 | Section 6.6 |
-| 0x71 | CLAIM_CHECK_RESPONSE | 2 | Section 6.6 |
-| 0x72 | COMPLETION_POLICY | 2 | Section 8.3 |
+| Value | Frame Type Name | Class | Layer | Reference |
+|-------|-----------------|-------|-------|-----------|
+| 0x50 | STATUS | Fixed | 0 | Section 6.2 |
+| 0x54 | SCOPE_DIGEST | Fixed | 1 | Section 6.3 |
+| 0x55 | BARRIER | Fixed | 1 | Section 6.4 |
+| 0x56-0x7F | Reserved | Fixed | - | [this document] |
+| 0x80 | CAPABILITIES | Var | 0 | Section 3.4 |
+| 0x81 | CHECKPOINT | Var | 0 | Section 9.3 |
+| 0x82-0xBF | Reserved | Var | - | [this document] |
 
 ### 11.3. PipeStream Status Code Registry
 
-IANA is requested to create the "PipeStream Status Codes" registry with the following initial entries. Status codes are 4-bit values (0x0-0xF). Values 0x0-0xC are defined by this document. Values 0xD-0xF are reserved for future Standards Action.
+IANA is requested to create the "PipeStream Status Codes" registry. Status codes are 4-bit values (0x0-0xF). Values 0xD-0xF are reserved for future Standards Action.
 
 | Value | Name | Layer | Description |
 |-------|------|-------|-------------|
@@ -47,13 +39,12 @@ IANA is requested to create the "PipeStream Status Codes" registry with the foll
 | 0x8 | YIELDED | 2 | Paused |
 | 0x9 | DEFERRED | 2 | Claim check issued |
 | 0xA | RETRYING | 2 | Retry in progress |
-| 0xB | SKIPPED | 2 | Intentionally skipped (lenient mode) |
+| 0xB | SKIPPED | 2 | Intentionally skipped |
 | 0xC | ABANDONED | 2 | Timed out |
-| 0xD-0xF | Reserved | - | Reserved for future use |
 
 ### 11.4. PipeStream Error Code Registry
 
-IANA is requested to create the "PipeStream Error Codes" registry with the following initial entries. Values in the range 0x00-0x3F are assigned by Expert Review. Values in the range 0x40-0xFF are reserved for private use.
+IANA is requested to create the "PipeStream Error Codes" registry. Values in the range 0x00-0x3F are assigned by Expert Review. Values in the range 0x40-0xFF are reserved for private use.
 
 | Value | Name | Description |
 |-------|------|-------------|

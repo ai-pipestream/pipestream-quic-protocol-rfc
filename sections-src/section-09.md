@@ -15,15 +15,16 @@ Entity IDs are managed using a cursor-based recycling scheme:
                       ^                                    ^
                    cursor                             last_assigned
 
-   Window Size = (last_assigned - cursor) mod MAX_ID
+   Window Size = (last_assigned - cursor) mod 0xFFFFFFFD
    If window_size >= max_window → backpressure
 ```
 
 **Rules:**
-1. `new_id = (last_assigned + 1) % MAX_ENTITY_ID`
-2. If `(new_id - cursor) % MAX_ID >= max_window` → STOP, apply backpressure
-3. On COMPLETE/FAILED: mark resolved; if `entity_id == cursor`, advance cursor
-4. IDs behind cursor are implicitly recyclable
+1. `new_id = (last_assigned + 1) % 0xFFFFFFFD`
+2. If `new_id == 0`, `new_id = 1` (skip reserved NULL_ENTITY)
+3. If `(new_id - cursor) % 0xFFFFFFFD >= max_window` → STOP, apply backpressure
+4. On COMPLETE/FAILED: mark resolved; if `entity_id == cursor`, advance cursor
+5. IDs behind cursor are implicitly recyclable
 
 ### 9.2. Assembly Manifest
 
@@ -53,9 +54,9 @@ enum ResolutionState {
 
 A checkpoint is satisfied when:
 
-1. All entities with IDs less than checkpoint ID have reached terminal state
-2. All Assembly Manifest entries within scope have been resolved
-3. All nested checkpoints have been satisfied
+1. All entities with IDs less than checkpoint ID (considering circular wrap) have reached terminal state.
+2. All Assembly Manifest entries within the scope have been resolved.
+3. All nested checkpoints have been satisfied.
 
 ### 9.4. Scope Digest Propagation (Layer 1)
 
@@ -63,18 +64,20 @@ When a scope completes, the endpoint MUST compute a Scope Digest and propagate i
 
 The Merkle root in the Scope Digest is computed as follows:
 
-1. For each entity in the scope, ordered by Entity ID (ascending), construct a leaf value by concatenating the 4-byte big-endian Entity ID with the 1-byte status code.
-2. Compute SHA-256 over each leaf to produce leaf hashes.
-3. Build a binary Merkle tree by repeatedly hashing pairs of sibling nodes: `SHA-256(left || right)`. If the number of nodes at any level is odd, the last node is promoted without hashing.
+1. For each entity in the scope, ordered by Entity ID (ascending), construct a 5-octet leaf value by concatenating:
+   - The 4-octet big-endian Entity ID.
+   - A 1-octet status field where the lower 4 bits contain the `Stat` code (Section 6.2.2) and the upper 4 bits are zero.
+2. Compute SHA-256 over each 5-octet leaf to produce leaf hashes.
+3. Build a binary Merkle tree by repeatedly hashing pairs of sibling nodes: `SHA-256(left || right)`. If the number of nodes at any level is odd, the last node is promoted to the next level without hashing.
 4. The root of this tree is the `merkle_root` value in the SCOPE_DIGEST frame.
 
-This construction is deterministic: any two implementations processing the same set of entity statuses MUST produce the same Merkle root. The parent scope MAY use the Merkle root to verify subtree integrity with a single hash comparison. Full status history remains available on request for audit.
+This construction is deterministic: any two implementations processing the same set of entity statuses MUST produce the same Merkle root.
 
 ### 9.5. Rehydration Readiness Tracking
 
 Implementations MUST track Assembly Manifest resolution order using a mechanism that provides O(1) insertion and amortized O(log n) minimum extraction. The tracking mechanism MUST support efficient decrease-key operations to handle out-of-order status updates.
 
-Implementations MAY choose any data structure that satisfies these complexity requirements. See the companion document `REFERENCE_IMPLEMENTATION.md` for a recommended approach using a Fibonacci heap with pseudocode and amortized complexity analysis.
+Implementations MAY choose any data structure that satisfies these complexity requirements. See the companion document `REFERENCE_IMPLEMENTATION.md` for a recommended approach using a Fibonacci heap.
 
 ### 9.6. Stopping Point Validation (Layer 2)
 

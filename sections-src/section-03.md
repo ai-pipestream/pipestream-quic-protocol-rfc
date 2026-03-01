@@ -50,7 +50,7 @@ message Capabilities {
   bool layer0_core = 1;           // Always true
   bool layer1_recursive = 2;      // Scoped IDs, digests
   bool layer2_resilience = 3;     // Yield, claim checks
-  uint32 max_scope_depth = 4;     // Default: 8
+  uint32 max_scope_depth = 4;     // Default: 7 (8 levels, 0-7)
   uint32 max_entities_per_scope = 5;  // Default: 4,294,967,294 (2^32-2)
   uint32 max_window_size = 6;     // Default: 2,147,483,648 (2^31)
 }

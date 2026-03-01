@@ -37,7 +37,7 @@ message Capabilities {
   bool layer2_resilience = 3;
 
   // Maximum nesting depth allowed for recursive scopes.
-  // Default is 8. Range 0-7 (constrained by 3-bit depth field in status frame flags).
+  // Default is 7. Range 0-7 (constrained by 3-bit depth field in status frame flags).
   uint32 max_scope_depth = 4;
 
   // Maximum number of entities permitted within a single scope.

@@ -6,13 +6,22 @@ PipeStream inherits security from QUIC {{RFC9000}} and TLS 1.3 {{RFC8446}}. All 
 
 ### 10.2. Entity Payload Integrity
 
-Each Entity MUST include a SHA-256 checksum. Receivers MUST verify the checksum before processing the entity payload. Entities with invalid checksums MUST be rejected with PIPESTREAM_INTEGRITY_ERROR (0x04). Implementations MUST NOT process any portion of an entity payload before checksum verification succeeds.
+Each Entity MUST include a SHA-256 checksum in its EntityHeader. 
+
+To support true streaming of large entities, implementations MAY begin processing an entity payload before the complete payload has been received and verified. However, the final rehydration or terminal SINK operation MUST NOT be committed until the complete payload checksum has been verified. 
+
+If a checksum verification fails, the implementation MUST:
+1. Reject the entity with PIPESTREAM_INTEGRITY_ERROR (0x04).
+2. Discard any partial results or temporary state associated with the entity.
+3. Propagate the failure according to the Completion Policy (Section 8.3).
+
+Implementations that require immediate consistency SHOULD buffer the entire entity and verify the checksum before initiating processing.
 
 ### 10.3. Resource Exhaustion
 
 | Limit | Default | Description |
 |-------|---------|-------------|
-| Max scope depth | 8 | Prevents recursive bombs |
+| Max scope depth | 7 | Prevents recursive bombs (8 levels: 0-7) |
 | Max entities per scope | 4,294,967,294 | Memory bounds |
 | Max window size | 2,147,483,648 | Backpressure threshold |
 | Checkpoint timeout | 3600s | Prevents stuck state |
