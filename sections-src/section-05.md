@@ -24,7 +24,9 @@ The Control Stream carries bit-packed control frames. STATUS frames are 12 octet
 
 #### 5.1.4. Heartbeat Mechanism
 
-To maintain session liveness, an endpoint sends a STATUS frame with all fields set to their heartbeat values:
+QUIC already provides native transport liveness signals (for example, PING and idle timeout handling). Implementations SHOULD rely on those transport mechanisms for connection liveness.
+
+PipeStream heartbeat frames are OPTIONAL and are intended for application-level responsiveness checks (for example, detecting stalled processing logic even when the transport remains healthy). When used, an endpoint sends a STATUS frame with all fields set to their heartbeat values:
 
 | Field | Value | Description |
 |-------|-------|-------------|
@@ -38,7 +40,7 @@ To maintain session liveness, an endpoint sends a STATUS frame with all fields s
 | Scope ID | 0x0000 | Root scope |
 | Reserved | 0x0000 | MUST be zero |
 
-When no status updates have been transmitted for KEEPALIVE_TIMEOUT (default: 30 seconds), an endpoint SHOULD send a heartbeat frame. If no data is received on Stream 0 for 3 * KEEPALIVE_TIMEOUT, the connection SHOULD be closed with PIPESTREAM_IDLE_TIMEOUT (0x02).
+When no status updates have been transmitted for KEEPALIVE_TIMEOUT (default: 30 seconds), an endpoint MAY send a heartbeat frame. If no data is received on Stream 0 for 3 * KEEPALIVE_TIMEOUT, the endpoint SHOULD first apply transport-native liveness policy; it MAY close the connection with PIPESTREAM_IDLE_TIMEOUT (0x02) when application-level inactivity policy requires it.
 
 #### 5.1.5. Transport Session vs. Application Session Context
 
@@ -64,3 +66,12 @@ Entity Streams MUST be unidirectional streams:
 1. Each Entity Stream MUST carry exactly one entity.
 2. The entity_id in the Entity Frame header MUST be unique within its scope.
 3. Once an entity has been completely transmitted, the sender MUST close the stream.
+
+### 5.3. Transport Error Mapping
+
+PipeStream error signaling on Stream 0 and QUIC transport signals are complementary. Endpoints SHOULD bridge them so peers receive both transport-level and protocol-level context.
+
+1. If an Entity Stream is aborted with `RESET_STREAM` or `STOP_SENDING`, the endpoint SHOULD emit a corresponding terminal status (`FAILED`, `ABANDONED`, or policy-driven equivalent) for that entity on Stream 0.
+2. If PipeStream determines a terminal entity error first (for example, checksum failure or invalid frame), the endpoint SHOULD abort the affected Entity Stream with an appropriate QUIC error and emit the corresponding PipeStream status/error context on Stream 0.
+3. If Stream 0 is reset or becomes unusable, endpoints SHOULD treat this as a control-plane failure and close the connection with `PIPESTREAM_CONTROL_RESET (0x03)`.
+4. On QUIC connection termination (`CONNECTION_CLOSE`), entities without a previously observed terminal status MUST be treated as failed by local policy.
