@@ -38,6 +38,29 @@ normative:
   RFC8610:
 
 informative:
+  RFC9114:
+  RFC9297:
+  RFC9308:
+  RFC9250:
+  RFC9260:
+  RFC7574:
+  MOQT:
+    title: "Media over QUIC Transport"
+    author:
+      - ins: "L. Curley"
+        name: "Luke Curley"
+      - ins: "K. Pugin"
+        name: "Kirill Pugin"
+      - ins: "S. Nandakumar"
+        name: "Suhas Nandakumar"
+      - ins: "V. Vasiliev"
+        name: "Victor Vasiliev"
+      - ins: "I. Swett"
+        name: "Ian Swett"
+    date: 2025
+    seriesinfo:
+      Internet-Draft: draft-ietf-moq-transport-16
+    target: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
   FIPS-180-4:
     title: "Secure Hash Standard (SHS)"
     author:

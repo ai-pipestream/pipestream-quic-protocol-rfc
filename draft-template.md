@@ -34,3 +34,5 @@
 
 {::include sections-src/appendix-c.md}
 
+{::include sections-src/appendix-d.md}
+
