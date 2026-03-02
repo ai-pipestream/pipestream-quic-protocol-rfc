@@ -7,3 +7,9 @@ draft-krickert-pipestream-*.xml
 draft-krickert-pipestream-*.txt
 draft-krickert-pipestream-*.html
 .idea
+.refcache/
+build/
+fix_align.py
+test.py
+test.md
+test.xml
