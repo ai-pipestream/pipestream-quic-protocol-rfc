@@ -44,7 +44,7 @@ Layer 2 is OPTIONAL and requires Layer 1. Implementations advertise Layer 2 supp
 
 ## Capability Negotiation
 
-During CONNECT, endpoints exchange supported capabilities:
+During CONNECT, endpoints exchange supported capabilities using the `capabilities` structure. This message MUST be encoded using the default CBOR format during the initial handshake (Section 3.5).
 
 ~~~~ cddl
 serialization-format = &(
