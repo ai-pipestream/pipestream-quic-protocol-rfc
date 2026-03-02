@@ -53,7 +53,7 @@ The Status Frame reports lifecycle transitions for entities. The frame is 128-bi
 {: type="ascii-art"}
 
 Ver (4 bits):
-:   Protocol version. MUST be set to 0x1 for this specification.
+:   Protocol version. MUST be set to 0x1 for this specification. Receivers MUST treat any other value as malformed and close the connection with PIPESTREAM_ENTITY_INVALID (0x05).
 
 Stat (4 bits):
 :   Status code (see Section 6.2.2).
