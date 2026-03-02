@@ -2,7 +2,7 @@
 
 | Feature | Layer 0 | Layer 1 | Layer 2 |
 |---------|---------|---------|---------|
-| Unified status frame (96-bit base) | X | X | X |
+| Unified status frame (128-bit base) | X | X | X |
 | Entity streaming | X | X | X |
 | PENDING/PROCESSING/COMPLETE/FAILED | X | X | X |
 | Checkpoint blocking | X | X | X |
