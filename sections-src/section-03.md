@@ -44,7 +44,9 @@ Layer 2 is OPTIONAL and requires Layer 1. Implementations advertise Layer 2 supp
 
 ## Capability Negotiation
 
-During CONNECT, endpoints exchange supported capabilities using the `capabilities` structure. This message MUST be encoded using the default CBOR format during the initial handshake (Section 3.5).
+PipeStream uses a two-tier negotiation model. The ALPN identifier (Section 11.1) identifies the base PipeStream transport mapping, while the `capabilities` structure handles dynamic resource limits and optional layer support that may vary based on endpoint configuration or real-time load.
+
+During CONNECT, endpoints exchange supported capabilities using the `capabilities` structure. This message MUST be encoded using the default CBOR format for both the client's initiation and the server's response (Section 3.5).
 
 ~~~~ cddl
 serialization-format = &(
@@ -75,4 +77,4 @@ The serialization_format field determines the encoding used for all variable-len
 3. If a peer receives a Capabilities message without serialization_format, the sender is assumed to prefer CBOR {{RFC8949}}.
 4. If the resulting preferences differ, the peers MUST use CBOR {{RFC8949}} as the fallback.
 
-The initial Capabilities exchange on a new connection MUST use the default CBOR format for both the client's initiation and the server's response. Subsequent variable-length messages and entity headers use the negotiated format. If a peer cannot decode the initial Capabilities exchange, it MUST close the connection with PIPESTREAM_INTERNAL_ERROR (0x01).
+The initial Capabilities exchange on a new connection MUST use the default CBOR format for both the client's initiation and the server's response. The negotiated serialization format and resource limits take effect immediately following the successful completion of this initial Capabilities exchange (one request and one response). If a peer cannot decode the initial Capabilities exchange, it MUST close the connection with PIPESTREAM_INTERNAL_ERROR (0x01).

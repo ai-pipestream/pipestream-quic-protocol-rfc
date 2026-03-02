@@ -29,6 +29,8 @@ Implementations that require immediate consistency SHOULD buffer the entire enti
 
 Implementations MUST enforce all resource limits listed above. Exceeding any limit MUST result in the corresponding error code (see Section 11.4). Implementations SHOULD allow operators to configure stricter limits than the defaults shown here.
 
+To prevent memory-exhaustion attacks, implementations MUST NOT pre-allocate memory for variable-length payloads based solely on the 32-bit Length field in the UCF header (Section 6.1.1). Memory MUST be allocated incrementally as octets are received, or capped at a smaller initial buffer until the message type and context are verified.
+
 ## Amplification Attacks
 
 A single dehydration operation can produce an arbitrary number of child entities from a small input, creating a potential amplification vector. To mitigate this:

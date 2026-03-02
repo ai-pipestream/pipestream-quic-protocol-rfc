@@ -41,7 +41,7 @@ The Status Frame reports lifecycle transitions for entities. The frame is 128-bi
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |  Type (0x50)  |Stat(4)|E|C|D(3) |        Flags (15 bits)        |
+   |  Type (0x50)  |Ver(4) |Stat(4)|E|C|D(3) |    Flags (11 bits)    |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                       Entity ID (32 bits)                     |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -51,6 +51,9 @@ The Status Frame reports lifecycle transitions for entities. The frame is 128-bi
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ~~~~
 {: type="ascii-art"}
+
+Ver (4 bits):
+:   Protocol version. MUST be set to 0x1 for this specification.
 
 Stat (4 bits):
 :   Status code (see Section 6.2.2).
@@ -64,7 +67,7 @@ C (1 bit):
 D (3 bits):
 :   Explicit scope nesting depth (0-7). 0=Root. Layer 1.
 
-Flags (15 bits):
+Flags (11 bits):
 :   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
 
 Entity ID (32 bits):
@@ -357,16 +360,16 @@ chunk-info = {
 ~~~~ cddl
 yield-token = {
   reason: uint,
-  ? continuation-state: bstr,
-  ? validation: stopping-point-validation,
+  continuation-state: bstr,
+  validation: stopping-point-validation,
 }
 
 claim-check = {
   claim-id: uint,
   entity-id: uint,
-  ? scope-id: uint,
+  scope-id: uint,
   expiry-timestamp: uint,        ; Unix epoch microseconds
-  ? validation: stopping-point-validation,
+  validation: stopping-point-validation,
 }
 ~~~~
 
