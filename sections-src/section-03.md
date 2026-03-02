@@ -7,7 +7,7 @@ PipeStream defines three protocol layers that build upon each other. This layere
 Layer 0 provides the fundamental streaming capabilities:
 
 - Unified Control Frame (UCF) header (1-octet type)
-- Status frame (12-octet base bit-packed frame)
+- Status frame (16-octet base bit-packed frame)
 - Entity frame (header + payload)
 - Status codes: PENDING, PROCESSING, COMPLETE, FAILED, CHECKPOINT
 - Assembly Manifest for parent-child tracking

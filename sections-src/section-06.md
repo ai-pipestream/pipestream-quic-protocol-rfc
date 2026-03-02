@@ -26,26 +26,28 @@ The following fixed-size frame types are defined by this document:
 
 | Type | Name | Total Size | Notes |
 |------|------|------------|-------|
-| 0x50 | STATUS | 12 octets (base) | 16 octets when C=1; larger when E=1 with extension data |
-| 0x54 | SCOPE_DIGEST | 68 octets | Includes 32-octet Merkle root and 64-bit counters |
-| 0x55 | BARRIER | 8 octets | No variable extension |
+| 0x50 | STATUS | 16 octets (base) | 20 octets when C=1; larger when E=1 with extension data |
+| 0x54 | SCOPE_DIGEST | 72 octets | Includes 32-octet Merkle root and 64-bit counters |
+| 0x55 | BARRIER | 12 octets | No variable extension |
 
 ## Status Frames (Layer 0)
 
 ### Status Frame Format (0x50)
 
-The Status Frame reports lifecycle transitions for entities.
+The Status Frame reports lifecycle transitions for entities. The frame is 128-bit aligned for efficient parsing on 64-bit architectures.
 
 ~~~~
 
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |  Type (0x50)  |Stat(4)|E|C|D(3) |        Flags (15 bits)      |
+   |  Type (0x50)  |Stat(4)|E|C|D(3) |        Flags (15 bits)        |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                       Entity ID (32 bits)                     |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |        Scope ID (16 bits)       |      Reserved (16 bits)     |
+   |                       Scope ID (32 bits)                      |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                       Reserved (32 bits)                      |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ~~~~
 {: type="ascii-art"}
@@ -68,10 +70,10 @@ Flags (15 bits):
 Entity ID (32 bits):
 :   Unsigned integer identifying the entity.
 
-Scope ID (16 bits):
-:   Identifier for the scope to which this entity belongs.
+Scope ID (32 bits):
+:   Identifier for the scope to which this entity belongs. Expanding to 32 bits ensures uniqueness across high-frequency document sessions.
 
-Reserved (16 bits):
+Reserved (32 bits):
 :   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
 
 ### Status Codes
@@ -92,7 +94,7 @@ Reserved (16 bits):
 | 0xB   | SKIPPED     | 2     | Intentionally skipped                  |
 | 0xC   | ABANDONED   | 2     | Timed out                              |
 
-The base STATUS frame is 12 octets. When C=1, a 4-octet cursor value follows (total 16 octets). When E=1, an Extension Header follows all other STATUS fields.
+The base STATUS frame is 16 octets. When C=1, a 4-octet cursor value follows (total 20 octets). When E=1, an Extension Header follows all other STATUS fields.
 
 ### Cursor Update Extension
 
@@ -120,7 +122,9 @@ When Protocol Layer 1 is negotiated, a scope completion is summarized:
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |  Type (0x54)  |  Flags (8)      |        Scope ID (16)        |
+   |  Type (0x54)  |  Flags (8)      |        Reserved (16)        |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                       Scope ID (32 bits)                      |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                                                               |
    |                   Entities Processed (64 bits)                |
@@ -148,7 +152,7 @@ When Protocol Layer 1 is negotiated, a scope completion is summarized:
 Flags (8 bits):
 :   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
 
-Scope ID (16 bits):
+Scope ID (32 bits):
 :   Identifier of the scope being summarized.
 
 Entities Processed (64 bits):
@@ -166,7 +170,7 @@ Entities Deferred (64 bits):
 Merkle Root (256 bits):
 :   The SHA-256 Merkle root covering all entity statuses in the scope (see Section 9.4).
 
-The SCOPE_DIGEST frame is 68 octets total. The Scope ID MUST match the 16-bit identifier defined in Section 6.2.1.
+The SCOPE_DIGEST frame is 72 octets total. The Scope ID MUST match the 32-bit identifier defined in Section 6.2.1.
 
 ## Barrier Frame (0x55)
 
@@ -175,7 +179,9 @@ The SCOPE_DIGEST frame is 68 octets total. The Scope ID MUST match the 16-bit id
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |  Type (0x55)  |S|  Reserved (7) |        Barrier ID (16)      |
+   |  Type (0x55)  |S|  Reserved (23 bits)                         |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                       Scope ID (32 bits)                      |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                    Parent Entity ID (32 bits)                 |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -185,11 +191,11 @@ The SCOPE_DIGEST frame is 68 octets total. The Scope ID MUST match the 16-bit id
 S (1 bit):
 :   Status (0 = waiting, 1 = released).
 
-Reserved (7 bits):
+Reserved (23 bits):
 :   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
 
-Barrier ID (16 bits):
-:   Identifier for the barrier within the scope.
+Scope ID (32 bits):
+:   Identifier for the scope to which this barrier applies.
 
 Parent Entity ID (32 bits):
 :   The identifier of the parent entity whose sub-tree is blocked by this barrier.
