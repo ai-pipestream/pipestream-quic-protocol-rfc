@@ -360,16 +360,16 @@ chunk-info = {
 ~~~~ cddl
 yield-token = {
   reason: uint,
-  continuation-state: bstr,
-  validation: stopping-point-validation,
+  ? continuation-state: bstr,
+  ? validation: stopping-point-validation,
 }
 
 claim-check = {
   claim-id: uint,
   entity-id: uint,
-  scope-id: uint,
+  ? scope-id: uint,
   expiry-timestamp: uint,        ; Unix epoch microseconds
-  validation: stopping-point-validation,
+  ? validation: stopping-point-validation,
 }
 ~~~~
 
