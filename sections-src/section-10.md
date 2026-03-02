@@ -6,16 +6,27 @@ PipeStream inherits security from QUIC {{RFC9000}} and TLS 1.3 {{RFC8446}}. All 
 
 ## Entity Payload Integrity
 
-Each Entity MUST include a SHA-256 checksum in its EntityHeader. 
+Each Entity SHOULD include a SHA-256 {{FIPS-180-4}} checksum in its EntityHeader (the `checksum` field defined in Section 6.7.2). The checksum is OPTIONAL in the wire format to accommodate zero-length entities, streamed entities whose final length is unknown at header-emission time, and scenarios where application-layer integrity mechanisms provide equivalent guarantees. When a checksum is present, it MUST be exactly 32 octets containing the SHA-256 digest computed over the raw payload bytes (the octet sequence following the EntityHeader on the Entity Stream). The checksum does not cover the EntityHeader itself.
 
-To support true streaming of large entities, implementations MAY begin processing an entity payload before the complete payload has been received and verified. However, the final rehydration or terminal SINK operation MUST NOT be committed until the complete payload checksum has been verified. 
+For chunked entities (where `chunk-info` is present in the EntityHeader), each chunk MAY carry its own per-chunk checksum. The checksum in the first chunk's EntityHeader, if present, MUST cover only that chunk's payload bytes. An implementation that requires whole-entity integrity verification MUST either compute a rolling digest across all chunks or require the sender to transmit a final summary entity containing the whole-payload checksum.
+
+To support true streaming of large entities, implementations MAY begin processing an entity payload before the complete payload has been received and verified. However, the final rehydration or terminal SINK operation MUST NOT be committed until the complete payload checksum has been verified.
 
 If a checksum verification fails, the implementation MUST:
+
 1. Reject the entity with PIPESTREAM_INTEGRITY_ERROR (0x04).
 2. Discard any partial results or temporary state associated with the entity.
 3. Propagate the failure according to the Completion Policy (Section 8.3).
 
 Implementations that require immediate consistency SHOULD buffer the entire entity and verify the checksum before initiating processing.
+
+### Algorithm Agility
+
+This specification mandates SHA-256 {{FIPS-180-4}} as the sole checksum algorithm for both payload integrity (this section) and Merkle tree construction (Section 9.4). SHA-256 is well-studied and widely deployed; however, future developments may necessitate migration to a different algorithm.
+
+PipeStream supports algorithm migration through the capability negotiation mechanism (Section 3.4). A future specification MAY define additional fields in the `capabilities` structure to advertise supported checksum algorithms, following the general principles outlined in {{RFC7696}}. Until such negotiation is defined, all implementations MUST use SHA-256 when producing or verifying checksums. An implementation that receives a checksum of a length other than 32 octets MUST reject the entity with PIPESTREAM_INTEGRITY_ERROR (0x04).
+
+The `checksum` field in the EntityHeader is typed as `bstr .size 32` in the CDDL schema (Appendix C). A future algorithm negotiation extension would need to update this constraint, the SCOPE_DIGEST Merkle root size, and the corresponding IANA registry entries.
 
 ## Resource Exhaustion
 
@@ -45,15 +56,15 @@ A single dehydration operation can produce an arbitrary number of child entities
 
 ## Privacy Considerations
 
-PipeStream entity headers and control stream frames carry metadata that may reveal information about the documents being processed, even when payloads are encrypted at the application layer:
+PipeStream entity headers and control stream frames carry metadata that may reveal information about the entities being processed, even when payloads are encrypted at the application layer:
 
-1. **Document structure leakage**: The number of child entities produced by dehydration, the scope depth, and the Entity ID assignment pattern may reveal the structure of the document being processed (e.g., a document that dehydrates into 50 children is likely a multi-page document). Implementations that require structural privacy SHOULD pad dehydration counts or use fixed decomposition granularity.
+1. **Entity structure leakage**: The number of child entities produced by dehydration, the scope depth, and the Entity ID assignment pattern may reveal the structure of the input being processed (e.g., an entity that dehydrates into 50 children is likely a multi-part input). Implementations that require structural privacy SHOULD pad dehydration counts or use fixed decomposition granularity. Deployments that do not handle privacy-sensitive data MAY omit this padding.
 
-2. **Metadata in headers**: The `content_type`, `metadata` map, and `payload_length` fields in EntityHeader (Section 6.7) are transmitted in cleartext within the QUIC-encrypted stream. Implementations that require metadata confidentiality beyond transport encryption SHOULD encrypt EntityHeader fields at the application layer and use an opaque content_type such as `application/octet-stream`.
+2. **Metadata in headers**: The `content_type`, `metadata` map, and `payload_length` fields in EntityHeader (Section 6.7) are transmitted in cleartext within the QUIC-encrypted stream. Implementations that require metadata confidentiality beyond transport encryption SHOULD encrypt EntityHeader fields at the application layer and use an opaque content_type such as `application/octet-stream`. This overhead is unnecessary when the deployment operates within a trusted network.
 
-3. **Traffic analysis**: The timing and size of status frames on the Control Stream may correlate with document processing patterns. Implementations operating in privacy-sensitive environments SHOULD send status frames at fixed intervals with padding to obscure processing timing.
+3. **Traffic analysis**: The timing and size of status frames on the Control Stream may correlate with processing patterns. Implementations operating in privacy-sensitive environments SHOULD send status frames at fixed intervals with padding to obscure processing timing. Deployments in trusted environments MAY omit traffic padding to reduce bandwidth overhead.
 
-4. **Identifiers**: The `doc_id` field in PipeDoc (Section 7.1) and filenames in BlobBag entries are application-layer data but may be logged by intermediate processing nodes. Implementations SHOULD provide mechanisms to redact or pseudonymize identifiers at pipeline boundaries.
+4. **Identifiers**: The `doc_id` field in PipeDoc (Section 7.1) and filenames in BlobBag entries are application-layer data but may be logged by intermediate processing nodes. Implementations SHOULD provide mechanisms to redact or pseudonymize identifiers at pipeline boundaries. This recommendation may be relaxed when all nodes in the pipeline are operated by the same administrative entity.
 
 ## Replay and Token Reuse
 

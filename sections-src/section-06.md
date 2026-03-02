@@ -2,6 +2,8 @@
 
 This section defines the wire formats for PipeStream frames. All multi-octet integer fields are encoded in network byte order (big-endian).
 
+**Forward Compatibility:** All Reserved and Flags fields defined in this section MUST be set to zero when sent and MUST be ignored by receivers. This convention enables future specifications to assign meaning to currently-reserved bits without breaking deployed implementations. Receivers that encounter non-zero values in reserved fields MUST NOT treat this as an error.
+
 ## Control Stream Framing (Stream 0)
 
 To support mixed content (bit-packed frames and serialized messages) on the Control Stream, PipeStream uses a Unified Control Frame (UCF) header.
@@ -15,7 +17,7 @@ Every message on Stream 0 MUST begin with a 1-octet Frame Type.
 | 0x50-0x7F | Fixed | No length prefix | Bit-packed control frames with type-defined sizes |
 | 0x80-0xFF | Variable | 4-octet Length + N | Variable-size serialized control messages (encoding per Section 3.5) |
 
-For Fixed frames, the receiver determines frame size from the Frame Type value. For Variable frames, the Type is followed by a 4-octet unsigned integer (big-endian) indicating the length of the serialized message that follows.
+For Fixed frames, the receiver determines frame size from the Frame Type value. For Variable frames, the Type is followed by a 4-octet unsigned integer (big-endian) indicating the length of the serialized message that follows. Handling of unknown frame types is specified in Section 11.2.1.
 
 Variable-frame Length (32 bits):
 :   The payload length in octets, excluding the 1-octet Type and the 4-octet Length field. Receivers MUST reject lengths greater than 16,777,215 octets (16 MiB - 1) with PIPESTREAM_ENTITY_TOO_LARGE (0x06).
@@ -29,6 +31,7 @@ The following fixed-size frame types are defined by this document:
 | 0x50 | STATUS | 16 octets (base) | 20 octets when C=1; larger when E=1 with extension data |
 | 0x54 | SCOPE_DIGEST | 72 octets | Includes 32-octet Merkle root and 64-bit counters |
 | 0x55 | BARRIER | 12 octets | No variable extension |
+| 0x56 | GOAWAY | 8 octets | Graceful shutdown signal |
 
 ## Status Frames (Layer 0)
 
@@ -98,6 +101,32 @@ Reserved (32 bits):
 | 0xC   | ABANDONED   | 2     | Timed out                              |
 
 The base STATUS frame is 16 octets. When C=1, a 4-octet cursor value follows (total 20 octets). When E=1, an Extension Header follows all other STATUS fields.
+
+### Entity Status State Machine
+
+The following table defines the complete set of valid status transitions. A receiver that observes a transition not listed in this table MUST treat the status frame as a protocol error and emit PIPESTREAM_ENTITY_INVALID (0x05) on the Control Stream. Terminal states (COMPLETE, FAILED, SKIPPED, ABANDONED) permit no further transitions.
+
+| From State | Valid Transitions (To) |
+|------------|------------------------|
+| PENDING | PROCESSING, DEHYDRATING, FAILED, SKIPPED, ABANDONED |
+| PROCESSING | COMPLETE, FAILED, DEHYDRATING, CHECKPOINT, YIELDED, DEFERRED, ABANDONED |
+| DEHYDRATING | REHYDRATING, FAILED, ABANDONED |
+| REHYDRATING | COMPLETE, FAILED, ABANDONED |
+| CHECKPOINT | PROCESSING |
+| YIELDED | PROCESSING, FAILED, DEFERRED, ABANDONED |
+| DEFERRED | PROCESSING, FAILED, SKIPPED, ABANDONED |
+| RETRYING | PROCESSING, FAILED, ABANDONED |
+| COMPLETE | (terminal -- no transitions) |
+| FAILED | (terminal -- no transitions) |
+| SKIPPED | (terminal -- no transitions) |
+| ABANDONED | (terminal -- no transitions) |
+
+Notes:
+
+1. PENDING is the implicit initial state for every entity upon ID assignment.
+2. RETRYING is entered implicitly when a FAILED entity is retried per its completion policy; the transition is FAILED -> RETRYING, which is the sole exception to FAILED being terminal. This exception applies only when the entity's completion policy permits retries (max-retries > 0) and the retry count has not been exhausted. If retries are exhausted, FAILED is terminal.
+3. Layer 2 states (YIELDED, DEFERRED, RETRYING, SKIPPED, ABANDONED) MUST NOT appear when Layer 2 has not been negotiated. A receiver operating at Layer 0 or Layer 1 that observes a Layer 2 status code MUST treat it as PIPESTREAM_LAYER_UNSUPPORTED (0x0C).
+4. The UNSPECIFIED (0x0) status is used only for heartbeat frames (Section 5.1.4) and connection-level signals. It is not a valid entity lifecycle state and MUST NOT appear in transitions for entity IDs other than 0xFFFFFFFF.
 
 ### Cursor Update Extension
 
@@ -202,6 +231,38 @@ Scope ID (32 bits):
 
 Parent Entity ID (32 bits):
 :   The identifier of the parent entity whose sub-tree is blocked by this barrier.
+
+## GOAWAY Frame (0x56)
+
+The GOAWAY frame signals that the sender will not accept new entities beyond a specified Entity ID. It enables graceful shutdown: in-flight entities with IDs at or below the Last Entity ID are processed to completion, while the peer refrains from opening new Entity Streams.
+
+~~~~
+
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |  Type (0x56)  |      Reserved (24 bits)                       |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                   Last Entity ID (32 bits)                    |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+~~~~
+{: type="ascii-art"}
+
+Reserved (24 bits):
+:   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
+
+Last Entity ID (32 bits):
+:   The highest Entity ID that the sender will process. Entities with IDs greater than this value (per the circular ordering defined in Section 9.1) MUST NOT be sent by the peer after receiving this frame.
+
+### Graceful Shutdown Procedure
+
+1. An endpoint wishing to shut down sends a GOAWAY frame on Stream 0 with Last Entity ID set to the highest entity it is willing to process.
+2. Upon receiving GOAWAY, the peer MUST NOT open new Entity Streams for entities with IDs above Last Entity ID. Entity Streams already open for IDs at or below Last Entity ID continue to completion.
+3. Both peers continue processing status updates on Stream 0 until all in-flight entities reach terminal state.
+4. Once all entities are resolved, either peer MAY close the QUIC connection with PIPESTREAM_NO_ERROR (0x00).
+5. If an endpoint receives an entity with an ID above the Last Entity ID after sending GOAWAY, it MUST reject it with PIPESTREAM_ENTITY_INVALID (0x05).
+
+An endpoint MAY send multiple GOAWAY frames to progressively lower the Last Entity ID. The Last Entity ID MUST NOT increase across successive GOAWAY frames within the same connection.
 
 ## Yield and Claim Check Extensions (Layer 2)
 
@@ -341,9 +402,11 @@ entity-header = {
   ? checksum: bstr .size 32,     ; SHA-256 (32 bytes)
   ? metadata: { * tstr => tstr },
   ? chunk-info: chunk-info,
-  ? completion-policy: completion-policy,
+  ? completion-policy: completion-policy,  ; Layer 2 only
 }
 ~~~~
+
+The `scope-id` field is meaningful only when Layer 1 has been negotiated; a Layer 0-only sender MUST omit it. The `completion-policy` field is meaningful only when Layer 2 has been negotiated; a sender that has not negotiated Layer 2 MUST omit it. A receiver operating at Layer 0 or Layer 1 that encounters an unknown optional field MUST ignore it, per standard CBOR map decoding rules.
 
 #### Chunk Info
 

@@ -1,5 +1,7 @@
 # Entity Model
 
+PipeStream distinguishes between the wire-level entity representation (EntityHeader, Section 6.7.2) and the application-level document envelope (PipeDoc, this section). The EntityHeader is the on-the-wire structure that prefixes every entity payload on an Entity Stream; it carries the fields needed for transport-level processing (entity-id, layer, payload-length, checksum). The PipeDoc structure is an application-layer envelope carried within the entity payload itself, providing domain-specific identification (doc_id) and ownership tracking. A PipeDoc's `entity_id` field MUST match the `entity-id` field in the enclosing EntityHeader.
+
 ## Core Fields
 
 Every PipeStream entity is represented as a PipeDoc message:

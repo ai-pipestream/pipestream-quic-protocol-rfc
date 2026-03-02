@@ -36,6 +36,16 @@ normative:
   RFC8126:
   RFC8949:
   RFC8610:
+  RFC5234:
+  RFC7595:
+  RFC7301:
+  FIPS-180-4:
+    title: "Secure Hash Standard (SHS)"
+    author:
+      org: National Institute of Standards and Technology
+    date: 2015-08
+    seriesinfo:
+      FIPS: PUB 180-4
 
 informative:
   RFC9114:
@@ -44,6 +54,7 @@ informative:
   RFC9250:
   RFC9260:
   RFC7574:
+  RFC7696:
   MOQT:
     title: "Media over QUIC Transport"
     author:
@@ -61,13 +72,6 @@ informative:
     seriesinfo:
       Internet-Draft: draft-ietf-moq-transport-16
     target: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
-  FIPS-180-4:
-    title: "Secure Hash Standard (SHS)"
-    author:
-      org: National Institute of Standards and Technology
-    date: 2015-08
-    seriesinfo:
-      FIPS: PUB 180-4
   scatter-gather:
     title: "The Scatter-Gather Design Pattern"
     author:

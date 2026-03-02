@@ -46,7 +46,7 @@ PipeStream uses a dual-stream architecture within a single QUIC connection betwe
 
 | Stream | Type | Plane | Content |
 |--------|------|-------|---------|
-| Stream 0 | Bidirectional | Control | STATUS, SCOPE_DIGEST, BARRIER, CAPABILITIES, CHECKPOINT |
+| Stream 0 | Bidirectional | Control | STATUS, SCOPE_DIGEST, BARRIER, GOAWAY, CAPABILITIES, CHECKPOINT |
 | Streams 2+ | Unidirectional | Data | Entity frames (Header + Payload) |
 
 ## Connection Lifecycle
@@ -57,4 +57,4 @@ A PipeStream connection follows this lifecycle:
 2. **Capability Exchange:** Client and server exchange supported protocol layers and limits
 3. **Control Stream Initialization:** Client opens Stream 0 as bidirectional Control Stream
 4. **Entity Streaming:** Entities are transmitted per Sections 5 and 6
-5. **Termination:** Connection closes via QUIC CONNECTION_CLOSE or application-level shutdown
+5. **Termination:** Connection closes via GOAWAY-initiated graceful shutdown (Section 6.4a) or QUIC CONNECTION_CLOSE

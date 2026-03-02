@@ -6,6 +6,25 @@ An informational Protocol Buffers equivalent is provided in Appendix D for imple
 
 ~~~~ cddl
 ; -----------------------------------------------------------
+; Integer size convention
+; -----------------------------------------------------------
+; CDDL "uint" is an unbounded unsigned integer. When
+; encoded in CBOR, the encoder MUST use the smallest
+; CBOR major-type-0 encoding that fits the value.
+; The following aliases document the wire-format field
+; widths used in fixed-size frames; they do not constrain
+; the CBOR encoding but record the maximum value each
+; field may carry.
+;
+;   uint32 — values 0..4294967295     (Entity ID, Scope ID)
+;   uint64 — values 0..2^64-1         (counters, timestamps)
+;
+; For variable-length serialized messages (CBOR), the
+; natural uint encoding applies and receivers MUST accept
+; any valid CBOR unsigned integer.
+; -----------------------------------------------------------
+
+; -----------------------------------------------------------
 ; Serialization format negotiation
 ; -----------------------------------------------------------
 
@@ -26,6 +45,7 @@ capabilities = {
   ? max-entities-per-scope: uint,
   ? max-window-size: uint,
   ? serialization-format: serialization-format,
+  ? keepalive-timeout-ms: uint,   ; Default: 30000 (30s)
 }
 
 ; -----------------------------------------------------------
@@ -33,16 +53,16 @@ capabilities = {
 ; -----------------------------------------------------------
 
 entity-header = {
-  entity-id: uint,
-  ? parent-id: uint,
-  ? scope-id: uint,
-  layer: uint .le 3,
+  entity-id: uint,                ; 32-bit on wire (STATUS frame)
+  ? parent-id: uint,              ; 32-bit scope-local
+  ? scope-id: uint,               ; 32-bit (Section 6.2.1)
+  layer: uint .le 3,              ; Data layer 0-3
   ? content-type: tstr,
-  payload-length: uint,
-  ? checksum: bstr .size 32,
+  payload-length: uint,           ; 32-bit (UCF header)
+  ? checksum: bstr .size 32,      ; SHA-256; SHOULD be present
   ? metadata: { * tstr => tstr },
   ? chunk-info: chunk-info,
-  ? completion-policy: completion-policy,
+  ? completion-policy: completion-policy,  ; Layer 2
 }
 
 chunk-info = {
@@ -196,7 +216,7 @@ scope-digest = {
   entities-processed: uint,
   entities-succeeded: uint,
   entities-failed: uint,
-  ? entities-deferred: uint,
+  entities-deferred: uint,
   merkle-root: bstr .size 32,
 }
 

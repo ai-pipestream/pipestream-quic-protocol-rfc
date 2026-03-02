@@ -22,6 +22,8 @@ The window size is computed as `(last_assigned - cursor) mod 0xFFFFFFFD`. If `wi
 
 ## Assembly Manifest
 
+The Assembly Manifest is a local data structure maintained by each endpoint to track the parent-child relationships created during dehydration. It is not transmitted on the wire; rather, each endpoint constructs its own manifest from the `parent-id` fields in received EntityHeaders and from status updates observed on the Control Stream. The CDDL below defines the logical structure of each entry; implementations MAY use any internal representation that preserves the required semantics.
+
 Each Assembly Manifest entry tracks:
 
 ~~~~ cddl
@@ -75,6 +77,15 @@ For circular comparison in Condition 1, implementations MUST use the same modulo
 `is_before(a, b) = ((b - a + MAX) % MAX) < (MAX / 2)`
 
 An entity ID `a` is considered "less than checkpoint_entity_id `b`" iff `is_before(a, b)` is true.
+
+## Scope ID Allocation (Layer 1)
+
+When Layer 1 is negotiated, Scope IDs are 32-bit unsigned integers assigned by the endpoint that initiates the dehydration. The allocation scheme is as follows:
+
+1. Scope ID 0 is the root scope and MUST NOT be used for child scopes.
+2. The dehydrating endpoint assigns a unique Scope ID to each new child scope created during dehydration. The Scope ID MUST be unique within the connection for the lifetime of that scope (i.e., until the scope's SCOPE_DIGEST frame has been emitted and acknowledged).
+3. Scope IDs MAY be allocated sequentially or randomly; the protocol does not require any particular ordering. Sequential allocation is RECOMMENDED for simplicity and debuggability.
+4. Once a scope has been closed (its SCOPE_DIGEST has been sent), the Scope ID MAY be reused for a new scope. Implementations MUST ensure that no in-flight status frames reference a recycled Scope ID; this is guaranteed if the implementation waits until all entities within the scope have reached terminal state before recycling.
 
 ## Scope Digest Propagation (Layer 1)
 

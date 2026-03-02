@@ -63,10 +63,19 @@ capabilities = {
   ? max-window-size: uint,         ; Default: 2,147,483,648 (2^31)
                                    ; (Max in-flight entities)
   ? serialization-format: serialization-format, ; Default: CBOR
+  ? keepalive-timeout-ms: uint,    ; Default: 30000 (30s)
 }
 ~~~~
 
 Peers negotiate down to common capabilities. If Layer 2 is requested but Layer 1 is not supported, Layer 2 MUST be disabled.
+
+### Version Negotiation
+
+PipeStream protocol versioning is carried in two places: the ALPN identifier and the Ver field in the STATUS frame (Section 6.2.1). The ALPN identifier `pipestream/1` identifies the major protocol version and the QUIC transport mapping defined in this document. The 4-bit Ver field in STATUS frames carries the value 0x1 for this specification.
+
+A future major version of PipeStream (e.g., `pipestream/2`) would register a new ALPN identifier. QUIC's native ALPN negotiation during the TLS handshake provides version selection: if a client offers both `pipestream/2` and `pipestream/1` and the server supports only `pipestream/1`, the TLS handshake selects `pipestream/1` without additional round trips. This mechanism is consistent with the versioning approach used by HTTP/3 {{RFC9114}} and DNS over QUIC {{RFC9250}}.
+
+Minor, backward-compatible extensions (such as new optional capability fields or new status codes within the reserved ranges) do not require a new ALPN identifier. Such extensions are negotiated through the capabilities structure or the IANA registries defined in Section 11.
 
 ### Serialization Format Negotiation
 
