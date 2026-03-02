@@ -7,7 +7,7 @@ PipeStream defines three protocol layers that build upon each other. This layere
 Layer 0 provides the fundamental streaming capabilities:
 
 - Unified Control Frame (UCF) header (1-octet type)
-- Status frame (8-octet bit-packed frame)
+- Status frame (12-octet base bit-packed frame)
 - Entity frame (header + payload)
 - Status codes: PENDING, PROCESSING, COMPLETE, FAILED, CHECKPOINT
 - Assembly Manifest for parent-child tracking
@@ -37,7 +37,7 @@ Layer 2 adds fault tolerance and async processing:
 - DEFERRED status with claim checks
 - RETRYING, SKIPPED, ABANDONED statuses
 - Completion policies (STRICT, LENIENT, BEST_EFFORT, QUORUM)
-- Claim check query/response frames
+- Claim check extensions and deferred processing tokens
 - Stopping point validation
 
 Layer 2 is OPTIONAL and requires Layer 1. Implementations advertise Layer 2 support during capability negotiation.
@@ -72,7 +72,7 @@ The serialization_format field determines the encoding used for all variable-len
 
 1. Each peer advertises its preferred serialization_format in its Capabilities message.
 2. If both peers advertise the same format, that format is used.
-3. If the peers advertise different formats, CBOR {{RFC8949}} (the default) MUST be used as the fallback.
-4. If serialization_format is absent (field not set), the peer is assumed to prefer CBOR.
+3. If a peer receives a Capabilities message without serialization_format, the sender is assumed to prefer CBOR {{RFC8949}}.
+4. If the resulting preferences differ, the peers MUST use CBOR {{RFC8949}} as the fallback.
 
-The Capabilities message itself is always encoded in the format initiated by the client. If the server cannot decode the client's Capabilities message, it MUST close the connection with PIPESTREAM_INTERNAL_ERROR (0x01).
+The initial Capabilities message on a new connection MUST be CBOR-encoded. Subsequent variable-length messages and entity headers use the negotiated format. If a peer cannot decode the initial Capabilities message, it MUST close the connection with PIPESTREAM_INTERNAL_ERROR (0x01).
