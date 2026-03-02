@@ -61,7 +61,8 @@ message Capabilities {
   // Maximum number of entities permitted within a single scope.
   uint32 max_entities_per_scope = 5;
 
-  // Maximum flow-control window size, in number of entities.
+  // Maximum flow-control window size, in number of in-flight
+  // entities. Default is 2,147,483,648 (2^31).
   uint32 max_window_size = 6;
 
   // Serialization format (default: CBOR).

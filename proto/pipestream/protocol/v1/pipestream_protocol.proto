@@ -58,9 +58,9 @@ message Capabilities {
   // (excluding reserved values NULL_ENTITY and CONNECTION_LEVEL).
   uint32 max_entities_per_scope = 5;
 
-  // Maximum flow-control window size, in number of entities, that the
-  // endpoint is willing to buffer before requiring cursor advancement.
-  // Default is 2,147,483,648 (2^31).
+  // Maximum flow-control window size, in number of in-flight entities,
+  // that the endpoint is willing to buffer before requiring cursor
+  // advancement. Default is 2,147,483,648 (2^31).
   uint32 max_window_size = 6;
 
   // Serialization format for variable-length control messages (0x80-0xFF)

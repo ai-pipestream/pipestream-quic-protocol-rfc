@@ -58,7 +58,8 @@ capabilities = {
   layer2-resilience: bool,         ; Yield, claim checks
   ? max-scope-depth: uint .le 7,   ; Default: 7 (8 levels, 0-7)
   ? max-entities-per-scope: uint,  ; Default: 4,294,967,294
-  ? max-window-size: uint,         ; Default: 2,147,483,648
+  ? max-window-size: uint,         ; Default: 2,147,483,648 (2^31)
+                                   ; (Max in-flight entities)
   ? serialization-format: serialization-format, ; Default: CBOR
 }
 ~~~~
