@@ -1,8 +1,8 @@
-# Schema Reference (CDDL)
+# Appendix C: Schema Reference (CDDL)
 
 This appendix consolidates the normative CDDL {{RFC8610}} schema definitions for all PipeStream messages. These definitions are authoritative for the wire format when CBOR {{RFC8949}} is the negotiated serialization format (the default). Individual definitions also appear inline throughout the specification body.
 
-An informational Protocol Buffers equivalent is provided in Appendix A for implementations that negotiate Protobuf encoding.
+An informational Protocol Buffers equivalent is provided in Appendix D for implementations that negotiate Protobuf encoding.
 
 ~~~~ cddl
 ; -----------------------------------------------------------

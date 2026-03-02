@@ -317,7 +317,7 @@ Payload (variable):
 
 ### Message Schema (CDDL)
 
-Normative definitions for serialized PipeStream messages use CDDL {{RFC8610}} notation. An informational Protocol Buffers equivalent is provided in Appendix A.
+Normative definitions for serialized PipeStream messages use CDDL {{RFC8610}} notation. An informational Protocol Buffers equivalent is provided in Appendix D.
 
 #### Entity Header
 

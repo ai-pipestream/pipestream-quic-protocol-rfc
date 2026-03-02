@@ -1,134 +1,398 @@
-# Relationship to Existing Protocols
+# Appendix D: Schema Reference (Protocol Buffers)
 
-This appendix discusses the relationship between PipeStream and
-existing transport and application protocols. The intent is to
-clarify the design rationale for specifying a new application
-protocol directly over QUIC {{RFC9000}} rather than layering
-on HTTP/3 {{RFC9114}}, gRPC, or WebTransport {{RFC9297}}.
+This appendix provides an informational Protocol Buffers schema equivalent for PipeStream messages. The normative schema definitions use CDDL notation and appear throughout the specification body and in Appendix C. Implementations that negotiate Protobuf as the serialization format (Section 3.5) MAY use these definitions. The canonical Protobuf source files are maintained in the repository at `proto/`.
 
-## QUIC as Application Transport
+## Protocol-Level Messages
 
-RFC 9308 {{RFC9308}} provides guidance for designers of application
-protocol mappings to QUIC. PipeStream follows this guidance:
-stream semantics are mapped to the protocol's data model
-(Section 4), flow control operates at both the stream and
-connection level, and an ALPN token is registered for protocol
-identification (Section 11).
+~~~~ protobuf
+// Copyright 2026 PipeStream AI
+//
+// PipeStream Protocol - IETF draft protocol for recursive
+// entity streaming over QUIC. Defines the wire-format
+// messages for Layers 0-2 of the PipeStream architecture:
+// core streaming, recursive scoping, and resilience.
+//
+// Edition 2023 is used for closed enums (critical for wire-protocol
+// safety) and implicit field presence (distinguishing "not set" from
+// zero values). In this edition, all fields have explicit presence
+// by default, making the 'optional' keyword unnecessary.
 
-The precedent for application protocols that bypass HTTP and map
-directly onto QUIC is well established. DNS over Dedicated QUIC
-Connections {{RFC9250}} adopts a direct mapping on the grounds
-that HTTP framing introduces unnecessary overhead when the
-application has its own message semantics. The Media over QUIC
-Transport protocol {{MOQT}} similarly defines its own framing
-and control messages over QUIC streams, with HTTP/3 as an
-optional encapsulation rather than a requirement.
+edition = "2023";
 
-PipeStream's requirements align with these precedents. The
-protocol's dual-stream architecture (Section 4), bit-packed
-control frames (Section 6), and recursive entity lifecycle
-(Section 9) have no counterpart in HTTP semantics, and mapping
-them onto request-response pairs would add complexity without
-benefit.
+package pipestream.protocol.v1;
 
-## HTTP/3
+import "google/protobuf/any.proto";
 
-HTTP/3 {{RFC9114}} provides multiplexed request-response
-exchanges over QUIC. Its stream model binds each
-client-initiated request to a server response on the same
-stream. PipeStream requires bidirectional, peer-initiated
-entity streams where either endpoint may open new streams to
-transmit sub-entities arising from recursive decomposition.
-The request-response constraint precludes this.
+// All enums in this file are CLOSED. Unknown enum values received on
+// the wire MUST be rejected. This is essential because status codes
+// are encoded as 4-bit values in the status frame wire format;
+// accepting unknown values could cause undefined behavior in state
+// machines and cursor advancement.
+option features.enum_type = CLOSED;
 
-PipeStream also requires a persistent control stream carrying
-compact, fixed-size status frames at high frequency. HTTP/3
-does define unidirectional control streams, but their framing
-is specific to HTTP semantics (SETTINGS, GOAWAY, MAX_PUSH_ID)
-and cannot be repurposed for application-level status
-coordination without introducing a parallel signaling
-mechanism that duplicates much of what QUIC already provides.
+// SerializationFormat specifies the encoding for variable-
+// length control messages (0x80-0xFF) and entity headers.
+enum SerializationFormat {
+  SERIALIZATION_FORMAT_CBOR = 0;
+  SERIALIZATION_FORMAT_PROTOBUF = 1;
+}
 
-## gRPC
+// Capabilities describes the feature set supported by a PipeStream
+// endpoint. Exchanged during the CONNECT handshake so that both
+// sides can negotiate which protocol layers and resource limits
+// apply to the session.
+message Capabilities {
+  // Whether the endpoint supports Layer 0 (core entity streaming).
+  bool layer0_core = 1;
 
-gRPC defines a remote procedure call framework over HTTP/2,
-with experimental support for HTTP/3. Bidirectional streaming
-in gRPC is scoped to a single RPC method: one request stream
-and one response stream per call. PipeStream requires an
-arbitrary number of concurrent entity streams with independent
-flow control, plus a dedicated control stream, all within a
-single connection. Achieving this over gRPC would require
-either multiplexing all entities onto a single bidirectional
-RPC (sacrificing per-stream flow control and head-of-line
-independence) or opening a separate RPC per entity (sacrificing
-session-level coordination and incurring per-call overhead).
+  // Whether the endpoint supports Layer 1 (recursive scoping and
+  // dehydration).
+  bool layer1_recursive = 2;
 
-gRPC further mandates a 5-octet length-prefixed framing
-envelope for every message. PipeStream's fixed-size control
-frames (STATUS at 12 octets, SCOPE_DIGEST, BARRIER) are
-bit-packed at the wire level with zero serialization overhead,
-which is material at the status update frequencies the
-protocol is designed to sustain.
+  // Whether the endpoint supports Layer 2 (resilience, yield, and
+  // claim-check). Requires Layer 1 support; if layer1_recursive is
+  // false, this MUST be false.
+  bool layer2_resilience = 3;
 
-## WebTransport
+  // Maximum nesting depth allowed for recursive scopes.
+  // Default is 7 (8 levels: 0-7).
+  uint32 max_scope_depth = 4;
 
-WebTransport {{RFC9297}} provides bidirectional streams and
-unreliable datagrams over HTTP/3, and is the closest existing
-protocol to the transport abstraction PipeStream requires.
-However, several properties make it unsuitable as a substrate:
+  // Maximum number of entities permitted within a single scope.
+  uint32 max_entities_per_scope = 5;
 
-WebTransport sessions are established via an HTTP/3 CONNECT
-request, inheriting the client-server asymmetry of HTTP. In
-PipeStream, both endpoints participate symmetrically in
-capability negotiation and may initiate entity streams;
-the protocol does not distinguish a "client" role from a
-"server" role after the handshake.
+  // Maximum flow-control window size, in number of in-flight
+  // entities. Default is 2,147,483,648 (2^31).
+  uint32 max_window_size = 6;
 
-WebTransport is designed for environments constrained by the
-web security model (origin-based isolation, CORS). PipeStream
-targets server-to-server processing pipelines where these
-constraints are inapplicable.
+  // Serialization format (default: CBOR).
+  SerializationFormat serialization_format = 7;
+}
 
-WebTransport provides raw byte streams with no built-in
-coordination semantics. PipeStream would need to implement
-its own framing, status state machine, checkpoint barriers,
-and scope hierarchy on top of WebTransport streams. At that
-point, the HTTP/3 session layer introduces an additional
-round trip during establishment and per-stream framing
-overhead, with no corresponding benefit.
+// EntityHeader is sent at the beginning of each entity stream to
+// describe the payload that follows. It carries identity, lineage,
+// content metadata, chunking information, and the completion policy
+// that governs how partial failures of this entity's children are
+// handled.
+message EntityHeader {
+  // Scope-local entity identifier.
+  uint32 entity_id = 1;
 
-## SCTP
+  // Identifier of the parent entity.
+  uint32 parent_id = 2;
 
-The Stream Control Transmission Protocol {{RFC9260}} provides
-multi-homed, multi-stream transport with per-stream ordering
-and message boundaries. SCTP's multi-stream model is
-conceptually similar to QUIC's, and its chunk-based framing
-influenced the design of PipeStream's Unified Control Frame.
-However, SCTP operates as a transport protocol and does not
-provide the application-level semantics (entity lifecycle,
-recursive scopes, Merkle-based integrity, checkpoint barriers)
-that PipeStream defines. Additionally, SCTP's deployment has
-been limited by middlebox ossification; QUIC's UDP
-encapsulation avoids this obstacle.
+  // Identifier of the scope.
+  uint32 scope_id = 3;
 
-## Peer-to-Peer Streaming Peer Protocol
+  // Data layer (0-3).
+  uint32 layer = 4;
 
-PPSPP {{RFC7574}} disseminates content across a swarm of peers
-using Merkle hash trees for integrity verification. The use of
-a cryptographic hash tree to detect corruption during
-distributed transfer is directly analogous to PipeStream's
-scope digest mechanism (Section 9.4). The protocols differ in
-purpose: PPSPP replicates identical content to multiple
-consumers, whereas PipeStream processes and transforms entities
-through a pipeline, tracking per-entity status transitions and
-enforcing completion invariants before reassembly.
+  // MIME content type.
+  string content_type = 5;
 
-## Summary
+  // Length in bytes of the complete entity payload, before any
+  // chunking.
+  uint64 payload_length = 6;
 
-PipeStream occupies a design point not addressed by existing
-protocols: a QUIC-native application protocol combining
-multiplexed entity streaming, recursive decomposition with
-hierarchical scopes, Merkle-based integrity propagation, and
-barrier-synchronized reassembly. Existing protocols address
-subsets of these requirements but none provide the integrated
-lifecycle and coordination semantics that PipeStream defines.
+  // SHA-256 integrity checksum.
+  bytes checksum = 7;
+
+  // Arbitrary metadata.
+  map<string, string> metadata = 8;
+
+  // Chunking information.
+  ChunkInfo chunk_info = 9;
+
+  // Resilience completion policy.
+  CompletionPolicy completion_policy = 10;
+}
+
+// ChunkInfo describes how a payload is divided into chunks.
+message ChunkInfo {
+  // Total number of chunks.
+  uint32 total_chunks = 1;
+
+  // Zero-based chunk index.
+  uint32 chunk_index = 2;
+
+  // Byte offset within the complete payload.
+  uint64 chunk_offset = 3;
+}
+
+// CompletionPolicy controls Layer 2 resilience behavior.
+message CompletionPolicy {
+  // Mode for evaluating completion.
+  CompletionMode mode = 1;
+
+  // Maximum retry attempts.
+  uint32 max_retries = 2;
+
+  // Delay between retries in milliseconds.
+  uint32 retry_delay_ms = 3;
+
+  // Maximum wait time in milliseconds.
+  uint32 timeout_ms = 4;
+
+  // Minimum success ratio for QUORUM mode.
+  float min_success_ratio = 5;
+
+  // Action on timeout.
+  FailureAction on_timeout = 6;
+
+  // Action on failure.
+  FailureAction on_failure = 7;
+}
+
+// CompletionMode specifies completion evaluation strategies.
+enum CompletionMode {
+  COMPLETION_MODE_UNSPECIFIED = 0;
+  COMPLETION_MODE_STRICT = 1;
+  COMPLETION_MODE_LENIENT = 2;
+  COMPLETION_MODE_BEST_EFFORT = 3;
+  COMPLETION_MODE_QUORUM = 4;
+}
+
+// FailureAction specifies error handling behaviors.
+enum FailureAction {
+  FAILURE_ACTION_UNSPECIFIED = 0;
+  FAILURE_ACTION_FAIL = 1;
+  FAILURE_ACTION_SKIP = 2;
+  FAILURE_ACTION_RETRY = 3;
+  FAILURE_ACTION_DEFER = 4;
+}
+
+// EntityStatus represents the lifecycle state of an entity.
+enum EntityStatus {
+  ENTITY_STATUS_UNSPECIFIED = 0;
+  ENTITY_STATUS_PENDING = 1;
+  ENTITY_STATUS_PROCESSING = 2;
+  ENTITY_STATUS_COMPLETE = 3;
+  ENTITY_STATUS_FAILED = 4;
+  ENTITY_STATUS_CHECKPOINT = 5;
+  ENTITY_STATUS_DEHYDRATING = 6;
+  ENTITY_STATUS_REHYDRATING = 7;
+  ENTITY_STATUS_YIELDED = 8;
+  ENTITY_STATUS_DEFERRED = 9;
+  ENTITY_STATUS_RETRYING = 10;
+  ENTITY_STATUS_SKIPPED = 11;
+  ENTITY_STATUS_ABANDONED = 12;
+}
+
+// StatusFrame represents a status transition.
+message StatusFrame {
+  // Identifier of the entity.
+  uint32 entity_id = 1;
+
+  // Identifier of the scope.
+  uint32 scope_id = 2;
+
+  // Current status.
+  EntityStatus status = 3;
+
+  // Optional extension data.
+  google.protobuf.Any extended_data = 4;
+}
+
+// CheckpointFrame (Type 0x81)
+message CheckpointFrame {
+  // Unique checkpoint identifier.
+  string checkpoint_id = 1;
+
+  // Monotonic sequence number.
+  uint64 sequence_number = 2;
+
+  // Numeric ordering key for barrier evaluation.
+  uint32 checkpoint_entity_id = 3;
+
+  // Scope to which this checkpoint applies.
+  uint32 scope_id = 4;
+
+  // Checkpoint flags.
+  uint32 flags = 5;
+
+  // Maximum wait time in milliseconds.
+  uint32 timeout_ms = 6;
+}
+
+// AssemblyManifestEntry tracks parent-child relationships.
+message AssemblyManifestEntry {
+  // Identifier of the parent entity.
+  uint32 parent_id = 1;
+
+  // Scope identifier.
+  uint32 scope_id = 2;
+
+  // Ordered child identifiers.
+  repeated uint32 children_ids = 3;
+
+  // Current status of each child.
+  repeated EntityStatus children_status = 4;
+
+  // Governing completion policy.
+  CompletionPolicy policy = 5;
+
+  // Creation timestamp (Unix epoch microseconds).
+  uint64 created_at = 6;
+
+  // Current resolution state.
+  ResolutionState state = 7;
+}
+
+// ResolutionState tracks Assembly Manifest completion.
+enum ResolutionState {
+  RESOLUTION_STATE_UNSPECIFIED = 0;
+  RESOLUTION_STATE_ACTIVE = 1;
+  RESOLUTION_STATE_RESOLVED = 2;
+  RESOLUTION_STATE_PARTIAL = 3;
+  RESOLUTION_STATE_FAILED = 4;
+}
+
+// YieldToken captures continuation state for paused entities.
+message YieldToken {
+  // Reason for yielding.
+  YieldReason reason = 1;
+
+  // Opaque continuation state.
+  bytes continuation_state = 2;
+
+  // Validation data for resumption.
+  StoppingPointValidation validation = 3;
+}
+
+// YieldReason describes why processing was yielded.
+enum YieldReason {
+  YIELD_REASON_UNSPECIFIED = 0;
+  YIELD_REASON_EXTERNAL_CALL = 1;
+  YIELD_REASON_RATE_LIMITED = 2;
+  YIELD_REASON_AWAITING_SIBLING = 3;
+  YIELD_REASON_AWAITING_APPROVAL = 4;
+  YIELD_REASON_RESOURCE_BUSY = 5;
+}
+
+// ClaimCheck is a Layer 2 deferred-processing reference.
+message ClaimCheck {
+  // Unique claim identifier.
+  uint64 claim_id = 1;
+
+  // Identifier of the deferred entity.
+  uint32 entity_id = 2;
+
+  // Scope identifier.
+  uint32 scope_id = 3;
+
+  // Expiry timestamp (Unix epoch microseconds).
+  uint64 expiry_timestamp = 4;
+
+  // Validation data.
+  StoppingPointValidation validation = 5;
+}
+
+// StoppingPointValidation captures a snapshot of progress.
+message StoppingPointValidation {
+  // Hash of internal state.
+  bytes state_checksum = 1;
+
+  // Payload bytes consumed.
+  uint64 bytes_processed = 2;
+
+  // Completed child count.
+  uint32 children_complete = 3;
+
+  // Total expected child count.
+  uint32 children_total = 4;
+
+  // Resumption capability flag.
+  bool is_resumable = 5;
+
+  // Last passed checkpoint reference.
+  string checkpoint_ref = 6;
+}
+
+// ScopeDigest is a Layer 1 summary of a completed scope.
+message ScopeDigest {
+  // Identifier of the scope.
+  uint32 scope_id = 1;
+
+  // Total processed count.
+  uint64 entities_processed = 2;
+
+  // Total succeeded count.
+  uint64 entities_succeeded = 3;
+
+  // Total failed count.
+  uint64 entities_failed = 4;
+
+  // Total deferred count.
+  uint64 entities_deferred = 5;
+
+  // Merkle root hash.
+  bytes merkle_root = 6;
+}
+
+// PipeDoc represents the top-level document envelope for an entity.
+message PipeDoc {
+  // Unique document identifier.
+  string doc_id = 1;
+
+  // Identifier of the entity.
+  uint32 entity_id = 2;
+
+  // Ownership and access context.
+  OwnershipContext ownership = 3;
+}
+
+// OwnershipContext defines multi-tenancy and access control for
+// entities.
+message OwnershipContext {
+  // Entity owner identifier.
+  string owner_id = 1;
+
+  // Group identifier.
+  string group_id = 2;
+
+  // List of access scopes.
+  repeated string scopes = 3;
+}
+
+// FileStorageReference provides a location for external data.
+message FileStorageReference {
+  // Storage provider identifier.
+  string provider = 1;
+
+  // Bucket or container name.
+  string bucket = 2;
+
+  // Object key or path.
+  string key = 3;
+
+  // Optional region hint.
+  string region = 4;
+
+  // Provider-specific attributes.
+  map<string, string> attrs = 5;
+
+  // Encryption metadata.
+  EncryptionMetadata encryption = 6;
+}
+
+// EncryptionMetadata defines encryption parameters.
+message EncryptionMetadata {
+  // Encryption algorithm.
+  string algorithm = 1;
+
+  // Key provider identifier.
+  string key_provider = 2;
+
+  // Encryption key identifier.
+  string key_id = 3;
+
+  // Optional wrapped DEK.
+  bytes wrapped_key = 4;
+
+  // Initialization vector.
+  bytes iv = 5;
+
+  // Additional encryption context.
+  map<string, string> context = 6;
+}
+~~~~
