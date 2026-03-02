@@ -300,7 +300,11 @@ Header (serialized):
 Payload (variable):
 :   The raw entity data.
 
-### Entity Header
+### Message Schema (CDDL)
+
+Normative definitions for serialized PipeStream messages use CDDL {{RFC8610}} notation. An informational Protocol Buffers equivalent is provided in Appendix A.
+
+#### Entity Header
 
 ~~~~ cddl
 entity-header = {
@@ -317,7 +321,33 @@ entity-header = {
 }
 ~~~~
 
-The EntityHeader is defined above using CDDL {{RFC8610}} notation. On the wire, this structure is encoded using the serialization format negotiated during capability exchange (Section 3.5). CBOR {{RFC8949}} is the default encoding. An informational Protocol Buffers equivalent is provided in Appendix A.
+#### Chunk Info
+
+~~~~ cddl
+chunk-info = {
+  total-chunks: uint,
+  chunk-index: uint,
+  chunk-offset: uint,
+}
+~~~~
+
+#### Yield and Deferral
+
+~~~~ cddl
+yield-token = {
+  reason: uint,
+  continuation-state: bstr,
+  validation: stopping-point-validation,
+}
+
+claim-check = {
+  claim-id: uint,
+  entity-id: uint,
+  scope-id: uint,
+  expiry-timestamp: uint,        ; Unix epoch microseconds
+  validation: stopping-point-validation,
+}
+~~~~
 
 ### Checksum Algorithm
 

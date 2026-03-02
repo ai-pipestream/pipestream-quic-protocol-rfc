@@ -16,7 +16,7 @@ This repository uses a modular authoring workflow for IETF drafts. The monolithi
 
 - **`sections-src/`**: **The Source of Truth.** Individual Markdown files for each RFC section. Edit these files directly.
 - **`draft-template.md`**: The master kramdown-rfc template that includes all sections in the correct order.
-- **`proto/`**: Canonical Protobuf definitions (Edition 2023). Inline protobuf blocks in the spec MUST match these files.
+- **`proto/`**: Informational Protobuf definitions. Normative structures use CDDL in the specification.
 
 ### Styling Conventions for Rendering
 
@@ -34,12 +34,12 @@ Always use the `ascii-art` type to force monospaced rendering:
 {: type="ascii-art"}
 ```
 
-#### 2. Protobuf/Source Code
-Use the `protobuf` type for schema blocks:
+#### 2. Structured Metadata
+Use appropriate syntax highlighters for schema blocks:
 ```markdown
-~~~~ protobuf
-message Example {
-  uint32 id = 1;
+~~~~ cddl
+example = {
+  id: uint
 }
 ~~~~
 ```
