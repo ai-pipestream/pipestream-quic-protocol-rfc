@@ -5,6 +5,7 @@
 | Unified status frame (128-bit base) | X | X | X |
 | Entity streaming | X | X | X |
 | PENDING/PROCESSING/COMPLETE/FAILED | X | X | X |
+| DEHYDRATING/REHYDRATING | X | X | X |
 | Checkpoint blocking | X | X | X |
 | Assembly Manifest | X | X | X |
 | Cursor-based ID recycling | X | X | X |

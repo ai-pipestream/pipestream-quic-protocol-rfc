@@ -17,8 +17,10 @@ The window size is computed as `(last_assigned - cursor) mod 0xFFFFFFFD`. If `wi
 1. `new_id = (last_assigned + 1) % 0xFFFFFFFD`
 2. If `new_id == 0`, `new_id = 1` (skip reserved NULL_ENTITY)
 3. If `(new_id - cursor) % 0xFFFFFFFD >= max_window` -> STOP, apply backpressure
-4. On COMPLETE/FAILED: mark resolved; if `entity_id == cursor`, advance cursor
+4. On reaching a terminal state (COMPLETE, SKIPPED, ABANDONED, or FAILED with no remaining retries): mark resolved; if `entity_id == cursor`, advance cursor past all contiguous resolved IDs
 5. IDs behind cursor are implicitly recyclable
+
+An entity in the FAILED state that may still transition to RETRYING (Section 6.2.2a) MUST NOT be marked resolved. Only when retries are exhausted or no completion policy permits retries does FAILED become terminal for cursor purposes.
 
 ## Assembly Manifest
 
@@ -106,7 +108,7 @@ This construction is deterministic: any two implementations processing the same 
 
 Implementations MUST track Assembly Manifest resolution order using a mechanism that provides O(1) insertion and amortized O(log n) minimum extraction. The tracking mechanism MUST support efficient decrease-key operations to handle out-of-order status updates.
 
-Implementations MAY choose any data structure that satisfies these complexity requirements. See the companion document `REFERENCE_IMPLEMENTATION.md` for a recommended approach using a Fibonacci heap.
+Implementations MAY use a Fibonacci heap or similar priority queue to satisfy these complexity requirements.
 
 ## Stopping Point Validation (Layer 2)
 

@@ -58,7 +58,7 @@ entity-header = {
   ? scope-id: uint,               ; 32-bit (Section 6.2.1)
   layer: uint .le 3,              ; Data layer 0-3
   ? content-type: tstr,
-  payload-length: uint,           ; 32-bit (UCF header)
+  payload-length: uint,           ; Payload byte count
   ? checksum: bstr .size 32,      ; SHA-256; SHOULD be present
   ? metadata: { * tstr => tstr },
   ? chunk-info: chunk-info,

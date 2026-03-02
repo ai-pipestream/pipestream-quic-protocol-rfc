@@ -57,4 +57,4 @@ A PipeStream connection follows this lifecycle:
 2. **Capability Exchange:** Client and server exchange supported protocol layers and limits
 3. **Control Stream Initialization:** Client opens Stream 0 as bidirectional Control Stream
 4. **Entity Streaming:** Entities are transmitted per Sections 5 and 6
-5. **Termination:** Connection closes via GOAWAY-initiated graceful shutdown (Section 6.4a) or QUIC CONNECTION_CLOSE
+5. **Termination:** Connection closes via GOAWAY-initiated graceful shutdown (Section 6.5) or QUIC CONNECTION_CLOSE

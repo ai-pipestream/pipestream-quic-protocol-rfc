@@ -24,7 +24,7 @@ IANA is requested to create the "PipeStream Frame Types" registry. Values are ca
 | 0x50 | STATUS | Fixed | 16 octets base | 0 | Section 6.2 |
 | 0x54 | SCOPE_DIGEST | Fixed | 72 octets | 1 | Section 6.3 |
 | 0x55 | BARRIER | Fixed | 12 octets | 1 | Section 6.4 |
-| 0x56 | GOAWAY | Fixed | 8 octets | 0 | Section 6.4a |
+| 0x56 | GOAWAY | Fixed | 8 octets | 0 | Section 6.5 |
 | 0x57-0x7F | Reserved | Fixed | - | - | this document |
 | 0x80 | CAPABILITIES | Var | Length-prefixed | 0 | Section 3.4 |
 | 0x81 | CHECKPOINT | Var | Length-prefixed | 0 | Section 9.3 |

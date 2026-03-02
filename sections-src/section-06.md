@@ -420,7 +420,7 @@ chunk-info = {
 
 ~~~~ cddl
 yield-token = {
-  reason: uint,
+  reason: yield-reason,            ; See Appendix C for enum values
   ? continuation-state: bstr,
   ? validation: stopping-point-validation,
 }
