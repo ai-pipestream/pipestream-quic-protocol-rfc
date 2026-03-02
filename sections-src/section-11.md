@@ -58,7 +58,7 @@ IANA is requested to create the "PipeStream Status Codes" registry. Status codes
 
 IANA is requested to create the "PipeStream Error Codes" registry. Values in the range 0x00-0x3F are assigned by Expert Review. Values in the range 0x40-0xFF are reserved for private use.
 
-PipeStream error codes are used as QUIC application error codes in CONNECTION_CLOSE and RESET_STREAM frames. When closing a connection due to a PipeStream error, the endpoint MUST use the corresponding PipeStream error code value as the QUIC Application Error Code.
+PipeStream error codes are used as QUIC application error codes in CONNECTION_CLOSE and RESET_STREAM frames. When terminating a connection or aborting a stream due to a protocol-level error, the endpoint MUST use the corresponding PipeStream error code value as the QUIC Application Error Code.
 
 | Value | Name | Description |
 |-------|------|-------------|

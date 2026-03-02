@@ -16,8 +16,8 @@ An informational Protocol Buffers equivalent is provided in Appendix D for imple
 ; the CBOR encoding but record the maximum value each
 ; field may carry.
 ;
-;   uint32 — values 0..4294967295     (Entity ID, Scope ID)
-;   uint64 — values 0..2^64-1         (counters, timestamps)
+;   uint32  values 0..4294967295     (Entity ID, Scope ID)
+;   uint64  values 0..2^64-1         (counters, timestamps)
 ;
 ; For variable-length serialized messages (CBOR), the
 ; natural uint encoding applies and receivers MUST accept

@@ -44,7 +44,7 @@ The Status Frame reports lifecycle transitions for entities. The frame is 128-bi
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |  Type (0x50)  |Ver(4) |Stat(4)|E|C|D(3) |    Flags (11 bits)  |
+   |  Type (0x50)  |Ver(4) |Stat(4)|E|C|D(3) |    Flags (11 bits)    |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                       Entity ID (32 bits)                     |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -56,7 +56,7 @@ The Status Frame reports lifecycle transitions for entities. The frame is 128-bi
 {: type="ascii-art"}
 
 Ver (4 bits):
-:   Protocol version. MUST be set to 0x1 for this specification. Receivers MUST treat any other value as malformed and close the connection with PIPESTREAM_ENTITY_INVALID (0x05).
+:   Protocol version. MUST be set to 0x1 for this specification. Receivers that encounter an unsupported version MUST close the connection with PIPESTREAM_LAYER_UNSUPPORTED (0x0C).
 
 Stat (4 bits):
 :   Status code (see Section 6.2.2).
@@ -104,7 +104,7 @@ The base STATUS frame is 16 octets. When C=1, a 4-octet cursor value follows (to
 
 ### Entity Status State Machine
 
-The following table defines the complete set of valid status transitions. A receiver that observes a transition not listed in this table MUST treat the status frame as a protocol error and emit PIPESTREAM_ENTITY_INVALID (0x05) on the Control Stream. Terminal states (COMPLETE, FAILED, SKIPPED, ABANDONED) permit no further transitions.
+The following table defines the complete set of valid status transitions. A receiver that observes a transition not listed in this table MUST treat the status frame as a protocol error and close the connection with PIPESTREAM_ENTITY_INVALID (0x05) as the QUIC Application Error Code.
 
 | From State | Valid Transitions (To) |
 |------------|------------------------|
@@ -115,16 +115,16 @@ The following table defines the complete set of valid status transitions. A rece
 | CHECKPOINT | PROCESSING |
 | YIELDED | PROCESSING, FAILED, DEFERRED, ABANDONED |
 | DEFERRED | PROCESSING, FAILED, SKIPPED, ABANDONED |
+| FAILED | RETRYING, ABANDONED |
 | RETRYING | PROCESSING, FAILED, ABANDONED |
 | COMPLETE | (terminal -- no transitions) |
-| FAILED | (terminal -- no transitions) |
 | SKIPPED | (terminal -- no transitions) |
 | ABANDONED | (terminal -- no transitions) |
 
 Notes:
 
 1. PENDING is the implicit initial state for every entity upon ID assignment.
-2. RETRYING is entered implicitly when a FAILED entity is retried per its completion policy; the transition is FAILED -> RETRYING, which is the sole exception to FAILED being terminal. This exception applies only when the entity's completion policy permits retries (max-retries > 0) and the retry count has not been exhausted. If retries are exhausted, FAILED is terminal.
+2. The FAILED -> RETRYING transition is valid only when the entity's completion policy permits retries (max-retries > 0) and the retry count has not been exhausted. If retries are not permitted or are exhausted, FAILED MUST be treated as a terminal state.
 3. Layer 2 states (YIELDED, DEFERRED, RETRYING, SKIPPED, ABANDONED) MUST NOT appear when Layer 2 has not been negotiated. A receiver operating at Layer 0 or Layer 1 that observes a Layer 2 status code MUST treat it as PIPESTREAM_LAYER_UNSUPPORTED (0x0C).
 4. The UNSPECIFIED (0x0) status is used only for heartbeat frames (Section 5.1.4) and connection-level signals. It is not a valid entity lifecycle state and MUST NOT appear in transitions for entity IDs other than 0xFFFFFFFF.
 
@@ -393,20 +393,18 @@ Normative definitions for serialized PipeStream messages use CDDL {{RFC8610}} no
 
 ~~~~ cddl
 entity-header = {
-  entity-id: uint,               ; Scope-local identifier
-  ? parent-id: uint,             ; 0 for root entities
-  ? scope-id: uint,              ; Layer 1: scope identifier
-  layer: uint .le 3,             ; Data layer (0-3)
+  entity-id: uint,               ; 32-bit on wire (STATUS frame)
+  ? parent-id: uint,             ; 32-bit scope-local
+  ? scope-id: uint,              ; 32-bit (Section 6.2.1)
+  layer: uint .le 3,             ; Data layer 0-3
   ? content-type: tstr,          ; MIME type
-  payload-length: uint,
-  ? checksum: bstr .size 32,     ; SHA-256 (32 bytes)
+  payload-length: uint,          ; 32-bit (UCF header)
+  ? checksum: bstr .size 32,     ; SHA-256; SHOULD be present
   ? metadata: { * tstr => tstr },
   ? chunk-info: chunk-info,
-  ? completion-policy: completion-policy,  ; Layer 2 only
+  ? completion-policy: completion-policy, ; Layer 2
 }
 ~~~~
-
-The `scope-id` field is meaningful only when Layer 1 has been negotiated; a Layer 0-only sender MUST omit it. The `completion-policy` field is meaningful only when Layer 2 has been negotiated; a sender that has not negotiated Layer 2 MUST omit it. A receiver operating at Layer 0 or Layer 1 that encounters an unknown optional field MUST ignore it, per standard CBOR map decoding rules.
 
 #### Chunk Info
 
