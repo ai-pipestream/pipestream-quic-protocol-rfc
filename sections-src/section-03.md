@@ -75,4 +75,4 @@ The serialization_format field determines the encoding used for all variable-len
 3. If a peer receives a Capabilities message without serialization_format, the sender is assumed to prefer CBOR {{RFC8949}}.
 4. If the resulting preferences differ, the peers MUST use CBOR {{RFC8949}} as the fallback.
 
-The initial Capabilities message on a new connection MUST be CBOR-encoded. Subsequent variable-length messages and entity headers use the negotiated format. If a peer cannot decode the initial Capabilities message, it MUST close the connection with PIPESTREAM_INTERNAL_ERROR (0x01).
+The initial Capabilities exchange on a new connection MUST use the default CBOR format for both the client's initiation and the server's response. Subsequent variable-length messages and entity headers use the negotiated format. If a peer cannot decode the initial Capabilities exchange, it MUST close the connection with PIPESTREAM_INTERNAL_ERROR (0x01).

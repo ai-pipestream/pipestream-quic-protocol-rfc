@@ -54,7 +54,7 @@ Stat (4 bits):
 :   Status code (see Section 6.2.2).
 
 E (1 bit):
-:   Extended frame flag. Additional extension data follows (Section 6.5).
+:   Extended frame flag. If set, an Extension Header (Section 6.5) MUST follow the base frame (and any cursor update).
 
 C (1 bit):
 :   Cursor update flag. A 4-octet cursor value follows (Section 6.2.3).
@@ -92,7 +92,7 @@ Reserved (16 bits):
 | 0xB   | SKIPPED     | 2     | Intentionally skipped                  |
 | 0xC   | ABANDONED   | 2     | Timed out                              |
 
-The base STATUS frame is 12 octets. When C=1, a 4-octet cursor value follows (total 16 octets before any E=1 extension data). When E=1, additional extension bytes follow as defined in Section 6.5.
+The base STATUS frame is 12 octets. When C=1, a 4-octet cursor value follows (total 16 octets). When E=1, an Extension Header follows all other STATUS fields.
 
 ### Cursor Update Extension
 
@@ -196,9 +196,24 @@ Parent Entity ID (32 bits):
 
 ## Yield and Claim Check Extensions (Layer 2)
 
-When E=1 in a status frame, extension data follows. The length of extension data is determined by the Status code.
+When E=1 in a status frame, an Extension Header MUST follow.
 
-If E=1 is set for a Status code that does not define an extension layout in this specification (or a negotiated extension), the receiver MUST treat the frame as malformed and fail processing with PIPESTREAM_ENTITY_INVALID (0x05).
+### Extension Header
+
+~~~~
+
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |     Extension Length (32 bits)                                |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+~~~~
+{: type="ascii-art"}
+
+Extension Length (32 bits):
+:   The total length of the extension data that follows this header, in octets. This allows receivers that do not support specific status extensions to skip the extension data and continue parsing the control stream.
+
+If E=1 is set for a Status code that does not define an extension layout in this specification (or a negotiated extension), the receiver MUST use the Extension Length to skip the data. If the length is zero or missing, the frame MUST be treated as malformed.
 
 ### Yield Extension (Stat = 0x8)
 
@@ -346,6 +361,21 @@ claim-check = {
   scope-id: uint,
   expiry-timestamp: uint,        ; Unix epoch microseconds
   validation: stopping-point-validation,
+}
+~~~~
+
+#### Support Types
+
+~~~~ cddl
+entity-status = uint .size 1 ; Values 0x0-0xC per Section 6.2.2
+
+stopping-point-validation = {
+  ? state-checksum: bstr,        ; Hash of processing state
+  ? bytes-processed: uint,       ; Progress marker
+  ? children-complete: uint,
+  ? children-total: uint,
+  ? is-resumable: bool,
+  ? checkpoint-ref: tstr,
 }
 ~~~~
 
