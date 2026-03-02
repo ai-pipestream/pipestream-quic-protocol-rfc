@@ -50,4 +50,4 @@ WebTransport provides raw byte streams with no built-in coordination semantics. 
 
 ## Summary
 
-PipeStream occupies a design point not addressed by existing protocols: a QUIC-native application protocol combining multiplexed entity streaming, recursive decomposition with hierarchical scopes, Merkle-based integrity propagation, and barrier-synchronized reassembly. Existing protocols address subsets of these requirements but none provide the integrated lifecycle and coordination semantics that PipeStream defines.
+PipeStream occupies a design point not addressed by existing protocols: a QUIC-native application protocol combining multiplexed entity streaming, recursive decomposition with hierarchical scopes, Merkle-based integrity propagation, and barrier-synchronized reassembly. While existing protocols like SCTP {{RFC9260}} and PPSPP {{RFC7574}} address subsets of these requirements, none provide the integrated lifecycle and coordination semantics that PipeStream defines.
