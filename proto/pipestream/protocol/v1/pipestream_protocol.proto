@@ -21,6 +21,19 @@ import "google/protobuf/any.proto";
 // could cause undefined behavior in state machines and cursor advancement.
 option features.enum_type = CLOSED;
 
+// SerializationFormat specifies the encoding used for variable-length control
+// messages (frame types 0x80-0xFF) and entity headers. Negotiated during the
+// CONNECT handshake via the Capabilities message. CLOSED enum: unknown values
+// MUST be rejected on the wire.
+enum SerializationFormat {
+  // CBOR encoding (RFC 8949). This is the default when the field is not
+  // present, ensuring IETF-native interoperability.
+  SERIALIZATION_FORMAT_CBOR = 0;
+
+  // Protocol Buffers encoding. Requires explicit negotiation.
+  SERIALIZATION_FORMAT_PROTOBUF = 1;
+}
+
 // Capabilities describes the feature set supported by a PipeStream endpoint.
 // Exchanged during the CONNECT handshake so that both sides can negotiate
 // which protocol layers and resource limits apply to the session.
@@ -49,6 +62,11 @@ message Capabilities {
   // endpoint is willing to buffer before requiring cursor advancement.
   // Default is 2,147,483,648 (2^31).
   uint32 max_window_size = 6;
+
+  // Serialization format for variable-length control messages (0x80-0xFF)
+  // and entity headers. Both peers MUST agree on the format during capability
+  // exchange. Default: CBOR (0).
+  SerializationFormat serialization_format = 7;
 }
 
 // EntityHeader is sent at the beginning of each entity stream to describe

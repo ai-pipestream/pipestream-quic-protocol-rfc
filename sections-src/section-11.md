@@ -28,7 +28,7 @@ IANA is requested to create the "PipeStream Status Codes" registry. Status codes
 
 | Value | Name | Layer | Description |
 |-------|------|-------|-------------|
-| 0x0 | UNSPECIFIED | - | Protobuf default / heartbeat |
+| 0x0 | UNSPECIFIED | - | Default / heartbeat |
 | 0x1 | PENDING | 0 | Entity announced |
 | 0x2 | PROCESSING | 0 | In progress |
 | 0x3 | COMPLETE | 0 | Success |
@@ -61,6 +61,16 @@ IANA is requested to create the "PipeStream Error Codes" registry. Values in the
 | 0x0A | PIPESTREAM_CLAIM_EXPIRED | Claim check expired |
 | 0x0B | PIPESTREAM_CLAIM_NOT_FOUND | Claim check not found |
 | 0x0C | PIPESTREAM_LAYER_UNSUPPORTED | Protocol layer not supported |
+
+## PipeStream Serialization Format Registry
+
+IANA is requested to create the "PipeStream Serialization Formats" registry. New entries require Expert Review {{RFC8126}}.
+
+| Value | Name | Description | Reference |
+|-------|------|-------------|-----------|
+| 0 | CBOR | Concise Binary Object Representation | RFC 8949, this document |
+| 1 | PROTOBUF | Protocol Buffers | this document |
+| 2-255 | Reserved | Reserved for future use | this document |
 
 ## URI Scheme Registration
 

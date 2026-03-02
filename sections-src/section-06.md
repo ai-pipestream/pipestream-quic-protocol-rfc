@@ -4,7 +4,7 @@ This section defines the wire formats for PipeStream frames. All multi-octet int
 
 ## Control Stream Framing (Stream 0)
 
-To support mixed content (bit-packed frames and Protobuf messages) on the Control Stream, PipeStream uses a Unified Control Frame (UCF) header.
+To support mixed content (bit-packed frames and serialized messages) on the Control Stream, PipeStream uses a Unified Control Frame (UCF) header.
 
 ### UCF Header
 
@@ -13,9 +13,9 @@ Every message on Stream 0 MUST begin with a 1-octet Frame Type.
 | Value | Frame Class | Length Encoding | Description |
 |-------|-------------|-----------------|-------------|
 | 0x50-0x7F | Fixed | No length prefix | Bit-packed control frames with type-defined sizes |
-| 0x80-0xFF | Variable | 4-octet Length + N | Variable-size Protobuf-encoded control messages |
+| 0x80-0xFF | Variable | 4-octet Length + N | Variable-size serialized control messages (encoding per Section 3.5) |
 
-For Fixed frames, the receiver determines frame size from the Frame Type value. For Variable frames, the Type is followed by a 4-octet unsigned integer (big-endian) indicating the length of the Protobuf message that follows.
+For Fixed frames, the receiver determines frame size from the Frame Type value. For Variable frames, the Type is followed by a 4-octet unsigned integer (big-endian) indicating the length of the serialized message that follows.
 
 Variable-frame Length (32 bits):
 :   The payload length in octets, excluding the 1-octet Type and the 4-octet Length field. Receivers MUST reject lengths greater than 16,777,215 octets (16 MiB - 1) with PIPESTREAM_ENTITY_TOO_LARGE (0x06).
@@ -78,7 +78,7 @@ Reserved (16 bits):
 
 | Value | Name        | Layer | Description                            |
 |-------|-------------|-------|----------------------------------------|
-| 0x0   | UNSPECIFIED | -     | Protobuf default / heartbeat signal      |
+| 0x0   | UNSPECIFIED | -     | Default / heartbeat signal      |
 | 0x1   | PENDING     | 0     | Entity announced, not yet transmitting |
 | 0x2   | PROCESSING  | 0     | Entity transmission in progress        |
 | 0x3   | COMPLETE    | 0     | Entity successfully processed          |
@@ -260,9 +260,9 @@ Claim Check ID (64 bits):
 Expiry Timestamp (64 bits):
 :   Unix epoch timestamp in microseconds when the claim expires.
 
-## Protobuf-Encoded Messages (0x80-0xFF)
+## Variable-Length Serialized Messages (0x80-0xFF)
 
-Messages in this range are preceded by a 4-octet length field.
+Messages in this range are preceded by a 4-octet length field. The message body is encoded using the serialization format negotiated during capability exchange (Section 3.5). If no format was negotiated, CBOR {{RFC8949}} is the default.
 
 | Type | Message Name | Reference |
 |-------|--------------|-----------|
@@ -281,7 +281,7 @@ Entity frames carry the actual document entity data on Entity Streams.
    |    Header Length (4)      |   4 octets, big-endian uint32
    +---------------------------+
    |                           |
-   |    Header (Protobuf)      |   Variable length
+   |    Header (serialized)    |   Variable length
    |                           |
    +---------------------------+
    |                           |
@@ -292,30 +292,32 @@ Entity frames carry the actual document entity data on Entity Streams.
 {: type="ascii-art"}
 
 Header Length (4 octets):
-:   The length of the Protobuf-encoded EntityHeader in bytes.
+:   The length of the serialized EntityHeader in bytes.
 
-Header (Protobuf):
-:   The serialized EntityHeader message (see Section 6.7.2).
+Header (serialized):
+:   The EntityHeader message encoded in the negotiated serialization format (see Section 6.7.2).
 
 Payload (variable):
 :   The raw entity data.
 
-### Entity Header (Protobuf)
+### Entity Header
 
-~~~~ protobuf
-message EntityHeader {
-  uint32 entity_id = 1;         // Scope-local identifier
-  uint32 parent_id = 2;         // 0 for root entities
-  uint32 scope_id = 3;          // Layer 1: scope identifier
-  uint32 layer = 4;             // Data layer (0-3)
-  string content_type = 5;      // MIME type
-  uint64 payload_length = 6;
-  bytes checksum = 7;           // SHA-256 (32 bytes)
-  map<string, string> metadata = 8;
-  ChunkInfo chunk_info = 9;
-  CompletionPolicy completion_policy = 10; // Layer 2: failure handling
+~~~~ cddl
+entity-header = {
+  entity-id: uint,               ; Scope-local identifier
+  ? parent-id: uint,             ; 0 for root entities
+  ? scope-id: uint,              ; Layer 1: scope identifier
+  layer: uint .le 3,             ; Data layer (0-3)
+  ? content-type: tstr,          ; MIME type
+  payload-length: uint,
+  ? checksum: bstr .size 32,     ; SHA-256 (32 bytes)
+  ? metadata: { * tstr => tstr },
+  ? chunk-info: chunk-info,
+  ? completion-policy: completion-policy,
 }
 ~~~~
+
+The EntityHeader is defined above using CDDL {{RFC8610}} notation. On the wire, this structure is encoded using the serialization format negotiated during capability exchange (Section 3.5). CBOR {{RFC8949}} is the default encoding. An informational Protocol Buffers equivalent is provided in Appendix A.
 
 ### Checksum Algorithm
 

@@ -24,24 +24,24 @@ The window size is computed as `(last_assigned - cursor) mod 0xFFFFFFFD`. If `wi
 
 Each Assembly Manifest entry tracks:
 
-~~~~ protobuf
-message AssemblyManifestEntry {
-  uint32 parent_id = 1;
-  uint32 scope_id = 2;           // Layer 1
-  repeated uint32 children_ids = 3;
-  repeated EntityStatus children_status = 4;
-  CompletionPolicy policy = 5;   // Layer 2
-  uint64 created_at = 6;
-  ResolutionState state = 7;
+~~~~ cddl
+assembly-manifest-entry = {
+  parent-id: uint,
+  ? scope-id: uint,              ; Layer 1
+  children-ids: [* uint],
+  ? children-status: [* entity-status],
+  ? policy: completion-policy,   ; Layer 2
+  ? created-at: uint,
+  ? state: resolution-state,
 }
 
-enum ResolutionState {
-  RESOLUTION_STATE_UNSPECIFIED = 0;
-  RESOLUTION_STATE_ACTIVE = 1;
-  RESOLUTION_STATE_RESOLVED = 2;
-  RESOLUTION_STATE_PARTIAL = 3;      // Some children failed/skipped
-  RESOLUTION_STATE_FAILED = 4;
-}
+resolution-state = &(
+  unspecified: 0,
+  active: 1,
+  resolved: 2,
+  partial: 3,                   ; Some children failed/skipped
+  failed: 4,
+)
 ~~~~
 
 ## Checkpoint Blocking
@@ -54,14 +54,14 @@ A checkpoint is satisfied when:
 
 CheckpointFrame (Section 6.6 / Appendix A) carries both:
 
-~~~~ protobuf
-message CheckpointFrame {
-  string checkpoint_id = 1;
-  uint64 sequence_number = 2;
-  uint32 checkpoint_entity_id = 3;
-  uint32 scope_id = 4;
-  uint32 flags = 5;
-  uint32 timeout_ms = 6;
+~~~~ cddl
+checkpoint-frame = {
+  checkpoint-id: tstr,
+  sequence-number: uint,
+  checkpoint-entity-id: uint,
+  ? scope-id: uint,
+  ? flags: uint,
+  ? timeout-ms: uint,
 }
 ~~~~
 
@@ -101,13 +101,13 @@ Implementations MAY choose any data structure that satisfies these complexity re
 
 When yielding or deferring, include validation:
 
-~~~~ protobuf
-message StoppingPointValidation {
-  bytes state_checksum = 1;      // Hash of processing state
-  uint64 bytes_processed = 2;    // Progress marker
-  uint32 children_complete = 3;
-  uint32 children_total = 4;
-  bool is_resumable = 5;
-  string checkpoint_ref = 6;
+~~~~ cddl
+stopping-point-validation = {
+  ? state-checksum: bstr,        ; Hash of processing state
+  ? bytes-processed: uint,       ; Progress marker
+  ? children-complete: uint,
+  ? children-total: uint,
+  ? is-resumable: bool,
+  ? checkpoint-ref: tstr,
 }
 ~~~~

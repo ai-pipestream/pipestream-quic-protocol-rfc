@@ -58,36 +58,38 @@ ALPN Protocol ID: `pipestream/1`
 
 Immediately after QUIC handshake, peers exchange Capabilities messages on Stream 0.
 
+The Capabilities exchange includes serialization format negotiation (Section 3.5). The agreed-upon format applies to all subsequent variable-length serialized messages on Stream 0 and to all entity headers on Entity Streams.
+
 ## PARSE Action
 
 The PARSE action performs dehydration with optional completion policy:
 
-~~~~ protobuf
-message CompletionPolicy {
-  CompletionMode mode = 1;
-  uint32 max_retries = 2;        // Default: 3
-  uint32 retry_delay_ms = 3;     // Default: 1000
-  uint32 timeout_ms = 4;         // Default: 300000 (5 min)
-  float min_success_ratio = 5;   // For QUORUM mode
-  FailureAction on_timeout = 6;
-  FailureAction on_failure = 7;
+~~~~ cddl
+completion-policy = {
+  ? mode: completion-mode,
+  ? max-retries: uint,           ; Default: 3
+  ? retry-delay-ms: uint,        ; Default: 1000
+  ? timeout-ms: uint,            ; Default: 300000 (5 min)
+  ? min-success-ratio: float32,  ; For QUORUM mode
+  ? on-timeout: failure-action,
+  ? on-failure: failure-action,
 }
 
-enum CompletionMode {
-  COMPLETION_MODE_UNSPECIFIED = 0;  // Default; treat as STRICT
-  COMPLETION_MODE_STRICT = 1;       // All children MUST complete
-  COMPLETION_MODE_LENIENT = 2;      // Continue with partial results
-  COMPLETION_MODE_BEST_EFFORT = 3;  // Complete with whatever succeeds
-  COMPLETION_MODE_QUORUM = 4;       // Need min_success_ratio
-}
+completion-mode = &(
+  unspecified: 0,                ; Default; treat as STRICT
+  strict: 1,                    ; All children MUST complete
+  lenient: 2,                   ; Continue with partial results
+  best-effort: 3,               ; Complete with whatever succeeds
+  quorum: 4,                    ; Need min-success-ratio
+)
 
-enum FailureAction {
-  FAILURE_ACTION_UNSPECIFIED = 0;  // Default; treat as FAIL
-  FAILURE_ACTION_FAIL = 1;         // Propagate failure up
-  FAILURE_ACTION_SKIP = 2;         // Skip, continue with siblings
-  FAILURE_ACTION_RETRY = 3;        // Retry up to max_retries
-  FAILURE_ACTION_DEFER = 4;        // Create claim check, continue
-}
+failure-action = &(
+  unspecified: 0,                ; Default; treat as FAIL
+  fail: 1,                      ; Propagate failure up
+  skip: 2,                      ; Skip, continue with siblings
+  retry: 3,                     ; Retry up to max-retries
+  defer: 4,                     ; Create claim check, continue
+)
 ~~~~
 
 ## PROCESS Action

@@ -14,7 +14,8 @@ keyword:
  - quic
  - streaming
  - recursive
- - document-processing
+ - distributed-processing
+ - scatter-gather
  - consistency
 github: ai-pipestream/pipestream-quic-protocol-rfc
 venue:
@@ -33,6 +34,8 @@ normative:
   RFC9000:
   RFC8446:
   RFC8126:
+  RFC8949:
+  RFC8610:
 
 informative:
   FIPS-180-4:

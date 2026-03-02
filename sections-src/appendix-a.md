@@ -1,14 +1,16 @@
-# Protobuf Schema Reference
+# Schema Reference (Protocol Buffers)
+
+This appendix provides an informational Protocol Buffers schema equivalent for PipeStream messages. The normative schema definitions use CDDL notation and appear throughout the specification body and in Appendix C. Implementations that negotiate Protobuf as the serialization format (Section 3.5) MAY use these definitions. The canonical Protobuf source files are maintained in the repository at `proto/`.
 
 ## Protocol-Level Messages
 
 ~~~~ protobuf
 // Copyright 2026 PipeStream AI
 //
-// PipeStream Protocol - IETF draft protocol for recursive entity
-// streaming over QUIC. Defines the wire-format messages for Layers 0-2
-// of the PipeStream architecture: core streaming, recursive scoping,
-// and resilience.
+// PipeStream Protocol - IETF draft protocol for recursive
+// entity streaming over QUIC. Defines the wire-format
+// messages for Layers 0-2 of the PipeStream architecture:
+// core streaming, recursive scoping, and resilience.
 //
 // Edition 2023 is used for closed enums (critical for wire-protocol
 // safety) and implicit field presence (distinguishing "not set" from
@@ -27,6 +29,13 @@ import "google/protobuf/any.proto";
 // accepting unknown values could cause undefined behavior in state
 // machines and cursor advancement.
 option features.enum_type = CLOSED;
+
+// SerializationFormat specifies the encoding for variable-
+// length control messages (0x80-0xFF) and entity headers.
+enum SerializationFormat {
+  SERIALIZATION_FORMAT_CBOR = 0;
+  SERIALIZATION_FORMAT_PROTOBUF = 1;
+}
 
 // Capabilities describes the feature set supported by a PipeStream
 // endpoint. Exchanged during the CONNECT handshake so that both
@@ -54,6 +63,9 @@ message Capabilities {
 
   // Maximum flow-control window size, in number of entities.
   uint32 max_window_size = 6;
+
+  // Serialization format (default: CBOR).
+  SerializationFormat serialization_format = 7;
 }
 
 // EntityHeader is sent at the beginning of each entity stream to
@@ -165,7 +177,7 @@ enum EntityStatus {
   ENTITY_STATUS_ABANDONED = 12;
 }
 
-// StatusFrame is the Protobuf representation of a status transition.
+// StatusFrame represents a status transition.
 message StatusFrame {
   // Identifier of the entity.
   uint32 entity_id = 1;
@@ -180,7 +192,7 @@ message StatusFrame {
   google.protobuf.Any extended_data = 4;
 }
 
-// CheckpointFrame (Protobuf, Type 0x81)
+// CheckpointFrame (Type 0x81)
 message CheckpointFrame {
   // Unique checkpoint identifier.
   string checkpoint_id = 1;

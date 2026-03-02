@@ -46,7 +46,7 @@ The `session-id` segment identifies application context for detached or resumabl
 
 ## Entity Streams (Streams 2+)
 
-Entity Streams carry the actual document entity data.
+Entity Streams carry the actual entity data.
 
 ### Unidirectional Data Flow
 

@@ -32,3 +32,5 @@
 
 {::include sections-src/appendix-b.md}
 
+{::include sections-src/appendix-c.md}
+

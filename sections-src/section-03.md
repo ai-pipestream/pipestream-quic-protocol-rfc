@@ -46,16 +46,32 @@ Layer 2 is OPTIONAL and requires Layer 1. Implementations advertise Layer 2 supp
 
 During CONNECT, endpoints exchange supported capabilities:
 
-~~~~ protobuf
-message Capabilities {
-  bool layer0_core = 1;           // Always true
-  bool layer1_recursive = 2;      // Scoped IDs, digests
-  bool layer2_resilience = 3;     // Yield, claim checks
-  uint32 max_scope_depth = 4;     // Default: 7 (8 levels, 0-7)
-  uint32 max_entities_per_scope = 5;  // Default: 4,294,967,294
-                                      // (2^32-2)
-  uint32 max_window_size = 6;     // Default: 2,147,483,648 (2^31)
+~~~~ cddl
+serialization-format = &(
+  cbor: 0,                         ; Default (IETF native)
+  protobuf: 1,
+)
+
+capabilities = {
+  layer0-core: bool,               ; Always true
+  layer1-recursive: bool,          ; Scoped IDs, digests
+  layer2-resilience: bool,         ; Yield, claim checks
+  ? max-scope-depth: uint .le 7,   ; Default: 7 (8 levels, 0-7)
+  ? max-entities-per-scope: uint,  ; Default: 4,294,967,294
+  ? max-window-size: uint,         ; Default: 2,147,483,648
+  ? serialization-format: serialization-format, ; Default: CBOR
 }
 ~~~~
 
 Peers negotiate down to common capabilities. If Layer 2 is requested but Layer 1 is not supported, Layer 2 MUST be disabled.
+
+### Serialization Format Negotiation
+
+The serialization_format field determines the encoding used for all variable-length control messages (frame types 0x80-0xFF) and entity headers. Negotiation proceeds as follows:
+
+1. Each peer advertises its preferred serialization_format in its Capabilities message.
+2. If both peers advertise the same format, that format is used.
+3. If the peers advertise different formats, CBOR {{RFC8949}} (the default) MUST be used as the fallback.
+4. If serialization_format is absent (field not set), the peer is assumed to prefer CBOR.
+
+The Capabilities message itself is always encoded in the format initiated by the client. If the server cannot decode the client's Capabilities message, it MUST close the connection with PIPESTREAM_INTERNAL_ERROR (0x01).

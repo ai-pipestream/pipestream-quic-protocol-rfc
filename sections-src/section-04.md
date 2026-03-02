@@ -6,7 +6,7 @@ This section provides a high-level overview of the PipeStream protocol architect
 
 ### True Streaming Processing
 
-PipeStream MUST enable true streaming document processing where entities are transmitted and processed incrementally as they become available. Implementations MUST NOT buffer complete documents before initiating transmission.
+PipeStream MUST enable true streaming processing where entities are transmitted and processed incrementally as they become available. Implementations MUST NOT buffer complete inputs before initiating transmission.
 
 ### Recursive Decomposition
 
