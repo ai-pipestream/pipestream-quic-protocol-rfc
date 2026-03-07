@@ -19,7 +19,7 @@ The Control Stream MUST use QUIC Stream ID 0, which per RFC 9000 is a bidirectio
 
 ### Flow Control Considerations
 
-The Control Stream carries small, bit-packed control frames. STATUS frames are 16 octets base. Implementations MUST ensure adequate flow control credits:
+The Control Stream carries small, bit-packed control frames. STATUS frame payloads are 16 octets base (21 octets on wire including the 5-octet UCF header). Implementations MUST ensure adequate flow control credits:
 
 - The initial MAX_STREAM_DATA for Stream 0 SHOULD be at least 8192 octets. A lower value is permissible for extremely constrained devices but risks stalling status delivery.
 - Implementations SHOULD NOT block Entity Stream transmission due to Control Stream flow control exhaustion. In rare cases where strict ordering between control and data planes is required by the application, an implementation MAY temporarily pause entity transmission until control stream credits are replenished.
@@ -33,6 +33,7 @@ PipeStream heartbeat frames are OPTIONAL and are intended for application-level 
 | Field | Value | Description |
 |-------|-------|-------------|
 | Type | 0x50 (STATUS) | |
+| Length | 16 | STATUS payload length with no cursor or extension |
 | Stat | 0x0 (UNSPECIFIED) | Heartbeat signal |
 | Entity ID | 0xFFFFFFFF | CONNECTION_LEVEL |
 | Scope ID | 0x00000000 | Root scope |

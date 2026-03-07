@@ -20,31 +20,33 @@ Every message on Stream 0 MUST begin with a 1-octet Frame Type and a 4-octet Len
 
 This structure allows any implementation to skip an unknown frame type by reading its length and discarding the payload.
 
+For compactness, the fixed-frame diagrams below show the frame payload that follows the common UCF header. On the wire, each Stream 0 frame is encoded as `Type (1 octet) | Length (4 octets) | Payload`.
+
 ### Frame Types
 
-The following frame types are defined by this document. All frames MUST include the 4-octet Length prefix:
+The following frame types are defined by this document. All frames use the common UCF header:
 
-| Type | Name | Class | Layer | Notes |
-|------|------|-------|-------|-------|
-| 0x50 | STATUS | Control | 0 | Entity lifecycle status transitions |
-| 0x54 | SCOPE_DIGEST | Control | 1 | Merkle-based completion summary |
-| 0x55 | BARRIER | Control | 1 | Subtree synchronization |
-| 0x56 | GOAWAY | Control | 0 | Graceful shutdown signal |
-| 0x80 | CAPABILITIES | Var-Msg | 0 | Negotiated limits/layers (CBOR/Proto) |
-| 0x81 | CHECKPOINT | Var-Msg | 0 | Global synchronization (CBOR/Proto) |
+| Type | Name | Layer | Payload Format |
+|------|------|-------|----------------|
+| 0x50 | STATUS | 0 | Fixed 16-octet payload, with optional cursor and extension payloads |
+| 0x54 | SCOPE_DIGEST | 1 | Fixed 72-octet payload |
+| 0x55 | BARRIER | 1 | Fixed 12-octet payload |
+| 0x56 | GOAWAY | 0 | Fixed 8-octet payload |
+| 0x80 | CAPABILITIES | 0 | Serialized message payload (CBOR/Protobuf) |
+| 0x81 | CHECKPOINT | 0 | Serialized message payload (CBOR/Protobuf) |
 
 ## Status Frames (Layer 0)
 
 ### Status Frame Format (0x50)
 
-The Status Frame reports lifecycle transitions for entities. The frame is 128-bit aligned for efficient parsing on 64-bit architectures.
+The Status Frame payload reports lifecycle transitions for entities. The payload is 128-bit aligned for efficient parsing on 64-bit architectures.
 
 ~~~~
 
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |  Type (0x50)  |Ver(4) |Stat(4)|E|C|D(3) |   Flags (11 bits)   |
+   | Ver(4) |Stat(4)|E|C|D(3) |           Flags (19 bits)          |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                       Entity ID (32 bits)                     |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -70,7 +72,7 @@ C (1 bit):
 D (3 bits):
 :   Explicit scope nesting depth (0-7). 0=Root. Layer 1.
 
-Flags (11 bits):
+Flags (19 bits):
 :   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
 
 Entity ID (32 bits):
@@ -100,7 +102,7 @@ Reserved (32 bits):
 | 0xB   | SKIPPED     | 2     | Intentionally skipped                  |
 | 0xC   | ABANDONED   | 2     | Timed out                              |
 
-The base STATUS frame is 16 octets. When C=1, a 4-octet cursor value follows (total 20 octets). When E=1, an Extension Header follows all other STATUS fields.
+The base STATUS payload is 16 octets (21 octets on the wire including the UCF header). When C=1, a 4-octet cursor value follows (20-octet payload, 25 octets on the wire). When E=1, an Extension Header follows all other STATUS fields.
 
 ### Entity Status State Machine
 
@@ -154,7 +156,7 @@ When Protocol Layer 1 is negotiated, a scope completion is summarized:
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |  Type (0x54)  |  Flags (8)      |        Reserved (16)        |
+   |  Flags (8)      |        Reserved (24)                        |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                       Scope ID (32 bits)                      |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -202,7 +204,7 @@ Entities Deferred (64 bits):
 Merkle Root (256 bits):
 :   The SHA-256 Merkle root covering all entity statuses in the scope (see Section 9.5).
 
-The SCOPE_DIGEST frame is 72 octets total. The Scope ID MUST match the 32-bit identifier defined in Section 6.2.1.
+The SCOPE_DIGEST payload is 72 octets (77 octets on the wire including the UCF header). The Scope ID MUST match the 32-bit identifier defined in Section 6.2.1.
 
 ## Barrier Frame (0x55)
 
@@ -211,7 +213,7 @@ The SCOPE_DIGEST frame is 72 octets total. The Scope ID MUST match the 32-bit id
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |  Type (0x55)  |S|  Reserved (23 bits)                         |
+   |S|  Reserved (31 bits)                                         |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                       Scope ID (32 bits)                      |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -223,7 +225,7 @@ The SCOPE_DIGEST frame is 72 octets total. The Scope ID MUST match the 32-bit id
 S (1 bit):
 :   Status (0 = waiting, 1 = released).
 
-Reserved (23 bits):
+Reserved (31 bits):
 :   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
 
 Scope ID (32 bits):
@@ -231,6 +233,8 @@ Scope ID (32 bits):
 
 Parent Entity ID (32 bits):
 :   The identifier of the parent entity whose sub-tree is blocked by this barrier.
+
+The BARRIER payload is 12 octets (17 octets on the wire including the UCF header).
 
 ## GOAWAY Frame (0x56)
 
@@ -241,18 +245,20 @@ The GOAWAY frame signals that the sender will not accept new entities beyond a s
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |  Type (0x56)  |      Reserved (24 bits)                       |
+   |                           Reserved (32 bits)                  |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |                   Last Entity ID (32 bits)                    |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ~~~~
 {: type="ascii-art"}
 
-Reserved (24 bits):
+Reserved (32 bits):
 :   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
 
 Last Entity ID (32 bits):
 :   The highest Entity ID that the sender will process. Entities with IDs greater than this value (per the circular ordering defined in Section 9.1) MUST NOT be sent by the peer after receiving this frame.
+
+The GOAWAY payload is 8 octets (13 octets on the wire including the UCF header).
 
 ### Graceful Shutdown Procedure
 
@@ -345,9 +351,9 @@ Claim Check ID (64 bits):
 Expiry Timestamp (64 bits):
 :   Unix epoch timestamp in microseconds when the claim expires.
 
-## Variable-Length Serialized Messages (0x80-0xFF)
+## Serialized Message Frames (0x80-0xFF)
 
-Messages in this range are preceded by a 4-octet length field. The message body is encoded using the serialization format negotiated during capability exchange (Section 3.4.2). If no format was negotiated, CBOR {{RFC8949}} is the default.
+These frame types use the common UCF header defined in Section 6.1. The payload body is encoded using the serialization format negotiated during capability exchange (Section 3.4.2). If no format was negotiated, CBOR {{RFC8949}} is the default.
 
 | Type | Message Name | Reference |
 |-------|--------------|-----------|

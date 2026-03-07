@@ -86,8 +86,8 @@ The serialization_format field determines the encoding used for all variable-len
 Negotiation proceeds as follows:
 
 1. CBOR {{RFC8949}} is the default and MUST be supported by all endpoints.
-2. Each peer advertises its supported serialization_formats in its Capabilities message.
-3. If both peers support a format other than CBOR (e.g., Protobuf), they MAY negotiate its use.
-4. If preferences differ or no common optional format is found, the peers MUST fallback to CBOR {{RFC8949}}.
+2. Each peer advertises its preferred `serialization-format` in its Capabilities message.
+3. If both peers advertise the same format, that format is used.
+4. If preferences differ, or if either peer omits the field, the peers MUST fall back to CBOR {{RFC8949}}.
 
 The initial Capabilities exchange on a new connection MUST use the default CBOR format for both the client's initiation and the server's response. The negotiated serialization format and resource limits take effect immediately following the successful completion of this initial Capabilities exchange (one request and one response). If a peer cannot decode the initial Capabilities exchange, it MUST close the connection with PIPESTREAM_INTERNAL_ERROR (0x01).
