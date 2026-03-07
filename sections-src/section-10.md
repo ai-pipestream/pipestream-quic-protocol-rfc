@@ -64,7 +64,7 @@ PipeStream entity headers and control stream frames carry metadata that may reve
 
 3. **Traffic analysis**: The timing and size of status frames on the Control Stream may correlate with processing patterns. Implementations operating in privacy-sensitive environments SHOULD send status frames at fixed intervals with padding to obscure processing timing. Deployments in trusted environments MAY omit traffic padding to reduce bandwidth overhead.
 
-4. **Identifiers**: Application-level work-unit identifiers and filenames carried inside profile-defined payload envelopes are not interpreted by PipeStream Core but may still be logged by intermediate processing nodes. Implementations SHOULD provide mechanisms to redact or pseudonymize such identifiers at pipeline boundaries. This recommendation may be relaxed when all nodes in the pipeline are operated by the same administrative entity.
+4. **Identifiers**: Application-level input identifiers and filenames carried inside profile-defined payload envelopes are not interpreted by PipeStream Core but may still be logged by intermediate processing nodes. Implementations SHOULD provide mechanisms to redact or pseudonymize such identifiers at pipeline boundaries. This recommendation may be relaxed when all nodes in the pipeline are operated by the same administrative entity.
 
 ## Replay and Token Reuse
 

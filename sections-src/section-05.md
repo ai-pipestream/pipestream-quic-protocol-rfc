@@ -60,7 +60,7 @@ When the QUIC connection-level flow control window is exhausted, new Entity Stre
 
 ### Entity Granularity and Stream Overhead
 
-PipeStream's "one entity per stream" model (Section 5.2) provides clean multiplexing and flow control but introduces per-stream overhead (QUIC STREAM frame headers and internal stack state).
+PipeStream's "one entity per stream" model (Section 4.2) provides clean multiplexing and flow control but introduces per-stream overhead (QUIC STREAM frame headers and internal stack state).
 
 1. **Small Payloads:** For workloads consisting of many small entities (e.g., <1 KiB), the per-stream overhead may become significant. Implementations SHOULD avoid excessive fragmentation and prefer coarser entity granularity where possible.
 2. **Aggregation:** Application profiles MAY define mechanisms for bundling multiple small logical units into a single PipeStream entity to reduce transport-layer overhead.

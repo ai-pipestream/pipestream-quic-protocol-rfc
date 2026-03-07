@@ -67,7 +67,7 @@ E (1 bit):
 :   Extended frame flag. If set, an Extension Header (Section 6.6.1) MUST follow the base frame (and any cursor update).
 
 C (1 bit):
-:   Cursor update flag. A 4-octet cursor value follows (Section 6.2.3).
+:   Cursor update flag. A 4-octet cursor value follows (Section 6.2.4).
 
 D (3 bits):
 :   Explicit scope nesting depth (0-7). 0=Root. Layer 1.

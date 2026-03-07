@@ -56,7 +56,7 @@ A checkpoint is satisfied when:
 2. All Assembly Manifest entries within the checkpoint scope have been resolved.
 3. All nested checkpoints within the checkpoint scope have been satisfied.
 
-CheckpointFrame (Section 6.6 / Appendix C) carries both:
+CheckpointFrame (Section 6.7 / Appendix C) carries both:
 
 ~~~~ cddl
 checkpoint-frame = {
