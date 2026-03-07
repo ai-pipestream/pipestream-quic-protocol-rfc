@@ -124,6 +124,10 @@ checkpoint-frame = {
   ? timeout-ms: uint,
 }
 
+; -----------------------------------------------------------
+; Entity status codes
+; -----------------------------------------------------------
+
 entity-status = &(
   unspecified: 0,
   pending: 1,

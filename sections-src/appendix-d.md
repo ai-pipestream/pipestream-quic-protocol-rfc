@@ -34,8 +34,6 @@ edition = "2023";
 
 package pipestream.protocol.v1;
 
-import "google/protobuf/any.proto";
-
 // All enums in this file are CLOSED. Unknown enum values received on
 // the wire MUST be rejected. This is essential because status codes
 // are encoded as 4-bit values in the status frame wire format;
