@@ -31,14 +31,15 @@ PipeStream MUST be implemented over QUIC {{RFC9000}} to leverage:
 
 ### Multi-Layer Data Representation
 
-The protocol MUST support four distinct data representation layers:
+The protocol MUST support four distinct data representation layers whose
+concrete semantics are defined by application profiles:
 
-| Layer | Name       | Description                                    |
-|-------|------------|------------------------------------------------|
-| 0     | BlobBag    | Raw binary data with metadata                  |
-| 1     | SemanticLayer | Annotated content with embeddings           |
-| 2     | ParsedData | Structured extracted information               |
-| 3     | CustomEntity | Application-specific extension               |
+| Layer | Conventional Role | Description |
+|-------|-------------------|-------------|
+| 0     | Raw input | Binary or originating payload bytes |
+| 1     | Enriched intermediate | Annotated or partially processed payload |
+| 2     | Structured result | Normalized or extracted output |
+| 3     | Extension | Application-specific payload semantics |
 
 ## Architecture Summary
 

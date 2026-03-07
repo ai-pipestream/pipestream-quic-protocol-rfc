@@ -42,9 +42,9 @@ A PipeStream session proceeds through four sequential actions:
 | Phase | Action | Cardinality | Description |
 |-------|--------|-------------|-------------|
 | 1 | CONNECT | 1:1 | Session establishment and capability negotiation |
-| 2 | PARSE | 1:N | Dehydration: decompose input into entities |
+| 2 | PARSE | 1:N | Decomposition: dehydrate a root entity into sub-entities |
 | 3 | PROCESS | 1:1 or N:1 | Transform, rehydrate, aggregate, or pass through entities (parallel) |
-| 4 | SINK | N:1 | Terminal consumption: index, store, or notify |
+| 4 | SINK | N:1 | Terminal consumption by an application-defined sink |
 
 ## CONNECT Action
 
@@ -58,11 +58,17 @@ ALPN Protocol ID: `pipestream/1`
 
 Immediately after QUIC handshake, peers exchange Capabilities messages on Stream 0.
 
-The Capabilities exchange includes serialization format negotiation (Section 3.5). The agreed-upon format applies to all subsequent variable-length serialized messages on Stream 0 and to all entity headers on Entity Streams.
+The Capabilities exchange includes serialization format negotiation
+(Section 3.4.2). The agreed-upon format applies to all subsequent
+variable-length serialized messages on Stream 0 and to all entity
+headers on Entity Streams.
 
 ## PARSE Action
 
-The PARSE action performs dehydration with optional completion policy:
+The PARSE action performs decomposition by dehydrating an input entity
+into one or more sub-entities. When Layer 2 is negotiated, the sender
+MAY attach a completion policy that governs how partial success,
+timeouts, or retries are handled during recursive processing.
 
 ~~~~ cddl
 completion-policy = {
@@ -103,8 +109,8 @@ failure-action = &(
 
 ## SINK Action
 
-| Type | Description |
-|------|-------------|
-| INDEX | Search engine integration (Elasticsearch, Solr, etc.) |
-| STORAGE | Blob storage persistence (Object stores, Cloud storage) |
-| NOTIFICATION | Webhook/messaging triggers |
+The SINK action represents terminal consumption of processed entities.
+Sink implementations are application-specific and are defined by
+Application Profile specifications. Common sink patterns include
+persistent storage, search engine indexing, event notification, and
+downstream service delivery.

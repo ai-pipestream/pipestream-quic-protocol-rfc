@@ -1,11 +1,11 @@
 ---
 title: "PipeStream: A Recursive Entity Streaming Protocol for Distributed Processing over QUIC"
 abbrev: "PipeStream"
-docname: draft-krickert-pipestream-02
+docname: draft-krickert-pipestream-03
 category: std
 submissiontype: IETF
 number:
-date: 2026-03-01
+date: 2026-03-07
 consensus: true
 v: 3
 area: "Applications and Real-Time"
@@ -48,11 +48,42 @@ normative:
       FIPS: PUB 180-4
 
 informative:
+  PIPESTREAM-DOCPROC:
+    title: "PipeStream Document Processing Profile"
+    author:
+      - ins: "K. Rickert"
+        name: "Kristian Rickert"
+    date: 2026-03
+    seriesinfo:
+      Internet-Draft: draft-krickert-pipestream-docproc-00
+    target: https://datatracker.ietf.org/doc/draft-krickert-pipestream-docproc/
   RFC9114:
   RFC9297:
   RFC9308:
+    title: "Applicability of the QUIC Transport Protocol"
+    author:
+      - ins: "M. Kuehlewind"
+        name: "Mirja Kuehlewind"
+      - ins: "B. Trammell"
+        name: "Brian Trammell"
+    date: 2022-09
+    seriesinfo:
+      RFC: "9308"
+    target: https://www.rfc-editor.org/rfc/rfc9308
   RFC9250:
   RFC9260:
+    title: "Stream Control Transmission Protocol"
+    author:
+      - ins: "R. Stewart"
+        name: "Randall Stewart"
+      - ins: "M. Tuexen"
+        name: "Michael Tuexen"
+      - ins: "K. Nielsen"
+        name: "Kirsty Nielsen"
+    date: 2022-06
+    seriesinfo:
+      RFC: "9260"
+    target: https://www.rfc-editor.org/rfc/rfc9260
   RFC7574:
   RFC7696:
   MOQT:

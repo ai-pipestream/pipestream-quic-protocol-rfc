@@ -15,7 +15,7 @@ Every message on Stream 0 MUST begin with a 1-octet Frame Type.
 | Value | Frame Class | Length Encoding | Description |
 |-------|-------------|-----------------|-------------|
 | 0x50-0x7F | Fixed | No length prefix | Bit-packed control frames with type-defined sizes |
-| 0x80-0xFF | Variable | 4-octet Length + N | Variable-size serialized control messages (encoding per Section 3.5) |
+| 0x80-0xFF | Variable | 4-octet Length + N | Variable-size serialized control messages (encoding per Section 3.4.2) |
 
 For Fixed frames, the receiver determines frame size from the Frame Type value. For Variable frames, the Type is followed by a 4-octet unsigned integer (big-endian) indicating the length of the serialized message that follows. Handling of unknown frame types is specified in Section 11.2.1.
 
@@ -62,7 +62,7 @@ Stat (4 bits):
 :   Status code (see Section 6.2.2).
 
 E (1 bit):
-:   Extended frame flag. If set, an Extension Header (Section 6.5) MUST follow the base frame (and any cursor update).
+:   Extended frame flag. If set, an Extension Header (Section 6.6.1) MUST follow the base frame (and any cursor update).
 
 C (1 bit):
 :   Cursor update flag. A 4-octet cursor value follows (Section 6.2.3).
@@ -302,7 +302,7 @@ If E=1 is set for a Status code that does not define an extension layout in this
 {: type="ascii-art"}
 
 Yield Reason (8 bits):
-:   The reason for yielding (see Section 6.5.1.1).
+:   The reason for yielding (see Section 6.6.2.1).
 
 Token Length (24 bits):
 :   The length of the Yield Token in bytes (maximum 16,777,215).
@@ -347,7 +347,7 @@ Expiry Timestamp (64 bits):
 
 ## Variable-Length Serialized Messages (0x80-0xFF)
 
-Messages in this range are preceded by a 4-octet length field. The message body is encoded using the serialization format negotiated during capability exchange (Section 3.5). If no format was negotiated, CBOR {{RFC8949}} is the default.
+Messages in this range are preceded by a 4-octet length field. The message body is encoded using the serialization format negotiated during capability exchange (Section 3.4.2). If no format was negotiated, CBOR {{RFC8949}} is the default.
 
 | Type | Message Name | Reference |
 |-------|--------------|-----------|
@@ -380,7 +380,7 @@ Header Length (4 octets):
 :   The length of the serialized EntityHeader in bytes.
 
 Header (serialized):
-:   The EntityHeader message encoded in the negotiated serialization format (see Section 6.7.2).
+:   The EntityHeader message encoded in the negotiated serialization format (see Section 6.8.2).
 
 Payload (variable):
 :   The raw entity data.
@@ -398,7 +398,7 @@ entity-header = {
   ? scope-id: uint,              ; 32-bit (Section 6.2.1)
   layer: uint .le 3,             ; Data layer 0-3
   ? content-type: tstr,          ; MIME type
-  payload-length: uint,          ; 32-bit (UCF header)
+  payload-length: uint,          ; Payload byte count
   ? checksum: bstr .size 32,     ; SHA-256; SHOULD be present
   ? metadata: { * tstr => tstr },
   ? chunk-info: chunk-info,

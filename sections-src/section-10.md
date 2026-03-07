@@ -6,7 +6,7 @@ PipeStream inherits security from QUIC {{RFC9000}} and TLS 1.3 {{RFC8446}}. All 
 
 ## Entity Payload Integrity
 
-Each Entity SHOULD include a SHA-256 {{FIPS-180-4}} checksum in its EntityHeader (the `checksum` field defined in Section 6.7.2). The checksum is OPTIONAL in the wire format to accommodate zero-length entities, streamed entities whose final length is unknown at header-emission time, and scenarios where application-layer integrity mechanisms provide equivalent guarantees. When a checksum is present, it MUST be exactly 32 octets containing the SHA-256 digest computed over the raw payload bytes (the octet sequence following the EntityHeader on the Entity Stream). The checksum does not cover the EntityHeader itself.
+Each Entity SHOULD include a SHA-256 {{FIPS-180-4}} checksum in its EntityHeader (the `checksum` field defined in Section 6.8.2). The checksum is OPTIONAL in the wire format to accommodate zero-length entities, streamed entities whose final length is unknown at header-emission time, and scenarios where application-layer integrity mechanisms provide equivalent guarantees. When a checksum is present, it MUST be exactly 32 octets containing the SHA-256 digest computed over the raw payload bytes (the octet sequence following the EntityHeader on the Entity Stream). The checksum does not cover the EntityHeader itself.
 
 For chunked entities (where `chunk-info` is present in the EntityHeader), each chunk MAY carry its own per-chunk checksum. The checksum in the first chunk's EntityHeader, if present, MUST cover only that chunk's payload bytes. An implementation that requires whole-entity integrity verification MUST either compute a rolling digest across all chunks or require the sender to transmit a final summary entity containing the whole-payload checksum.
 
@@ -60,27 +60,27 @@ PipeStream entity headers and control stream frames carry metadata that may reve
 
 1. **Entity structure leakage**: The number of child entities produced by dehydration, the scope depth, and the Entity ID assignment pattern may reveal the structure of the input being processed (e.g., an entity that dehydrates into 50 children is likely a multi-part input). Implementations that require structural privacy SHOULD pad dehydration counts or use fixed decomposition granularity. Deployments that do not handle privacy-sensitive data MAY omit this padding.
 
-2. **Metadata in headers**: The `content_type`, `metadata` map, and `payload_length` fields in EntityHeader (Section 6.7) are transmitted in cleartext within the QUIC-encrypted stream. Implementations that require metadata confidentiality beyond transport encryption SHOULD encrypt EntityHeader fields at the application layer and use an opaque content_type such as `application/octet-stream`. This overhead is unnecessary when the deployment operates within a trusted network.
+2. **Metadata in headers**: The `content_type`, `metadata` map, and `payload_length` fields in EntityHeader (Section 6.8.2) are transmitted in cleartext within the QUIC-encrypted stream. Implementations that require metadata confidentiality beyond transport encryption SHOULD encrypt EntityHeader fields at the application layer and use an opaque content_type such as `application/octet-stream`. This overhead is unnecessary when the deployment operates within a trusted network.
 
 3. **Traffic analysis**: The timing and size of status frames on the Control Stream may correlate with processing patterns. Implementations operating in privacy-sensitive environments SHOULD send status frames at fixed intervals with padding to obscure processing timing. Deployments in trusted environments MAY omit traffic padding to reduce bandwidth overhead.
 
-4. **Identifiers**: The `doc_id` field in PipeDoc (Section 7.1) and filenames in BlobBag entries are application-layer data but may be logged by intermediate processing nodes. Implementations SHOULD provide mechanisms to redact or pseudonymize identifiers at pipeline boundaries. This recommendation may be relaxed when all nodes in the pipeline are operated by the same administrative entity.
+4. **Identifiers**: Application-level work-unit identifiers and filenames carried inside profile-defined payload envelopes are not interpreted by PipeStream Core but may still be logged by intermediate processing nodes. Implementations SHOULD provide mechanisms to redact or pseudonymize such identifiers at pipeline boundaries. This recommendation may be relaxed when all nodes in the pipeline are operated by the same administrative entity.
 
 ## Replay and Token Reuse
 
 ### Yield Token Replay
 
-Yield tokens (Section 6.5.1) contain opaque continuation state that enables resumption of paused entity processing. A replayed yield token could cause an entity to be processed multiple times or to resume from a stale state. To prevent this:
+Yield tokens (Section 6.6.2) contain opaque continuation state that enables resumption of paused entity processing. A replayed yield token could cause an entity to be processed multiple times or to resume from a stale state. To prevent this:
 
 1. Implementations MUST associate each yield token with a stable application context identifier (for example, a session identifier) and Entity ID. In Layer 0-only operation, this context MAY be implicit in the active transport connection. For Layer 2 resumptions that can occur across reconnects or different nodes, the context identifier MUST remain stable across transport connections. A yield token MUST be rejected if presented in a different context than the one that issued it, unless the token was explicitly transferred via a claim check.
 
 2. Implementations MUST invalidate a yield token after it has been consumed for resumption. A second resumption attempt with the same token MUST be rejected.
 
-3. The StoppingPointValidation (Section 9.6) provides integrity checking at resume time. Implementations MUST verify the `state_checksum` field before accepting a resumed entity. If the checksum does not match the current state, the resumption MUST be rejected and the entity MUST be reprocessed from the beginning.
+3. The StoppingPointValidation (Section 9.7) provides integrity checking at resume time. Implementations MUST verify the `state_checksum` field before accepting a resumed entity. If the checksum does not match the current state, the resumption MUST be rejected and the entity MUST be reprocessed from the beginning.
 
 ### Claim Check Replay
 
-Claim checks (Section 6.5.2) are long-lived references that can be redeemed in different sessions. To prevent misuse:
+Claim checks (Section 6.6.3) are long-lived references that can be redeemed in different sessions. To prevent misuse:
 
 1. Each claim check carries an `expiry_timestamp` (Unix epoch microseconds). Implementations MUST reject expired claim checks.
 

@@ -1,29 +1,64 @@
-# Entity Model
+# Entity Payload Model
 
-PipeStream distinguishes between the wire-level entity representation (EntityHeader, Section 6.7.2) and the application-level document envelope (PipeDoc, this section). The EntityHeader is the on-the-wire structure that prefixes every entity payload on an Entity Stream; it carries the fields needed for transport-level processing (entity-id, layer, payload-length, checksum). The PipeDoc structure is an application-layer envelope carried within the entity payload itself, providing domain-specific identification (doc_id) and ownership tracking. A PipeDoc's `entity_id` field MUST match the `entity-id` field in the enclosing EntityHeader.
+This section describes the payload model visible to the core protocol.
+PipeStream distinguishes between the wire-level Entity Header carried on
+Entity Streams and any application-level envelope that may be embedded
+within the payload bytes.
 
-## Core Fields
+## Entity Header
 
-Every PipeStream entity is represented as a PipeDoc message:
+The normative wire-level Entity Header is defined in Section 6.8.2. It
+provides transport-level identification and routing metadata, including
+`entity-id`, `parent-id`, `scope-id`, `layer`, `payload-length`, and
+optional integrity metadata. The core protocol interprets these fields
+for stream processing, flow control, and recursive coordination, but it
+does not define application-specific payload structure.
 
-| Field | Type | Requirement | Description |
-|-------|------|-------------|-------------|
-| doc_id | string | REQUIRED | Unique document identifier (UUID recommended) |
-| entity_id | uint32 | REQUIRED | Scope-local identifier |
-| ownership | OwnershipContext | OPTIONAL | Multi-tenancy tracking |
+## Data Layers
 
-## Four Data Layers
+PipeStream defines a 2-bit Data Layer field (values 0-3) in the Entity
+Header that identifies the payload encoding class. The semantics of each
+layer value are defined by Application Profile specifications. The core
+protocol does not assign meaning to specific layer values; it ensures
+that the layer field is faithfully transmitted and that receivers can
+route entities to appropriate handlers based on layer.
 
-Each PipeDoc carries entity payload in one of four data layers:
+Application Profiles SHOULD define at most four data layers. Common
+patterns include:
 
-| Layer | Name | Content |
-|-------|------|---------|
-| 0 | BlobBag | Raw binary data: original document bytes, images, attachments |
-| 1 | SemanticLayer | Annotated content: text segments with vector embeddings, NLP annotations, NER, classifications |
-| 2 | ParsedData | Structured extraction: key-value pairs, tables, structured fields |
-| 3 | CustomEntity | Extension point: domain-specific extension types |
+| Layer | Conventional Meaning | Purpose |
+|-------|----------------------|---------|
+| 0 | Raw or binary payload | Unprocessed input |
+| 1 | Annotated or enriched payload | Intermediate processing artifacts |
+| 2 | Structured or normalized payload | Final extracted or transformed output |
+| 3 | Application-specific extension | Domain extension point |
 
-## Cloud-Agnostic Storage Reference
+This layering enables pipeline stages to progressively transform
+entities from raw input to structured output while maintaining type
+distinction through the layer field.
+
+## Application-Level Envelope
+
+The Entity Header (Section 6.8.2) provides transport-level
+identification (`entity-id`, `scope-id`, and `layer`). Applications that
+require additional identification, such as a stable input
+identifier that persists across pipeline runs, multi-tenancy context, or
+domain-specific metadata, SHOULD define an application-level envelope
+message carried within the entity payload.
+
+If an application-level envelope carries its own entity identifier, that
+identifier MUST match the `entity-id` in the enclosing Entity Header.
+The definition of application-level envelopes is outside the scope of
+this specification. See [PIPESTREAM-DOCPROC] for an example document
+processing profile that defines such an envelope.
+
+## Common Storage References
+
+PipeStream defines a common storage reference type for entities that
+refer to externally stored data. Application Profiles are not required
+to use this type but SHOULD prefer it over ad hoc storage reference
+formats to improve interoperability between pipeline stages from
+different implementations.
 
 ~~~~ cddl
 file-storage-reference = {

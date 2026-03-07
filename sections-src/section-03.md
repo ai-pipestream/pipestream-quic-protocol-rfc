@@ -21,7 +21,7 @@ All implementations MUST support Layer 0.
 
 Layer 1 adds hierarchical processing capabilities:
 
-- Scoped Entity ID namespaces (collection -> document -> part -> job)
+- Scoped Entity ID namespaces (root -> component -> sub-task -> leaf)
 - Explicit Depth tracking in status frames
 - SCOPE_DIGEST for Merkle-based subtree completion
 - BARRIER for subtree-scoped synchronization
@@ -46,7 +46,7 @@ Layer 2 is OPTIONAL and requires Layer 1. Implementations advertise Layer 2 supp
 
 PipeStream uses a two-tier negotiation model. The ALPN identifier (Section 11.1) identifies the base PipeStream transport mapping, while the `capabilities` structure handles dynamic resource limits and optional layer support that may vary based on endpoint configuration or real-time load.
 
-During CONNECT, endpoints exchange supported capabilities using the `capabilities` structure. This message MUST be encoded using the default CBOR format for both the client's initiation and the server's response (Section 3.5).
+During CONNECT, endpoints exchange supported capabilities using the `capabilities` structure. This message MUST be encoded using the default CBOR format for both the client's initiation and the server's response (Section 3.4.2).
 
 ~~~~ cddl
 serialization-format = &(

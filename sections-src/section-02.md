@@ -5,13 +5,10 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 ## Protocol Entities
 
 **Entity**
-:   The fundamental unit of data flowing through a PipeStream pipeline. An Entity represents either a complete document or a constituent part of a decomposed document. Each Entity possesses a unique identifier within its processing scope and carries payload data in one of the four defined Layer formats. Entities are immutable once created; transformations produce new Entities rather than modifying existing ones.
-
-**Document**
-:   A logical unit of content or work submitted to a PipeStream pipeline for processing. A Document enters the pipeline as a single root Entity and MAY be decomposed into multiple Entities during processing. The Document is considered complete when its root Entity (or the rehydrated result of its decomposition) exits the pipeline.
+:   The fundamental unit of data flowing through a PipeStream pipeline. An Entity represents either a complete input or a constituent part of a decomposed input. Each Entity possesses a unique identifier within its processing scope and carries payload data tagged with a transport-level layer value. Entities are immutable once created; transformations produce new Entities rather than modifying existing ones. An input enters the pipeline as a single root Entity and MAY be decomposed into multiple Entities during processing; it is considered complete when its root Entity (or the rehydrated result of its decomposition) exits the pipeline.
 
 **Scope**
-:   A hierarchical namespace for Entity IDs. Each scope maintains its own Entity ID space, cursor, and Assembly Manifest. Scopes enable collections to contain documents, documents to contain parts, and parts to contain jobs, each with independent ID management. (Protocol Layer 1)
+:   A hierarchical namespace for Entity IDs. Each scope maintains its own Entity ID space, cursor, and Assembly Manifest. Scopes enable root entities to contain parts, and parts to contain sub-tasks, each with independent ID management. (Protocol Layer 1)
 
 ## Dehydration and Rehydration
 
@@ -19,16 +16,16 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 :   The distributed processing pattern implemented by PipeStream. A single input is "scattered" (dehydrated) into multiple parts for parallel processing, and the results are "gathered" (rehydrated) back into a single output. PipeStream extends classical scatter-gather with recursive nesting: any scattered part may itself be scattered further.
 
 **Dehydrate (Scatter)**
-:   The operation of decomposing a document or Entity into multiple constituent Entities for parallel or distributed processing. When an Entity is dehydrated, the originating node MUST create an Assembly Manifest entry recording the identifiers of all resulting sub-entities. The dehydration operation is recursive; a sub-entity produced by dehydration MAY itself be dehydrated, creating a tree of decomposition. Dehydration transitions data from a solid state (a single stored record) to a fluid state (multiple in-flight entities).
+:   The operation of decomposing an Entity into multiple constituent Entities for parallel or distributed processing. When an Entity is dehydrated, the originating node MUST create an Assembly Manifest entry recording the identifiers of all resulting sub-entities. The dehydration operation is recursive; a sub-entity produced by dehydration MAY itself be dehydrated, creating a tree of decomposition. Dehydration transitions data from a solid state (a single complete unit) to a fluid state (multiple in-flight entities).
 
 **Rehydrate (Gather)**
-:   The operation of reassembling multiple Entities back into a single composite Entity or Document. A rehydrate operation MUST NOT proceed until all constituent Entities listed in the corresponding Assembly Manifest entry have been received and processed (or handled according to the Completion Policy). Rehydration transitions data from a fluid state back to a solid state.
+:   The operation of reassembling multiple Entities back into a single composite Entity. A rehydrate operation MUST NOT proceed until all constituent Entities listed in the corresponding Assembly Manifest entry have been received and processed (or handled according to the Completion Policy). Rehydration transitions data from a fluid state back to a solid state.
 
 **Solid State**
-:   A document or Entity that exists as a complete, stored record -- either at rest in storage or as a single root Entity entering or exiting a pipeline. Contrast with "fluid state".
+:   An Entity that exists as a complete, stored unit or as a single root Entity entering or exiting a pipeline. Contrast with "fluid state".
 
 **Fluid State**
-:   A document that has been decomposed into multiple in-flight Entities being processed in parallel across distributed nodes. A document is in the fluid state between dehydration and rehydration. Contrast with "solid state".
+:   An input that has been decomposed into multiple in-flight Entities being processed in parallel across distributed nodes. An input is in the fluid state between dehydration and rehydration. Contrast with "solid state".
 
 ## Consistency Mechanisms
 
@@ -61,12 +58,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 ## Data Representation
 
 **Data Layer**
-:   One of four defined representations for Entity payload data:
-
-    1. **BlobBag**: Raw binary data with minimal metadata
-    2. **SemanticLayer**: Annotated content with structural and semantic metadata
-    3. **ParsedData**: Structured information extracted from document content
-    4. **CustomEntity**: Application-specific extension Layer
+:   A transport-level 2-bit field carried in the Entity Header that identifies the payload representation. The concrete meaning of each layer value is defined by an application profile rather than by the core protocol.
 
 ## Additional Terms
 
@@ -77,7 +69,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 :   A node in the mesh that performs operations on entities (e.g., transformation, dehydration, or rehydration).
 
 **Sink**
-:   A terminal stage in a pipeline where rehydrated documents are persisted or delivered to an external system.
+:   A terminal stage in a pipeline where rehydrated entities or terminal entities are persisted or delivered to an external system.
 
 **Stage**
 :   A single processing step within a Pipeline.

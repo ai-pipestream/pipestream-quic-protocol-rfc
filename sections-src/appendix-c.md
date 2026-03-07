@@ -1,8 +1,16 @@
 # Appendix C: Schema Reference (CDDL)
 
-This appendix consolidates the normative CDDL {{RFC8610}} schema definitions for all PipeStream messages. These definitions are authoritative for the wire format when CBOR {{RFC8949}} is the negotiated serialization format (the default). Individual definitions also appear inline throughout the specification body.
+This appendix consolidates the normative CDDL {{RFC8610}} schema
+definitions for PipeStream Core messages. These definitions are
+authoritative for the wire format when CBOR {{RFC8949}} is the
+negotiated serialization format (the default). Individual definitions
+also appear inline throughout the specification body.
 
-An informational Protocol Buffers equivalent is provided in Appendix D for implementations that negotiate Protobuf encoding.
+An informational Protocol Buffers equivalent is provided in Appendix D
+for implementations that negotiate Protobuf encoding. Application-
+specific payload envelopes and profile-specific schemas are outside the
+scope of this appendix; see [PIPESTREAM-DOCPROC] for an example profile
+that defines such messages.
 
 ~~~~ cddl
 ; -----------------------------------------------------------
@@ -218,22 +226,6 @@ scope-digest = {
   entities-failed: uint,
   entities-deferred: uint,
   merkle-root: bstr .size 32,
-}
-
-; -----------------------------------------------------------
-; Document envelope
-; -----------------------------------------------------------
-
-pipe-doc = {
-  doc-id: tstr,
-  entity-id: uint,
-  ? ownership: ownership-context,
-}
-
-ownership-context = {
-  owner-id: tstr,
-  ? group-id: tstr,
-  ? scopes: [* tstr],
 }
 
 ; -----------------------------------------------------------

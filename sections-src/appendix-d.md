@@ -1,6 +1,16 @@
 # Appendix D: Schema Reference (Protocol Buffers)
 
-This appendix provides an informational Protocol Buffers schema equivalent for PipeStream messages. The normative schema definitions use CDDL notation and appear throughout the specification body and in Appendix C. Implementations that negotiate Protobuf as the serialization format (Section 3.5) MAY use these definitions. The canonical Protobuf source files are maintained in the repository at `proto/`.
+This appendix provides an informational Protocol Buffers schema
+equivalent for PipeStream Core messages. The normative schema
+definitions use CDDL notation and appear throughout the specification
+body and in Appendix C. Implementations that negotiate Protobuf as the
+serialization format (Section 3.4.2) MAY use these definitions. The
+canonical Protobuf source files are maintained in the repository at
+`proto/`.
+
+Application-specific payload envelopes and domain-specific schemas are
+outside the scope of this appendix; see [PIPESTREAM-DOCPROC] for an
+example profile that defines such messages.
 
 ## Protocol-Level Messages
 
@@ -327,31 +337,6 @@ message ScopeDigest {
 
   // Merkle root hash.
   bytes merkle_root = 6;
-}
-
-// PipeDoc represents the top-level document envelope for an entity.
-message PipeDoc {
-  // Unique document identifier.
-  string doc_id = 1;
-
-  // Identifier of the entity.
-  uint32 entity_id = 2;
-
-  // Ownership and access context.
-  OwnershipContext ownership = 3;
-}
-
-// OwnershipContext defines multi-tenancy and access control for
-// entities.
-message OwnershipContext {
-  // Entity owner identifier.
-  string owner_id = 1;
-
-  // Group identifier.
-  string group_id = 2;
-
-  // List of access scopes.
-  repeated string scopes = 3;
 }
 
 // FileStorageReference provides a location for external data.

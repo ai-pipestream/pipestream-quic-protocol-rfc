@@ -36,7 +36,11 @@ PipeStream also requires a persistent control stream carrying compact, fixed-siz
 
 gRPC defines a remote procedure call framework over HTTP/2, with experimental support for HTTP/3. Bidirectional streaming in gRPC is scoped to a single RPC method: one request stream and one response stream per call. PipeStream requires an arbitrary number of concurrent entity streams with independent flow control, plus a dedicated control stream, all within a single connection. Achieving this over gRPC would require either multiplexing all entities onto a single bidirectional RPC (sacrificing per-stream flow control and head-of-line independence) or opening a separate RPC per entity (sacrificing session-level coordination and incurring per-call overhead).
 
+Beyond the stream model mismatch, gRPC does not provide protocol-level primitives for recursive entity decomposition, checkpoint-based consistency across parallel processing paths, or hierarchical scope management with digest propagation. Building equivalent semantics on top of gRPC requires application-layer coordination logic that PipeStream provides natively as part of the protocol specification.
+
 gRPC further mandates a 5-octet length-prefixed framing envelope for every message. PipeStream's fixed-size control frames are bit-packed at the wire level with zero serialization overhead, which is material at the status update frequencies the protocol is designed to sustain.
+
+PipeStream complements rather than replaces gRPC: a PipeStream pipeline stage MAY internally use gRPC to communicate with processing services while relying on PipeStream for inter-stage coordination and consistency.
 
 ## WebTransport
 
