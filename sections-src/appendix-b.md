@@ -24,7 +24,7 @@ HTTP/3 requires maintaining state for QPACK header compression. In high-concurre
 
 ### Stream Independence
 
-gRPC bidirectional streaming is constrained by the lifecycle of a single RPC call. While multiple entities can be multiplexed into one RPC, this reintroduces head-of-line blocking at the application layer if one entity requires retransmission. Alternatively, opening a new RPC for every entity (which could number in the millions for large document sets) incurs substantial setup and teardown overhead. PipeStream treats each entity as an independent QUIC stream, ensuring maximum parallelism and optimal use of QUIC's loss recovery mechanisms.
+gRPC bidirectional streaming is constrained by the lifecycle of a single RPC call. While multiple entities can be multiplexed into one RPC, this reintroduces head-of-line blocking at the application layer if one entity requires retransmission. Alternatively, opening a new RPC for every entity (which could number in the millions for large input sets) incurs substantial setup and teardown overhead. PipeStream treats each entity as an independent QUIC stream, ensuring maximum parallelism and optimal use of QUIC's loss recovery mechanisms.
 
 ## HTTP/3
 

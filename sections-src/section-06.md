@@ -200,7 +200,7 @@ Entities Deferred (64 bits):
 :   The number of entities that were deferred via claim checks.
 
 Merkle Root (256 bits):
-:   The SHA-256 Merkle root covering all entity statuses in the scope (see Section 9.4).
+:   The SHA-256 Merkle root covering all entity statuses in the scope (see Section 9.5).
 
 The SCOPE_DIGEST frame is 72 octets total. The Scope ID MUST match the 32-bit identifier defined in Section 6.2.1.
 

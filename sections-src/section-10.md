@@ -22,7 +22,7 @@ Implementations that require immediate consistency SHOULD buffer the entire enti
 
 ### Algorithm Agility
 
-This specification mandates SHA-256 {{FIPS-180-4}} as the sole checksum algorithm for both payload integrity (this section) and Merkle tree construction (Section 9.4). SHA-256 is well-studied and widely deployed; however, future developments may necessitate migration to a different algorithm.
+This specification mandates SHA-256 {{FIPS-180-4}} as the sole checksum algorithm for both payload integrity (this section) and Merkle tree construction (Section 9.5). SHA-256 is well-studied and widely deployed; however, future developments may necessitate migration to a different algorithm.
 
 PipeStream supports algorithm migration through the capability negotiation mechanism (Section 3.4). A future specification MAY define additional fields in the `capabilities` structure to advertise supported checksum algorithms, following the general principles outlined in {{RFC7696}}. Until such negotiation is defined, all implementations MUST use SHA-256 when producing or verifying checksums. An implementation that receives a checksum of a length other than 32 octets MUST reject the entity with PIPESTREAM_INTEGRITY_ERROR (0x04).
 

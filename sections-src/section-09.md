@@ -20,7 +20,7 @@ The window size is computed as `(last_assigned - cursor) mod 0xFFFFFFFD`. If `wi
 4. On reaching a terminal state (COMPLETE, SKIPPED, ABANDONED, or FAILED with no remaining retries): mark resolved; if `entity_id == cursor`, advance cursor past all contiguous resolved IDs
 5. IDs behind cursor are implicitly recyclable
 
-An entity in the FAILED state that may still transition to RETRYING (Section 6.2.2a) MUST NOT be marked resolved. Only when retries are exhausted or no completion policy permits retries does FAILED become terminal for cursor purposes.
+An entity in the FAILED state that may still transition to RETRYING (see the state transition table in Section 6.2) MUST NOT be marked resolved. Only when retries are exhausted or no completion policy permits retries does FAILED become terminal for cursor purposes.
 
 ## Assembly Manifest
 
