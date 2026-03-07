@@ -55,24 +55,19 @@ PipeStream relies on the flow control and congestion control mechanisms provided
 
 When the QUIC connection-level flow control window is exhausted, new Entity Streams cannot transmit data regardless of whether PipeStream's entity window has capacity. Conversely, when PipeStream's entity window is full, no new Entity Streams are opened even if QUIC flow control credits are available. Implementations MUST respect both limits. An implementation SHOULD monitor QUIC-level flow control credit availability and avoid opening new Entity Streams when connection-level credits are below the expected entity size, to prevent head-of-line blocking across streams sharing the connection budget.
 
-## Entity Streams (Streams 2+)
+## Performance Considerations
 
-Entity Streams carry the actual entity data.
+### Entity Granularity and Stream Overhead
 
-### Unidirectional Data Flow
+PipeStream's "one entity per stream" model (Section 5.2) provides clean multiplexing and flow control but introduces per-stream overhead (QUIC STREAM frame headers and internal stack state).
 
-Entity Streams MUST be unidirectional streams:
+1. **Small Payloads:** For workloads consisting of many small entities (e.g., <1 KiB), the per-stream overhead may become significant. Implementations SHOULD avoid excessive fragmentation and prefer coarser entity granularity where possible.
+2. **Aggregation:** Application profiles MAY define mechanisms for bundling multiple small logical units into a single PipeStream entity to reduce transport-layer overhead.
+3. **Stream Limits:** Senders MUST respect the peer's QUIC `initial_max_streams_uni` and `MAX_STREAMS` limits. High-frequency entity producers SHOULD monitor stream credit availability and adjust dehydration rates accordingly to avoid stalling the pipeline.
 
-| Stream Type | Client to Server | Server to Client |
-|-------------|-------------------|----------|
-| Client-Initiated | 4n + 2 (n >= 0) | 2, 6, 10, 14, ... |
-| Server-Initiated | 4n + 3 (n >= 0) | 3, 7, 11, 15, ... |
+### Control Stream Priority
 
-### One Entity Per Stream
-
-1. Each Entity Stream MUST carry exactly one entity.
-2. The entity_id in the Entity Frame header MUST be unique within its scope.
-3. Once an entity has been completely transmitted, the sender MUST close the stream.
+Implementations SHOULD assign the Control Stream (Stream 0) a higher priority than Entity Streams. Timely delivery of STATUS and SCOPE_DIGEST frames is critical for advancing the cursor and releasing backpressure (Section 9.1).
 
 ## Transport Error Mapping
 

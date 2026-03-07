@@ -79,11 +79,15 @@ Minor, backward-compatible extensions (such as new optional capability fields or
 
 ### Serialization Format Negotiation
 
-The serialization_format field determines the encoding used for all variable-length control messages (frame types 0x80-0xFF) and entity headers. Negotiation proceeds as follows:
+The serialization_format field determines the encoding used for all variable-length control messages (frame types 0x80-0xFF) and entity headers.
 
-1. Each peer advertises its preferred serialization_format in its Capabilities message.
-2. If both peers advertise the same format, that format is used.
-3. If a peer receives a Capabilities message without serialization_format, the sender is assumed to prefer CBOR {{RFC8949}}.
-4. If the resulting preferences differ, the peers MUST use CBOR {{RFC8949}} as the fallback.
+**Mandatory To Implement (MTI):** All PipeStream implementations MUST support CBOR {{RFC8949}}.
+
+Negotiation proceeds as follows:
+
+1. CBOR {{RFC8949}} is the default and MUST be supported by all endpoints.
+2. Each peer advertises its supported serialization_formats in its Capabilities message.
+3. If both peers support a format other than CBOR (e.g., Protobuf), they MAY negotiate its use.
+4. If preferences differ or no common optional format is found, the peers MUST fallback to CBOR {{RFC8949}}.
 
 The initial Capabilities exchange on a new connection MUST use the default CBOR format for both the client's initiation and the server's response. The negotiated serialization format and resource limits take effect immediately following the successful completion of this initial Capabilities exchange (one request and one response). If a peer cannot decode the initial Capabilities exchange, it MUST close the connection with PIPESTREAM_INTERNAL_ERROR (0x01).

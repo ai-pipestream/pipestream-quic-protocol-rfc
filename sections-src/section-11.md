@@ -17,22 +17,20 @@ Specification:
 
 ## PipeStream Frame Type Registry
 
-IANA is requested to create the "PipeStream Frame Types" registry. Values are categorized into Fixed (type-sized, no length prefix) frames in 0x50-0x7F and Variable (4-octet length prefix) frames in 0x80-0xFF. Values 0xC0-0xFF are reserved for private use.
+IANA is requested to create the "PipeStream Frame Types" registry. All frames on Stream 0 MUST use a 4-octet length prefix following the 1-octet Type. Values 0xC0-0xFF are reserved for private use.
 
-| Value | Frame Type Name | Class | Size | Layer | Reference |
-|-------|-----------------|-------|------|-------|-----------|
-| 0x50 | STATUS | Fixed | 16 octets base | 0 | Section 6.2 |
-| 0x54 | SCOPE_DIGEST | Fixed | 72 octets | 1 | Section 6.3 |
-| 0x55 | BARRIER | Fixed | 12 octets | 1 | Section 6.4 |
-| 0x56 | GOAWAY | Fixed | 8 octets | 0 | Section 6.5 |
-| 0x57-0x7F | Reserved | Fixed | - | - | this document |
-| 0x80 | CAPABILITIES | Var | Length-prefixed | 0 | Section 3.4 |
-| 0x81 | CHECKPOINT | Var | Length-prefixed | 0 | Section 9.3 |
-| 0x82-0xBF | Reserved | Var | - | - | this document |
+| Value | Frame Type Name | Layer | Description | Reference |
+|-------|-----------------|-------|-------------|-----------|
+| 0x50 | STATUS | 0 | Entity lifecycle status | Section 6.2 |
+| 0x54 | SCOPE_DIGEST | 1 | Merkle completion summary | Section 6.3 |
+| 0x55 | BARRIER | 1 | Subtree synchronization | Section 6.4 |
+| 0x56 | GOAWAY | 0 | Graceful shutdown signal | Section 6.5 |
+| 0x80 | CAPABILITIES | 0 | Negotiated limits/layers | Section 3.4 |
+| 0x81 | CHECKPOINT | 0 | Global synchronization | Section 9.3 |
 
 ### Unknown Frame Handling
 
-Receivers that encounter a Variable-class frame type (0x80-0xFF) that they do not recognize MUST skip the frame by reading and discarding the number of octets indicated by the 4-octet length prefix. Receivers that encounter an unknown Fixed-class frame type (0x50-0x7F) for which no size is defined MUST close the connection with PIPESTREAM_ENTITY_INVALID (0x05), since the frame size cannot be determined. Future specifications that register new Fixed-class frame types MUST define the frame size in the registry entry.
+Receivers that encounter a frame type that they do not recognize MUST skip the frame by reading and discarding the number of octets indicated by the 4-octet length prefix. This mechanism ensures that future protocol extensions can be introduced without breaking backward compatibility for older implementations.
 
 ## PipeStream Status Code Registry
 

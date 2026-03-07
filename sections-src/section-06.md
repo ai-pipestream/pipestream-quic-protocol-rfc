@@ -6,32 +6,32 @@ This section defines the wire formats for PipeStream frames. All multi-octet int
 
 ## Control Stream Framing (Stream 0)
 
-To support mixed content (bit-packed frames and serialized messages) on the Control Stream, PipeStream uses a Unified Control Frame (UCF) header.
+To ensure forward compatibility and consistent parsing, all messages on the Control Stream use a Unified Control Frame (UCF) structure with an explicit length prefix.
 
 ### UCF Header
 
-Every message on Stream 0 MUST begin with a 1-octet Frame Type.
+Every message on Stream 0 MUST begin with a 1-octet Frame Type and a 4-octet Length field.
 
-| Value | Frame Class | Length Encoding | Description |
-|-------|-------------|-----------------|-------------|
-| 0x50-0x7F | Fixed | No length prefix | Bit-packed control frames with type-defined sizes |
-| 0x80-0xFF | Variable | 4-octet Length + N | Variable-size serialized control messages (encoding per Section 3.4.2) |
+| Field | Type | Description |
+|-------|------|-------------|
+| Type | 1 octet | Frame Type identifier |
+| Length | 4 octets | Total length of the frame payload (excluding Type/Length) |
+| Payload | variable | Frame-specific data |
 
-For Fixed frames, the receiver determines frame size from the Frame Type value. For Variable frames, the Type is followed by a 4-octet unsigned integer (big-endian) indicating the length of the serialized message that follows. Handling of unknown frame types is specified in Section 11.2.1.
+This structure allows any implementation to skip an unknown frame type by reading its length and discarding the payload.
 
-Variable-frame Length (32 bits):
-:   The payload length in octets, excluding the 1-octet Type and the 4-octet Length field. Receivers MUST reject lengths greater than 16,777,215 octets (16 MiB - 1) with PIPESTREAM_ENTITY_TOO_LARGE (0x06).
+### Frame Types
 
-### Fixed Frame Sizes
+The following frame types are defined by this document. All frames MUST include the 4-octet Length prefix:
 
-The following fixed-size frame types are defined by this document:
-
-| Type | Name | Total Size | Notes |
-|------|------|------------|-------|
-| 0x50 | STATUS | 16 octets (base) | 20 octets when C=1; larger when E=1 with extension data |
-| 0x54 | SCOPE_DIGEST | 72 octets | Includes 32-octet Merkle root and 64-bit counters |
-| 0x55 | BARRIER | 12 octets | No variable extension |
-| 0x56 | GOAWAY | 8 octets | Graceful shutdown signal |
+| Type | Name | Class | Layer | Notes |
+|------|------|-------|-------|-------|
+| 0x50 | STATUS | Control | 0 | Entity lifecycle status transitions |
+| 0x54 | SCOPE_DIGEST | Control | 1 | Merkle-based completion summary |
+| 0x55 | BARRIER | Control | 1 | Subtree synchronization |
+| 0x56 | GOAWAY | Control | 0 | Graceful shutdown signal |
+| 0x80 | CAPABILITIES | Var-Msg | 0 | Negotiated limits/layers (CBOR/Proto) |
+| 0x81 | CHECKPOINT | Var-Msg | 0 | Global synchronization (CBOR/Proto) |
 
 ## Status Frames (Layer 0)
 
