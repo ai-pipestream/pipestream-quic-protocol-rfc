@@ -11,7 +11,7 @@ In this profile, the PARSE stage commonly performs document
 decomposition. A root document entity MAY be split into child entities
 representing pages, embedded documents, archive members, images, or
 other logical subcomponents. The decomposition strategy is
-implementation-specific but MUST preserve enough lineage metadata to
+implementation-specific but SHOULD preserve enough lineage metadata to
 allow rehydration at later stages.
 
 ## PROCESS Stage

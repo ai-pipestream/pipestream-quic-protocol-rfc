@@ -11,7 +11,7 @@ entity:
 | 0 | `blob_bag` plus shared envelope metadata | Raw source content |
 | 1 | `semantic_result` plus shared envelope metadata | Annotated or enriched intermediate output |
 | 2 | `parsed_metadata` and/or `structured_data` plus shared envelope metadata | Structured extraction results |
-| 3 | `structured_data` plus shared envelope metadata | Profile extension or vendor-specific payload |
+| 3 | `custom_entity` plus shared envelope metadata | Profile extension or vendor-specific payload |
 
 An implementation of this profile SHOULD NOT populate multiple
 layer-specific payload families in the same PipeDoc instance. Shared
