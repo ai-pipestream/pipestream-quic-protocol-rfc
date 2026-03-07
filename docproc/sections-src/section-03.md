@@ -1,5 +1,23 @@
 # Data Layer Definitions
 
+The PipeStream Entity Header `layer` field is authoritative for the
+semantic interpretation of a document-processing payload. Every
+document-processing entity carries a PipeDoc envelope, but exactly one
+layer-specific payload family is expected to be populated for a given
+entity:
+
+| Layer | PipeDoc fields expected | Notes |
+|-------|-------------------------|-------|
+| 0 | `blob_bag` plus shared envelope metadata | Raw source content |
+| 1 | `semantic_result` plus shared envelope metadata | Annotated or enriched intermediate output |
+| 2 | `parsed_metadata` and/or `structured_data` plus shared envelope metadata | Structured extraction results |
+| 3 | `structured_data` plus shared envelope metadata | Profile extension or vendor-specific payload |
+
+An implementation of this profile SHOULD NOT populate multiple
+layer-specific payload families in the same PipeDoc instance. Shared
+envelope metadata such as `profile_version`, `doc_id`, `entity_id`,
+`search_metadata`, and `ownership` MAY appear at any layer.
+
 ## Layer 0: BlobBag
 
 BlobBag is the Layer 0 representation for raw binary document data. It
@@ -8,8 +26,9 @@ material entering the pipeline, such as PDFs, images, office
 attachments, or archive members.
 
 Each Blob MAY embed bytes inline or MAY reference externally stored data
-via `FileStorageReference`. Blob metadata MAY include MIME type,
-filename, size, and checksum information.
+via the `FileStorageReference` type defined in PipeStream Core. Blob
+metadata MAY include MIME type, filename, size, and checksum
+information.
 
 ## Layer 1: SemanticLayer
 

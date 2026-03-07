@@ -1,12 +1,15 @@
 # IANA Considerations
 
-This document requests the creation of a new "PipeStream Application
-Profiles" registry.
+This document requests no IANA actions.
 
-Registration policy: Expert Review.
+## Profile Identification
 
-Initial registry contents:
+This profile is identified by the case-sensitive string `DOCPROC`.
+Implementations MAY advertise this identifier in out-of-band
+configuration, capability metadata, or application-specific routing
+tables.
 
-| Value | Profile Name | Description | Reference |
-|-------|--------------|-------------|-----------|
-| 0x00 | DOCPROC | Distributed document processing profile | This document |
+The initial profile schema version defined by this document is `1`.
+Receivers that do not support the advertised `profile_version` in a
+PipeDoc payload SHOULD reject that payload at the application layer
+rather than attempting best-effort interpretation.

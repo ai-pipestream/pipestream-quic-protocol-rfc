@@ -2,7 +2,7 @@
 
 
 
-Individual Submission                                         K. Rickert
+Independent Submission                                        K. Rickert
 Internet-Draft                                             PipeStream AI
 Intended status: Informational                              7 March 2026
 Expires: 8 September 2026
@@ -22,8 +22,8 @@ Abstract
    Data Layers: BlobBag (Layer 0), SemanticLayer (Layer 1), ParsedData
    (Layer 2), and CustomEntity (Layer 3).  It also specifies the PipeDoc
    application-level envelope, ownership contexts for multi-tenant
-   environments, and standardized SINK actions for search engine
-   indexing, storage persistence, and event notification.
+   environments, and profile conventions for document-oriented
+   processing and archival correlation.
 
 About This Document
 
@@ -69,10 +69,7 @@ Copyright Notice
    Provisions Relating to IETF Documents (https://trustee.ietf.org/
    license-info) in effect on the date of publication of this document.
    Please review these documents carefully, as they describe your rights
-   and restrictions with respect to this document.  Code Components
-   extracted from this document must include Revised BSD License text as
-   described in Section 4.e of the Trust Legal Provisions and are
-   provided without warranty as described in the Revised BSD License.
+   and restrictions with respect to this document.
 
 Table of Contents
 
@@ -83,29 +80,32 @@ Table of Contents
    2.  PipeDoc Entity Envelope . . . . . . . . . . . . . . . . . . .   4
      2.1.  Core Fields . . . . . . . . . . . . . . . . . . . . . . .   4
      2.2.  OwnershipContext  . . . . . . . . . . . . . . . . . . . .   5
-   3.  Data Layer Definitions  . . . . . . . . . . . . . . . . . . .   5
-     3.1.  Layer 0: BlobBag  . . . . . . . . . . . . . . . . . . . .   5
-     3.2.  Layer 1: SemanticLayer  . . . . . . . . . . . . . . . . .   5
-     3.3.  Layer 2: ParsedData . . . . . . . . . . . . . . . . . . .   6
-     3.4.  Layer 3: CustomEntity . . . . . . . . . . . . . . . . . .   6
-   4.  Document Processing Pipeline Stages . . . . . . . . . . . . .   6
-     4.1.  PARSE Stage (Document Decomposition)  . . . . . . . . . .   6
-     4.2.  PROCESS Stage Patterns  . . . . . . . . . . . . . . . . .   6
-       4.2.1.  Text Extraction . . . . . . . . . . . . . . . . . . .   7
-       4.2.2.  NLP Enrichment  . . . . . . . . . . . . . . . . . . .   7
-       4.2.3.  Structured Table Extraction . . . . . . . . . . . . .   7
-       4.2.4.  Image Processing  . . . . . . . . . . . . . . . . . .   7
-     4.3.  SINK Stage Types  . . . . . . . . . . . . . . . . . . . .   7
-       4.3.1.  INDEX . . . . . . . . . . . . . . . . . . . . . . . .   7
-       4.3.2.  STORAGE . . . . . . . . . . . . . . . . . . . . . . .   7
-       4.3.3.  NOTIFICATION  . . . . . . . . . . . . . . . . . . . .   7
+   3.  Data Layer Definitions  . . . . . . . . . . . . . . . . . . .   6
+     3.1.  Layer 0: BlobBag  . . . . . . . . . . . . . . . . . . . .   7
+     3.2.  Layer 1: SemanticLayer  . . . . . . . . . . . . . . . . .   7
+     3.3.  Layer 2: ParsedData . . . . . . . . . . . . . . . . . . .   7
+     3.4.  Layer 3: CustomEntity . . . . . . . . . . . . . . . . . .   8
+   4.  Document Processing Pipeline Conventions  . . . . . . . . . .   8
+     4.1.  PARSE Stage (Document Decomposition)  . . . . . . . . . .   8
+     4.2.  PROCESS Stage . . . . . . . . . . . . . . . . . . . . . .   8
+     4.3.  SINK Stage  . . . . . . . . . . . . . . . . . . . . . . .   8
    5.  Security Considerations . . . . . . . . . . . . . . . . . . .   8
-     5.1.  PII in Document Metadata  . . . . . . . . . . . . . . . .   8
-     5.2.  Multi-Tenancy via OwnershipContext  . . . . . . . . . . .   8
-   6.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .   8
-   7.  References  . . . . . . . . . . . . . . . . . . . . . . . . .   8
-     7.1.  Normative References  . . . . . . . . . . . . . . . . . .   8
-     7.2.  Informative References  . . . . . . . . . . . . . . . . .   9
+     5.1.  PII in Document Metadata  . . . . . . . . . . . . . . . .   9
+     5.2.  Multi-Tenancy via OwnershipContext  . . . . . . . . . . .   9
+     5.3.  Malicious Content and Resource Exhaustion . . . . . . . .   9
+     5.4.  Metadata and Structured Content Injection . . . . . . . .   9
+     5.5.  Cross-Tenant Trust Boundaries . . . . . . . . . . . . . .   9
+   6.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .  10
+     6.1.  Profile Identification  . . . . . . . . . . . . . . . . .  10
+   7.  References  . . . . . . . . . . . . . . . . . . . . . . . . .  10
+     7.1.  Normative References  . . . . . . . . . . . . . . . . . .  10
+     7.2.  Informative References  . . . . . . . . . . . . . . . . .  10
+   Appendix A.  Appendix A: Complete CDDL Schema . . . . . . . . . .  11
+   Appendix B.  Appendix B: Complete Protocol Buffers Schema . . . .  13
+   Appendix C.  Appendix C: Example Processing Patterns  . . . . . .  16
+     C.1.  Text Extraction . . . . . . . . . . . . . . . . . . . . .  16
+     C.2.  NLP Enrichment  . . . . . . . . . . . . . . . . . . . . .  16
+     C.3.  Structured Table Extraction . . . . . . . . . . . . . . .  16
 
 
 
@@ -114,9 +114,9 @@ Rickert                 Expires 8 September 2026                [Page 2]
 Internet-Draft             PipeStream DocProc                 March 2026
 
 
-   Appendix A.  Appendix A: Complete CDDL Schema . . . . . . . . . .   9
-   Appendix B.  Appendix B: Complete Protocol Buffers Schema . . . .  12
-   Author's Address  . . . . . . . . . . . . . . . . . . . . . . . .  15
+     C.4.  Image Processing  . . . . . . . . . . . . . . . . . . . .  16
+     C.5.  Example Sink Patterns . . . . . . . . . . . . . . . . . .  16
+   Author's Address  . . . . . . . . . . . . . . . . . . . . . . . .  16
 
 1.  Introduction
 
@@ -127,7 +127,7 @@ Internet-Draft             PipeStream DocProc                 March 2026
    semantics for distributed document processing pipelines.  This
    profile assigns concrete meanings to PipeStream's four data layers,
    defines the PipeDoc application-level entity envelope, and specifies
-   common pipeline-stage patterns for document ingestion, enrichment,
+   interoperable payload conventions for document ingestion, enrichment,
    and indexing workflows.
 
 1.2.  Relationship to PipeStream Core
@@ -137,6 +137,12 @@ Internet-Draft             PipeStream DocProc                 March 2026
    profile does not modify any PipeStream Core wire format.  Instead, it
    defines how document-processing implementations interpret the payload
    bytes carried within PipeStream entities.
+
+   This document is intended as an independent industry profile rather
+   than as a standards-track extension to PipeStream Core.  It can
+   evolve on a faster cadence than the core transport specification
+   while preserving wire compatibility with PipeStream entities and
+   control frames.
 
    Implementations of this profile MUST implement PipeStream Core
    [PIPESTREAM] Layer 0 at minimum.  Implementations that require
@@ -156,12 +162,6 @@ Internet-Draft             PipeStream DocProc                 March 2026
    This profile uses all capitalized PipeStream Core terms as defined in
    [PIPESTREAM].  In addition, the following profile terms are used:
 
-   *PipeDoc*  The application-level document envelope carried within an
-      entity payload.  PipeDoc provides a stable document identifier and
-      ownership context for document-processing pipelines.
-
-   *BlobBag*  The Layer 0 representation for raw binary document content
-      and related attachments.
 
 
 
@@ -169,6 +169,17 @@ Rickert                 Expires 8 September 2026                [Page 3]
 
 Internet-Draft             PipeStream DocProc                 March 2026
 
+
+   *PipeDoc*  The application-level document envelope carried within an
+      entity payload.  PipeDoc provides a stable document identifier and
+      ownership context for document-processing pipelines.
+
+   *Profile Version*  A profile-level schema version carried within
+      PipeDoc.  It identifies which revision of this document defined
+      the payload layout for a given document-processing entity.
+
+   *BlobBag*  The Layer 0 representation for raw binary document content
+      and related attachments.
 
    *SemanticLayer*  The Layer 1 representation for annotated content,
       chunking output, embeddings, and NLP annotations.
@@ -186,33 +197,22 @@ Internet-Draft             PipeStream DocProc                 March 2026
    This profile defines PipeDoc as the application-level envelope
    carried within document-processing entity payloads.
 
-     +===========+==================+=============+==================+
-     | Field     | Type             | Requirement | Description      |
-     +===========+==================+=============+==================+
-     | doc_id    | string           | REQUIRED    | Stable document  |
-     |           |                  |             | identifier for   |
-     |           |                  |             | the pipeline run |
-     |           |                  |             | or deduplicated  |
-     |           |                  |             | source object    |
-     +-----------+------------------+-------------+------------------+
-     | entity_id | uint32           | REQUIRED    | Profile-visible  |
-     |           |                  |             | copy of the      |
-     |           |                  |             | enclosing        |
-     |           |                  |             | PipeStream       |
-     |           |                  |             | Entity ID        |
-     +-----------+------------------+-------------+------------------+
-     | ownership | OwnershipContext | OPTIONAL    | Multi-tenant     |
-     |           |                  |             | ownership and    |
-     |           |                  |             | access metadata  |
-     +-----------+------------------+-------------+------------------+
 
-                                  Table 1
 
-   The entity_id in PipeDoc MUST match the entity-id value in the
-   enclosing PipeStream Entity Header.
 
-   PipeDoc MAY carry additional document metadata and layer-specific
-   payload structures as defined in Appendix A and Appendix B.
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -226,12 +226,61 @@ Rickert                 Expires 8 September 2026                [Page 4]
 Internet-Draft             PipeStream DocProc                 March 2026
 
 
+   +===============+================+===========+======================+
+   |Field          |Type            |Requirement| Description          |
+   +===============+================+===========+======================+
+   |profile_version|uint32          |REQUIRED   | Version of this      |
+   |               |                |           | document-processing  |
+   |               |                |           | profile used to      |
+   |               |                |           | encode the envelope  |
+   +---------------+----------------+-----------+----------------------+
+   |doc_id         |string          |REQUIRED   | Stable document      |
+   |               |                |           | identifier for the   |
+   |               |                |           | pipeline run or      |
+   |               |                |           | deduplicated source  |
+   |               |                |           | object               |
+   +---------------+----------------+-----------+----------------------+
+   |entity_id      |uint32          |REQUIRED   | Profile-visible      |
+   |               |                |           | copy of the          |
+   |               |                |           | enclosing            |
+   |               |                |           | PipeStream Entity    |
+   |               |                |           | ID for archival and  |
+   |               |                |           | off-transport        |
+   |               |                |           | correlation          |
+   +---------------+----------------+-----------+----------------------+
+   |ownership      |OwnershipContext|OPTIONAL   | Multi-tenant         |
+   |               |                |           | ownership and        |
+   |               |                |           | access metadata      |
+   +---------------+----------------+-----------+----------------------+
+
+                                  Table 1
+
+   The entity_id in PipeDoc MUST match the entity-id value in the
+   enclosing PipeStream Entity Header.  This field is retained so that
+   archived payloads, detached artifacts, and reprocessed document
+   representations can be correlated after transport headers have been
+   stripped or normalized away.
+
+   PipeDoc MAY carry additional document metadata and layer-specific
+   payload structures as defined in Appendix A and Appendix B.
+
+   The profile_version field MUST be set to 1 for payloads conforming to
+   this document.
+
 2.2.  OwnershipContext
 
    OwnershipContext provides application-layer multi-tenancy and
    authorization metadata for document-processing deployments.  It is
    not interpreted by PipeStream Core; it is consumed only by
    implementations of this profile and related applications.
+
+
+
+
+Rickert                 Expires 8 September 2026                [Page 5]
+
+Internet-Draft             PipeStream DocProc                 March 2026
+
 
       +===========+==========+=============+=======================+
       | Field     | Type     | Requirement | Description           |
@@ -254,6 +303,46 @@ Internet-Draft             PipeStream DocProc                 March 2026
 
 3.  Data Layer Definitions
 
+   The PipeStream Entity Header layer field is authoritative for the
+   semantic interpretation of a document-processing payload.  Every
+   document-processing entity carries a PipeDoc envelope, but exactly
+   one layer-specific payload family is expected to be populated for a
+   given entity:
+
+       +=======+==========================+=======================+
+       | Layer | PipeDoc fields expected  | Notes                 |
+       +=======+==========================+=======================+
+       | 0     | blob_bag plus shared     | Raw source content    |
+       |       | envelope metadata        |                       |
+       +-------+--------------------------+-----------------------+
+       | 1     | semantic_result plus     | Annotated or enriched |
+       |       | shared envelope metadata | intermediate output   |
+       +-------+--------------------------+-----------------------+
+       | 2     | parsed_metadata and/or   | Structured extraction |
+       |       | structured_data plus     | results               |
+       |       | shared envelope metadata |                       |
+       +-------+--------------------------+-----------------------+
+       | 3     | structured_data plus     | Profile extension or  |
+       |       | shared envelope metadata | vendor-specific       |
+       |       |                          | payload               |
+       +-------+--------------------------+-----------------------+
+
+                                 Table 3
+
+
+
+
+
+Rickert                 Expires 8 September 2026                [Page 6]
+
+Internet-Draft             PipeStream DocProc                 March 2026
+
+
+   An implementation of this profile SHOULD NOT populate multiple layer-
+   specific payload families in the same PipeDoc instance.  Shared
+   envelope metadata such as profile_version, doc_id, entity_id,
+   search_metadata, and ownership MAY appear at any layer.
+
 3.1.  Layer 0: BlobBag
 
    BlobBag is the Layer 0 representation for raw binary document data.
@@ -262,8 +351,9 @@ Internet-Draft             PipeStream DocProc                 March 2026
    attachments, or archive members.
 
    Each Blob MAY embed bytes inline or MAY reference externally stored
-   data via FileStorageReference.  Blob metadata MAY include MIME type,
-   filename, size, and checksum information.
+   data via the FileStorageReference type defined in PipeStream Core.
+   Blob metadata MAY include MIME type, filename, size, and checksum
+   information.
 
 3.2.  Layer 1: SemanticLayer
 
@@ -273,14 +363,6 @@ Internet-Draft             PipeStream DocProc                 March 2026
    *  chunked text segments
 
    *  dense vector embeddings
-
-
-
-
-Rickert                 Expires 8 September 2026                [Page 5]
-
-Internet-Draft             PipeStream DocProc                 March 2026
-
 
    *  named-entity annotations
 
@@ -303,6 +385,15 @@ Internet-Draft             PipeStream DocProc                 March 2026
 
    *  parser-specific raw textual output
 
+
+
+
+
+Rickert                 Expires 8 September 2026                [Page 7]
+
+Internet-Draft             PipeStream DocProc                 March 2026
+
+
    This layer is intended for downstream systems that require normalized
    records rather than raw documents or semantic chunks.
 
@@ -317,7 +408,13 @@ Internet-Draft             PipeStream DocProc                 March 2026
    payload MAY pass it through unchanged, provided that PipeStream Core
    processing requirements are still met.
 
-4.  Document Processing Pipeline Stages
+4.  Document Processing Pipeline Conventions
+
+   This section describes common conventions used by document-processing
+   deployments that implement this profile.  It is intentionally non-
+   prescriptive: implementations MAY realize these stages using
+   different internal service boundaries, model stacks, and sink
+   targets.
 
 4.1.  PARSE Stage (Document Decomposition)
 
@@ -328,73 +425,30 @@ Internet-Draft             PipeStream DocProc                 March 2026
    is implementation-specific but MUST preserve enough lineage metadata
    to allow rehydration at later stages.
 
-4.2.  PROCESS Stage Patterns
+4.2.  PROCESS Stage
 
+   The PROCESS stage transforms document entities between profile-
+   defined layer representations.  Typical examples include text
+   extraction, OCR, semantic chunking, embedding generation, entity
+   recognition, and structured field or table extraction.  Example
+   processing patterns are described in Appendix C.
 
+4.3.  SINK Stage
 
-
-Rickert                 Expires 8 September 2026                [Page 6]
-
-Internet-Draft             PipeStream DocProc                 March 2026
-
-
-4.2.1.  Text Extraction
-
-   A text-extraction stage transforms binary document content into
-   textual or layout-aware intermediate representations.  Typical
-   outputs include page text, OCR results, or format-specific structural
-   markup.
-
-4.2.2.  NLP Enrichment
-
-   An NLP enrichment stage adds semantic metadata such as chunking,
-   embeddings, named entities, classifications, or relation annotations.
-   These results are commonly encoded in SemanticLayer payloads.
-
-4.2.3.  Structured Table Extraction
-
-   A table-extraction stage identifies structured tabular regions and
-   emits normalized table representations suitable for indexing or
-   analytics.
-
-4.2.4.  Image Processing
-
-   An image-processing stage derives metadata or features from document
-   images, such as OCR overlays, captions, detections, or classification
-   results.
-
-4.3.  SINK Stage Types
-
-4.3.1.  INDEX
-
-   The INDEX sink delivers processed document entities into search-
-   engine backends such as Elasticsearch, Solr, or equivalent indexing
-   systems.  Implementations SHOULD ensure that indexing occurs only
-   after required rehydration and consistency checks have completed.
-
-4.3.2.  STORAGE
-
-   The STORAGE sink persists processed artifacts to object stores,
-   content repositories, or long-term archival systems.  Implementations
-   MAY store either the original document, intermediate layer outputs,
-   final structured results, or any combination of these.
-
-4.3.3.  NOTIFICATION
-
-   The NOTIFICATION sink emits terminal workflow signals to webhooks,
-   message buses, or orchestration systems.  Typical uses include
-   completion events, retry queue notifications, and handoff to
-   downstream services.
-
-
-
-
-Rickert                 Expires 8 September 2026                [Page 7]
-
-Internet-Draft             PipeStream DocProc                 March 2026
-
+   The SINK stage represents terminal consumption of document-processing
+   results.  Common sink patterns include indexing, archival storage,
+   and workflow notification, but this profile does not require a fixed
+   sink registry or specific backend products.
 
 5.  Security Considerations
+
+
+
+
+Rickert                 Expires 8 September 2026                [Page 8]
+
+Internet-Draft             PipeStream DocProc                 March 2026
+
 
 5.1.  PII in Document Metadata
 
@@ -418,37 +472,59 @@ Internet-Draft             PipeStream DocProc                 March 2026
    validate it against local policy before granting access to document
    payloads or derived results.
 
+5.3.  Malicious Content and Resource Exhaustion
+
+   Document-processing pipelines routinely ingest untrusted payloads.
+   Implementations SHOULD defend against malformed archives, zip bombs,
+   polyglot files, decompression attacks, path traversal in embedded
+   filenames, and parser-specific exploit inputs.  BlobBag processing
+   SHOULD apply bounded resource policies for maximum object size,
+   expansion ratios, page counts, recursion depth, and extraction time.
+
+5.4.  Metadata and Structured Content Injection
+
+   Titles, filenames, annotations, extracted fields, and table content
+   MAY contain attacker-controlled strings.  Implementations SHOULD
+   treat these values as untrusted input when rendering search results,
+   constructing queries, invoking downstream tools, or generating
+   prompts for language models.
+
+5.5.  Cross-Tenant Trust Boundaries
+
+   Shared indexing, storage, or enrichment infrastructure can create
+   cross-tenant leakage risks if document-processing metadata is reused
+   outside its intended scope.  Implementations SHOULD isolate tenant
+   data paths, avoid sharing authorization context across tenants, and
+   ensure that cached semantic or structured outputs are keyed by both
+   doc_id and the relevant ownership boundary.
+
+
+
+
+Rickert                 Expires 8 September 2026                [Page 9]
+
+Internet-Draft             PipeStream DocProc                 March 2026
+
+
 6.  IANA Considerations
 
-   This document requests the creation of a new "PipeStream Application
-   Profiles" registry.
+   This document requests no IANA actions.
 
-   Registration policy: Expert Review.
+6.1.  Profile Identification
 
-   Initial registry contents:
+   This profile is identified by the case-sensitive string DOCPROC.
+   Implementations MAY advertise this identifier in out-of-band
+   configuration, capability metadata, or application-specific routing
+   tables.
 
-        +=======+==============+======================+===========+
-        | Value | Profile Name | Description          | Reference |
-        +=======+==============+======================+===========+
-        | 0x00  | DOCPROC      | Distributed document | This      |
-        |       |              | processing profile   | document  |
-        +-------+--------------+----------------------+-----------+
-
-                                  Table 3
+   The initial profile schema version defined by this document is 1.
+   Receivers that do not support the advertised profile_version in a
+   PipeDoc payload SHOULD reject that payload at the application layer
+   rather than attempting best-effort interpretation.
 
 7.  References
 
 7.1.  Normative References
-
-
-
-
-
-
-Rickert                 Expires 8 September 2026                [Page 8]
-
-Internet-Draft             PipeStream DocProc                 March 2026
-
 
    [PIPESTREAM]
               Rickert, K., "PipeStream: A Recursive Entity Streaming
@@ -476,21 +552,35 @@ Internet-Draft             PipeStream DocProc                 March 2026
 
    [protobuf] Google, "Protocol Buffers", n.d., <https://protobuf.dev/>.
 
+
+
+
+
+
+Rickert                 Expires 8 September 2026               [Page 10]
+
+Internet-Draft             PipeStream DocProc                 March 2026
+
+
 Appendix A.  Appendix A: Complete CDDL Schema
 
    This appendix provides the profile's consolidated CDDL [RFC8610]
    definitions.
 
+   The file-storage-reference and encryption-metadata types are defined
+   by reference in PipeStream Core Appendix C and are reused here
+   without modification.
+
    pipe-doc = {
+     profile-version: uint,
      doc-id: tstr,
      entity-id: uint,
      ? search-metadata: search-metadata,
      ? blob-bag: blob-bag,
-     ? structured-data: any,
-     ? parsed-metadata: { * tstr => parsed-metadata },
      ? semantic-result: semantic-processing-result,
+     ? layer2-payload: layer2-payload,
+     ? custom-entity: any,
      ? ownership: ownership-context,
-     ? doc-id-derivation: doc-id-derivation,
    }
 
    search-metadata = {
@@ -498,19 +588,9 @@ Appendix A.  Appendix A: Complete CDDL Schema
      ? keywords: [* tstr],
      ? description: tstr,
      ? custom-fields: { * tstr => tstr },
-
-
-
-Rickert                 Expires 8 September 2026                [Page 9]
-
-Internet-Draft             PipeStream DocProc                 March 2026
-
-
    }
 
-   blob-bag = (
-     blob / blobs
-   )
+   blob-bag = blob / blobs
 
    blobs = {
      blobs: [* blob],
@@ -519,7 +599,7 @@ Internet-Draft             PipeStream DocProc                 March 2026
    blob = {
      blob-id: tstr,
      ? drive-id: tstr,
-     content: bytes / file-storage-reference,
+     content: bstr / file-storage-reference,
      ? mime-type: tstr,
      ? filename: tstr,
      ? size-bytes: int,
@@ -530,6 +610,14 @@ Internet-Draft             PipeStream DocProc                 March 2026
    checksum-type = &(
      unspecified: 0,
      md5: 1,
+
+
+
+Rickert                 Expires 8 September 2026               [Page 11]
+
+Internet-Draft             PipeStream DocProc                 March 2026
+
+
      sha1: 2,
      sha256: 3,
      sha512: 4,
@@ -554,14 +642,6 @@ Internet-Draft             PipeStream DocProc                 March 2026
      ? vector: [* float],
      ? model-id: tstr,
      ? original-char-start-offset: int,
-
-
-
-Rickert                 Expires 8 September 2026               [Page 10]
-
-Internet-Draft             PipeStream DocProc                 March 2026
-
-
      ? original-char-end-offset: int,
    }
 
@@ -581,6 +661,19 @@ Internet-Draft             PipeStream DocProc                 March 2026
      ? raw-output: tstr,
    }
 
+   layer2-payload = {
+     ? parsed-metadata: { * tstr => parsed-metadata },
+     ? structured-data: any,
+   }
+
+
+
+
+Rickert                 Expires 8 September 2026               [Page 12]
+
+Internet-Draft             PipeStream DocProc                 March 2026
+
+
    table-data = {
      table-id: tstr,
      ? headers: [* tstr],
@@ -597,44 +690,10 @@ Internet-Draft             PipeStream DocProc                 March 2026
      ? acl: [* tstr],
    }
 
-   doc-id-derivation = {
-     strategy: tstr,
-     ? source-field: tstr,
-     ? hash-algorithm: tstr,
-   }
-
-   file-storage-reference = {
-     provider: tstr,
-     bucket: tstr,
-     key: tstr,
-     ? region: tstr,
-     ? attrs: { * tstr => tstr },
-     ? encryption: encryption-metadata,
-
-
-
-Rickert                 Expires 8 September 2026               [Page 11]
-
-Internet-Draft             PipeStream DocProc                 March 2026
-
-
-   }
-
-   encryption-metadata = {
-     algorithm: tstr,
-     ? key-provider: tstr,
-     ? key-id: tstr,
-     ? wrapped-key: bstr,
-     ? iv: bstr,
-     ? context: { * tstr => tstr },
-   }
-
 Appendix B.  Appendix B: Complete Protocol Buffers Schema
 
    This appendix provides an informational Protocol Buffers [protobuf]
-   schema for the document-processing profile.  The canonical source is
-   maintained in the repository at proto/pipestream/data/v1/
-   pipestream_data.proto.
+   schema for the document-processing profile.
 
    // Copyright 2026 PipeStream AI
    //
@@ -644,36 +703,46 @@ Appendix B.  Appendix B: Complete Protocol Buffers Schema
 
    edition = "2023";
 
-   package pipestream.data.v1;
+   package pipestream.docproc.v1;
 
    import "google/protobuf/any.proto";
    import "google/protobuf/struct.proto";
+   import "pipestream/protocol/v1/pipestream_protocol.proto";
 
    option features.enum_type = CLOSED;
 
    message PipeDoc {
-     string doc_id = 1;
-     SearchMetadata search_metadata = 2;
-     BlobBag blob_bag = 3;
-     google.protobuf.Any structured_data = 4;
-     map<string, ParsedMetadata> parsed_metadata = 5;
-     SemanticProcessingResult semantic_result = 6;
-     OwnershipContext ownership = 7;
-     DocIdDerivation doc_id_derivation = 8;
+     uint32 profile_version = 1;
+     string doc_id = 2;
+     uint32 entity_id = 3;
+     SearchMetadata search_metadata = 4;
+     OwnershipContext ownership = 5;
+
+     oneof layer_payload {
+       BlobBag blob_bag = 10;
+       SemanticProcessingResult semantic_result = 11;
+       Layer2Payload layer2_payload = 12;
+
+
+
+Rickert                 Expires 8 September 2026               [Page 13]
+
+Internet-Draft             PipeStream DocProc                 March 2026
+
+
+       google.protobuf.Any custom_entity = 13;
+     }
+   }
+
+   message Layer2Payload {
+     map<string, ParsedMetadata> parsed_metadata = 1;
+     google.protobuf.Any structured_data = 2;
    }
 
    message BlobBag {
      oneof blob_data {
        Blob blob = 1;
        Blobs blobs = 2;
-
-
-
-Rickert                 Expires 8 September 2026               [Page 12]
-
-Internet-Draft             PipeStream DocProc                 March 2026
-
-
      }
    }
 
@@ -686,31 +755,13 @@ Internet-Draft             PipeStream DocProc                 March 2026
      string drive_id = 2;
      oneof content {
        bytes data = 3;
-       FileStorageReference storage_ref = 4;
+       pipestream.protocol.v1.FileStorageReference storage_ref = 4;
      }
      string mime_type = 5;
      string filename = 6;
      int64 size_bytes = 8;
      string checksum = 9;
      ChecksumType checksum_type = 10;
-   }
-
-   message FileStorageReference {
-     string provider = 1;
-     string bucket = 2;
-     string key = 3;
-     string region = 4;
-     map<string, string> attrs = 5;
-     EncryptionMetadata encryption = 6;
-   }
-
-   message EncryptionMetadata {
-     string algorithm = 1;
-     string key_provider = 2;
-     string key_id = 3;
-     bytes wrapped_key = 4;
-     bytes iv = 5;
-     map<string, string> context = 6;
    }
 
    enum ChecksumType {
@@ -722,18 +773,18 @@ Internet-Draft             PipeStream DocProc                 March 2026
    }
 
    message SemanticProcessingResult {
-
-
-
-Rickert                 Expires 8 September 2026               [Page 13]
-
-Internet-Draft             PipeStream DocProc                 March 2026
-
-
      repeated SemanticChunk chunks = 1;
      string chunking_strategy = 2;
      map<string, string> processing_metadata = 3;
    }
+
+
+
+
+Rickert                 Expires 8 September 2026               [Page 14]
+
+Internet-Draft             PipeStream DocProc                 March 2026
+
 
    message SemanticChunk {
      string chunk_id = 1;
@@ -778,19 +829,18 @@ Internet-Draft             PipeStream DocProc                 March 2026
    }
 
    message SearchMetadata {
-
-
-
-Rickert                 Expires 8 September 2026               [Page 14]
-
-Internet-Draft             PipeStream DocProc                 March 2026
-
-
      string title = 1;
      repeated string keywords = 2;
      string description = 3;
      map<string, string> custom_fields = 4;
    }
+
+
+
+Rickert                 Expires 8 September 2026               [Page 15]
+
+Internet-Draft             PipeStream DocProc                 March 2026
+
 
    message OwnershipContext {
      string tenant_id = 1;
@@ -798,11 +848,41 @@ Internet-Draft             PipeStream DocProc                 March 2026
      repeated string acl = 3;
    }
 
-   message DocIdDerivation {
-     string strategy = 1;
-     string source_field = 2;
-     string hash_algorithm = 3;
-   }
+Appendix C.  Appendix C: Example Processing Patterns
+
+   This appendix is non-normative.
+
+C.1.  Text Extraction
+
+   A text-extraction stage transforms binary document content into
+   textual or layout-aware intermediate representations.  Typical
+   outputs include page text, OCR results, or format-specific structural
+   markup.
+
+C.2.  NLP Enrichment
+
+   An enrichment stage adds semantic metadata such as chunking,
+   embeddings, named entities, classifications, or relation annotations.
+   These results are commonly encoded in SemanticLayer payloads.
+
+C.3.  Structured Table Extraction
+
+   A table-extraction stage identifies structured tabular regions and
+   emits normalized table representations suitable for indexing or
+   analytics.
+
+C.4.  Image Processing
+
+   An image-processing stage derives metadata or features from document
+   images, such as OCR overlays, captions, detections, or classification
+   results.
+
+C.5.  Example Sink Patterns
+
+   Common sink patterns include search indexing, archival persistence,
+   and workflow notification.  Backend-specific integrations such as
+   particular search engines, object stores, or message buses are
+   deployment choices, not protocol requirements of this profile.
 
 Author's Address
 
@@ -813,28 +893,4 @@ Author's Address
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Rickert                 Expires 8 September 2026               [Page 15]
+Rickert                 Expires 8 September 2026               [Page 16]

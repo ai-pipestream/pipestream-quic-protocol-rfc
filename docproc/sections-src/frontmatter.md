@@ -3,13 +3,13 @@ title: "PipeStream Application Profile for Distributed Document Processing"
 abbrev: "PipeStream DocProc"
 docname: draft-krickert-pipestream-docproc-00
 category: info
-submissiontype: IETF
+submissiontype: independent
 number:
 date: 2026-03-07
-consensus: true
+consensus: false
 v: 3
-area: "Applications and Real-Time"
-workgroup: "Individual Submission"
+area: "Independent Submission"
+workgroup: "Independent Submission"
 keyword:
  - pipestream
  - document-processing

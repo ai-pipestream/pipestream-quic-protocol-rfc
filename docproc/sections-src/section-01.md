@@ -6,9 +6,9 @@ This document defines an Application Profile for PipeStream
 {{PIPESTREAM}} that specifies entity payload formats and processing
 semantics for distributed document processing pipelines. This profile
 assigns concrete meanings to PipeStream's four data layers, defines the
-PipeDoc application-level entity envelope, and specifies common
-pipeline-stage patterns for document ingestion, enrichment, and
-indexing workflows.
+PipeDoc application-level entity envelope, and specifies interoperable
+payload conventions for document ingestion, enrichment, and indexing
+workflows.
 
 ## Relationship to PipeStream Core
 
@@ -17,6 +17,11 @@ recursive entity lifecycle, and resilience semantics. This profile does
 not modify any PipeStream Core wire format. Instead, it defines how
 document-processing implementations interpret the payload bytes carried
 within PipeStream entities.
+
+This document is intended as an independent industry profile rather than
+as a standards-track extension to PipeStream Core. It can evolve on a
+faster cadence than the core transport specification while preserving
+wire compatibility with PipeStream entities and control frames.
 
 Implementations of this profile MUST implement PipeStream Core
 {{PIPESTREAM}} Layer 0 at minimum. Implementations that require
@@ -40,6 +45,11 @@ This profile uses all capitalized PipeStream Core terms as defined in
 :   The application-level document envelope carried within an entity
     payload. PipeDoc provides a stable document identifier and ownership
     context for document-processing pipelines.
+
+**Profile Version**
+:   A profile-level schema version carried within PipeDoc. It identifies
+    which revision of this document defined the payload layout for a
+    given document-processing entity.
 
 **BlobBag**
 :   The Layer 0 representation for raw binary document content and

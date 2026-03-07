@@ -3,17 +3,21 @@
 This appendix provides the profile's consolidated CDDL
 {{RFC8610}} definitions.
 
+The `file-storage-reference` and `encryption-metadata` types are defined
+by reference in PipeStream Core Appendix C and are reused here without
+modification.
+
 ~~~~ cddl
 pipe-doc = {
+  profile-version: uint,
   doc-id: tstr,
   entity-id: uint,
   ? search-metadata: search-metadata,
   ? blob-bag: blob-bag,
-  ? structured-data: any,
-  ? parsed-metadata: { * tstr => parsed-metadata },
   ? semantic-result: semantic-processing-result,
+  ? layer2-payload: layer2-payload,
+  ? custom-entity: any,
   ? ownership: ownership-context,
-  ? doc-id-derivation: doc-id-derivation,
 }
 
 search-metadata = {
@@ -23,9 +27,7 @@ search-metadata = {
   ? custom-fields: { * tstr => tstr },
 }
 
-blob-bag = (
-  blob / blobs
-)
+blob-bag = blob / blobs
 
 blobs = {
   blobs: [* blob],
@@ -34,7 +36,7 @@ blobs = {
 blob = {
   blob-id: tstr,
   ? drive-id: tstr,
-  content: bytes / file-storage-reference,
+  content: bstr / file-storage-reference,
   ? mime-type: tstr,
   ? filename: tstr,
   ? size-bytes: int,
@@ -88,6 +90,11 @@ parsed-metadata = {
   ? raw-output: tstr,
 }
 
+layer2-payload = {
+  ? parsed-metadata: { * tstr => parsed-metadata },
+  ? structured-data: any,
+}
+
 table-data = {
   table-id: tstr,
   ? headers: [* tstr],
@@ -102,29 +109,5 @@ ownership-context = {
   ? tenant-id: tstr,
   ? owner-id: tstr,
   ? acl: [* tstr],
-}
-
-doc-id-derivation = {
-  strategy: tstr,
-  ? source-field: tstr,
-  ? hash-algorithm: tstr,
-}
-
-file-storage-reference = {
-  provider: tstr,
-  bucket: tstr,
-  key: tstr,
-  ? region: tstr,
-  ? attrs: { * tstr => tstr },
-  ? encryption: encryption-metadata,
-}
-
-encryption-metadata = {
-  algorithm: tstr,
-  ? key-provider: tstr,
-  ? key-id: tstr,
-  ? wrapped-key: bstr,
-  ? iv: bstr,
-  ? context: { * tstr => tstr },
 }
 ~~~~

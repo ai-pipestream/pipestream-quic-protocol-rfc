@@ -1,9 +1,7 @@
 # Appendix B: Complete Protocol Buffers Schema
 
 This appendix provides an informational Protocol Buffers {{protobuf}}
-schema for the document-processing profile. The canonical source is
-maintained in the repository at
-`proto/pipestream/data/v1/pipestream_data.proto`.
+schema for the document-processing profile.
 
 ~~~~ protobuf
 // Copyright 2026 PipeStream AI
@@ -14,22 +12,32 @@ maintained in the repository at
 
 edition = "2023";
 
-package pipestream.data.v1;
+package pipestream.docproc.v1;
 
 import "google/protobuf/any.proto";
 import "google/protobuf/struct.proto";
+import "pipestream/protocol/v1/pipestream_protocol.proto";
 
 option features.enum_type = CLOSED;
 
 message PipeDoc {
-  string doc_id = 1;
-  SearchMetadata search_metadata = 2;
-  BlobBag blob_bag = 3;
-  google.protobuf.Any structured_data = 4;
-  map<string, ParsedMetadata> parsed_metadata = 5;
-  SemanticProcessingResult semantic_result = 6;
-  OwnershipContext ownership = 7;
-  DocIdDerivation doc_id_derivation = 8;
+  uint32 profile_version = 1;
+  string doc_id = 2;
+  uint32 entity_id = 3;
+  SearchMetadata search_metadata = 4;
+  OwnershipContext ownership = 5;
+
+  oneof layer_payload {
+    BlobBag blob_bag = 10;
+    SemanticProcessingResult semantic_result = 11;
+    Layer2Payload layer2_payload = 12;
+    google.protobuf.Any custom_entity = 13;
+  }
+}
+
+message Layer2Payload {
+  map<string, ParsedMetadata> parsed_metadata = 1;
+  google.protobuf.Any structured_data = 2;
 }
 
 message BlobBag {
@@ -48,31 +56,13 @@ message Blob {
   string drive_id = 2;
   oneof content {
     bytes data = 3;
-    FileStorageReference storage_ref = 4;
+    pipestream.protocol.v1.FileStorageReference storage_ref = 4;
   }
   string mime_type = 5;
   string filename = 6;
   int64 size_bytes = 8;
   string checksum = 9;
   ChecksumType checksum_type = 10;
-}
-
-message FileStorageReference {
-  string provider = 1;
-  string bucket = 2;
-  string key = 3;
-  string region = 4;
-  map<string, string> attrs = 5;
-  EncryptionMetadata encryption = 6;
-}
-
-message EncryptionMetadata {
-  string algorithm = 1;
-  string key_provider = 2;
-  string key_id = 3;
-  bytes wrapped_key = 4;
-  bytes iv = 5;
-  map<string, string> context = 6;
 }
 
 enum ChecksumType {
@@ -142,11 +132,5 @@ message OwnershipContext {
   string tenant_id = 1;
   string owner_id = 2;
   repeated string acl = 3;
-}
-
-message DocIdDerivation {
-  string strategy = 1;
-  string source_field = 2;
-  string hash_algorithm = 3;
 }
 ~~~~
