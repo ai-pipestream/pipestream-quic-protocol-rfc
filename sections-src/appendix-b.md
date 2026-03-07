@@ -16,7 +16,7 @@ The decision to implement PipeStream as a standalone protocol over QUIC is drive
 
 ### Framing Overhead
 
-HTTP/3 and gRPC introduce multiple layers of framing. A gRPC message over HTTP/3 incurs QUIC stream overhead, HTTP/3 DATA frame overhead (minimum 2 octets), and gRPC envelope overhead (5 octets). For small status updates like PipeStream's 16-octet STATUS frame, this encapsulation would double the bandwidth requirement. PipeStream's bit-packed frames achieve near-theoretical minimum overhead for high-frequency coordination.
+HTTP/3 and gRPC introduce multiple layers of framing. A gRPC message over HTTP/3 incurs QUIC stream overhead, HTTP/3 DATA frame overhead (minimum 2 octets), and gRPC envelope overhead (5 octets). For small status updates like PipeStream's 21-octet on-wire STATUS frame, this encapsulation would still materially increase bandwidth requirements. PipeStream's bit-packed frames minimize coordination overhead for high-frequency control traffic.
 
 ### Stateless Control Plane
 

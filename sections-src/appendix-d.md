@@ -1,12 +1,15 @@
 # Appendix D: Schema Reference (Protocol Buffers)
 
 This appendix provides an informational Protocol Buffers schema
-equivalent for PipeStream Core messages. The normative schema
-definitions use CDDL notation and appear throughout the specification
-body and in Appendix C. Implementations that negotiate Protobuf as the
-serialization format (Section 3.4.2) MAY use these definitions. The
-canonical Protobuf source files are maintained in the repository at
-`proto/`.
+equivalent for PipeStream Core messages that use negotiated
+serialization. The normative schema definitions use CDDL notation and
+appear throughout the specification body and in Appendix C.
+Implementations that negotiate Protobuf as the serialization format
+(Section 3.4.2) MAY use these definitions for variable-length control
+messages and entity headers. Fixed control frames on Stream 0, such as
+STATUS and SCOPE_DIGEST, use the bit-packed wire formats defined in
+Section 6 and are not encoded as Protocol Buffers. The canonical
+Protobuf source files are maintained in the repository at `proto/`.
 
 Application-specific payload envelopes and domain-specific schemas are
 outside the scope of this appendix; see [PIPESTREAM-DOCPROC] for an
@@ -188,21 +191,6 @@ enum EntityStatus {
   ENTITY_STATUS_ABANDONED = 12;
 }
 
-// StatusFrame represents a status transition.
-message StatusFrame {
-  // Identifier of the entity.
-  uint32 entity_id = 1;
-
-  // Identifier of the scope.
-  uint32 scope_id = 2;
-
-  // Current status.
-  EntityStatus status = 3;
-
-  // Optional extension data.
-  google.protobuf.Any extended_data = 4;
-}
-
 // CheckpointFrame (Type 0x81)
 message CheckpointFrame {
   // Unique checkpoint identifier.
@@ -316,27 +304,6 @@ message StoppingPointValidation {
 
   // Last passed checkpoint reference.
   string checkpoint_ref = 6;
-}
-
-// ScopeDigest is a Layer 1 summary of a completed scope.
-message ScopeDigest {
-  // Identifier of the scope.
-  uint32 scope_id = 1;
-
-  // Total processed count.
-  uint64 entities_processed = 2;
-
-  // Total succeeded count.
-  uint64 entities_succeeded = 3;
-
-  // Total failed count.
-  uint64 entities_failed = 4;
-
-  // Total deferred count.
-  uint64 entities_deferred = 5;
-
-  // Merkle root hash.
-  bytes merkle_root = 6;
 }
 
 // FileStorageReference provides a location for external data.

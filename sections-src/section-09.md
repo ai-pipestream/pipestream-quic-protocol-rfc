@@ -85,9 +85,9 @@ An entity ID `a` is considered "less than checkpoint_entity_id `b`" iff `is_befo
 When Layer 1 is negotiated, Scope IDs are 32-bit unsigned integers assigned by the endpoint that initiates the dehydration. The allocation scheme is as follows:
 
 1. Scope ID 0 is the root scope and MUST NOT be used for child scopes.
-2. The dehydrating endpoint assigns a unique Scope ID to each new child scope created during dehydration. The Scope ID MUST be unique within the connection for the lifetime of that scope (i.e., until the scope's SCOPE_DIGEST frame has been emitted and acknowledged).
+2. The dehydrating endpoint assigns a unique Scope ID to each new child scope created during dehydration. The Scope ID MUST be unique within the connection for the lifetime of that scope (i.e., until the scope's SCOPE_DIGEST frame has been sent and all entities in the scope have reached terminal state).
 3. Scope IDs MAY be allocated sequentially or randomly; the protocol does not require any particular ordering. Sequential allocation is RECOMMENDED for simplicity and debuggability.
-4. Once a scope has been closed (its SCOPE_DIGEST has been sent), the Scope ID MAY be reused for a new scope. Implementations MUST ensure that no in-flight status frames reference a recycled Scope ID; this is guaranteed if the implementation waits until all entities within the scope have reached terminal state before recycling.
+4. Once a scope has been closed (its SCOPE_DIGEST has been sent and all entities within the scope have reached terminal state), the Scope ID MAY be reused for a new scope. Implementations MUST ensure that no in-flight status frames reference a recycled Scope ID before reuse.
 
 ## Scope Digest Propagation (Layer 1)
 
@@ -106,9 +106,9 @@ This construction is deterministic: any two implementations processing the same 
 
 ## Rehydration Readiness Tracking
 
-Implementations MUST track Assembly Manifest resolution order using a mechanism that provides O(1) insertion and amortized O(log n) minimum extraction. The tracking mechanism MUST support efficient decrease-key operations to handle out-of-order status updates.
+Implementations MUST track Assembly Manifest resolution order using a local data structure that can efficiently identify the next parent entity eligible for rehydration as child statuses arrive out of order.
 
-Implementations MAY use a Fibonacci heap or similar priority queue to satisfy these complexity requirements.
+The specific algorithm and internal representation are implementation choices and are outside the scope of this specification.
 
 ## Stopping Point Validation (Layer 2)
 

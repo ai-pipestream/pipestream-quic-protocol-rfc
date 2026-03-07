@@ -1,10 +1,12 @@
 # Appendix C: Schema Reference (CDDL)
 
 This appendix consolidates the normative CDDL {{RFC8610}} schema
-definitions for PipeStream Core messages. These definitions are
-authoritative for the wire format when CBOR {{RFC8949}} is the
-negotiated serialization format (the default). Individual definitions
-also appear inline throughout the specification body.
+definitions for PipeStream Core messages that use negotiated
+serialization. These definitions are authoritative for the wire format
+when CBOR {{RFC8949}} is the negotiated serialization format (the
+default). Fixed control frames on Stream 0, such as STATUS and
+SCOPE_DIGEST, use the bit-packed wire formats defined in Section 6 and
+are not serialized as CDDL messages.
 
 An informational Protocol Buffers equivalent is provided in Appendix D
 for implementations that negotiate Protobuf encoding. Application-
@@ -122,17 +124,6 @@ checkpoint-frame = {
   ? timeout-ms: uint,
 }
 
-; -----------------------------------------------------------
-; Status frame
-; -----------------------------------------------------------
-
-status-frame = {
-  entity-id: uint,
-  ? scope-id: uint,
-  status: entity-status,
-  ? extended-data: any,
-}
-
 entity-status = &(
   unspecified: 0,
   pending: 1,
@@ -213,19 +204,6 @@ stopping-point-validation = {
   ? children-total: uint,
   ? is-resumable: bool,
   ? checkpoint-ref: tstr,
-}
-
-; -----------------------------------------------------------
-; Scope digest (Layer 1)
-; -----------------------------------------------------------
-
-scope-digest = {
-  scope-id: uint,
-  entities-processed: uint,
-  entities-succeeded: uint,
-  entities-failed: uint,
-  entities-deferred: uint,
-  merkle-root: bstr .size 32,
 }
 
 ; -----------------------------------------------------------
