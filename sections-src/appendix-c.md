@@ -9,8 +9,8 @@ also appear inline throughout the specification body.
 An informational Protocol Buffers equivalent is provided in Appendix D
 for implementations that negotiate Protobuf encoding. Application-
 specific payload envelopes and profile-specific schemas are outside the
-scope of this appendix; see [PIPESTREAM-DOCPROC] for an example profile
-that defines such messages.
+scope of this appendix; see [PIPESTREAM-DOCPROC] for an example
+companion profile that defines such messages.
 
 ~~~~ cddl
 ; -----------------------------------------------------------

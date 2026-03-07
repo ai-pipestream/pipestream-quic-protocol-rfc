@@ -49,8 +49,8 @@ message carried within the entity payload.
 If an application-level envelope carries its own entity identifier, that
 identifier MUST match the `entity-id` in the enclosing Entity Header.
 The definition of application-level envelopes is outside the scope of
-this specification. See [PIPESTREAM-DOCPROC] for an example document
-processing profile that defines such an envelope.
+this specification. See [PIPESTREAM-DOCPROC] for an example companion
+profile that defines such an envelope for document-processing workloads.
 
 ## Common Storage References
 

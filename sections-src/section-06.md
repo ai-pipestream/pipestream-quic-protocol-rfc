@@ -77,7 +77,7 @@ Entity ID (32 bits):
 :   Unsigned integer identifying the entity.
 
 Scope ID (32 bits):
-:   Identifier for the scope to which this entity belongs. Expanding to 32 bits ensures uniqueness across high-frequency document sessions.
+:   Identifier for the scope to which this entity belongs. Expanding to 32 bits ensures uniqueness across high-frequency workloads.
 
 Reserved (32 bits):
 :   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
@@ -356,7 +356,7 @@ Messages in this range are preceded by a 4-octet length field. The message body 
 
 ## Entity Frames
 
-Entity frames carry the actual document entity data on Entity Streams.
+Entity frames carry the actual entity payload data on Entity Streams.
 
 ### Entity Frame Structure
 

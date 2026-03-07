@@ -10,7 +10,7 @@ canonical Protobuf source files are maintained in the repository at
 
 Application-specific payload envelopes and domain-specific schemas are
 outside the scope of this appendix; see [PIPESTREAM-DOCPROC] for an
-example profile that defines such messages.
+example companion profile that defines such messages.
 
 ## Protocol-Level Messages
 

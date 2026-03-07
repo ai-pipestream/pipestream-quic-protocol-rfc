@@ -54,9 +54,7 @@ informative:
       - ins: "K. Rickert"
         name: "Kristian Rickert"
     date: 2026-03
-    seriesinfo:
-      Internet-Draft: draft-krickert-pipestream-docproc-00
-    target: https://datatracker.ietf.org/doc/draft-krickert-pipestream-docproc/
+    target: https://github.com/ai-pipestream/pipestream-quic-protocol-rfc/tree/main/docproc
   RFC9114:
   RFC9297:
   RFC9308:
