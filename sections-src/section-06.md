@@ -20,6 +20,10 @@ Every message on Stream 0 MUST begin with a 1-octet Frame Type and a 4-octet Len
 
 This structure allows any implementation to skip an unknown frame type by reading its length and discarding the payload.
 
+For frame types with a fixed or computable payload layout defined by this specification, the Length field MUST equal the length implied by that layout (for STATUS frames, the base payload plus any cursor update and extension; see Section 6.2.2). A receiver that detects a Length value inconsistent with the frame's type-specific layout MUST close the connection with PIPESTREAM_FRAME_ERROR (0x0D).
+
+Although the Length field can express values up to 2^32 - 1, implementations SHOULD enforce a locally configured maximum control frame size and MAY treat frames exceeding it as a connection error of type PIPESTREAM_FRAME_ERROR (0x0D). See also the incremental allocation requirement in Section 10.3.
+
 For compactness, the fixed-frame diagrams below show the frame payload that follows the common UCF header. On the wire, each Stream 0 frame is encoded as `Type (1 octet) | Length (4 octets) | Payload`.
 
 ### Frame Types
@@ -32,8 +36,8 @@ The following frame types are defined by this document. All frames use the commo
 | 0x54 | SCOPE_DIGEST | 1 | Fixed 72-octet payload |
 | 0x55 | BARRIER | 1 | Fixed 12-octet payload |
 | 0x56 | GOAWAY | 0 | Fixed 8-octet payload |
-| 0x80 | CAPABILITIES | 0 | Serialized message payload (CBOR/Protobuf) |
-| 0x81 | CHECKPOINT | 0 | Serialized message payload (CBOR/Protobuf) |
+| 0x80 | CAPABILITIES | 0 | Serialized message payload (negotiated format) |
+| 0x81 | CHECKPOINT | 0 | Serialized message payload (negotiated format) |
 
 ## Status Frames (Layer 0)
 
@@ -146,6 +150,17 @@ When C=1, a 4-octet cursor update follows the status frame:
 
 New Cursor Value (32 bits):
 :   The numeric value of the new cursor. Entities with IDs lower than this value (modulo circular ID rules) are considered resolved and their IDs MAY be recycled.
+
+### Status Reporting Direction
+
+STATUS frames flow in both directions on Stream 0. For each entity, responsibility for status reporting is divided between the originating endpoint (the endpoint that assigned the Entity ID and transmits the entity) and the processing endpoint (the endpoint that receives the corresponding Entity Stream):
+
+1. The originating endpoint MAY announce an entity with a PENDING status frame before opening its Entity Stream.
+2. Once the Entity Stream has been opened, the processing endpoint is authoritative for the entity's lifecycle and emits the STATUS frames for subsequent transitions (PROCESSING, DEHYDRATING, REHYDRATING, COMPLETE, FAILED, and the Layer 2 statuses).
+3. The originating endpoint applies terminal statuses (typically FAILED or ABANDONED) on its own authority only as part of transport error handling (Section 5.5) or local failure policy, for example when the Entity Stream is reset or the connection is lost before a terminal report arrives.
+4. The originating endpoint advances its cursor based on observed terminal statuses and announces cursor advancement using the C flag (Section 6.2.4).
+
+If an endpoint receives a STATUS frame for an entity from a peer that is not authoritative for that transition under these rules, the frame MUST be validated against the state machine of Section 6.2.3; conflicting reports are resolved in favor of the processing endpoint.
 
 ## Scope Digest Frame (0x54)
 
@@ -268,7 +283,7 @@ The GOAWAY payload is 8 octets (13 octets on the wire including the UCF header).
 4. Once all entities are resolved, either peer MAY close the QUIC connection with PIPESTREAM_NO_ERROR (0x00).
 5. If an endpoint receives an entity with an ID above the Last Entity ID after sending GOAWAY, it MUST reject it with PIPESTREAM_ENTITY_INVALID (0x05).
 
-An endpoint MAY send multiple GOAWAY frames to progressively lower the Last Entity ID. The Last Entity ID MUST NOT increase across successive GOAWAY frames within the same connection.
+An endpoint MAY send multiple GOAWAY frames to progressively lower the Last Entity ID. The Last Entity ID MUST NOT increase across successive GOAWAY frames within the same connection, where "increase" is evaluated using the circular ordering function `is_before` defined in Section 9.3.
 
 ## Yield and Claim Check Extensions (Layer 2)
 
@@ -289,7 +304,7 @@ When E=1 in a status frame, an Extension Header MUST follow.
 Extension Length (32 bits):
 :   The total length of the extension data that follows this header, in octets. This allows receivers that do not support specific status extensions to skip the extension data and continue parsing the control stream.
 
-If E=1 is set for a Status code that does not define an extension layout in this specification (or a negotiated extension), the receiver MUST use the Extension Length to skip the data. If the length is zero or missing, the frame MUST be treated as malformed.
+If E=1 is set for a Status code that does not define an extension layout in this specification (or a negotiated extension), the receiver MUST use the Extension Length to skip the data. If the Extension Length is zero, extends beyond the end of the frame as delimited by the UCF Length field, or is missing, the receiver MUST treat the frame as malformed and close the connection with PIPESTREAM_FRAME_ERROR (0x0D).
 
 ### Yield Extension (Stat = 0x8)
 
@@ -315,6 +330,8 @@ Token Length (24 bits):
 
 Yield Token (variable):
 :   The opaque continuation state.
+
+For a Yield Extension, the Extension Length (Section 6.6.1) MUST equal 4 + Token Length. A mismatch MUST be treated as PIPESTREAM_FRAME_ERROR (0x0D).
 
 #### Yield Reason Codes
 
@@ -389,11 +406,11 @@ Header (serialized):
 :   The EntityHeader message encoded in the negotiated serialization format (see Section 6.8.2).
 
 Payload (variable):
-:   The raw entity data.
+:   The raw entity data. The payload extends to the end of the Entity Stream (QUIC FIN); see Section 5.2. When the `payload-length` field is present in the EntityHeader, it MUST equal the number of payload octets.
 
 ### Message Schema (CDDL)
 
-Normative definitions for serialized PipeStream messages use CDDL {{RFC8610}} notation. An informational Protocol Buffers equivalent is provided in Appendix D.
+Normative definitions for serialized PipeStream messages use CDDL {{RFC8610}} notation; Appendix C consolidates the complete schema.
 
 #### Entity Header
 
@@ -404,7 +421,12 @@ entity-header = {
   ? scope-id: uint,              ; 32-bit (Section 6.2.1)
   layer: uint .le 3,             ; Data layer 0-3
   ? content-type: tstr,          ; MIME type
-  payload-length: uint,          ; Payload byte count
+  ? payload-length: uint,        ; Octet count of the payload
+                                 ; carried in this frame; SHOULD be
+                                 ; present. Omitted only when the
+                                 ; final length is unknown at
+                                 ; header-emission time (the stream
+                                 ; FIN delimits the payload).
   ? checksum: bstr .size 32,     ; SHA-256; SHOULD be present
   ? metadata: { * tstr => tstr },
   ? chunk-info: chunk-info,
@@ -443,7 +465,8 @@ claim-check = {
 #### Support Types
 
 ~~~~ cddl
-entity-status = uint .size 1 ; Values 0x0-0xC per Section 6.2.2
+; entity-status enumerates the status codes of Section 6.2.2;
+; the full definition appears in Appendix C.
 
 stopping-point-validation = {
   ? state-checksum: bstr,        ; Hash of processing state
@@ -458,3 +481,14 @@ stopping-point-validation = {
 ### Checksum Algorithm
 
 PipeStream uses SHA-256 {{FIPS-180-4}} for payload integrity verification. The checksum MUST be exactly 32 octets.
+
+### Chunked Transfer
+
+An entity whose payload is too large to transmit conveniently as a single frame MAY be split into chunks. Each chunk is transmitted as its own Entity Frame on its own Entity Stream, subject to the following rules:
+
+1. Every chunk of an entity MUST carry the same `entity-id`, `parent-id` (if present), `scope-id` (if present), and `layer` values, and MUST include a `chunk-info` structure.
+2. The `payload-length` and `checksum` fields in a chunk's EntityHeader, when present, cover only that chunk's payload octets (see Section 10.2 for whole-entity integrity requirements).
+3. `chunk-offset` is the octet offset of the chunk's first payload octet within the complete entity payload. `total-chunks` MUST be identical across all chunks of an entity, and the `chunk-index` values MUST cover the range 0 to total-chunks - 1 with no duplicates.
+4. Chunks MAY be transmitted concurrently on separate Entity Streams and MAY arrive in any order. The receiver reassembles the payload by `chunk-offset`.
+5. The entity payload is complete when all `total-chunks` chunks have been received and the reassembled ranges are contiguous and non-overlapping. Overlapping or duplicated ranges MUST be treated as PIPESTREAM_ENTITY_INVALID (0x05).
+6. Lifecycle status for a chunked entity is reported once for the entity as a whole (Section 6.2), not per chunk.

@@ -4,25 +4,28 @@ This section provides a high-level overview of the PipeStream protocol architect
 
 ## Design Goals
 
+This section is descriptive; the normative requirements that realize
+these goals appear in Sections 5 through 9.
+
 ### True Streaming Processing
 
-PipeStream MUST enable true streaming processing where entities are transmitted and processed incrementally as they become available. Implementations MUST NOT buffer complete inputs before initiating transmission.
+PipeStream enables entities to be transmitted and processed incrementally as they become available. The framing and status mechanisms operate on individual entities rather than complete inputs, so a sender never needs to buffer a complete input before initiating transmission.
 
 ### Recursive Decomposition
 
-The protocol MUST support recursive decomposition of entities, wherein a single input entity MAY produce zero, one, or many output entities.
+The protocol supports recursive decomposition of entities, wherein a single input entity may produce zero, one, or many output entities.
 
 ### Checkpoint Consistency
 
-PipeStream MUST provide checkpoint blocking semantics to maintain processing consistency across distributed workers.
+PipeStream provides checkpoint blocking semantics (Section 9.3) to maintain processing consistency across distributed workers.
 
 ### Control and Data Plane Separation
 
-The protocol MUST maintain strict separation between the control plane (control stream) and the data plane (entities).
+The protocol maintains strict separation between the control plane (the Control Stream) and the data plane (Entity Streams).
 
 ### QUIC Foundation
 
-PipeStream MUST be implemented over QUIC {{RFC9000}} to leverage:
+PipeStream is defined directly over QUIC {{RFC9000}} to leverage:
 
 - Native stream multiplexing without head-of-line blocking
 - Built-in flow control at both connection and stream levels
@@ -31,8 +34,9 @@ PipeStream MUST be implemented over QUIC {{RFC9000}} to leverage:
 
 ### Multi-Layer Data Representation
 
-The protocol MUST support four distinct data representation layers whose
-concrete semantics are defined by application profiles:
+The protocol carries a 2-bit data layer field supporting four distinct
+data representation layers whose concrete semantics are defined by
+application profiles:
 
 | Layer | Conventional Role | Description |
 |-------|-------------------|-------------|
@@ -43,12 +47,12 @@ concrete semantics are defined by application profiles:
 
 ## Architecture Summary
 
-PipeStream uses a dual-stream architecture within a single QUIC connection between a Client (Producer) and Server (Consumer):
+PipeStream uses a dual-plane architecture within a single QUIC connection. The endpoint that initiates the QUIC connection is the client. Either endpoint MAY originate entities (Section 5.2); in many deployments the client acts as producer and the server as consumer, but the protocol does not require this asymmetry after connection establishment.
 
 | Stream | Type | Plane | Content |
 |--------|------|-------|---------|
-| Stream 0 | Bidirectional | Control | STATUS, SCOPE_DIGEST, BARRIER, GOAWAY, CAPABILITIES, CHECKPOINT |
-| Streams 2+ | Unidirectional | Data | Entity frames (Header + Payload) |
+| Stream 0 | Bidirectional (client-initiated) | Control | STATUS, SCOPE_DIGEST, BARRIER, GOAWAY, CAPABILITIES, CHECKPOINT |
+| Entity Streams | Unidirectional (either endpoint) | Data | Entity frames (Header + Payload) |
 
 ## Connection Lifecycle
 

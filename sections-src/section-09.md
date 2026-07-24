@@ -2,7 +2,17 @@
 
 ## Entity ID Lifecycle and Cursor
 
-Entity IDs are managed using a cursor-based circular recycling scheme within the 32-bit ID space. The ID space is divided into three logical regions relative to the current `cursor` and `last_assigned` pointers:
+Entity IDs are managed using a cursor-based circular recycling scheme within the 32-bit ID space. All circular arithmetic in this document is performed modulo 0xFFFFFFFD; this modulus excludes the reserved values at the top of the 32-bit space from circulation. The following Entity ID values are reserved and MUST NOT be assigned to entities:
+
+| Entity ID | Name | Purpose |
+|-----------|------|---------|
+| 0x00000000 | NULL_ENTITY | Reserved; skipped during assignment |
+| 0xFFFFFFFD-0xFFFFFFFE | Reserved | Outside the circular ID space |
+| 0xFFFFFFFF | CONNECTION_LEVEL | Connection-scoped signals such as heartbeats (Section 5.1.4) |
+
+Assignable Entity IDs therefore range from 0x00000001 to 0xFFFFFFFC, yielding 4,294,967,292 usable identifiers per scope.
+
+The ID space is divided into three logical regions relative to the current `cursor` and `last_assigned` pointers:
 
 | Region | ID Range | Description |
 |--------|----------|-------------|
@@ -11,6 +21,8 @@ Entity IDs are managed using a cursor-based circular recycling scheme within the
 | Free | Beyond `last_assigned` | Available for new entity assignment |
 
 The window size is computed as `(last_assigned - cursor) mod 0xFFFFFFFD`. If `window_size >= max_window`, the sender MUST apply backpressure and stop assigning new IDs until the cursor advances.
+
+The `max_window` value MUST NOT exceed 2,147,483,646 (the largest value strictly less than 0xFFFFFFFD / 2). This bound guarantees that the circular comparison function `is_before` (Section 9.3) is unambiguous for any pair of in-flight Entity IDs. The default `max-window-size` advertised in the capabilities exchange (Section 3.4) is 2,147,483,646.
 
 **Rules:**
 
@@ -95,14 +107,18 @@ When a scope completes, the endpoint MUST compute a Scope Digest and propagate i
 
 The Merkle root in the Scope Digest is computed as follows:
 
-1. For each entity in the scope, ordered by Entity ID (ascending), construct a 5-octet leaf value by concatenating:
+1. For each entity in the scope, ordered by ascending numeric Entity ID value, construct a 5-octet leaf value by concatenating:
    - The 4-octet big-endian Entity ID.
-   - A 1-octet status field where the lower 4 bits contain the `Stat` code (Section 6.2.2) and the upper 4 bits are zero.
-2. Compute SHA-256 over each 5-octet leaf to produce leaf hashes.
-3. Build a binary Merkle tree by repeatedly hashing pairs of sibling nodes: `SHA-256(left || right)`. If the number of nodes at any level is odd, the last node is promoted to the next level without hashing.
+   - A 1-octet status field where the lower 4 bits contain the entity's terminal `Stat` code (Section 6.2.2) and the upper 4 bits are zero.
+2. Compute each leaf hash as `SHA-256(0x00 || leaf)`, where `leaf` is the 5-octet value from step 1.
+3. Build a binary Merkle tree by repeatedly hashing pairs of sibling nodes: `SHA-256(0x01 || left || right)`. If the number of nodes at any level is odd, the last node is promoted to the next level without hashing.
 4. The root of this tree is the `merkle_root` value in the SCOPE_DIGEST frame.
 
+The 0x00 and 0x01 domain-separation prefixes distinguish leaf hashes from interior-node hashes, preventing second-preimage attacks in which an interior node is presented as a leaf (or vice versa). This construction follows the approach used for Merkle Tree Hashes in Certificate Transparency.
+
 This construction is deterministic: any two implementations processing the same set of entity statuses MUST produce the same Merkle root.
+
+Because each Entity ID contributes exactly one leaf, an implementation MUST NOT recycle an Entity ID within a scope whose SCOPE_DIGEST has not yet been computed. Cursor-based recycling (Section 9.1) already guarantees this when scopes complete before the ID space wraps; implementations whose scopes approach the ID-space capacity MUST close and digest the scope before reusing any of its Entity IDs.
 
 ## Rehydration Readiness Tracking
 

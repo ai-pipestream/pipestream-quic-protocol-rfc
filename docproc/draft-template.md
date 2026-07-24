@@ -21,5 +21,3 @@
 {::include docproc/sections-src/appendix-a.md}
 
 {::include docproc/sections-src/appendix-b.md}
-
-{::include docproc/sections-src/appendix-c.md}

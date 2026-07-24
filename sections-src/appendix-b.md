@@ -1,4 +1,4 @@
-# Appendix B: Relationship to Existing Protocols
+# Relationship to Existing Protocols
 
 This appendix discusses the relationship between PipeStream and existing transport and application protocols. The intent is to clarify the design rationale for specifying a new application protocol directly over QUIC {{RFC9000}} rather than layering on HTTP/3 {{RFC9114}}, gRPC, or WebTransport {{RFC9297}}.
 
@@ -51,6 +51,22 @@ WebTransport sessions are established via an HTTP/3 CONNECT request, inheriting 
 WebTransport is designed for environments constrained by the web security model (origin-based isolation, CORS). PipeStream targets server-to-server processing pipelines where these constraints are inapplicable.
 
 WebTransport provides raw byte streams with no built-in coordination semantics. PipeStream would need to implement its own framing, status state machine, checkpoint barriers, and scope hierarchy on top of WebTransport streams. At that point, the HTTP/3 session layer introduces an additional round trip during establishment and per-stream framing overhead, with no corresponding benefit.
+
+## Media over QUIC Transport
+
+The Media over QUIC Transport protocol {{MOQT}} is architecturally the closest existing QUIC-native protocol to PipeStream: both use a bidirectional control stream for session coordination alongside unidirectional streams carrying independent data objects, following the application-mapping guidance of {{RFC9308}}.
+
+The two protocols nevertheless solve different problems. MOQT is a publish/subscribe media delivery protocol optimized for fan-out through relays: objects within a track are delivered to a dynamic set of subscribers, delivery of any individual object may be abandoned when it ceases to be useful (for example, after a latency deadline passes), and no participant tracks whether the totality of published objects reached any subscriber. PipeStream is a scatter-gather processing protocol with the opposite requirements: the set of child entities produced by a decomposition is determinate, every entity MUST be driven to a terminal status, and reassembly is gated on cryptographically verifiable completion of the entire set (Section 9). MOQT has no counterpart to hierarchical scopes, scope digests, barrier synchronization, or completion policies, and PipeStream has no counterpart to tracks, subscriptions, or relay-based fan-out.
+
+Extending MOQT with completion tracking would require adding precisely the control-plane machinery this document defines, while inheriting subscription semantics that have no role in pipeline processing.
+
+## Broker-Based Pipeline Architectures
+
+Many production processing pipelines are built not on RPC frameworks but on message brokers and distributed commit logs, with stages communicating through persistent intermediary queues or topics. These architectures provide durable decoupling and replay, and PipeStream is not a replacement for them where store-and-forward durability between organizationally separate stages is the primary requirement.
+
+However, broker-based architectures externalize the semantics that PipeStream provides natively. Completion of a hierarchically decomposed job must be tracked in a coordination store outside the message path; end-to-end integrity of a reassembled output must be verified by application logic; and backpressure operates per queue rather than end-to-end across a pipeline. Each stage boundary additionally imposes a full persist-and-forward cycle, which defeats incremental streaming of large entities. The broker itself is also an interoperability boundary: no standardized wire protocol expresses scatter-gather semantics across brokers from different vendors, so multi-organization pipelines are coupled through vendor-specific client libraries.
+
+A PipeStream deployment MAY use a broker behind an individual processing stage (as it may use gRPC; see above) while relying on PipeStream for inter-stage transport, completion tracking, and integrity verification.
 
 ## Summary
 

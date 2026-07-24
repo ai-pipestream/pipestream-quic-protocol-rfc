@@ -1,6 +1,6 @@
 # IANA Considerations
 
-This document requests the creation of several new registries and one ALPN identifier registration. All registries defined in this section use the "Expert Review" policy {{RFC8126}} for new assignments unless otherwise stated.
+This document requests the creation of several new registries and one ALPN identifier registration. All registries defined in this section use the "Expert Review" policy {{RFC8126}} for new assignments unless otherwise stated; guidance for the designated experts appears in Section 11.7.
 
 ## ALPN Identifier Registration
 
@@ -17,7 +17,15 @@ Specification:
 
 ## PipeStream Frame Type Registry
 
-IANA is requested to create the "PipeStream Frame Types" registry. All frames on Stream 0 MUST use a 4-octet length prefix following the 1-octet Type. Values 0xC0-0xFF are reserved for private use.
+IANA is requested to create the "PipeStream Frame Types" registry. All frames on Stream 0 MUST use a 4-octet length prefix following the 1-octet Type. The registry is partitioned into three ranges that determine both the registration policy and the framing class of the payload:
+
+| Range | Framing Class | Registration Policy |
+|-------|---------------|---------------------|
+| 0x00-0x7F | Fixed bit-packed payload (Section 6) | Expert Review |
+| 0x80-0xBF | Serialized payload in the negotiated format (Section 6.7) | Expert Review |
+| 0xC0-0xFF | Private use | Not applicable |
+
+Each registration consists of a value, a frame type name, the minimum protocol layer, a short description, and a reference to a specification. The initial contents are:
 
 | Value | Frame Type Name | Layer | Description | Reference |
 |-------|-----------------|-------|-------------|-----------|
@@ -73,16 +81,16 @@ PipeStream error codes are used as QUIC application error codes in CONNECTION_CL
 | 0x0A | PIPESTREAM_CLAIM_EXPIRED | Claim check expired |
 | 0x0B | PIPESTREAM_CLAIM_NOT_FOUND | Claim check not found |
 | 0x0C | PIPESTREAM_LAYER_UNSUPPORTED | Protocol layer not supported |
+| 0x0D | PIPESTREAM_FRAME_ERROR | Malformed frame or improper stream usage |
 
 ## PipeStream Serialization Format Registry
 
-IANA is requested to create the "PipeStream Serialization Formats" registry. New entries require Expert Review {{RFC8126}}.
+IANA is requested to create the "PipeStream Serialization Formats" registry. New entries require Expert Review {{RFC8126}}. A registration request MUST include a reference to a specification that normatively defines the encoding of every serialized PipeStream message (Section 3.4.2).
 
 | Value | Name | Description | Reference |
 |-------|------|-------------|-----------|
 | 0 | CBOR | Concise Binary Object Representation | RFC 8949, this document |
-| 1 | PROTOBUF | Protocol Buffers (see Appendix D) | this document |
-| 2-255 | Reserved | Reserved for future use | this document |
+| 1-255 | Unassigned | Available via Expert Review | |
 
 ## URI Scheme Registration
 
@@ -97,11 +105,29 @@ Status:
 Applications/protocols that use this scheme:
 :   PipeStream protocol (this document)
 
+Scheme syntax:
+:   See Section 11.6.1.
+
+Scheme semantics:
+:   A pipestream URI identifies an application-level session context within a PipeStream deployment and, optionally, a scope path and an entity reference within that context. It is used to locate detached or resumable resources, such as Layer 2 claim checks, potentially across transport connections. The authority component identifies the endpoint that issued the resource.
+
+Encoding considerations:
+:   All components other than the authority are restricted to a subset of unreserved ASCII characters by the ABNF in Section 11.6.1. Percent-encoding is neither required nor permitted in those components. The authority component follows the syntax and encoding rules of {{RFC3986}}, Section 3.2.
+
+Interoperability considerations:
+:   None beyond those described in this document.
+
+Security considerations:
+:   See Section 10 of this document. A pipestream URI may embed session and claim identifiers that function as bearer capabilities; such URIs SHOULD be treated as sensitive and MUST NOT be exposed in logs or referral contexts where they could enable claim redemption by unauthorized parties.
+
 Contact:
 :   Kristian Rickert (kristian.rickert@pipestream.ai)
 
 Change controller:
 :   IETF
+
+References:
+:   This document
 
 ### URI Syntax
 
@@ -124,3 +150,12 @@ Examples:
 
 - `pipestream://processor.example.com/a1b2c3d4`
 - `pipestream://processor.example.com:8443/a1b2c3d4/1.42/e5f6`
+
+## Guidance for Designated Experts
+
+For all registries defined in this section, the designated experts are advised to apply the following criteria when evaluating requests:
+
+1. A permanent, readily available public specification of the proposed value is required and needs to define the value's semantics precisely enough for independent interoperable implementations.
+2. The proposed value must not conflict with, duplicate, or create ambiguity with existing registrations, including the framing class of frame types (fixed bit-packed versus serialized payload; Section 11.2).
+3. Requests should be evaluated for their effect on existing deployments; extensions that require behavior changes from unmodified endpoints are inappropriate for these registries and instead require a new protocol version (Section 3.4.1).
+4. Assignments from scarce code spaces (in particular the 4-bit status code space) should be granted conservatively; the expert may require demonstrated deployment interest before assigning values from a scarce space.

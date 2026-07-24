@@ -1,4 +1,4 @@
-# Appendix A: Complete CDDL Schema
+# Complete CDDL Schema
 
 This appendix provides the profile's consolidated CDDL
 {{RFC8610}} definitions.

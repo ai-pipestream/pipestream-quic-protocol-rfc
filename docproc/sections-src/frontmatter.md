@@ -5,7 +5,7 @@ docname: draft-krickert-pipestream-docproc-00
 category: info
 submissiontype: independent
 number:
-date: 2026-03-07
+date: 2026-07-23
 consensus: false
 v: 3
 area: "Independent Submission"
@@ -36,16 +36,9 @@ normative:
     author:
       - ins: "K. Rickert"
         name: "Kristian Rickert"
-    date: 2026-03
+    date: 2026-07
     seriesinfo:
       Internet-Draft: draft-krickert-pipestream-03
     target: https://datatracker.ietf.org/doc/draft-krickert-pipestream/
-
-informative:
-  protobuf:
-    title: "Protocol Buffers"
-    author:
-      org: Google
-    target: https://protobuf.dev/
 
 --- abstract

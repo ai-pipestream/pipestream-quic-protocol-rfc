@@ -10,6 +10,6 @@ configuration, capability metadata, or application-specific routing
 tables.
 
 The initial profile schema version defined by this document is `1`.
-Receivers that do not support the advertised `profile_version` in a
+Receivers that do not support the advertised `profile-version` in a
 PipeDoc payload SHOULD reject that payload at the application layer
 rather than attempting best-effort interpretation.

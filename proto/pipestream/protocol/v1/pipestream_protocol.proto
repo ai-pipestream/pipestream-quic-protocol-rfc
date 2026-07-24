@@ -54,19 +54,24 @@ message Capabilities {
   uint32 max_scope_depth = 4;
 
   // Maximum number of entities permitted within a single scope.
-  // Default is 4,294,967,294 (2^32-2), matching the 32-bit entity ID space
-  // (excluding reserved values NULL_ENTITY and CONNECTION_LEVEL).
+  // Default is 4,294,967,292, matching the assignable 32-bit entity ID
+  // space (1 to 0xFFFFFFFC; reserved values excluded).
   uint32 max_entities_per_scope = 5;
 
   // Maximum flow-control window size, in number of in-flight entities,
   // that the endpoint is willing to buffer before requiring cursor
-  // advancement. Default is 2,147,483,648 (2^31).
+  // advancement. Default (and maximum) is 2,147,483,646, which keeps
+  // circular ID comparison unambiguous.
   uint32 max_window_size = 6;
 
   // Serialization format for variable-length control messages (0x80-0xFF)
   // and entity headers. Both peers MUST agree on the format during capability
   // exchange. Default: CBOR (0).
   SerializationFormat serialization_format = 7;
+
+  // Keepalive timeout in milliseconds. The effective timeout is the
+  // minimum of the two peers' advertised values. Default is 30000 (30s).
+  uint32 keepalive_timeout_ms = 8;
 }
 
 // EntityHeader is sent at the beginning of each entity stream to describe
@@ -74,10 +79,10 @@ message Capabilities {
 // chunking information, and the completion policy that governs how partial
 // failures of this entity's children are handled.
 message EntityHeader {
-  // Scope-local entity identifier (32-bit, range 1 to 0xFFFFFFFD).
+  // Scope-local entity identifier (32-bit, range 1 to 0xFFFFFFFC).
   // Assigned by the sender using a cursor-based circular buffer.
-  // Reserved values: 0x00000000 (NULL_ENTITY), 0xFFFFFFFE (SCOPE_MARKER),
-  // 0xFFFFFFFF (CONNECTION_LEVEL).
+  // Reserved values: 0x00000000 (NULL_ENTITY), 0xFFFFFFFD-0xFFFFFFFE
+  // (outside the circular ID space), 0xFFFFFFFF (CONNECTION_LEVEL).
   uint32 entity_id = 1;
 
   // Identifier of the parent entity that spawned this entity, or zero if
@@ -89,15 +94,17 @@ message EntityHeader {
   // Set to 0 when Layer 1 is not negotiated.
   uint32 scope_id = 3;
 
-  // Data layer of this entity's payload (0=BlobBag, 1=Semantic, 2=Parsed,
-  // 3=Custom).
+  // Data layer of this entity's payload (0-3). The concrete meaning of
+  // each layer value is defined by the application profile in use.
   uint32 layer = 4;
 
   // MIME content type of the entity payload (e.g. "application/json",
   // "application/x-protobuf").
   string content_type = 5;
 
-  // Length in bytes of the complete entity payload, before any chunking.
+  // Length in bytes of the payload carried in this frame. For a chunked
+  // entity this is the chunk length, not the total entity length. When
+  // unset, the payload is delimited by the end of the Entity Stream.
   uint64 payload_length = 6;
 
   // SHA-256 integrity checksum of the complete entity payload (32 bytes).

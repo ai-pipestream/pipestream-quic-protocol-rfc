@@ -5,7 +5,7 @@ docname: draft-krickert-pipestream-03
 category: std
 submissiontype: IETF
 number:
-date: 2026-03-07
+date: 2026-07-23
 consensus: true
 v: 3
 area: "Applications and Real-Time"
@@ -37,6 +37,7 @@ normative:
   RFC8949:
   RFC8610:
   RFC5234:
+  RFC3986:
   RFC7595:
   RFC7301:
   FIPS-180-4:
@@ -48,6 +49,7 @@ normative:
       FIPS: PUB 180-4
 
 informative:
+  RFC7942:
   PIPESTREAM-DOCPROC:
     title: "PipeStream Document Processing Profile"
     author:
@@ -84,23 +86,7 @@ informative:
     target: https://www.rfc-editor.org/rfc/rfc9260
   RFC7574:
   RFC7696:
-  MOQT:
-    title: "Media over QUIC Transport"
-    author:
-      - ins: "L. Curley"
-        name: "Luke Curley"
-      - ins: "K. Pugin"
-        name: "Kirill Pugin"
-      - ins: "S. Nandakumar"
-        name: "Suhas Nandakumar"
-      - ins: "V. Vasiliev"
-        name: "Victor Vasiliev"
-      - ins: "I. Swett"
-        name: "Ian Swett"
-    date: 2025
-    seriesinfo:
-      Internet-Draft: draft-ietf-moq-transport-16
-    target: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
+  MOQT: I-D.ietf-moq-transport
   scatter-gather:
     title: "The Scatter-Gather Design Pattern"
     author:

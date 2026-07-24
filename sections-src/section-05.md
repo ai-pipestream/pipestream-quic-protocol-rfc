@@ -45,7 +45,7 @@ When no status updates have been transmitted for KEEPALIVE_TIMEOUT, an endpoint 
 
 ### Transport Session vs. Application Session Context
 
-The `session-id` segment identifies application context for detached or resumable resources (for example, Layer 2 yield/claim-check flows). PipeStream Layer 0 streaming semantics do not depend on this URI scheme.
+The `session-id` segment of the pipestream URI scheme (Section 11.6) identifies application context for detached or resumable resources (for example, Layer 2 yield/claim-check flows). PipeStream Layer 0 streaming semantics do not depend on this URI scheme.
 
 ### Interaction with QUIC Flow Control and Congestion Control
 
@@ -56,11 +56,37 @@ PipeStream relies on the flow control and congestion control mechanisms provided
 
 When the QUIC connection-level flow control window is exhausted, new Entity Streams cannot transmit data regardless of whether PipeStream's entity window has capacity. Conversely, when PipeStream's entity window is full, no new Entity Streams are opened even if QUIC flow control credits are available. Implementations MUST respect both limits. An implementation SHOULD monitor QUIC-level flow control credit availability and avoid opening new Entity Streams when connection-level credits are below the expected entity size, to prevent head-of-line blocking across streams sharing the connection budget.
 
+## Entity Streams
+
+Entity Streams carry entity payload data using the Entity Frame format defined in Section 6.8.
+
+### Stream Identification and Direction
+
+Each Entity Stream is a QUIC unidirectional stream. Either endpoint MAY open Entity Streams once the initial Capabilities exchange (Section 3.4) has completed. Per {{RFC9000}}, client-initiated unidirectional streams carry Stream IDs 2, 6, 10, and so on, and server-initiated unidirectional streams carry Stream IDs 3, 7, 11, and so on.
+
+Endpoints MUST NOT open bidirectional streams other than Stream 0. An endpoint that receives a bidirectional stream other than Stream 0 MUST treat this as a connection error of type PIPESTREAM_FRAME_ERROR (0x0D).
+
+### One Entity per Stream
+
+Each Entity Stream carries exactly one Entity Frame (Section 6.8): a Header Length prefix, a serialized EntityHeader, and the payload octets. The following rules apply:
+
+1. The sender MUST close the stream (QUIC FIN) immediately after the final payload octet. The end of the stream delimits the payload.
+2. When the EntityHeader includes a `payload-length` field, the receiver MUST verify that the number of payload octets received before the FIN equals that value. A mismatch MUST be treated as a stream error of type PIPESTREAM_ENTITY_INVALID (0x05).
+3. A sender that abandons transmission of an entity SHOULD abort the stream with RESET_STREAM carrying an appropriate PipeStream error code; the receiver MUST discard any partial payload data (see Section 5.5).
+4. A receiver that no longer requires an entity MAY send STOP_SENDING on the corresponding Entity Stream.
+5. Additional data received on an Entity Stream after a complete Entity Frame MUST be treated as a stream error of type PIPESTREAM_FRAME_ERROR (0x0D).
+
+## Prohibition of 0-RTT Early Data
+
+QUIC permits applications to send data in 0-RTT early data before the TLS handshake completes; such data is replayable by an attacker. PipeStream capability negotiation establishes per-connection state whose replay could alter negotiated limits or serialization formats.
+
+Endpoints MUST NOT send PipeStream frames in 0-RTT early data, and a server MUST NOT process PipeStream frames received in early data before the QUIC handshake is confirmed. A future extension may define 0-RTT semantics along with the required replay protections.
+
 ## Performance Considerations
 
 ### Entity Granularity and Stream Overhead
 
-PipeStream's "one entity per stream" model (Section 4.2) provides clean multiplexing and flow control but introduces per-stream overhead (QUIC STREAM frame headers and internal stack state).
+PipeStream's "one entity per stream" model (Section 5.2) provides clean multiplexing and flow control but introduces per-stream overhead (QUIC STREAM frame headers and internal stack state).
 
 1. **Small Payloads:** For workloads consisting of many small entities (e.g., <1 KiB), the per-stream overhead may become significant. Implementations SHOULD avoid excessive fragmentation and prefer coarser entity granularity where possible.
 2. **Aggregation:** Application profiles MAY define mechanisms for bundling multiple small logical units into a single PipeStream entity to reduce transport-layer overhead.

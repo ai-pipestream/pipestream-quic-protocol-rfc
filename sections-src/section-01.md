@@ -15,6 +15,8 @@ Modern distributed processing workflows increasingly demand the ability to:
 
 Current approaches based on batch processing and store-and-forward architectures are inefficient for large inputs and fail to exploit the inherent parallelism available in distributed processing environments. Furthermore, existing streaming protocols do not provide the consistency semantics required for hierarchical processing where the integrity of the rehydrated output depends on the successful processing of all constituent parts.
 
+These pipelines also increasingly span organizational and vendor boundaries: a processing stage operated by one party must interoperate with stages operated by others. Today that interoperability is achieved through per-vendor SDKs and bespoke coordination logic, because no standardized wire protocol expresses the decomposition, tracking, and reassembly semantics these systems share. PipeStream specifies that wire protocol.
+
 ### The Limits of Existing Transport and RPC Mechanisms
 
 Existing multiplexed RPC frameworks (for example, gRPC over HTTP/2 or
@@ -30,6 +32,15 @@ Scope Digests (Section 6.3) and Barrier Frames (Section 6.4), PipeStream
 provides native barrier synchronization semantics, ensuring a parent
 stream cannot logically terminate until all scattered child entities
 across distributed nodes have reached a terminal status.
+
+Broker-based pipeline architectures (distributed commit logs and
+message queues) address a related problem by decoupling stages through
+intermediary persistence, but they externalize exactly the semantics
+PipeStream makes native: determining whether a hierarchically
+decomposed job has fully completed requires an external coordination
+store, and end-to-end integrity verification is left to the
+application. Appendix B compares PipeStream to these and other
+existing protocols in detail.
 
 ## Applicability
 

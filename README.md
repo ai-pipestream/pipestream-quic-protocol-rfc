@@ -16,7 +16,7 @@ This repository uses a modular authoring workflow for IETF drafts. The monolithi
 
 - **`sections-src/`**: **The Source of Truth.** Individual Markdown files for each RFC section. Edit these files directly.
 - **`draft-template.md`**: The master kramdown-rfc template that includes all sections in the correct order.
-- **`proto/`**: Informational Protobuf definitions. Normative structures use CDDL in the specification.
+- **`proto/`**: Non-normative Protocol Buffers definitions used by implementation tooling. Not part of the Internet-Draft; the specification's normative schemas use CDDL (Appendix C). An alternative serialization format may be registered separately via the PipeStream Serialization Formats registry.
 
 ### Styling Conventions for Rendering
 
@@ -95,6 +95,7 @@ Submit the generated **`.xml`** file to the IETF Datatracker:
 
 - **`REFERENCE_IMPLEMENTATION.md`**: Informative guidance on algorithms (Fibonacci heaps, Merkle trees).
 - **`OVERVIEW.md`**: High-level architectural summary.
+- **`advocacy/`**: IETF process materials (prior-art survey, DISPATCH kit, ANRW paper draft, submission checklist). Not part of any Internet-Draft.
 - **`build/`**: (Ignored) Temporary build artifacts.
 
 ## Authors

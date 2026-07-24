@@ -10,13 +10,13 @@ entity:
 |-------|-------------------------|-------|
 | 0 | `blob_bag` plus shared envelope metadata | Raw source content |
 | 1 | `semantic_result` plus shared envelope metadata | Annotated or enriched intermediate output |
-| 2 | `parsed_metadata` and/or `structured_data` plus shared envelope metadata | Structured extraction results |
+| 2 | `parsed-metadata` and/or `structured-data` plus shared envelope metadata | Structured extraction results |
 | 3 | `custom_entity` plus shared envelope metadata | Profile extension or vendor-specific payload |
 
 An implementation of this profile SHOULD NOT populate multiple
 layer-specific payload families in the same PipeDoc instance. Shared
-envelope metadata such as `profile_version`, `doc_id`, `entity_id`,
-`search_metadata`, and `ownership` MAY appear at any layer.
+envelope metadata such as `profile-version`, `doc-id`, `entity-id`,
+`search-metadata`, and `ownership` MAY appear at any layer.
 
 ## Layer 0: BlobBag
 

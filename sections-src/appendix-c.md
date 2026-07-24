@@ -1,4 +1,4 @@
-# Appendix C: Schema Reference (CDDL)
+# Schema Reference (CDDL)
 
 This appendix consolidates the normative CDDL {{RFC8610}} schema
 definitions for PipeStream Core messages that use negotiated
@@ -8,11 +8,9 @@ default). Fixed control frames on Stream 0, such as STATUS and
 SCOPE_DIGEST, use the bit-packed wire formats defined in Section 6 and
 are not serialized as CDDL messages.
 
-An informational Protocol Buffers equivalent is provided in Appendix D
-for implementations that negotiate Protobuf encoding. Application-
-specific payload envelopes and profile-specific schemas are outside the
-scope of this appendix; see [PIPESTREAM-DOCPROC] for an example
-companion profile that defines such messages.
+Application-specific payload envelopes and profile-specific schemas are
+outside the scope of this appendix; see [PIPESTREAM-DOCPROC] for an
+example companion profile that defines such messages.
 
 ~~~~ cddl
 ; -----------------------------------------------------------
@@ -38,22 +36,23 @@ companion profile that defines such messages.
 ; Serialization format negotiation
 ; -----------------------------------------------------------
 
-serialization-format = &(
-  cbor: 0,
-  protobuf: 1,
-)
+serialization-format = uint .le 255
+                       ; Value from the PipeStream Serialization
+                       ; Formats registry (Section 11.5).
+                       ; This document defines only CBOR (0).
 
 ; -----------------------------------------------------------
 ; Capabilities (exchanged during CONNECT on Stream 0)
 ; -----------------------------------------------------------
 
 capabilities = {
-  layer0-core: bool,
+  layer0-core: bool,              ; MUST be true
   layer1-recursive: bool,
   layer2-resilience: bool,
-  ? max-scope-depth: uint .le 7,
-  ? max-entities-per-scope: uint,
-  ? max-window-size: uint,
+  ? max-scope-depth: uint .le 7,  ; Default: 7
+  ? max-entities-per-scope: uint, ; Default: 4,294,967,292
+  ? max-window-size: uint,        ; Default: 2,147,483,646
+                                  ; (Section 9.1)
   ? serialization-format: serialization-format,
   ? keepalive-timeout-ms: uint,   ; Default: 30000 (30s)
 }
@@ -68,7 +67,9 @@ entity-header = {
   ? scope-id: uint,               ; 32-bit (Section 6.2.1)
   layer: uint .le 3,              ; Data layer 0-3
   ? content-type: tstr,
-  payload-length: uint,           ; Payload byte count
+  ? payload-length: uint,         ; Octet count of this frame's
+                                  ; payload; SHOULD be present
+                                  ; (Section 6.8.1)
   ? checksum: bstr .size 32,      ; SHA-256; SHOULD be present
   ? metadata: { * tstr => tstr },
   ? chunk-info: chunk-info,

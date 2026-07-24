@@ -4,6 +4,8 @@
 
 PipeStream inherits security from QUIC {{RFC9000}} and TLS 1.3 {{RFC8446}}. All connections MUST use TLS 1.3 or later. Implementations MUST NOT provide mechanisms to disable encryption.
 
+PipeStream frames MUST NOT be sent or processed in 0-RTT early data (Section 5.3), which removes the replay exposure that early data would otherwise introduce for capability negotiation and status frames.
+
 ## Entity Payload Integrity
 
 Each Entity SHOULD include a SHA-256 {{FIPS-180-4}} checksum in its EntityHeader (the `checksum` field defined in Section 6.8.2). The checksum is OPTIONAL in the wire format to accommodate zero-length entities, streamed entities whose final length is unknown at header-emission time, and scenarios where application-layer integrity mechanisms provide equivalent guarantees. When a checksum is present, it MUST be exactly 32 octets containing the SHA-256 digest computed over the raw payload bytes (the octet sequence following the EntityHeader on the Entity Stream). The checksum does not cover the EntityHeader itself.
@@ -33,8 +35,8 @@ The `checksum` field in the EntityHeader is typed as `bstr .size 32` in the CDDL
 | Limit | Default | Description |
 |-------|---------|-------------|
 | Max scope depth | 7 | Prevents recursive bombs (8 levels: 0-7) |
-| Max entities per scope | 4,294,967,294 | Memory bounds |
-| Max window size | 2,147,483,648 | Max in-flight entities (2^31) |
+| Max entities per scope | 4,294,967,292 | Memory bounds (Section 9.1) |
+| Max window size | 2,147,483,646 | Max in-flight entities (Section 9.1) |
 | Checkpoint timeout | 30s | Prevents stuck state |
 | Claim check expiry | 86400s | Garbage collection |
 
@@ -87,6 +89,8 @@ Claim checks (Section 6.6.3) are long-lived references that can be redeemed in d
 2. Implementations MUST track redeemed claim check IDs and reject duplicate redemptions. The tracking state MUST persist for at least the claim check expiry duration.
 
 3. Claim check IDs MUST be generated using a cryptographically secure random number generator to prevent guessing.
+
+4. Because the claim check identifier space is 64 bits, an online attacker with sufficient query volume could attempt to enumerate valid identifiers. Implementations SHOULD rate-limit claim redemption attempts per peer and SHOULD treat repeated redemption failures as a signal of probing.
 
 ## Encryption Key Management
 

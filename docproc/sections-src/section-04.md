@@ -20,7 +20,7 @@ The PROCESS stage transforms document entities between profile-defined
 layer representations. Typical examples include text extraction, OCR,
 semantic chunking, embedding generation, entity recognition, and
 structured field or table extraction. Example processing patterns are
-described in Appendix C.
+described in Appendix B.
 
 ## SINK Stage
 

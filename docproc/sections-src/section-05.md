@@ -44,5 +44,5 @@ Shared indexing, storage, or enrichment infrastructure can create
 cross-tenant leakage risks if document-processing metadata is reused
 outside its intended scope. Implementations SHOULD isolate tenant data
 paths, avoid sharing authorization context across tenants, and ensure
-that cached semantic or structured outputs are keyed by both `doc_id`
+that cached semantic or structured outputs are keyed by both `doc-id`
 and the relevant ownership boundary.

@@ -13,3 +13,7 @@ fix_align.py
 test.py
 test.md
 test.xml
+draft-template.txt
+draft-template.xml
+docproc/draft-template.txt
+docproc/draft-template.xml
