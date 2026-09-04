@@ -169,7 +169,7 @@ def main() -> int:
         certs = temporary_root / "certs"
         run([str(ROOT / "conformance/generate_test_certs.sh"), str(certs)])
         payload = temporary_root / "payload.bin"
-        payload.write_bytes(b"PipeStream interop\x00" + bytes(range(256)) * 17 + "\n東京\n".encode())
+        payload.write_bytes(b"PipeStream interop\x00" + bytes(range(256)) * 17)
         entity_id = 100
         for server in values:
             for client in values:

@@ -1,12 +1,23 @@
 # Three-node scatter and reassembly
 
-This demo launches one Java/Netty, one Rust/Quinn, and one C++/MsQuic server.
-An external coordinator divides a root entity into three immutable children,
-sends each child to a different process with the same Layer 0 `parent-id`, waits
-for each checkpoint-confirmed completion, and reassembles the children in Entity
-ID order. Each server independently validates its child's SHA-256 checksum.
+This is a Rust coordinator application. Its [`main.rs`](src/main.rs) divides a
+root entity into three immutable children, calls the reusable Quinn client to
+send them concurrently to independent Java/Netty, Rust/Quinn, and C++/MsQuic
+servers, waits for each checkpoint-confirmed completion, verifies the shared
+Layer 0 `parent-id`, and reassembles the result in Entity ID order.
 
 ```sh
-python3 conformance/run_interop.py --build
-python3 examples/three-node-scatter/run.py [INPUT]
+cargo build --release --locked
+
+target/release/three-node-scatter \
+  --input input.bin --ca /path/to/ca.crt \
+  --java-server 127.0.0.1:9441 --java-output /tmp/java-received \
+  --rust-server 127.0.0.1:9442 --rust-output /tmp/rust-received \
+  --cpp-server 127.0.0.1:9443 --cpp-output /tmp/cpp-received
 ```
+
+The three servers must already be running with the output directories supplied
+above. `conformance/run_examples.py` starts those processes and invokes this
+Rust application during the full repository gate. Reading those output
+directories is a local demonstration adapter, not a Layer 0 network gather
+operation.

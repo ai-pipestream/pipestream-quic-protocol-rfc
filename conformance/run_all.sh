@@ -26,12 +26,21 @@ cargo clippy --locked --all-targets --manifest-path implementations/rust-quinn/C
 cargo test --locked --manifest-path implementations/rust-quinn/Cargo.toml
 cargo build --release --locked --manifest-path implementations/rust-quinn/Cargo.toml
 
-mvn verify -q -f implementations/java-netty/pom.xml
+mvn install -q -f implementations/java-netty/pom.xml
+mvn verify -q -f examples/java-to-rust/pom.xml
 
 cmake -S implementations/cpp-msquic -B implementations/cpp-msquic/build \
   -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build implementations/cpp-msquic/build -j 4
 ctest --test-dir implementations/cpp-msquic/build --output-on-failure
 
+for example in rust-to-cpp-recovery three-node-scatter; do
+  manifest="examples/${example}/Cargo.toml"
+  cargo fmt --manifest-path "$manifest" -- --check
+  cargo clippy --locked --all-targets --manifest-path "$manifest" -- -D warnings
+  cargo test --locked --manifest-path "$manifest"
+  cargo build --release --locked --manifest-path "$manifest"
+done
+
 python3 conformance/run_interop.py
-python3 examples/run_all.py
+python3 conformance/run_examples.py

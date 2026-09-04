@@ -18,6 +18,11 @@ processes complete the Layer 0 state machine and the runner observes byte-exact
 payload and parent identity on disk. The current matrix is 3 clients by 3
 servers, or nine pairings.
 
+`run_examples.py` is a separate black-box runner for the language-native
+applications under `examples/`. It provides certificates and server processes,
+then invokes the compiled Java or Rust example. It does not implement example
+behavior or any part of the PipeStream protocol.
+
 ## Standalone command contract
 
 Every executable provides equivalent commands:

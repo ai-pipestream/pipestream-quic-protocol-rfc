@@ -20,7 +20,7 @@ This repository uses a modular authoring workflow for IETF drafts. The monolithi
 - **`test-vectors/`**: Checked-in golden valid and invalid wire inputs with named expected refusals.
 - **`conformance/`**: Vector checks and the black-box client/server interoperability runner.
 - **`implementations/`**: Independent Java/Netty, Rust/Quinn, and C++/MsQuic libraries and executables.
-- **`examples/`**: Process-level demonstrations that use the independent implementations.
+- **`examples/`**: Language-native Java and Rust applications that use the reusable implementations.
 - **`proto/`**: Non-normative Protocol Buffers definitions used by implementation tooling. Not part of the Internet-Draft; the specification's normative schemas use CDDL (Appendix C). An alternative serialization format may be registered separately via the PipeStream Serialization Formats registry.
 
 ## Reference Suite
@@ -36,7 +36,11 @@ bundle install
 ./conformance/run_all.sh
 ```
 
-That command checks generated vectors, runs every implementation's unit tests, builds the three executables, executes all nine black-box client/server pairings, and runs the three external demos. See [`conformance/README.md`](conformance/README.md) for the command contract and [`examples/README.md`](examples/README.md) for the demos.
+That command checks generated vectors, runs every implementation and example's
+tests, builds the three servers and language-native applications, executes all
+nine black-box client/server pairings, and runs the three external scenarios.
+See [`conformance/README.md`](conformance/README.md) for the command contract and
+[`examples/README.md`](examples/README.md) for the application sources.
 
 Dependency versions are reproducible: Ruby dependencies are exact in
 `Gemfile.lock`, Rust dependencies in `Cargo.lock`, Java dependencies and build

@@ -1,6 +1,6 @@
-"""Process-only support for external interoperability demos.
+"""Black-box process support for language-native example verification.
 
-This module knows how to launch the standalone programs. It contains no
+This module launches executables and checks readiness. It contains no
 PipeStream framing, serialization, state-machine, or transport code.
 """
 
@@ -14,12 +14,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def command(name: str) -> list[str]:
+def single_match(directory: Path, pattern: str, description: str) -> Path:
+    matches = sorted(directory.glob(pattern))
+    if len(matches) != 1:
+        raise RuntimeError(f"expected one {description}; run ./conformance/run_all.sh")
+    return matches[0]
+
+
+def implementation_command(name: str) -> list[str]:
     if name == "java-netty":
-        jars = sorted((ROOT / "implementations/java-netty/target").glob("*-all.jar"))
-        if len(jars) != 1:
-            raise RuntimeError("Java reference JAR is missing; run conformance/run_interop.py --build")
-        return ["java", "--enable-native-access=ALL-UNNAMED", "-jar", str(jars[0])]
+        jar = single_match(
+            ROOT / "implementations/java-netty/target", "*-all.jar", "Java implementation JAR"
+        )
+        return ["java", "--enable-native-access=ALL-UNNAMED", "-jar", str(jar)]
     if name == "rust-quinn":
         executable = ROOT / "implementations/rust-quinn/target/release/pipestream-quinn"
     elif name == "cpp-msquic":
@@ -27,7 +34,21 @@ def command(name: str) -> list[str]:
     else:
         raise ValueError(f"unknown implementation {name}")
     if not executable.is_file():
-        raise RuntimeError(f"{name} is missing; run conformance/run_interop.py --build")
+        raise RuntimeError(f"{name} executable is missing; run ./conformance/run_all.sh")
+    return [str(executable)]
+
+
+def java_example_command() -> list[str]:
+    jar = single_match(
+        ROOT / "examples/java-to-rust/target", "*-all.jar", "Java-to-Rust example JAR"
+    )
+    return ["java", "--enable-native-access=ALL-UNNAMED", "-jar", str(jar)]
+
+
+def rust_example_command(name: str) -> list[str]:
+    executable = ROOT / "examples" / name / "target/release" / name
+    if not executable.is_file():
+        raise RuntimeError(f"{name} executable is missing; run ./conformance/run_all.sh")
     return [str(executable)]
 
 
@@ -39,6 +60,17 @@ def certificates(output: Path) -> None:
     )
 
 
+def run_checked(command: list[str]) -> subprocess.CompletedProcess[bytes]:
+    result = subprocess.run(command, cwd=ROOT, capture_output=True, timeout=30)
+    if result.returncode:
+        raise RuntimeError(
+            f"command failed ({result.returncode}): {' '.join(command)}\n"
+            f"stdout:\n{result.stdout.decode(errors='replace')}\n"
+            f"stderr:\n{result.stderr.decode(errors='replace')}"
+        )
+    return result
+
+
 @dataclass
 class Server:
     name: str
@@ -48,12 +80,12 @@ class Server:
 
 
 def start_server(name: str, root: Path, certs: Path) -> Server:
-    output = root / name / "received"
+    output = root / f"{name}-server" / "received"
     output.mkdir(parents=True)
-    ready = root / name / "ready"
+    ready = root / f"{name}-server" / "ready"
     process = subprocess.Popen(
         [
-            *command(name),
+            *implementation_command(name),
             "serve",
             "--bind", "127.0.0.1:0",
             "--cert", str(certs / "server.crt"),
@@ -66,10 +98,12 @@ def start_server(name: str, root: Path, certs: Path) -> Server:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+    server = Server(name, process, "", output)
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         if ready.is_file() and ready.stat().st_size:
-            return Server(name, process, ready.read_text(encoding="utf-8").strip(), output)
+            server.address = ready.read_text(encoding="utf-8").strip()
+            return server
         if process.poll() is not None:
             stdout, stderr = process.communicate()
             raise RuntimeError(
@@ -78,38 +112,8 @@ def start_server(name: str, root: Path, certs: Path) -> Server:
                 f"stderr:\n{stderr.decode(errors='replace')}"
             )
         time.sleep(0.025)
-    stop_server(Server(name, process, "", output))
+    stop_server(server)
     raise RuntimeError(f"{name} readiness timed out")
-
-
-def send_entity(
-    name: str,
-    server: Server,
-    certs: Path,
-    entity_id: int,
-    payload: Path,
-    *,
-    parent_id: int | None = None,
-) -> None:
-    arguments = [
-        *command(name),
-        "send",
-        "--connect", server.address,
-        "--ca", str(certs / "ca.crt"),
-        "--server-name", "localhost",
-        "--entity-id", str(entity_id),
-        "--input", str(payload),
-        "--content-type", "application/octet-stream",
-    ]
-    if parent_id is not None:
-        arguments.extend(("--parent-id", str(parent_id)))
-    result = subprocess.run(arguments, cwd=ROOT, capture_output=True, timeout=30)
-    if result.returncode:
-        raise RuntimeError(
-            f"{name} client failed against {server.name}\n"
-            f"stdout:\n{result.stdout.decode(errors='replace')}\n"
-            f"stderr:\n{result.stderr.decode(errors='replace')}"
-        )
 
 
 def finish_server(server: Server) -> None:

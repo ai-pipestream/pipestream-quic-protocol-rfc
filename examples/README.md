@@ -1,18 +1,21 @@
 # External demonstrations
 
-These examples are process orchestrators, not a fourth protocol
-implementation. They call the standalone programs and inspect only their
-documented command contract and output artifacts.
+These are language-native applications built against the reusable reference
+libraries:
 
-- `java-to-rust`: Java/Netty client to Rust/Quinn server transfer.
-- `rust-to-cpp-recovery`: durable application-profile replay from Rust to C++.
-  It does not claim QUIC connection resumption or Layer 2 continuation.
-- `three-node-scatter`: one Java, one Rust, and one C++ server receive children
-  with a common parent identity, followed by checksum-checked reassembly.
+- `java-to-rust` is Java 21 source in a standalone Maven project. It imports
+  the Java/Netty library and sends to a Rust/Quinn server.
+- `rust-to-cpp-recovery` is Rust source in a standalone Cargo project. It owns
+  durable sender state and replays through the Quinn library to C++/MsQuic.
+- `three-node-scatter` is a Rust coordinator in a standalone Cargo project. It
+  scatters to Java, Rust, and C++ servers and performs checked reassembly.
 
-Build the implementations first, then run all demonstrations:
+There is no Python application code in `examples/`. The Python runner under
+`conformance/` only starts external servers, invokes these compiled programs,
+and checks their process and filesystem results.
+
+Build and run every implementation, example, interop pair, and scenario with:
 
 ```bash
-python3 conformance/run_interop.py --build
-python3 examples/run_all.py
+./conformance/run_all.sh
 ```

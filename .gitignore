@@ -12,6 +12,7 @@ vendor/bundle/
 __pycache__/
 *.py[cod]
 implementations/*/target/
+examples/*/target/
 implementations/cpp-msquic/build/
 .refcache/
 build/
