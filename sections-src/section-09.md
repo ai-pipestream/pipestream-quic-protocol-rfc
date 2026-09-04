@@ -74,17 +74,24 @@ CheckpointFrame (Section 6.7 / Appendix C) carries both:
 checkpoint-frame = {
   checkpoint-id: tstr,
   sequence-number: uint,
-  checkpoint-entity-id: uint,
-  ? scope-id: uint,
-  ? flags: uint,
+  checkpoint-entity-id: entity-id,
+  ? scope-id: uint32,
+  ? flags: checkpoint-flags,
   ? timeout-ms: uint,
 }
+
+checkpoint-flags = uint .le 1
+                   ; Bit 0: ACK. All other bits are invalid.
 ~~~~
 
 - `checkpoint_id`: an opaque identifier for logging and correlation.
 - `checkpoint_entity_id`: the numeric ordering key used for barrier evaluation.
 
 Implementations MUST use `checkpoint_entity_id` (not `checkpoint_id`) when evaluating Condition 1.
+
+The endpoint requesting a barrier sends a CHECKPOINT frame with Flags set to 0. The processing endpoint MUST NOT acknowledge it until all three conditions above are satisfied. It then sends a CHECKPOINT frame with the same `checkpoint-id`, `sequence-number`, `checkpoint-entity-id`, and `scope-id`, and with the ACK flag (bit 0) set. All other flag bits are invalid and MUST cause PIPESTREAM_FRAME_ERROR (0x0D). A requester that receives an acknowledgement whose identifying fields do not match the outstanding checkpoint MUST close the connection with PIPESTREAM_ENTITY_INVALID (0x05).
+
+The originating endpoint MUST NOT advance its cursor beyond `checkpoint-entity-id` until it has received the matching acknowledgement. A checkpoint is optional for ordinary Layer 0 transfer, but when one is used this request/acknowledgement exchange is the wire evidence that the barrier was crossed.
 
 For circular comparison in Condition 1, implementations MUST use the same modulo ordering as cursor management. Define `MAX = 0xFFFFFFFD` and:
 

@@ -24,13 +24,19 @@ example companion profile that defines such messages.
 ; the CBOR encoding but record the maximum value each
 ; field may carry.
 ;
-;   uint32  values 0..4294967295     (Entity ID, Scope ID)
+;   uint32  values 0..4294967295     (Scope ID)
+;   entity-id values 1..4294967292   (assignable Entity ID)
 ;   uint64  values 0..2^64-1         (counters, timestamps)
 ;
 ; For variable-length serialized messages (CBOR), the
 ; natural uint encoding applies and receivers MUST accept
 ; any valid CBOR unsigned integer.
 ; -----------------------------------------------------------
+
+; -----------------------------------------------------------
+
+uint32 = 0..4294967295
+entity-id = 1..4294967292
 
 ; -----------------------------------------------------------
 ; Serialization format negotiation
@@ -50,8 +56,10 @@ capabilities = {
   layer1-recursive: bool,
   layer2-resilience: bool,
   ? max-scope-depth: uint .le 7,  ; Default: 7
-  ? max-entities-per-scope: uint, ; Default: 4,294,967,292
-  ? max-window-size: uint,        ; Default: 2,147,483,646
+  ? max-entities-per-scope: uint .le 4294967292,
+                                  ; Default: 4,294,967,292
+  ? max-window-size: uint .le 2147483646,
+                                  ; Default: 2,147,483,646
                                   ; (Section 9.1)
   ? serialization-format: serialization-format,
   ? keepalive-timeout-ms: uint,   ; Default: 30000 (30s)
@@ -62,9 +70,9 @@ capabilities = {
 ; -----------------------------------------------------------
 
 entity-header = {
-  entity-id: uint,                ; 32-bit on wire (STATUS frame)
-  ? parent-id: uint,              ; 32-bit scope-local
-  ? scope-id: uint,               ; 32-bit (Section 6.2.1)
+  entity-id: entity-id,
+  ? parent-id: entity-id,         ; Scope-local parent
+  ? scope-id: uint32,             ; Section 6.2.1
   layer: uint .le 3,              ; Data layer 0-3
   ? content-type: tstr,
   ? payload-length: uint,         ; Octet count of this frame's
@@ -119,11 +127,14 @@ failure-action = &(
 checkpoint-frame = {
   checkpoint-id: tstr,
   sequence-number: uint,
-  checkpoint-entity-id: uint,
-  ? scope-id: uint,
-  ? flags: uint,
+  checkpoint-entity-id: entity-id,
+  ? scope-id: uint32,
+  ? flags: checkpoint-flags,
   ? timeout-ms: uint,
 }
+
+checkpoint-flags = uint .le 1
+                   ; Bit 0: ACK. All other bits are invalid.
 
 ; -----------------------------------------------------------
 ; Entity status codes

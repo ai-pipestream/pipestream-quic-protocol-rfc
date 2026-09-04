@@ -1,7 +1,7 @@
 # Implementation Status
 
-[[RFC Editor: please remove this entire appendix, and the reference to
-{{RFC7942}}, before publication.]]
+**RFC Editor Note:** Please remove this entire appendix, and the reference to
+{{RFC7942}}, before publication.
 
 This appendix records the status of known implementations of the
 protocol defined by this specification at the time of posting of this
@@ -15,25 +15,78 @@ IETF contributors. This is not intended as, and must not be construed
 to be, a catalog of available implementations or their features.
 Readers are advised to note that other implementations may exist.
 
-## Reference Implementation
+## Java/Netty Reference Implementation
 
 Organization:
 :   PipeStream AI
 
 Description:
-:   Reference implementation of the PipeStream protocol.
+:   Java 21 implementation using Netty QUIC for transport and Jackson CBOR for an independently implemented Layer 0 codec. It is available as a reusable Java library and a standalone client/server executable.
 
 Maturity:
-:   Under development; not yet publicly released.
+:   Prototype, publicly available in the `implementations/java-netty` directory of this document's source repository.
 
 Coverage:
-:   To be updated as development progresses.
+:   TLS 1.3 with ALPN `pipestream/1`; no 0-RTT; deterministic CBOR Capabilities, EntityHeader, and Checkpoint messages; STATUS heartbeat and entity progression; cursor advancement; parent identity; SHA-256 payload validation; checkpoint request/acknowledgement; and GOAWAY. The standalone command handles one entity per connection and does not implement Layers 1 or 2.
 
 Licensing:
-:   To be determined.
+:   MIT.
+
+Implementation:
+:   `https://github.com/ai-pipestream/pipestream-quic-protocol-rfc/tree/main/implementations/java-netty`
 
 Contact:
 :   Kristian Rickert (kristian.rickert@pipestream.ai)
+
+## Rust/Quinn Reference Implementation
+
+Organization:
+:   PipeStream AI
+
+Description:
+:   Rust implementation using Quinn and Minicbor. It contains a reusable Rust library and a standalone client/server executable, with protocol code implemented independently from the Java and C++ implementations.
+
+Maturity:
+:   Prototype, publicly available in the `implementations/rust-quinn` directory of this document's source repository.
+
+Coverage:
+:   TLS 1.3 with ALPN `pipestream/1`; no 0-RTT; deterministic CBOR Capabilities, EntityHeader, and Checkpoint messages; STATUS heartbeat and entity progression; cursor advancement; parent identity; SHA-256 payload validation; checkpoint request/acknowledgement; and GOAWAY. The standalone command handles one entity per connection and does not implement Layers 1 or 2.
+
+Licensing:
+:   MIT.
+
+Implementation:
+:   `https://github.com/ai-pipestream/pipestream-quic-protocol-rfc/tree/main/implementations/rust-quinn`
+
+Contact:
+:   Kristian Rickert (kristian.rickert@pipestream.ai)
+
+## C++/MsQuic Reference Implementation
+
+Organization:
+:   PipeStream AI
+
+Description:
+:   C++20 implementation using Microsoft MsQuic and a manually implemented deterministic CBOR codec. It contains reusable wire and transport libraries and a standalone client/server executable. It does not share protocol implementation code with the Java or Rust implementations.
+
+Maturity:
+:   Prototype, publicly available in the `implementations/cpp-msquic` directory of this document's source repository.
+
+Coverage:
+:   TLS 1.3 with ALPN `pipestream/1`; no 0-RTT; deterministic CBOR Capabilities, EntityHeader, and Checkpoint messages; STATUS heartbeat and entity progression; cursor advancement; parent identity; SHA-256 payload validation; checkpoint request/acknowledgement; and GOAWAY. The standalone command handles one entity per connection and does not implement Layers 1 or 2.
+
+Licensing:
+:   MIT.
+
+Implementation:
+:   `https://github.com/ai-pipestream/pipestream-quic-protocol-rfc/tree/main/implementations/cpp-msquic`
+
+Contact:
+:   Kristian Rickert (kristian.rickert@pipestream.ai)
+
+## Interoperability Evidence
+
+The repository's black-box runner starts each executable as a separate process and tests all nine client/server pairings. The implementations share the normative specification, CDDL, and golden vector corpus, but no protocol implementation code. The current suite verifies binary and UTF-8 payload transfer, parent identity, status progression, checkpoint acknowledgement, cursor advancement, graceful GOAWAY, and byte-exact delivery. The result is reproducible evidence for the listed protocol subset, not a claim of complete support for every optional field or extension in this document.
 
 The authors welcome reports of additional implementations for inclusion
 in future revisions of this appendix.

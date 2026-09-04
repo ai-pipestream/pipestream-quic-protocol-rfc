@@ -7,6 +7,12 @@ draft-krickert-pipestream-*.xml
 draft-krickert-pipestream-*.txt
 draft-krickert-pipestream-*.html
 .idea
+.bundle/
+vendor/bundle/
+__pycache__/
+*.py[cod]
+implementations/*/target/
+implementations/cpp-msquic/build/
 .refcache/
 build/
 fix_align.py

@@ -1,0 +1,26 @@
+[package]
+name = "pipestream-quic-rust"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "Independent Rust/Quinn implementation of PipeStream Layer 0"
+
+[lib]
+name = "pipestream_quic"
+
+[[bin]]
+name = "pipestream-quinn"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.6", features = ["derive"] }
+minicbor = { version = "2.3.0", features = ["std"] }
+quinn = "0.11.11"
+rustls = { version = "0.23.43", default-features = false, features = ["ring", "std"] }
+sha2 = "0.11.0"
+tokio = { version = "1.53.1", features = ["fs", "macros", "rt-multi-thread", "time"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

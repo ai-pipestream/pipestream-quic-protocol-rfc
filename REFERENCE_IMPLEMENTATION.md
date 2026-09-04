@@ -2,6 +2,12 @@
 
 This document provides implementation guidance and recommended data structures for PipeStream protocol implementations. The content in this document is INFORMATIVE and not part of the normative protocol specification.
 
+## Current Layer 0 Suite
+
+Executable Layer 0 implementations now live under [`implementations/`](implementations/): Java/Netty, Rust/Quinn, and C++/MsQuic. Each directory builds a reusable library plus a standalone client/server. Their codecs and protocol state machines are separate implementations.
+
+The checked-in [`test-vectors/`](test-vectors/) corpus supplies golden valid and invalid bytes, while [`conformance/run_interop.py`](conformance/run_interop.py) runs every client against every server as separate processes. The demonstrations in [`examples/`](examples/) exercise cross-language transfer, application-profile recovery, and three-node scatter/reassembly. These implementations currently cover the documented Layer 0 subset; the algorithms below remain guidance for the recursive layers and are not implied by a passing Layer 0 run.
+
 ## 1. Rehydration Readiness Tracking (Fibonacci Heap)
 
 ### 1.1. Overview

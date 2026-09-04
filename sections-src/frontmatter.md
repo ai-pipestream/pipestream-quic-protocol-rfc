@@ -1,11 +1,11 @@
 ---
 title: "PipeStream: A Recursive Entity Streaming Protocol for Distributed Processing over QUIC"
 abbrev: "PipeStream"
-docname: draft-krickert-pipestream-03
+docname: draft-krickert-pipestream-04
 category: std
 submissiontype: IETF
 number:
-date: 2026-07-23
+date: 2026-09-04
 consensus: true
 v: 3
 area: "Applications and Real-Time"
@@ -17,7 +17,6 @@ keyword:
  - distributed-processing
  - scatter-gather
  - consistency
-github: ai-pipestream/pipestream-quic-protocol-rfc
 venue:
   group: Individual
   mail: kristian.rickert@pipestream.ai
@@ -32,7 +31,7 @@ normative:
   RFC2119:
   RFC8174:
   RFC9000:
-  RFC8446:
+  RFC9846:
   RFC8126:
   RFC8949:
   RFC8610:

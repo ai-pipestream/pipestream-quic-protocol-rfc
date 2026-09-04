@@ -84,13 +84,15 @@ PipeStream protocol versioning is carried in two places: the ALPN identifier and
 
 A future major version of PipeStream (e.g., `pipestream/2`) would register a new ALPN identifier. QUIC's native ALPN negotiation during the TLS handshake provides version selection: if a client offers both `pipestream/2` and `pipestream/1` and the server supports only `pipestream/1`, the TLS handshake selects `pipestream/1` without additional round trips. This mechanism is consistent with the versioning approach used by HTTP/3 {{RFC9114}} and DNS over QUIC {{RFC9250}}.
 
-Minor, backward-compatible extensions (such as new optional capability fields or new status codes within the reserved ranges) do not require a new ALPN identifier. Such extensions are negotiated through the capabilities structure or the IANA registries defined in Section 11.
+Minor, backward-compatible extensions do not require a new ALPN identifier. Such extensions use newly registered frame or status values and explicit capability negotiation as specified by the extension. The maps defined by this document are closed: an endpoint that receives an unrecognized map member before negotiating an extension that defines it MUST close the connection with PIPESTREAM_FRAME_ERROR (0x0D). An extension therefore cannot add an optional member to a core map without also defining how support for that member is negotiated.
 
 ### Serialization Format Negotiation
 
 The serialization_format field determines the encoding used for all variable-length control messages (frame types 0x80-0xFF) and entity headers.
 
-This document defines a single serialization format: CBOR {{RFC8949}}, value 0 in the PipeStream Serialization Formats registry (Section 11.5). All PipeStream implementations MUST support CBOR. The `serialization-format` capability field and its registry exist to permit future specifications to define additional formats; any such specification MUST normatively define the encoding of every serialized message in this document.
+This document defines a single serialization format: CBOR {{RFC8949}}, value 0 in the PipeStream Serialization Formats registry (Section 11.5). All PipeStream implementations MUST support CBOR. Every CBOR message MUST use the deterministic encoding requirements of Section 4.2 of {{RFC8949}}: definite-length items, the shortest form for integers and lengths, and deterministic map-key ordering. A receiver MUST reject a non-deterministically encoded PipeStream CBOR message with PIPESTREAM_FRAME_ERROR (0x0D). This gives every message one golden byte representation and makes conformance results independent of a library's default encoder settings.
+
+The `serialization-format` capability field and its registry exist to permit future specifications to define additional formats; any such specification MUST normatively define the encoding of every serialized message in this document.
 
 Negotiation proceeds as follows:
 

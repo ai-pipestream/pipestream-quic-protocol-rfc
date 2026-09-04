@@ -16,7 +16,35 @@ This repository uses a modular authoring workflow for IETF drafts. The monolithi
 
 - **`sections-src/`**: **The Source of Truth.** Individual Markdown files for each RFC section. Edit these files directly.
 - **`draft-template.md`**: The master kramdown-rfc template that includes all sections in the correct order.
+- **`cddl/`**: Machine-readable Layer 0 CDDL synchronized with Appendix C.
+- **`test-vectors/`**: Checked-in golden valid and invalid wire inputs with named expected refusals.
+- **`conformance/`**: Vector checks and the black-box client/server interoperability runner.
+- **`implementations/`**: Independent Java/Netty, Rust/Quinn, and C++/MsQuic libraries and executables.
+- **`examples/`**: Process-level demonstrations that use the independent implementations.
 - **`proto/`**: Non-normative Protocol Buffers definitions used by implementation tooling. Not part of the Internet-Draft; the specification's normative schemas use CDDL (Appendix C). An alternative serialization format may be registered separately via the PipeStream Serialization Formats registry.
+
+## Reference Suite
+
+The Layer 0 reference suite is intentionally polyglot. Each implementation owns its codec and protocol state machine; no implementation imports protocol code from another. The shared artifacts are the specification, CDDL, and language-neutral binary corpus.
+
+The common standalone interface supports `serve` and `send`. A successful transfer negotiates capabilities, sends one immutable Entity Stream, validates SHA-256, crosses a CHECKPOINT request/acknowledgement barrier, advances the connection cursor, and completes a GOAWAY exchange. TLS 1.3 and ALPN `pipestream/1` are mandatory and 0-RTT is disabled.
+
+Run the complete suite after installing the prerequisites below and the language toolchains:
+
+```bash
+bundle install
+./conformance/run_all.sh
+```
+
+That command checks generated vectors, runs every implementation's unit tests, builds the three executables, executes all nine black-box client/server pairings, and runs the three external demos. See [`conformance/README.md`](conformance/README.md) for the command contract and [`examples/README.md`](examples/README.md) for the demos.
+
+Dependency versions are reproducible: Ruby dependencies are exact in
+`Gemfile.lock`, Rust dependencies in `Cargo.lock`, Java dependencies and build
+plugins in `pom.xml`, and MsQuic at an immutable Git tag in `CMakeLists.txt`.
+The direct dependencies were checked against their upstream registries on
+2026-09-04; the reference suite uses the latest compatible stable releases at
+that point. Rustls remains on the latest 0.23 release required by Quinn rather
+than the 0.24 development series.
 
 ### Styling Conventions for Rendering
 
@@ -50,15 +78,16 @@ example = {
 
 You need the following tools installed:
 
-- **Ruby**: For `kramdown-rfc`
-- **Python/uv**: For `xml2rfc`
+- **Ruby and Bundler**: For the pinned `kramdown-rfc` and CDDL validator gems
+- **Python/uv**: For `xml2rfc` 3.34.0
 - **idnits**: For final validation
 
 ```bash
 # Install toolchain (macOS example)
 brew install ruby idnits
-gem install kramdown-rfc
-uv tool install xml2rfc
+gem install bundler
+bundle install
+uv tool install xml2rfc==3.34.0
 ```
 
 ### 2. Generating the Draft
@@ -66,15 +95,12 @@ uv tool install xml2rfc
 To build all formats (XML, TXT, HTML) in one pass:
 
 ```bash
-# 1. Convert Markdown source to IETF XML v3
-kdrfc draft-template.md
-
-# 2. Rename to the official draft name (e.g., version -01)
-mv draft-template.xml draft-krickert-pipestream-01.xml
-
-# 3. Generate TXT and HTML versions from the XML
-xml2rfc draft-krickert-pipestream-01.xml --text --html
+./build.sh core 04
 ```
+
+The script runs the pinned `kramdown-rfc` and `xml2rfc` toolchain, emits XML,
+TXT, and HTML, and finishes with `idnits` validation. Generated drafts are
+ignored build artifacts.
 
 ### 3. Validation
 
@@ -93,7 +119,7 @@ Submit the generated **`.xml`** file to the IETF Datatracker:
 
 ## Repository Contents
 
-- **`REFERENCE_IMPLEMENTATION.md`**: Informative guidance on algorithms (Fibonacci heaps, Merkle trees).
+- **`REFERENCE_IMPLEMENTATION.md`**: Reference-suite status plus informative guidance on algorithms.
 - **`OVERVIEW.md`**: High-level architectural summary.
 - **`advocacy/`**: IETF process materials (prior-art survey, DISPATCH kit, ANRW paper draft, submission checklist). Not part of any Internet-Draft.
 - **`build/`**: (Ignored) Temporary build artifacts.

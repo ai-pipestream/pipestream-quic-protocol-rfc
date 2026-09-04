@@ -2,7 +2,7 @@
 
 This section defines the wire formats for PipeStream frames. All multi-octet integer fields are encoded in network byte order (big-endian).
 
-**Forward Compatibility:** All Reserved and Flags fields defined in this section MUST be set to zero when sent and MUST be ignored by receivers. This convention enables future specifications to assign meaning to currently-reserved bits without breaking deployed implementations. Receivers that encounter non-zero values in reserved fields MUST NOT treat this as an error.
+**Forward Compatibility:** All fields named Reserved in this section MUST be set to zero when sent and MUST be ignored by receivers. This convention enables future specifications to assign meaning to currently-reserved bits without breaking deployed implementations. Receivers that encounter non-zero values in reserved fields MUST NOT treat this as an error. A field named Flags follows its frame-specific rules; a receiver MUST NOT assume that unknown flag bits are ignorable unless that frame definition says so.
 
 ## Control Stream Framing (Stream 0)
 
@@ -150,6 +150,8 @@ When C=1, a 4-octet cursor update follows the status frame:
 
 New Cursor Value (32 bits):
 :   The numeric value of the new cursor. Entities with IDs lower than this value (modulo circular ID rules) are considered resolved and their IDs MAY be recycled.
+
+The C flag is a connection-level signal. It MUST appear only on an UNSPECIFIED status whose Entity ID is CONNECTION_LEVEL (0xFFFFFFFF), Scope ID is the root scope (0), and depth is 0. A STATUS frame that carries C=1 in any other state or scope MUST be rejected with PIPESTREAM_ENTITY_INVALID (0x05). The same connection-level UNSPECIFIED status with C=0 is a heartbeat (Section 5.1.4).
 
 ### Status Reporting Direction
 
@@ -370,7 +372,7 @@ Expiry Timestamp (64 bits):
 
 ## Serialized Message Frames (0x80-0xFF)
 
-These frame types use the common UCF header defined in Section 6.1. The payload body is encoded using the serialization format negotiated during capability exchange (Section 3.4.2). If no format was negotiated, CBOR {{RFC8949}} is the default.
+These frame types use the common UCF header defined in Section 6.1. The payload body is encoded using the serialization format negotiated during capability exchange (Section 3.4.2). If no format was negotiated, deterministic CBOR {{RFC8949}} is the default.
 
 | Type | Message Name | Reference |
 |-------|--------------|-----------|
@@ -416,9 +418,9 @@ Normative definitions for serialized PipeStream messages use CDDL {{RFC8610}} no
 
 ~~~~ cddl
 entity-header = {
-  entity-id: uint,               ; 32-bit on wire (STATUS frame)
-  ? parent-id: uint,             ; 32-bit scope-local
-  ? scope-id: uint,              ; 32-bit (Section 6.2.1)
+  entity-id: entity-id,
+  ? parent-id: entity-id,        ; Scope-local parent
+  ? scope-id: uint32,            ; Section 6.2.1
   layer: uint .le 3,             ; Data layer 0-3
   ? content-type: tstr,          ; MIME type
   ? payload-length: uint,        ; Octet count of the payload

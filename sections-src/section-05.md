@@ -43,6 +43,8 @@ The KEEPALIVE_TIMEOUT defaults to 30 seconds. Endpoints MAY negotiate a differen
 
 When no status updates have been transmitted for KEEPALIVE_TIMEOUT, an endpoint MAY send a heartbeat frame. If no data is received on Stream 0 for 3 * KEEPALIVE_TIMEOUT, the endpoint SHOULD first apply transport-native liveness policy (e.g., QUIC PING); it MAY close the connection with PIPESTREAM_IDLE_TIMEOUT (0x02) when application-level inactivity policy requires it.
 
+A valid heartbeat does not change entity state, advance the cursor, or require a response. A receiver MUST continue parsing subsequent control frames normally.
+
 ### Transport Session vs. Application Session Context
 
 The `session-id` segment of the pipestream URI scheme (Section 11.6) identifies application context for detached or resumable resources (for example, Layer 2 yield/claim-check flows). PipeStream Layer 0 streaming semantics do not depend on this URI scheme.

@@ -2,7 +2,7 @@
 
 ## Transport Security
 
-PipeStream inherits security from QUIC {{RFC9000}} and TLS 1.3 {{RFC8446}}. All connections MUST use TLS 1.3 or later. Implementations MUST NOT provide mechanisms to disable encryption.
+PipeStream inherits security from QUIC {{RFC9000}} and TLS 1.3 {{RFC9846}}. All connections MUST use TLS 1.3 or later. Implementations MUST NOT provide mechanisms to disable encryption.
 
 PipeStream frames MUST NOT be sent or processed in 0-RTT early data (Section 5.3), which removes the replay exposure that early data would otherwise introduce for capability negotiation and status frames.
 
