@@ -35,6 +35,7 @@ Each registration consists of a value, a frame type name, the minimum protocol l
 | 0x56 | GOAWAY | 0 | Graceful shutdown signal | Section 6.5 |
 | 0x80 | CAPABILITIES | 0 | Negotiated limits/layers | Section 3.4 |
 | 0x81 | CHECKPOINT | 0 | Global synchronization | Section 9.3 |
+| 0x82 | CLAIM_REDEMPTION | 2 | Durable claim request or acknowledgement | Section 6.7.1 |
 
 ### Unknown Frame Handling
 

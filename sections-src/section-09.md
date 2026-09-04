@@ -36,7 +36,7 @@ An entity in the FAILED state that may still transition to RETRYING (see the sta
 
 ## Assembly Manifest
 
-The Assembly Manifest is a local data structure maintained by each endpoint to track the parent-child relationships created during dehydration. It is not transmitted on the wire; rather, each endpoint constructs its own manifest from the `parent-id` fields in received EntityHeaders and from status updates observed on the Control Stream. The CDDL below defines the logical structure of each entry; implementations MAY use any internal representation that preserves the required semantics.
+The Assembly Manifest is a local data structure maintained by each endpoint to track the parent-child relationships created during dehydration. It is not transmitted on the wire; rather, each endpoint constructs its own manifest from the (`parent-scope-id`, `parent-id`) pairs in received Layer 1 EntityHeaders and from status updates observed on the Control Stream. Layer 0 relationships in the root scope continue to use `parent-id` alone. The CDDL below defines the logical structure of each entry; implementations MAY use any internal representation that preserves the required semantics.
 
 Each Assembly Manifest entry tracks:
 
@@ -95,7 +95,7 @@ The originating endpoint MUST NOT advance its cursor beyond `checkpoint-entity-i
 
 For circular comparison in Condition 1, implementations MUST use the same modulo ordering as cursor management. Define `MAX = 0xFFFFFFFD` and:
 
-`is_before(a, b) = ((b - a + MAX) % MAX) < (MAX / 2)`
+`is_before(a, b) = (a != b) && (((b - a + MAX) % MAX) < (MAX / 2))`
 
 An entity ID `a` is considered "less than checkpoint_entity_id `b`" iff `is_before(a, b)` is true.
 
@@ -111,6 +111,12 @@ When Layer 1 is negotiated, Scope IDs are 32-bit unsigned integers assigned by t
 ## Scope Digest Propagation (Layer 1)
 
 When a scope completes, the endpoint MUST compute a Scope Digest and propagate it to the parent scope via a SCOPE_DIGEST frame (Section 6.3).
+
+A child scope MUST contain at least one Entity before it is closed. An endpoint
+MUST reject a SCOPE_DIGEST for an empty or unknown scope with
+PIPESTREAM_SCOPE_INVALID (0x09). The digest covers direct Entity statuses in
+the named scope. Nested scope integrity is verified independently by requiring
+each nested scope's SCOPE_DIGEST before its parent scope can close.
 
 The Merkle root in the Scope Digest is computed as follows:
 

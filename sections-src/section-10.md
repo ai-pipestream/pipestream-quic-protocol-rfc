@@ -84,13 +84,20 @@ Yield tokens (Section 6.6.2) contain opaque continuation state that enables resu
 
 Claim checks (Section 6.6.3) are long-lived references that can be redeemed in different sessions. To prevent misuse:
 
-1. Each claim check carries an `expiry_timestamp` (Unix epoch microseconds). Implementations MUST reject expired claim checks.
+1. Each claim check carries an `expiry_timestamp` (Unix epoch microseconds). Implementations MUST reject expired claim checks. Cross-connection redemption uses the CLAIM_REDEMPTION frame defined in Section 6.7.1.
 
 2. Implementations MUST track redeemed claim check IDs and reject duplicate redemptions. The tracking state MUST persist for at least the claim check expiry duration.
 
 3. Claim check IDs MUST be generated using a cryptographically secure random number generator to prevent guessing.
 
 4. Because the claim check identifier space is 64 bits, an online attacker with sufficient query volume could attempt to enumerate valid identifiers. Implementations SHOULD rate-limit claim redemption attempts per peer and SHOULD treat repeated redemption failures as a signal of probing.
+
+5. A claim issuer MUST durably bind the claim ID to its session identifier,
+Entity identity, expiry, continuation state, and stopping-point checksum before
+announcing DEFERRED. Deployments MUST deliver the session identifier and
+stopping-point checksum to the redeeming application through an authenticated
+application context. The fixed Claim Check status extension intentionally does
+not disclose that additional context.
 
 ## Encryption Key Management
 

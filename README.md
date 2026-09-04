@@ -36,7 +36,7 @@ bundle install
 ./conformance/run_all.sh
 ```
 
-That command checks generated vectors, runs every implementation and example's
+That command checks frozen vectors, runs every implementation and example's
 tests, builds the three servers and language-native applications, executes all
 nine black-box client/server pairings, and runs the three external scenarios.
 See [`conformance/README.md`](conformance/README.md) for the command contract and
@@ -83,7 +83,7 @@ example = {
 You need the following tools installed:
 
 - **Ruby and Bundler**: For the pinned `kramdown-rfc` and CDDL validator gems
-- **Python/uv**: For `xml2rfc` 3.34.0
+- **xml2rfc 3.34.0 via uv**: External IETF document rendering only
 - **idnits**: For final validation
 
 ```bash
@@ -93,6 +93,11 @@ gem install bundler
 bundle install
 uv tool install xml2rfc==3.34.0
 ```
+
+There are no checked-in Python sources, and the reference implementations,
+vector checks, interoperability matrix, and examples do not invoke Python.
+`xml2rfc` is an external IETF authoring tool used only by `build.sh` to render
+the draft. It is not part of the protocol or its conformance evidence.
 
 ### 2. Generating the Draft
 

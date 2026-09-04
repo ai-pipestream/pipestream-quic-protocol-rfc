@@ -44,13 +44,13 @@ Organization:
 :   PipeStream AI
 
 Description:
-:   Rust implementation using Quinn and Minicbor. It contains a reusable Rust library and a standalone client/server executable, with protocol code implemented independently from the Java and C++ implementations.
+:   Rust feature-complete exemplar using Quinn and Minicbor. Transport-independent protocol logic, Quinn transport, and the runnable server are separate crates. The implementation remains non-normative and is implemented independently from the Java and C++ implementations.
 
 Maturity:
 :   Prototype, publicly available in the `implementations/rust-quinn` directory of this document's source repository.
 
 Coverage:
-:   TLS 1.3 with ALPN `pipestream/1`; no 0-RTT; deterministic CBOR Capabilities, EntityHeader, and Checkpoint messages; STATUS heartbeat and entity progression; cursor advancement; parent identity; SHA-256 payload validation; checkpoint request/acknowledgement; and GOAWAY. The standalone command handles one entity per connection and does not implement Layers 1 or 2.
+:   Layer 0 plus Layer 1 recursive scopes, cross-scope parent identity, nested out-of-order completion, SCOPE_DIGEST verification, BARRIER, scoped checkpoints, rehydration, and lineage digests. Its Layer 2 subset provides durable yield, claim checks, cross-connection CLAIM_REDEMPTION, replay refusal, SQLite WAL recovery, and immutable payload storage. TLS 1.3 with ALPN `pipestream/1` is mandatory and 0-RTT is disabled. The original one-entity Layer 0 command remains available for the polyglot interoperability matrix.
 
 Licensing:
 :   MIT.
@@ -86,7 +86,7 @@ Contact:
 
 ## Interoperability Evidence
 
-The repository's black-box runner starts each executable as a separate process and tests all nine client/server pairings. The implementations share the normative specification, CDDL, and golden vector corpus, but no protocol implementation code. The current suite verifies binary and UTF-8 payload transfer, parent identity, status progression, checkpoint acknowledgement, cursor advancement, graceful GOAWAY, and byte-exact delivery. The result is reproducible evidence for the listed protocol subset, not a claim of complete support for every optional field or extension in this document.
+The repository's protocol-neutral Rust driver starts each executable as a separate process and tests all nine client/server pairings. The driver has no dependency on a PipeStream implementation and does not encode or decode PipeStream frames. The implementations share the normative specification, CDDL, and golden vector corpus, but no protocol implementation code. The current suite verifies binary and UTF-8 payload transfer, parent identity, status progression, checkpoint acknowledgement, cursor advancement, graceful GOAWAY, and byte-exact delivery. The result is reproducible evidence for the listed protocol subset, not a claim of complete support for every optional field or extension in this document.
 
 The authors welcome reports of additional implementations for inclusion
 in future revisions of this appendix.

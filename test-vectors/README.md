@@ -1,23 +1,28 @@
-# PipeStream Layer 0 test vectors
+# PipeStream test vectors
 
 The binary files in `valid/` and `invalid/` are language-neutral wire inputs.
 `index.tsv` records their type, expected outcome, digest, and exact length.
 
-Regenerate them with:
+These bytes are frozen review artifacts. Normal tests never generate or modify
+them. Adding or changing a vector requires the same review as a normative wire
+change: update the specification or CDDL first, add the exact bytes, and then
+update `index.tsv` with an independently calculated SHA-256 and octet count.
+Each implementation must parse the resulting bytes with its own codec.
+
+`cddl/index.tsv` is a separate set of frozen hexadecimal CBOR instances. The
+schema validator consumes these instances directly. They are deliberately not
+derived from framed wire vectors during a test, because a shared extractor
+would become another protocol implementation and weaken the evidence.
+
+Run the non-mutating corpus and CDDL checks with:
 
 ```bash
-python3 conformance/generate_vectors.py
+cargo run --release --locked \
+  --manifest-path implementations/rust-quinn/Cargo.toml \
+  -p pipestream-conformance -- verify
 ```
 
-CI and implementations must use the non-mutating checks:
-
-```bash
-python3 conformance/generate_vectors.py --check
-python3 conformance/verify_vectors.py
-```
-
-The vectors are protocol evidence, not serialized internal state. Implementations
-must parse them using their own codec and state machine.
+The vectors are protocol evidence, not serialized internal state.
 
 The current corpus covers deterministic CBOR, capability bounds, entity and
 parent identifiers, exact payload length, SHA-256 integrity, Layer 0 status and

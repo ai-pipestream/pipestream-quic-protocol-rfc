@@ -38,6 +38,7 @@ The following frame types are defined by this document. All frames use the commo
 | 0x56 | GOAWAY | 0 | Fixed 8-octet payload |
 | 0x80 | CAPABILITIES | 0 | Serialized message payload (negotiated format) |
 | 0x81 | CHECKPOINT | 0 | Serialized message payload (negotiated format) |
+| 0x82 | CLAIM_REDEMPTION | 2 | Serialized message payload (negotiated format) |
 
 ## Status Frames (Layer 0)
 
@@ -378,6 +379,42 @@ These frame types use the common UCF header defined in Section 6.1. The payload 
 |-------|--------------|-----------|
 | 0x80 | Capabilities | Section 3.4 |
 | 0x81 | Checkpoint | Section 9.3 |
+| 0x82 | ClaimRedemption | Section 6.7.1 |
+
+### Claim Redemption Frame (0x82)
+
+A client redeems a durable claim check by opening a new PipeStream connection,
+negotiating Layer 2, and sending a CLAIM_REDEMPTION request. The request and
+acknowledgement use the following serialized message:
+
+~~~~ cddl
+claim-redemption-frame = {
+  flags: claim-redemption-flags,
+  claim-id: uint .gt 0,
+  session-id: tstr,
+  state-checksum: bstr .size 32,
+}
+
+claim-redemption-flags = uint .le 1
+                         ; Bit 0: ACK. All other bits are invalid.
+~~~~
+
+The request MUST set `flags` to 0. The `session-id` is the stable application
+context identifier associated with the claim, and `state-checksum` is the
+SHA-256 stopping-point checksum supplied by that application context. The
+receiver MUST atomically verify that the claim exists, is unexpired, has not
+been redeemed, belongs to the supplied session, and carries the supplied state
+checksum before marking it redeemed. It MUST reject failures with
+PIPESTREAM_CLAIM_NOT_FOUND (0x0B), PIPESTREAM_CLAIM_EXPIRED (0x0A), or
+PIPESTREAM_INTEGRITY_ERROR (0x04), as applicable.
+
+After durably accepting the claim and completing or durably scheduling its
+resumption, the receiver sends the same message with the ACK flag set. The
+identifying fields in the acknowledgement MUST exactly match the request. A
+requester receiving different fields MUST close the connection with
+PIPESTREAM_ENTITY_INVALID (0x05). A server failure after durable redemption
+MUST be recovered from server-side state; it MUST NOT make the same claim
+redeemable a second time.
 
 ## Entity Frames
 
@@ -419,8 +456,9 @@ Normative definitions for serialized PipeStream messages use CDDL {{RFC8610}} no
 ~~~~ cddl
 entity-header = {
   entity-id: entity-id,
-  ? parent-id: entity-id,        ; Scope-local parent
+  ? parent-id: entity-id,
   ? scope-id: uint32,            ; Section 6.2.1
+  ? parent-scope-id: uint32,     ; Scope containing parent-id
   layer: uint .le 3,             ; Data layer 0-3
   ? content-type: tstr,          ; MIME type
   ? payload-length: uint,        ; Octet count of the payload
@@ -435,6 +473,12 @@ entity-header = {
   ? completion-policy: completion-policy, ; Layer 2
 }
 ~~~~
+
+When `scope-id` is non-zero, both `parent-id` and `parent-scope-id` MUST be
+present, and `parent-scope-id` MUST differ from `scope-id`. Together they name
+the parent unambiguously because Entity IDs are scope-local. In the root scope,
+`parent-scope-id` MUST be absent; a Layer 0 parent relationship therefore
+continues to use `parent-id` alone.
 
 #### Chunk Info
 
@@ -488,7 +532,7 @@ PipeStream uses SHA-256 {{FIPS-180-4}} for payload integrity verification. The c
 
 An entity whose payload is too large to transmit conveniently as a single frame MAY be split into chunks. Each chunk is transmitted as its own Entity Frame on its own Entity Stream, subject to the following rules:
 
-1. Every chunk of an entity MUST carry the same `entity-id`, `parent-id` (if present), `scope-id` (if present), and `layer` values, and MUST include a `chunk-info` structure.
+1. Every chunk of an entity MUST carry the same `entity-id`, `parent-id` (if present), `scope-id` (if present), `parent-scope-id` (if present), and `layer` values, and MUST include a `chunk-info` structure.
 2. The `payload-length` and `checksum` fields in a chunk's EntityHeader, when present, cover only that chunk's payload octets (see Section 10.2 for whole-entity integrity requirements).
 3. `chunk-offset` is the octet offset of the chunk's first payload octet within the complete entity payload. `total-chunks` MUST be identical across all chunks of an entity, and the `chunk-index` values MUST cover the range 0 to total-chunks - 1 with no duplicates.
 4. Chunks MAY be transmitted concurrently on separate Entity Streams and MAY arrive in any order. The receiver reassembles the payload by `chunk-offset`.

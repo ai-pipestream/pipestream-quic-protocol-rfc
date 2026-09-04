@@ -29,6 +29,6 @@ target/release/rust-to-cpp-recovery recover \
   --connect 127.0.0.1:9443 --ca /path/to/ca.crt
 ```
 
-`conformance/run_examples.py` starts the C++ server and invokes this Rust
-program during the full repository gate. Python performs only process and
-artifact assertions; the recovery behavior is Rust.
+The `pipestream-conformance examples` command starts the C++ server and invokes
+this Rust program during the full repository gate. The driver performs process
+and artifact assertions; the recovery behavior is Rust.

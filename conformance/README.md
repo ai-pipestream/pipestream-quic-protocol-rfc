@@ -1,27 +1,31 @@
-# Layer 0 conformance
+# Conformance and interoperability
 
-The suite has two independent levels of evidence.
+The suite has three independent levels of evidence. Python is not a reference
+implementation, a vector generator, or a conformance oracle in this repository.
 
 `test-vectors/index.tsv` inventories language-neutral binary inputs. Each row
 names the parser class, expected acceptance or refusal, exact error name,
-SHA-256 digest, and octet count. The Python, Java, Rust, and C++ codecs each
-consume the entire corpus. Regeneration is explicit; normal validation uses
-`generate_vectors.py --check` so a test cannot silently rewrite its oracle.
-`validate_cddl.py` also extracts serialized messages from selected vectors and
-proves that the normative CDDL accepts valid instances and refuses the schema
-violations assigned to it.
+SHA-256 digest, and octet count. The Java, Rust, and C++ codecs each consume the
+corpus using independent protocol code. The checked-in bytes are frozen; the
+normal test path cannot regenerate or rewrite them.
 
-`run_interop.py` is a black-box process runner. It generates a temporary CA and
-server certificate, starts each standalone server on an ephemeral UDP port,
-and invokes every standalone client against it. A pair passes only when the
-processes complete the Layer 0 state machine and the runner observes byte-exact
-payload and parent identity on disk. The current matrix is 3 clients by 3
-servers, or nine pairings.
+`test-vectors/cddl/index.tsv` contains separate frozen, hexadecimal CBOR
+instances for schema validation. The Rust driver decodes hexadecimal text to
+temporary files and gives those files directly to the CDDL validator. It does
+not extract messages from PipeStream frames or otherwise parse protocol bytes.
 
-`run_examples.py` is a separate black-box runner for the language-native
-applications under `examples/`. It provides certificates and server processes,
-then invokes the compiled Java or Rust example. It does not implement example
-behavior or any part of the PipeStream protocol.
+`pipestream-conformance` is a protocol-neutral Rust process driver. It has no
+dependency on `pipestream-core` or either transport library. It generates
+temporary test certificates, starts each compiled server on an ephemeral UDP
+port, and invokes every compiled client against it. A pair passes only when the
+processes complete their own state machines and the driver observes byte-exact
+payload and parent identity on disk. The current Layer 0 matrix is 3 clients by
+3 servers, or nine pairings. The same driver launches the external examples;
+the examples contain their own application behavior.
+
+The `verify` command also refuses checked-in `.py`, `.pyi`, or `.pyx` sources
+outside ignored build and dependency directories. This prevents a script codec
+or vector generator from silently reappearing in the reference suite.
 
 ## Standalone command contract
 
@@ -49,6 +53,14 @@ process as ready.
 ./conformance/run_all.sh
 ```
 
-Use `python3 conformance/run_interop.py --build` when only the implementations
-and all black-box pairings are needed. Test certificates are generated in a
-temporary directory and are never production credentials.
+For focused checks after the Rust workspace has been built:
+
+```bash
+implementations/rust-quinn/target/release/pipestream-conformance verify
+implementations/rust-quinn/target/release/pipestream-conformance interop
+implementations/rust-quinn/target/release/pipestream-conformance recursive
+implementations/rust-quinn/target/release/pipestream-conformance examples
+```
+
+Test certificates are generated in a temporary directory and are never
+production credentials.

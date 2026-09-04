@@ -71,8 +71,9 @@ capabilities = {
 
 entity-header = {
   entity-id: entity-id,
-  ? parent-id: entity-id,         ; Scope-local parent
+  ? parent-id: entity-id,
   ? scope-id: uint32,             ; Section 6.2.1
+  ? parent-scope-id: uint32,      ; Scope containing parent-id
   layer: uint .le 3,              ; Data layer 0-3
   ? content-type: tstr,
   ? payload-length: uint,         ; Octet count of this frame's
@@ -135,6 +136,20 @@ checkpoint-frame = {
 
 checkpoint-flags = uint .le 1
                    ; Bit 0: ACK. All other bits are invalid.
+
+; -----------------------------------------------------------
+; Claim redemption frame (Type 0x82, Layer 2)
+; -----------------------------------------------------------
+
+claim-redemption-frame = {
+  flags: claim-redemption-flags,
+  claim-id: uint .gt 0,
+  session-id: tstr,
+  state-checksum: bstr .size 32,
+}
+
+claim-redemption-flags = uint .le 1
+                         ; Bit 0: ACK. All other bits are invalid.
 
 ; -----------------------------------------------------------
 ; Entity status codes

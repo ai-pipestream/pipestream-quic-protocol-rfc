@@ -1,0 +1,19 @@
+[package]
+name = "pipestream-conformance"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Protocol-neutral black-box runner for the PipeStream reference suite"
+publish = false
+
+[[bin]]
+name = "pipestream-conformance"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.6", features = ["derive"] }
+rcgen = "0.14.10"
+sha2 = "0.11.0"
+tempfile = "3.27.0"
