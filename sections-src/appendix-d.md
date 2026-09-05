@@ -101,7 +101,7 @@ conformance. The common command exercises one-entity transfers, not the
 entire mandatory manifest and recycling lifecycle. Rust's recursive path
 adds independent control/data reception, identity-based stream dispatch,
 pending checkpoints with deadlines, negotiated depth enforcement, and
-serialized recovery execution. Its payload processing is whole-entity
+fenced recovery-result publication. Its payload processing is whole-entity
 buffered and its application callbacks are synchronous.
 
 The durable Rust prototype now has optional mutual-TLS principal/session
@@ -125,6 +125,14 @@ certificates; refusal of anonymous downgrade; principal and authority checks;
 certificate rotation; live and reconnected session revocation; and background
 recovery authorization. These do not establish crash-safe asynchronous
 execution or solve ambiguous outcomes after a lost redemption ACK.
+
+The Rust service durably fences process, rehydrate, and resume result
+publication and no longer invokes application callbacks under database
+transactions. Tests cover simultaneous lease acquisition, expiry, stale
+publication after reopen and reacquisition, callback database re-entry, and
+revocation during a callback. Dispatch remains synchronous, and restartable
+processing inputs, bounded asynchronous workers, and retained recovery-request
+outcomes remain unfinished.
 
 The repository's protocol-neutral Rust driver starts each executable as a separate process and tests all nine client/server pairings. The driver has no dependency on a PipeStream implementation and does not encode or decode PipeStream frames. The implementations share the normative specification, CDDL, and golden vector corpus, but no protocol implementation code. The current suite verifies binary and UTF-8 payload transfer, parent identity, status progression, checkpoint acknowledgement, cursor advancement, graceful GOAWAY, and byte-exact delivery. The result is reproducible evidence for the listed protocol subset, not a claim of complete support for every optional field or extension in this document.
 

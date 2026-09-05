@@ -16,11 +16,20 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 struct Processor {
     processed: AtomicUsize,
     resumed: AtomicUsize,
+    revoke_during_process: Option<Arc<SqliteSessionStore>>,
 }
 
 impl EntityProcessor for Processor {
     fn process(&self, context: ProcessContext<'_>) -> ProcessingDisposition {
         self.processed.fetch_add(1, Ordering::SeqCst);
+        if let Some(store) = &self.revoke_during_process {
+            store
+                .transact(
+                    context.session_id,
+                    pipestream_core::session::Session::revoke_access,
+                )
+                .unwrap();
+        }
         ExemplarProcessor::default().process(context)
     }
     fn rehydrate(&self, context: RehydrateContext<'_>) -> [u8; 32] {
@@ -30,6 +39,36 @@ impl EntityProcessor for Processor {
         self.resumed.fetch_add(1, Ordering::SeqCst);
         ExemplarProcessor::default().resume(context)
     }
+}
+
+#[tokio::test]
+async fn revocation_during_callback_prevents_result_publication() -> Result<()> {
+    let mut fixture = AuthFixture::new()?;
+    fixture.processor = Arc::new(Processor {
+        revoke_during_process: Some(fixture.store.clone()),
+        ..Processor::default()
+    });
+    let options = fixture.listen(Some("issuer-a"), Some(0))?;
+    let error = begin_durable_yield(&options, "revoked-in-flight")
+        .await
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("PIPESTREAM_UNAUTHORIZED"));
+    let retained = fixture.store.load("revoked-in-flight")?.unwrap();
+    assert!(retained.session.owner.as_ref().unwrap().revoked);
+    assert!(retained.session.claims.is_empty());
+    assert_eq!(retained.session.executions.len(), 1);
+    assert!(
+        retained
+            .session
+            .executions
+            .values()
+            .all(|attempt| attempt.completed_at_micros.is_none())
+    );
+    assert!(retained.session.entities.values().all(|entity| entity.state
+        == pipestream_core::session::EntityState::Processing
+        && entity.output_digest.is_none()));
+    assert_eq!(fixture.processor.processed.load(Ordering::SeqCst), 1);
+    Ok(())
 }
 
 struct AuthFixture {

@@ -49,6 +49,11 @@ process as ready.
 
 ## Running the suite
 
+Rust execution tests also verify durable acquisition/publication fences,
+reopen and stale-epoch refusal, transactional rollback, callback database
+re-entry over QUIC, callback expiry, and revocation during processing. They
+do not claim bounded asynchronous dispatch or full crash-boundary coverage.
+
 ```bash
 ./conformance/run_all.sh
 ```
