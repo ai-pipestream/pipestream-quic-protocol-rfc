@@ -31,8 +31,9 @@ construction, including odd-node promotion.
 
 `SealedSessionStore.open(path)` creates a separate SQLite database with strict
 typed tables, WAL, and synchronous FULL commits. The Java database format is
-now version 2, with managed entity state, durable jobs, and persistent dispatch
-policy. Version-1 stores are refused without conversion; keep them with their
+now version 3, with managed entity state, durable jobs, persistent dispatch
+policy, and checksummed checkpoint request/ACK history. Version-1 and version-2
+stores are refused without conversion; keep them with their
 matching binary. Do not point this API at a Rust
 store. Unknown table sets or policy versions are refused without conversion.
 The JDBC driver requires native access; run an embedding application with
@@ -65,11 +66,9 @@ Declaration history and scope trees are checked with bounded scans, not a
 constant-time readiness index. These are logical record limits, not physical
 database/WAL quotas or a throughput claim. Reopen cannot reset the policy.
 
-The Netty listener and standalone commands still expose only Layer 0 and do
-not advertise `sealed-work-sets-v1`. The separate public client below requires
-that profile. A sealed server integrating this store with incremental payload
-and chunk ingestion, asynchronous processing, pending checkpoints, and GOAWAY
-remains required, together with Rust-to-Java recursive/reconnect tests.
+The original `PipeStreamServer` and standalone commands remain Layer 0. The
+separate `SealedServer` and public client require `sealed-work-sets-v1`; neither
+silently converts an unsealed session or falls back to weaker capabilities.
 
 ## Sealed-work payload storage
 
@@ -121,8 +120,8 @@ installed before admission remains unadmitted after restart. Other tests cover
 chunk geometry, integrity, concurrent installation/close, immutable replay at
 capacity, and cross-process writer exclusion. A 32 MiB receive/install/read test
 runs in a JVM with a 24 MiB maximum heap; it is not a QUIC, native-memory, RSS,
-or concurrent-throughput measurement. Java sealed-server integration and
-explicit orphan reconciliation remain unfinished.
+or concurrent-throughput measurement. The sealed listener below uses these
+APIs; explicit orphan reconciliation remains unfinished.
 
 ## Durable sealed-work execution
 
@@ -182,9 +181,64 @@ during a stalled callback, callback storage re-entry, stale publication after
 abrupt exit and reopen, cancellation-safe ownership, corrupt input, retained
 refusals, and metadata capacity retained by completed jobs. A 32 MiB retained
 input executes through the worker under a 24 MiB Java heap cap. This is not a
-QUIC, RSS, native-memory, or multi-tenant stress measurement. Netty sealed-server
-integration, responsive connection controls, durable checkpoint ACK identity,
-and Rust-to-Java interoperability remain required.
+QUIC, RSS, native-memory, or multi-tenant stress measurement. The listener below
+adds separate network and connection-control evidence.
+
+## Sealed-work listener
+
+`SealedServer.start(bind, certificate, privateKey, sessions, payloads, processor,
+limits, executionLimits)` starts a sealed-only Netty listener and its durable
+executor. It is an embeddable Java API, independent of the existing Layer 0 CLI.
+TLS authenticates the server, not the producer label: this listener is for
+application-authorized peers, not untrusted multi-tenant exposure or the
+authenticated-recovery profile.
+
+Declarations are durably acknowledged before payload reception. Entity headers
+are bounded, bodies are read in at-most-8-KiB pieces, and FIN validation and
+immutable chunk installation precede atomic admission/dispatch. Streams do not
+need PENDING announcements. A reset or disconnect does not remove declared
+work, admit partial input, or cancel an already-admitted job.
+
+Fixed listener limits are 32 connections, eight entity readers per connection,
+four file/receive workers with 32 queued tasks, and four metadata workers with
+64 queued tasks. A reader's Java byte backlog is at most eight 8-KiB pieces;
+QUIC windows are 1 MiB per connection and 64 KiB per Entity Stream. Readers may
+occupy a file worker while waiting for network input. Per-connection limits
+include 32 partial assemblies, 128 result observers, 32 queued storage actions
+with 4 MiB of encoded controls, and 1 MiB of pending control output. These are
+component bounds, not whole-process/native-memory, filesystem-block, or tenant
+quotas. Capacity exhaustion is a named refusal.
+
+Complete checkpoint receipt starts a monotonic deadline on the network event
+loop before SQLite queueing. Pending requests do not block eligible payloads
+or control parsing; duplicates retain the original deadline. Covered ingress,
+unsent outcomes, and nested checkpoints prevent ACK. An operation completing
+after timeout cannot emit a late ACK on that connection. The version-3 store
+retains exact request identity, optional root-scope presence, unsigned counters,
+and ACK state under checksums and history accounting. Missing records cannot
+erase outstanding obligations. Limits are 4,096 retained checkpoints globally,
+1,024 per session, and 4 KiB per encoded request; ACKs remain charged.
+
+SCOPE_DIGEST comparison, closure, STRICT parent resolution, and any rehydration
+dispatch occur in one transaction. A forged digest rolls closure back. Failure
+propagates without running a rehydration callback. GOAWAY requires the matching
+acknowledged root cut and no outstanding connection work.
+
+`close()` stops ingress without interrupting callbacks or claiming cancellation
+of started storage calls. Keep both stores alive until `isTerminated()` reports
+physical shutdown. A separate bounded cleanup worker closes abandoned receipts;
+connection credit is retained until cleanup returns.
+
+`SealedServerTest` uses actual QUIC to cover nested and out-of-order chunked work,
+independent completion during a stalled callback, held-SQLite deadlines and
+protocol refusals, duplicate clocks, storage backlog overflow, STRICT failure,
+forged digest rollback, reset streams, and unobserved ACK replay after restart.
+The `sealed-interop` profile also runs the Rust public producer against this
+Java server. A separate 32 MiB QUIC transfer/install/execute test runs with
+a 24 MiB Java heap limit; it does not measure native memory or RSS.
+Persistent producer-side observations, broader crash-boundary and
+resource stress coverage, physical SQLite/WAL quotas, and completion-space
+reservations remain unfinished; this is not a full conformance claim.
 
 ## Sealed-work network producer
 
@@ -231,7 +285,8 @@ replay after Rust restarts, a deliberately discarded declaration ACK, and named
 refusals for changed ownership labels, lower retained limits, missing seals,
 wrong checkpoint bounds, changed ACKs, downgrade, oversized frames, and Layer 2
 responses. Scripted test peers inject faults; they are not reference servers.
-They do not replace the independent Java server required by the goal.
+The separate `SealedServerTest` now supplies Java-server and reverse-direction
+evidence; the scripted peers are still only fault injectors.
 
 ```bash
 cargo build --release --locked --manifest-path ../rust-quinn/Cargo.toml

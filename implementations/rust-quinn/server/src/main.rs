@@ -5,7 +5,7 @@ use pipestream_quic::{
     authentication::{AuthenticationPolicy, ClientIdentity},
     recursive::{
         ExemplarProcessor, MAX_CHUNKS_PER_ENTITY, RecursiveClientOptions, RecursiveServerOptions,
-        begin_durable_yield, finish_durable_yield, run_recursive_scenario,
+        begin_durable_yield, finish_durable_yield, run_recursive_scenario, run_sealed_scenario,
         serve_recursive_authenticated,
     },
     transport::{ClientOptions, ServerOptions, send, serve},
@@ -84,6 +84,12 @@ enum Command {
         principal_map: Option<PathBuf>,
     },
     RecursiveScenario {
+        #[command(flatten)]
+        connection: ConnectionArgs,
+        #[arg(long)]
+        session_id: String,
+    },
+    SealedScenario {
         #[command(flatten)]
         connection: ConnectionArgs,
         #[arg(long)]
@@ -243,6 +249,18 @@ async fn run(cli: Cli) -> Result<()> {
                 result.nested_digest.entities_processed,
                 result.child_digest.entities_processed
             );
+            Ok(())
+        }
+        Command::SealedScenario {
+            connection,
+            session_id,
+        } => {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                run_sealed_scenario(&connection.options(), &session_id),
+            )
+            .await??;
+            println!("SEALED_OK {session_id}");
             Ok(())
         }
         Command::BeginYield {

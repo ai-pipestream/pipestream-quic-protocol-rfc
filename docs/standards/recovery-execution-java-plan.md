@@ -269,10 +269,36 @@ approval as part of a repository landing.
   checks, and all external examples. Changed/new public Java APIs passed
   Javadoc with doclint and warnings denied. Draft -04 passed idnits with zero
   errors/flaws/warnings and one informational FIPS reference comment.
+- Java sealed listener integration: the separate public `SealedServer` now
+  connects the independent codec, SQLite state machine, payload store, and
+  executor over actual Netty QUIC. Fixed-size file reads and bounded metadata
+  workers do not hold the network event loop. Pending checkpoint clocks begin
+  before storage queueing; duplicates cannot extend them, and late storage
+  completion cannot produce a late ACK. Covered ingress, unsent job outcomes,
+  and nested checkpoints gate completion. Scope-digest comparison and STRICT
+  resolution commit together; a forged summary rolls back closure.
+  Java database version 3 retains bounded checkpoint identity and ACK history,
+  checksummed with ownership and protected against missing records. Versions 1
+  and 2 are refused without conversion. No operational store was migrated.
+  The Rust public-client `sealed-scenario` exercises the Java server's recursive
+  and out-of-order chunked completion, reconnect replay, and changed-owner or
+  checkpoint-identity refusals. Java-server tests additionally hold SQLite,
+  stall application callbacks, reset streams, discard ACK observations before
+  restarting, verify STRICT failure, and exhaust the storage backlog. A 32 MiB
+  real-QUIC transfer and callback run under a 24 MiB Java heap cap; this is not
+  a native-memory/RSS or concurrent multi-tenant measurement.
+  Persistent producer observations and broader resource/crash evidence remain
+  due. The full goal is not complete merely because these scenarios pass.
+  The final `./conformance/run_all.sh` passed with 164 Rust workspace tests,
+  89 Java tests with no skips (nine server and six checkpoint-store tests),
+  C++, all nine Layer 0 pairings, 32 capability probes, recursive/recovery CLI
+  checks, and all external examples. Changed public Java APIs passed Javadoc
+  with doclint and warnings denied. Draft -04 passed idnits with zero errors,
+  flaws, and warnings and one informational FIPS reference comment.
 - Not yet implemented: physical database/WAL and Rust retained-payload quotas,
   completion-space reservations, orphan reclamation,
-  and the independent Java
-  profile. Physical execution limits and temporary spools are coordinated only
+  persistent producer observations, and the remaining independent Java
+  profile requirement matrix. Physical execution limits and temporary spools are coordinated only
   within one writer process; broader tenant/resource stress evidence remains due.
 
 Implementation evidence must replace these status entries as it lands. A
@@ -290,10 +316,7 @@ and physical SQLite storage. Add physical quotas, completion reservations, and
 explicit orphan reconciliation without
 deleting a live generation or treating missing input as completed work.
 Do not treat recovery receipts or publication fencing as completion of bounded
-asynchronous execution. Java now has a separate public sealed producer, but
-its listener and CLI still implement only the earlier Layer 0 subset. Wire the
-independent Java sealed state machine into the Netty server with durable
-payload storage, bounded asynchronous work, and responsive pending checkpoints.
-Prove Rust-to-Java positive and adversarial sequences over actual QUIC, and
-extend the existing Java-to-Rust tests through full retained-work resumption,
+asynchronous execution. Java now has a separate sealed listener and public
+producer; its original listener and CLI remain Layer 0. Extend the existing
+cross-language tests through full retained-work resumption,
 including lost ACKs, reconnect, scoped checkpoints, and recursive completion.

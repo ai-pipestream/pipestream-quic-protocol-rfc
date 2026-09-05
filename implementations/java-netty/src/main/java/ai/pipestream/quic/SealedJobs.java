@@ -105,10 +105,19 @@ final class SealedJobs {
   }
 
   Optional<Closure> closeScope(String session, UUID producer, long scope) throws SQLException, ProtocolException {
+    return closeScope(session, producer, scope, null);
+  }
+
+  Closure confirmScope(String session, UUID producer, SealedScope.Digest expected) throws SQLException, ProtocolException {
+    return closeScope(session, producer, expected.scopeId(), expected).orElseThrow(() -> SealedScope.invalid("scope digest has unresolved declared work"));
+  }
+
+  private Optional<Closure> closeScope(String session, UUID producer, long scope, SealedScope.Digest expected) throws SQLException, ProtocolException {
     return sessions.transaction(connection -> {
       audit(connection);
       var summary = SealedSessionStore.closeScope(connection, session, producer, scope);
       if (summary.isEmpty()) return Optional.empty();
+      if (expected != null && !expected.equals(summary.get())) throw Wire.integrity("scope digest differs from retained results");
       SealedWork.EntityKey parent;
       try (var query = connection.prepareStatement("SELECT parent_scope,parent_id FROM ps_java_scopes WHERE session=? AND id=?")) {
         query.setString(1, session); query.setLong(2, scope);

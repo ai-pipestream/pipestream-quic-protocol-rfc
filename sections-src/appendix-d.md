@@ -35,7 +35,9 @@ Coverage:
     immutable retained inputs. Payload installation does not itself admit or
     complete work. A separate executor commits processing and rehydration jobs
     with state transitions, then runs fenced callbacks in bounded workers.
-    The sealed Java server remains unimplemented.
+    A separate public SealedServer integrates these libraries with bounded
+    Netty ingress, asynchronous execution, pending checkpoint deadlines,
+    durable request/ACK replay identity, and recursive completion.
 
 Licensing:
 :   MIT.
@@ -119,9 +121,10 @@ automatic retry scheduling, bidirectional work-set origination, scoped
 cursor recycling, and full resilience semantics. Its
 Layer 2 advertisement does not identify the narrower implemented subset.
 It is unsuitable for untrusted multi-tenant deployment without additional
-implementation work. Java's independent sealed producer now exercises recursive
-work against Rust; its sealed server and reverse-direction evidence remain
-unfinished. C++ does not yet provide recursive or resilience evidence.
+implementation work. Java's independent sealed producer exercises recursive
+work against Rust, and a Rust public-client scenario exercises the Java sealed
+server. Persistent producer observations and broader crash/resource evidence
+remain unfinished. C++ does not yet provide recursive or resilience evidence.
 These limitations remain open;
 passing vectors or document checks does not resolve them.
 
@@ -131,9 +134,11 @@ and a public-client reconnect after an unobserved declaration ACK and
 server restart. Java-to-Rust QUIC tests additionally cover nested/chunked
 completion, scoped checkpoints, replay after restart and a discarded declaration
 ACK, and named protocol refusals. Fault-injection peers check Java's rejection
-of changed ACKs, downgrade, oversized replies, and Layer 2 frames. This is
-one-direction interoperability, not a complete Java server or proof of the
-entire profile. The Java listener/CLI and C++ endpoints remain Layer 0.
+of changed ACKs, downgrade, oversized replies, and Layer 2 frames. Reverse
+Rust-to-Java tests cover recursive/chunked completion, reconnect replay, and
+changed-owner/checkpoint refusals. These scenarios do not prove the entire
+profile. The original Java listener/CLI and C++ endpoints remain Layer 0;
+Java's separate SealedServer requires the sealed profile.
 
 Java payload-library tests additionally cover chunk geometry, immutable replay,
 file-length and file-count quotas, cancellation-safe accounting, writer
@@ -148,8 +153,11 @@ queued jobs and retained descriptors, recursive rehydration, stale executor
 refusal after restart, and independent progress during a stalled callback.
 Callbacks run outside database transactions and consume verified file-backed
 input. Shutdown retains physical ownership until active work returns. These
-are local library tests, not evidence of responsive Netty sealed-session
-controls or reverse-direction interoperability. Per-session labels are not
+are local library tests. Separate real-QUIC listener tests hold SQLite writes,
+stall a callback, reset input, discard ACK observations, and restart the server.
+They check pending deadlines, independent completion, replay, capacity refusal,
+STRICT child failure, and rollback of forged scope summaries.
+Per-session labels are not
 authenticated tenants, and logical record quotas do not bound SQLite/WAL
 pages or every future completion allocation.
 

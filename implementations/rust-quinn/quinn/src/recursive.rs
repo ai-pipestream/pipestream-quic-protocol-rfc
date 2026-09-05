@@ -2586,6 +2586,168 @@ pub async fn run_recursive_scenario(
     })
 }
 
+/// Exercise sealed declarations, nested chunked work, replay, and named refusals
+/// through the public producer API against an independent sealed server.
+/// The server application must implement the exemplar processing actions.
+pub async fn run_sealed_scenario(options: &RecursiveClientOptions, session_id: &str) -> Result<()> {
+    let declaration = |scope_id, parent, ids: &[u32]| WorkSetFrame {
+        session_id: session_id.to_owned(),
+        producer_id: [7; 16],
+        scope_id,
+        parent,
+        sequence: 0,
+        entity_ids: ids.to_vec(),
+        flags: work_set::SEAL,
+        seal_digest: Some(work_set::seal_digest(
+            session_id,
+            [7; 16],
+            scope_id,
+            parent,
+            &ids.iter().copied().collect(),
+        )),
+    };
+    let root = declaration(0, None, &[1, 2]);
+    let mut client = RecursiveClient::connect_sealed(options).await?;
+    client.declare_work(&root).await?;
+    client.disconnect_gracefully().await;
+    let mut client = RecursiveClient::connect_sealed(options).await?;
+    client.declare_work(&root).await?;
+    for (id, action) in [(2, "complete"), (1, "dehydrate")] {
+        let header = exemplar_header(session_id, id, None, None, action, b"root");
+        expect_states(
+            &client.send_entity(&header, b"root", 0).await?,
+            &[
+                EntityState::Processing,
+                if id == 1 {
+                    EntityState::Dehydrating
+                } else {
+                    EntityState::Complete
+                },
+            ],
+        )?;
+    }
+    client
+        .declare_work(&declaration(
+            1,
+            Some(EntityKey {
+                scope_id: 0,
+                entity_id: 1,
+            }),
+            &[1, 2, 3],
+        ))
+        .await?;
+    for id in [3, 1, 2] {
+        let action = if id == 2 { "dehydrate" } else { "complete" };
+        let header = exemplar_header(session_id, id, Some(1), Some(0), action, b"child");
+        expect_states(
+            &client.send_entity(&header, b"child", 1).await?,
+            &[
+                EntityState::Processing,
+                if id == 2 {
+                    EntityState::Dehydrating
+                } else {
+                    EntityState::Complete
+                },
+            ],
+        )?;
+    }
+    if client.barrier(1, 1).await?.released {
+        bail!("unfinished child scope released its barrier");
+    }
+    client
+        .declare_work(&declaration(
+            2,
+            Some(EntityKey {
+                scope_id: 1,
+                entity_id: 2,
+            }),
+            &[1, 2],
+        ))
+        .await?;
+    let header = exemplar_header(session_id, 1, Some(2), Some(1), "complete", b"leaf");
+    expect_states(
+        &client.send_entity(&header, b"leaf", 2).await?,
+        &[EntityState::Processing, EntityState::Complete],
+    )?;
+    let mut chunks = Vec::new();
+    for (index, payload) in [(1, b"def"), (0, b"abc")] {
+        let mut header = exemplar_header(session_id, 2, Some(2), Some(1), "complete", payload);
+        header.chunk_info = Some(pipestream_core::ChunkInfo {
+            total_chunks: 2,
+            chunk_index: index,
+            chunk_offset: index * 3,
+        });
+        chunks.push(EntityChunk {
+            header,
+            payload: payload.to_vec(),
+        });
+    }
+    expect_states(
+        &client.send_chunked_entity(&chunks, 2).await?,
+        &[EntityState::Processing, EntityState::Complete],
+    )?;
+    for (scope, ids, parent) in [(2, vec![1, 2], 2), (1, vec![1, 2, 3], 1)] {
+        let (_, statuses) = client.close_scope(&complete_digest(scope, &ids)?).await?;
+        expect_states(
+            &statuses,
+            &[EntityState::Rehydrating, EntityState::Complete],
+        )?;
+        if !client.barrier(scope, parent).await?.released {
+            bail!("closed child scope failed to release barrier");
+        }
+        client
+            .checkpoint(&Checkpoint {
+                checkpoint_id: format!("scope-{scope}"),
+                sequence_number: u64::MAX,
+                checkpoint_entity_id: *ids.last().unwrap(),
+                scope_id: Some(scope),
+                flags: 0,
+                timeout_ms: Some(5000),
+            })
+            .await?;
+    }
+    let checkpoint = Checkpoint {
+        checkpoint_id: "sealed-root".to_owned(),
+        sequence_number: 1 << 63,
+        checkpoint_entity_id: 2,
+        scope_id: Some(0),
+        flags: 0,
+        timeout_ms: Some(5000),
+    };
+    client.checkpoint(&checkpoint).await?;
+    client.goaway(2).await?;
+    let mut replay = RecursiveClient::connect_sealed(options).await?;
+    replay.declare_work(&root).await?;
+    replay.checkpoint(&checkpoint).await?;
+    replay.goaway(2).await?;
+    let mut wrong_owner = RecursiveClient::connect_sealed(options).await?;
+    let mut changed = root.clone();
+    changed.producer_id = [8; 16];
+    let error = wrong_owner
+        .declare_work(&changed)
+        .await
+        .err()
+        .context("changed owner was incorrectly accepted")?;
+    if !error.to_string().contains("PIPESTREAM_ENTITY_INVALID") {
+        return Err(error);
+    }
+    wrong_owner.disconnect_gracefully().await;
+    let mut wrong_checkpoint = RecursiveClient::connect_sealed(options).await?;
+    wrong_checkpoint.declare_work(&root).await?;
+    let mut changed = checkpoint;
+    changed.checkpoint_id = "changed-request".to_owned();
+    let error = wrong_checkpoint
+        .checkpoint(&changed)
+        .await
+        .err()
+        .context("changed checkpoint identity was incorrectly accepted")?;
+    if !error.to_string().contains("PIPESTREAM_ENTITY_INVALID") {
+        return Err(error);
+    }
+    wrong_checkpoint.disconnect_gracefully().await;
+    Ok(())
+}
+
 /// Persist a yielded root and return the cross-connection claim request.
 pub async fn begin_durable_yield(
     options: &RecursiveClientOptions,

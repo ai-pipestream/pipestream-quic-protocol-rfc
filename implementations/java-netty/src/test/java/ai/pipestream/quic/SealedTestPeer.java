@@ -13,6 +13,7 @@ import io.netty.channel.socket.nio.NioDatagramChannel;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import io.netty.incubator.codec.quic.QuicChannel;
 import io.netty.incubator.codec.quic.QuicClientCodecBuilder;
+import io.netty.incubator.codec.quic.QuicConnectionCloseEvent;
 import io.netty.incubator.codec.quic.QuicServerCodecBuilder;
 import io.netty.incubator.codec.quic.QuicSslContextBuilder;
 import io.netty.incubator.codec.quic.QuicStreamChannel;
@@ -21,6 +22,7 @@ import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 /** Fault-injection transports, not reference implementations or protocol oracles. */
@@ -31,6 +33,7 @@ final class SealedTestPeer {
     final NioEventLoopGroup group = new NioEventLoopGroup(1);
     Channel datagram; QuicChannel connection; QuicStreamChannel control;
     final ArrayBlockingQueue<byte[]> replies = new ArrayBlockingQueue<>(16);
+    final CompletableFuture<Long> closeCode = new CompletableFuture<>();
 
     RawClient(InetSocketAddress remote, Path certs) throws Exception {
       try {
@@ -41,7 +44,12 @@ final class SealedTestPeer {
           .initialMaxStreamDataBidirectionalLocal(2L << 20).initialMaxStreamDataBidirectionalRemote(2L << 20)
           .initialMaxStreamsBidirectional(0).initialMaxStreamsUnidirectional(0).build())
           .bind(new InetSocketAddress(0)).sync().channel();
-      connection = QuicChannel.newBootstrap(datagram).handler(new ChannelInboundHandlerAdapter())
+      connection = QuicChannel.newBootstrap(datagram).handler(new ChannelInboundHandlerAdapter() {
+        @Override public void userEventTriggered(ChannelHandlerContext context, Object event) {
+          if (event instanceof QuicConnectionCloseEvent close && close.isApplicationClose()) closeCode.complete(Integer.toUnsignedLong(close.error()));
+          context.fireUserEventTriggered(event);
+        }
+      })
           .streamHandler(new ChannelInboundHandlerAdapter()).remoteAddress(remote).connect().get(5, TimeUnit.SECONDS);
       control = connection.createStream(QuicStreamType.BIDIRECTIONAL, new ChannelInitializer<QuicStreamChannel>() {
         @Override protected void initChannel(QuicStreamChannel channel) {
