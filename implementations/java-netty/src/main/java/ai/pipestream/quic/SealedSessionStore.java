@@ -4,11 +4,9 @@ import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -27,6 +25,40 @@ import java.util.UUID;
  * This API does not execute application callbacks or promise exactly-once effects.
  */
 public final class SealedSessionStore {
+  /**
+   * Immutable SQLite file-length caps, separate from logical record and payload quotas.
+   * All values must be positive multiples of 64 KiB; main/WAL/journal are capped
+   * at 16 GiB each and shared memory at 16 MiB. These are not filesystem-block caps.
+   * @param databaseBytes main database length cap
+   * @param walBytes WAL length cap
+   * @param journalBytes rollback journal length cap
+   * @param sharedMemoryBytes WAL shared-memory length cap
+   */
+  public record FileLimits(long databaseBytes, long walBytes, long journalBytes, long sharedMemoryBytes) {
+    /** Validates each file bound. */
+    public FileLimits {
+      long[] values = {databaseBytes, walBytes, journalBytes, sharedMemoryBytes};
+      for (int i = 0; i < values.length; i++) {
+        if (values[i] <= 0 || values[i] % 65536 != 0 || values[i] > (i == 3 ? 16L << 20 : 16L << 30)) {
+          throw new IllegalArgumentException("invalid SQLite file-length limit");
+        }
+      }
+    }
+    /**
+     * Returns the reference implementation's default file bounds.
+     * @return 256 MiB database, 64 MiB WAL/journal, and 512 KiB shared memory
+     */
+    public static FileLimits defaults() { return new FileLimits(256L << 20, 64L << 20, 64L << 20, 512L << 10); }
+  }
+
+  /**
+   * Sampled lengths, not a transactional snapshot or allocated filesystem blocks.
+   * @param databaseBytes main database bytes
+   * @param walBytes WAL bytes
+   * @param journalBytes rollback journal bytes
+   * @param sharedMemoryBytes shared-memory bytes
+   */
+  public record FileUsage(long databaseBytes, long walBytes, long journalBytes, long sharedMemoryBytes) {}
   /** Parent resolution when its child scope is examined under the Layer 1 STRICT policy. */
   public enum ChildResolution {
     /** The child scope is missing or has not closed. */
@@ -43,8 +75,9 @@ public final class SealedSessionStore {
   private static final Set<String> TABLES = Set.of("ps_java_meta", "ps_java_sessions",
       "ps_java_scopes", "ps_java_batches", "ps_java_entities", "ps_java_jobs", "ps_java_job_policy", "ps_java_checkpoints", "ps_java_checkpoint_history");
   private final Path database;
+  private final SealedSqliteFiles files;
 
-  private SealedSessionStore(Path database) { this.database = database; }
+  private SealedSessionStore(SealedSqliteFiles files) { this.files = files; this.database = files.path(); }
 
   /**
    * Opens or creates this implementation's database without converting another format.
@@ -54,9 +87,36 @@ public final class SealedSessionStore {
    * @throws SQLException for unsupported schema, corruption, or SQLite failure
    */
   public static SealedSessionStore open(Path database) throws IOException, SQLException {
-    Path path = database.toAbsolutePath().normalize();
-    Files.createDirectories(path.getParent());
-    SealedSessionStore store = new SealedSessionStore(path);
+    return openConfigured(database, null);
+  }
+
+  /**
+   * Opens with explicit immutable file limits; existing policies must match.
+   * @param database database filename
+   * @param limits immutable file-length limits
+   * @return bounded store handle
+   * @throws IOException for invalid policy or filesystem layout
+   * @throws SQLException for database or native guard failure
+   */
+  public static SealedSessionStore open(Path database, FileLimits limits) throws IOException, SQLException {
+    return openConfigured(database, Objects.requireNonNull(limits, "limits"));
+  }
+
+  /**
+   * Returns the policy retained with this database.
+   * @return immutable file-length policy
+   */
+  public FileLimits fileLimits() { return files.limits(); }
+
+  /**
+   * Samples current file lengths and verifies policy/layout.
+   * @return file lengths; absent sidecars count as zero
+   * @throws IOException for corruption, aliasing, or over-budget files
+   */
+  public FileUsage fileUsage() throws IOException { return files.usage(); }
+
+  private static SealedSessionStore openConfigured(Path database, FileLimits limits) throws IOException, SQLException {
+    SealedSessionStore store = new SealedSessionStore(SealedSqliteFiles.open(database, limits));
     try (Connection connection = store.connection(); var statement = connection.createStatement()) {
       statement.execute("BEGIN IMMEDIATE");
       try {
@@ -711,11 +771,21 @@ public final class SealedSessionStore {
   }
 
   private Connection connection() throws SQLException {
-    Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+    Connection connection = files.connect();
     try (var statement = connection.createStatement()) {
       statement.execute("PRAGMA busy_timeout=5000");
       statement.execute("PRAGMA foreign_keys=ON");
       statement.execute("PRAGMA synchronous=FULL");
+      statement.execute("PRAGMA temp_store=MEMORY");
+      statement.execute("PRAGMA mmap_size=0");
+      long pages;
+      try (var size = statement.executeQuery("PRAGMA page_size")) {
+        if (!size.next()) throw new SQLException("missing SQLite page size");
+        pages = files.limits().databaseBytes() / size.getLong(1);
+      }
+      try (var cap = statement.executeQuery("PRAGMA max_page_count=" + pages)) {
+        if (!cap.next() || cap.getLong(1) > pages) throw new SQLException("database exceeds page limit");
+      }
     } catch (SQLException failure) { connection.close(); throw failure; }
     return connection;
   }
@@ -742,6 +812,13 @@ public final class SealedSessionStore {
         rollback(connection, failure);
         throw failure;
       }
+    } catch (SQLException failure) {
+      if (SealedSqliteFiles.isFull(failure)) {
+        ProtocolException refusal = Wire.limit("SQLite file capacity exhausted");
+        refusal.initCause(failure);
+        throw refusal;
+      }
+      throw failure;
     }
   }
 

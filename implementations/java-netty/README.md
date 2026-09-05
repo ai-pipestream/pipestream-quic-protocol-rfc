@@ -9,7 +9,13 @@ mvn verify
 java -jar target/pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar --help
 ```
 
-The current build uses Netty's `linux-x86_64` native classifier. The client
+The current build uses Netty's `linux-x86_64` native classifier. Building also
+requires CMake 3.24 or newer and a C11 compiler for the small SQLite file-limit
+extension. Maven builds and packages it in both JARs and runs its native tests
+during `test`. See [native storage guard](native/README.md) for the pinned source,
+supported backend, and sanitizer command. No Rust protocol or storage code is
+linked into the Java library.
+The client
 requires a CA certificate and the server requires an end-entity certificate and
 private key. QUIC 0-RTT is never enabled.
 
@@ -63,12 +69,60 @@ library below supplies retained input, not state-machine admission or execution.
 Persistent local policy allows 512 sessions, 65,536 declared entities globally,
 and 16,384 per session, in addition to negotiated per-scope and depth limits.
 Declaration history and scope trees are checked with bounded scans, not a
-constant-time readiness index. These are logical record limits, not physical
-database/WAL quotas or a throughput claim. Reopen cannot reset the policy.
+constant-time readiness index. These logical record limits are separate from
+the file-length policy below; neither is a throughput claim. Reopen cannot
+reset either policy.
 
 The original `PipeStreamServer` and standalone commands remain Layer 0. The
 separate `SealedServer` and public client require `sealed-work-sets-v1`; neither
 silently converts an unsealed session or falls back to weaker capabilities.
+
+## SQLite file-length bounds
+
+Every session-store connection uses a non-default bounded VFS over Xerial's
+bundled Unix SQLite backend. The default `FileLimits` are 256 MiB for the main
+database, 64 MiB each for WAL and rollback journal, and 512 KiB for shared memory.
+`open(path, limits)` accepts explicit immutable caps; `open(path)` uses the
+retained policy on reopen or defaults for a new store. Caps are positive multiples
+of 64 KiB, at most 16 GiB for main/WAL/journal and 16 MiB for shared memory.
+`fileUsage()` validates the policy and samples actual lengths; it is not an
+atomic snapshot or a count of allocated filesystem blocks.
+
+The guard checks writes, truncates and shared-memory mappings before growth.
+Database mmap and size-hint/chunk preallocation are disabled. Every store
+connection also sets a main-page cap so a WAL transaction cannot commit a
+database that would exceed its main-file bound when checkpointed. `SQLITE_FULL`
+from store transactions becomes `PIPESTREAM_LIMIT_EXCEEDED`, including through
+the public QUIC listener. It does not erase declarations, admit missing input,
+or report completion. A reader retaining an old WAL snapshot can exhaust the
+WAL cap before the logical record cap. Releasing that reader and successfully
+checkpointing can permit new writes; a busy checkpoint is not success.
+
+A synced `.psjlimits` sidecar retains the 72-byte `PSJDB001` version, four
+big-endian limits, and a SHA-256 checksum. The empty `.psjlock` file coordinates
+policy creation. Nonempty databases or sidecars without policy are refused
+before SQLite opens them. Policy changes, corrupt or oversized files, symlinks,
+and hardlink aliases are refused. Java schema version 3 is unchanged, but an
+older unbounded store still lacks the required file policy: keep it with its
+matching binary. No automatic conversion or operational migration is supplied.
+
+This backend requires 64-bit Linux, the pinned JDBC SQLite version, private
+local directories, and cooperating writers using this library. Unrelated raw
+JDBC connections and filesystem writers are not controlled by the guard. Use
+one loaded copy of the library per process. The native registry permits 64
+concurrently open database identities, with capacity released on connection
+close; sequentially used databases do not accumulate registrations. Bootstrap
+registration is private, extension loading is disabled afterward, and missing
+or incompatible native support is a hard failure without an unbounded fallback.
+
+Direct native tests exercise all four file families and growth bypass controls.
+JDBC tests exhaust actual database/WAL/journal files, hold WAL readers, check
+rollback and integrity, corrupt retained policy, exhaust registry capacity,
+and abruptly exit with an uncheckpointed WAL. A real-QUIC test checks the named
+capacity refusal, unchanged acknowledged membership, zero accidental payload/job
+admission, and declaration replay after checkpointing and reopen. File caps do
+not reserve space for every future completion record or provide authenticated
+principal quotas; completion reservations and broader resource gates remain due.
 
 ## Sealed-work payload storage
 
@@ -237,7 +291,7 @@ The `sealed-interop` profile also runs the Rust public producer against this
 Java server. A separate 32 MiB QUIC transfer/install/execute test runs with
 a 24 MiB Java heap limit; it does not measure native memory or RSS.
 Persistent producer-side observations, broader crash-boundary and
-resource stress coverage, physical SQLite/WAL quotas, and completion-space
+resource stress coverage, and completion-space
 reservations remain unfinished; this is not a full conformance claim.
 
 ## Sealed-work network producer

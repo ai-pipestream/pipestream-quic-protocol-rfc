@@ -56,8 +56,9 @@ now guards database, WAL, rollback-journal, and shared-memory file lengths under
 an immutable on-disk policy. Retained Rust payloads and lineage files now have
 persistent global and authority/principal reservations, bounded staging, and
 exclusive writer ownership. Interrupted copies and incomplete metadata stay
-charged across reopen. Java database bounds, completion-space reservations,
-and explicit orphan reconciliation remain unfinished.
+charged across reopen. Java now has independent database/WAL/journal/shared-memory
+file-length enforcement through a small SQLite extension packaged with JDBC.
+Completion-space reservations and explicit orphan reconciliation remain unfinished.
 Connection metadata and lineage operations now run in a bounded storage pool.
 An independent control reader enforces checkpoint deadlines during those
 operations; held-storage tests also exercise protocol refusals and progress
