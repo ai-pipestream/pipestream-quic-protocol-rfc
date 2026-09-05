@@ -10,9 +10,9 @@ libraries:
 - `three-node-scatter` is a Rust coordinator in a standalone Cargo project. It
   scatters to Java, Rust, and C++ servers and performs checked reassembly.
 
-There is no Python application code in `examples/`. The Python runner under
-`conformance/` only starts external servers, invokes these compiled programs,
-and checks their process and filesystem results.
+The protocol-neutral Rust driver under `implementations/rust-quinn/conformance`
+starts external servers, invokes these compiled programs, and checks process
+and filesystem results. It contains no example behavior or protocol codec.
 
 Build and run every implementation, example, interop pair, and scenario with:
 

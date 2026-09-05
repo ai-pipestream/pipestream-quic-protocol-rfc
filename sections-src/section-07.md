@@ -9,7 +9,7 @@ within the payload bytes.
 
 The normative wire-level Entity Header is defined in Section 6.8.2. It
 provides transport-level identification and routing metadata, including
-`entity-id`, `parent-id`, `scope-id`, `layer`, `payload-length`, and
+`entity-id`, `parent-id`, `scope-id`, `parent-scope-id`, `layer`, `payload-length`, and
 optional integrity metadata. The core protocol interprets these fields
 for stream processing, flow control, and recursive coordination, but it
 does not define application-specific payload structure.

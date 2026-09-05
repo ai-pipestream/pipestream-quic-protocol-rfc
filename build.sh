@@ -25,6 +25,11 @@ case "${TARGET}" in
     ;;
 esac
 
+if [[ ! "$DRAFT_VERSION" =~ ^[0-9]{2}$ ]]; then
+  echo "Draft revision must contain exactly two decimal digits." >&2
+  exit 1
+fi
+
 TEMPLATE_XML="${TEMPLATE_MD%.md}.xml"
 OUTPUT_XML="${OUTPUT_DIR}/${DRAFT_NAME}.xml"
 OUTPUT_TXT="${OUTPUT_DIR}/${DRAFT_NAME}.txt"
@@ -46,6 +51,11 @@ echo "==> Building ${DRAFT_NAME}..."
 # 1. Convert Markdown source to IETF XML v3
 echo "  [1/4] kramdown-rfc: ${TEMPLATE_MD} -> XML"
 "${BUNDLE[@]}" exec kdrfc "${TEMPLATE_MD}"
+
+if ! grep -Fq "docName=\"${DRAFT_NAME}\"" "${TEMPLATE_XML}"; then
+  echo "Generated docName does not match ${DRAFT_NAME}; update the source frontmatter first." >&2
+  exit 1
+fi
 
 # 2. Rename to official draft name
 echo "  [2/4] Renaming to ${OUTPUT_XML}"

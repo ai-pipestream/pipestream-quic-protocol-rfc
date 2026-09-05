@@ -17,7 +17,7 @@ target/release/three-node-scatter \
 ```
 
 The three servers must already be running with the output directories supplied
-above. `conformance/run_examples.py` starts those processes and invokes this
-Rust application during the full repository gate. Reading those output
-directories is a local demonstration adapter, not a Layer 0 network gather
-operation.
+above. The `pipestream-conformance examples` command starts those processes and
+invokes this Rust application during the full repository gate. Reading those
+output directories is a local demonstration adapter, not a Layer 0 network
+gather operation.

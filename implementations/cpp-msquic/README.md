@@ -3,7 +3,8 @@
 This implementation has an independent C++20 Layer 0 codec and uses Microsoft's
 MsQuic transport. CMake fetches the immutable MsQuic `v2.6.1` tag and builds it
 against the system OpenSSL 3.5 installation. It does not share protocol code
-with the Java/Netty, Rust/Quinn, or Python conformance implementations.
+with the Java/Netty or Rust/Quinn implementations. The conformance driver is
+not a protocol implementation.
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release

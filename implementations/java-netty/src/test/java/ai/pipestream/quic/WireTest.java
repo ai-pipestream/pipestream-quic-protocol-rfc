@@ -13,6 +13,27 @@ final class WireTest {
   private static final Path VECTORS = Path.of("..", "..", "test-vectors");
 
   @Test
+  void optionalFieldsDoNotChangeDeterministicValidation() throws Exception {
+    for (String row : Files.readAllLines(VECTORS.resolve("optional-fields.tsv")).stream().skip(1).toList()) {
+      String[] fields = row.split("\t");
+      byte[] bytes = java.util.HexFormat.of().parseHex(fields[3]);
+      org.junit.jupiter.api.function.Executable decode = () -> {
+        if (fields[1].equals("capabilities")) {
+          Wire.decodeCapabilities(bytes);
+        } else {
+          Wire.decodeCheckpoint(bytes);
+        }
+      };
+      if (fields[2].equals("valid")) {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(decode, fields[0]);
+      } else {
+        assertEquals("PIPESTREAM_FRAME_ERROR",
+            assertThrows(ProtocolException.class, decode, fields[0]).errorName());
+      }
+    }
+  }
+
+  @Test
   void capabilitiesMatchGoldenVector() throws Exception {
     assertArrayEquals(
         Files.readAllBytes(VECTORS.resolve("valid/capabilities-default.bin")),

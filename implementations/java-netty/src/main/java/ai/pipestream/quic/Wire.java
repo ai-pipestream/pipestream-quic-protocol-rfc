@@ -216,11 +216,15 @@ public final class Wire {
     boolean layer1 = requiredBoolean(map, "layer1-recursive");
     boolean layer2 = requiredBoolean(map, "layer2-resilience");
     long maxWindow = number(map, "max-window-size", MAX_WINDOW);
-    int serialization = Math.toIntExact(number(map, "serialization-format", 0));
+    long serializationValue = number(map, "serialization-format", 0);
+    if (serializationValue < 0 || serializationValue > 255) {
+      throw frame("serialization-format exceeds uint8");
+    }
+    int serialization = (int) serializationValue;
     long keepalive = number(map, "keepalive-timeout-ms", 30_000);
     rejectUnknown(map,
         "layer0-core", "max-window-size", "layer1-recursive", "layer2-resilience",
-        "keepalive-timeout-ms", "serialization-format");
+        "keepalive-timeout-ms", "serialization-format", "max-scope-depth", "max-entities-per-scope");
     Capabilities result = new Capabilities(layer0, layer1, layer2, maxWindow, serialization, keepalive);
     if (!layer0) {
       throw layerUnsupported("Layer 0 is mandatory");
@@ -228,8 +232,15 @@ public final class Wire {
     if (maxWindow < 1 || maxWindow > MAX_WINDOW) {
       throw limit("invalid max-window-size");
     }
-    byte[] canonical = encodeCapabilities(result);
-    if (!Arrays.equals(Arrays.copyOfRange(canonical, 5, canonical.length), payload)) {
+    long depth = number(map, "max-scope-depth", 7);
+    long entities = number(map, "max-entities-per-scope", MAX_ENTITY_ID);
+    if (depth < 0 || depth > 7 || entities < 1 || entities > MAX_ENTITY_ID) {
+      throw limit("invalid recursive capability limit");
+    }
+    if (serialization < 0 || serialization > 255 || keepalive < 0) {
+      throw frame("invalid serialization format or keepalive");
+    }
+    if (!Arrays.equals(encodeMap(map), payload)) {
       throw frame("capabilities CBOR is not deterministic");
     }
     return result;
@@ -284,8 +295,7 @@ public final class Wire {
     }
     Checkpoint result = new Checkpoint(
         checkpointId, sequence, checkpointEntity, scope, Math.toIntExact(flagsValue), timeout);
-    byte[] canonical = encodeCheckpoint(result);
-    if (!Arrays.equals(Arrays.copyOfRange(canonical, 5, canonical.length), payload)) {
+    if (!Arrays.equals(encodeMap(map), payload)) {
       throw frame("checkpoint CBOR is not deterministic");
     }
     return result;
@@ -498,7 +508,12 @@ public final class Wire {
     try (ByteArrayOutputStream output = new ByteArrayOutputStream();
          JsonGenerator generator = CBOR.getFactory().createGenerator(output)) {
       generator.writeStartObject(map, map.size());
-      for (Map.Entry<String, Object> entry : map.entrySet()) {
+      for (Map.Entry<String, Object> entry : map.entrySet().stream().sorted((left, right) -> {
+        byte[] a = left.getKey().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] b = right.getKey().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        int length = Integer.compare(a.length, b.length);
+        return length != 0 ? length : Arrays.compareUnsigned(a, b);
+      }).toList()) {
         generator.writeFieldName(entry.getKey());
         Object value = entry.getValue();
         if (value instanceof Boolean bool) {
@@ -512,7 +527,7 @@ public final class Wire {
         } else if (value instanceof Long number) {
           generator.writeNumber(number);
         } else {
-          throw frame("unsupported CBOR value " + value.getClass().getName());
+          throw frame("unsupported CBOR value");
         }
       }
       generator.writeEndObject();

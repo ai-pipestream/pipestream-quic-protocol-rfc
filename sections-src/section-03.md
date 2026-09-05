@@ -94,6 +94,14 @@ This document defines a single serialization format: CBOR {{RFC8949}}, value 0 i
 
 The `serialization-format` capability field and its registry exist to permit future specifications to define additional formats; any such specification MUST normatively define the encoding of every serialized message in this document.
 
+Determinism applies to the map actually transmitted, before defaults are
+applied. Omission of an optional member and explicit transmission of its
+default value are both valid, distinct maps. Receivers MUST NOT reject an
+omitted optional member because re-encoding a default-filled object would
+insert that member. Duplicate map keys, non-minimal integers or lengths,
+indefinite-length items, and trailing CBOR items are invalid. Floating-point
+values follow the shortest exact representation rule in Section 8.4.
+
 Negotiation proceeds as follows:
 
 1. CBOR {{RFC8949}} is the default and MUST be supported by all endpoints.

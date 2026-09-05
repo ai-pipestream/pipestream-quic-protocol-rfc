@@ -88,6 +88,23 @@ void encode_bool(std::vector<std::uint8_t>& output, bool value) {
   output.push_back(value ? 0xf5 : 0xf4);
 }
 
+bool valid_utf8(std::span<const std::uint8_t> bytes) {
+  for (std::size_t i = 0; i < bytes.size();) {
+    const auto first = bytes[i++];
+    if (first < 0x80) continue;
+    const unsigned count = first >= 0xc2 && first <= 0xdf ? 1 :
+        first >= 0xe0 && first <= 0xef ? 2 : first >= 0xf0 && first <= 0xf4 ? 3 : 0;
+    if (count == 0 || bytes.size() - i < count) return false;
+    const auto second = bytes[i];
+    if ((first == 0xe0 && second < 0xa0) || (first == 0xed && second >= 0xa0) ||
+        (first == 0xf0 && second < 0x90) || (first == 0xf4 && second >= 0x90)) return false;
+    for (unsigned j = 0; j < count; ++j) {
+      if ((bytes[i++] & 0xc0) != 0x80) return false;
+    }
+  }
+  return true;
+}
+
 class Decoder {
  public:
   explicit Decoder(std::span<const std::uint8_t> input) : input_(input) {}
@@ -122,6 +139,9 @@ class Decoder {
     auto [major, length] = head();
     if (major != 3 || length > remaining()) {
       frame_error("expected bounded CBOR text");
+    }
+    if (!valid_utf8(input_.subspan(position_, static_cast<std::size_t>(length)))) {
+      frame_error("CBOR text is not valid UTF-8");
     }
     const char* begin = reinterpret_cast<const char*>(input_.data() + position_);
     std::string result(begin, begin + static_cast<std::ptrdiff_t>(length));
@@ -338,6 +358,7 @@ Capabilities decode_capabilities(std::span<const std::uint8_t> payload) {
   Decoder decoder(payload);
   const std::uint64_t count = decoder.map();
   Capabilities result;
+  result.max_window_size = kMaxWindow;
   bool has_layer0 = false;
   bool has_layer1 = false;
   bool has_layer2 = false;
@@ -362,6 +383,11 @@ Capabilities decode_capabilities(std::span<const std::uint8_t> payload) {
       result.serialization_format = static_cast<std::uint8_t>(value);
     } else if (key == "keepalive-timeout-ms") {
       result.keepalive_timeout_ms = decoder.uint_value();
+    } else if (key == "max-scope-depth") {
+      if (decoder.uint_value() > 7) limit_error("invalid max-scope-depth");
+    } else if (key == "max-entities-per-scope") {
+      const auto value = decoder.uint_value();
+      if (value == 0 || value > kMaxEntityId) limit_error("invalid max-entities-per-scope");
     } else {
       frame_error("unknown capabilities field " + key);
     }
@@ -371,9 +397,6 @@ Capabilities decode_capabilities(std::span<const std::uint8_t> payload) {
   if (!result.layer0_core) layer_error("Layer 0 is mandatory");
   if (result.max_window_size == 0 || result.max_window_size > kMaxWindow) {
     limit_error("invalid max-window-size");
-  }
-  if (encode_capability_payload(result) != std::vector<std::uint8_t>(payload.begin(), payload.end())) {
-    frame_error("capabilities CBOR is not deterministic");
   }
   return result;
 }
@@ -429,9 +452,6 @@ Checkpoint decode_checkpoint(std::span<const std::uint8_t> payload) {
   }
   if (result.scope_id && *result.scope_id != 0) layer_error("checkpoint scope requires Layer 1");
   if (result.flags > kCheckpointAck) frame_error("unknown checkpoint flags");
-  if (encode_checkpoint_payload(result) != std::vector<std::uint8_t>(payload.begin(), payload.end())) {
-    frame_error("checkpoint CBOR is not deterministic");
-  }
   return result;
 }
 

@@ -1,6 +1,7 @@
 //! Reusable Quinn transport for the PipeStream Layer 0 reference contract.
 
-use crate::{
+use anyhow::{Context, Result, bail};
+use pipestream_core::{
     CHECKPOINT_ACK, CONNECTION_LEVEL, Capabilities, Checkpoint, ERROR_FRAME, ERROR_NO_ERROR,
     FRAME_CAPABILITIES, FRAME_CHECKPOINT, FRAME_GOAWAY, FRAME_STATUS, MAX_CONTROL_FRAME,
     MAX_PAYLOAD, ProtocolError, STATUS_COMPLETE, STATUS_PENDING, STATUS_PROCESSING,
@@ -8,7 +9,6 @@ use crate::{
     decode_goaway, decode_status, decode_ucf, encode_capabilities, encode_checkpoint,
     encode_goaway, encode_status, entity_with_parent, next_entity_id,
 };
-use anyhow::{Context, Result, bail};
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use std::{
@@ -55,7 +55,7 @@ pub async fn serve(options: ServerOptions) -> Result<()> {
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .context("configure server certificate")?;
-    tls.alpn_protocols = vec![crate::ALPN.to_vec()];
+    tls.alpn_protocols = vec![pipestream_core::ALPN.to_vec()];
     let mut config = quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls)?));
     let transport = Arc::get_mut(&mut config.transport).expect("new transport config is unique");
     transport
@@ -228,7 +228,7 @@ pub async fn send(options: ClientOptions) -> Result<()> {
     let mut tls = rustls::ClientConfig::builder()
         .with_root_certificates(roots)
         .with_no_client_auth();
-    tls.alpn_protocols = vec![crate::ALPN.to_vec()];
+    tls.alpn_protocols = vec![pipestream_core::ALPN.to_vec()];
     let config = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls)?));
     let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse()?)?;
     endpoint.set_default_client_config(config);
@@ -347,7 +347,7 @@ async fn read_control(stream: &mut quinn::RecvStream) -> Result<(u8, Vec<u8>), P
         let length = u32::from_be_bytes(header[1..5].try_into().expect("slice length")) as usize;
         if length > MAX_CONTROL_FRAME {
             return Err(ProtocolError::new(
-                crate::ERROR_LIMIT_EXCEEDED,
+                pipestream_core::ERROR_LIMIT_EXCEEDED,
                 "PIPESTREAM_LIMIT_EXCEEDED",
                 "control frame exceeds local limit",
             ));
@@ -397,7 +397,7 @@ impl TransportErrors for ProtocolError {
 
     fn entity_for_transport(detail: impl Into<String>) -> Self {
         ProtocolError::new(
-            crate::ERROR_ENTITY_INVALID,
+            pipestream_core::ERROR_ENTITY_INVALID,
             "PIPESTREAM_ENTITY_INVALID",
             detail,
         )

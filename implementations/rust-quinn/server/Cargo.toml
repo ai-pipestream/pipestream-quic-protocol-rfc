@@ -1,0 +1,17 @@
+[package]
+name = "pipestream-server"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Runnable PipeStream reference server and client"
+
+[[bin]]
+name = "pipestream-quinn"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.6", features = ["derive"] }
+pipestream-quinn = { path = "../quinn" }
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }

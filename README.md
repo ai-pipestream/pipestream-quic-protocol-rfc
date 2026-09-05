@@ -6,7 +6,12 @@
 
 ## Overview
 
-PipeStream is a recursive entity streaming protocol designed for high-performance distributed document processing over QUIC transport. It implements a scatter-gather pattern where documents are "dehydrated" (scattered) into constituent entities, processed in parallel across distributed nodes, and "rehydrated" (gathered) back into complete processed documents with strong consistency guarantees.
+PipeStream is a proposed application protocol over QUIC for recursive work
+decomposition, entity streaming, completion barriers, and durable continuation
+references. The draft and implementations are under development. They are not
+an approved IETF standard or a fully conformant production implementation.
+See [draft-04 readiness](docs/standards/draft04-readiness.md) for tested changes
+and the remaining interoperability and security work.
 
 ## Authoring Workflow
 
@@ -16,7 +21,7 @@ This repository uses a modular authoring workflow for IETF drafts. The monolithi
 
 - **`sections-src/`**: **The Source of Truth.** Individual Markdown files for each RFC section. Edit these files directly.
 - **`draft-template.md`**: The master kramdown-rfc template that includes all sections in the correct order.
-- **`cddl/`**: Machine-readable Layer 0 CDDL synchronized with Appendix C.
+- **`cddl/`**: Machine-readable serialized-message CDDL, checked against Appendix C.
 - **`test-vectors/`**: Checked-in golden valid and invalid wire inputs with named expected refusals.
 - **`conformance/`**: Vector checks and the black-box client/server interoperability runner.
 - **`implementations/`**: Independent Java/Netty, Rust/Quinn, and C++/MsQuic libraries and executables.
@@ -36,7 +41,7 @@ bundle install
 ./conformance/run_all.sh
 ```
 
-That command checks generated vectors, runs every implementation and example's
+That command checks frozen vectors, runs every implementation and example's
 tests, builds the three servers and language-native applications, executes all
 nine black-box client/server pairings, and runs the three external scenarios.
 See [`conformance/README.md`](conformance/README.md) for the command contract and
@@ -83,7 +88,7 @@ example = {
 You need the following tools installed:
 
 - **Ruby and Bundler**: For the pinned `kramdown-rfc` and CDDL validator gems
-- **Python/uv**: For `xml2rfc` 3.34.0
+- **xml2rfc 3.34.0 via uv**: External IETF document rendering only
 - **idnits**: For final validation
 
 ```bash
@@ -93,6 +98,11 @@ gem install bundler
 bundle install
 uv tool install xml2rfc==3.34.0
 ```
+
+There are no checked-in Python sources, and the reference implementations,
+vector checks, interoperability matrix, and examples do not invoke Python.
+`xml2rfc` is an external IETF authoring tool used only by `build.sh` to render
+the draft. It is not part of the protocol or its conformance evidence.
 
 ### 2. Generating the Draft
 
@@ -111,7 +121,7 @@ ignored build artifacts.
 Always run `idnits` on the generated `.txt` file before submitting to ensure there are no formatting errors or non-ASCII characters:
 
 ```bash
-idnits --verbose draft-krickert-pipestream-01.txt
+idnits --verbose draft-krickert-pipestream-04.txt
 ```
 
 ## Submission

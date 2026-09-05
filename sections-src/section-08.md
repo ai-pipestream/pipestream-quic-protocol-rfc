@@ -76,7 +76,7 @@ completion-policy = {
   ? max-retries: uint,           ; Default: 3
   ? retry-delay-ms: uint,        ; Default: 1000
   ? timeout-ms: uint,            ; Default: 300000 (5 min)
-  ? min-success-ratio: float32,  ; For QUORUM mode
+  ? min-success-ratio: float16 / float32, ; For QUORUM mode
   ? on-timeout: failure-action,
   ? on-failure: failure-action,
 }
@@ -99,6 +99,26 @@ failure-action = &(
 ~~~~
 
 ## PROCESS Action
+
+For QUORUM, `min-success-ratio` MUST be present and finite, with a value
+between zero and one, inclusive.
+Its semantic value is the exact binary rational represented by an IEEE 754
+binary32 value. The sender MUST use binary16 when it preserves that value
+exactly, and binary32 otherwise. For example, 0.75 is encoded as
+`f9 3a 00`, not `fa 3f 40 00 00`. Binary64, NaN, and infinities are invalid.
+For N declared children, at least `ceil(N * min-success-ratio)` children
+MUST be COMPLETE. Implementations MUST compute this threshold without
+rounding the product down; integer arithmetic on the binary rational is
+one implementation strategy.
+
+All children MUST reach a terminal state before any completion policy
+permits rehydration. STRICT requires every child to be COMPLETE. LENIENT
+requires at least one COMPLETE child. BEST_EFFORT accepts any terminal
+mixture. QUORUM uses the threshold above. SKIPPED and ABANDONED do not
+count as successes. DEFERRED is not terminal; a parent does not become
+ready merely because a claim was issued. An input that produces no
+children completes directly without allocating an empty child scope.
+Partial completion is not a claim that all work succeeded.
 
 | Mode | Description |
 |------|-------------|

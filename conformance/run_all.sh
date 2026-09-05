@@ -14,17 +14,11 @@ else
 fi
 
 "${bundle_command[@]}" check
-"${bundle_command[@]}" exec cddl cddl/pipestream-layer0.cddl generate 1 >/dev/null
-
-python3 conformance/generate_vectors.py --check
-python3 conformance/validate_cddl.py
-python3 conformance/verify_vectors.py
-python3 -m unittest discover -s conformance -p 'test_*.py'
-
-cargo fmt --manifest-path implementations/rust-quinn/Cargo.toml -- --check
-cargo clippy --locked --all-targets --manifest-path implementations/rust-quinn/Cargo.toml -- -D warnings
-cargo test --locked --manifest-path implementations/rust-quinn/Cargo.toml
-cargo build --release --locked --manifest-path implementations/rust-quinn/Cargo.toml
+cargo fmt --all --manifest-path implementations/rust-quinn/Cargo.toml -- --check
+cargo clippy --locked --workspace --all-targets --manifest-path implementations/rust-quinn/Cargo.toml -- -D warnings
+cargo test --locked --workspace --manifest-path implementations/rust-quinn/Cargo.toml
+cargo build --release --locked --workspace --manifest-path implementations/rust-quinn/Cargo.toml
+implementations/rust-quinn/target/release/pipestream-conformance verify
 
 mvn install -q -f implementations/java-netty/pom.xml
 mvn verify -q -f examples/java-to-rust/pom.xml
@@ -42,5 +36,6 @@ for example in rust-to-cpp-recovery three-node-scatter; do
   cargo build --release --locked --manifest-path "$manifest"
 done
 
-python3 conformance/run_interop.py
-python3 conformance/run_examples.py
+implementations/rust-quinn/target/release/pipestream-conformance interop
+implementations/rust-quinn/target/release/pipestream-conformance recursive
+implementations/rust-quinn/target/release/pipestream-conformance examples

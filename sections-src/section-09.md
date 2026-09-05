@@ -36,7 +36,7 @@ An entity in the FAILED state that may still transition to RETRYING (see the sta
 
 ## Assembly Manifest
 
-The Assembly Manifest is a local data structure maintained by each endpoint to track the parent-child relationships created during dehydration. It is not transmitted on the wire; rather, each endpoint constructs its own manifest from the `parent-id` fields in received EntityHeaders and from status updates observed on the Control Stream. The CDDL below defines the logical structure of each entry; implementations MAY use any internal representation that preserves the required semantics.
+The Assembly Manifest is a local data structure maintained by each endpoint to track the parent-child relationships created during dehydration. It is not transmitted on the wire; rather, each endpoint constructs its own manifest from the (`parent-scope-id`, `parent-id`) pairs in received Layer 1 EntityHeaders and from status updates observed on the Control Stream. Layer 0 relationships in the root scope continue to use `parent-id` alone. The CDDL below defines the logical structure of each entry; implementations MAY use any internal representation that preserves the required semantics.
 
 Each Assembly Manifest entry tracks:
 
@@ -93,9 +93,27 @@ The endpoint requesting a barrier sends a CHECKPOINT frame with Flags set to 0. 
 
 The originating endpoint MUST NOT advance its cursor beyond `checkpoint-entity-id` until it has received the matching acknowledgement. A checkpoint is optional for ordinary Layer 0 transfer, but when one is used this request/acknowledgement exchange is the wire evidence that the barrier was crossed.
 
+An unsatisfied checkpoint is pending, not a malformed request. The receiver
+MUST continue accepting control traffic and eligible descendant work while
+it waits. Its deadline starts when the complete request is received and
+uses a local monotonic clock. `timeout-ms` defaults to 30000. Repetition
+of the same request MUST NOT extend its deadline. Reuse of its scope and
+sequence with different fields is PIPESTREAM_ENTITY_INVALID (0x05).
+Expiry closes the connection with PIPESTREAM_CHECKPOINT_TIMEOUT (0x0E),
+without an ACK or any claim that outstanding work completed.
+
+QUIC provides no ordering between Stream 0 and Entity Streams. Before
+requesting a checkpoint, its originator MUST have received PROCESSING or
+a subsequent lifecycle status for each entity it includes in the cut.
+Writing an Entity Stream or sending PENDING is not evidence of admission.
+The receiver MUST NOT acknowledge a cut while an announced entity in
+that cut still lacks a validated EntityHeader and completed payload.
+This admission rule does not declare the complete set of descendants;
+the work-set closure issue in Appendix E remains relevant to decomposition.
+
 For circular comparison in Condition 1, implementations MUST use the same modulo ordering as cursor management. Define `MAX = 0xFFFFFFFD` and:
 
-`is_before(a, b) = ((b - a + MAX) % MAX) < (MAX / 2)`
+`is_before(a, b) = (a != b) && (((b - a + MAX) % MAX) < (MAX / 2))`
 
 An entity ID `a` is considered "less than checkpoint_entity_id `b`" iff `is_before(a, b)` is true.
 
@@ -112,6 +130,12 @@ When Layer 1 is negotiated, Scope IDs are 32-bit unsigned integers assigned by t
 
 When a scope completes, the endpoint MUST compute a Scope Digest and propagate it to the parent scope via a SCOPE_DIGEST frame (Section 6.3).
 
+A child scope MUST contain at least one Entity before it is closed. An endpoint
+MUST reject a SCOPE_DIGEST for an empty or unknown scope with
+PIPESTREAM_SCOPE_INVALID (0x09). The digest covers direct Entity statuses in
+the named scope. Nested scope integrity is verified independently by requiring
+each nested scope's SCOPE_DIGEST before its parent scope can close.
+
 The Merkle root in the Scope Digest is computed as follows:
 
 1. For each entity in the scope, ordered by ascending numeric Entity ID value, construct a 5-octet leaf value by concatenating:
@@ -124,6 +148,13 @@ The Merkle root in the Scope Digest is computed as follows:
 The 0x00 and 0x01 domain-separation prefixes distinguish leaf hashes from interior-node hashes, preventing second-preimage attacks in which an interior node is presented as a leaf (or vice versa). This construction follows the approach used for Merkle Tree Hashes in Certificate Transparency.
 
 This construction is deterministic: any two implementations processing the same set of entity statuses MUST produce the same Merkle root.
+
+This value commits to direct entity identifiers and terminal statuses only.
+It does not commit to payload bytes, result bytes, parent links, completion
+policy, or nested digest values. It MUST NOT be represented as proof of
+content lineage or correct computation. Payload checksums are separate.
+Applications that require authenticated content receipts need an
+application profile that defines those commitments and their verification.
 
 Because each Entity ID contributes exactly one leaf, an implementation MUST NOT recycle an Entity ID within a scope whose SCOPE_DIGEST has not yet been computed. Cursor-based recycling (Section 9.1) already guarantees this when scopes complete before the ID space wraps; implementations whose scopes approach the ID-space capacity MUST close and digest the scope before reusing any of its Entity IDs.
 

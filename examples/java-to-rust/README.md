@@ -22,6 +22,6 @@ java --enable-native-access=ALL-UNNAMED \
   --server-name localhost --entity-id 101 --input /path/to/input.bin
 ```
 
-`conformance/run_examples.py` starts the surrounding processes and executes
-this Java program during the full repository gate. The Python file is test
-orchestration only; the example behavior above is Java.
+The `pipestream-conformance examples` command starts the surrounding processes
+and executes this Java program during the full repository gate. The driver only
+orchestrates compiled processes; the example behavior above is Java.
