@@ -100,27 +100,50 @@ approval as part of a repository landing.
   reset policy. Queue overflow and injected index-write failures roll back both
   records. Tests cover an abrupt process exit after committed acquisition,
   lease-expiry rediscovery, identity and outcome refusals, and an explicit
-  integrity audit for missing/extra/changed index rows. The transport service
-  does not yet enqueue these descriptors or run a dispatcher. This is a tested
-  storage API, not completion of the asynchronous execution requirement.
+  integrity audit for missing/extra/changed index rows. At that landing, the
+  transport service did not enqueue descriptors or run a dispatcher. That
+  storage API alone did not complete the asynchronous execution requirement.
   The final `./conformance/run_all.sh` passed with 107 Rust workspace tests,
   Java/C++ suites, all nine transfer pairings, 32 raw QUIC capability probes,
   recursive/recovery CLI scenarios, and the external examples. Draft -04 built
   with zero idnits errors/flaws/warnings and one informational FIPS comment.
-- Not yet implemented: retained recovery-request outcomes, asynchronous job dispatch,
-  durable storage quotas and restartable inputs, periodic recovery for every operation, and
-  the independent Java profile. Callback execution itself is still synchronous.
+- Worker integration: the service now installs payloads before atomically
+  committing admission and typed job descriptors. Bounded periodic workers
+  process, rehydrate, and resume independently of connection dispatch, reopening
+  and checking retained input. Callback panics and invalid decisions are
+  retained as refusals. Physical permits remain charged until callbacks return,
+  including after shutdown and lease expiry. Queue and worker limits are
+  separate from the bounded per-connection outcome observers.
+  Raw QUIC tests cover independent completion, control refusals and checkpoint
+  deadlines during stalled callbacks, and queue overflow without lost admission.
+  Listener-owned connection tasks stop ingress on cancellation without erasing
+  admitted jobs. Held-installation tests cover pipelined root admission and
+  checkpoint deadlines without prematurely acknowledging received work.
+  An abrupt-exit test exercises durable file/job admission and execution after
+  reopening. Detached rehydration/resume, missing/corrupt input, shared worker
+  limits, and replacement executors with a still-running expired callback are
+  also covered. This does not complete retained-storage accounting or make
+  synchronous SQLite metadata and lineage operations safe under storage stalls.
+  The final `./conformance/run_all.sh` passed with 122 Rust workspace tests
+  (55 core, 27 Quinn unit, 37 wire, one allocation gate, two runner tests),
+  Java/C++ suites, nine transfer pairings, 32 capability probes, and all external
+  examples. Draft -04 passed idnits with zero errors/flaws/warnings and one
+  informational FIPS 180-4 comment. Session format 5 is unchanged.
+- Not yet implemented: retained recovery-request outcomes, durable storage
+  quotas, orphan reclamation, storage-stall handling, and the independent Java
+  profile. Physical execution limits and temporary spools are coordinated only
+  within one writer process; broader tenant/resource stress evidence remains due.
 
 Implementation evidence must replace these status entries as it lands. A
 transport-authentication increment alone does not satisfy authenticated recovery.
 
 Next implementation boundaries: authority-qualified recovery requests with
 stable request identity, retained outcomes, expiry/revocation/retention rules;
-and durable dispatch of the file-backed inputs with bounded per-principal/global workers.
+and complete storage/resource guarantees around the asynchronous workers.
 The current CLAIM_REDEMPTION path still refuses a duplicate after a lost ACK.
-The service does not yet populate the core job descriptors or reopen retained
-inputs for execution; lease expiry
-is not callback cancellation. No automatic execution retry is advertised.
+The service now populates job descriptors and reopens retained input. Lease
+expiry is not callback cancellation. Periodic dispatch can reacquire unfinished
+expired attempts, but does not retry application-refused jobs automatically.
 Temporary spool accounting is process-local and excludes permanent entity files
 and SQLite state. Add durable quotas and explicit orphan reconciliation without
 deleting a live generation or treating missing input as completed work.

@@ -121,13 +121,17 @@ impl Chunks {
         self.entities.is_empty()
     }
 
-    pub async fn insert(
+    pub fn insert(
         &mut self,
         received: Received,
         limits: RecursiveLimits,
-    ) -> Result<Option<Received>, ProtocolError> {
+    ) -> Result<Option<Assembly>, ProtocolError> {
         let Some(info) = received.header.chunk_info else {
-            return Ok(Some(received));
+            return Ok(Some(Assembly {
+                header: received.header,
+                parts: vec![received.body],
+                chunked: false,
+            }));
         };
         if info.total_chunks > limits.max_chunks_per_entity {
             return Err(limit_error("chunk count exceeds local limit"));
@@ -170,13 +174,39 @@ impl Chunks {
         }
         self.bytes -= length;
         let mut ordered = ordered.into_iter();
-        let mut result = ordered.next().unwrap();
+        let result = ordered.next().unwrap();
         let mut parts = vec![result.body];
         parts.extend(ordered.map(|chunk| chunk.body));
-        result.body = Payload::concatenate(parts).await?;
-        result.header.chunk_info = None;
-        result.header.payload_length = Some(length);
-        result.header.checksum = Some(result.body.digest());
-        Ok(Some(result))
+        Ok(Some(Assembly {
+            header: result.header,
+            parts,
+            chunked: true,
+        }))
+    }
+}
+
+pub(super) struct Assembly {
+    pub header: EntityHeader,
+    parts: Vec<Payload>,
+    chunked: bool,
+}
+
+impl Assembly {
+    /// Run in a bounded admission worker, never in the connection dispatch loop.
+    pub fn finish(mut self) -> Result<Received, ProtocolError> {
+        let body = if self.chunked {
+            Payload::concatenate_blocking(self.parts)?
+        } else {
+            self.parts.pop().expect("unchunked entity has one body")
+        };
+        if self.chunked {
+            self.header.chunk_info = None;
+            self.header.payload_length = Some(body.len());
+            self.header.checksum = Some(body.digest());
+        }
+        Ok(Received {
+            header: self.header,
+            body,
+        })
     }
 }

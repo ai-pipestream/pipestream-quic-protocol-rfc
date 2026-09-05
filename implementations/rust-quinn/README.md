@@ -38,8 +38,9 @@ target/release/pipestream-quinn serve-recursive \
 enforces scope depth, entity-count, frame, chunk-count, and payload limits, and
 persists state transitions before reporting them. SQLite runs in WAL mode with
 full synchronous durability and checksummed, versioned session records. Payload
-objects and final lineage digests are immutable, fsynced files. Startup resumes
-claims that were durably redeemed but interrupted before completion.
+objects and final lineage digests are immutable, fsynced files. A periodic
+dispatcher executes admitted jobs independently of attached connections,
+including durably redeemed claims interrupted before completion.
 
 The public `RecursiveService`, `RecursiveServer`, `RecursiveClient`,
 `EntityProcessor`, `EntityStore`, and `SessionStore` APIs support embedding the
@@ -174,8 +175,8 @@ Restart counts abandoned files against the store quota without deleting them.
 Live handles for the same directory share accounting and cannot reset it with
 different limits. Accounting is not coordinated between separate operating
 system processes. Temporary receive budgets do not limit retained entity files,
-SQLite state, or the filesystem cache. Durable storage quotas, restartable job
-descriptors, and explicit orphan reclamation remain required before production
+SQLite state, or the filesystem cache. Durable storage quotas and explicit
+orphan reclamation remain required before production
 multi-tenant use. Do not run multiple writer processes against this spool root.
 
 `cargo test -p pipestream-quinn --test spool_resources -- --nocapture` sends
@@ -186,7 +187,7 @@ return to zero. One local run on 2026-09-05 measured 132,968 bytes of heap growt
 and a largest allocation of 15,972 bytes. This is a single-transfer allocation
 measurement, not a process-RSS, concurrency, or throughput claim.
 
-## Execution still to finish
+## Bounded asynchronous execution
 
 ### Durable queue APIs
 
@@ -215,23 +216,50 @@ read snapshot, including missing and extra entries. This full audit scans one
 session at a time, not an in-memory list of all sessions. It is an explicit
 operation, not a periodic background task.
 
-These core APIs are tested but not yet used by the transport service. They do
-not reopen retained payload files or provide workers, cancellation, scheduling,
-or recovery-request ACKs. Finished records and permanent storage are not covered
-by unfinished-job limits. The full executor must integrate admission and file
-installation, verify the queue before dispatch, and observe outcomes without
-blocking control parsing. No asynchronous service claim is made here.
+The transport service now uses these APIs. Bounded admission workers perform
+chunk hashing and immutable payload installation before committing admission
+and its job descriptor together. Failure before that commit produces no
+runnable job. A crash between file installation and commit can leave an orphan;
+it is not treated as admitted or completed work.
 
-### Current service path
+### Workers and connection handling
 
-Pending checkpoints use monotonic deadlines, but a synchronous callback still
-blocks the connection's dispatch loop. Application processing, rehydration,
-and resume callbacks now run outside database transactions and may re-enter
-the store. Each runs with a durably acquired `ExecutionLease`. Publication
+Application processing, rehydration, and resume callbacks run in blocking
+workers outside database transactions and may re-enter the store. Each runs
+with a durably acquired `ExecutionLease`. Publication
 atomically checks the session owner, revocation, operation, epoch, executor
 identity, and expiry before applying its result and marking the attempt done.
 Expired or superseded attempts cannot publish, including after reopening the
 database. An active attempt prevents another store handle from acquiring it.
+
+`RecursiveServer::run` starts the periodic executor automatically. Embedded
+applications can call `RecursiveService::start_executor` and retain its handle.
+The dispatcher audits queue integrity before execution and scans a bounded
+ready-job index every 10 ms. `EntityStore::load_payload` reconstructs processing
+input from retained files; length and SHA-256 are checked with an 8 KiB buffer
+before invoking the processor. Rehydration and resume use their retained scope
+and claim descriptors. Missing/corrupt input and callback panics produce named,
+retained refusals, not successful completion or automatic application retries.
+
+`with_execution_limits` configures physical worker limits: defaults are four
+workers per canonical session database and two per authority/principal. Handles
+and listeners in one process share these permits. Admission has a separate pool
+with the same bounds, allowing jobs to be queued while execution is occupied.
+Anonymous work shares one principal bucket. The same job cannot occupy two
+physical worker slots in one process, even after lease expiry. These limits do
+not coordinate physical threads in different processes; the single-writer-
+process restriction for the spool directory still applies.
+
+Connections retain at most 1,024 job observers and emit replies from committed
+outcomes. Callback execution, chunk hashing, and payload installation do not
+hold their dispatch loop. Raw QUIC tests pin independent job completion,
+checkpoint deadline progress during a stalled callback, immediate control
+refusals, and queue overflow without losing admitted jobs. Pipelined roots
+received during the first admission wait within the same observation and spool
+budgets. Known entities still being assembled or installed block covered
+checkpoints even without a PENDING announcement. SQLite metadata
+operations and lineage writes still execute synchronously in the connection
+path; responsive handling under storage stalls remains unfinished.
 
 The default lease is 300 seconds; embedded services can use
 `with_execution_lease` to choose 1 microsecond through 300 seconds. Lease
@@ -242,17 +270,31 @@ when the clock moves backward. Applications must use idempotency or enforce
 their own transactional fence for external effects. A lease is not a wire
 credential and does not prove exactly-once execution.
 
-Resume recovery can reacquire expired attempts through the existing recovery
-entry point. There is not yet a periodic durable job dispatcher, automatic
-processing/rehydration replay, or retained recovery-request outcome. In
-particular, the service's persisted processing attempts do not yet retain a reconstructible
-header/spool descriptor. An interrupted admission remains incomplete, never
-successful. The next execution increment must cover those restart boundaries.
+Unfinished expired attempts can be reacquired by periodic dispatch. Refused
+application jobs are not automatically retried. The blocking operator API
+`recover_interrupted_resumptions` uses the same bounded queue and physical
+permits; it no longer scans all sessions. It only executes queued resume jobs.
+This is execution recovery, not the retained request/ACK protocol still required
+to resolve ambiguous claim redemption after a lost acknowledgment.
+
+Dropping an executor handle stops new dispatch. `shutdown(grace)` additionally
+waits up to the grace period and returns the store-wide count of callbacks
+still active. It cannot kill a synchronous callback. Started callbacks retain
+their physical permits until they return, and their publication remains fenced.
+The listener owns a bounded set of connection tasks. Dropping its run future
+aborts connection handling and incomplete receive streams in both one-shot and
+long-lived modes. Already-started blocking admission or execution may finish;
+their resource permits remain charged until they return.
+A connection loss does not cancel admitted work or remove declared IDs. A
+shutdown or expired callback cannot make an unfinished job count as complete.
+Tests cover abrupt process exit after durable admission, input corruption,
+detached rehydration/resume, and replacement executors while an expired callback
+still occupies the sole worker slot.
 
 Without the explicit mutual-TLS settings, the standalone prototype authenticates
 only the server and remains suitable solely for trusted local demonstrations.
-Even with mutual TLS, per-principal resource gates, retained recovery outcomes,
-asynchronous dispatch, durable storage quotas and restartable inputs, and a complete resilience capability remain
+Even with mutual TLS and bounded workers, retained recovery-request outcomes,
+durable storage quotas, orphan reclamation, storage-stall handling, and a complete resilience capability remain
 unfinished. It MUST NOT yet be described as a production multi-tenant durable
 work service. Its Layer 2 boolean still advertises more than the tested subset.
 

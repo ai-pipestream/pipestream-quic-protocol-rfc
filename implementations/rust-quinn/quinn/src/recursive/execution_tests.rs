@@ -139,7 +139,7 @@ async fn overlong_callback_cannot_publish_a_successful_protocol_result() {
 }
 
 #[test]
-fn panic_leaves_durable_resume_attempt_for_expiry_and_reacquisition() {
+fn interrupted_durable_resume_attempt_is_reacquired_after_reopen() {
     struct Interrupted(AtomicU64);
     impl EntityProcessor for Interrupted {
         fn process(&self, _: ProcessContext<'_>) -> Result<ProcessingDisposition, ProtocolError> {
@@ -149,9 +149,7 @@ fn panic_leaves_durable_resume_attempt_for_expiry_and_reacquisition() {
             unreachable!()
         }
         fn resume(&self, context: ResumeContext<'_>) -> [u8; 32] {
-            if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
-                panic!("injected callback interruption before publication");
-            }
+            self.0.fetch_add(1, Ordering::SeqCst);
             assert_eq!(context.execution.epoch(), 2);
             ExemplarProcessor::default().resume(context)
         }
@@ -188,6 +186,13 @@ fn panic_leaves_durable_resume_attempt_for_expiry_and_reacquisition() {
         )
         .unwrap();
     session.redeem_claim(99, [2; 32], now).unwrap();
+    let key = ExecutionKey {
+        entity,
+        stage: ExecutionStage::Resume { claim_id: 99 },
+    };
+    session
+        .enqueue_job(key, JobInput::Resume { claim_id: 99 }, now)
+        .unwrap();
     store.create(&session).unwrap();
     let processor = Arc::new(Interrupted(AtomicU64::new(0)));
     let entities = Arc::new(FileEntityStore::open(dir.path().join("entities")).unwrap());
@@ -195,10 +200,12 @@ fn panic_leaves_durable_resume_attempt_for_expiry_and_reacquisition() {
         .unwrap()
         .with_execution_lease(Duration::from_millis(50))
         .unwrap();
-    let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        service.recover_interrupted_resumptions()
-    }));
-    assert!(failed.is_err());
+    // Simulate interruption after the dispatch commit and before callback invocation.
+    store
+        .transact("interrupted-resume", |s| {
+            s.acquire_job(None, key, now, 50_000)
+        })
+        .unwrap();
     let interrupted = store.load("interrupted-resume").unwrap().unwrap();
     let key = ExecutionKey {
         entity,
@@ -233,5 +240,5 @@ fn panic_leaves_durable_resume_attempt_for_expiry_and_reacquisition() {
             .completed_at_micros
             .is_some()
     );
-    assert_eq!(processor.0.load(Ordering::SeqCst), 2);
+    assert_eq!(processor.0.load(Ordering::SeqCst), 1);
 }

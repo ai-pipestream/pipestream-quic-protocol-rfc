@@ -329,7 +329,7 @@ impl SpoolWriter {
             let length = self.len();
             drop(self.file);
             Ok(Payload(Arc::new(PayloadData {
-                segments: vec![Arc::new(self.temporary)],
+                segments: vec![Arc::new(Segment::Temporary(self.temporary))],
                 length,
                 digest: self.digest.finalize().into(),
             })))
@@ -341,9 +341,24 @@ impl SpoolWriter {
 
 #[derive(Debug)]
 struct PayloadData {
-    segments: Vec<Arc<Temporary>>,
+    segments: Vec<Arc<Segment>>,
     length: u64,
     digest: [u8; 32],
+}
+
+#[derive(Debug)]
+enum Segment {
+    Temporary(Temporary),
+    Retained(PathBuf),
+}
+
+impl Segment {
+    fn path(&self) -> &Path {
+        match self {
+            Self::Temporary(temporary) => temporary.path(),
+            Self::Retained(path) => path,
+        }
+    }
 }
 
 /// Immutable, file-backed payload. Opening a reader does not allocate a whole entity.
@@ -351,6 +366,52 @@ struct PayloadData {
 pub struct Payload(Arc<PayloadData>);
 
 impl Payload {
+    /// Reopen an immutable retained object, checking it against its durable descriptor.
+    /// The caller must prevent replacement while readers use this path.
+    pub fn open_retained(path: PathBuf, length: u64, expected: [u8; 32]) -> io::Result<Self> {
+        if length > pipestream_core::MAX_PAYLOAD as u64 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "retained payload exceeds entity limit",
+            ));
+        }
+        let mut file = File::open(&path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.len() != length {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "retained payload length differs from job input",
+            ));
+        }
+        let mut bytes = [0; PAYLOAD_IO_CHUNK];
+        let mut measured = 0u64;
+        let mut digest = Sha256::new();
+        loop {
+            let count = file.read(&mut bytes)?;
+            if count == 0 {
+                break;
+            }
+            measured += count as u64;
+            if measured > length {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "retained payload grew during validation",
+                ));
+            }
+            digest.update(&bytes[..count]);
+        }
+        if measured != length || <[u8; 32]>::from(digest.finalize()) != expected {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "retained payload differs from job digest",
+            ));
+        }
+        Ok(Self(Arc::new(PayloadData {
+            segments: vec![Arc::new(Segment::Retained(path))],
+            length,
+            digest: expected,
+        })))
+    }
     pub fn len(&self) -> u64 {
         self.0.length
     }
@@ -369,13 +430,14 @@ impl Payload {
         }
     }
 
+    #[cfg(test)]
     pub(super) async fn concatenate(parts: Vec<Self>) -> Result<Self, ProtocolError> {
         tokio::task::spawn_blocking(move || Self::concatenate_blocking(parts))
             .await
             .map_err(storage_error)?
     }
 
-    fn concatenate_blocking(parts: Vec<Self>) -> Result<Self, ProtocolError> {
+    pub(super) fn concatenate_blocking(parts: Vec<Self>) -> Result<Self, ProtocolError> {
         let mut length = 0u64;
         let mut segments = Vec::new();
         let mut digest = Sha256::new();

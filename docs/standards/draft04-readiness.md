@@ -206,9 +206,9 @@ multi-principal behavior.
 
 No stored-session format or wire schema changes in this increment. Temporary
 spool quotas do not yet cover permanent payloads, SQLite state, or independent
-writer processes. Dispatch and callbacks remain synchronous. Durable queued
-input descriptors, storage quotas, periodic recovery, and explicit orphan
-reconciliation remain requirements, not completed features.
+writer processes. At that landing, dispatch and callbacks remained synchronous;
+the queue and worker integration below add separate evidence. Durable storage
+quotas and explicit orphan reconciliation remain unfinished.
 
 ## Durable job records and queue limits
 
@@ -231,10 +231,44 @@ Fifteen new core tests cover input identity, process/rehydrate/resume outcomes,
 refusal without completion, ownership, revocation, concurrent admission,
 rollback on overload and injected index failure, abrupt process exit and
 reacquisition, immutable retained outcomes, corruption, and missing queue schema.
-The transport service does not yet use these APIs. File-backed input reopening,
-asynchronous workers, periodic recovery, cancellation/shutdown behavior, and
-retained-storage limits remain unfinished. These tests are not evidence of
-responsive asynchronous processing over QUIC.
+Those core storage tests alone were not evidence of responsive asynchronous
+processing over QUIC. The integration below supplies separate execution evidence.
+
+## Asynchronous worker integration
+
+The transport service now installs immutable payloads before atomically
+admitting their typed jobs. Chunk hashing and installation run in a bounded
+admission pool. A periodic executor audits and reads the durable queue, acquires
+fenced attempts, and reopens retained input with length/SHA-256 validation.
+Connections observe committed outcomes instead of invoking application code.
+Default physical limits are four execution workers and two per principal, plus
+a separate admission pool with the same bounds. Handles for the same canonical
+database share these limits within one process. Job observers are independently
+bounded at 1,024 per connection.
+
+The listener owns bounded connection tasks instead of detaching them. Cancellation
+stops incomplete ingress while started blocking work retains its physical credit.
+Pipelined roots wait for first admission within the receive/observation budgets.
+Received but unadmitted entities block covered checkpoints; moving installation
+to a worker cannot hide them from completion accounting.
+
+Raw QUIC tests cover a fast job completing beside a held callback, checkpoint
+deadline progress during process/rehydrate/resume callbacks, malformed control
+refusal, queue overload with admitted jobs intact, and retained application
+refusals. A child process exits abruptly after file/job admission; the parent
+reopens the store and executes that retained input. Additional tests exercise
+missing/corrupt input, detached rehydration/resume, shared physical permits, and
+shutdown/replacement while an expired callback still occupies the sole slot.
+The older panic recovery test now uses an interrupted durable dispatch; callback
+panics are separately tested as retained refusals, not unbounded replay.
+
+Shutdown stops dispatch and reports callbacks still active after its grace
+period. It does not forcibly kill callbacks or remove admitted work. Expired
+attempts may be reacquired, so external effects still need idempotency/fencing.
+Permanent storage quotas, orphan reconciliation, storage-stall handling, and
+broader multi-principal resource measurements remain required. Metadata database
+operations and lineage writes remain synchronous on the connection path, and
+physical worker/spool accounting does not cover independent writer processes.
 
 ## Validation
 
@@ -290,6 +324,14 @@ gate, and two conformance-runner tests), Java/C++ suites, nine transfer pairings
 32 capability probes, and all external examples. Draft -04 again passed idnits
 with zero errors/flaws/warnings and one informational FIPS 180-4 comment.
 
+The asynchronous-worker increment passed the full command locally on 2026-09-05
+with 122 Rust workspace tests (55 core, 27 Quinn unit, 37 wire, one allocation
+gate, two runner tests), five Java tests, the C++ vector test, all nine transfer
+pairings, 32 capability probes, and all external examples. New tests cover
+listener cancellation, retained execution, pipelined first admission, and
+checkpoint progress during payload installation as well as application callbacks.
+Draft -04 passed idnits with zero errors/flaws/warnings and one FIPS comment.
+
 `./build.sh core 04` produced XML, text, and HTML. idnits reported zero errors,
 zero flaws, zero warnings, and one informational possible-downref comment
 for the NIST FIPS 180-4 normative reference. This is document validation,
@@ -306,9 +348,9 @@ xml2rfc renderer remains confined to document authoring.
    profile, authority-qualified requests, and
    retained outcomes for lost redemption ACKs. The
    current Layer 2 boolean advertises more than the prototype implements.
-2. Build the bounded asynchronous fenced executor around file-backed inputs,
-   with durable job descriptors/storage quotas, crash-boundary tests, and
-   concurrent-workload resource gates.
+2. Complete the asynchronous executor's storage/resource guarantees: durable
+   quotas, orphan reconciliation, storage-stall handling, further crash-boundary
+   tests, and concurrent-workload resource gates.
 3. Implement the clarified sealed-work profile independently in Java, and
    cross-test declaration, lost ACK, reconnect, and descendant completion.
    C++ follows as the third implementation; the full requirement matrix

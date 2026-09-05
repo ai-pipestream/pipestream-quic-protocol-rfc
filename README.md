@@ -24,13 +24,14 @@ implementations of that profile remain unfinished.
 The Rust durable service also supports negotiated mutual-TLS session binding:
 certificate-mapped principals, retained authority/owner records, and session
 revocation. This is the authentication prerequisite for recovery, not the
-retained-outcome or asynchronous-executor implementation. Durable attempt
+retained recovery-request protocol. Durable attempt
 fences now protect result publication, and callbacks run outside database
 transactions. Receive payloads are now incrementally spooled to bounded
-temporary files and processed through readers; callbacks remain synchronous.
-The core now has durable typed job records and a transactionally bounded queue.
-The transport service does not yet submit work to that queue or run asynchronous
-workers; the queue APIs are the next integration boundary.
+temporary files and processed through readers. The service submits typed jobs
+to a transactionally bounded queue and dispatches processing, rehydration, and
+resume callbacks in bounded workers, independently of connection control handling.
+Retained payloads are reopened and verified before interrupted work is executed.
+Permanent storage quotas and storage-stall handling remain unfinished.
 The full remaining
 goal is tracked in [the implementation plan](docs/standards/recovery-execution-java-plan.md).
 
