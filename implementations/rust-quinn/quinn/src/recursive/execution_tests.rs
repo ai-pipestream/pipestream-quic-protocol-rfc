@@ -22,7 +22,7 @@ impl ReentrantProcessor {
 }
 
 impl EntityProcessor for ReentrantProcessor {
-    fn process(&self, context: ProcessContext<'_>) -> ProcessingDisposition {
+    fn process(&self, context: ProcessContext<'_>) -> Result<ProcessingDisposition, ProtocolError> {
         self.probe(context.execution, 0);
         ExemplarProcessor::default().process(context)
     }
@@ -85,7 +85,10 @@ async fn every_callback_can_reenter_store_and_has_a_durable_fence() {
 async fn overlong_callback_cannot_publish_a_successful_protocol_result() {
     struct Slow;
     impl EntityProcessor for Slow {
-        fn process(&self, context: ProcessContext<'_>) -> ProcessingDisposition {
+        fn process(
+            &self,
+            context: ProcessContext<'_>,
+        ) -> Result<ProcessingDisposition, ProtocolError> {
             std::thread::sleep(Duration::from_millis(25));
             ExemplarProcessor::default().process(context)
         }
@@ -139,7 +142,7 @@ async fn overlong_callback_cannot_publish_a_successful_protocol_result() {
 fn panic_leaves_durable_resume_attempt_for_expiry_and_reacquisition() {
     struct Interrupted(AtomicU64);
     impl EntityProcessor for Interrupted {
-        fn process(&self, _: ProcessContext<'_>) -> ProcessingDisposition {
+        fn process(&self, _: ProcessContext<'_>) -> Result<ProcessingDisposition, ProtocolError> {
             unreachable!()
         }
         fn rehydrate(&self, _: RehydrateContext<'_>) -> [u8; 32] {

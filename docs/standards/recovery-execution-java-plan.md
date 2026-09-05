@@ -66,7 +66,8 @@ approval as part of a repository landing.
   `./conformance/run_all.sh` passed with 71 Rust workspace tests, all language
   suites, nine pairings, 32 capability probes, and the examples. Draft -04
   builds with zero idnits errors/flaws/warnings and one FIPS 180-4 comment.
-- Execution increment: process, rehydrate, and resume callbacks now run outside
+- Execution increment landed through Forgejo PR #8 at `7ca85f5`, also verified
+  on GitHub main: process, rehydrate, and resume callbacks now run outside
   database transactions. Session format 4 retains per-operation execution
   epochs, executor identities, expiry, and completion records. Acquisition and
   publication are separate transactions with owner/revocation checks. Expired
@@ -77,8 +78,22 @@ approval as part of a repository landing.
   The full suite passed with 81 Rust workspace tests, Java/C++ tests, all nine
   transfer pairings, 32 capability probes, and the external examples. Draft -04
   again passed idnits with zero errors/flaws/warnings and one FIPS 180-4 comment.
+- Spooling increment: headers are decoded before payload reception, and each
+  body is incrementally written to quota-charged temporary files with an 8 KiB
+  I/O bound. Chunk assembly retains original segments and checks their stored
+  digests. Processing consumes a file-backed reader. Temporary bytes, files,
+  and active principal budgets are bounded across connections and same-process
+  store handles. Cancellation retains credit until outstanding I/O finishes;
+  abandoned files are counted on reopen, not silently deleted.
+  The real-QUIC 32 MiB transfer allocation gate passed: 132,968 bytes of heap
+  growth and largest allocation 15,972 bytes in one focused local run.
+  `./conformance/run_all.sh` then passed with 92 Rust workspace tests, Java/C++
+  tests, nine transfer pairings, 32 capability probes, and all external examples.
+  The Rust examples' lockfiles now include the existing pinned `tempfile`
+  dependency on the library's runtime path; no package versions changed.
+  Draft -04 passed idnits with zero errors/flaws/warnings and one FIPS comment.
 - Not yet implemented: retained recovery outcomes, asynchronous job dispatch,
-  spool-backed processing, periodic restart recovery for every operation, and
+  durable storage quotas and restartable inputs, periodic recovery for every operation, and
   the independent Java profile. Callback execution itself is still synchronous.
 
 Implementation evidence must replace these status entries as it lands. A
@@ -86,9 +101,12 @@ transport-authentication increment alone does not satisfy authenticated recovery
 
 Next implementation boundaries: authority-qualified recovery requests with
 stable request identity, retained outcomes, expiry/revocation/retention rules;
-and spool-backed durable dispatch with bounded per-principal/global workers.
+and durable dispatch of the file-backed inputs with bounded per-principal/global workers.
 The current CLAIM_REDEMPTION path still refuses a duplicate after a lost ACK.
 Processing attempts lack restartable header/spool descriptors; lease expiry
 is not callback cancellation. No automatic execution retry is advertised.
+Temporary spool accounting is process-local and excludes permanent entity files
+and SQLite state. Add durable quotas and explicit orphan reconciliation without
+deleting a live generation or treating missing input as completed work.
 Do not treat authentication or publication fencing as completion of recovery
 or asynchronous execution. Java still implements only the earlier Layer 0 subset.

@@ -3,6 +3,8 @@
 #[cfg(test)]
 mod execution_tests;
 mod ingress;
+pub mod spool;
+use spool::{PAYLOAD_IO_CHUNK, Payload, SpoolLimits, SpoolStore};
 
 use crate::authentication::{AuthenticationPolicy, ClientIdentity};
 use pipestream_core::authorization::{
@@ -21,10 +23,10 @@ use pipestream_core::{
     FRAME_CLAIM_REDEMPTION, FRAME_GOAWAY, FRAME_SCOPE_DIGEST, FRAME_STATUS, LayerSupport,
     MAX_CONTROL_FRAME, MAX_ENTITY_HEADER, MAX_PAYLOAD, ProtocolError, ScopeDigest, Status,
     StatusExtension, StatusFrame, StoppingPointValidation, decode_barrier, decode_capabilities,
-    decode_checkpoint_for, decode_claim_redemption, decode_entity_for, decode_goaway,
-    decode_scope_digest, decode_status_frame, encode_barrier, encode_capabilities,
-    encode_checkpoint_for, encode_claim_redemption, encode_entity_for, encode_goaway,
-    encode_scope_digest, encode_status, encode_status_frame,
+    decode_checkpoint_for, decode_claim_redemption, decode_goaway, decode_scope_digest,
+    decode_status_frame, encode_barrier, encode_capabilities, encode_checkpoint_for,
+    encode_claim_redemption, encode_entity_for, encode_goaway, encode_scope_digest, encode_status,
+    encode_status_frame,
     persistence::{SessionStore, SqliteSessionStore, StoreError},
     session::{
         ClaimRecord, EntityKey, EntityState, NewEntity, Session, merkle_root, validate_session_id,
@@ -36,7 +38,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs::{self, OpenOptions},
-    io::Write,
+    io::{Read, Write},
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{
@@ -139,7 +141,7 @@ pub struct ProcessContext<'a> {
     pub execution: &'a ExecutionLease,
     pub session_id: &'a str,
     pub header: &'a EntityHeader,
-    pub payload: &'a [u8],
+    pub payload: &'a Payload,
     pub now_micros: u64,
 }
 
@@ -180,7 +182,7 @@ pub enum ProcessingDisposition {
 /// fences protocol publication, not external effects; applications must make those
 /// idempotent or fence them transactionally. Callbacks must finish within the lease.
 pub trait EntityProcessor: Send + Sync + 'static {
-    fn process(&self, context: ProcessContext<'_>) -> ProcessingDisposition;
+    fn process(&self, context: ProcessContext<'_>) -> Result<ProcessingDisposition, ProtocolError>;
 
     fn rehydrate(&self, context: RehydrateContext<'_>) -> [u8; 32];
 
@@ -202,39 +204,46 @@ impl Default for ExemplarProcessor {
 }
 
 impl EntityProcessor for ExemplarProcessor {
-    fn process(&self, context: ProcessContext<'_>) -> ProcessingDisposition {
-        match context
-            .header
-            .metadata
-            .get(ACTION_METADATA_KEY)
-            .map(String::as_str)
-        {
-            Some("dehydrate") => ProcessingDisposition::Dehydrate,
-            Some("yield") => {
-                let state_checksum =
-                    tagged_digest(b"pipestream-stopping-point-v1", context.payload);
-                let continuation_token =
-                    tagged_digest(b"pipestream-continuation-v1", context.payload).to_vec();
-                let lifetime = u64::try_from(self.claim_lifetime.as_micros()).unwrap_or(u64::MAX);
-                ProcessingDisposition::Yield {
-                    reason: 1,
-                    continuation_token,
-                    validation: StoppingPointValidation {
-                        state_checksum: Some(state_checksum),
-                        bytes_processed: Some(context.payload.len() as u64),
-                        children_complete: Some(0),
-                        children_total: Some(0),
-                        is_resumable: Some(true),
-                        checkpoint_ref: Some("durable-yield".to_owned()),
-                    },
-                    expires_at_micros: context.now_micros.saturating_add(lifetime),
+    fn process(&self, context: ProcessContext<'_>) -> Result<ProcessingDisposition, ProtocolError> {
+        Ok(
+            match context
+                .header
+                .metadata
+                .get(ACTION_METADATA_KEY)
+                .map(String::as_str)
+            {
+                Some("dehydrate") => ProcessingDisposition::Dehydrate,
+                Some("yield") => {
+                    let state_checksum =
+                        tagged_payload_digest(b"pipestream-stopping-point-v1", context.payload)?;
+                    let continuation_token =
+                        tagged_payload_digest(b"pipestream-continuation-v1", context.payload)?
+                            .to_vec();
+                    let lifetime =
+                        u64::try_from(self.claim_lifetime.as_micros()).unwrap_or(u64::MAX);
+                    ProcessingDisposition::Yield {
+                        reason: 1,
+                        continuation_token,
+                        validation: StoppingPointValidation {
+                            state_checksum: Some(state_checksum),
+                            bytes_processed: Some(context.payload.len()),
+                            children_complete: Some(0),
+                            children_total: Some(0),
+                            is_resumable: Some(true),
+                            checkpoint_ref: Some("durable-yield".to_owned()),
+                        },
+                        expires_at_micros: context.now_micros.saturating_add(lifetime),
+                    }
                 }
-            }
-            Some("fail") => ProcessingDisposition::Failed,
-            _ => ProcessingDisposition::Complete {
-                output_digest: tagged_digest(b"pipestream-processed-v1", context.payload),
+                Some("fail") => ProcessingDisposition::Failed,
+                _ => ProcessingDisposition::Complete {
+                    output_digest: tagged_payload_digest(
+                        b"pipestream-processed-v1",
+                        context.payload,
+                    )?,
+                },
             },
-        }
+        )
     }
 
     fn rehydrate(&self, context: RehydrateContext<'_>) -> [u8; 32] {
@@ -270,8 +279,32 @@ fn tagged_digest(tag: &[u8], value: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+fn tagged_payload_digest(tag: &[u8], payload: &Payload) -> Result<[u8; 32], ProtocolError> {
+    let mut reader = payload.reader();
+    let mut hasher = Sha256::new();
+    hasher.update(tag);
+    let mut bytes = [0; PAYLOAD_IO_CHUNK];
+    loop {
+        let count = reader.read(&mut bytes).map_err(storage_error)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&bytes[..count]);
+    }
+    Ok(hasher.finalize().into())
+}
+
 pub trait EntityStore: Send + Sync + 'static {
     fn put(&self, session_id: &str, key: EntityKey, payload: &[u8]) -> std::io::Result<()>;
+
+    fn put_payload(
+        &self,
+        session_id: &str,
+        key: EntityKey,
+        payload: &Payload,
+    ) -> std::io::Result<()>;
+
+    fn spool(&self) -> &Arc<SpoolStore>;
 
     fn put_lineage(&self, session_id: &str, digest: [u8; 32]) -> std::io::Result<()>;
 }
@@ -281,14 +314,23 @@ pub trait EntityStore: Send + Sync + 'static {
 pub struct FileEntityStore {
     root: PathBuf,
     nonce: AtomicU64,
+    spool: Arc<SpoolStore>,
 }
 
 impl FileEntityStore {
     pub fn open(root: impl Into<PathBuf>) -> std::io::Result<Self> {
+        Self::open_with_spool_limits(root, SpoolLimits::default())
+    }
+
+    pub fn open_with_spool_limits(
+        root: impl Into<PathBuf>,
+        limits: SpoolLimits,
+    ) -> std::io::Result<Self> {
         let root = root.into();
         fs::create_dir_all(&root)?;
         sync_directory(&root)?;
         Ok(Self {
+            spool: SpoolStore::new(root.join(".spool"), limits).map_err(std::io::Error::other)?,
             root,
             nonce: AtomicU64::new(1),
         })
@@ -297,6 +339,19 @@ impl FileEntityStore {
     #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    fn sync_payload_directories(&self, directory: &Path) -> std::io::Result<()> {
+        let mut current = directory;
+        loop {
+            sync_directory(current)?;
+            if current == self.root {
+                return Ok(());
+            }
+            current = current
+                .parent()
+                .ok_or_else(|| std::io::Error::other("payload directory escaped store root"))?;
+        }
     }
 
     fn entity_path(&self, session_id: &str, key: EntityKey) -> PathBuf {
@@ -347,6 +402,65 @@ impl FileEntityStore {
 }
 
 impl EntityStore for FileEntityStore {
+    fn spool(&self) -> &Arc<SpoolStore> {
+        &self.spool
+    }
+
+    fn put_payload(
+        &self,
+        session_id: &str,
+        key: EntityKey,
+        payload: &Payload,
+    ) -> std::io::Result<()> {
+        validate_storage_session_id(session_id)?;
+        let destination = self.entity_path(session_id, key);
+        let parent = destination.parent().expect("entity parent directory");
+        fs::create_dir_all(parent)?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        let mut reader = payload.reader();
+        let mut bytes = [0; PAYLOAD_IO_CHUNK];
+        let mut digest = Sha256::new();
+        let mut length = 0u64;
+        loop {
+            let count = reader.read(&mut bytes)?;
+            if count == 0 {
+                break;
+            }
+            temporary.write_all(&bytes[..count])?;
+            digest.update(&bytes[..count]);
+            length += count as u64;
+        }
+        let actual: [u8; 32] = digest.finalize().into();
+        if length != payload.len() || actual != payload.digest() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "spooled payload changed before persistence",
+            ));
+        }
+        temporary.as_file().sync_all()?;
+        match temporary.persist_noclobber(&destination) {
+            Ok(_) => self.sync_payload_directories(parent),
+            Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let mut existing = fs::File::open(&destination)?;
+                let mut digest = Sha256::new();
+                let mut length = 0u64;
+                loop {
+                    let count = existing.read(&mut bytes)?;
+                    if count == 0 {
+                        break;
+                    }
+                    length += count as u64;
+                    digest.update(&bytes[..count]);
+                }
+                let actual: [u8; 32] = digest.finalize().into();
+                if length != payload.len() || actual != payload.digest() {
+                    return Err(error.error);
+                }
+                self.sync_payload_directories(parent)
+            }
+            Err(error) => Err(error.error),
+        }
+    }
     fn put(&self, session_id: &str, key: EntityKey, payload: &[u8]) -> std::io::Result<()> {
         validate_storage_session_id(session_id)?;
         self.write_immutable(&self.entity_path(session_id, key), payload)
@@ -616,8 +730,12 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         .await?;
 
         let mut current_session: Option<String> = None;
+        let spool = self
+            .entities
+            .spool()
+            .connection(self.caller.as_ref(), self.limits.max_entity_bytes as u64)?;
         let (_readers, mut incoming) =
-            ingress::start(connection.clone(), control_recv, layers, self.limits);
+            ingress::start(connection.clone(), control_recv, layers, self.limits, spool);
         let mut announcements: BTreeMap<EntityKey, StatusFrame> = BTreeMap::new();
         let mut chunks = ingress::Chunks::default();
         let mut checkpoints: BTreeMap<(u32, u64), (Checkpoint, tokio::time::Instant)> =
@@ -658,7 +776,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             let (frame_type, payload) = match event {
                 ingress::Event::Control(kind, bytes) => (kind, bytes),
                 ingress::Event::Entity(received) => {
-                    let Some(received) = chunks.insert(*received, self.limits)? else {
+                    let Some(received) = chunks.insert(*received, self.limits).await? else {
                         continue;
                     };
                     let header = &received.header;
@@ -1030,7 +1148,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         current_session: &mut Option<String>,
         pending: &StatusFrame,
         header: &EntityHeader,
-        body: &[u8],
+        body: &Payload,
         negotiated: &Capabilities,
     ) -> Result<(), ProtocolError> {
         let scope_id = header.scope_id.unwrap_or(0);
@@ -1129,7 +1247,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             .map_err(store_error)?;
         }
         self.entities
-            .put(&session_id, key, body)
+            .put_payload(&session_id, key, body)
             .map_err(storage_error)?;
         let (lease, _) = self
             .transact(&session_id, |session| {
@@ -1151,7 +1269,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             header,
             payload: body,
             now_micros: now,
-        });
+        })?;
         if matches!(disposition, ProcessingDisposition::Yield { .. })
             && (!negotiated.layer2_resilience || sealed)
         {
@@ -1392,13 +1510,11 @@ fn apply_disposition(
     }
 }
 
-fn new_entity(header: &EntityHeader, body: &[u8]) -> NewEntity {
+fn new_entity(header: &EntityHeader, body: &Payload) -> NewEntity {
     NewEntity {
         entity_id: header.entity_id,
         layer: header.layer,
-        payload_digest: header
-            .checksum
-            .unwrap_or_else(|| Sha256::digest(body).into()),
+        payload_digest: header.checksum.unwrap_or_else(|| body.digest()),
         policy: header.completion_policy.clone(),
     }
 }
@@ -2214,6 +2330,8 @@ fn server_endpoint(
     let mut config = quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls)?));
     let transport = Arc::get_mut(&mut config.transport).expect("new transport config is unique");
     transport
+        .receive_window((1u32 << 20).into())
+        .stream_receive_window((64u32 << 10).into())
         .max_concurrent_bidi_streams(1u32.into())
         .max_concurrent_uni_streams(1024u32.into())
         .max_idle_timeout(Some(Duration::from_secs(30).try_into()?));
@@ -2709,7 +2827,10 @@ mod tests {
         #[derive(Default)]
         struct CountingResume(AtomicU64);
         impl EntityProcessor for CountingResume {
-            fn process(&self, _: ProcessContext<'_>) -> ProcessingDisposition {
+            fn process(
+                &self,
+                _: ProcessContext<'_>,
+            ) -> Result<ProcessingDisposition, ProtocolError> {
                 unreachable!()
             }
             fn rehydrate(&self, _: RehydrateContext<'_>) -> [u8; 32] {

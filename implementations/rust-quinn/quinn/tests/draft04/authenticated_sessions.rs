@@ -20,7 +20,7 @@ struct Processor {
 }
 
 impl EntityProcessor for Processor {
-    fn process(&self, context: ProcessContext<'_>) -> ProcessingDisposition {
+    fn process(&self, context: ProcessContext<'_>) -> Result<ProcessingDisposition, ProtocolError> {
         self.processed.fetch_add(1, Ordering::SeqCst);
         if let Some(store) = &self.revoke_during_process {
             store

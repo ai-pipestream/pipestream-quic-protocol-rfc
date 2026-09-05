@@ -1231,7 +1231,21 @@ pub fn encode_entity_for(
     payload: &[u8],
     layers: LayerSupport,
 ) -> Result<Vec<u8>, ProtocolError> {
-    validate_entity_header_for(header, payload, layers)?;
+    validate_entity_payload(header, payload.len() as u64, Sha256::digest(payload).into())?;
+    let encoded = encode_entity_header_for(header, layers)?;
+    let mut output = Vec::with_capacity(4 + encoded.len() + payload.len());
+    output.extend_from_slice(&(encoded.len() as u32).to_be_bytes());
+    output.extend_from_slice(&encoded);
+    output.extend_from_slice(payload);
+    Ok(output)
+}
+
+/// Encode only the CBOR header, without the four-octet length or payload.
+pub fn encode_entity_header_for(
+    header: &EntityHeader,
+    layers: LayerSupport,
+) -> Result<Vec<u8>, ProtocolError> {
+    validate_entity_header_for(header, layers)?;
     let fields = 2
         + usize::from(header.parent_id.is_some())
         + usize::from(header.scope_id.is_some())
@@ -1309,13 +1323,10 @@ pub fn encode_entity_for(
         encoder.str("completion-policy").map_err(cbor_encode)?;
         encode_completion_policy(&mut encoder, policy)?;
     }
-    let header_length = u32::try_from(encoded.len())
-        .map_err(|_| ProtocolError::limit("entity header exceeds uint32"))?;
-    let mut output = Vec::with_capacity(4 + encoded.len() + payload.len());
-    output.extend_from_slice(&header_length.to_be_bytes());
-    output.extend_from_slice(&encoded);
-    output.extend_from_slice(payload);
-    Ok(output)
+    if encoded.len() > MAX_ENTITY_HEADER {
+        return Err(ProtocolError::limit("entity header exceeds local limit"));
+    }
+    Ok(encoded)
 }
 
 pub fn entity(
@@ -1373,6 +1384,24 @@ pub fn decode_entity_for(
     let payload = &data[4 + header_length..];
     if payload.len() > MAX_PAYLOAD {
         return Err(ProtocolError::limit("entity payload exceeds local limit"));
+    }
+    let header = decode_entity_header_for(encoded, layers)?;
+    validate_entity_payload(
+        &header,
+        payload.len() as u64,
+        Sha256::digest(payload).into(),
+    )?;
+    Ok((header, payload))
+}
+
+/// Decode and validate a bounded CBOR header before reading any payload octets.
+/// Call `validate_entity_payload` after reading to FIN and computing its digest.
+pub fn decode_entity_header_for(
+    encoded: &[u8],
+    layers: LayerSupport,
+) -> Result<EntityHeader, ProtocolError> {
+    if encoded.len() > MAX_ENTITY_HEADER {
+        return Err(ProtocolError::limit("entity header exceeds local limit"));
     }
     deterministic::validate(encoded)?;
     let mut decoder = Decoder::new(encoded);
@@ -1436,13 +1465,12 @@ pub fn decode_entity_for(
         chunk_info,
         completion_policy,
     };
-    validate_entity_header_for(&header, payload, layers)?;
-    Ok((header, payload))
+    validate_entity_header_for(&header, layers)?;
+    Ok(header)
 }
 
 fn validate_entity_header_for(
     header: &EntityHeader,
-    payload: &[u8],
     layers: LayerSupport,
 ) -> Result<(), ProtocolError> {
     if header.entity_id == 0 || header.entity_id > MAX_ENTITY_ID {
@@ -1501,18 +1529,6 @@ fn validate_entity_header_for(
             "parent-scope-id requires scope-id",
         ));
     }
-    if header
-        .payload_length
-        .is_some_and(|length| length != payload.len() as u64)
-    {
-        return Err(ProtocolError::entity("payload-length mismatch"));
-    }
-    if let Some(expected) = header.checksum {
-        let actual: [u8; 32] = Sha256::digest(payload).into();
-        if expected != actual {
-            return Err(ProtocolError::integrity("checksum mismatch"));
-        }
-    }
     if let Some(chunk) = header.chunk_info
         && (chunk.total_chunks == 0 || chunk.chunk_index >= chunk.total_chunks)
     {
@@ -1528,6 +1544,30 @@ fn validate_entity_header_for(
     }
     if let Some(policy) = &header.completion_policy {
         validate_completion_policy(policy)?;
+    }
+    Ok(())
+}
+
+/// Validate measured payload properties. A header alone is not an entity receipt.
+pub fn validate_entity_payload(
+    header: &EntityHeader,
+    actual_length: u64,
+    actual_checksum: [u8; 32],
+) -> Result<(), ProtocolError> {
+    if actual_length > MAX_PAYLOAD as u64 {
+        return Err(ProtocolError::limit("entity payload exceeds local limit"));
+    }
+    if header
+        .payload_length
+        .is_some_and(|length| length != actual_length)
+    {
+        return Err(ProtocolError::entity("payload-length mismatch"));
+    }
+    if header
+        .checksum
+        .is_some_and(|expected| expected != actual_checksum)
+    {
+        return Err(ProtocolError::integrity("checksum mismatch"));
     }
     Ok(())
 }

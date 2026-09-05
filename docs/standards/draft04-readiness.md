@@ -20,7 +20,7 @@ standard. No implementation in this repository demonstrates full conformance.
 | R9 | Checkpoint ACK identity is compared exactly; claim, digest, and barrier correlation is also checked | `r9_mismatched_checkpoint_ack_is_refused`; happy-path recursive and recovery scenarios |
 | R10 | Quorum uses shortest exact CBOR floats and an integer-computed success threshold | Deterministic encoding tests, corrected recursive vector, `quorum_threshold_uses_exact_integer_rounding` |
 | R11 | Durable acquisition and publication fences coordinate recovery across store handles | `concurrent_recovery_fences_resume_across_store_handles` checks one live attempt; stale-attempt tests check publication refusal |
-| Admission | Invalid parent/depth/identity and digest failures occur before application callbacks or payload writes | Callback counters and absent-child-storage assertions in wire tests |
+| Admission | Invalid parent/depth/identity and digest failures occur before application callbacks or final payload installation | Callback counters and absent-child-storage assertions in wire tests; receive spools are temporary and quota-charged |
 | Resource handling | Independent bounded stream readers; aggregate receive/chunk budgets; incremental control-body allocation | Stalled-stream and aggregate-chunk-limit wire tests |
 | URI | Typed session/entity/claim locators, explicit port and numeric bounds, no userinfo or bearer secrets | Core URI acceptance and refusal tests |
 | Evidence integrity | Actual Appendix C/CDDL definition comparison; independent expected local receipt calculation | Conformance schema drift test and recursive CLI receipt equality checks |
@@ -174,9 +174,41 @@ SQLite reopen; recovery reacquires it after expiry under the next epoch.
 
 This adds format version 4. Earlier versions are refused without conversion;
 no operational database was changed. The service still lacks asynchronous
-dispatch, spool-backed input, periodic recovery of every operation, and
+dispatch, restartable job descriptors, periodic recovery of every operation, and
 retained recovery-request outcomes. An execution lease is neither a client
 credential nor a callback resource limit. No new wire capability is advertised.
+
+## Incremental receive spools and allocation gate
+
+The recursive service no longer buffers full entities or concatenates their
+chunks in memory. A bounded header decoder precedes incremental file writes,
+and FIN triggers length and SHA-256 validation before admission. Processors
+receive a file-backed reader and return errors explicitly. Chunk assembly
+uses ordered file segments, validating their original digests before computing
+the combined digest. Final payload installation copies through an 8 KiB buffer
+and syncs the file and directory chain.
+
+Temporary byte/file limits apply to the connection, authenticated principal,
+and store directory. Same-process handles share quotas, active principal
+entries are bounded, empty files consume credit, and cancelled I/O retains
+credit until its file operation finishes. Reopen counts abandoned files without
+deleting them. The tests exercise these limits plus malformed early headers,
+FIN length/checksum errors, spool corruption, and zero-byte chunk exhaustion
+over actual QUIC.
+
+The separate `spool_resources` test binary measures allocations during a 32 MiB
+QUIC transfer with fixed-size sender blocks. It requires heap growth below
+12 MiB, maximum individual allocation below 4 MiB, exact persisted SHA-256,
+and zero temporary credit after completion. One focused local run measured
+132,968 bytes of heap growth and a largest allocation of 15,972 bytes.
+This does not measure native allocations, page cache, process RSS, or loaded
+multi-principal behavior.
+
+No stored-session format or wire schema changes in this increment. Temporary
+spool quotas do not yet cover permanent payloads, SQLite state, or independent
+writer processes. Dispatch and callbacks remain synchronous. Durable queued
+input descriptors, storage quotas, periodic recovery, and explicit orphan
+reconciliation remain requirements, not completed features.
 
 ## Validation
 
@@ -211,6 +243,15 @@ pairings, 32 capability probes, and every external example. The new tests
 cover acquisition/publication, callback re-entry and expiry, revocation while
 processing, and an interrupted resume callback recovered after lease expiry.
 
+The spooling increment passed the full command locally on 2026-09-05 with
+92 Rust workspace tests, including seven spool-state tests, three new QUIC
+refusal tests, and the isolated 32 MiB allocation gate. Java/C++ tests, all
+nine transfer pairings, 32 capability probes, and the external examples passed.
+The first full run caught stale example lockfiles after `tempfile` became a
+runtime dependency; both were regenerated without changing any package version,
+then the entire locked suite passed. Draft -04 again passed idnits with zero
+errors/flaws/warnings and one informational FIPS 180-4 comment.
+
 The adversarial pass also fixed terminal failure handling: Java completes
 both public waiters and ignores callbacks after the first failure; C++
 will not process buffered frames or entities after failure; Rust drains
@@ -233,8 +274,9 @@ xml2rfc renderer remains confined to document authoring.
    profile, authority-qualified requests, and
    retained outcomes for lost redemption ACKs. The
    current Layer 2 boolean advertises more than the prototype implements.
-2. Add bounded spool-backed payload processing and an asynchronous fenced
-   application executor, with crash-boundary and measured resource gates.
+2. Build the bounded asynchronous fenced executor around file-backed inputs,
+   with durable job descriptors/storage quotas, crash-boundary tests, and
+   concurrent-workload resource gates.
 3. Implement the clarified sealed-work profile independently in Java, and
    cross-test declaration, lost ACK, reconnect, and descendant completion.
    C++ follows as the third implementation; the full requirement matrix
