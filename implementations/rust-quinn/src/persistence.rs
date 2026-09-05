@@ -328,6 +328,9 @@ fn load_from(
     session
         .validate_jobs()
         .map_err(|error| StoreError::Corrupt(error.to_string()))?;
+    session
+        .validate_recovery()
+        .map_err(|error| StoreError::Corrupt(error.to_string()))?;
     Ok(Some(VersionedSession { revision, session }))
 }
 
@@ -340,6 +343,9 @@ fn persist_update(
     if let Some(previous) = load_from(connection, &session.session_id)? {
         session
             .validate_retained_jobs(&previous.session)
+            .map_err(StoreError::Protocol)?;
+        session
+            .validate_retained_recovery(&previous.session)
             .map_err(StoreError::Protocol)?;
     }
     let expected = i64::try_from(expected_revision)
@@ -389,6 +395,7 @@ fn encode_state(session: &Session) -> Result<(Vec<u8>, [u8; 32]), StoreError> {
         )));
     }
     session.validate_jobs().map_err(StoreError::Protocol)?;
+    session.validate_recovery().map_err(StoreError::Protocol)?;
     let state =
         postcard::to_stdvec(session).map_err(|error| StoreError::Codec(error.to_string()))?;
     let checksum = Sha256::digest(&state).into();

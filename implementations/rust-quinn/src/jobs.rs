@@ -296,6 +296,11 @@ impl Session {
 
     pub(crate) fn validate_jobs(&self) -> Result<(), ProtocolError> {
         for (key, job) in &self.jobs {
+            if matches!(&job.state, JobState::Refused(failure) if failure.detail.len() > 512) {
+                return Err(ProtocolError::entity(
+                    "retained refusal exceeds detail limit",
+                ));
+            }
             let attempt = self.executions.get(key);
             let valid = match &job.state {
                 JobState::Queued => attempt.is_none(),

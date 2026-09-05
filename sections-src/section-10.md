@@ -101,7 +101,9 @@ requesting principal. Mutual TLS is one possible profile mechanism;
 another mechanism requires an explicit authenticated application profile.
 
 The issuer MUST retain the principal binding and authorization policy with
-the durable claim record and apply revocation and expiry before execution.
+the durable claim record and apply revocation and expiry before accepting
+redemption. Execution of accepted work remains authorized and fenced as below;
+Section 10.6.5 distinguishes receipt retention from a claim's acceptance expiry.
 Session names supplied in entity metadata MUST NOT override that binding.
 A receiving authority MUST NOT accept a claim issued by an unrelated
 authority solely because it has the same numeric ID. Profiles using bearer
@@ -211,6 +213,98 @@ also check the retained binding, current authority policy, and revocation
 before execution. These checks do not cancel an external effect already
 committed before revocation; asynchronous executors additionally require
 fencing and application idempotency under Section 10.6.1.
+
+### Retained Authenticated Recovery (Private-Use Profile)
+
+The `authenticated-recovery-v1` profile uses private-use extension identifier
+65283 (0xFF03) by explicit agreement. Both endpoints MUST require this extension
+and `authenticated-session-v1` (65282). It requires Layer 2 and excludes the
+sealed-work profile. An incompatible selection MUST fail CONNECT with
+PIPESTREAM_EXTENSION_UNSUPPORTED; a client MUST reject an invalid response.
+No anonymous or legacy-redemption fallback is permitted. These values are
+draft identifiers, not IANA assignments.
+
+RECOVERY uses UCF type 0x84 and the `recovery-frame` schema in Appendix C.
+A request has flags 0 and contains an authority, session ID, nonzero
+16-octet request ID, nonzero 64-bit claim ID, and 32-octet stopping-point
+checksum. The authority uses the principal-binding identifier syntax:
+1..128 ASCII alphanumeric or `-._~` characters. Session syntax is defined in
+Section 11.6.1. The client MUST persist a unique request ID and its complete
+request before first transmission, MUST reuse that request after an ambiguous
+disconnect, and MUST NOT reuse its ID for different work in the same session.
+The request ID is a correlation label, not a credential.
+
+The receiver MUST authenticate and authorize the current principal against
+the durable session owner and configured authority before revealing a receipt
+or claim state. A request's authority cannot select or override the listener's
+authority. Session and claim revocation apply to initial acceptance, replay,
+and fenced execution publication. Revocation MUST be durable and irreversible
+for that identity. It does not retract effects already committed.
+
+For a new request, the receiver MUST check the claim's expiry and stopping-point
+checksum, then atomically commit claim redemption, a restartable resume job,
+and an immutable acceptance receipt. A claim already redeemed by another
+request, or through CLAIM_REDEMPTION, is PIPESTREAM_CLAIM_NOT_FOUND. Invalid
+checksums are PIPESTREAM_INTEGRITY_ERROR. Queue or receipt capacity exhaustion
+is PIPESTREAM_LIMIT_EXCEEDED and MUST leave all three records uncommitted.
+A refusal without an acceptance receipt is not evidence of successful work.
+
+After that commit, the receiver returns RECOVERY with flags 1, echoes every
+request field, and includes the admitted entity and scope IDs, `accepted-at`,
+and `retain-until`. Timestamps are unsigned Unix microseconds.
+`retain-until` MUST equal `accepted-at` plus 86400000000 microseconds
+(24 hours); arithmetic overflow is refused. All four receipt-only fields MUST
+be absent in requests and present in receipts and terminal outcomes. Flags are
+0 for a request, 1 for a receipt, or 2 for a terminal outcome; other values are
+reserved. Unknown fields and malformed encodings are PIPESTREAM_FRAME_ERROR.
+
+An identical request before `retain-until` MUST return the identical receipt,
+including after reconnect or server restart, without redeeming again,
+enqueueing another job, or changing the original retention deadline.
+Changing any field under a retained request ID is PIPESTREAM_ENTITY_INVALID.
+The client MUST compare all echoed request fields and validate the receipt
+fields; a mismatched receipt MUST close the connection rather than report
+acceptance. A connection remains bound to one session.
+
+The receipt acknowledges durable admission, not successful processing.
+Claim expiry prevents new acceptance; it does not invalidate a receipt already
+committed before expiry or cancel its accepted job. Accepted jobs follow their
+durable execution lifecycle, authorization checks, and publication fences.
+Replaying a receipt is not a new execution grant. After receipt delivery, the
+server returns RECOVERY with flags 2 only when a terminal job outcome is durably
+committed. It echoes the complete receipt and adds an `outcome` discriminator:
+0 means successful resume completion, and 1 means application refusal. Refusal
+additionally requires `failure-code` (the unsigned 32-bit diagnostic code) and
+`failure-detail` (at most 512 UTF-8 octets). Both fields MUST be absent for
+success. The discriminator, not a diagnostic code, determines success. A
+transport error or disconnect MUST NOT substitute for this correlated refusal.
+Unknown outcome values are PIPESTREAM_FRAME_ERROR. The client MUST compare
+every receipt field in the outcome against its accepted receipt; mismatches
+are PIPESTREAM_ENTITY_INVALID and MUST close the connection.
+
+Pending work produces no terminal outcome. After reconnect, an identical request
+replays its receipt and then the same committed terminal outcome when available.
+These outcome records MUST be retained for the receipt's promised interval and
+MUST NOT change after publication. A refusal does not resolve the entity as
+successful, remove declared obligations, or authorize an application retry.
+This profile uses the correlated terminal frame, not uncorrelated STATUS
+transitions, for recovery completion. A client MUST consume the terminal frame
+or reconnect before issuing another recovery request on its connection.
+
+A replay at or after `retain-until` is PIPESTREAM_CLAIM_EXPIRED, not a new
+request. An issuer clock earlier than `accepted-at` MUST NOT produce a
+receipt. Implementations MUST retain the complete receipt through its promised
+interval and retain sufficient request-ID and redeemed-claim history afterward
+to prevent reuse. Compaction cannot convert an expired receipt into fresh
+work. Retention does not override revocation. Resource limits MAY refuse new
+requests, but MUST NOT evict an unexpired receipt to admit another.
+
+An unexpected RECOVERY on a connection without this extension is
+PIPESTREAM_EXTENSION_UNSUPPORTED. A receiver selecting this profile MUST
+refuse CLAIM_REDEMPTION on that connection; the legacy frame keeps its
+single-use semantics on other connections. A successful reconnect only
+restores the ability to retrieve retained outcomes. It does not imply
+completion, automatic retry of refused work, or exactly-once external effects.
 
 ## Encryption Key Management
 

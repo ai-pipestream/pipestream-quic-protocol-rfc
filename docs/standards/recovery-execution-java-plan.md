@@ -129,23 +129,40 @@ approval as part of a repository landing.
   Java/C++ suites, nine transfer pairings, 32 capability probes, and all external
   examples. Draft -04 passed idnits with zero errors/flaws/warnings and one
   informational FIPS 180-4 comment. Session format 5 is unchanged.
-- Not yet implemented: retained recovery-request outcomes, durable storage
-  quotas, orphan reclamation, storage-stall handling, and the independent Java
+- Retained authenticated recovery: private-use extension 65283 requires Layer 2
+  and authenticated-session binding. Authority-qualified immutable request IDs
+  correlate atomic claim redemption, resume admission, and 24-hour receipts.
+  Complete/refused terminal frames echo the full receipt; disconnect never
+  substitutes for an application refusal. Receipt replay cannot extend retention
+  or enqueue another job. Durable irreversible claim revocation fences acceptance,
+  replay, acquisition, and publication. Session format 6 retains the new state;
+  formats 1 through 5 are refused without operational database conversion.
+  Eleven core tests cover concurrency, abrupt exit, expiry, rollback, bounded
+  receipt history, immutable refusal, and 20 frozen wire cases. Five real-QUIC
+  tests cover lost receipt/restart, callback refusal/restart without retry,
+  credential ownership and authority, incompatible frames, and full response
+  correlation. Separate CDDL fixtures cover all 20 wire shapes.
+  The full `./conformance/run_all.sh` passed with 138 Rust workspace tests
+  (66 core, 27 Quinn unit, 42 wire, one allocation gate, two runner tests),
+  five Java tests, the C++ vector test, all nine transfer pairings, 32 capability
+  probes, recursive/recovery CLI scenarios, and every external example.
+- Not yet implemented: durable storage quotas, orphan reclamation,
+  storage-stall handling, and the independent Java
   profile. Physical execution limits and temporary spools are coordinated only
   within one writer process; broader tenant/resource stress evidence remains due.
 
 Implementation evidence must replace these status entries as it lands. A
 transport-authentication increment alone does not satisfy authenticated recovery.
 
-Next implementation boundaries: authority-qualified recovery requests with
-stable request identity, retained outcomes, expiry/revocation/retention rules;
-and complete storage/resource guarantees around the asynchronous workers.
-The current CLAIM_REDEMPTION path still refuses a duplicate after a lost ACK.
+Next implementation boundaries: complete storage/resource guarantees around
+the asynchronous workers and independent Java sealed-work interoperability.
+Legacy CLAIM_REDEMPTION still refuses a duplicate after a lost ACK. Clients
+requiring retained admission and completion use the negotiated recovery profile.
 The service now populates job descriptors and reopens retained input. Lease
 expiry is not callback cancellation. Periodic dispatch can reacquire unfinished
 expired attempts, but does not retry application-refused jobs automatically.
 Temporary spool accounting is process-local and excludes permanent entity files
 and SQLite state. Add durable quotas and explicit orphan reconciliation without
 deleting a live generation or treating missing input as completed work.
-Do not treat authentication or publication fencing as completion of recovery
-or asynchronous execution. Java still implements only the earlier Layer 0 subset.
+Do not treat recovery receipts or publication fencing as completion of bounded
+asynchronous execution. Java still implements only the earlier Layer 0 subset.

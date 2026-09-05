@@ -24,6 +24,14 @@ cargo run --release --locked \
 
 The vectors are protocol evidence, not serialized internal state.
 
+`authenticated-recovery.tsv` freezes 20 independently specified UCF inputs for
+the Rust-only recovery profile: requests, receipts, successful/refused terminal
+outcomes, maximum-size refusal fields, and named malformed-input refusals.
+`cddl/authenticated-recovery.tsv` independently records their CBOR schema cases.
+Schema validity alone does not establish semantic validity: nonzero request
+identity and the exact retention interval also need protocol checks. Other
+implementations do not yet claim this profile by passing the Layer 0 corpus.
+
 `optional-fields.tsv` contains independently specified hexadecimal maps
 covering omitted defaults, richer capability maps, non-minimal integers,
 duplicate keys, key ordering, and invalid UTF-8. All three codecs consume it.

@@ -70,6 +70,41 @@ capabilities = {
   ? required-extensions: extension-list,  ; Default: []
 }
 
+; Retained authenticated recovery (Section 10.6.5).
+recovery-request-fields = (
+  authority: tstr .size (1..128),
+  session-id: tstr .size (1..128),
+  request-id: bstr .size 16,
+  claim-id: 1..18446744073709551615,
+  state-checksum: bstr .size 32,
+)
+
+recovery-receipt-fields = (
+  recovery-request-fields,
+  scope-id: uint32,
+  entity-id: entity-id,
+  accepted-at: uint .le 18446744073709551615,
+  retain-until: uint .le 18446744073709551615,
+)
+
+recovery-frame = {
+  flags: 0,
+  recovery-request-fields,
+} / {
+  flags: 1,
+  recovery-receipt-fields,
+} / {
+  flags: 2,
+  recovery-receipt-fields,
+  outcome: 0,
+} / {
+  flags: 2,
+  recovery-receipt-fields,
+  outcome: 1,
+  failure-code: uint32,
+  failure-detail: tstr .size (0..512),
+}
+
 ; Sealed work sets, negotiated private-use profile (Section 9.8).
 work-set-frame = {
   flags: uint .le 3,

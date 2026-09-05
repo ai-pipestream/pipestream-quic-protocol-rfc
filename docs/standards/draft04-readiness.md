@@ -83,8 +83,9 @@ they do not assert implementation or registration of an extension.
 
 The raw probes use Quinn as a transport and frozen message bodies, without
 importing any PipeStream codec or state machine. Sealed-profile dependency
-tests additionally require Layer 1 and exclude Layer 2. Authenticated profiles
-and principal-bound durable capability binding remain open.
+tests additionally require Layer 1 and exclude Layer 2. The subsequent Rust
+authentication and recovery profiles are covered separately below; these
+polyglot negotiation probes do not establish their interoperability.
 
 ## Sealed-work requirement coverage
 
@@ -146,9 +147,10 @@ evidence for retained redemption outcomes or an asynchronous executor.
 
 This increment introduced format version 3. Version-1 and version-2 records are refused
 without writes; no operational database was converted. Principal maps are
-startup configuration, not a live authorization directory. Per-claim
-revocation, portable authority-qualified recovery requests, retained outcomes,
-the complete asynchronous executor, and per-principal resource gates remain goal requirements.
+startup configuration, not a live authorization directory. At that landing,
+claim revocation and retained recovery requests were still missing. The later
+profile below adds them; portable recovery between unrelated authorities is
+not claimed. Complete asynchronous resource guarantees remain goal requirements.
 See [the full implementation plan](recovery-execution-java-plan.md).
 
 ## Durable execution publication fences
@@ -172,11 +174,43 @@ callback. These are not yet complete asynchronous-executor crash tests.
 An injected resume-callback panic also leaves an unfinished attempt across
 SQLite reopen; recovery reacquires it after expiry under the next epoch.
 
-This adds format version 4. Earlier versions are refused without conversion;
-no operational database was changed. The service still lacks asynchronous
-dispatch, restartable job descriptors, periodic recovery of every operation, and
-retained recovery-request outcomes. An execution lease is neither a client
-credential nor a callback resource limit. No new wire capability is advertised.
+This increment introduced format version 4. Earlier versions were refused
+without conversion; no operational database was changed. At that point the
+service lacked asynchronous dispatch, restartable job descriptors, periodic
+recovery, and retained requests. Later increments below add those mechanisms.
+An execution lease is neither a client credential nor a callback resource limit.
+The fencing increment did not advertise a new wire capability.
+
+## Retained authenticated recovery
+
+Section 10.6.5 defines private-use `authenticated-recovery-v1` (65283), requiring
+Layer 2 and authenticated-session negotiation. Rust's public `connect_recovery`,
+`accept_recovery`, and `wait_recovery` APIs enforce request and full-receipt
+correlation. This profile is separate from sealed work and cannot activate
+legacy claim redemption or anonymous fallback on its connection.
+
+One transaction commits claim redemption, a durable resume job, and the receipt.
+Identical requests replay the same acceptance for 24 hours, even after initial
+claim expiry; accepted jobs have their own fenced lifecycle. Terminal frames
+distinguish successful completion from retained application refusal. Refusal
+codes are diagnostic, never a substitute for the explicit outcome discriminator.
+Claim revocation denies acceptance, replay, acquisition, and publication without
+erasing unfinished work or undoing committed external effects.
+
+Eleven core tests cover concurrent acceptance, abrupt process exit, reopen,
+identity/owner/authority/expiry refusals, revocation fences, immutable outcomes,
+the 1,024-receipt limit, queue rollback, and frozen wire bytes. Five real-QUIC
+tests cover lost receipts and server restart, retained callback refusal without
+retry, cross-owner/authority and missing-session denial, incompatible frames,
+and malformed or mismatched receipts and terminal outcomes. Twenty independently
+specified wire inputs and separate CDDL fixtures pin encoding and refusal rules.
+The prior-format test now also refuses version 5 without modifying its state.
+
+Session format 6 retains receipts and irreversible claim revocation. Formats
+1 through 5 are refused, not converted; no operational database was migrated.
+Expired receipt history is not evicted. Permanent storage accounting, explicit
+orphan reconciliation, and storage-stall isolation remain unfinished. These
+Rust tests do not establish independent Java or C++ recovery interoperability.
 
 ## Incremental receive spools and allocation gate
 
@@ -332,6 +366,14 @@ listener cancellation, retained execution, pipelined first admission, and
 checkpoint progress during payload installation as well as application callbacks.
 Draft -04 passed idnits with zero errors/flaws/warnings and one FIPS comment.
 
+The retained-recovery increment passed the complete command locally on
+2026-09-05 with 138 Rust workspace tests (66 core, 27 Quinn unit, 42 wire,
+one allocation gate, two runner tests), five Java tests, the C++ vector test,
+all nine transfer pairings, 32 capability probes, and every external example.
+The new recovery frames have 20 frozen wire cases and separate CDDL fixtures.
+The build script now checks the idnits summary as well as its exit status:
+idnits can exit zero while reporting a document error.
+
 `./build.sh core 04` produced XML, text, and HTML. idnits reported zero errors,
 zero flaws, zero warnings, and one informational possible-downref comment
 for the NIST FIPS 180-4 normative reference. This is document validation,
@@ -344,10 +386,9 @@ xml2rfc renderer remains confined to document authoring.
 
 ## Still required before a conformance or deployment claim
 
-1. Build on the authenticated-session binding with an explicit recovery
-   profile, authority-qualified requests, and
-   retained outcomes for lost redemption ACKs. The
-   current Layer 2 boolean advertises more than the prototype implements.
+1. Complete the mandatory behavior matrix and independent interoperability
+   evidence. Rust's explicit retained-recovery profile is implemented, but the
+   current Layer 2 boolean still advertises more than the prototype implements.
 2. Complete the asynchronous executor's storage/resource guarantees: durable
    quotas, orphan reconciliation, storage-stall handling, further crash-boundary
    tests, and concurrent-workload resource gates.

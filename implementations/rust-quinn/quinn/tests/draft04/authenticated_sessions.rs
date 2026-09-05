@@ -12,11 +12,15 @@ use rcgen::{
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[path = "retained_recovery.rs"]
+mod retained_recovery;
+
 #[derive(Default)]
 struct Processor {
     processed: AtomicUsize,
     resumed: AtomicUsize,
     revoke_during_process: Option<Arc<SqliteSessionStore>>,
+    panic_resume: bool,
 }
 
 impl EntityProcessor for Processor {
@@ -37,6 +41,7 @@ impl EntityProcessor for Processor {
     }
     fn resume(&self, context: ResumeContext<'_>) -> [u8; 32] {
         self.resumed.fetch_add(1, Ordering::SeqCst);
+        assert!(!self.panic_resume, "injected resume failure");
         ExemplarProcessor::default().resume(context)
     }
 }

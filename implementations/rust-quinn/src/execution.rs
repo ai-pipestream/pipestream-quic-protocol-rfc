@@ -86,6 +86,9 @@ impl Session {
         lease_micros: u64,
     ) -> Result<Option<ExecutionLease>, ProtocolError> {
         self.authorize(caller)?;
+        if let ExecutionStage::Resume { claim_id } = key.stage {
+            self.authorize_claim(claim_id)?;
+        }
         if !(1..=MAX_EXECUTION_LEASE_MICROS).contains(&lease_micros) {
             return Err(ProtocolError::entity("invalid execution lease parameters"));
         }
@@ -133,6 +136,9 @@ impl Session {
         apply: impl FnOnce(&mut Self) -> Result<T, ProtocolError>,
     ) -> Result<T, ProtocolError> {
         self.authorize(caller)?;
+        if let ExecutionStage::Resume { claim_id } = lease.key.stage {
+            self.authorize_claim(claim_id)?;
+        }
         if lease.session_id != self.session_id
             || lease.owner.as_ref() != caller
             || self.executions.get(&lease.key) != Some(&lease.record)

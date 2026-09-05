@@ -77,8 +77,9 @@ effects. A rejected or missing payload remains outstanding. No cancellation
 tombstone, authenticated claim redemption, or server-originated work is
 implemented in this profile.
 
-Stored session format is now version 5, including durable owner, revocation,
-execution-attempt state, and typed job records. Versions 1 through 4 are refused without conversion or
+Stored session format is now version 6, including durable owner, claim/session
+revocation, execution attempts, typed jobs, and retained recovery receipts.
+Versions 1 through 5 are refused without conversion or
 modification; preserve old databases with their matching binary.
 The implementation caps each session at 1,000,000 declared IDs, in addition
 to negotiated per-scope limits. SQLite still serializes the whole session
@@ -109,7 +110,8 @@ The library uses `RecursiveClientOptions::identity` and `ClientIdentity`;
 embedded servers call `RecursiveService::with_authentication` before binding.
 Both sides require private-use extension 65282, `authenticated-session-v1`.
 A configured client refuses an anonymous server instead of dropping its
-authentication requirement. No new recovery extension is advertised.
+authentication requirement. Retained recovery additionally requires the
+separate extension described below.
 TLS session resumption is disabled on this path so reconnects recheck client
 credentials; 0-RTT remains disabled on every path.
 
@@ -123,8 +125,40 @@ sessions. Neither producer labels nor metadata identify the caller.
 
 Principal maps are loaded at startup. Reconfigure them to withdraw certificates
 from future connections; revoke a session to deny its existing connections.
-This is not per-claim revocation, online certificate-status checking, or
-portable recovery between unrelated authorities.
+This is not online certificate-status checking or portable recovery between
+unrelated authorities. Claim revocation is a separate durable operator action.
+
+## Retained authenticated recovery
+
+`RecursiveClient::connect_recovery` requires client identity, Layer 2, and both
+private-use extensions 65282 and 65283 (`authenticated-recovery-v1`). The
+authenticated server supports this profile without requiring it from legacy
+clients. It cannot be combined with sealed work. Section 10.6.5 defines the
+request, receipt, and terminal-outcome wire contract.
+
+Persist a `recovery::RecoveryRequest` before sending it: configured authority,
+session ID, a unique nonzero 16-byte request ID, claim ID, and stopping-point
+checksum. `accept_recovery` returns a `RecoveryReceipt` after claim redemption,
+the resume job, and the receipt commit in one transaction. It acknowledges
+admission, not successful execution. `wait_recovery(&receipt)` returns an
+explicit `RecoveryOutcome::Complete` or `RecoveryOutcome::Refused(JobFailure)`.
+A refusal is not success even if its diagnostic code is zero. Consume the
+outcome or reconnect before sending another recovery request on that client.
+
+After a lost response, resend the identical persisted request. During the
+receipt's 24-hour interval, it returns the same receipt and retained terminal
+outcome when available, without enqueueing again. Claim expiry gates first
+acceptance; it does not cancel an already-accepted job. Receipt expiry, changed
+request identity, wrong authority/owner, and revocation are named refusals.
+Receipts and completed/refused outcomes remain immutable across store reopen.
+Legacy `CLAIM_REDEMPTION` stays single-use and is refused on this profile.
+
+Call `Session::revoke_claim` through a store transaction for irreversible claim
+revocation. It denies initial acceptance, receipt replay, attempt acquisition,
+and result publication; already-committed external effects are not undone.
+Revoked unfinished jobs remain charged to the durable queue. Each session
+retains at most 1,024 recovery receipts; expired entries are not evicted to
+admit new requests. Permanent storage quotas and reclamation remain unfinished.
 
 ## Other prototype paths and limitations
 
@@ -274,8 +308,9 @@ Unfinished expired attempts can be reacquired by periodic dispatch. Refused
 application jobs are not automatically retried. The blocking operator API
 `recover_interrupted_resumptions` uses the same bounded queue and physical
 permits; it no longer scans all sessions. It only executes queued resume jobs.
-This is execution recovery, not the retained request/ACK protocol still required
-to resolve ambiguous claim redemption after a lost acknowledgment.
+This is execution recovery. Use the separate authenticated-recovery profile
+to retrieve admission and terminal outcomes after a lost acknowledgment;
+legacy claim redemption alone still refuses duplicates.
 
 Dropping an executor handle stops new dispatch. `shutdown(grace)` additionally
 waits up to the grace period and returns the store-wide count of callbacks
@@ -293,8 +328,8 @@ still occupies the sole worker slot.
 
 Without the explicit mutual-TLS settings, the standalone prototype authenticates
 only the server and remains suitable solely for trusted local demonstrations.
-Even with mutual TLS and bounded workers, retained recovery-request outcomes,
-durable storage quotas, orphan reclamation, storage-stall handling, and a complete resilience capability remain
+Even with mutual TLS, retained recovery, and bounded workers, durable storage
+quotas, orphan reclamation, storage-stall handling, and a complete resilience capability remain
 unfinished. It MUST NOT yet be described as a production multi-tenant durable
 work service. Its Layer 2 boolean still advertises more than the tested subset.
 

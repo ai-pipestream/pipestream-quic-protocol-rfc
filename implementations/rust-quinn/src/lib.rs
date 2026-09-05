@@ -10,6 +10,7 @@ pub mod execution;
 pub mod extensions;
 pub mod jobs;
 pub mod persistence;
+pub mod recovery;
 pub mod session;
 pub mod uri;
 pub mod work_set;

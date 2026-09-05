@@ -67,7 +67,13 @@ uvx --from xml2rfc==3.34.0 xml2rfc "${OUTPUT_XML}" --text --html
 
 # 4. Validate
 echo "  [4/4] idnits: validating ${OUTPUT_TXT}"
-idnits --verbose "${OUTPUT_TXT}"
+nits_status=0
+nits_output=$(idnits --verbose "${OUTPUT_TXT}") || nits_status=$?
+printf '%s\n' "$nits_output"
+if (( nits_status != 0 )) || ! printf '%s\n' "$nits_output" | grep -Eq 'Summary: 0 errors .*0 flaws .*0 warnings '; then
+  echo "Draft validation failed; inspect the idnits summary above." >&2
+  exit 1
+fi
 
 echo ""
 echo "==> Build complete!"

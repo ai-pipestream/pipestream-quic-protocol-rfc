@@ -39,6 +39,8 @@ The following frame types are defined by this document. All frames use the commo
 | 0x80 | CAPABILITIES | 0 | Serialized message payload (negotiated format) |
 | 0x81 | CHECKPOINT | 0 | Serialized message payload (negotiated format) |
 | 0x82 | CLAIM_REDEMPTION | 2 | Serialized message payload (negotiated format) |
+| 0x83 | WORK_SET | 1 | Negotiated sealed work declarations (Section 9.8) |
+| 0x84 | RECOVERY | 2 | Retained authenticated acceptance (Section 10.6.5) |
 
 ## Status Frames (Layer 0)
 
@@ -380,6 +382,8 @@ These frame types use the common UCF header defined in Section 6.1. The payload 
 | 0x80 | Capabilities | Section 3.4 |
 | 0x81 | Checkpoint | Section 9.3 |
 | 0x82 | ClaimRedemption | Section 6.7.1 |
+| 0x83 | WorkSet | Section 9.8 |
+| 0x84 | Recovery | Section 10.6.5 |
 
 ### Claim Redemption Frame (0x82)
 
