@@ -76,12 +76,54 @@ effects. A rejected or missing payload remains outstanding. No cancellation
 tombstone, authenticated claim redemption, or server-originated work is
 implemented in this profile.
 
-Stored session format is now version 2. Version-1 records are refused without
-conversion or modification; preserve old databases with their matching binary.
+Stored session format is now version 3, including durable owner and revocation
+state. Version-1 and version-2 records are refused without conversion or
+modification; preserve old databases with their matching binary.
 The implementation caps each session at 1,000,000 declared IDs, in addition
 to negotiated per-scope limits. SQLite still serializes the whole session
 on each transaction, and final sealing walks the full identifier set.
 These bounds are not a throughput or large-session performance claim.
+
+## Mutual TLS and session ownership
+
+Configure all three authentication settings together:
+
+```bash
+target/release/pipestream-quinn serve-recursive \
+  --bind 127.0.0.1:9443 --cert server.crt --key server.key \
+  --state-db state/sessions.sqlite3 --entity-dir state/entities \
+  --client-ca client-ca.crt --authority example-authority \
+  --principal-map principals.tsv
+```
+
+`principals.tsv` starts with `sha256<TAB>principal`, followed by one hexadecimal
+SHA-256 fingerprint of a DER client leaf certificate and its stable principal
+per row. Trust-chain validation and certificate proof of possession still
+apply; a fingerprint is not a credential. The map permits 1..4096 certificates;
+multiple certificates may map to one principal for rotation. Authority and
+principal identifiers contain 1..128 ASCII alphanumeric or `-._~` characters.
+
+Recursive client commands accept `--client-cert` and `--client-key` together.
+The library uses `RecursiveClientOptions::identity` and `ClientIdentity`;
+embedded servers call `RecursiveService::with_authentication` before binding.
+Both sides require private-use extension 65282, `authenticated-session-v1`.
+A configured client refuses an anonymous server instead of dropping its
+authentication requirement. No new recovery extension is advertised.
+TLS session resumption is disabled on this path so reconnects recheck client
+credentials; 0-RTT remains disabled on every path.
+
+The first admission atomically records the principal and issuing authority.
+All subsequent mutations check ownership and revocation inside the session
+transaction. `Session::revoke_access` is an operator API to invoke through the
+store's transaction mechanism; it disables live/reconnected access and
+background recovery. An unprotected listener sharing the database cannot
+access a bound session. An authenticated listener does not adopt anonymous
+sessions. Neither producer labels nor metadata identify the caller.
+
+Principal maps are loaded at startup. Reconfigure them to withdraw certificates
+from future connections; revoke a session to deny its existing connections.
+This is not per-claim revocation, online certificate-status checking, or
+portable recovery between unrelated authorities.
 
 ## Other prototype paths and limitations
 
@@ -112,12 +154,12 @@ This deliberately serializes writers; long-running applications need an
 asynchronous fenced executor. A crash after an external effect but before
 commit still requires application idempotency.
 
-The standalone prototype authenticates the server, not the caller. It has
-no principal/session authorization binding and MUST NOT be exposed as a
-multi-tenant or Internet-facing durable-work service. Its Layer 2 boolean
-does not yet distinguish the implemented subset on the wire. The missing
-authenticated profile and narrower capability negotiation are open work,
-not hidden guarantees supplied by TLS or checksums.
+Without the explicit mutual-TLS settings, the standalone prototype authenticates
+only the server and remains suitable solely for trusted local demonstrations.
+Even with mutual TLS, per-principal resource gates, retained recovery outcomes,
+fenced asynchronous execution, and a complete resilience capability remain
+unfinished. It MUST NOT yet be described as a production multi-tenant durable
+work service. Its Layer 2 boolean still advertises more than the tested subset.
 
 The core `uri` module parses typed `pipestream://` session, entity, and claim
 locators with explicit ports. Parsing grants no access and does not perform

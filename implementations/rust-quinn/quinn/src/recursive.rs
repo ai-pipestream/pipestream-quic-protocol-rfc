@@ -2,6 +2,10 @@
 
 mod ingress;
 
+use crate::authentication::{AuthenticationPolicy, ClientIdentity};
+use pipestream_core::authorization::{
+    EXTENSION_AUTHENTICATED_SESSIONS, PrincipalBinding, unauthorized,
+};
 use pipestream_core::work_set::{self, EXTENSION_SEALED_WORK_SETS, FRAME_WORK_SET, WorkSetFrame};
 
 use anyhow::{Context, Result, bail};
@@ -108,6 +112,7 @@ pub struct RecursiveClientOptions {
     pub remote: SocketAddr,
     pub ca_certificate: PathBuf,
     pub server_name: String,
+    pub identity: Option<ClientIdentity>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -356,6 +361,8 @@ pub struct RecursiveService<P, E = FileEntityStore> {
     processor: Arc<P>,
     capabilities: Capabilities,
     limits: RecursiveLimits,
+    authentication: Option<Arc<AuthenticationPolicy>>,
+    caller: Option<PrincipalBinding>,
 }
 
 impl<P, E> Clone for RecursiveService<P, E> {
@@ -366,6 +373,8 @@ impl<P, E> Clone for RecursiveService<P, E> {
             processor: Arc::clone(&self.processor),
             capabilities: self.capabilities.clone(),
             limits: self.limits,
+            authentication: self.authentication.clone(),
+            caller: self.caller.clone(),
         }
     }
 }
@@ -409,6 +418,8 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             processor,
             capabilities,
             limits,
+            authentication: None,
+            caller: None,
         })
     }
 
@@ -417,19 +428,62 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         &self.store
     }
 
+    /// Require mutual TLS and use this authority's explicit principal mapping.
+    pub fn with_authentication(mut self, policy: AuthenticationPolicy) -> Self {
+        self.authentication = Some(Arc::new(policy));
+        for ids in [
+            &mut self.capabilities.extensions.supported,
+            &mut self.capabilities.extensions.required,
+        ] {
+            if !ids.contains(&EXTENSION_AUTHENTICATED_SESSIONS) {
+                ids.push(EXTENSION_AUTHENTICATED_SESSIONS);
+                ids.sort_unstable();
+            }
+        }
+        self
+    }
+
+    fn transact<T>(
+        &self,
+        session_id: &str,
+        operation: impl FnOnce(&mut Session) -> Result<T, ProtocolError>,
+    ) -> Result<(T, pipestream_core::persistence::VersionedSession), StoreError> {
+        self.store.transact(session_id, |session| {
+            session.authorize(self.caller.as_ref())?;
+            operation(session)
+        })
+    }
+
+    fn bind_new_session(&self, session: &mut Session) -> Result<(), ProtocolError> {
+        if let Some(caller) = &self.caller {
+            session.bind_owner(caller.clone())?;
+        }
+        Ok(())
+    }
+
     pub fn recover_interrupted_resumptions(&self) -> Result<usize> {
         let mut recovered = 0;
         for session_id in self.store.list_session_ids()? {
             let Some(versioned) = self.store.load(&session_id)? else {
                 continue;
             };
+            let mut executor = self.clone();
+            match (&self.authentication, &versioned.session.owner) {
+                (None, None) => {}
+                (Some(policy), Some(owner))
+                    if !owner.revoked && policy.permits_recovery(&owner.binding) =>
+                {
+                    executor.caller = Some(owner.binding.clone());
+                }
+                _ => continue,
+            }
             for claim in versioned.session.claims.values() {
                 if claim.redeemed_at_micros.is_none()
                     || versioned.session.entities[&claim.entity].state != EntityState::Processing
                 {
                     continue;
                 }
-                let (executed, _) = self.resume_claim(&session_id, claim.claim_id)?;
+                let (executed, _) = executor.resume_claim(&session_id, claim.claim_id)?;
                 recovered += usize::from(executed);
             }
             if let Some(current) = self.store.load(&session_id)?
@@ -450,7 +504,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         session_id: &str,
         claim_id: u64,
     ) -> Result<(bool, pipestream_core::persistence::VersionedSession), StoreError> {
-        self.store.transact(session_id, |session| {
+        self.transact(session_id, |session| {
             let claim = session
                 .claims
                 .get(&claim_id)
@@ -472,6 +526,19 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
     }
 
     pub async fn handle_connection(
+        &self,
+        connection: &quinn::Connection,
+    ) -> Result<(), ProtocolError> {
+        let mut service = self.clone();
+        service.caller = self
+            .authentication
+            .as_ref()
+            .map(|policy| policy.authenticate(connection))
+            .transpose()?;
+        service.handle_authorized_connection(connection).await
+    }
+
+    async fn handle_authorized_connection(
         &self,
         connection: &quinn::Connection,
     ) -> Result<(), ProtocolError> {
@@ -515,6 +582,14 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             BTreeMap::new();
         let mut tick = tokio::time::interval(Duration::from_millis(10));
         loop {
+            if let Some(id) = current_session.as_deref() {
+                let retained = self
+                    .store
+                    .load(id)
+                    .map_err(store_error)?
+                    .ok_or_else(unauthorized)?;
+                retained.session.authorize(self.caller.as_ref())?;
+            }
             self.flush_checkpoints(
                 &mut control_send,
                 current_session.as_deref(),
@@ -607,6 +682,9 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                         return Err(entity_error("WORK_SET changed the connection session"));
                     }
                     let existing = self.store.load(&request.session_id).map_err(store_error)?;
+                    if let Some(retained) = &existing {
+                        retained.session.authorize(self.caller.as_ref())?;
+                    }
                     if current_session.is_none() && (request.scope_id != 0 || request.sequence != 0)
                     {
                         return Err(entity_error("attach with the root WORK_SET sequence zero"));
@@ -626,25 +704,25 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                             negotiated.effective_max_scope_depth(),
                             negotiated.effective_max_entities_per_scope(),
                         )?;
+                        self.bind_new_session(&mut session)?;
                         let ack =
                             session.declare_work(&request, now_micros().map_err(storage_error)?)?;
                         self.store.create(&session).map_err(store_error)?;
                         ack
                     } else {
-                        self.store
-                            .transact(&request.session_id, |session| {
-                                if session.max_scope_depth > negotiated.effective_max_scope_depth()
-                                    || session.max_entities_per_scope
-                                        > negotiated.effective_max_entities_per_scope()
-                                {
-                                    return Err(extension_error(
-                                        "connection limits cannot resume this session",
-                                    ));
-                                }
-                                session.declare_work(&request, now_micros().map_err(storage_error)?)
-                            })
-                            .map_err(store_error)?
-                            .0
+                        self.transact(&request.session_id, |session| {
+                            if session.max_scope_depth > negotiated.effective_max_scope_depth()
+                                || session.max_entities_per_scope
+                                    > negotiated.effective_max_entities_per_scope()
+                            {
+                                return Err(extension_error(
+                                    "connection limits cannot resume this session",
+                                ));
+                            }
+                            session.declare_work(&request, now_micros().map_err(storage_error)?)
+                        })
+                        .map_err(store_error)?
+                        .0
                     };
                     current_session = Some(request.session_id);
                     write_control(&mut control_send, &work_set::encode(&ack)?).await?;
@@ -747,8 +825,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     let session_id = current_session
                         .as_deref()
                         .ok_or_else(|| entity_error("CHECKPOINT precedes session establishment"))?;
-                    self.store
-                        .transact(session_id, |session| session.request_checkpoint(&request))
+                    self.transact(session_id, |session| session.request_checkpoint(&request))
                         .map_err(store_error)?;
                     let key = (request.scope_id.unwrap_or(0), request.sequence_number);
                     if checkpoints.len() >= 1024 && !checkpoints.contains_key(&key) {
@@ -857,7 +934,6 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                 continue;
             }
             let (ack, versioned) = self
-                .store
                 .transact(session_id, |session| {
                     if session.checkpoint_satisfied(scope, sequence)? {
                         session.acknowledge_checkpoint(scope, sequence).map(Some)
@@ -957,6 +1033,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                 negotiated.effective_max_scope_depth(),
                 negotiated.effective_max_entities_per_scope(),
             )?;
+            self.bind_new_session(&mut session)?;
             session.add_root(new_entity(header, body))?;
             if pending.status.depth != 0 {
                 return Err(entity_error("root PENDING depth is not zero"));
@@ -968,12 +1045,11 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             if header.parent_id.is_some() || pending.status.depth != 0 {
                 return Err(entity_error("root entity has a parent or nonzero depth"));
             }
-            self.store
-                .transact(&session_id, |session| {
-                    session.add_root(new_entity(header, body))?;
-                    session.transition(key, EntityState::Processing)
-                })
-                .map_err(store_error)?;
+            self.transact(&session_id, |session| {
+                session.add_root(new_entity(header, body))?;
+                session.transition(key, EntityState::Processing)
+            })
+            .map_err(store_error)?;
         } else {
             let parent = EntityKey {
                 scope_id: header
@@ -998,24 +1074,22 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             if pending.status.depth != expected_depth {
                 return Err(entity_error("PENDING depth differs from parent depth"));
             }
-            self.store
-                .transact(&session_id, |session| {
-                    match session.scopes.get(&scope_id) {
-                        None => session.open_child_scope(parent, scope_id, now)?,
-                        Some(scope) if scope.parent == Some(parent) => {}
-                        Some(_) => return Err(entity_error("scope parent changed")),
-                    }
-                    session.add_child(scope_id, new_entity(header, body))?;
-                    session.transition(key, EntityState::Processing)?;
-                    Ok(())
-                })
-                .map_err(store_error)?;
+            self.transact(&session_id, |session| {
+                match session.scopes.get(&scope_id) {
+                    None => session.open_child_scope(parent, scope_id, now)?,
+                    Some(scope) if scope.parent == Some(parent) => {}
+                    Some(_) => return Err(entity_error("scope parent changed")),
+                }
+                session.add_child(scope_id, new_entity(header, body))?;
+                session.transition(key, EntityState::Processing)?;
+                Ok(())
+            })
+            .map_err(store_error)?;
         }
         self.entities
             .put(&session_id, key, body)
             .map_err(storage_error)?;
         let (applied, _) = self
-            .store
             .transact(&session_id, |session| {
                 let disposition = self.processor.process(ProcessContext {
                     session_id: &session_id,
@@ -1117,7 +1191,6 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             .and_then(|scope| scope.parent)
             .ok_or_else(|| entity_error("scope parent is absent"))?;
         let (actual, versioned) = self
-            .store
             .transact(session_id, |session| {
                 let actual = session.close_scope_with_expected(&expected)?;
                 match session.entities[&parent].state {
@@ -1146,7 +1219,6 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
     ) -> Result<(), ProtocolError> {
         let now = now_micros().map_err(storage_error)?;
         let (entity, _) = self
-            .store
             .transact(&request.session_id, |session| {
                 let entity = session
                     .claims
@@ -1282,7 +1354,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveServer<P, E> {
         if options.max_concurrent_connections == 0 {
             bail!("PIPESTREAM_LIMIT_EXCEEDED: max concurrent connections is zero");
         }
-        let endpoint = server_endpoint(options)?;
+        let endpoint = server_endpoint(options, service.authentication.as_deref())?;
         Ok(Self {
             endpoint,
             service,
@@ -1336,9 +1408,18 @@ pub async fn serve_recursive<P: EntityProcessor>(
     options: RecursiveServerOptions,
     processor: P,
 ) -> Result<()> {
+    serve_recursive_authenticated(options, processor, None).await
+}
+
+/// Start a durable server with an optional, explicitly configured mutual-TLS policy.
+pub async fn serve_recursive_authenticated<P: EntityProcessor>(
+    options: RecursiveServerOptions,
+    processor: P,
+    authentication: Option<AuthenticationPolicy>,
+) -> Result<()> {
     let store = Arc::new(SqliteSessionStore::open(&options.state_database)?);
     let entities = Arc::new(FileEntityStore::open(&options.entity_directory)?);
-    let service = RecursiveService::with_limits(
+    let mut service = RecursiveService::with_limits(
         store,
         entities,
         Arc::new(processor),
@@ -1349,6 +1430,9 @@ pub async fn serve_recursive<P: EntityProcessor>(
             max_chunks_per_entity: options.max_chunks_per_entity,
         },
     )?;
+    if let Some(policy) = authentication {
+        service = service.with_authentication(policy);
+    }
     let recovered = service.recover_interrupted_resumptions()?;
     let server = RecursiveServer::bind(&options, service)?;
     let address = server.local_addr()?;
@@ -1387,9 +1471,18 @@ impl RecursiveClient {
         {
             roots.add(cert).context("add CA certificate")?;
         }
-        let mut tls = rustls::ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
+        let builder = rustls::ClientConfig::builder().with_root_certificates(roots);
+        let mut tls = if let Some(identity) = &options.identity {
+            let chain = CertificateDer::pem_file_iter(&identity.certificate)?
+                .collect::<Result<Vec<_>, _>>()?;
+            let key = PrivateKeyDer::from_pem_file(&identity.private_key)?;
+            builder.with_client_auth_cert(chain, key)?
+        } else {
+            builder.with_no_client_auth()
+        };
+        if options.identity.is_some() {
+            tls.resumption = rustls::client::Resumption::disabled();
+        }
         tls.alpn_protocols = vec![pipestream_core::ALPN.to_vec()];
         let config = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls)?));
         let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse()?)?;
@@ -1409,8 +1502,24 @@ impl RecursiveClient {
                 .push(EXTENSION_SEALED_WORK_SETS);
             offered.extensions.required.push(EXTENSION_SEALED_WORK_SETS);
         }
-        write_control(&mut control_send, &encode_capabilities(&offered)?).await?;
-        let (frame_type, response) = read_control(&mut control_recv).await?;
+        if options.identity.is_some() {
+            offered
+                .extensions
+                .supported
+                .push(EXTENSION_AUTHENTICATED_SESSIONS);
+            offered
+                .extensions
+                .required
+                .push(EXTENSION_AUTHENTICATED_SESSIONS);
+        }
+        if let Err(error) = write_control(&mut control_send, &encode_capabilities(&offered)?).await
+        {
+            return Err(peer_failure(&connection, error).await);
+        }
+        let (frame_type, response) = match read_control(&mut control_recv).await {
+            Ok(frame) => frame,
+            Err(error) => return Err(peer_failure(&connection, error).await),
+        };
         if frame_type != FRAME_CAPABILITIES {
             bail!("PIPESTREAM_FRAME_ERROR: server did not answer capabilities");
         }
@@ -1439,7 +1548,10 @@ impl RecursiveClient {
         if !self.sealed || request.flags & work_set::ACK != 0 {
             bail!("PIPESTREAM_EXTENSION_UNSUPPORTED: client is not a sealed-work producer");
         }
-        write_control(&mut self.control_send, &work_set::encode(request)?).await?;
+        if let Err(error) = write_control(&mut self.control_send, &work_set::encode(request)?).await
+        {
+            return Err(peer_failure(&self.connection, error).await);
+        }
         let (kind, body) = self.read_response().await?;
         let mut expected = request.clone();
         expected.flags |= work_set::ACK;
@@ -1734,25 +1846,27 @@ impl RecursiveClient {
                 }
                 Ok(frame) => return Ok(frame),
                 Err(protocol_error) => {
-                    let close_reason = match self.connection.close_reason() {
-                        Some(reason) => Some(reason),
-                        None => {
-                            tokio::time::timeout(Duration::from_secs(1), self.connection.closed())
-                                .await
-                                .ok()
-                        }
-                    };
-                    if let Some(quinn::ConnectionError::ApplicationClosed(close)) = close_reason {
-                        let reason = String::from_utf8_lossy(&close.reason);
-                        if !reason.is_empty() {
-                            bail!("{reason}");
-                        }
-                    }
-                    return Err(protocol_error.into());
+                    return Err(peer_failure(&self.connection, protocol_error).await);
                 }
             }
         }
     }
+}
+
+async fn peer_failure(connection: &quinn::Connection, fallback: ProtocolError) -> anyhow::Error {
+    let close = match connection.close_reason() {
+        Some(reason) => Some(reason),
+        None => tokio::time::timeout(Duration::from_secs(1), connection.closed())
+            .await
+            .ok(),
+    };
+    if let Some(quinn::ConnectionError::ApplicationClosed(close)) = close {
+        let reason = String::from_utf8_lossy(&close.reason);
+        if !reason.is_empty() {
+            return anyhow::anyhow!("{reason}");
+        }
+    }
+    fallback.into()
 }
 
 /// Run the exemplar Layer 1 tree over the public client API.
@@ -1984,17 +2098,29 @@ fn same_chunk_identity(first: &EntityHeader, current: &EntityHeader) -> bool {
         && first.completion_policy == current.completion_policy
 }
 
-fn server_endpoint(options: &RecursiveServerOptions) -> Result<quinn::Endpoint> {
+fn server_endpoint(
+    options: &RecursiveServerOptions,
+    authentication: Option<&AuthenticationPolicy>,
+) -> Result<quinn::Endpoint> {
     let certs = CertificateDer::pem_file_iter(&options.certificate)
         .context("read certificate PEM")?
         .collect::<Result<Vec<_>, _>>()
         .context("parse certificate PEM")?;
     let key =
         PrivateKeyDer::from_pem_file(&options.private_key).context("parse private-key PEM")?;
-    let mut tls = rustls::ServerConfig::builder()
-        .with_no_client_auth()
+    let builder = rustls::ServerConfig::builder();
+    let builder = if let Some(policy) = authentication {
+        builder.with_client_cert_verifier(policy.verifier()?)
+    } else {
+        builder.with_no_client_auth()
+    };
+    let mut tls = builder
         .with_single_cert(certs, key)
         .context("configure server certificate")?;
+    if authentication.is_some() {
+        tls.send_tls13_tickets = 0;
+        tls.session_storage = Arc::new(rustls::server::NoServerSessionStorage {});
+    }
     tls.alpn_protocols = vec![pipestream_core::ALPN.to_vec()];
     let mut config = quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls)?));
     let transport = Arc::get_mut(&mut config.transport).expect("new transport config is unique");
@@ -2187,6 +2313,7 @@ mod tests {
         remote: SocketAddr,
     ) -> RecursiveClientOptions {
         RecursiveClientOptions {
+            identity: None,
             remote,
             ca_certificate: options.certificate.clone(),
             server_name: "localhost".to_owned(),

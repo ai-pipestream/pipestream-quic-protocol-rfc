@@ -2,9 +2,11 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use pipestream_quic::{
     ClaimRedemption,
+    authentication::{AuthenticationPolicy, ClientIdentity},
     recursive::{
         ExemplarProcessor, MAX_CHUNKS_PER_ENTITY, RecursiveClientOptions, RecursiveServerOptions,
-        begin_durable_yield, finish_durable_yield, run_recursive_scenario, serve_recursive,
+        begin_durable_yield, finish_durable_yield, run_recursive_scenario,
+        serve_recursive_authenticated,
     },
     transport::{ClientOptions, ServerOptions, send, serve},
 };
@@ -74,6 +76,12 @@ enum Command {
         max_chunks_per_entity: u64,
         #[arg(long, default_value_t = 256)]
         max_concurrent_connections: usize,
+        #[arg(long, requires_all = ["authority", "principal_map"])]
+        client_ca: Option<PathBuf>,
+        #[arg(long, requires_all = ["client_ca", "principal_map"])]
+        authority: Option<String>,
+        #[arg(long, requires_all = ["client_ca", "authority"])]
+        principal_map: Option<PathBuf>,
     },
     RecursiveScenario {
         #[command(flatten)]
@@ -107,6 +115,10 @@ struct ConnectionArgs {
     ca: PathBuf,
     #[arg(long, default_value = "localhost")]
     server_name: String,
+    #[arg(long, requires = "client_key")]
+    client_cert: Option<PathBuf>,
+    #[arg(long, requires = "client_cert")]
+    client_key: Option<PathBuf>,
 }
 
 impl ConnectionArgs {
@@ -115,6 +127,13 @@ impl ConnectionArgs {
             remote: self.connect,
             ca_certificate: self.ca,
             server_name: self.server_name,
+            identity: self
+                .client_cert
+                .zip(self.client_key)
+                .map(|(certificate, private_key)| ClientIdentity {
+                    certificate,
+                    private_key,
+                }),
         }
     }
 }
@@ -180,8 +199,20 @@ async fn run(cli: Cli) -> Result<()> {
             max_entity_bytes,
             max_chunks_per_entity,
             max_concurrent_connections,
+            client_ca,
+            authority,
+            principal_map,
         } => {
-            serve_recursive(
+            let authentication = match (client_ca, authority, principal_map) {
+                (None, None, None) => None,
+                (Some(ca), Some(authority), Some(map)) => {
+                    Some(AuthenticationPolicy::from_files(authority, &ca, &map)?)
+                }
+                _ => anyhow::bail!(
+                    "client-ca, authority, and principal-map must be supplied together"
+                ),
+            };
+            serve_recursive_authenticated(
                 RecursiveServerOptions {
                     bind,
                     certificate: cert,
@@ -197,6 +228,7 @@ async fn run(cli: Cli) -> Result<()> {
                     max_concurrent_connections,
                 },
                 ExemplarProcessor::default(),
+                authentication,
             )
             .await
         }

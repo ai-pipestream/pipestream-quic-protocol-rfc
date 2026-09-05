@@ -123,3 +123,14 @@ These are Rust-only profile tests. Java and C++ still refuse this required
 extension; their existing Layer 0 transfer matrix is not evidence for
 sealed-work interoperability. No authenticated recovery or bidirectional
 producer support is implied.
+
+## Authenticated-session evidence
+
+The Rust-only `quinn/tests/draft04/authenticated_sessions.rs` tests actual
+mutual TLS, required session-profile negotiation, missing/untrusted/expired/
+unmapped certificates, principal and authority binding, anonymous-listener
+bypass refusal, certificate rotation, live/reconnected revocation, and
+background recovery authorization. Core tests reopen ownership records and
+refuse old stored formats without modifying them. This prerequisite is not
+the retained-outcome recovery or asynchronous execution implementation; those
+remain in the [active goal plan](../docs/standards/recovery-execution-java-plan.md).
