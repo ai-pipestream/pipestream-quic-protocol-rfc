@@ -36,8 +36,12 @@ resume callbacks in bounded workers, independently of connection control handlin
 Retained payloads are reopened and verified before interrupted work is executed.
 Retained serialized session state now has persistent global and per-principal
 byte/count quotas and bounded serialization. Physical storage quotas, payload
-accounting, completion-space reservations, and storage-stall handling remain
+accounting and completion-space reservations remain
 unfinished.
+Connection metadata and lineage operations now run in a bounded storage pool.
+An independent control reader enforces checkpoint deadlines during those
+operations; held-storage tests also exercise protocol refusals and progress
+on another connection. This is not a disk-latency or throughput guarantee.
 The full remaining
 goal is tracked in [the implementation plan](docs/standards/recovery-execution-java-plan.md).
 

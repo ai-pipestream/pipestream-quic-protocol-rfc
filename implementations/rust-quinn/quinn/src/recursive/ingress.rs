@@ -19,19 +19,88 @@ pub(super) fn start(
     layers: LayerSupport,
     limits: RecursiveLimits,
     spool: SpoolConnection,
-) -> (JoinSet<()>, mpsc::Receiver<Result<Event, ProtocolError>>) {
-    let (sender, receiver) = mpsc::channel(4);
+    deadlines: Arc<control::Deadlines>,
+) -> (
+    JoinSet<()>,
+    mpsc::Receiver<Result<Event, ProtocolError>>,
+    mpsc::Receiver<ProtocolError>,
+) {
+    // At most 32 complete events, each with a protocol-bounded frame or charged spool.
+    // Control overflow refuses the connection instead of hiding later deadlines behind
+    // a blocked send while storage is stalled.
+    let (sender, receiver) = mpsc::channel(32);
+    let (failures, failure) = mpsc::channel(1);
     let mut tasks = JoinSet::new();
     let controls = sender.clone();
+    let control_connection = connection.clone();
     tasks.spawn(async move {
         loop {
-            let result = read_control(&mut control)
-                .await
-                .map(|(kind, bytes)| Event::Control(kind, bytes));
-            let failed = result.is_err();
-            if controls.send(result).await.is_err() || failed {
-                break;
-            }
+            let (kind, bytes) = match read_control(&mut control).await {
+                Ok(frame) => frame,
+                Err(error) => {
+                    if control_connection.close_reason().is_some() {
+                        let _ = controls.send(Err(error)).await;
+                    } else {
+                        let _ = failures.send(error).await;
+                    }
+                    break;
+                }
+            };
+            let validated = (|| {
+                match kind {
+                    FRAME_CAPABILITIES => return Err(frame_error("duplicate CAPABILITIES")),
+                    FRAME_CHECKPOINT => {
+                        deadlines.received(decode_checkpoint_for(&bytes, layers)?)?
+                    }
+                    FRAME_STATUS => {
+                        let status = decode_status_frame(&bytes, layers)?;
+                        if status.status.state == pipestream_core::STATUS_UNSPECIFIED
+                            && status.status.entity_id == CONNECTION_LEVEL
+                            && status.status.cursor.is_none()
+                        {
+                            return Ok(false);
+                        }
+                        if status.status.state != pipestream_core::STATUS_PENDING
+                            || status.extension.is_some()
+                        {
+                            return Err(entity_error("entity announcement must be plain PENDING"));
+                        }
+                    }
+                    FRAME_WORK_SET => {
+                        work_set::decode(&bytes)?;
+                    }
+                    FRAME_SCOPE_DIGEST => {
+                        decode_scope_digest(&bytes)?;
+                    }
+                    FRAME_BARRIER => {
+                        decode_barrier(&bytes)?;
+                    }
+                    FRAME_RECOVERY => {
+                        recovery::decode(&bytes)?;
+                    }
+                    FRAME_CLAIM_REDEMPTION => {
+                        decode_claim_redemption(&bytes)?;
+                    }
+                    FRAME_GOAWAY => {
+                        decode_goaway(&bytes)?;
+                    }
+                    _ => return Ok(false),
+                }
+                Ok(true)
+            })();
+            let error = match validated {
+                Ok(false) => continue,
+                Ok(true) => match controls.try_send(Ok(Event::Control(kind, bytes))) {
+                    Ok(()) => continue,
+                    Err(mpsc::error::TrySendError::Closed(_)) => break,
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        limit_error("connection control backlog exhausted")
+                    }
+                },
+                Err(error) => error,
+            };
+            let _ = failures.send(error).await;
+            break;
         }
     });
     tasks.spawn(async move {
@@ -62,7 +131,7 @@ pub(super) fn start(
             }
         }
     });
-    (tasks, receiver)
+    (tasks, receiver, failure)
 }
 
 async fn receive(

@@ -160,9 +160,24 @@ approval as part of a repository landing.
   transfer pairings, 32 capability probes, and all external examples.
   Payload format 6 is unchanged, but nonempty unaccounted stores are refused
   without conversion. No operational database was migrated.
+- Connection storage isolation: metadata operations and lineage writes now use
+  a shared canonical-database pool with eight global and four principal slots.
+  Physical credit survives waiter cancellation. Control parsing starts and
+  enforces checkpoint clocks independently of database admission and output I/O;
+  bounded backlog overflow and malformed frames are named refusals. Tests hold
+  a SQLite writer through timeout, hold lineage writes while another connection
+  completes work, and verify queued-duplicate clocks and cancellation accounting.
+  Covered result observers prevent a checkpoint overtaking a concurrently
+  committed result. State-dependent operations on one connection remain ordered;
+  no disk-latency or concurrent-workload performance guarantee is claimed.
+  The full `./conformance/run_all.sh` passed with 162 Rust workspace tests
+  (79 core, 32 Quinn unit, 48 wire, one allocation gate, two runner tests),
+  five Java tests, the C++ test, nine transfer pairings, 32 capability probes,
+  and every external example. Draft -04 passed idnits with zero errors, flaws,
+  and warnings, and one informational FIPS reference comment.
 - Not yet implemented: physical database/WAL and retained-payload quotas,
   completion-space reservations, orphan reclamation,
-  storage-stall handling, and the independent Java
+  and the independent Java
   profile. Physical execution limits and temporary spools are coordinated only
   within one writer process; broader tenant/resource stress evidence remains due.
 

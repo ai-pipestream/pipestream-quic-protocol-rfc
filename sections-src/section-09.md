@@ -106,6 +106,13 @@ sequence with different fields is PIPESTREAM_ENTITY_INVALID (0x05).
 Expiry closes the connection with PIPESTREAM_CHECKPOINT_TIMEOUT (0x0E),
 without an ACK or any claim that outstanding work completed.
 
+Storage queueing, database lock acquisition, and durable writes MUST NOT
+postpone the start of this deadline or suspend its enforcement. If persistence
+outlasts the deadline, its eventual completion MUST NOT produce a late ACK on
+that connection. A timeout does not prove that an already-started storage
+operation was cancelled or rolled back; reconnecting peers determine retained
+state through the applicable replay rules.
+
 QUIC provides no ordering between Stream 0 and Entity Streams. Before
 requesting a checkpoint, its originator MUST have received PROCESSING or
 a subsequent lifecycle status for each entity it includes in the cut.

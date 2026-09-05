@@ -1,10 +1,12 @@
 //! Durable Layer 1 and Layer 2 service built on the transport-independent core.
 
+mod control;
 #[cfg(test)]
 mod execution_tests;
 pub mod executor;
 mod ingress;
 pub mod spool;
+mod storage;
 use spool::{PAYLOAD_IO_CHUNK, Payload, SpoolLimits, SpoolStore};
 
 use crate::authentication::{AuthenticationPolicy, ClientIdentity};
@@ -514,6 +516,7 @@ pub struct RecursiveService<P, E = FileEntityStore> {
     caller: Option<PrincipalBinding>,
     execution_lease_micros: u64,
     execution_limits: ExecutionLimits,
+    storage_pool: Arc<storage::StoragePool>,
 }
 
 impl<P, E> Clone for RecursiveService<P, E> {
@@ -528,6 +531,7 @@ impl<P, E> Clone for RecursiveService<P, E> {
             caller: self.caller.clone(),
             execution_lease_micros: self.execution_lease_micros,
             execution_limits: self.execution_limits,
+            storage_pool: self.storage_pool.clone(),
         }
     }
 }
@@ -565,6 +569,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             .extensions
             .supported
             .push(EXTENSION_SEALED_WORK_SETS);
+        let storage_pool = storage::StoragePool::open(store.path())?;
         Ok(Self {
             store,
             entities,
@@ -575,6 +580,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             caller: None,
             execution_lease_micros: MAX_EXECUTION_LEASE_MICROS,
             execution_limits: ExecutionLimits::default(),
+            storage_pool,
         })
     }
 
@@ -750,43 +756,81 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         )
         .await?;
 
-        let mut current_session: Option<String> = None;
-        let mut establishing_session: Option<String> = None;
-        let mut initial_entities = VecDeque::new();
-        let mut unadmitted = BTreeSet::new();
         let spool = self
             .entities
             .spool()
             .connection(self.caller.as_ref(), self.limits.max_entity_bytes as u64)?;
-        let (_readers, mut incoming) =
-            ingress::start(connection.clone(), control_recv, layers, self.limits, spool);
+        let deadlines = Arc::new(control::Deadlines::default());
+        let (_readers, incoming, mut failures) = ingress::start(
+            connection.clone(),
+            control_recv,
+            layers,
+            self.limits,
+            spool,
+            deadlines.clone(),
+        );
+        tokio::select! {
+            biased;
+            Some(error) = failures.recv() => Err(error),
+            error = deadlines.expired() => Err(error),
+            result = self.dispatch_connection(connection, control_send, negotiated, incoming, &deadlines) => result,
+        }
+    }
+
+    async fn dispatch_connection(
+        &self,
+        connection: &quinn::Connection,
+        mut control_send: quinn::SendStream,
+        negotiated: Capabilities,
+        mut incoming: tokio::sync::mpsc::Receiver<Result<ingress::Event, ProtocolError>>,
+        deadlines: &control::Deadlines,
+    ) -> Result<(), ProtocolError> {
+        let layers = layers(&negotiated);
+        let sealed = negotiated
+            .extensions
+            .supported
+            .contains(&EXTENSION_SEALED_WORK_SETS);
+        let authenticated_recovery = negotiated
+            .extensions
+            .supported
+            .contains(&EXTENSION_AUTHENTICATED_RECOVERY);
+        let mut current_session: Option<String> = None;
+        let mut establishing_session: Option<String> = None;
+        let mut initial_entities = VecDeque::new();
+        let mut unadmitted = BTreeSet::new();
         let mut announcements: BTreeMap<EntityKey, StatusFrame> = BTreeMap::new();
         let mut chunks = ingress::Chunks::default();
-        let admission_pool = WorkerPool::admission(self.store.path(), self.execution_limits)?;
+        let admission_pool = self
+            .storage(|service| {
+                WorkerPool::admission(service.store.path(), service.execution_limits)
+            })
+            .await?;
         let mut preparing: tokio::task::JoinSet<Result<(String, ExecutionKey), ProtocolError>> =
             tokio::task::JoinSet::new();
         let mut replies = BTreeMap::new();
-        let mut checkpoints: BTreeMap<(u32, u64), (Checkpoint, tokio::time::Instant)> =
-            BTreeMap::new();
+        let mut checkpoints: BTreeMap<(u32, u64), (Checkpoint, usize)> = BTreeMap::new();
         let mut tick = tokio::time::interval(Duration::from_millis(10));
         loop {
             if let Some(id) = current_session.as_deref() {
-                let retained = self
-                    .store
-                    .load(id)
-                    .map_err(store_error)?
-                    .ok_or_else(unauthorized)?;
-                retained.session.authorize(self.caller.as_ref())?;
+                self.load_session(id).await?.ok_or_else(unauthorized)?;
             }
             self.flush_job_replies(&mut control_send, current_session.as_deref(), &mut replies)
                 .await?;
+            // A worker may commit between the reply snapshot and checkpoint snapshot.
+            // Deliver observed outcomes before a checkpoint that covers their entities.
+            let unsettled = announcements
+                .keys()
+                .chain(unadmitted.iter())
+                .chain(replies.keys().map(|key| &key.entity))
+                .copied()
+                .collect();
             self.flush_checkpoints(
                 &mut control_send,
                 current_session.as_deref(),
                 &mut checkpoints,
-                &announcements,
-                &unadmitted,
+                &unsettled,
                 layers,
+                deadlines,
             )
             .await?;
             let event = tokio::select! {
@@ -797,8 +841,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     }
                     current_session = Some(session_id);
                     establishing_session = None;
-                    let state = self.store.load(current_session.as_deref().unwrap()).map_err(store_error)?.ok_or_else(|| entity_error("admitted session is absent"))?;
-                    state.session.authorize(self.caller.as_ref())?;
+                    let state = self.load_session(current_session.as_deref().unwrap()).await?.ok_or_else(|| entity_error("admitted session is absent"))?;
                     unadmitted.remove(&key.entity);
                     write_status(&mut control_send, EntityState::Processing, key.entity, state.session.entities[&key.entity].depth, None).await?;
                     replies.insert(key, JobReply::Process);
@@ -813,7 +856,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                 Err(_error)
                     if self
                         .accepts_durable_disconnect(connection, current_session.as_deref())
-                        .map_err(store_error)? =>
+                        .await? =>
                 {
                     return Ok(());
                 }
@@ -861,9 +904,8 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                             .as_deref()
                             .ok_or_else(|| entity_error("child precedes root admission"))?;
                         let current = self
-                            .store
-                            .load(session_id)
-                            .map_err(store_error)?
+                            .load_session(session_id)
+                            .await?
                             .ok_or_else(|| entity_error("session is absent"))?;
                         let parent = EntityKey {
                             scope_id: header.parent_scope_id.unwrap_or(0),
@@ -940,49 +982,64 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     {
                         return Err(entity_error("WORK_SET changed the connection session"));
                     }
-                    let existing = self.store.load(&request.session_id).map_err(store_error)?;
-                    if let Some(retained) = &existing {
-                        retained.session.authorize(self.caller.as_ref())?;
-                    }
-                    if current_session.is_none() && (request.scope_id != 0 || request.sequence != 0)
-                    {
-                        return Err(entity_error("attach with the root WORK_SET sequence zero"));
-                    }
-                    let ack = if existing.is_none() {
-                        if current_session.is_some()
-                            || request.scope_id != 0
-                            || request.sequence != 0
-                        {
-                            return Err(entity_error(
-                                "first WORK_SET must declare root sequence zero",
-                            ));
-                        }
-                        let mut session = Session::new_sealed(
-                            &request.session_id,
-                            request.producer_id,
-                            negotiated.effective_max_scope_depth(),
-                            negotiated.effective_max_entities_per_scope(),
-                        )?;
-                        self.bind_new_session(&mut session)?;
-                        let ack =
-                            session.declare_work(&request, now_micros().map_err(storage_error)?)?;
-                        self.store.create(&session).map_err(store_error)?;
-                        ack
-                    } else {
-                        self.transact(&request.session_id, |session| {
-                            if session.max_scope_depth > negotiated.effective_max_scope_depth()
-                                || session.max_entities_per_scope
-                                    > negotiated.effective_max_entities_per_scope()
-                            {
-                                return Err(extension_error(
-                                    "connection limits cannot resume this session",
+                    let requested = request.clone();
+                    let attached = current_session.is_some();
+                    let negotiated = negotiated.clone();
+                    let ack = self
+                        .storage(move |service| {
+                            let request = requested;
+                            let existing = service
+                                .store
+                                .load(&request.session_id)
+                                .map_err(store_error)?;
+                            if let Some(retained) = &existing {
+                                retained.session.authorize(service.caller.as_ref())?;
+                            }
+                            if !attached && (request.scope_id != 0 || request.sequence != 0) {
+                                return Err(entity_error(
+                                    "attach with the root WORK_SET sequence zero",
                                 ));
                             }
-                            session.declare_work(&request, now_micros().map_err(storage_error)?)
+                            let ack = if existing.is_none() {
+                                if attached || request.scope_id != 0 || request.sequence != 0 {
+                                    return Err(entity_error(
+                                        "first WORK_SET must declare root sequence zero",
+                                    ));
+                                }
+                                let mut session = Session::new_sealed(
+                                    &request.session_id,
+                                    request.producer_id,
+                                    negotiated.effective_max_scope_depth(),
+                                    negotiated.effective_max_entities_per_scope(),
+                                )?;
+                                service.bind_new_session(&mut session)?;
+                                let ack = session
+                                    .declare_work(&request, now_micros().map_err(storage_error)?)?;
+                                service.store.create(&session).map_err(store_error)?;
+                                ack
+                            } else {
+                                service
+                                    .transact(&request.session_id, |session| {
+                                        if session.max_scope_depth
+                                            > negotiated.effective_max_scope_depth()
+                                            || session.max_entities_per_scope
+                                                > negotiated.effective_max_entities_per_scope()
+                                        {
+                                            return Err(extension_error(
+                                                "connection limits cannot resume this session",
+                                            ));
+                                        }
+                                        session.declare_work(
+                                            &request,
+                                            now_micros().map_err(storage_error)?,
+                                        )
+                                    })
+                                    .map_err(store_error)?
+                                    .0
+                            };
+                            Ok(ack)
                         })
-                        .map_err(store_error)?
-                        .0
-                    };
+                        .await?;
                     current_session = Some(request.session_id);
                     write_control(&mut control_send, &work_set::encode(&ack)?).await?;
                 }
@@ -1009,9 +1066,8 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                             .as_deref()
                             .ok_or_else(|| entity_error("PENDING precedes work-set declaration"))?;
                         let current = self
-                            .store
-                            .load(session_id)
-                            .map_err(store_error)?
+                            .load_session(session_id)
+                            .await?
                             .ok_or_else(|| entity_error("session is absent"))?;
                         let scope = current
                             .session
@@ -1024,7 +1080,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                         }
                     }
                     if let Some(session_id) = current_session.as_deref()
-                        && let Some(current) = self.store.load(session_id).map_err(store_error)?
+                        && let Some(current) = self.load_session(session_id).await?
                         && let Some(entity) = current.session.entities.get(&key)
                     {
                         if entity.depth != pending.status.depth {
@@ -1054,8 +1110,11 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     {
                         return Err(limit_error("connection job observation limit exhausted"));
                     }
-                    let key =
-                        self.enqueue_rehydration(session_id, decode_scope_digest(&payload)?)?;
+                    let session_id = session_id.to_owned();
+                    let digest = decode_scope_digest(&payload)?;
+                    let key = self
+                        .storage(move |service| service.enqueue_rehydration(&session_id, digest))
+                        .await?;
                     replies.insert(key, JobReply::Rehydrate);
                 }
                 FRAME_BARRIER => {
@@ -1070,9 +1129,8 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                         .as_deref()
                         .ok_or_else(|| entity_error("BARRIER precedes session establishment"))?;
                     let versioned = self
-                        .store
-                        .load(session_id)
-                        .map_err(store_error)?
+                        .load_session(session_id)
+                        .await?
                         .ok_or_else(|| entity_error("session is absent"))?;
                     let response = versioned.session.barrier(request.scope_id)?;
                     if response.parent_entity_id != request.parent_entity_id {
@@ -1085,16 +1143,20 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     let session_id = current_session
                         .as_deref()
                         .ok_or_else(|| entity_error("CHECKPOINT precedes session establishment"))?;
-                    self.transact(session_id, |session| session.request_checkpoint(&request))
-                        .map_err(store_error)?;
+                    let id = session_id.to_owned();
+                    let requested = request.clone();
+                    self.storage(move |service| {
+                        service
+                            .transact(&id, |session| session.request_checkpoint(&requested))
+                            .map_err(store_error)
+                            .map(|_| ())
+                    })
+                    .await?;
                     let key = (request.scope_id.unwrap_or(0), request.sequence_number);
                     if checkpoints.len() >= 1024 && !checkpoints.contains_key(&key) {
                         return Err(limit_error("pending checkpoint limit exhausted"));
                     }
-                    let deadline = tokio::time::Instant::now()
-                        .checked_add(Duration::from_millis(request.timeout_ms.unwrap_or(30_000)))
-                        .ok_or_else(|| frame_error("checkpoint timeout overflows clock"))?;
-                    checkpoints.entry(key).or_insert((request, deadline));
+                    checkpoints.entry(key).or_insert((request, 0)).1 += 1;
                 }
                 FRAME_RECOVERY => {
                     if !authenticated_recovery {
@@ -1121,19 +1183,25 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     {
                         return Err(limit_error("connection job observation limit exhausted"));
                     }
+                    let requested = request.clone();
                     let receipt = self
-                        .transact(&request.session_id, |session| {
-                            session.accept_recovery(
-                                self.caller.as_ref(),
-                                &request,
-                                now_micros().map_err(storage_error)?,
-                            )
+                        .storage(move |service| {
+                            let request = requested;
+                            service
+                                .transact(&request.session_id, |session| {
+                                    session.accept_recovery(
+                                        service.caller.as_ref(),
+                                        &request,
+                                        now_micros().map_err(storage_error)?,
+                                    )
+                                })
+                                .map_err(|error| match error {
+                                    StoreError::NotFound(_) => unauthorized(),
+                                    other => store_error(other),
+                                })
+                                .map(|result| result.0)
                         })
-                        .map_err(|error| match error {
-                            StoreError::NotFound(_) => unauthorized(),
-                            other => store_error(other),
-                        })?
-                        .0;
+                        .await?;
                     current_session = Some(request.session_id);
                     write_control(
                         &mut control_send,
@@ -1172,7 +1240,10 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     {
                         return Err(limit_error("connection job observation limit exhausted"));
                     }
-                    let key = self.enqueue_redemption(&request)?;
+                    let requested = request.clone();
+                    let key = self
+                        .storage(move |service| service.enqueue_redemption(&requested))
+                        .await?;
                     replies.insert(key, JobReply::Resume(request));
                 }
                 FRAME_GOAWAY => {
@@ -1191,9 +1262,8 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                             .as_deref()
                             .ok_or_else(|| entity_error("GOAWAY lacks session"))?;
                         let state = self
-                            .store
-                            .load(id)
-                            .map_err(store_error)?
+                            .load_session(id)
+                            .await?
                             .ok_or_else(|| entity_error("session is absent"))?
                             .session;
                         if !state.work_scope_ready(0)
@@ -1223,56 +1293,77 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         &self,
         control: &mut quinn::SendStream,
         session_id: Option<&str>,
-        pending: &mut BTreeMap<(u32, u64), (Checkpoint, tokio::time::Instant)>,
-        announcements: &BTreeMap<EntityKey, StatusFrame>,
-        unadmitted: &BTreeSet<EntityKey>,
+        pending: &mut BTreeMap<(u32, u64), (Checkpoint, usize)>,
+        unsettled: &BTreeSet<EntityKey>,
         layers: LayerSupport,
+        deadlines: &control::Deadlines,
     ) -> Result<(), ProtocolError> {
         let Some(session_id) = session_id else {
             return Ok(());
         };
         let mut resolved = Vec::new();
-        for (&(scope, sequence), (request, deadline)) in pending.iter() {
-            if tokio::time::Instant::now() >= *deadline {
-                return Err(ProtocolError::new(
-                    0x0e,
-                    "PIPESTREAM_CHECKPOINT_TIMEOUT",
-                    "checkpoint deadline expired",
-                ));
-            }
-            if announcements.keys().chain(unadmitted.iter()).any(|key| {
-                key.scope_id == scope
-                    && pipestream_core::session::is_before(
-                        key.entity_id,
-                        request.checkpoint_entity_id,
-                    )
+        for (&(scope, sequence), (request, count)) in pending.iter() {
+            deadlines.check((scope, sequence))?;
+            let current = self
+                .load_session(session_id)
+                .await?
+                .ok_or_else(|| entity_error("session is absent"))?;
+            if unsettled.iter().any(|key| {
+                let mut key = *key;
+                loop {
+                    if key.scope_id == scope {
+                        return if current.session.work_sets.is_some() {
+                            key.entity_id <= request.checkpoint_entity_id
+                        } else {
+                            pipestream_core::session::is_before(
+                                key.entity_id,
+                                request.checkpoint_entity_id,
+                            )
+                        };
+                    }
+                    let Some(parent) = current
+                        .session
+                        .scopes
+                        .get(&key.scope_id)
+                        .and_then(|scope| scope.parent)
+                    else {
+                        return false;
+                    };
+                    key = parent;
+                }
             }) {
                 continue;
             }
-            let current = self
-                .store
-                .load(session_id)
-                .map_err(store_error)?
-                .ok_or_else(|| entity_error("session is absent"))?;
             if !current.session.checkpoint_satisfied(scope, sequence)? {
                 continue;
             }
-            let (ack, versioned) = self
-                .transact(session_id, |session| {
-                    if session.checkpoint_satisfied(scope, sequence)? {
-                        session.acknowledge_checkpoint(scope, sequence).map(Some)
-                    } else {
-                        Ok(None)
+            let id = session_id.to_owned();
+            let ack = self
+                .storage(move |service| {
+                    let (ack, versioned) = service
+                        .transact(&id, |session| {
+                            if session.checkpoint_satisfied(scope, sequence)? {
+                                session.acknowledge_checkpoint(scope, sequence).map(Some)
+                            } else {
+                                Ok(None)
+                            }
+                        })
+                        .map_err(store_error)?;
+                    if ack.is_some()
+                        && let Ok(lineage) = versioned.session.final_lineage_digest()
+                    {
+                        service
+                            .entities
+                            .put_lineage(&id, lineage)
+                            .map_err(storage_error)?;
                     }
+                    Ok(ack)
                 })
-                .map_err(store_error)?;
+                .await?;
             if let Some(ack) = ack {
-                if let Ok(lineage) = versioned.session.final_lineage_digest() {
-                    self.entities
-                        .put_lineage(session_id, lineage)
-                        .map_err(storage_error)?;
-                }
+                deadlines.check((scope, sequence))?;
                 write_control(control, &encode_checkpoint_for(&ack, layers)?).await?;
+                deadlines.acknowledged((scope, sequence), *count)?;
                 resolved.push((scope, sequence));
             }
         }
@@ -1282,11 +1373,11 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         Ok(())
     }
 
-    fn accepts_durable_disconnect(
+    async fn accepts_durable_disconnect(
         &self,
         connection: &quinn::Connection,
         session_id: Option<&str>,
-    ) -> Result<bool, StoreError> {
+    ) -> Result<bool, ProtocolError> {
         let clean_close = matches!(
             connection.close_reason(),
             Some(quinn::ConnectionError::ApplicationClosed(close))
@@ -1298,17 +1389,21 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         let Some(session_id) = session_id else {
             return Ok(false);
         };
-        Ok(self.store.load(session_id)?.is_some_and(|versioned| {
-            versioned
-                .session
-                .jobs
-                .values()
-                .any(|job| job.state.is_unfinished())
-                || versioned.session.claims.values().any(|claim| {
-                    claim.redeemed_at_micros.is_none()
-                        && versioned.session.entities[&claim.entity].state == EntityState::Deferred
-                })
-        }))
+        Ok(self
+            .load_session(session_id)
+            .await?
+            .is_some_and(|versioned| {
+                versioned
+                    .session
+                    .jobs
+                    .values()
+                    .any(|job| job.state.is_unfinished())
+                    || versioned.session.claims.values().any(|claim| {
+                        claim.redeemed_at_micros.is_none()
+                            && versioned.session.entities[&claim.entity].state
+                                == EntityState::Deferred
+                    })
+            }))
     }
 
     fn prepare_entity(
@@ -1499,9 +1594,8 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         }
         let session_id = session_id.ok_or_else(|| entity_error("job reply lacks session"))?;
         let retained = self
-            .store
-            .load(session_id)
-            .map_err(store_error)?
+            .load_session(session_id)
+            .await?
             .ok_or_else(|| entity_error("job session is absent"))?;
         let session = &retained.session;
         session.authorize(self.caller.as_ref())?;
@@ -1596,9 +1690,14 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                 }
                 (JobReply::Resume(request), JobOutput::Resumed) => {
                     if let Ok(lineage) = session.final_lineage_digest() {
-                        self.entities
-                            .put_lineage(session_id, lineage)
-                            .map_err(storage_error)?;
+                        let id = session_id.to_owned();
+                        self.storage(move |service| {
+                            service
+                                .entities
+                                .put_lineage(&id, lineage)
+                                .map_err(storage_error)
+                        })
+                        .await?;
                     }
                     let mut acknowledgement = request.clone();
                     acknowledgement.acknowledged = true;

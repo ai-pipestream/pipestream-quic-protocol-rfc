@@ -158,9 +158,17 @@ capacity still occupied by a callback. Listener cancellation aborts its owned
 connection and ingress tasks. Tests also cover pipelined first admission and
 checkpoint accounting for received payloads awaiting installation.
 Physical permits are shared within one
-process, not across independent writer processes. Synchronous metadata I/O and
-unbounded retained payload storage remain limitations; temporary quotas and
+process, not across independent writer processes. Unbounded retained payload
+storage remains a limitation; temporary quotas and
 worker counts are not a complete multi-tenant resource guarantee.
+
+Connection metadata and lineage I/O use separately bounded blocking workers.
+Checkpoint clocks start at control-frame reception and are enforced independently
+of storage completion. Tests hold SQLite writes and lineage persistence while
+checking timely refusal, bounded control backlogs, and another connection's
+progress. Cancelled waiters do not release still-running storage slots. Ordered
+state-dependent dispatch can still wait behind storage; these tests do not
+establish disk latency or concurrent-workload performance bounds.
 
 Rust now applies persistent global and authority/principal quotas to serialized
 session bytes and retained-session counts, including completed and revoked work.

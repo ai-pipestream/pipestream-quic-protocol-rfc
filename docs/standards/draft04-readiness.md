@@ -209,7 +209,7 @@ The prior-format test now also refuses version 5 without modifying its state.
 Session format 6 retains receipts and irreversible claim revocation. Formats
 1 through 5 are refused, not converted; no operational database was migrated.
 Expired receipt history is not evicted. Permanent storage accounting, explicit
-orphan reconciliation, and storage-stall isolation remain unfinished. These
+and orphan reconciliation remain unfinished. These
 Rust tests do not establish independent Java or C++ recovery interoperability.
 
 ## Incremental receive spools and allocation gate
@@ -299,9 +299,9 @@ panics are separately tested as retained refusals, not unbounded replay.
 Shutdown stops dispatch and reports callbacks still active after its grace
 period. It does not forcibly kill callbacks or remove admitted work. Expired
 attempts may be reacquired, so external effects still need idempotency/fencing.
-Permanent storage quotas, orphan reconciliation, storage-stall handling, and
-broader multi-principal resource measurements remain required. Metadata database
-operations and lineage writes remain synchronous on the connection path, and
+Permanent storage quotas, orphan reconciliation, and
+broader multi-principal resource measurements remain required. The connection
+storage isolation increment below moves metadata and lineage calls to workers;
 physical worker/spool accounting does not cover independent writer processes.
 
 ## Retained-state quotas
@@ -326,8 +326,34 @@ This increment passed `./conformance/run_all.sh` with 153 Rust workspace tests
 (79 core, 27 Quinn unit, 44 wire, one allocation gate, two runner tests), five
 Java tests, the C++ vector test, nine transfer pairings, 32 capability probes,
 and all external examples. Physical database/WAL and payload quotas, completion
-headroom reservations, orphan reconciliation, and storage-stall isolation still
+headroom reservations and orphan reconciliation still
 need implementation and measurement. A logical byte quota is not their proof.
+
+## Connection storage isolation
+
+Connection metadata and lineage operations use eight physical slots per canonical
+database and four per authority/principal, shared by handles in one process.
+Cancellation keeps a started operation charged until it returns. A separate
+control reader and deadline watchdog prevent storage or output waits from
+postponing checkpoint clocks. The ingress backlog is bounded to 32 events;
+overflow is a named refusal. Queued duplicate checkpoints remain charged and
+cannot reset their initial deadline or lose their clocks to an earlier ACK.
+
+Four raw QUIC tests hold SQLite and lineage writes while checking deadline and
+protocol refusals, backlog/oversized-frame limits, and independent connection
+completion. Five unit tests cover shared physical bounds, cancellation, and
+checkpoint clock lifecycle. Existing recursive wire tests pin result-before-cut
+ordering even when workers commit between separate storage snapshots. Sections
+9.3 and 10.3 clarify storage-independent deadlines and cancellation-safe charges.
+No wire encoding or stored-session format changes. Ordered state-dependent work
+on one connection still waits for its storage operation; this is not a physical
+disk quota or a concurrent-workload performance claim.
+
+The full `./conformance/run_all.sh` passed with 162 Rust workspace tests
+(79 core, 32 Quinn unit, 48 wire, one allocation gate, two runner tests), five
+Java tests, the C++ test, nine transfer pairings, 32 capability probes, and
+all external examples. Draft -04 passed idnits with zero errors, flaws, and
+warnings, and one informational FIPS reference comment.
 
 ## Validation
 
@@ -415,7 +441,7 @@ xml2rfc renderer remains confined to document authoring.
    evidence. Rust's explicit retained-recovery profile is implemented, but the
    current Layer 2 boolean still advertises more than the prototype implements.
 2. Complete the asynchronous executor's storage/resource guarantees: durable
-   quotas, orphan reconciliation, storage-stall handling, further crash-boundary
+   quotas, orphan reconciliation, further crash-boundary
    tests, and concurrent-workload resource gates.
 3. Implement the clarified sealed-work profile independently in Java, and
    cross-test declaration, lost ACK, reconnect, and descendant completion.
