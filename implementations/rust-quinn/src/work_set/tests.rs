@@ -145,6 +145,59 @@ fn wire_roundtrip_is_deterministic_and_bounded() {
 }
 
 #[test]
+fn checkpoint_optional_fields_survive_acknowledgement_and_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("checkpoint.sqlite3");
+    let mut session = session();
+    session
+        .declare_work(&frame(&[1, 2], 0, Some(&[1, 2])), 0)
+        .unwrap();
+    admit(&mut session, 1).unwrap();
+    admit(&mut session, 2).unwrap();
+    let mut requests = Vec::new();
+    for scope_id in [None, Some(0)] {
+        for timeout_ms in [None, Some(30_000), Some(u64::MAX)] {
+            let mut request = checkpoint(2);
+            request.sequence_number = requests.len() as u64;
+            request.scope_id = scope_id;
+            request.timeout_ms = timeout_ms;
+            session.request_checkpoint(&request).unwrap();
+            requests.push(request);
+        }
+    }
+    let store = SqliteSessionStore::open(&path).unwrap();
+    store.create(&session).unwrap();
+    drop(store);
+    for _ in 0..2 {
+        let reopened = SqliteSessionStore::open(&path).unwrap();
+        for request in &requests {
+            let mut expected = request.clone();
+            expected.flags = crate::CHECKPOINT_ACK;
+            let (ack, _) = reopened
+                .transact("sealed-1", |session| {
+                    session.request_checkpoint(request)?;
+                    session.acknowledge_checkpoint(0, request.sequence_number)
+                })
+                .unwrap();
+            assert_eq!(ack, expected);
+            let before = reopened.load("sealed-1").unwrap().unwrap();
+            let mut changed = request.clone();
+            changed.scope_id = if request.scope_id.is_some() {
+                None
+            } else {
+                Some(0)
+            };
+            assert!(
+                matches!(reopened.transact("sealed-1", |session| session.request_checkpoint(&changed)),
+                Err(StoreError::Protocol(error)) if error.code == ERROR_ENTITY_INVALID)
+            );
+            assert_eq!(reopened.load("sealed-1").unwrap().unwrap(), before);
+        }
+        reopened.integrity_check().unwrap();
+    }
+}
+
+#[test]
 fn prior_session_format_is_refused_without_conversion() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("old.sqlite3");
@@ -159,6 +212,16 @@ fn prior_session_format_is_refused_without_conversion() {
     assert!(
         matches!(store.load("sealed-1"),Err(StoreError::Corrupt(message)) if message.contains("unsupported stored session version 1"))
     );
+    let after: Vec<u8> = conn
+        .query_row("SELECT state FROM pipestream_sessions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(before, after);
+    conn.execute("UPDATE pipestream_sessions SET format_version = 6", [])
+        .unwrap();
+    assert!(
+        matches!(store.load("sealed-1"), Err(StoreError::Corrupt(message)) if message.contains("unsupported stored session version 6"))
+    );
+    assert!(store.save(1, &session()).is_err());
     let after: Vec<u8> = conn
         .query_row("SELECT state FROM pipestream_sessions", [], |r| r.get(0))
         .unwrap();

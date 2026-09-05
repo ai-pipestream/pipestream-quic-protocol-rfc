@@ -90,6 +90,10 @@ checkpoint-flags = uint .le 1
 
 - `checkpoint_id`: an opaque identifier for logging and correlation.
 - `checkpoint_entity_id`: the numeric ordering key used for barrier evaluation.
+- An omitted `scope-id` or an explicit value of 0 names the root scope.
+  A nonzero value requires Layer 1. These two root representations are
+  distinct valid maps under Section 3.4.2; an ACK MUST preserve whether
+  `scope-id` was present, rather than inserting or removing its default.
 
 Implementations MUST use `checkpoint_entity_id` (not `checkpoint_id`) when evaluating Condition 1.
 

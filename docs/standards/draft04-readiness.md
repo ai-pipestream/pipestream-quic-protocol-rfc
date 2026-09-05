@@ -206,8 +206,9 @@ and malformed or mismatched receipts and terminal outcomes. Twenty independently
 specified wire inputs and separate CDDL fixtures pin encoding and refusal rules.
 The prior-format test now also refuses version 5 without modifying its state.
 
-Session format 6 retains receipts and irreversible claim revocation. Formats
-1 through 5 are refused, not converted; no operational database was migrated.
+That increment introduced session format 6 for receipts and irreversible claim
+revocation. The checkpoint correction below now requires format 7. Older formats
+are refused, not converted; no operational database was migrated.
 Expired receipt history is not evicted. Permanent storage accounting, explicit
 and orphan reconciliation remain unfinished. These
 Rust tests do not establish independent Java or C++ recovery interoperability.
@@ -373,17 +374,60 @@ commit only to direct identifiers and statuses. Tests exercise nested scopes
 with out-of-order arrival, WAL reopen, abrupt exit after declaration/closure,
 concurrent handles, quota exhaustion, corruption, and transactional rollback.
 
-The Java public network client and listener remain Layer 0. This foundation
-does not activate sealed work on Netty, add payload storage or executor fencing,
-or establish Java/Rust sealed-work interoperability. Logical declaration quotas
-are not physical storage bounds. The remaining connection and interoperability
-work is explicit in the [Java README](../../implementations/java-netty/README.md).
+At that landing, the Java public network client and listener remained Layer 0.
+The foundation did not itself add network behavior, payload storage or executor
+fencing, or establish Java/Rust interoperability. The producer increment below
+adds one-direction transport evidence. Logical declaration quotas are not
+physical storage bounds. Remaining work is explicit in the
+[Java README](../../implementations/java-netty/README.md).
 
 The complete `./conformance/run_all.sh` passed with 162 Rust workspace tests,
 30 Java tests (25 new), the C++ test, all nine existing transfer pairings,
 32 capability probes, and all external examples. New Java APIs also passed
 Javadoc with `-Xdoclint:all -Werror`. Draft -04 passed idnits with zero errors,
 flaws, and warnings, and one informational FIPS reference comment.
+
+### Independent Java sealed producer
+
+The public Netty `SealedClient` requires the sealed profile and validates the
+selected limits. Its independent codecs preserve uint64 counters and optional
+checkpoint fields. File and chunk sends use 8 KiB buffers; local membership,
+checkpoint history, and the response backlog have explicit limits. Operations
+are blocking and serialized. They do not persist producer observations, retry
+payloads, or provide a measured whole-process memory bound.
+
+Five real-QUIC tests exercise Java-to-Rust nested and out-of-order chunked work,
+scoped cuts, replay after server restarts, and a declaration ACK discarded at
+the transport boundary. Named refusals cover changed producer labels, retained
+limits, missing seals, and incorrect cuts. Scripted fault-injection peers test
+changed ACK fields, downgrade, oversized frames, and forbidden Layer 2 responses;
+they are not a replacement for an independent Java reference server.
+
+This testing exposed Rust's rejection of explicit root checkpoint scope zero
+and its loss of that optional field during ACK construction. Section 9.3 now
+clarifies the existing CDDL, and `optional-fields.tsv` supplies a shared valid
+input. Stored-session format 7 preserves scope presence across SQLite reopen
+and rejects changed replays without mutating the retained checkpoint. Formats
+1 through 6 are refused without conversion. This changes no wire schema and
+migrates no operational database.
+
+The Java sealed listener, durable payload/chunk storage integration, responsive
+pending checkpoints, and Rust-to-Java tests remain required. The existing nine
+Layer 0 pairings do not supply that missing evidence.
+
+The full-suite recovery CLI exposed a separate Rust shutdown race. A focused
+isolated-runtime test failed when the yield client stopped its runtime before
+QUIC sent connection close. `begin-yield` now uses the public asynchronous
+`disconnect_gracefully` API to drain its endpoint. The test verifies a clean
+server exit while the retained entity stays DEFERRED and its claim unredeemed;
+transport shutdown is not treated as successful work completion.
+
+The final `./conformance/run_all.sh` passed with 164 Rust workspace tests,
+40 Java tests with no skips (including five real-QUIC sealed tests), C++, the
+nine existing Layer 0 pairings, 32 capability probes, recursive/recovery CLI
+checks, and all external examples. New Java public APIs passed Javadoc with
+`-Xdoclint:all -Werror`. Draft -04 passed idnits with zero errors, flaws, and
+warnings and one informational FIPS reference comment.
 
 ### Reproducible suite and earlier landings
 

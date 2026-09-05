@@ -1268,7 +1268,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                             .session;
                         if !state.work_scope_ready(0)
                             || !state.checkpoints.values().any(|cp| {
-                                cp.scope_id == 0
+                                cp.scope_id.unwrap_or(0) == 0
                                     && cp.acknowledged
                                     && cp.checkpoint_entity_id == last
                             })
@@ -2401,8 +2401,21 @@ impl RecursiveClient {
         Ok(())
     }
 
+    /// Request disconnection without waiting for transport shutdown.
+    ///
+    /// Use [`Self::disconnect_gracefully`] before stopping the runtime. Neither
+    /// operation acknowledges completion or redeems a retained claim.
     pub fn disconnect(self) {
         self.connection.close(ERROR_NO_ERROR.into(), b"disconnect");
+    }
+
+    /// Disconnect and drain the QUIC endpoint before its runtime can stop.
+    ///
+    /// This waits for transport shutdown, not application work or a completion
+    /// barrier. If this future is cancelled, notification becomes best-effort.
+    pub async fn disconnect_gracefully(self) {
+        self.connection.close(ERROR_NO_ERROR.into(), b"disconnect");
+        self.endpoint.wait_idle().await;
     }
 
     async fn read_response(&mut self) -> Result<(u8, Vec<u8>)> {
@@ -2594,7 +2607,7 @@ pub async fn begin_durable_yield(
         Some(StatusExtension::ClaimCheck { claim_id, .. }) => *claim_id,
         _ => bail!("PIPESTREAM_ENTITY_INVALID: DEFERRED lacks claim check"),
     };
-    client.disconnect();
+    client.disconnect_gracefully().await;
     Ok(ClaimRedemption {
         session_id: session_id.to_owned(),
         claim_id,
@@ -3147,6 +3160,45 @@ mod tests {
         assert!(error.to_string().contains("PIPESTREAM_LIMIT_EXCEEDED"));
         assert!(error.to_string().contains("chunk count"));
         assert!(server.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    async fn yielded_client_runtime_exit_notifies_server_without_claiming_completion() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = test_options(directory.path(), "yield-runtime-exit");
+        let (remote, mut server) = start_once(&options).await;
+        let client_options = client_options(&options, remote);
+        let claim = tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(begin_durable_yield(&client_options, "yield-runtime-exit"))
+            // The isolated client runtime stops immediately, as it does in the CLI.
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        let stopped = tokio::time::timeout(Duration::from_secs(3), &mut server).await;
+        if stopped.is_err() {
+            server.abort();
+            let _ = server.await;
+        }
+        stopped
+            .expect("client exit left the server waiting for the idle timeout")
+            .unwrap()
+            .unwrap();
+        let store = SqliteSessionStore::open(&options.state_database).unwrap();
+        let session = store.load("yield-runtime-exit").unwrap().unwrap().session;
+        assert_eq!(
+            session.entities[&EntityKey {
+                scope_id: 0,
+                entity_id: 1
+            }]
+                .state,
+            EntityState::Deferred
+        );
+        assert!(session.claims[&claim.claim_id].redeemed_at_micros.is_none());
     }
 
     #[tokio::test]

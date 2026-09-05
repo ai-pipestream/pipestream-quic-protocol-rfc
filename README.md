@@ -18,13 +18,15 @@ independently in Rust, Java, and C++. Unknown requirements fail CONNECT;
 optional unknown identifiers are not activated. Sealed work sets and
 their durable producer/session binding are now available in Rust through
 the opt-in private-use `sealed-work-sets-v1` profile (Section 9.8).
-Authenticated resilience, bidirectional producers, and independent Java/C++
-implementations of that profile remain unfinished.
+Authenticated resilience, bidirectional producers, and the complete independent
+Java/C++ implementations of that profile remain unfinished.
 
-Java now has an independent sealed declaration codec and SQLite state-machine
-foundation, including recursive closure and STRICT rehydration readiness.
-Its network listener and client still expose only Layer 0. This library work
-is not yet Java/Rust sealed-work interoperability; see the
+Java now has an independent sealed declaration codec, SQLite state machine,
+and public Netty `SealedClient`. Real Java-to-Rust tests exercise nested work,
+out-of-order chunks, scoped checkpoints, declaration replay after restart,
+and malformed responses. The Java listener and standalone commands still
+expose only Layer 0; the sealed Java server and reverse-direction tests remain
+unfinished. See the
 [Java implementation boundary](implementations/java-netty/README.md#sealed-work-library-foundation).
 
 The Rust durable service also supports negotiated mutual-TLS session binding:

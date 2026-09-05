@@ -60,8 +60,65 @@ Declaration history and scope trees are checked with bounded scans, not a
 constant-time readiness index. These are logical record limits, not physical
 database/WAL quotas or a throughput claim. Reopen cannot reset the policy.
 
-The Netty listener and public network client still expose only Layer 0 and do
-not advertise `sealed-work-sets-v1`. Connection codecs/state, incremental entity
-and chunk ingestion, pending checkpoints, GOAWAY, and real Java-to-Rust and
-Rust-to-Java recursive/reconnect tests remain required. Passing the storage
-tests is not evidence of cross-language sealed-work interoperability.
+The Netty listener and standalone commands still expose only Layer 0 and do
+not advertise `sealed-work-sets-v1`. The separate public client below requires
+that profile. A sealed server integrating this store with incremental payload
+and chunk ingestion, asynchronous processing, pending checkpoints, and GOAWAY
+remains required, together with Rust-to-Java recursive/reconnect tests.
+
+## Sealed-work network producer
+
+`SealedClient.connect(remote, caCertificate, serverName, limits, timeout)`
+opens real QUIC with server-certificate validation and requires extension
+65281, Layer 1, and no Layer 2. It does not retry with weaker capabilities,
+accept server-originated work, or enable 0-RTT. This is a separate reusable
+API, not a change to the Layer 0 `PipeStreamClient` or CLI.
+
+1. Call `declare` for the root batch, then any subsequent batches. It checks
+   every ACK field before remembering membership. Keep the original requests
+   for explicit replay after reconnecting.
+2. `send(header, path)` streams a regular file through 8 KiB buffers and waits
+   for its processing outcome. `sendChunks` streams a complete file-backed
+   chunk set in caller order, checking identity and contiguous nonoverlapping
+   geometry. It reports one entity lifecycle, not one per chunk.
+3. Declare child scopes for dehydrated parents, send descendants, then call
+   `closeScope` from the leaves upward. The client verifies the status Merkle
+   digest and the parent's returned lifecycle. `barrier` correlates both scope
+   and parent identity.
+4. Seal membership and request a whole-scope `checkpoint`. Its ACK must preserve
+   scope/timeout presence and the full uint64 sequence; known unfinished work
+   cannot be accepted as completion. `goaway` requires the acknowledged sealed
+   root cut and closed descendants.
+
+Operations are blocking and serialized per client. Run them outside Netty event
+loops. The monotonic operation budget bounds network waits, not blocking local
+file I/O. The receive backlog is limited to 128 frames and 4 MiB of encoded
+frames, with a 1 MiB individual control limit. Local bookkeeping allows 65,536
+entities, 65,536 chunks per send, and 1,024 checkpoint identities. These limits
+and fixed-size file reads are not a measured whole-process memory bound.
+
+This client does not persist its producer ledger or observed statuses, export
+resume tokens, retry payloads, or provide authenticated-session/recovery APIs.
+A new client can replay declaration history and send work not previously
+admitted. Replaying declarations alone does not reconstruct prior admission or
+completion observations for checkpointing already-processed work. A pending
+checkpoint blocks this client's next operation; concurrent submission needs
+additional client API work. Closing never claims successful completion.
+
+The `sealed-interop` Maven profile runs five actual-QUIC tests, including
+Java-to-Rust nested/chunked completion, declaration replay and checkpoint ACK
+replay after Rust restarts, a deliberately discarded declaration ACK, and named
+refusals for changed ownership labels, lower retained limits, missing seals,
+wrong checkpoint bounds, changed ACKs, downgrade, oversized frames, and Layer 2
+responses. Scripted test peers inject faults; they are not reference servers.
+They do not replace the independent Java server required by the goal.
+
+```bash
+cargo build --release --locked --manifest-path ../rust-quinn/Cargo.toml
+mvn test -Psealed-interop
+```
+
+Default `mvn test` runs the independent Java codec/store tests without requiring
+a Rust executable. The repository's `conformance/run_all.sh` explicitly enables
+the interoperability profile after building Rust; a missing executable is a
+failure, not a skipped integration test.

@@ -16,6 +16,7 @@
     <jackson.version>2.22.2</jackson.version>
     <junit.version>6.1.3</junit.version>
     <sqlite.version>3.53.4.0</sqlite.version>
+    <test.excludedGroups>sealed-interop</test.excludedGroups>
   </properties>
 
   <dependencies>
@@ -86,6 +87,7 @@
         <configuration>
           <useModulePath>false</useModulePath>
           <argLine>--enable-native-access=ALL-UNNAMED</argLine>
+          <excludedGroups>${test.excludedGroups}</excludedGroups>
         </configuration>
       </plugin>
       <plugin>
@@ -123,4 +125,13 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <profile>
+      <id>sealed-interop</id>
+      <properties>
+        <test.excludedGroups>none</test.excludedGroups>
+      </properties>
+    </profile>
+  </profiles>
 </project>
