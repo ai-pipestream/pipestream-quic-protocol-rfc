@@ -28,6 +28,9 @@ retained-outcome or asynchronous-executor implementation. Durable attempt
 fences now protect result publication, and callbacks run outside database
 transactions. Receive payloads are now incrementally spooled to bounded
 temporary files and processed through readers; callbacks remain synchronous.
+The core now has durable typed job records and a transactionally bounded queue.
+The transport service does not yet submit work to that queue or run asynchronous
+workers; the queue APIs are the next integration boundary.
 The full remaining
 goal is tracked in [the implementation plan](docs/standards/recovery-execution-java-plan.md).
 

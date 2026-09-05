@@ -181,6 +181,16 @@ fn prior_session_format_is_refused_without_conversion() {
         .query_row("SELECT state FROM pipestream_sessions", [], |r| r.get(0))
         .unwrap();
     assert_eq!(before, after);
+    conn.execute("UPDATE pipestream_sessions SET format_version = 4", [])
+        .unwrap();
+    assert!(
+        matches!(store.load("sealed-1"), Err(StoreError::Corrupt(message)) if message.contains("unsupported stored session version 4"))
+    );
+    assert!(store.save(1, &session()).is_err());
+    let after: Vec<u8> = conn
+        .query_row("SELECT state FROM pipestream_sessions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(before, after);
 }
 
 #[test]
