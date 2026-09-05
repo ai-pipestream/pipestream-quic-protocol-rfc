@@ -16,7 +16,10 @@ and the remaining interoperability and security work.
 Draft -04 now defines supported/required extension negotiation, implemented
 independently in Rust, Java, and C++. Unknown requirements fail CONNECT;
 optional unknown identifiers are not activated. Sealed work sets and
-authenticated resilience profiles remain separate, unfinished work.
+their durable producer/session binding are now available in Rust through
+the opt-in private-use `sealed-work-sets-v1` profile (Section 9.8).
+Authenticated resilience, bidirectional producers, and independent Java/C++
+implementations of that profile remain unfinished.
 
 ## Authoring Workflow
 

@@ -47,6 +47,44 @@ same behavior without the command-line process. Applications provide processing
 and storage behavior while the service owns protocol transitions and durable
 state.
 
+## Sealed work sets
+
+`RecursiveClient::connect_sealed` requires private-use extension 65281
+(`sealed-work-sets-v1`), Layer 1, and no Layer 2. `serve-recursive` supports
+it without requiring it from legacy clients. The profile is defined in
+Section 9.8, not just by these APIs.
+
+The client calls `declare_work` with a `work_set::WorkSetFrame` before
+sending any declared entity. Start with root scope 0, sequence 0, a stable
+nonzero 16-octet producer label, and a unique session ID. Batches contain
+up to 256 strictly increasing IDs. The final batch sets `SEAL` and includes
+`work_set::seal_digest` over the entire set. `declare_work` waits for and
+compares the durable ACK. IDs cannot be removed or reused after declaration.
+The producer label is not an authentication credential.
+
+Child declarations require an admitted DEHYDRATING parent. Scope digests
+and checkpoints wait for the immutable set, including missing declared
+entities. Checkpoints name the inclusive largest declared ID in their scope;
+GOAWAY names the largest root ID after an acknowledged root checkpoint.
+Payloads can arrive out of ID order after their declaration ACK.
+
+After a connection loss, connect with the same profile and replay the original
+root sequence-0 request to attach to the retained session. Identical batches
+replay the same ACK; changed identities, sequences, or seals are refused.
+This is declaration replay, not automatic retry or recovery of application
+effects. A rejected or missing payload remains outstanding. No cancellation
+tombstone, authenticated claim redemption, or server-originated work is
+implemented in this profile.
+
+Stored session format is now version 2. Version-1 records are refused without
+conversion or modification; preserve old databases with their matching binary.
+The implementation caps each session at 1,000,000 declared IDs, in addition
+to negotiated per-scope limits. SQLite still serializes the whole session
+on each transaction, and final sealing walks the full identifier set.
+These bounds are not a throughput or large-session performance claim.
+
+## Other prototype paths and limitations
+
 The Layer 1 end-to-end scenario is runnable with `recursive-scenario`. It sends
 one root, three children, and two grandchildren; completes descendants out of
 order; verifies nested scope digests; crosses scope barriers and checkpoints;

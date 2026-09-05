@@ -163,7 +163,9 @@ An extension specification MUST identify its prerequisite layers and
 extensions, resource bounds, state transitions, and incompatible
 combinations. If a selected combination cannot be activated, the server
 MUST refuse CONNECT with PIPESTREAM_EXTENSION_UNSUPPORTED. It MUST NOT
-silently drop required behavior. No extensions are assigned by this draft.
+silently drop required behavior. No public extension identifiers are
+assigned by this draft; Section 9.8 defines an explicitly agreed private-use
+profile for prototype interoperability.
 
 CAPABILITIES is exchanged once per connection. A subsequent CAPABILITIES
 frame causes PIPESTREAM_FRAME_ERROR; reconnect to renegotiate. Every

@@ -25,6 +25,7 @@ standard. No implementation in this repository demonstrates full conformance.
 | URI | Typed session/entity/claim locators, explicit port and numeric bounds, no userinfo or bearer secrets | Core URI acceptance and refusal tests |
 | Evidence integrity | Actual Appendix C/CDDL definition comparison; independent expected local receipt calculation | Conformance schema drift test and recursive CLI receipt equality checks |
 | Extension negotiation | Bounded supported/required sets, exact intersection and requirement union, named refusal, client response validation | 35 shared codec cases and raw QUIC probes, detailed below |
+| Sealed work sets | Opt-in client producer binding, durable declaration/seal ACKs, immutable full-scope cuts, and declaration replay | 20 frozen wire inputs, core storage tests, and raw/public-client QUIC tests, detailed below |
 
 The wire tests are in `implementations/rust-quinn/quinn/tests/draft04_wire.rs`.
 The coverage above is a review-finding matrix, not a requirement-to-test matrix
@@ -51,13 +52,16 @@ verified. All implementations still need that complete matrix.
 - Factual implementation status and an explicit open-issues appendix.
 - Supported/required extension negotiation, one exchange per connection,
   explicit activation and downgrade rules, and a proposed 16-bit registry.
-  No extension identifiers are assigned or enabled by the shipped services.
+  No public extension identifiers are assigned. The Rust recursive service
+  additionally offers private-use profile 65281 by explicit peer agreement.
+- Section 9.8's client-owned work-set lifecycle, identity non-reuse, declaration
+  and seal hashing, scope-qualified checkpoints, and root GOAWAY cut.
 
 ## Extension requirement coverage
 
-This follow-up builds on the first draft-04 landing (`89711e1`). It closes
-the base negotiation mechanism needed before adding sealed work sets and
-authenticated recovery profiles. It does not implement those features.
+The negotiation landing (`d10d9e2`) builds on the first draft-04 landing
+(`89711e1`). It supplied the base mechanism for the sealed-work profile below
+and future authenticated recovery profiles.
 
 All three independent codecs consume `test-vectors/extension-negotiation.tsv`.
 The positive selection cases use synthetic identifiers solely as test data;
@@ -77,9 +81,49 @@ they do not assert implementation or registration of an extension.
 | Negotiation refusal is terminal | `rejected-then-valid` pipelines a second offer, PENDING and an Entity Stream; no stored entity after server exit |
 
 The raw probes use Quinn as a transport and frozen message bodies, without
-importing any PipeStream codec or state machine. Extension dependency and
-conflict handling will need extension-specific tests when identifiers are
-defined. Authenticated profiles and durable capability binding remain open.
+importing any PipeStream codec or state machine. Sealed-profile dependency
+tests additionally require Layer 1 and exclude Layer 2. Authenticated profiles
+and principal-bound durable capability binding remain open.
+
+## Sealed-work requirement coverage
+
+Section 9.8 uses private-use identifier 65281, `sealed-work-sets-v1`.
+Only Rust implements it. The public `connect_sealed` and `declare_work`
+APIs require negotiation and exact ACK correlation. The producer label is
+durable identity data, not a principal or credential.
+
+| Profile requirement | Evidence |
+|---|---|
+| Deterministic bounded WORK_SET fields | 20 independent frozen inputs in `test-vectors/work-sets.tsv`; separate CDDL fixtures |
+| Seal binds the complete set independently of batching | Fixed independently calculated SHA-256 and 1,024-ID, four-batch test |
+| Missing declarations/payloads cannot disappear from completion | Core maximum-ID cut test and pending-checkpoint QUIC test |
+| Child sets remain accountable through root completion | Out-of-order child payloads, scope closure, parent rehydration, root ACK test |
+| Identity, sequence, and seal failures do not mutate declarations | Core state-equality and SQLite transaction rollback checks |
+| Unobserved ACK can be replayed after restart | Public sealed client attaches to retained SQLite state and completes the original set |
+| ACK must exactly match the request | Changed-owner and malformed-ACK tests check client error and actual QUIC close code |
+| No unnegotiated declarations, undeclared admission, or early GOAWAY | Named-refusal wire tests and absent payload storage checks |
+| Announcement budget and no STATUS cursor recycling | Bounded-window and cursor refusal wire tests |
+| No mode conversion or unsafe old-format load | Legacy-session declaration refusal and version-1 row refusal without writes |
+
+Payloads can arrive before a final seal, but only after their declaration
+ACK. A missing or rejected declared payload stays outstanding; cancellation
+tombstones and automatic retries are not implemented. The profile has a
+single client producer and excludes Layer 2. It is not an authenticated
+multi-tenant session or a claim-redemption protocol.
+
+Stored session format changes from version 1 to version 2. Old records are
+refused before deserialization, not converted. No running service or existing
+application database was migrated. Keep old databases with their matching
+binary. Tests cover declaration commit/reopen and lost-ACK replay, not every
+payload/application-effect crash boundary.
+
+The local aggregate budget is 1,000,000 declared IDs per session; each batch
+is limited to 256 and per-scope negotiated limits still apply. The SQLite
+adapter rewrites a serialized session per transaction, and sealing hashes
+the complete ID set. No large-session throughput or resource-efficiency claim
+is made. The local lineage digest now commits to the profile's producer and
+scope seals under a distinct domain tag; it is still not an authenticated
+content receipt or proof of correct computation.
 
 ## Validation
 
@@ -93,6 +137,12 @@ The follow-up passed the complete command locally on 2026-09-05 with
 capability probes. All three language suites, nine transfer pairings,
 recursive/recovery scenarios, and external examples passed. The conformance
 runner also builds separately from the rest of the Cargo workspace.
+
+The sealed-work landing passed the complete command locally on 2026-09-05
+with 63 Rust workspace tests (including nine sealed-work core tests and
+eight sealed-work QUIC tests), 20 new frozen work-set inputs, the Java and
+C++ suites, all nine transfer pairings, 32 capability probes, and every
+recursive/recovery scenario and external example.
 
 The adversarial pass also fixed terminal failure handling: Java completes
 both public waiters and ignores callbacks after the first failure; C++
@@ -112,17 +162,16 @@ xml2rfc renderer remains confined to document authoring.
 
 ## Still required before a conformance or deployment claim
 
-1. Define and implement work-set declaration/sealing, ownership-qualified IDs,
-   recycling epochs or non-reuse, scoped cursors, and GOAWAY's identity cut.
-   The admission restriction improves current checkpoints but does not solve
-   the complete descendant-set problem.
-2. Define and implement an authenticated resilience profile using the new
+1. Define and implement an authenticated resilience profile using the new
    supported/required negotiation mechanism, with principal-bound claims, durable
    executor fencing, and retained outcomes for lost redemption ACKs. The
    current Layer 2 boolean advertises more than the prototype implements.
-3. Add bounded spool-backed payload processing and an asynchronous application
-   executor, then complete Java from the clarified text and cross-test the
-   entire state machine. C++ follows as the third implementation.
+2. Add bounded spool-backed payload processing and an asynchronous fenced
+   application executor, with crash-boundary and measured resource gates.
+3. Implement the clarified sealed-work profile independently in Java, and
+   cross-test declaration, lost ACK, reconnect, and descendant completion.
+   C++ follows as the third implementation; the full requirement matrix
+   remains necessary for every implementation.
 
 Additional gaps include Layer 0 dehydration, arbitrary bidirectional work
 origination, child-before-parent admission buffering, automatic retry/timer

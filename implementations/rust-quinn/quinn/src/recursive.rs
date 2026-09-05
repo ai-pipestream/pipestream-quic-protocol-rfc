@@ -2,6 +2,8 @@
 
 mod ingress;
 
+use pipestream_core::work_set::{self, EXTENSION_SEALED_WORK_SETS, FRAME_WORK_SET, WorkSetFrame};
+
 use anyhow::{Context, Result, bail};
 use pipestream_core::{
     Barrier, CHECKPOINT_ACK, CONNECTION_LEVEL, Capabilities, Checkpoint, ClaimRedemption,
@@ -395,8 +397,12 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         limits: RecursiveLimits,
     ) -> Result<Self> {
         let limits = limits.validate()?;
-        let capabilities =
+        let mut capabilities =
             recursive_capabilities(limits.max_scope_depth, limits.max_entities_per_scope)?;
+        capabilities
+            .extensions
+            .supported
+            .push(EXTENSION_SEALED_WORK_SETS);
         Ok(Self {
             store,
             entities,
@@ -477,6 +483,15 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         }
         let peer = decode_capabilities(&payload)?;
         let negotiated = self.capabilities.negotiate(&peer)?;
+        let sealed = negotiated
+            .extensions
+            .supported
+            .contains(&EXTENSION_SEALED_WORK_SETS);
+        if sealed && (!negotiated.layer1_recursive || negotiated.layer2_resilience) {
+            return Err(extension_error(
+                "sealed work sets require Layer 1 without Layer 2",
+            ));
+        }
         let layers = layers(&negotiated);
         write_control(&mut control_send, &encode_capabilities(&negotiated)?).await?;
         write_control(
@@ -580,6 +595,60 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                 }
             };
             match frame_type {
+                FRAME_WORK_SET => {
+                    if !sealed {
+                        return Err(extension_error("WORK_SET was not negotiated"));
+                    }
+                    let request = work_set::decode(&payload)?;
+                    if current_session
+                        .as_ref()
+                        .is_some_and(|id| id != &request.session_id)
+                    {
+                        return Err(entity_error("WORK_SET changed the connection session"));
+                    }
+                    let existing = self.store.load(&request.session_id).map_err(store_error)?;
+                    if current_session.is_none() && (request.scope_id != 0 || request.sequence != 0)
+                    {
+                        return Err(entity_error("attach with the root WORK_SET sequence zero"));
+                    }
+                    let ack = if existing.is_none() {
+                        if current_session.is_some()
+                            || request.scope_id != 0
+                            || request.sequence != 0
+                        {
+                            return Err(entity_error(
+                                "first WORK_SET must declare root sequence zero",
+                            ));
+                        }
+                        let mut session = Session::new_sealed(
+                            &request.session_id,
+                            request.producer_id,
+                            negotiated.effective_max_scope_depth(),
+                            negotiated.effective_max_entities_per_scope(),
+                        )?;
+                        let ack =
+                            session.declare_work(&request, now_micros().map_err(storage_error)?)?;
+                        self.store.create(&session).map_err(store_error)?;
+                        ack
+                    } else {
+                        self.store
+                            .transact(&request.session_id, |session| {
+                                if session.max_scope_depth > negotiated.effective_max_scope_depth()
+                                    || session.max_entities_per_scope
+                                        > negotiated.effective_max_entities_per_scope()
+                                {
+                                    return Err(extension_error(
+                                        "connection limits cannot resume this session",
+                                    ));
+                                }
+                                session.declare_work(&request, now_micros().map_err(storage_error)?)
+                            })
+                            .map_err(store_error)?
+                            .0
+                    };
+                    current_session = Some(request.session_id);
+                    write_control(&mut control_send, &work_set::encode(&ack)?).await?;
+                }
                 FRAME_STATUS => {
                     let pending = decode_status_frame(&payload, layers)?;
                     if pending.status.state == pipestream_core::STATUS_UNSPECIFIED
@@ -590,6 +659,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     }
                     if pending.status.state != pipestream_core::STATUS_PENDING
                         || pending.extension.is_some()
+                        || (sealed && pending.status.cursor.is_some())
                     {
                         return Err(entity_error("entity announcement must be plain PENDING"));
                     }
@@ -597,6 +667,25 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                         scope_id: pending.status.scope_id,
                         entity_id: pending.status.entity_id,
                     };
+                    if sealed {
+                        let session_id = current_session
+                            .as_deref()
+                            .ok_or_else(|| entity_error("PENDING precedes work-set declaration"))?;
+                        let current = self
+                            .store
+                            .load(session_id)
+                            .map_err(store_error)?
+                            .ok_or_else(|| entity_error("session is absent"))?;
+                        let scope = current
+                            .session
+                            .scopes
+                            .get(&key.scope_id)
+                            .ok_or_else(|| entity_error("PENDING scope has no declaration"))?;
+                        current.session.work_admission(key, scope.parent)?;
+                        if pending.status.depth != scope.depth {
+                            return Err(entity_error("PENDING depth differs from declared scope"));
+                        }
+                    }
                     if let Some(session_id) = current_session.as_deref()
                         && let Some(current) = self.store.load(session_id).map_err(store_error)?
                         && let Some(entity) = current.session.entities.get(&key)
@@ -671,6 +760,11 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     checkpoints.entry(key).or_insert((request, deadline));
                 }
                 FRAME_CLAIM_REDEMPTION => {
+                    if sealed {
+                        return Err(extension_error(
+                            "claim redemption is outside the sealed-work profile",
+                        ));
+                    }
                     if !layers.layer2_resilience {
                         return Err(layer_error("claim redemption requires Layer 2"));
                     }
@@ -692,6 +786,28 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                         return Err(entity_error("GOAWAY precedes outstanding work"));
                     }
                     let last = decode_goaway(&payload)?;
+                    if sealed {
+                        let id = current_session
+                            .as_deref()
+                            .ok_or_else(|| entity_error("GOAWAY lacks session"))?;
+                        let state = self
+                            .store
+                            .load(id)
+                            .map_err(store_error)?
+                            .ok_or_else(|| entity_error("session is absent"))?
+                            .session;
+                        if !state.work_scope_ready(0)
+                            || !state.checkpoints.values().any(|cp| {
+                                cp.scope_id == 0
+                                    && cp.acknowledged
+                                    && cp.checkpoint_entity_id == last
+                            })
+                        {
+                            return Err(entity_error(
+                                "GOAWAY requires an acknowledged sealed root checkpoint",
+                            ));
+                        }
+                    }
                     write_control(&mut control_send, &encode_goaway(last)?).await?;
                     control_send.finish().map_err(frame_error)?;
                     let _ = tokio::time::timeout(Duration::from_secs(5), connection.closed()).await;
@@ -800,6 +916,13 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         negotiated: &Capabilities,
     ) -> Result<(), ProtocolError> {
         let scope_id = header.scope_id.unwrap_or(0);
+        let sealed = negotiated
+            .extensions
+            .supported
+            .contains(&EXTENSION_SEALED_WORK_SETS);
+        if sealed && current_session.is_none() {
+            return Err(entity_error("entity precedes WORK_SET acknowledgment"));
+        }
         if pending.status.entity_id != header.entity_id || pending.status.scope_id != scope_id {
             return Err(entity_error("PENDING and EntityHeader identity differ"));
         }
@@ -901,7 +1024,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     now_micros: now,
                 });
                 if matches!(disposition, ProcessingDisposition::Yield { .. })
-                    && !negotiated.layer2_resilience
+                    && (!negotiated.layer2_resilience || sealed)
                 {
                     return Err(layer_error("processor yield requires negotiated Layer 2"));
                 }
@@ -1243,10 +1366,19 @@ pub struct RecursiveClient {
     control_send: quinn::SendStream,
     control_recv: quinn::RecvStream,
     layers: LayerSupport,
+    sealed: bool,
 }
 
 impl RecursiveClient {
     pub async fn connect(options: &RecursiveClientOptions) -> Result<Self> {
+        Self::connect_profile(options, false).await
+    }
+
+    pub async fn connect_sealed(options: &RecursiveClientOptions) -> Result<Self> {
+        Self::connect_profile(options, true).await
+    }
+
+    async fn connect_profile(options: &RecursiveClientOptions, sealed: bool) -> Result<Self> {
         let mut roots = rustls::RootCertStore::empty();
         for cert in CertificateDer::pem_file_iter(&options.ca_certificate)
             .context("read CA PEM")?
@@ -1268,7 +1400,15 @@ impl RecursiveClient {
             .context("connect QUIC")?;
         let (mut control_send, mut control_recv) =
             connection.open_bi().await.context("open control stream")?;
-        let offered = recursive_capabilities(7, pipestream_core::MAX_ENTITY_ID)?;
+        let mut offered = recursive_capabilities(7, pipestream_core::MAX_ENTITY_ID)?;
+        if sealed {
+            offered.layer2_resilience = false;
+            offered
+                .extensions
+                .supported
+                .push(EXTENSION_SEALED_WORK_SETS);
+            offered.extensions.required.push(EXTENSION_SEALED_WORK_SETS);
+        }
         write_control(&mut control_send, &encode_capabilities(&offered)?).await?;
         let (frame_type, response) = read_control(&mut control_recv).await?;
         if frame_type != FRAME_CAPABILITIES {
@@ -1291,7 +1431,37 @@ impl RecursiveClient {
             control_send,
             control_recv,
             layers: layers(&negotiated),
+            sealed,
         })
+    }
+
+    pub async fn declare_work(&mut self, request: &WorkSetFrame) -> Result<()> {
+        if !self.sealed || request.flags & work_set::ACK != 0 {
+            bail!("PIPESTREAM_EXTENSION_UNSUPPORTED: client is not a sealed-work producer");
+        }
+        write_control(&mut self.control_send, &work_set::encode(request)?).await?;
+        let (kind, body) = self.read_response().await?;
+        let mut expected = request.clone();
+        expected.flags |= work_set::ACK;
+        if kind != FRAME_WORK_SET {
+            self.connection
+                .close(ERROR_ENTITY_INVALID.into(), b"WORK_SET ACK mismatch");
+            bail!("PIPESTREAM_ENTITY_INVALID: WORK_SET ACK mismatch");
+        }
+        let acknowledgement = match work_set::decode(&body) {
+            Ok(frame) => frame,
+            Err(error) => {
+                self.connection
+                    .close(error.code.into(), error.to_string().as_bytes());
+                return Err(error.into());
+            }
+        };
+        if acknowledgement != expected {
+            self.connection
+                .close(ERROR_ENTITY_INVALID.into(), b"WORK_SET ACK mismatch");
+            bail!("PIPESTREAM_ENTITY_INVALID: WORK_SET ACK mismatch");
+        }
+        Ok(())
     }
 
     pub async fn send_entity(
@@ -1552,6 +1722,7 @@ impl RecursiveClient {
                     if !matches!(
                         kind,
                         FRAME_BARRIER
+                            | FRAME_WORK_SET
                             | FRAME_CAPABILITIES
                             | FRAME_CHECKPOINT
                             | FRAME_CLAIM_REDEMPTION
@@ -1918,6 +2089,14 @@ fn layer_error(detail: impl std::fmt::Display) -> ProtocolError {
     ProtocolError::new(
         ERROR_LAYER_UNSUPPORTED,
         "PIPESTREAM_LAYER_UNSUPPORTED",
+        detail.to_string(),
+    )
+}
+
+fn extension_error(detail: impl std::fmt::Display) -> ProtocolError {
+    ProtocolError::new(
+        pipestream_core::ERROR_EXTENSION_UNSUPPORTED,
+        "PIPESTREAM_EXTENSION_UNSUPPORTED",
         detail.to_string(),
     )
 }

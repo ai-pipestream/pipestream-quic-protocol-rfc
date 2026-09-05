@@ -36,6 +36,7 @@ Each registration consists of a value, a frame type name, the minimum protocol l
 | 0x80 | CAPABILITIES | 0 | Negotiated limits/layers | Section 3.4 |
 | 0x81 | CHECKPOINT | 0 | Global synchronization | Section 9.3 |
 | 0x82 | CLAIM_REDEMPTION | 2 | Durable claim request or acknowledgement | Section 6.7.1 |
+| 0x83 | WORK_SET | 1 | Negotiated declaration and immutable seal | Section 9.8 |
 
 ### Unknown Frame Handling
 

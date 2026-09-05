@@ -1,5 +1,9 @@
 # Rehydration Semantics
 
+Section 9.8 defines an opt-in sealed-work profile that replaces the
+recycling, checkpoint-cut, and GOAWAY rules for its sessions. Other
+connections continue to use Sections 9.1 through 9.7.
+
 ## Entity ID Lifecycle and Cursor
 
 Entity IDs are managed using a cursor-based circular recycling scheme within the 32-bit ID space. All circular arithmetic in this document is performed modulo 0xFFFFFFFD; this modulus excludes the reserved values at the top of the 32-bit space from circulation. The following Entity ID values are reserved and MUST NOT be assigned to entities:
@@ -178,3 +182,152 @@ stopping-point-validation = {
   ? checkpoint-ref: tstr,
 }
 ~~~~
+
+## Sealed Work Sets (Private-Use Profile)
+
+The `sealed-work-sets-v1` profile uses private-use extension identifier
+65281 (0xFF01) by explicit agreement between its peers. This is a draft
+profile, not an IANA assignment or a complete bidirectional work protocol.
+It requires Layer 1 and excludes Layer 2. A server selecting the profile
+with any other layer combination MUST refuse CONNECT with
+PIPESTREAM_EXTENSION_UNSUPPORTED (0x0F). A client MUST reject an invalid
+selected combination with PIPESTREAM_FRAME_ERROR (0x0D).
+
+All entities and declarations in a profile session originate at the QUIC
+client. The server processes work and reports statuses. The client MUST
+require this extension on every connection attaching to the session;
+automatic fallback to an unsealed session is prohibited. This profile
+does not activate yield, claim redemption, retry policies, or bidirectional
+work origination. Those require separately specified contracts.
+
+### Identity and Scope Ownership
+
+The first WORK_SET request declares root scope 0, sequence 0, and a
+nonzero 16-octet `producer-id`. The `session-id` uses the bounded ASCII
+syntax in Section 11.6.1. The receiver MUST persist this producer binding
+with the session. Every subsequent declaration on the connection MUST
+have the same session and producer. EntityHeaders inherit the binding;
+any explicit session metadata MUST agree with it.
+
+Within the issuing authority, durable entity identity is the tuple of
+session ID, producer ID, scope ID, and entity ID. Neither entity IDs within
+a scope nor scope IDs within a session may be recycled, including after
+completion or reconnection. IDs remain in 1..4294967292; exhaustion requires
+a new session identity. Session IDs MUST NOT be reused for unrelated work.
+The producer label distinguishes ownership but is not an authentication
+credential or proof of authority. Section 10's authorization requirements
+remain necessary before exposing durable sessions to untrusted callers.
+
+Each child scope has exactly one parent in an existing scope. Its parent
+MUST already be admitted and DEHYDRATING. The declared parent, producer,
+and scope binding are immutable. A parent has at most one child scope.
+This profile does not buffer declarations whose parent is not yet admitted.
+
+The circular-window arithmetic of Section 9.1 does not apply. In this
+profile, `max-window-size` limits outstanding PENDING announcements, not
+the numeric distance between identifiers. Admission of the corresponding
+entity releases its announcement slot. Declaration ACKs do not reserve
+payload buffer space or execution capacity. QUIC flow control and local
+bounded receive limits govern Entity Streams, including those sent without
+PENDING; resource exhaustion MUST be reported, not treated as completion.
+
+### Declaration, Seal, and Acknowledgment
+
+WORK_SET uses UCF type 0x83 with the serialized `work-set-frame` in
+Appendix C. It contains session and producer identity, scope, sequence,
+an `entity-ids` array, flags, and optional parent and seal fields.
+`parent-id` and `parent-scope-id` MUST occur together on child scopes and
+MUST both be absent for scope 0. The flags are:
+
+| Bit | Meaning |
+|-----|---------|
+| 0 | ACK: response to this exact declaration |
+| 1 | SEAL: this is the final declaration batch for this scope |
+| 2-7 | Reserved; MUST be zero |
+
+The client sends requests with ACK clear. Sequences start at 0 independently
+in each scope and increment by one for each new batch. IDs MUST be strictly
+increasing, both within a batch and across batches. A batch contains at most
+256 IDs. An empty batch is permitted only with SEAL and only if previous
+batches declared at least one ID. A scope cannot seal an empty work set.
+The receiver enforces the negotiated per-scope entity limit and MAY enforce
+a lower aggregate local resource budget with PIPESTREAM_LIMIT_EXCEEDED.
+
+The producer MAY send payloads and further batches while a scope remains
+unsealed, but MUST wait for the exact declaration ACK covering an entity
+before sending its PENDING or Entity Stream. QUIC stream order is not
+admission evidence. An undeclared entity is PIPESTREAM_ENTITY_INVALID.
+Payload validation, execution, and completion remain separate from
+declaration acknowledgment. A WORK_SET ACK MUST NOT be presented as proof
+that any payload was received or any computation finished.
+
+SEAL MUST occur if and only if `seal-digest` is present. The receiver verifies
+the digest against all declared IDs, including this final batch, before
+committing the batch. A mismatch is PIPESTREAM_INTEGRITY_ERROR (0x04) and
+MUST leave the prior declaration state unchanged. After sealing, the set
+cannot grow or change. Payloads for already-declared, not-yet-admitted IDs
+may still arrive. Cancellation, stream reset, payload rejection, or client
+disconnect MUST NOT remove a declared ID or imply completion. A missing
+entity keeps completion pending; timeout or connection failure reports no
+successful barrier. This profile has no implicit cancellation tombstone.
+
+After durable commit, the server echoes the same fields with ACK set.
+The client MUST compare all fields with its outstanding request; a mismatch
+is PIPESTREAM_ENTITY_INVALID (0x05). The receiver retains the identity of
+each accepted request. Repetition of an identical request returns the same
+ACK, including after sealing or reconnecting. Reusing a sequence with changed
+fields, skipping a sequence, changing identity or parent, or extending a
+sealed set is PIPESTREAM_ENTITY_INVALID. Malformed field types, flags,
+ordering within a batch, or missing fields are PIPESTREAM_FRAME_ERROR.
+
+A new connection attaches by repeating the root sequence-0 request. The
+receiver MUST require the original producer, declaration, and profile,
+and MUST refuse connection limits that cannot accommodate the retained
+session. It MUST NOT convert an existing unsealed-mode session into this
+profile or interpret this session through the unsealed lifecycle.
+
+### Seal Hash
+
+The seal is SHA-256 over the concatenation below. Integers are unsigned
+big-endian; the domain string is ASCII without a terminator. This encoding
+is independent of CBOR optional-member omission and batch boundaries.
+
+1. `pipestream-work-set-v1`.
+2. Two-octet session ID length, followed by the session ID's ASCII octets.
+3. Sixteen-octet producer ID, then four-octet scope ID.
+4. One octet: 0 for no parent, 1 for a parent. If 1, append the parent's
+   four-octet scope ID and four-octet entity ID.
+5. Eight-octet final entity count.
+6. Each declared entity ID, four octets, in ascending order.
+
+The seal commits to ownership labels, parent identity, scope, final count,
+and declared identifiers. It is not a content receipt, an authorization
+token, or proof of correct processing. Payload and result commitments are
+separate, as described in Section 9.5.
+
+### Completion, Checkpoints, and Shutdown
+
+A scope's SCOPE_DIGEST MUST NOT be accepted until its set is sealed, every
+declared entity has been admitted and resolved, and all child scopes have
+closed under Section 9.5. Observing only the children received so far is
+insufficient. The existing status Merkle construction remains unchanged.
+
+In this profile, CHECKPOINT always covers the entire sealed scope.
+`checkpoint-entity-id` is the inclusive largest declared ID, not a circular
+exclusive bound. A request may arrive before the seal or final payload;
+it remains pending under Section 9.3's connection-local deadline. Once the
+scope is ready, a wrong bound is PIPESTREAM_ENTITY_INVALID. ACK additionally
+requires the existing manifest and nested-checkpoint conditions. Each ACK
+is therefore a scope-qualified completion cursor over a fixed set. STATUS
+cursor updates and ID recycling MUST NOT be used in this profile.
+
+After reconnecting, a retransmitted checkpoint starts a new connection-local
+wait against the same immutable set. This does not retroactively satisfy
+a timed-out request or assert that processing completed during disconnect.
+Retained declarations and entity states continue to determine readiness.
+
+GOAWAY's Last Entity ID MUST equal the inclusive largest root ID and MUST
+match an acknowledged root checkpoint. Pending checkpoints, announcements,
+or partial chunk assemblies prevent shutdown acknowledgment. Root readiness
+includes all descendant scopes through the manifest rules, so GOAWAY does
+not silently omit work in another scope.

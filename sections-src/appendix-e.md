@@ -6,33 +6,31 @@ the inventory when its decisions are incorporated into the specification.
 
 ## Work-Set Closure
 
-The current manifest is reconstructed from received headers and statuses.
-That is not sufficient to establish that every intended child has arrived.
-Layer 0 lacks a wire declaration of the complete child set. Layer 1's
-status digest carries a count and hash, but the producer, declaration,
-seal, acknowledgment, and late-child rules need one explicit lifecycle.
+Section 9.8 defines an opt-in, private-use lifecycle for client-produced
+declaration batches, immutable seals, durable acknowledgment replay, and
+full-scope checkpoints. Missing or rejected declared entities stay outstanding;
+the profile has no implicit cancellation tombstones. This closes the
+received-so-far cut only for sessions using that profile. The unsealed
+lifecycle, including Layer 0 dehydration, still lacks complete-set evidence.
 
-The next design milestone is a streamed declaration with an immutable seal
-binding the scope, owner, parent, admitted identifiers, and final count.
-A checkpoint must refer to a declared cut, not to whatever streams happened
-to arrive first. Cancellation and rejected children must remain accounted
-for. This requires wire-sequence interoperability tests, not just a local
-manifest data structure. The admission ordering rule in Section 9.3 is a
-necessary restriction for current checkpoints, not a substitute for a seal.
+Independent implementations must validate the profile's lost-ACK, reconnect,
+late-child, missing-payload, and descendant-closure sequences. A general
+bidirectional protocol and explicit cancellation outcomes remain design work.
 
 ## Identity and Recycling
 
-Both endpoints can originate work, but the current scope-local integer
+Outside Section 9.8, both endpoints can originate work, but the scope-local integer
 namespaces lack an allocation partition or an owner field. The next
 revision must choose one rule that prevents collisions. Cursor recycling
 also needs an epoch or a prohibition on reuse while durable references
 remain valid. Scope-local cursors and the unscoped Last Entity ID in
 GOAWAY must be reconciled with the same identity model.
 
-Until those decisions are made, application profiles must not infer that
-independently allocated numeric IDs are globally unique. A prototype that
-does not recycle IDs must report that limitation rather than claiming the
-entire Layer 0 lifecycle.
+Section 9.8 binds one client producer to a durable session, prohibits reuse,
+uses scope-qualified completion cursors, and defines a root GOAWAY cut.
+It does not allocate namespaces for two independent producers. Profiles
+must not infer that independently allocated numeric IDs are globally unique
+or describe a producer label as authentication.
 
 ## Extension Negotiation
 
