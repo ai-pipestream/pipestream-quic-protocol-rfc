@@ -35,12 +35,12 @@ public final class SealedSessionStore {
     /** At least one child failed; the parent durably entered FAILED. */
     FAILED
   }
-  private static final int VERSION = 1;
+  private static final int VERSION = 2;
   private static final long MAX_SESSIONS = 512;
   private static final long MAX_DECLARATIONS = 65_536;
   private static final long MAX_SESSION_DECLARATIONS = 16_384;
   private static final Set<String> TABLES = Set.of("ps_java_meta", "ps_java_sessions",
-      "ps_java_scopes", "ps_java_batches", "ps_java_entities");
+      "ps_java_scopes", "ps_java_batches", "ps_java_entities", "ps_java_jobs", "ps_java_job_policy");
   private final Path database;
 
   private SealedSessionStore(Path database) { this.database = database; }
@@ -89,15 +89,18 @@ public final class SealedSessionStore {
                 session TEXT NOT NULL, scope INTEGER NOT NULL,
                 id INTEGER NOT NULL CHECK(id BETWEEN 1 AND 4294967292),
                 state INTEGER, payload_digest BLOB, output_digest BLOB,
+                managed INTEGER NOT NULL DEFAULT 0 CHECK(managed IN (0,1)),
                 PRIMARY KEY(session,scope,id),
                 FOREIGN KEY(session,scope) REFERENCES ps_java_scopes(session,id),
                 CHECK((state IS NULL AND payload_digest IS NULL AND output_digest IS NULL)
                    OR (state IS NOT NULL AND state IN (2,3,4,6,7)
                      AND payload_digest IS NOT NULL AND length(payload_digest)=32)),
+                CHECK(managed=0 OR state IS NOT NULL),
                 CHECK((state=3 AND output_digest IS NOT NULL AND length(output_digest)=32)
                    OR ((state IS NULL OR state<>3) AND output_digest IS NULL))
               ) STRICT
               """);
+          SealedJobs.createSchema(connection);
         } else if (!present.equals(TABLES)) {
           throw new SQLException("unknown or incomplete Java sealed-work schema; no conversion performed");
         }
@@ -241,19 +244,35 @@ public final class SealedSessionStore {
    */
   public void admit(String sessionId, UUID producerId, SealedWork.EntityKey key,
       SealedWork.EntityKey parent, byte[] payloadDigest) throws ProtocolException, SQLException {
-    if (payloadDigest == null || payloadDigest.length != 32) throw Wire.integrity("payload digest must be SHA-256");
-    byte[] digest = payloadDigest.clone();
     transaction(connection -> {
-      owner(connection, sessionId, producerId);
-      Scope scope = scope(connection, sessionId, key.scopeId());
-      EntityState entity = entity(connection, sessionId, key);
-      if (scope == null || !Objects.equals(scope.parent(), parent) || entity == null || entity.state() != null) throw Wire.entity("payload is undeclared, repeated, or has a different parent");
-      verifyDeclaration(connection, sessionId, producerId, scope);
-      try (PreparedStatement update = connection.prepareStatement("UPDATE ps_java_entities SET state=2,payload_digest=? WHERE session=? AND scope=? AND id=?")) {
-        update.setBytes(1, digest); update.setString(2, sessionId); update.setLong(3, key.scopeId()); update.setLong(4, key.entityId()); update.executeUpdate();
-      }
+      admit(connection, sessionId, producerId, key, parent, payloadDigest);
       return null;
     });
+  }
+
+  static void admit(Connection connection, String sessionId, UUID producerId, SealedWork.EntityKey key,
+      SealedWork.EntityKey parent, byte[] payloadDigest) throws ProtocolException, SQLException {
+    if (payloadDigest == null || payloadDigest.length != 32) throw Wire.integrity("payload digest must be SHA-256");
+    byte[] digest = payloadDigest.clone();
+    owner(connection, sessionId, producerId);
+    Scope scope = scope(connection, sessionId, key.scopeId());
+    EntityState entity = entity(connection, sessionId, key);
+    if (scope == null || !Objects.equals(scope.parent(), parent) || entity == null || entity.state() != null) throw Wire.entity("payload is undeclared, repeated, or has a different parent");
+    verifyDeclaration(connection, sessionId, producerId, scope);
+    try (PreparedStatement update = connection.prepareStatement("UPDATE ps_java_entities SET state=2,payload_digest=? WHERE session=? AND scope=? AND id=?")) {
+      update.setBytes(1, digest); update.setString(2, sessionId); update.setLong(3, key.scopeId()); update.setLong(4, key.entityId()); update.executeUpdate();
+    }
+  }
+
+  Path database() { return database; }
+
+  static int status(Connection connection, String session, UUID producer, SealedWork.EntityKey key)
+      throws SQLException, ProtocolException {
+    owner(connection, session, producer);
+    EntityState entity = entity(connection, session, key);
+    if (entity == null) throw Wire.entity("entity is undeclared");
+    verifyDeclaration(connection, session, producer, scope(connection, session, key.scopeId()));
+    return entity.state() == null ? 0 : entity.state();
   }
 
   /**
@@ -268,17 +287,23 @@ public final class SealedSessionStore {
    */
   public void processed(String sessionId, UUID producerId, SealedWork.EntityKey key,
       int state, byte[] outputDigest) throws ProtocolException, SQLException {
+    transaction(connection -> {
+      SealedJobs.requireUnmanaged(connection, sessionId, key);
+      processed(connection, sessionId, producerId, key, state, outputDigest);
+      return null;
+    });
+  }
+
+  static void processed(Connection connection, String sessionId, UUID producerId, SealedWork.EntityKey key,
+      int state, byte[] outputDigest) throws ProtocolException, SQLException {
     if ((state != 3 && state != 4 && state != 6) || (state == 3) != (outputDigest != null)
         || (outputDigest != null && outputDigest.length != 32)) throw Wire.entity("invalid processing outcome");
     byte[] digest = outputDigest == null ? null : outputDigest.clone();
-    transaction(connection -> {
-      owner(connection, sessionId, producerId);
-      EntityState entity = entity(connection, sessionId, key);
-      if (entity == null || entity.state() == null || entity.state() != 2) throw Wire.entity("processing result requires PROCESSING state");
-      verifyDeclaration(connection, sessionId, producerId, scope(connection, sessionId, key.scopeId()));
-      setOutcome(connection, sessionId, key, state, digest);
-      return null;
-    });
+    owner(connection, sessionId, producerId);
+    EntityState entity = entity(connection, sessionId, key);
+    if (entity == null || entity.state() == null || entity.state() != 2) throw Wire.entity("processing result requires PROCESSING state");
+    verifyDeclaration(connection, sessionId, producerId, scope(connection, sessionId, key.scopeId()));
+    setOutcome(connection, sessionId, key, state, digest);
   }
 
   /**
@@ -314,20 +339,29 @@ public final class SealedSessionStore {
       throws ProtocolException, SQLException {
     SealedScope.childScope(scopeId);
     return transaction(connection -> {
-      owner(connection, sessionId, producerId);
       Scope scope = scope(connection, sessionId, scopeId);
-      if (scope == null) throw SealedScope.invalid("scope is absent");
-      List<SealedScope.Terminal> leaves = terminalScope(connection, sessionId, producerId, scope, 0);
-      if (leaves == null) return Optional.empty();
-      SealedScope.Digest digest = SealedScope.summarize(scopeId, leaves);
-      if (scope.closure() == null) {
-        try (PreparedStatement update = connection.prepareStatement("UPDATE ps_java_scopes SET closure=? WHERE session=? AND id=?")) {
-          update.setBytes(1, SealedScope.encode(digest)); update.setString(2, sessionId); update.setLong(3, scopeId);
-          update.executeUpdate();
-        }
-      }
-      return Optional.of(digest);
+      if (scope != null) SealedJobs.requireUnmanaged(connection, sessionId, scope.parent());
+      return closeScope(connection, sessionId, producerId, scopeId);
     });
+  }
+
+  static Optional<SealedScope.Digest> closeScope(Connection connection, String sessionId, UUID producerId, long scopeId)
+      throws ProtocolException, SQLException {
+    SealedScope.childScope(scopeId);
+    SealedJobs.audit(connection);
+    owner(connection, sessionId, producerId);
+    Scope scope = scope(connection, sessionId, scopeId);
+    if (scope == null) throw SealedScope.invalid("scope is absent");
+    List<SealedScope.Terminal> leaves = terminalScope(connection, sessionId, producerId, scope, 0);
+    if (leaves == null) return Optional.empty();
+    SealedScope.Digest digest = SealedScope.summarize(scopeId, leaves);
+    if (scope.closure() == null) {
+      try (PreparedStatement update = connection.prepareStatement("UPDATE ps_java_scopes SET closure=? WHERE session=? AND id=?")) {
+        update.setBytes(1, SealedScope.encode(digest)); update.setString(2, sessionId); update.setLong(3, scopeId);
+        update.executeUpdate();
+      }
+    }
+    return Optional.of(digest);
   }
 
   /**
@@ -343,18 +377,24 @@ public final class SealedSessionStore {
   public ChildResolution resolveChildren(String sessionId, UUID producerId, SealedWork.EntityKey parent)
       throws ProtocolException, SQLException {
     return transaction(connection -> {
-      owner(connection, sessionId, producerId);
-      EntityState entity = entity(connection, sessionId, parent);
-      if (entity == null || entity.state() == null || entity.state() != 6) throw Wire.entity("child resolution requires DEHYDRATING parent");
-      verifyDeclaration(connection, sessionId, producerId, scope(connection, sessionId, parent.scopeId()));
-      Scope child = child(connection, sessionId, parent);
-      if (child == null || child.closure() == null) return ChildResolution.PENDING;
-      List<SealedScope.Terminal> leaves = terminalScope(connection, sessionId, producerId, child, 0);
-      if (leaves == null) throw Wire.integrity("closed child has outstanding work");
-      boolean success = leaves.stream().allMatch(leaf -> leaf.state() == Wire.STATUS_COMPLETE);
-      setOutcome(connection, sessionId, parent, success ? 7 : Wire.STATUS_FAILED, null);
-      return success ? ChildResolution.REHYDRATING : ChildResolution.FAILED;
+      SealedJobs.requireUnmanaged(connection, sessionId, parent);
+      return resolveChildren(connection, sessionId, producerId, parent);
     });
+  }
+
+  static ChildResolution resolveChildren(Connection connection, String sessionId, UUID producerId, SealedWork.EntityKey parent)
+      throws ProtocolException, SQLException {
+    owner(connection, sessionId, producerId);
+    EntityState entity = entity(connection, sessionId, parent);
+    if (entity == null || entity.state() == null || entity.state() != 6) throw Wire.entity("child resolution requires DEHYDRATING parent");
+    verifyDeclaration(connection, sessionId, producerId, scope(connection, sessionId, parent.scopeId()));
+    Scope child = child(connection, sessionId, parent);
+    if (child == null || child.closure() == null) return ChildResolution.PENDING;
+    List<SealedScope.Terminal> leaves = terminalScope(connection, sessionId, producerId, child, 0);
+    if (leaves == null) throw Wire.integrity("closed child has outstanding work");
+    boolean success = leaves.stream().allMatch(leaf -> leaf.state() == Wire.STATUS_COMPLETE);
+    setOutcome(connection, sessionId, parent, success ? 7 : Wire.STATUS_FAILED, null);
+    return success ? ChildResolution.REHYDRATING : ChildResolution.FAILED;
   }
 
   /**
@@ -370,20 +410,26 @@ public final class SealedSessionStore {
    */
   public void rehydrated(String sessionId, UUID producerId, SealedWork.EntityKey parent,
       boolean success, byte[] outputDigest) throws ProtocolException, SQLException {
-    if (success != (outputDigest != null) || (outputDigest != null && outputDigest.length != 32)) throw Wire.entity("invalid rehydration outcome");
-    byte[] digest = outputDigest == null ? null : outputDigest.clone();
     transaction(connection -> {
-      owner(connection, sessionId, producerId);
-      EntityState entity = entity(connection, sessionId, parent);
-      if (entity == null || entity.state() == null || entity.state() != 7) throw Wire.entity("rehydration result requires REHYDRATING parent");
-      verifyDeclaration(connection, sessionId, producerId, scope(connection, sessionId, parent.scopeId()));
-      Scope child = child(connection, sessionId, parent);
-      if (child == null || child.closure() == null) throw Wire.integrity("rehydrating parent has no closed child scope");
-      List<SealedScope.Terminal> leaves = terminalScope(connection, sessionId, producerId, child, 0);
-      if (leaves == null || leaves.stream().anyMatch(leaf -> leaf.state() != Wire.STATUS_COMPLETE)) throw Wire.integrity("STRICT rehydration requires every child COMPLETE");
-      setOutcome(connection, sessionId, parent, success ? Wire.STATUS_COMPLETE : Wire.STATUS_FAILED, digest);
+      SealedJobs.requireUnmanaged(connection, sessionId, parent);
+      rehydrated(connection, sessionId, producerId, parent, success, outputDigest);
       return null;
     });
+  }
+
+  static void rehydrated(Connection connection, String sessionId, UUID producerId, SealedWork.EntityKey parent,
+      boolean success, byte[] outputDigest) throws ProtocolException, SQLException {
+    if (success != (outputDigest != null) || (outputDigest != null && outputDigest.length != 32)) throw Wire.entity("invalid rehydration outcome");
+    byte[] digest = outputDigest == null ? null : outputDigest.clone();
+    owner(connection, sessionId, producerId);
+    EntityState entity = entity(connection, sessionId, parent);
+    if (entity == null || entity.state() == null || entity.state() != 7) throw Wire.entity("rehydration result requires REHYDRATING parent");
+    verifyDeclaration(connection, sessionId, producerId, scope(connection, sessionId, parent.scopeId()));
+    Scope child = child(connection, sessionId, parent);
+    if (child == null || child.closure() == null) throw Wire.integrity("rehydrating parent has no closed child scope");
+    List<SealedScope.Terminal> leaves = terminalScope(connection, sessionId, producerId, child, 0);
+    if (leaves == null || leaves.stream().anyMatch(leaf -> leaf.state() != Wire.STATUS_COMPLETE)) throw Wire.integrity("STRICT rehydration requires every child COMPLETE");
+    setOutcome(connection, sessionId, parent, success ? Wire.STATUS_COMPLETE : Wire.STATUS_FAILED, digest);
   }
 
   /**
@@ -403,6 +449,7 @@ public final class SealedSessionStore {
     if (scopeId < 0 || scopeId > 0xffff_ffffL || inclusiveLastId < 1 || inclusiveLastId > Wire.MAX_ENTITY_ID) throw Wire.entity("invalid checkpoint identity");
     return transaction(connection -> {
       owner(connection, sessionId, producerId);
+      SealedJobs.audit(connection);
       Scope scope = scope(connection, sessionId, scopeId);
       if (scope == null) throw SealedScope.invalid("checkpoint scope is absent");
       List<SealedScope.Terminal> leaves = terminalScope(connection, sessionId, producerId, scope, 0);
@@ -522,9 +569,10 @@ public final class SealedSessionStore {
         throw new SQLException("unsupported Java sealed-work policy or schema version");
       }
     }
+    SealedJobs.checkPolicy(connection);
   }
 
-  private <T> T transaction(Operation<T> operation) throws SQLException, ProtocolException {
+  <T> T transaction(Operation<T> operation) throws SQLException, ProtocolException {
     try (Connection connection = connection(); var statement = connection.createStatement()) {
       statement.execute("BEGIN IMMEDIATE");
       try {
@@ -619,5 +667,5 @@ public final class SealedSessionStore {
   private static byte[] sequence(BigInteger sequence) { return ByteBuffer.allocate(8).putLong(sequence.longValue()).array(); }
   private record Scope(long id, SealedWork.EntityKey parent, int depth, BigInteger nextSequence, boolean sealed, byte[] digest, byte[] closure) {}
   private record EntityState(Integer state) {}
-  @FunctionalInterface private interface Operation<T> { T apply(Connection connection) throws SQLException, ProtocolException; }
+  @FunctionalInterface interface Operation<T> { T apply(Connection connection) throws SQLException, ProtocolException; }
 }

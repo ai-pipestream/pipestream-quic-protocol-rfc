@@ -30,7 +30,10 @@ codec. `SealedWorkTest` consumes all 20 frozen declaration inputs, and
 construction, including odd-node promotion.
 
 `SealedSessionStore.open(path)` creates a separate SQLite database with strict
-typed tables, WAL, and synchronous FULL commits. Do not point it at a Rust
+typed tables, WAL, and synchronous FULL commits. The Java database format is
+now version 2, with managed entity state, durable jobs, and persistent dispatch
+policy. Version-1 stores are refused without conversion; keep them with their
+matching binary. Do not point this API at a Rust
 store. Unknown table sets or policy versions are refused without conversion.
 The JDBC driver requires native access; run an embedding application with
 `--enable-native-access=ALL-UNNAMED`. Tests enable this explicitly.
@@ -50,9 +53,10 @@ The JDBC driver requires native access; run an embedding application with
   request correlation, outstanding ingress, and nested checkpoints.
 
 All storage calls are blocking and must run outside Netty event loops.
-Application callbacks are not executed under storage transactions. Producer
-labels are not credentials, and these APIs do not provide executor fencing,
-authenticated recovery, or exactly-once external effects. The separate payload
+Application callbacks are not executed under storage transactions. These
+manual lifecycle APIs refuse managed work so they cannot bypass its executor
+fence. Producer labels are not credentials; the Java APIs do not provide
+authenticated recovery or exactly-once external effects. The separate payload
 library below supplies retained input, not state-machine admission or execution.
 
 Persistent local policy allows 512 sessions, 65,536 declared entities globally,
@@ -117,8 +121,70 @@ installed before admission remains unadmitted after restart. Other tests cover
 chunk geometry, integrity, concurrent installation/close, immutable replay at
 capacity, and cross-process writer exclusion. A 32 MiB receive/install/read test
 runs in a JVM with a 24 MiB maximum heap; it is not a QUIC, native-memory, RSS,
-or concurrent-throughput measurement. Java sealed-server integration, durable
-dispatch, and explicit orphan reconciliation remain unfinished.
+or concurrent-throughput measurement. Java sealed-server integration and
+explicit orphan reconciliation remain unfinished.
+
+## Durable sealed-work execution
+
+`SealedExecutor.start(sessions, payloads, processor, limits)` starts a periodic
+dispatcher and bounded application workers, independently of client connections.
+One executor owns a canonical Java database within this process. Reuse it across
+listeners rather than starting one per connection. `admit(stored)` commits
+payload admission and its processing descriptor together. `closeScope` commits
+child closure, parent resolution, and any required rehydration job together;
+a queue refusal rolls all those changes back. STRICT child failure propagates
+FAILED without a rehydration callback.
+
+The internal typed queue retains immutable, checksummed input descriptors and
+outcomes. Its fixed persistent policy permits 128 queued/running jobs globally
+and 32 per session, with 64 MiB of retained descriptor charges globally and
+16 MiB per session. Each descriptor reserves a further 256 logical bytes for
+its bounded result and attempt fields. Completed/refused jobs remain charged;
+reopen cannot reset the budget. These are logical record bounds, not SQLite
+page/WAL quotas or reserved physical space for every future descendant or
+rehydration job. Session and producer labels are not authenticated principals;
+these limits do not provide tenant isolation. Reads bound blob materialization,
+and integrity checks reject missing jobs, changed descriptors, and outcomes
+that disagree with entity state before executing or acknowledging completion.
+The dispatcher audits retained records, not just the ready-job index. That
+bounded full scan is not a large-session throughput claim.
+
+Defaults are four workers, at most two per session, with five-minute leases.
+Acquisition and publication check a durable increasing epoch, executor identity,
+and issuer wall-clock expiry. Expired or superseded attempts cannot publish.
+An expired callback retains its physical permit and excludes a duplicate local
+callback for the same job until it actually returns. Epoch-millisecond clock
+changes may delay reacquisition or expire an attempt early; fencing remains
+necessary. Applications must deduplicate or transactionally fence external
+effects themselves.
+
+Before a callback, retained input is reopened and checked against its original
+header, measured length, and digest. `Processor.execute(context, input)` receives
+a file-backed reader and returns COMPLETE with an output digest, FAILED, or
+DEHYDRATING. Rehydration cannot dehydrate again. It executes outside database
+transactions and may re-enter storage. Callback exceptions or corrupt input
+produce retained refusals, not entity completion or automatic retries. A fatal
+dispatch/storage failure is exposed by `failure()` and stops new dispatch.
+An interrupted unfinished attempt may run again after expiry and restart.
+
+`close()` stops new dispatch without interrupting application callbacks.
+`usage()` continues to count them, and database ownership remains reserved
+until callbacks and started storage calls return. At most eight admission or
+scope-closure storage calls may be outstanding; excess calls receive a named
+capacity refusal, and closing does not release those slots early.
+Keep the payload store alive
+until `isTerminated()` is true. Closing a connection does not cancel or complete
+its durable jobs. The executor does not bound application-created threads,
+callback memory, or external effects.
+
+Tests exercise queue rollback, recursive closure, independent session progress
+during a stalled callback, callback storage re-entry, stale publication after
+abrupt exit and reopen, cancellation-safe ownership, corrupt input, retained
+refusals, and metadata capacity retained by completed jobs. A 32 MiB retained
+input executes through the worker under a 24 MiB Java heap cap. This is not a
+QUIC, RSS, native-memory, or multi-tenant stress measurement. Netty sealed-server
+integration, responsive connection controls, durable checkpoint ACK identity,
+and Rust-to-Java interoperability remain required.
 
 ## Sealed-work network producer
 
