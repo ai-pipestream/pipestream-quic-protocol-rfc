@@ -1,12 +1,13 @@
 //! Durable, compare-and-swap session persistence.
 
 use crate::{ProtocolError, session::SESSION_FORMAT_VERSION, session::Session};
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
 use std::{
     error::Error,
     fmt, fs,
     path::{Path, PathBuf},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -14,6 +15,8 @@ mod queue;
 pub use queue::{JobQueueLimits, ReadyJob};
 mod storage;
 pub use storage::{StorageLimits, StorageUsage};
+mod physical;
+pub use physical::{PhysicalLimits, PhysicalUsage};
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS pipestream_sessions (
@@ -75,7 +78,11 @@ impl Error for StoreError {
 
 impl From<rusqlite::Error> for StoreError {
     fn from(error: rusqlite::Error) -> Self {
-        Self::Database(error)
+        if error.sqlite_error_code() == Some(rusqlite::ErrorCode::DiskFull) {
+            Self::Protocol(ProtocolError::limit("SQLite storage capacity exhausted"))
+        } else {
+            Self::Database(error)
+        }
     }
 }
 
@@ -100,11 +107,12 @@ pub struct SqliteSessionStore {
     path: PathBuf,
     job_limits: JobQueueLimits,
     storage_limits: StorageLimits,
+    physical: Arc<physical::Guard>,
 }
 
 impl SqliteSessionStore {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, StoreError> {
-        Self::open_configured(path.into(), None, None)
+        Self::open_configured(path.into(), None, None, None)
     }
 
     /// Queue limits are durable database policy. Reopening cannot silently replace them.
@@ -113,7 +121,7 @@ impl SqliteSessionStore {
         limits: JobQueueLimits,
     ) -> Result<Self, StoreError> {
         limits.validate()?;
-        Self::open_configured(path.into(), Some(limits), None)
+        Self::open_configured(path.into(), Some(limits), None, None)
     }
 
     /// Configure persistent queue and serialized-state policy when creating a store.
@@ -125,24 +133,38 @@ impl SqliteSessionStore {
     ) -> Result<Self, StoreError> {
         jobs.validate()?;
         storage.validate()?;
-        Self::open_configured(path.into(), Some(jobs), Some(storage))
+        Self::open_configured(path.into(), Some(jobs), Some(storage), None)
+    }
+
+    /// Set all durable budgets on creation. Existing policies cannot be replaced.
+    pub fn open_with_all_limits(
+        path: impl Into<PathBuf>,
+        jobs: JobQueueLimits,
+        storage: StorageLimits,
+        physical: PhysicalLimits,
+    ) -> Result<Self, StoreError> {
+        jobs.validate()?;
+        storage.validate()?;
+        Self::open_configured(path.into(), Some(jobs), Some(storage), Some(physical))
     }
 
     fn open_configured(
         path: PathBuf,
         requested: Option<JobQueueLimits>,
         storage_limits: Option<StorageLimits>,
+        physical_limits: Option<PhysicalLimits>,
     ) -> Result<Self, StoreError> {
+        let physical = physical::Guard::open(&path, physical_limits)?;
+        let path = physical.path.clone();
         let parent = path
             .parent()
-            .filter(|value| !value.as_os_str().is_empty())
-            .unwrap_or(Path::new("."))
-            .to_path_buf();
-        fs::create_dir_all(&parent)?;
+            .ok_or_else(|| StoreError::Corrupt("missing database directory".into()))?
+            .to_owned();
         let mut store = Self {
             path,
             job_limits: JobQueueLimits::default(),
             storage_limits: StorageLimits::default(),
+            physical,
         };
         let mut connection = store.connect()?;
         connection.execute_batch(SCHEMA)?;
@@ -164,6 +186,15 @@ impl SqliteSessionStore {
 
     pub fn storage_limits(&self) -> StorageLimits {
         self.storage_limits
+    }
+
+    pub fn physical_limits(&self) -> PhysicalLimits {
+        self.physical.limits
+    }
+
+    /// Current file lengths. Concurrent writes can change them between samples.
+    pub fn physical_usage(&self) -> Result<PhysicalUsage, StoreError> {
+        self.physical.usage()
     }
 
     pub fn storage_usage(&self) -> Result<StorageUsage, StoreError> {
@@ -226,7 +257,14 @@ impl SqliteSessionStore {
 
     pub fn checkpoint(&self) -> Result<(), StoreError> {
         let connection = self.connect()?;
-        connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        let busy: i32 =
+            connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))?;
+        if busy != 0 {
+            return Err(StoreError::Database(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+                Some("WAL checkpoint blocked; storage has not been reclaimed".into()),
+            )));
+        }
         Ok(())
     }
 
@@ -240,8 +278,30 @@ impl SqliteSessionStore {
     }
 
     fn connect(&self) -> Result<Connection, StoreError> {
-        let connection = Connection::open(&self.path)?;
+        self.physical.verify()?;
+        let connection = Connection::open_with_flags_and_vfs(
+            &self.path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_CREATE
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            physical::VFS_NAME,
+        )?;
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
+        connection.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA mmap_size=0;")?;
+        let page_size: u32 = connection.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+        if !(512..=65536).contains(&page_size) || !page_size.is_power_of_two() {
+            return Err(StoreError::Corrupt("unsupported SQLite page size".into()));
+        }
+        let pages = self.physical.limits.database_bytes / u64::from(page_size);
+        let actual: i64 =
+            connection.query_row(&format!("PRAGMA max_page_count={pages}"), [], |row| {
+                row.get(0)
+            })?;
+        if actual < 0 || actual as u64 != pages {
+            return Err(StoreError::Corrupt(
+                "SQLite pages exceed the physical database policy".into(),
+            ));
+        }
         connection.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=FULL;

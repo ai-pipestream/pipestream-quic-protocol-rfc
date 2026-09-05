@@ -1,5 +1,5 @@
 use super::*;
-use pipestream_core::persistence::{JobQueueLimits, StorageLimits};
+use pipestream_core::persistence::{JobQueueLimits, PhysicalLimits, StorageLimits, StoreError};
 
 fn fixture(limits: StorageLimits) -> Result<AuthFixture> {
     let mut fixture = AuthFixture::new()?;
@@ -119,6 +119,76 @@ async fn record_exhaustion_cannot_extend_or_seal_an_acknowledged_work_set() -> R
     assert_eq!(scope.ids, std::collections::BTreeSet::from([1]));
     assert!(scope.seal_digest.is_none());
     assert!(!state.work_scope_ready(0));
+    fixture.store.integrity_check()?;
+    replay.disconnect();
+    Ok(())
+}
+
+#[tokio::test]
+async fn wal_exhaustion_is_a_named_wire_refusal_and_retained_work_resumes_after_checkpoint()
+-> Result<()> {
+    let mut fixture = AuthFixture::new()?;
+    fixture.options.state_database = fixture._dir.path().join("physical.sqlite3");
+    let physical = PhysicalLimits {
+        database_bytes: 256 << 10,
+        wal_bytes: 128 << 10,
+        journal_bytes: 256 << 10,
+        shared_memory_bytes: 64 << 10,
+    };
+    fixture.store = Arc::new(SqliteSessionStore::open_with_all_limits(
+        &fixture.options.state_database,
+        JobQueueLimits::default(),
+        StorageLimits::default(),
+        physical,
+    )?);
+    let options = fixture.listen(Some("issuer-a"), Some(0))?;
+    let first = work("physical-set", 0, vec![1], None);
+    let mut client = RecursiveClient::connect_sealed(&options).await?;
+    client.declare_work(&first).await?;
+    // A read-only fault-injection connection pins a WAL snapshot. All writes
+    // still go through the guarded production store, including wire admission.
+    let reader = rusqlite::Connection::open_with_flags(
+        &fixture.options.state_database,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    reader.execute_batch("BEGIN; SELECT count(*) FROM pipestream_sessions;")?;
+    let mut before = fixture.store.load("physical-set")?.unwrap();
+    let mut full = false;
+    for _ in 0..100 {
+        match fixture.store.save(before.revision, &before.session) {
+            Ok(next) => before = next,
+            Err(StoreError::Protocol(error))
+                if error.code == pipestream_core::ERROR_LIMIT_EXCEEDED =>
+            {
+                full = true;
+                break;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    assert!(full);
+    let final_batch = work("physical-set", 1, vec![2], Some(&[1, 2]));
+    let error = tokio::time::timeout(Duration::from_secs(5), client.declare_work(&final_batch))
+        .await?
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("PIPESTREAM_LIMIT_EXCEEDED"),
+        "{error:#}"
+    );
+    assert_eq!(fixture.store.load("physical-set")?.unwrap(), before);
+    assert_eq!(fixture.store.unfinished_job_count()?, 0);
+    assert!(fixture.store.physical_usage()?.wal_bytes <= physical.wal_bytes);
+    drop(reader);
+    fixture.store.checkpoint()?;
+    let mut replay = RecursiveClient::connect_sealed(&options).await?;
+    replay.declare_work(&first).await?;
+    replay.declare_work(&final_batch).await?;
+    let retained = fixture.store.load("physical-set")?.unwrap().session;
+    assert_eq!(
+        retained.work_sets.as_ref().unwrap().scopes[&0].ids,
+        std::collections::BTreeSet::from([1, 2])
+    );
+    assert!(!retained.work_scope_ready(0));
     fixture.store.integrity_check()?;
     replay.disconnect();
     Ok(())

@@ -51,9 +51,10 @@ to a transactionally bounded queue and dispatches processing, rehydration, and
 resume callbacks in bounded workers, independently of connection control handling.
 Retained payloads are reopened and verified before interrupted work is executed.
 Retained serialized session state now has persistent global and per-principal
-byte/count quotas and bounded serialization. Physical storage quotas, payload
-accounting and completion-space reservations remain
-unfinished.
+byte/count quotas and bounded serialization. The bundled Unix SQLite backend
+now guards database, WAL, rollback-journal, and shared-memory file lengths under
+an immutable on-disk policy. Java database bounds, Rust retained-payload
+accounting, and completion-space reservations remain unfinished.
 Connection metadata and lineage operations now run in a bounded storage pool.
 An independent control reader enforces checkpoint deadlines during those
 operations; held-storage tests also exercise protocol refusals and progress
