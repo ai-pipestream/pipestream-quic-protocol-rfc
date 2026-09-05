@@ -133,6 +133,7 @@ pub struct SpoolStore {
     limits: SpoolLimits,
     global: Arc<Budget>,
     principals: Mutex<BTreeMap<PrincipalKey, Weak<Budget>>>,
+    retained_owner: Mutex<Option<Arc<super::retained::RetainedRoot>>>,
 }
 
 impl SpoolStore {
@@ -199,6 +200,7 @@ impl SpoolStore {
             limits,
             global,
             principals: Mutex::new(BTreeMap::new()),
+            retained_owner: Mutex::new(None),
         });
         stores.insert(directory, Arc::downgrade(&store));
         Ok(store)
@@ -206,6 +208,22 @@ impl SpoolStore {
 
     pub fn usage(&self) -> Result<SpoolUsage, ProtocolError> {
         Ok(*self.global.usage.lock().map_err(storage_error)?)
+    }
+
+    pub(super) fn retain_root(
+        &self,
+        root: Arc<super::retained::RetainedRoot>,
+    ) -> Result<(), ProtocolError> {
+        let mut owner = self.retained_owner.lock().map_err(storage_error)?;
+        if self.directory.parent() != Some(root.path.as_path())
+            || owner
+                .as_ref()
+                .is_some_and(|existing| !Arc::ptr_eq(existing, &root))
+        {
+            return Err(storage_error("spool retained-root binding changed"));
+        }
+        *owner = Some(root);
+        Ok(())
     }
 
     pub(super) fn connection(
@@ -349,14 +367,14 @@ struct PayloadData {
 #[derive(Debug)]
 enum Segment {
     Temporary(Temporary),
-    Retained(PathBuf),
+    Retained(PathBuf, Option<Arc<super::retained::RetainedRoot>>),
 }
 
 impl Segment {
     fn path(&self) -> &Path {
         match self {
             Self::Temporary(temporary) => temporary.path(),
-            Self::Retained(path) => path,
+            Self::Retained(path, _owner) => path,
         }
     }
 }
@@ -369,6 +387,24 @@ impl Payload {
     /// Reopen an immutable retained object, checking it against its durable descriptor.
     /// The caller must prevent replacement while readers use this path.
     pub fn open_retained(path: PathBuf, length: u64, expected: [u8; 32]) -> io::Result<Self> {
+        Self::open_retained_inner(path, length, expected, None)
+    }
+
+    pub(crate) fn open_retained_owned(
+        path: PathBuf,
+        length: u64,
+        expected: [u8; 32],
+        owner: Arc<super::retained::RetainedRoot>,
+    ) -> io::Result<Self> {
+        Self::open_retained_inner(path, length, expected, Some(owner))
+    }
+
+    fn open_retained_inner(
+        path: PathBuf,
+        length: u64,
+        expected: [u8; 32],
+        owner: Option<Arc<super::retained::RetainedRoot>>,
+    ) -> io::Result<Self> {
         if length > pipestream_core::MAX_PAYLOAD as u64 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -407,7 +443,7 @@ impl Payload {
             ));
         }
         Ok(Self(Arc::new(PayloadData {
-            segments: vec![Arc::new(Segment::Retained(path))],
+            segments: vec![Arc::new(Segment::Retained(path, owner))],
             length,
             digest: expected,
         })))

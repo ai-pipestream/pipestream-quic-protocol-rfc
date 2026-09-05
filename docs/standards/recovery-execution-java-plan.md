@@ -315,7 +315,31 @@ approval as part of a repository landing.
   32 capability probes, recursive/recovery CLI checks, and all external
   examples. Draft -04 passed idnits with zero errors, flaws, and warnings
   and one informational FIPS reference comment.
-- Not yet implemented: Java physical database/WAL and Rust retained-payload quotas,
+- Rust retained-payload increment: immutable policy now bounds global and
+  authority/principal object lengths/counts, staging and directory metadata,
+  including final lineage. Reservation precedes disk creation; checksummed
+  identity metadata, verified incremental copies and synced receipts precede
+  installation success. Matching replay does not double-charge an object.
+  Reopen accounts for interrupted copies, partial metadata/receipts and empty
+  canonical directories without deleting them. Only matching prefixes resume;
+  corrupt complete metadata and unexpected aliases refuse. An exclusive Unix
+  root lock survives handle drop while payload readers, spool loans or I/O
+  retain ownership. Eighteen unit tests cover individual quota boundaries,
+  owner/authority refusal, process exit, prefix images, conservative rollback,
+  stalled readers, aliases and cross-process locking. A real-QUIC test preserves
+  declared-but-unadmitted work at one principal's payload limit while another
+  principal completes. Authentication refusal checks pin startup policy/lock
+  files and zero payload usage. Capability probes now compare startup output
+  byte-for-byte, with a separate regression test and no exempt filenames.
+  Nonempty unaccounted payload roots are refused without conversion; session
+  format 7 and normative wire/CDDL are unchanged. These are cooperating-writer
+  file-length reservations, not allocated filesystem or all-power-loss proof.
+  The final `./conformance/run_all.sh` passed with 196 Rust workspace tests
+  (91 core, 51 Quinn unit, 50 wire, one allocation gate, three runner tests),
+  89 Java tests with no skips, C++, all nine Layer 0 pairings, 32 capability
+  probes, recursive/recovery CLI checks and every external example. Draft -04
+  passed idnits with zero errors/flaws/warnings and one FIPS reference comment.
+- Not yet implemented: Java physical database/WAL bounds,
   completion-space reservations, orphan reclamation,
   persistent producer observations, and the remaining independent Java
   profile requirement matrix. Physical execution limits and temporary spools are coordinated only
@@ -333,7 +357,7 @@ expiry is not callback cancellation. Periodic dispatch can reacquire unfinished
 expired attempts, but does not retry application-refused jobs automatically.
 Temporary spool accounting is process-local and excludes permanent entity files.
 Rust SQLite file-length caps are now independent of that accounting. Add Java
-database bounds, retained-payload quotas, completion reservations, and
+database bounds, completion reservations, and
 explicit orphan reconciliation without
 deleting a live generation or treating missing input as completed work.
 Do not treat recovery receipts or publication fencing as completion of bounded

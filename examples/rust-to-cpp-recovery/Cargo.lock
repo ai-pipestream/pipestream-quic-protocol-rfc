@@ -557,6 +557,7 @@ dependencies = [
  "anyhow",
  "pipestream-core",
  "quinn",
+ "rustix",
  "rustls",
  "sha2",
  "tempfile",

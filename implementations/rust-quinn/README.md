@@ -169,7 +169,8 @@ revocation. It denies initial acceptance, receipt replay, attempt acquisition,
 and result publication; already-committed external effects are not undone.
 Revoked unfinished jobs remain charged to the durable queue. Each session
 retains at most 1,024 recovery receipts; expired entries are not evicted to
-admit new requests. Permanent storage quotas and reclamation remain unfinished.
+admit new requests. Separate retained-state and payload quotas apply;
+completion-space reservations and reclamation remain unfinished.
 
 ## Other prototype paths and limitations
 
@@ -220,7 +221,7 @@ Restart counts abandoned files against the store quota without deleting them.
 Live handles for the same directory share accounting and cannot reset it with
 different limits. Accounting is not coordinated between separate operating
 system processes. Temporary receive budgets do not limit retained entity files,
-SQLite state, or the filesystem cache. Durable storage quotas and explicit
+SQLite state, or the filesystem cache. Completion-space reservations and explicit
 orphan reclamation remain required before production
 multi-tenant use. Do not run multiple writer processes against this spool root.
 
@@ -267,8 +268,73 @@ below. They do not bound retained payload files or total process memory. Complet
 reservations are also unfinished: admission does not reserve every possible
 future outcome's bytes, and quota exhaustion can refuse a later publication.
 Such work remains unfinished and charged; no successful completion is invented.
-Retained-payload quotas and orphan reconciliation remain part of the full
-execution requirement.
+Retained payloads have the separate policy below. Orphan reconciliation remains
+part of the full execution requirement.
+
+### Retained payload and lineage reservations
+
+`FileEntityStore::open_with_limits(root, SpoolLimits, RetainedLimits)` configures
+both receive and retained stores. `open` and `open_with_spool_limits` read an
+existing retained policy or create the default for a new directory. Defaults
+reserve at most 512 MiB and 8,192 objects globally, 128 MiB and 2,048 objects per
+authority/principal, and 1,024 retained principal buckets. Anonymous work shares
+one bucket. Staging is separately capped at 128 MiB and 32 objects; at most 32
+object operations may run concurrently under the default policy.
+
+Every object reserves its entire length plus 512 bytes of checksummed identity
+metadata and a 32-byte publication receipt before any file is created. The
+reservation includes final lineage files. Pending copies additionally reserve
+their full payload length and one staging object until staging cleanup finishes.
+These conservative sums bound file lengths, not filesystem allocation or RSS;
+hardlinked staging/publication names can refer to the same bytes. Temporary
+receive spools and SQLite files retain their independent budgets.
+
+`retained_usage` and `principal_retained_usage` report retained and staging
+reservations, including incomplete writes. Matching replay does not charge an
+object twice. Crossing an object, byte, principal, staging or directory limit
+returns `PIPESTREAM_LIMIT_EXCEEDED`, including through the service's QUIC path.
+Previously declared work remains outstanding; no rejected payload becomes an
+admitted job or a successful scope. Authority/principal labels come from the
+authenticated service or durable job, never untrusted entity metadata.
+
+The 96-byte `.retained-policy` uses `PSRET001`, seven big-endian limits and a
+SHA-256 checksum. Each `.meta` uses `PSOBJ001` and commits to session, owner,
+entity/scope or lineage identity, length and digest. The `.done` file contains
+the metadata checksum. Raw entity and lineage bodies keep their original paths
+and bytes. Metadata fsync precedes copying through 8 KiB buffers; verified data
+is fsynced before no-replace hardlink publication, and the receipt and directory
+are synced before installation succeeds. Session format 7 and the wire/CDDL
+are unchanged. Existing nonempty payload roots without policy are refused,
+not converted. Preserve them with their matching binary.
+
+Reopen performs a bounded inventory. An interrupted copy resumes only from a
+matching stored prefix; an incomplete receipt is not loadable until verified
+publication finishes. Metadata prefixes shorter than 512 bytes, with no payload
+files yet, reserve 512 global bytes and one global object until matching replay
+establishes their owner and full charge. `incomplete_metadata` reports this
+unattributed count. Empty canonical directories left before metadata creation
+stay present and consume `directories` credit, bounded by twice the object cap.
+Directory counts are global only. The root, spool directory, policy and empty
+lock file are separate fixed overhead. Neither reopen nor refusal deletes
+admitted objects or silently discards surviving artifacts.
+
+The root has an exclusive Unix advisory lock using the existing pinned
+[rustix file-lock API](https://docs.rs/rustix/latest/rustix/fs/fn.flock.html).
+Same-process handles share accounting, and payload readers, spool loans and
+in-flight operations retain root ownership. A second cooperating writer process
+is refused. Use a private directory; external filesystem mutation is outside
+this boundary. Symlinks, foreign files, noncanonical directories, unexpected
+hardlinks, policy changes and corrupt complete metadata are refused rather than
+repaired. The only permitted two-name alias is the matching payload/stage pair.
+Process-exit and prefix-image tests are not proof against every torn-sector or
+power-loss failure. Unsupported platforms have no unbounded fallback.
+
+Eighteen focused tests cover quotas, lineage accounting, replay, owner checks, interrupted copies,
+metadata/receipt prefixes, empty directories, alias refusal, blocked readers
+and cross-process lock retention. A real-QUIC test exhausts one principal's
+payload allowance, verifies unchanged declared membership, and lets a different
+principal complete independent work. Future completion-space reservations,
+explicit orphan reconciliation and broader tenant stress remain unfinished.
 
 ### SQLite file-length caps
 
@@ -458,8 +524,8 @@ the entity DEFERRED. Transport shutdown is not a work-completion barrier.
 
 Without the explicit mutual-TLS settings, the standalone prototype authenticates
 only the server and remains suitable solely for trusted local demonstrations.
-Even with mutual TLS, retained recovery, and bounded workers, durable storage
-quotas, orphan reclamation, and a complete resilience capability remain
+Even with mutual TLS, retained recovery, bounded workers and retained-storage
+quotas, completion reservations, orphan reclamation, and a complete resilience capability remain
 unfinished. It MUST NOT yet be described as a production multi-tenant durable
 work service. Its Layer 2 boolean still advertises more than the tested subset.
 

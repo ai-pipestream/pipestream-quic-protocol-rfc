@@ -163,29 +163,36 @@ impl EntityStore for HeldLineage {
     }
     fn put_payload(
         &self,
+        principal: Option<&pipestream_core::authorization::PrincipalBinding>,
         id: &str,
         key: EntityKey,
         payload: &spool::Payload,
     ) -> std::io::Result<()> {
-        self.inner.put_payload(id, key, payload)
+        self.inner.put_payload(principal, id, key, payload)
     }
     fn spool(&self) -> &Arc<spool::SpoolStore> {
         self.inner.spool()
     }
     fn load_payload(
         &self,
+        principal: Option<&pipestream_core::authorization::PrincipalBinding>,
         id: &str,
         key: EntityKey,
         length: u64,
         digest: [u8; 32],
     ) -> std::io::Result<spool::Payload> {
-        self.inner.load_payload(id, key, length, digest)
+        self.inner.load_payload(principal, id, key, length, digest)
     }
-    fn put_lineage(&self, id: &str, digest: [u8; 32]) -> std::io::Result<()> {
+    fn put_lineage(
+        &self,
+        principal: Option<&pipestream_core::authorization::PrincipalBinding>,
+        id: &str,
+        digest: [u8; 32],
+    ) -> std::io::Result<()> {
         if id == "review-session" {
             self.gate.hold();
         }
-        self.inner.put_lineage(id, digest)
+        self.inner.put_lineage(principal, id, digest)
     }
 }
 

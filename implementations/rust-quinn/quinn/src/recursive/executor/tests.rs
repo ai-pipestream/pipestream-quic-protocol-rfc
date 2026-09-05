@@ -341,26 +341,38 @@ impl EntityStore for HeldInstallation {
     fn put(&self, id: &str, key: EntityKey, payload: &[u8]) -> std::io::Result<()> {
         self.files.put(id, key, payload)
     }
-    fn put_payload(&self, id: &str, key: EntityKey, payload: &Payload) -> std::io::Result<()> {
+    fn put_payload(
+        &self,
+        principal: Option<&PrincipalBinding>,
+        id: &str,
+        key: EntityKey,
+        payload: &Payload,
+    ) -> std::io::Result<()> {
         if key.entity_id == self.entity_id {
             self.hold.wait();
         }
-        self.files.put_payload(id, key, payload)
+        self.files.put_payload(principal, id, key, payload)
     }
     fn spool(&self) -> &Arc<SpoolStore> {
         self.files.spool()
     }
     fn load_payload(
         &self,
+        principal: Option<&PrincipalBinding>,
         id: &str,
         key: EntityKey,
         length: u64,
         digest: [u8; 32],
     ) -> std::io::Result<Payload> {
-        self.files.load_payload(id, key, length, digest)
+        self.files.load_payload(principal, id, key, length, digest)
     }
-    fn put_lineage(&self, id: &str, digest: [u8; 32]) -> std::io::Result<()> {
-        self.files.put_lineage(id, digest)
+    fn put_lineage(
+        &self,
+        principal: Option<&PrincipalBinding>,
+        id: &str,
+        digest: [u8; 32],
+    ) -> std::io::Result<()> {
+        self.files.put_lineage(principal, id, digest)
     }
 }
 

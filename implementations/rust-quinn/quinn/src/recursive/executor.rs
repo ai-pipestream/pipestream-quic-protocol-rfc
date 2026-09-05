@@ -257,7 +257,13 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             } => {
                 let payload = self
                     .entities
-                    .load_payload(&job.session_id, job.key.entity, *length, *digest)
+                    .load_payload(
+                        self.caller.as_ref(),
+                        &job.session_id,
+                        job.key.entity,
+                        *length,
+                        *digest,
+                    )
                     .map_err(|error| {
                         ProtocolError::new(
                             pipestream_core::ERROR_INTEGRITY,

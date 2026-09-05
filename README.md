@@ -53,8 +53,11 @@ Retained payloads are reopened and verified before interrupted work is executed.
 Retained serialized session state now has persistent global and per-principal
 byte/count quotas and bounded serialization. The bundled Unix SQLite backend
 now guards database, WAL, rollback-journal, and shared-memory file lengths under
-an immutable on-disk policy. Java database bounds, Rust retained-payload
-accounting, and completion-space reservations remain unfinished.
+an immutable on-disk policy. Retained Rust payloads and lineage files now have
+persistent global and authority/principal reservations, bounded staging, and
+exclusive writer ownership. Interrupted copies and incomplete metadata stay
+charged across reopen. Java database bounds, completion-space reservations,
+and explicit orphan reconciliation remain unfinished.
 Connection metadata and lineage operations now run in a bounded storage pool.
 An independent control reader enforces checkpoint deadlines during those
 operations; held-storage tests also exercise protocol refusals and progress

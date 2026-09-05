@@ -214,11 +214,19 @@ async fn missing_untrusted_and_unmapped_credentials_cannot_admit_work() -> Resul
     assert!(fixture.store.list_session_ids()?.is_empty());
     assert_eq!(fixture.processor.processed.load(Ordering::SeqCst), 0);
     assert_eq!(fixture.processor.resumed.load(Ordering::SeqCst), 0);
-    assert!(
-        fs::read_dir(&fixture.options.entity_directory)?
-            .next()
-            .is_none()
+    let names = fs::read_dir(&fixture.options.entity_directory)?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<std::io::Result<std::collections::BTreeSet<_>>>()?;
+    assert_eq!(
+        names,
+        [".retained-lock", ".retained-policy"]
+            .map(std::ffi::OsString::from)
+            .into()
     );
+    let files = FileEntityStore::open(&fixture.options.entity_directory)?;
+    assert_eq!(files.retained_usage()?, RetainedUsage::default());
+    assert_eq!(files.spool().usage()?.bytes, 0);
+    assert_eq!(files.spool().usage()?.files, 0);
     Ok(())
 }
 
