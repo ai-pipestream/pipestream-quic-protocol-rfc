@@ -151,7 +151,7 @@ impl Session {
         Ok(result)
     }
 
-    fn validate_execution_state(&self, key: ExecutionKey) -> Result<(), ProtocolError> {
+    pub(crate) fn validate_execution_state(&self, key: ExecutionKey) -> Result<(), ProtocolError> {
         let entity = self
             .entities
             .get(&key.entity)

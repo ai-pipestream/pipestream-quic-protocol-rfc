@@ -76,8 +76,8 @@ effects. A rejected or missing payload remains outstanding. No cancellation
 tombstone, authenticated claim redemption, or server-originated work is
 implemented in this profile.
 
-Stored session format is now version 4, including durable owner, revocation,
-and execution-attempt state. Version-1, version-2, and version-3 records are refused without conversion or
+Stored session format is now version 5, including durable owner, revocation,
+execution-attempt state, and typed job records. Versions 1 through 4 are refused without conversion or
 modification; preserve old databases with their matching binary.
 The implementation caps each session at 1,000,000 declared IDs, in addition
 to negotiated per-scope limits. SQLite still serializes the whole session
@@ -188,6 +188,42 @@ measurement, not a process-RSS, concurrency, or throughput claim.
 
 ## Execution still to finish
 
+### Durable queue APIs
+
+The core provides `Session::enqueue_job`, `acquire_job`, `publish_job`, and
+`refuse_job` for processing, rehydration, and resume operations. Invoke these
+through a store transaction. Inputs retain the validated header, measured
+length and digest, negotiated layers, or the specific closed scope/claim.
+Publication retains the outcome together with the execution fence and computed
+protocol state. Input replay cannot replace the original descriptor, and saves
+cannot remove a retained job or rewrite a terminal outcome. An application
+refusal is retained separately from entity completion.
+
+`SqliteSessionStore::open_with_job_limits` sets database-wide unfinished-job
+limits. Defaults are 128 queued/running jobs globally and 32 per authority and
+principal; anonymous work shares one bucket. Limits persist across reopen, and
+a handle cannot silently replace them. Queue admission and the session revision
+commit together. Exhaustion returns `PIPESTREAM_LIMIT_EXCEEDED` and rolls both
+back, including through `create` and `save`. Revoked work remains charged but
+is not returned for execution.
+
+`ready_jobs(now, limit)` uses a bounded SQLite index. An unexpired attempt is
+not returned; lease expiry makes it discoverable again but does not grant
+execution. `acquire_job` still checks authorization and the durable fence.
+`integrity_check` audits queue rows against checksummed session records in one
+read snapshot, including missing and extra entries. This full audit scans one
+session at a time, not an in-memory list of all sessions. It is an explicit
+operation, not a periodic background task.
+
+These core APIs are tested but not yet used by the transport service. They do
+not reopen retained payload files or provide workers, cancellation, scheduling,
+or recovery-request ACKs. Finished records and permanent storage are not covered
+by unfinished-job limits. The full executor must integrate admission and file
+installation, verify the queue before dispatch, and observe outcomes without
+blocking control parsing. No asynchronous service claim is made here.
+
+### Current service path
+
 Pending checkpoints use monotonic deadlines, but a synchronous callback still
 blocks the connection's dispatch loop. Application processing, rehydration,
 and resume callbacks now run outside database transactions and may re-enter
@@ -209,7 +245,7 @@ credential and does not prove exactly-once execution.
 Resume recovery can reacquire expired attempts through the existing recovery
 entry point. There is not yet a periodic durable job dispatcher, automatic
 processing/rehydration replay, or retained recovery-request outcome. In
-particular, persisted processing attempts do not yet retain a reconstructible
+particular, the service's persisted processing attempts do not yet retain a reconstructible
 header/spool descriptor. An interrupted admission remains incomplete, never
 successful. The next execution increment must cover those restart boundaries.
 

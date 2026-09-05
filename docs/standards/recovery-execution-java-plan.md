@@ -92,7 +92,22 @@ approval as part of a repository landing.
   The Rust examples' lockfiles now include the existing pinned `tempfile`
   dependency on the library's runtime path; no package versions changed.
   Draft -04 passed idnits with zero errors/flaws/warnings and one FIPS comment.
-- Not yet implemented: retained recovery outcomes, asynchronous job dispatch,
+- Durable queue increment: session format 5 adds typed process/rehydrate/resume
+  descriptors, queued/running/finished/refused states, immutable inputs and
+  terminal outcomes, and fenced result publication. SQLite indexes unfinished
+  jobs in the same transaction as the session revision. Persistent global and
+  authority/principal limits are enforced across store handles; reopen cannot
+  reset policy. Queue overflow and injected index-write failures roll back both
+  records. Tests cover an abrupt process exit after committed acquisition,
+  lease-expiry rediscovery, identity and outcome refusals, and an explicit
+  integrity audit for missing/extra/changed index rows. The transport service
+  does not yet enqueue these descriptors or run a dispatcher. This is a tested
+  storage API, not completion of the asynchronous execution requirement.
+  The final `./conformance/run_all.sh` passed with 107 Rust workspace tests,
+  Java/C++ suites, all nine transfer pairings, 32 raw QUIC capability probes,
+  recursive/recovery CLI scenarios, and the external examples. Draft -04 built
+  with zero idnits errors/flaws/warnings and one informational FIPS comment.
+- Not yet implemented: retained recovery-request outcomes, asynchronous job dispatch,
   durable storage quotas and restartable inputs, periodic recovery for every operation, and
   the independent Java profile. Callback execution itself is still synchronous.
 
@@ -103,7 +118,8 @@ Next implementation boundaries: authority-qualified recovery requests with
 stable request identity, retained outcomes, expiry/revocation/retention rules;
 and durable dispatch of the file-backed inputs with bounded per-principal/global workers.
 The current CLAIM_REDEMPTION path still refuses a duplicate after a lost ACK.
-Processing attempts lack restartable header/spool descriptors; lease expiry
+The service does not yet populate the core job descriptors or reopen retained
+inputs for execution; lease expiry
 is not callback cancellation. No automatic execution retry is advertised.
 Temporary spool accounting is process-local and excludes permanent entity files
 and SQLite state. Add durable quotas and explicit orphan reconciliation without

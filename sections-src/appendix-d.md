@@ -135,6 +135,12 @@ revocation during a callback. Dispatch remains synchronous, and restartable
 processing descriptors, bounded asynchronous workers, and retained recovery-request
 outcomes remain unfinished.
 
+The Rust core has typed job descriptors and a transactionally bounded
+unfinished-job index with retained outcomes. Storage tests exercise limits,
+rollback, interrupted attempts, and index integrity. The transport service
+does not yet use this queue, so these tests do not establish asynchronous
+execution or recovery of admitted payloads after restart.
+
 Spool tests cover quota exhaustion, file-backed chunk assembly, corruption
 before assembly, cancellation-safe disk credit, and abandoned-file accounting.
 A real-QUIC 32 MiB transfer measures Rust heap allocations while streaming

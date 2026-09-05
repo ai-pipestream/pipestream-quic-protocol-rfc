@@ -8,6 +8,7 @@ pub use authorization::ERROR_UNAUTHORIZED;
 mod deterministic;
 pub mod execution;
 pub mod extensions;
+pub mod jobs;
 pub mod persistence;
 pub mod session;
 pub mod uri;
@@ -310,7 +311,7 @@ impl CompletionPolicy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EntityHeader {
     pub entity_id: u32,
     pub parent_id: Option<u32>,
@@ -363,7 +364,7 @@ pub struct StatusFrame {
     pub extension: Option<StatusExtension>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScopeDigest {
     pub scope_id: u32,
     pub entities_processed: u64,

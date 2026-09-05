@@ -210,6 +210,32 @@ writer processes. Dispatch and callbacks remain synchronous. Durable queued
 input descriptors, storage quotas, periodic recovery, and explicit orphan
 reconciliation remain requirements, not completed features.
 
+## Durable job records and queue limits
+
+Session format 5 adds typed input descriptors and retained execution outcomes.
+Core job APIs acquire attempts under the existing authorization and expiry
+checks and publish the outcome with the protocol result. Saves cannot discard
+jobs or replace their inputs or terminal outcomes. A refusal retains unresolved
+work instead of fabricating entity completion. Formats 1 through 4 are refused;
+there is no stored-session conversion.
+
+SQLite maintains an unfinished-job index in the same transaction as session
+state and revision. Default limits are 128 jobs globally and 32 per authority
+and principal, with one shared anonymous bucket. Limits are persisted and
+cannot be changed by reopening another handle. Running jobs remain charged;
+expired attempts become discoverable but still need fenced acquisition.
+Revocation suppresses discovery without erasing work or releasing its charge.
+An explicit integrity audit compares the index to checksummed session records.
+
+Fifteen new core tests cover input identity, process/rehydrate/resume outcomes,
+refusal without completion, ownership, revocation, concurrent admission,
+rollback on overload and injected index failure, abrupt process exit and
+reacquisition, immutable retained outcomes, corruption, and missing queue schema.
+The transport service does not yet use these APIs. File-backed input reopening,
+asynchronous workers, periodic recovery, cancellation/shutdown behavior, and
+retained-storage limits remain unfinished. These tests are not evidence of
+responsive asynchronous processing over QUIC.
+
 ## Validation
 
 `./conformance/run_all.sh` runs Rust formatting, Clippy with warnings denied,
@@ -257,6 +283,12 @@ both public waiters and ignores callbacks after the first failure; C++
 will not process buffered frames or entities after failure; Rust drains
 its endpoint before a one-shot server exits following a refusal. The raw
 probes require the actual close code and inspect storage after server exit.
+
+The durable-queue increment passed the final full command locally on 2026-09-05
+with 107 Rust workspace tests (55 core, 20 Quinn unit, 29 wire, one allocation
+gate, and two conformance-runner tests), Java/C++ suites, nine transfer pairings,
+32 capability probes, and all external examples. Draft -04 again passed idnits
+with zero errors/flaws/warnings and one informational FIPS 180-4 comment.
 
 `./build.sh core 04` produced XML, text, and HTML. idnits reported zero errors,
 zero flaws, zero warnings, and one informational possible-downref comment

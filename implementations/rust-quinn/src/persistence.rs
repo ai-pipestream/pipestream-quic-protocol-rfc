@@ -10,6 +10,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+mod queue;
+pub use queue::{JobQueueLimits, ReadyJob};
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS pipestream_sessions (
     session_id TEXT PRIMARY KEY NOT NULL,
@@ -93,20 +96,40 @@ pub trait SessionStore: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct SqliteSessionStore {
     path: PathBuf,
+    job_limits: JobQueueLimits,
 }
 
 impl SqliteSessionStore {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, StoreError> {
-        let path = path.into();
+        Self::open_configured(path.into(), None)
+    }
+
+    /// Queue limits are durable database policy. Reopening cannot silently replace them.
+    pub fn open_with_job_limits(
+        path: impl Into<PathBuf>,
+        limits: JobQueueLimits,
+    ) -> Result<Self, StoreError> {
+        limits.validate()?;
+        Self::open_configured(path.into(), Some(limits))
+    }
+
+    fn open_configured(
+        path: PathBuf,
+        requested: Option<JobQueueLimits>,
+    ) -> Result<Self, StoreError> {
         let parent = path
             .parent()
             .filter(|value| !value.as_os_str().is_empty())
             .unwrap_or(Path::new("."))
             .to_path_buf();
         fs::create_dir_all(&parent)?;
-        let store = Self { path };
-        let connection = store.connect()?;
+        let mut store = Self {
+            path,
+            job_limits: JobQueueLimits::default(),
+        };
+        let mut connection = store.connect()?;
         connection.execute_batch(SCHEMA)?;
+        store.job_limits = queue::initialize(&mut connection, requested)?;
         drop(connection);
         sync_directory(&parent)?;
         Ok(store)
@@ -115,6 +138,10 @@ impl SqliteSessionStore {
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub fn job_limits(&self) -> JobQueueLimits {
+        self.job_limits
     }
 
     pub fn transact<T>(
@@ -128,6 +155,11 @@ impl SqliteSessionStore {
             .ok_or_else(|| StoreError::NotFound(session_id.to_owned()))?;
         let mut session = current.session;
         let output = operation(&mut session).map_err(StoreError::Protocol)?;
+        if session.session_id != session_id {
+            return Err(StoreError::Protocol(ProtocolError::entity(
+                "transaction changed session identity",
+            )));
+        }
         let next_revision = current
             .revision
             .checked_add(1)
@@ -144,14 +176,17 @@ impl SqliteSessionStore {
     }
 
     pub fn integrity_check(&self) -> Result<(), StoreError> {
-        let connection = self.connect()?;
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction()?;
         let result: String =
-            connection.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+            transaction.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
         if result != "ok" {
             return Err(StoreError::Corrupt(format!(
                 "SQLite integrity_check returned {result}"
             )));
         }
+        queue::verify_index(&transaction)?;
+        transaction.commit()?;
         Ok(())
     }
 
@@ -190,9 +225,10 @@ impl SessionStore for SqliteSessionStore {
                 session.format_version
             )));
         }
-        let connection = self.connect()?;
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let (state, checksum) = encode_state(session)?;
-        let inserted = connection.execute(
+        let inserted = transaction.execute(
             "INSERT OR IGNORE INTO pipestream_sessions
              (session_id, format_version, revision, state, checksum, updated_at_micros)
              VALUES (?1, ?2, 1, ?3, ?4, ?5)",
@@ -205,14 +241,15 @@ impl SessionStore for SqliteSessionStore {
             ],
         )?;
         if inserted != 1 {
-            let actual = self
-                .load(&session.session_id)?
-                .map_or(0, |value| value.revision);
+            let actual =
+                load_from(&transaction, &session.session_id)?.map_or(0, |value| value.revision);
             return Err(StoreError::Conflict {
                 expected: 0,
                 actual,
             });
         }
+        queue::replace_index(&transaction, session)?;
+        transaction.commit()?;
         Ok(VersionedSession {
             revision: 1,
             session: session.clone(),
@@ -229,11 +266,13 @@ impl SessionStore for SqliteSessionStore {
         expected_revision: u64,
         session: &Session,
     ) -> Result<VersionedSession, StoreError> {
-        let connection = self.connect()?;
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let next_revision = expected_revision
             .checked_add(1)
             .ok_or_else(|| StoreError::Corrupt("session revision overflow".to_owned()))?;
-        persist_update(&connection, expected_revision, next_revision, session)?;
+        persist_update(&transaction, expected_revision, next_revision, session)?;
+        transaction.commit()?;
         Ok(VersionedSession {
             revision: next_revision,
             session: session.clone(),
@@ -286,6 +325,9 @@ fn load_from(
             "stored session identity or version mismatch".to_owned(),
         ));
     }
+    session
+        .validate_jobs()
+        .map_err(|error| StoreError::Corrupt(error.to_string()))?;
     Ok(Some(VersionedSession { revision, session }))
 }
 
@@ -295,6 +337,11 @@ fn persist_update(
     next_revision: u64,
     session: &Session,
 ) -> Result<(), StoreError> {
+    if let Some(previous) = load_from(connection, &session.session_id)? {
+        session
+            .validate_retained_jobs(&previous.session)
+            .map_err(StoreError::Protocol)?;
+    }
     let expected = i64::try_from(expected_revision)
         .map_err(|_| StoreError::Corrupt("session revision exceeds SQLite integer".to_owned()))?;
     let next = i64::try_from(next_revision)
@@ -331,10 +378,17 @@ fn persist_update(
             None => Err(StoreError::NotFound(session.session_id.clone())),
         };
     }
-    Ok(())
+    queue::replace_index(connection, session)
 }
 
 fn encode_state(session: &Session) -> Result<(Vec<u8>, [u8; 32]), StoreError> {
+    if session.format_version != SESSION_FORMAT_VERSION {
+        return Err(StoreError::Corrupt(format!(
+            "unsupported in-memory session version {}",
+            session.format_version
+        )));
+    }
+    session.validate_jobs().map_err(StoreError::Protocol)?;
     let state =
         postcard::to_stdvec(session).map_err(|error| StoreError::Codec(error.to_string()))?;
     let checksum = Sha256::digest(&state).into();
@@ -359,6 +413,9 @@ fn sync_directory(path: &Path) -> Result<(), StoreError> {
 fn sync_directory(_path: &Path) -> Result<(), StoreError> {
     Ok(())
 }
+
+#[cfg(test)]
+mod queue_tests;
 
 #[cfg(test)]
 mod tests {
