@@ -34,7 +34,10 @@ temporary files and processed through readers. The service submits typed jobs
 to a transactionally bounded queue and dispatches processing, rehydration, and
 resume callbacks in bounded workers, independently of connection control handling.
 Retained payloads are reopened and verified before interrupted work is executed.
-Permanent storage quotas and storage-stall handling remain unfinished.
+Retained serialized session state now has persistent global and per-principal
+byte/count quotas and bounded serialization. Physical storage quotas, payload
+accounting, completion-space reservations, and storage-stall handling remain
+unfinished.
 The full remaining
 goal is tracked in [the implementation plan](docs/standards/recovery-execution-java-plan.md).
 

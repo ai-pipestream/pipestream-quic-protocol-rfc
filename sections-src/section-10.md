@@ -46,6 +46,16 @@ The `checksum` field in the EntityHeader is typed as `bstr .size 32` in the CDDL
 
 Implementations MUST enforce all resource limits listed above. Exceeding any limit MUST result in the corresponding error code (see Section 11.4). Implementations SHOULD allow operators to configure stricter limits than the defaults shown here.
 
+Durable implementations MUST account for retained protocol state, not only
+unfinished work. Completion, refusal, revocation, or connection loss MUST NOT
+release a storage charge for state that remains retained. Quota exhaustion
+MUST NOT produce an acknowledgment for a rejected state transition, remove
+declared obligations, or evict an unexpired recovery receipt. Implementations
+SHOULD reserve capacity for the completion records of admitted work. Logical
+state-byte limits do not bound temporary files, retained payloads, database
+journals, indexes, or other physical storage overhead; implementations need
+separate resource policies for those objects.
+
 To prevent memory-exhaustion attacks, implementations MUST NOT pre-allocate memory for variable-length payloads based solely on the 32-bit Length field in the UCF header (Section 6.1.1). Memory MUST be allocated incrementally as octets are received, or capped at a smaller initial buffer until the message type and context are verified.
 
 The entity-count and window defaults are identifier-space maxima, not safe

@@ -146,7 +146,22 @@ approval as part of a repository landing.
   (66 core, 27 Quinn unit, 42 wire, one allocation gate, two runner tests),
   five Java tests, the C++ vector test, all nine transfer pairings, 32 capability
   probes, recursive/recovery CLI scenarios, and every external example.
-- Not yet implemented: durable storage quotas, orphan reclamation,
+- Retained-state quota increment: persistent global and authority/principal
+  byte/count limits now cover serialized sessions, including completed and
+  revoked records. Bounded serialization and length-gated reads prevent
+  materializing over-budget serialized blobs. Session reads validate accounting
+  in one snapshot; create/save/transaction paths commit state, usage, and the
+  job index together. Writes verify checksummed accounting metadata before
+  using its capacity; this scans the bounded session set. Thirteen core tests
+  and two real-QUIC tests cover capacity,
+  concurrency, restart, corruption, rollback, and retained-declaration replay.
+  The complete suite passed with 153 Rust workspace tests (79 core, 27 Quinn
+  unit, 44 wire, one allocation gate, two runner tests), Java/C++ suites, nine
+  transfer pairings, 32 capability probes, and all external examples.
+  Payload format 6 is unchanged, but nonempty unaccounted stores are refused
+  without conversion. No operational database was migrated.
+- Not yet implemented: physical database/WAL and retained-payload quotas,
+  completion-space reservations, orphan reclamation,
   storage-stall handling, and the independent Java
   profile. Physical execution limits and temporary spools are coordinated only
   within one writer process; broader tenant/resource stress evidence remains due.
@@ -162,7 +177,8 @@ The service now populates job descriptors and reopens retained input. Lease
 expiry is not callback cancellation. Periodic dispatch can reacquire unfinished
 expired attempts, but does not retry application-refused jobs automatically.
 Temporary spool accounting is process-local and excludes permanent entity files
-and SQLite state. Add durable quotas and explicit orphan reconciliation without
+and physical SQLite storage. Add physical quotas, completion reservations, and
+explicit orphan reconciliation without
 deleting a live generation or treating missing input as completed work.
 Do not treat recovery receipts or publication fencing as completion of bounded
 asynchronous execution. Java still implements only the earlier Layer 0 subset.

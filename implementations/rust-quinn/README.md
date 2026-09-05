@@ -223,6 +223,44 @@ measurement, not a process-RSS, concurrency, or throughput claim.
 
 ## Bounded asynchronous execution
 
+### Retained session-state quotas
+
+`SqliteSessionStore::open_with_limits(path, JobQueueLimits, StorageLimits)` sets
+both durable policies when creating a database. Default state limits are
+128 MiB and 4,096 sessions globally, 32 MiB and 1,024 sessions per authority and
+principal, and 8 MiB per serialized record. Anonymous sessions share one bucket.
+`storage_usage` and `principal_storage_usage` report retained bytes and counts.
+
+All create/save/transaction paths commit the state charge, session revision,
+and job index atomically. Completing, refusing, or revoking work does not erase
+its retained-state charge. A full store refuses new work with
+`PIPESTREAM_LIMIT_EXCEEDED`, without changing previously acknowledged state or
+evicting receipts. Identical declaration replay remains possible at the session
+count limit. Serialization stops at the record cap rather than allocating an
+oversized output and checking afterward. Reads cap blob materialization and
+validate the accounting entry in the same SQLite snapshot as the session.
+
+The storage policy persists across reopen and cannot be replaced by another
+handle. Missing policy or accounting is corruption, not empty capacity.
+`integrity_check` verifies per-session identity/length and aggregate limits.
+Every write verifies checksummed accounting metadata before using its capacity;
+missing or altered entries cannot create free space for another session. This
+scan is bounded by the session-count policy, not constant-time. No large-store
+throughput claim is made.
+The session payload format remains version 6, but old nonempty databases without
+the accounting schema are refused. No operational database is migrated or
+silently assigned new quotas. Preserve old stores with their matching binary.
+
+These are logical serialized-state quotas, not bounds on database pages, WAL,
+indexes, retained payload files, or total process memory. SQLite can retain WAL
+pages while readers hold snapshots; an automatic checkpoint is not a hard disk
+limit ([SQLite WAL documentation](https://sqlite.org/wal.html)). Completion-space
+reservations are also unfinished: admission does not reserve every possible
+future outcome's bytes, and quota exhaustion can refuse a later publication.
+Such work remains unfinished and charged; no successful completion is invented.
+Physical file quotas, orphan reconciliation, and storage-stall isolation remain
+part of the full execution requirement.
+
 ### Durable queue APIs
 
 The core provides `Session::enqueue_job`, `acquire_job`, `publish_job`, and
