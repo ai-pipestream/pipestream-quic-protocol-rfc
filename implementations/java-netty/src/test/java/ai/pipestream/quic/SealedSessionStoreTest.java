@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.math.BigInteger;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.sql.DriverManager;
 import java.util.List;
 import java.util.UUID;
@@ -240,7 +241,8 @@ final class SealedSessionStoreTest {
     Path foreign = directory.resolve("foreign.sqlite3");
     try (var connection = DriverManager.getConnection("jdbc:sqlite:" + foreign); var statement = connection.createStatement()) {
       statement.execute("CREATE TABLE unrelated (value INTEGER)");
-      assertThrows(java.sql.SQLException.class, () -> SealedSessionStore.open(foreign));
+      assertThrows(java.io.IOException.class, () -> SealedSessionStore.open(foreign));
+      assertFalse(Files.exists(foreign.resolveSibling("foreign.sqlite3.psjlimits")));
       try (var rows = statement.executeQuery("PRAGMA journal_mode")) { assertTrue(rows.next()); assertEquals("delete", rows.getString(1)); }
     }
   }

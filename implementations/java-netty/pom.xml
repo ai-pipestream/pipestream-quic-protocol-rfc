@@ -53,6 +53,53 @@
   <build>
     <plugins>
       <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.6.3</version>
+        <executions>
+          <execution>
+            <id>configure-sqlite-guard</id>
+            <phase>generate-resources</phase>
+            <goals><goal>exec</goal></goals>
+            <configuration>
+              <executable>cmake</executable>
+              <arguments>
+                <argument>-S</argument><argument>${project.basedir}/native</argument>
+                <argument>-B</argument><argument>${project.build.directory}/native</argument>
+                <argument>-DCMAKE_BUILD_TYPE=RelWithDebInfo</argument>
+                <argument>-DBUILD_TESTING=ON</argument>
+                <argument>-DPIPESTREAM_NATIVE_OUTPUT=${project.build.outputDirectory}/ai/pipestream/quic/native</argument>
+              </arguments>
+            </configuration>
+          </execution>
+          <execution>
+            <id>test-sqlite-guard</id>
+            <phase>test</phase>
+            <goals><goal>exec</goal></goals>
+            <configuration>
+              <skip>${skipTests}</skip>
+              <executable>ctest</executable>
+              <arguments>
+                <argument>--test-dir</argument><argument>${project.build.directory}/native</argument>
+                <argument>--output-on-failure</argument><argument>--no-tests=error</argument>
+              </arguments>
+            </configuration>
+          </execution>
+          <execution>
+            <id>build-sqlite-guard</id>
+            <phase>generate-resources</phase>
+            <goals><goal>exec</goal></goals>
+            <configuration>
+              <executable>cmake</executable>
+              <arguments>
+                <argument>--build</argument><argument>${project.build.directory}/native</argument>
+                <argument>--parallel</argument><argument>2</argument>
+              </arguments>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-enforcer-plugin</artifactId>
         <version>3.6.3</version>

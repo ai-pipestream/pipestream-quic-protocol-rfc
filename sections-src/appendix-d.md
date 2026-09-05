@@ -38,6 +38,8 @@ Coverage:
     A separate public SealedServer integrates these libraries with bounded
     Netty ingress, asynchronous execution, pending checkpoint deadlines,
     durable request/ACK replay identity, and recursive completion.
+    A small native SQLite extension supplies JDBC file-length enforcement;
+    it contains no PipeStream protocol or state-machine code.
 
 Licensing:
 :   MIT.
@@ -227,8 +229,26 @@ truncates, and shared-memory mappings, with preallocation and database mmap
 disabled. Tests exhaust each file budget, hold WAL readers, interrupt a process,
 and verify transaction rollback and a named capacity refusal over real QUIC.
 This is a file-length boundary for cooperating writers in a private directory,
-not a filesystem-allocation quota. Java JDBC bounds, completion reservations,
-and orphan reconciliation remain unfinished.
+not a filesystem-allocation quota. Completion reservations and orphan
+reconciliation remain unfinished.
+
+Java separately enforces main database, WAL, rollback-journal and shared-memory
+file lengths through a non-default VFS over Xerial's bundled Unix SQLite engine.
+The packaged native extension does not link a second SQLite runtime or share
+Rust protocol code. Private bootstrap registration is bounded, and VFS callbacks
+remain loaded after bootstrap closure. Ordinary connections cannot manage the
+registry or load extensions.
+An immutable checksummed policy is synced before database creation. Every store
+connection sets a main-page cap, and writes, truncates and shared-memory maps
+check growth before delegation. Preallocation and database mmap are disabled.
+Existing nonempty stores without policy, changed policies, incompatible backends,
+corruption and aliases refuse without conversion. Native file-method and JDBC
+tests cover actual file exhaustion, rollback, held WAL readers, registry capacity
+and abrupt exit with an uncheckpointed WAL. A real-QUIC test verifies named
+capacity refusal, retained membership, and replay after checkpointing and reopen.
+The current backend supports private local directories and cooperating writers
+on 64-bit Linux. These are file-length limits, not filesystem-allocation quotas,
+authenticated principal quotas or future completion-space reservations.
 
 The Rust retained-payload store separately reserves global and authority/principal
 bytes and object counts, including lineage, before disk creation. An immutable

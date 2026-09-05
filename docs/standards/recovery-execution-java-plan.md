@@ -339,8 +339,29 @@ approval as part of a repository landing.
   89 Java tests with no skips, C++, all nine Layer 0 pairings, 32 capability
   probes, recursive/recovery CLI checks and every external example. Draft -04
   passed idnits with zero errors/flaws/warnings and one FIPS reference comment.
-- Not yet implemented: Java physical database/WAL bounds,
-  completion-space reservations, orphan reclamation,
+- Java SQLite file-length increment: a packaged native extension registers a
+  non-default bounded VFS inside the pinned JDBC engine. It carries no PipeStream
+  protocol/state code or Rust dependency. Main/WAL/journal/shared-memory limits
+  are immutable, checksummed and synced before database creation. Writes,
+  truncates and shared-memory maps check bounds before growth, and store
+  connections set a main-page cap. Mmap and preallocation cannot bypass the caps.
+  Nonempty unaccounted stores, policy drift, aliases and unsupported backends
+  refuse without conversion; the Java schema remains version 3.
+  Nine JDBC tests cover database/WAL/journal exhaustion, rollback, held readers,
+  immutable policy, oversized/corrupt layouts, concurrent handles, bounded native
+  registrations and abrupt exit with uncheckpointed WAL. Direct native tests
+  exercise all four file families and growth controls. A real-QUIC test checks
+  named refusal, retained membership, absent accidental payload/job admission,
+  and replay after checkpointing and reopen. Completion reservations,
+  authenticated Java principal quotas and the full crash/resource matrix remain
+  due. No operational database was converted.
+  The final `./conformance/run_all.sh` passed with 196 Rust workspace tests,
+  99 Java tests with no errors/failures/skips, the native SQLite test, C++, all
+  nine Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks and
+  every external example. Native address/undefined-behavior sanitizer checks
+  and strict public Javadoc passed. Draft -04 passed idnits with zero errors,
+  flaws and warnings and one informational FIPS reference comment.
+- Not yet implemented: completion-space reservations, orphan reclamation,
   persistent producer observations, and the remaining independent Java
   profile requirement matrix. Physical execution limits and temporary spools are coordinated only
   within one writer process; broader tenant/resource stress evidence remains due.
@@ -356,8 +377,8 @@ The service now populates job descriptors and reopens retained input. Lease
 expiry is not callback cancellation. Periodic dispatch can reacquire unfinished
 expired attempts, but does not retry application-refused jobs automatically.
 Temporary spool accounting is process-local and excludes permanent entity files.
-Rust SQLite file-length caps are now independent of that accounting. Add Java
-database bounds, completion reservations, and
+Rust and Java SQLite file-length caps are now independent of that accounting.
+Add completion reservations and
 explicit orphan reconciliation without
 deleting a live generation or treating missing input as completed work.
 Do not treat recovery receipts or publication fencing as completion of bounded

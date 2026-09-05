@@ -137,6 +137,58 @@ final class SealedServerTest {
     }
   }
 
+  @Test void walCapacityRefusesOverQuicWithoutLosingDeclaredWorkAndReplayResumesAfterCheckpoint() throws Exception {
+    Path certs = certificates(), database = directory.resolve("sessions.sqlite3");
+    var policy = new SealedSessionStore.FileLimits(4L << 20, 65536, 2L << 20, 65536);
+    SealedSessionStore.open(database, policy);
+    var accepted = new java.util.ArrayList<SealedWork.Declaration>();
+    var root = declaration(0, null, 0, List.of(1L), null);
+    accepted.add(root);
+    SealedWork.Declaration refused = null;
+    try (var fixture = new Fixture(certs, (context, input) -> complete(input))) {
+      var files = SealedSqliteFiles.open(database, policy);
+      try (var client = connect(fixture.server, certs); var reader = files.connect(); var statement = reader.createStatement()) {
+        client.declare(root);
+        statement.execute("BEGIN");
+        try {
+          try (var rows = statement.executeQuery("SELECT count(*) FROM ps_java_entities")) {
+            assertTrue(rows.next()); assertEquals(1, rows.getLong(1));
+          }
+          for (int batch = 1; batch < 128; batch++) {
+            long first = (batch - 1) * 8L + 2;
+            var request = declaration(0, null, batch, java.util.stream.LongStream.range(first, first + 8).boxed().toList(), null);
+            try { assertEquals(request.acknowledgement(), client.declare(request)); accepted.add(request); }
+            catch (ProtocolException full) {
+              assertEquals(Wire.ERROR_LIMIT_EXCEEDED, full.errorCode()); refused = request; break;
+            }
+          }
+          assertNotNull(refused, "real WAL exhaustion must reach the public QUIC client");
+          long committed = accepted.stream().mapToLong(batch -> batch.entityIds().size()).sum();
+          assertEquals(committed, fixture.sessions.declared(SESSION, PRODUCER, 0).size());
+          assertFalse(fixture.sessions.checkpointReady(SESSION, PRODUCER, 0, committed));
+          assertEquals(0, fixture.payloads.usage().retainedFiles());
+          assertTrue(fixture.sessions.fileUsage().walBytes() <= policy.walBytes());
+          try (var rows = statement.executeQuery("SELECT count(*) FROM ps_java_entities")) {
+            assertTrue(rows.next()); assertEquals(1, rows.getLong(1), "held snapshot must not advance");
+          }
+        } finally { statement.execute("ROLLBACK"); }
+        try (var checkpoint = statement.executeQuery("PRAGMA wal_checkpoint(TRUNCATE)")) {
+          assertTrue(checkpoint.next()); assertEquals(0, checkpoint.getInt(1));
+        }
+        try (var rows = statement.executeQuery("SELECT count(*) FROM ps_java_jobs")) {
+          assertTrue(rows.next()); assertEquals(0, rows.getLong(1));
+        }
+      }
+      try (var replay = connect(fixture.server, certs)) {
+        for (var request : accepted) assertEquals(request.acknowledgement(), replay.declare(request));
+        assertEquals(refused.acknowledgement(), replay.declare(refused));
+      }
+      assertTrue(fixture.server.failure().isEmpty());
+    }
+    assertEquals(policy, SealedSessionStore.open(database).fileLimits());
+    assertEquals(refused.acknowledgement(), SealedSessionStore.open(database).declare(refused, 7, 16384));
+  }
+
   @Test void resetStreamNeverCompletesDeclaredWorkAndCheckpointAckReplaysAfterRestart() throws Exception {
     Path certs = certificates(); var calls = new AtomicInteger();
     SealedExecutor.Processor processor = (context, input) -> { calls.incrementAndGet(); return complete(input); };

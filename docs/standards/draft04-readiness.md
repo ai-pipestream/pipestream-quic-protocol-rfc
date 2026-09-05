@@ -426,6 +426,51 @@ Java tests, the C++ test, nine transfer pairings, 32 capability probes, and
 all external examples. Draft -04 passed idnits with zero errors, flaws, and
 warnings, and one informational FIPS reference comment.
 
+## Java SQLite file-length bounds
+
+Every Java session-store connection now selects a bounded VFS inside Xerial's
+bundled SQLite engine. The small C extension is packaged with the Java library;
+the codec, state machine, listener, producer and executor remain independent
+Java code. No Rust protocol/state code or second runtime SQLite is linked.
+The build pins and verifies SQLite's public-header archive against SHA-256 and
+refuses an incompatible runtime version. The current backend is 64-bit Linux.
+
+An immutable checksummed 72-byte `PSJDB001` policy is synced before database
+creation. Default caps are 256 MiB database, 64 MiB WAL, 64 MiB rollback journal
+and 512 KiB shared memory. A main-page cap prevents WAL commits from outgrowing
+the eventual main-file limit. Guarded writes, truncates and shared-memory maps
+check growth; database mmap, size hints and chunk preallocation cannot bypass
+the policy. A fixed native registry allows 64 concurrent database identities and
+releases capacity after their final open file closes. The private registration
+connection does not expose its SQL functions to normal store connections.
+
+JDBC tests exhaust actual main/WAL/journal storage, preserve committed rows and
+declarations after rollback, hold readers through busy checkpoints, reject policy
+changes and oversized/aliased files, exhaust/reclaim the registry, use concurrent
+handles and abruptly exit with uncheckpointed WAL. Direct native tests exercise
+main/WAL/journal/shared-memory file methods, negative and overflowing offsets,
+preallocation controls, and callback lifetime after the loading connection closes.
+They also pass under address and undefined-behavior sanitizers. A real-QUIC test
+receives `PIPESTREAM_LIMIT_EXCEEDED` at WAL capacity, retains exact acknowledged
+membership with no accidental payload/job admission, and replays declarations
+after checkpointing and reopen.
+
+Nonempty unaccounted stores are refused before SQLite can change them; no
+operational database was converted. Schema version 3, normative wire messages
+and CDDL are unchanged. These are file-length caps for cooperating writers in
+private local directories, not allocated filesystem bounds, Java principal
+quotas or future completion-space reservations. Full producer resumption,
+orphan reconciliation and broader crash/resource evidence remain required.
+
+The final `./conformance/run_all.sh` passed with 196 Rust workspace tests
+(91 core, 51 Quinn unit, 50 wire, one allocation gate, three runner tests),
+99 Java tests without errors/failures/skips, the native SQLite test, C++, all
+nine Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks and
+every external example. The native address/undefined-behavior sanitizer gate
+and strict public Javadoc passed. Draft -04 passed idnits with zero errors,
+flaws and warnings and one informational FIPS reference comment. These are
+local validation results, not independent review or a full conformance claim.
+
 ## Validation
 
 ### Independent Java sealed-work foundation
