@@ -55,6 +55,11 @@ Maturity:
 Coverage:
 :   Layer 0 plus Layer 1 recursive scopes, cross-scope parent identity, nested out-of-order completion, SCOPE_DIGEST verification, BARRIER, scoped checkpoints, rehydration, and lineage digests. Its Layer 2 subset provides durable yield, claim checks, cross-connection CLAIM_REDEMPTION, replay refusal, SQLite WAL recovery, and immutable payload storage. TLS 1.3 with ALPN `pipestream/1` is mandatory and 0-RTT is disabled. The original one-entity Layer 0 command remains available for the polyglot interoperability matrix.
 
+    The separate private-use profile in Section 9.8 provides client-owned
+    work-set declarations and seals, durable declaration ACK replay,
+    non-reused identities, and fixed full-scope completion cuts. It excludes
+    Layer 2 and does not provide authenticated session ownership.
+
 Licensing:
 :   MIT.
 
@@ -98,13 +103,19 @@ serialized recovery execution. Its payload processing is whole-entity
 buffered and its application callbacks are synchronous.
 
 The durable Rust prototype lacks authenticated principal/session binding,
-automatic retry scheduling, a general sealed-work-set protocol, scoped
+automatic retry scheduling, bidirectional work-set origination, scoped
 cursor recycling, and an ambiguous-redemption-outcome operation. Its
 Layer 2 advertisement does not identify the narrower implemented subset.
 It is unsuitable for untrusted multi-tenant deployment without additional
 implementation work. Java and C++ do not yet provide independent evidence
 for recursive or resilience semantics. These limitations remain open;
 passing vectors or document checks does not resolve them.
+
+Rust-only tests exercise Section 9.8 with frozen wire fixtures, reordered
+descendants, missing declarations and payloads, immutable seal refusals,
+and a public-client reconnect after an unobserved declaration ACK and
+server restart. Java and C++ do not implement this private-use profile.
+Its presence does not establish cross-language sealed-work interoperability.
 
 The repository's protocol-neutral Rust driver starts each executable as a separate process and tests all nine client/server pairings. The driver has no dependency on a PipeStream implementation and does not encode or decode PipeStream frames. The implementations share the normative specification, CDDL, and golden vector corpus, but no protocol implementation code. The current suite verifies binary and UTF-8 payload transfer, parent identity, status progression, checkpoint acknowledgement, cursor advancement, graceful GOAWAY, and byte-exact delivery. The result is reproducible evidence for the listed protocol subset, not a claim of complete support for every optional field or extension in this document.
 

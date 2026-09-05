@@ -222,10 +222,16 @@ fn validate_cddl(root: &Path) -> Result<()> {
     let mut accepted_paths = Vec::new();
     let mut refused_paths = Vec::new();
     let mut index = fs::read_to_string(root.join("test-vectors/cddl/index.tsv"))?;
-    let extensions = fs::read_to_string(root.join("test-vectors/cddl/extensions.tsv"))?;
-    for row in extensions.lines().skip(1) {
-        index.push_str(row);
-        index.push('\n');
+    for fixture in ["extensions.tsv", "work-sets.tsv"] {
+        let additional = fs::read_to_string(root.join("test-vectors/cddl").join(fixture))?;
+        ensure!(
+            additional.lines().next() == Some("name\texpectation\thex"),
+            "unexpected CDDL fixture header: {fixture}"
+        );
+        for row in additional.lines().skip(1) {
+            index.push_str(row);
+            index.push('\n');
+        }
     }
     let mut lines = index.lines();
     ensure!(

@@ -8,6 +8,7 @@ pub mod extensions;
 pub mod persistence;
 pub mod session;
 pub mod uri;
+pub mod work_set;
 
 pub const ALPN: &[u8] = b"pipestream/1";
 pub const FRAME_STATUS: u8 = 0x50;
@@ -154,6 +155,17 @@ impl Capabilities {
         let layer1_recursive = self.layer1_recursive && peer.layer1_recursive;
         let layer2_resilience =
             self.layer2_resilience && peer.layer2_resilience && layer1_recursive;
+        if extensions
+            .supported
+            .contains(&work_set::EXTENSION_SEALED_WORK_SETS)
+            && (!layer1_recursive || layer2_resilience)
+        {
+            return Err(ProtocolError::new(
+                ERROR_EXTENSION_UNSUPPORTED,
+                "PIPESTREAM_EXTENSION_UNSUPPORTED",
+                "sealed work sets require Layer 1 without Layer 2",
+            ));
+        }
         Ok(Self {
             layer0_core: true,
             layer1_recursive,
@@ -175,6 +187,16 @@ impl Capabilities {
 
     pub fn validate_response(&self, response: &Self) -> Result<(), ProtocolError> {
         self.extensions.validate_response(&response.extensions)?;
+        if response
+            .extensions
+            .supported
+            .contains(&work_set::EXTENSION_SEALED_WORK_SETS)
+            && (!response.layer1_recursive || response.layer2_resilience)
+        {
+            return Err(ProtocolError::frame(
+                "invalid sealed-work capability combination",
+            ));
+        }
         if !response.layer0_core
             || (response.layer1_recursive && !self.layer1_recursive)
             || (response.layer2_resilience

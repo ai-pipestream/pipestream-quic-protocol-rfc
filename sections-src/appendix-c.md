@@ -70,6 +70,19 @@ capabilities = {
   ? required-extensions: extension-list,  ; Default: []
 }
 
+; Sealed work sets, negotiated private-use profile (Section 9.8).
+work-set-frame = {
+  flags: uint .le 3,
+  scope-id: uint32,
+  sequence: uint,
+  session-id: tstr .size (1..128),
+  producer-id: bstr .size 16,
+  entity-ids: [0*256 entity-id],
+  ? parent-id: entity-id,
+  ? parent-scope-id: uint32,
+  ? seal-digest: bstr .size 32,
+}
+
 ; -----------------------------------------------------------
 ; Entity header (prefixes each entity on Entity Streams)
 ; -----------------------------------------------------------

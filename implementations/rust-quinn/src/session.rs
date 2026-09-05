@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const SESSION_FORMAT_VERSION: u16 = 1;
+pub const SESSION_FORMAT_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EntityKey {
@@ -175,6 +175,7 @@ pub struct Session {
     pub manifests: BTreeMap<EntityKey, AssemblyManifest>,
     pub checkpoints: BTreeMap<(u32, u64), StoredCheckpoint>,
     pub claims: BTreeMap<u64, ClaimRecord>,
+    pub work_sets: Option<crate::work_set::WorkSets>,
 }
 
 impl Session {
@@ -213,6 +214,7 @@ impl Session {
             manifests: BTreeMap::new(),
             checkpoints: BTreeMap::new(),
             claims: BTreeMap::new(),
+            work_sets: None,
         })
     }
 
@@ -423,6 +425,11 @@ impl Session {
     }
 
     pub fn scope_digest(&self, scope_id: u32) -> Result<ScopeDigest, ProtocolError> {
+        if self.work_sets.is_some() && !self.work_scope_ready(scope_id) {
+            return Err(scope_error(
+                "work set is unsealed or has unresolved declarations",
+            ));
+        }
         if scope_id == 0 {
             return Err(scope_error("root scope is not propagated"));
         }
@@ -570,6 +577,16 @@ impl Session {
             .scopes
             .get(&scope_id)
             .ok_or_else(|| scope_error("checkpoint scope is not registered"))?;
+        if let Some(work) = &self.work_sets {
+            if !self.work_scope_ready(scope_id) {
+                return Ok(false);
+            }
+            if work.scopes[&scope_id].ids.last() != Some(&checkpoint.checkpoint_entity_id) {
+                return Err(entity_error(
+                    "sealed checkpoint must name the last declared entity",
+                ));
+            }
+        }
         for entity_id in &scope.entities {
             if is_before(*entity_id, checkpoint.checkpoint_entity_id) {
                 let record = self
@@ -742,6 +759,11 @@ impl Session {
     }
 
     pub fn final_lineage_digest(&self) -> Result<[u8; 32], ProtocolError> {
+        if self.work_sets.as_ref().is_some_and(|work| {
+            work.scopes.is_empty() || work.scopes.keys().any(|id| !self.work_scope_ready(*id))
+        }) {
+            return Err(entity_error("session has unresolved work-set declarations"));
+        }
         if self
             .entities
             .values()
@@ -763,7 +785,17 @@ impl Session {
             return Err(entity_error("session lineage is not terminal"));
         }
         let mut hasher = Sha256::new();
-        hasher.update(b"pipestream-lineage-v1");
+        if let Some(work) = &self.work_sets {
+            hasher.update(b"pipestream-lineage-sealed-v1");
+            hasher.update(work.producer_id);
+            hasher.update((work.scopes.len() as u64).to_be_bytes());
+            for (id, scope) in &work.scopes {
+                hasher.update(id.to_be_bytes());
+                hasher.update(scope.seal_digest.expect("work readiness checked above"));
+            }
+        } else {
+            hasher.update(b"pipestream-lineage-v1");
+        }
         hasher.update((self.session_id.len() as u64).to_be_bytes());
         hasher.update(self.session_id.as_bytes());
         for (key, entity) in &self.entities {
@@ -805,6 +837,7 @@ impl Session {
         depth: u8,
         entity: NewEntity,
     ) -> Result<(), ProtocolError> {
+        self.work_admission(key, parent)?;
         validate_entity_id(key.entity_id)?;
         if entity.layer > 3 {
             return Err(entity_error("entity layer exceeds 3"));
@@ -836,7 +869,7 @@ impl Session {
         Ok(())
     }
 
-    fn entity_is_resolved(&self, entity: &EntityRecord) -> bool {
+    pub(crate) fn entity_is_resolved(&self, entity: &EntityRecord) -> bool {
         if entity.state != EntityState::Failed {
             return entity.state.is_terminal();
         }

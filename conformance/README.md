@@ -100,3 +100,26 @@ checks that they fail before sending an Entity Stream. The probe parses
 only UCF type/length framing and does not use a PipeStream implementation
 to decide expected semantics. No production extension is enabled to make
 these tests pass.
+
+## Sealed-work profile evidence
+
+`test-vectors/work-sets.tsv` adds 20 frozen UCF inputs for the Rust
+`sealed-work-sets-v1` codec. The CBOR was constructed independently of the
+production codec; the root-seal SHA-256 was calculated separately from the
+specified concatenation using Node's crypto library. The test path only
+reads these files and compares exact encoding and the seal digest.
+`test-vectors/cddl/work-sets.tsv` tests the same message shapes. Sorted IDs,
+paired parents, flag/digest agreement, and other semantic constraints are
+checked by the Rust codec, not claimed as CDDL validation.
+
+`quinn/tests/draft04/sealed_work.rs` tests missing declared payloads, missing
+seals, out-of-order descendants, invalid admission, late declarations, early
+GOAWAY, declaration ACK correlation, and public-client replay after a server
+restart with an unobserved ACK. Core tests also reopen the SQLite WAL store,
+pin immutable state on refusal, check the maximum entity ID, and refuse old
+session-format records without conversion.
+
+These are Rust-only profile tests. Java and C++ still refuse this required
+extension; their existing Layer 0 transfer matrix is not evidence for
+sealed-work interoperability. No authenticated recovery or bidirectional
+producer support is implied.

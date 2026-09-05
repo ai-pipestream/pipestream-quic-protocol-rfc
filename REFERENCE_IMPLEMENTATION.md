@@ -10,8 +10,10 @@ The checked-in [`test-vectors/`](test-vectors/) corpus supplies frozen valid and
 
 All three implementations cover a documented Layer 0 subset, not all mandatory
 Layer 0 behavior. Rust additionally exercises recursive scopes and selected
-durable-yield and claim-redemption operations. There is not yet a negotiated
-wire capability identifying that narrower subset. Java and C++ do not
+durable-yield and claim-redemption operations. Its separate sealed-work-set
+profile is explicitly negotiated as private-use extension 65281 and excludes
+Layer 2; the legacy resilience subset still lacks its own narrower capability.
+Java and C++ do not
 implement those layers. See [draft-04 readiness](docs/standards/draft04-readiness.md)
 for the evidence and open work. The algorithms below are informative and
 are not implied by a successful interoperability run.

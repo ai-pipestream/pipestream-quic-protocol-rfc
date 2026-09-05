@@ -6,6 +6,9 @@ use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use std::{collections::BTreeMap, fs, sync::Arc, time::Duration};
 
+#[path = "draft04/sealed_work.rs"]
+mod sealed_work;
+
 // Raw QUIC peers exercise ordering and refusal behavior independently of RecursiveClient.
 struct Fixture {
     dir: tempfile::TempDir,
@@ -72,6 +75,18 @@ impl Fixture {
         depth: u8,
         processor: Arc<P>,
     ) -> Result<Self> {
+        Self::with_capabilities(offer(layers, depth), processor).await
+    }
+
+    async fn with_capabilities<P: EntityProcessor>(
+        capabilities: Capabilities,
+        processor: Arc<P>,
+    ) -> Result<Self> {
+        let depth = capabilities.effective_max_scope_depth();
+        let layers = LayerSupport {
+            layer1_recursive: capabilities.layer1_recursive,
+            layer2_resilience: capabilities.layer2_resilience,
+        };
         let dir = tempfile::tempdir()?;
         let options = options(dir.path());
         let service = RecursiveService::with_limits(
@@ -102,8 +117,7 @@ impl Fixture {
         )));
         let connection = endpoint.connect(address, "localhost")?.await?;
         let (mut send, mut recv) = connection.open_bi().await?;
-        send.write_all(&encode_capabilities(&offer(layers, depth))?)
-            .await?;
+        send.write_all(&encode_capabilities(&capabilities)?).await?;
         let (kind, body) = read(&mut recv).await?;
         assert_eq!(kind, FRAME_CAPABILITIES);
         assert_eq!(

@@ -15,6 +15,9 @@ the design is complete or that the IETF has adopted it.
 - [x] Compare shared CDDL definitions to Appendix C, not only to fixtures.
 - [x] Define supported/required extension negotiation and its proposed registry,
       with shared independent-codec cases and actual QUIC refusal tests.
+- [x] Specify a private-use, client-owned sealed-work profile and implement
+      declaration/seal ACKs, durable replay, and fixed completion cuts in Rust.
+      This is not independent interoperability or an authenticated profile.
 
 ## Author confirmation and submission
 
@@ -34,6 +37,7 @@ change the filename alone to advance the draft revision.
 
 No mailing-list announcement, chair contact, draft submission, or IANA
 registration is implied by merging this repository. Before requesting
-adoption, resolve Appendix E's identity, work-set closure, and authenticated
-profile choices and obtain review from independent implementers. Two or three
+adoption, validate the private-use closure profile independently, resolve
+Appendix E's bidirectional identity and authenticated-profile choices, and
+obtain review from independent implementers. Two or three
 languages maintained by one project do not constitute IETF approval.

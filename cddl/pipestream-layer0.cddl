@@ -4,7 +4,7 @@
 ; draft-krickert-pipestream. The conformance suite verifies that the definitions
 ; remain synchronized with the draft source.
 
-pipestream-message = pipestream-layer0-message / claim-redemption-frame
+pipestream-message = pipestream-layer0-message / claim-redemption-frame / work-set-frame
 pipestream-layer0-message = capabilities / entity-header / checkpoint-frame
 
 uint32 = 0..4294967295
@@ -80,3 +80,15 @@ claim-redemption-frame = {
 }
 
 claim-redemption-flags = uint .le 1
+
+work-set-frame = {
+  flags: uint .le 3,
+  scope-id: uint32,
+  sequence: uint,
+  session-id: tstr .size (1..128),
+  producer-id: bstr .size 16,
+  entity-ids: [0*256 entity-id],
+  ? parent-id: entity-id,
+  ? parent-scope-id: uint32,
+  ? seal-digest: bstr .size 32,
+}
