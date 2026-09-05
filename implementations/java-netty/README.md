@@ -52,7 +52,8 @@ The JDBC driver requires native access; run an embedding application with
 All storage calls are blocking and must run outside Netty event loops.
 Application callbacks are not executed under storage transactions. Producer
 labels are not credentials, and these APIs do not provide executor fencing,
-payload storage, authenticated recovery, or exactly-once external effects.
+authenticated recovery, or exactly-once external effects. The separate payload
+library below supplies retained input, not state-machine admission or execution.
 
 Persistent local policy allows 512 sessions, 65,536 declared entities globally,
 and 16,384 per session, in addition to negotiated per-scope and depth limits.
@@ -65,6 +66,59 @@ not advertise `sealed-work-sets-v1`. The separate public client below requires
 that profile. A sealed server integrating this store with incremental payload
 and chunk ingestion, asynchronous processing, pending checkpoints, and GOAWAY
 remains required, together with Rust-to-Java recursive/reconnect tests.
+
+## Sealed-work payload storage
+
+`SealedPayloadStore.open(directory, limits)` owns a dedicated local directory,
+separate from the SQLite state store. `begin(identity, header)` returns an
+incremental receiver: `write` charges temporary capacity before each at-most-8-KiB
+file write, and `finish` checks measured length and SHA-256 before transferring
+spool ownership to a `Received` receipt. Close unfinished receivers or receipts
+to release their spools. Installation pins receipts against concurrent close;
+failed cleanup retains conservative capacity charges.
+
+`install(receipts)` validates the complete entity or chunk set, including
+identity, headers, indexes, and contiguous nonoverlapping offsets. It streams
+the inputs into a checksummed `PSJPAY01` object, syncs the file, publishes it
+with a no-replace hard link, and syncs the directory. The installed filename
+hashes the scoped identity; request text never becomes a path component.
+Identical replay reuses and verifies the existing object without requiring
+new retained-file headroom. Changed bytes or commitments are refused.
+`find(identity)` and `Stored.openStream()` verify retained metadata and the
+complete payload before exposing input to an application. The latter then
+reads from that same opened file; this adds a verification pass, not a
+whole-payload allocation.
+
+Persistent defaults allow 256 MiB/4,096 temporary files, 512 MiB/8,192 retained
+files, 64 MiB per assembled entity, and 1,024 chunks per entity. Publication
+reserves the complete object length and file credit for both staging and final
+names. These are conservative logical file-length charges, including metadata,
+not filesystem-block, SQLite/WAL, page-cache, or whole-process memory bounds.
+There is also a fixed aggregate limit of 128 active receivers, receipts,
+readers, and operations. That limit can refuse a chunk set below the configured
+chunk count; exhaustion is `PIPESTREAM_LIMIT_EXCEEDED`, never completion.
+It is not a per-principal quota.
+
+Reopen requires the exact recorded policy and counts abandoned files without
+deleting them or inferring admission. Unknown layouts, symlinks, and incompatible
+policies are refused without conversion. One cooperative writer owns the
+directory lock; duplicate same-process opens are refused before opening a
+second lock channel. The latter matters because closing another channel can
+release a JVM's locks on that file ([JDK FileLock documentation](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/nio/channels/FileLock.html)).
+Use one loaded copy of this library for a store in a process. Locks are advisory;
+unrelated filesystem writers, separate class loaders sharing a store, and network
+filesystem semantics are outside this implementation's supported boundary.
+The filesystem must support hard links and directory synchronization.
+
+These calls are blocking and must run outside Netty event loops. Installing a
+payload does not admit or complete an entity: the session store must still
+commit admission and execution state. An abrupt-exit test checks that a file
+installed before admission remains unadmitted after restart. Other tests cover
+chunk geometry, integrity, concurrent installation/close, immutable replay at
+capacity, and cross-process writer exclusion. A 32 MiB receive/install/read test
+runs in a JVM with a 24 MiB maximum heap; it is not a QUIC, native-memory, RSS,
+or concurrent-throughput measurement. Java sealed-server integration, durable
+dispatch, and explicit orphan reconciliation remain unfinished.
 
 ## Sealed-work network producer
 

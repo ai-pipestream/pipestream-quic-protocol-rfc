@@ -429,6 +429,40 @@ checks, and all external examples. New Java public APIs passed Javadoc with
 `-Xdoclint:all -Werror`. Draft -04 passed idnits with zero errors, flaws, and
 warnings and one informational FIPS reference comment.
 
+### Independent Java payload store
+
+`SealedPayloadStore` receives into quota-charged files, checks FIN length and
+checksum, validates complete chunk geometry, and installs immutable input
+before session admission. Publication reserves both staging and final-name
+capacity and syncs file and directory state. Retained metadata is bounded and
+checksummed; readers verify the complete payload without whole-entity buffering.
+Identical replay remains possible without fresh publication headroom. Changed
+payloads, layouts, and persistent policy are refused without conversion.
+
+Tests cover concurrent installation, cancellation while an installer holds a
+receipt, concurrent reader close, corrupt input, quota refusal, and abandoned
+file accounting. A subprocess exits after installing a payload but before
+admission; reopening never turns that orphan into admitted or completed work.
+Cross-process tests also cover a rejected same-process duplicate open: a
+process-local guard prevents a second lock-channel close from releasing the
+first writer's OS lock. The supported boundary is one cooperative local
+filesystem writer and one loaded library copy per store in that process.
+
+The 32 MiB receive/install/read test passes under a 24 MiB Java maximum heap.
+This is a storage-library allocation guard, not a QUIC, RSS, native-memory, or
+concurrency measurement. Quotas count logical file lengths and file names,
+including staging and object headers; filesystem blocks, SQLite/WAL,
+per-principal accounting, orphan reconciliation, and server integration remain
+outside this increment. No wire schema, Rust session format, or Java SQLite
+format changed. The Java listener still advertises only Layer 0.
+
+The full `./conformance/run_all.sh` passed with 164 Rust workspace tests,
+55 Java tests with no skips (15 new payload tests), C++, all nine existing
+Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks, and
+every external example. The new Java API passed Javadoc with
+`-Xdoclint:all -Werror`. Draft -04 passed idnits with zero errors, flaws, and
+warnings and one informational FIPS reference comment.
+
 ### Reproducible suite and earlier landings
 
 `./conformance/run_all.sh` runs Rust formatting, Clippy with warnings denied,
