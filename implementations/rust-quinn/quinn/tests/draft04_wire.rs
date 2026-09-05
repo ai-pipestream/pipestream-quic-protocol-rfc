@@ -12,6 +12,9 @@ mod sealed_work;
 #[path = "draft04/authenticated_sessions.rs"]
 mod authenticated_sessions;
 
+#[path = "draft04/spooled_ingress.rs"]
+mod spooled_ingress;
+
 // Raw QUIC peers exercise ordering and refusal behavior independently of RecursiveClient.
 struct Fixture {
     dir: tempfile::TempDir,
@@ -85,6 +88,14 @@ impl Fixture {
         capabilities: Capabilities,
         processor: Arc<P>,
     ) -> Result<Self> {
+        Self::with_spool_limits(capabilities, processor, spool::SpoolLimits::default()).await
+    }
+
+    async fn with_spool_limits<P: EntityProcessor>(
+        capabilities: Capabilities,
+        processor: Arc<P>,
+        spool_limits: spool::SpoolLimits,
+    ) -> Result<Self> {
         let depth = capabilities.effective_max_scope_depth();
         let layers = LayerSupport {
             layer1_recursive: capabilities.layer1_recursive,
@@ -94,7 +105,10 @@ impl Fixture {
         let options = options(dir.path());
         let service = RecursiveService::with_limits(
             Arc::new(SqliteSessionStore::open(&options.state_database)?),
-            Arc::new(FileEntityStore::open(&options.entity_directory)?),
+            Arc::new(FileEntityStore::open_with_spool_limits(
+                &options.entity_directory,
+                spool_limits,
+            )?),
             processor,
             RecursiveLimits {
                 max_scope_depth: 7,
@@ -372,7 +386,7 @@ struct CountingProcessor {
 }
 
 impl EntityProcessor for CountingProcessor {
-    fn process(&self, context: ProcessContext<'_>) -> ProcessingDisposition {
+    fn process(&self, context: ProcessContext<'_>) -> Result<ProcessingDisposition, ProtocolError> {
         self.processed
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         ExemplarProcessor::default().process(context)

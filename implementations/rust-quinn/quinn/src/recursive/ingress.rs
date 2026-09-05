@@ -1,5 +1,6 @@
+use super::spool::{PAYLOAD_IO_CHUNK, Payload, SpoolConnection};
 use super::*;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
+use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
 pub(super) enum Event {
@@ -9,8 +10,7 @@ pub(super) enum Event {
 
 pub(super) struct Received {
     pub header: EntityHeader,
-    pub body: Vec<u8>,
-    _credit: OwnedSemaphorePermit,
+    pub body: Payload,
 }
 
 pub(super) fn start(
@@ -18,6 +18,7 @@ pub(super) fn start(
     mut control: quinn::RecvStream,
     layers: LayerSupport,
     limits: RecursiveLimits,
+    spool: SpoolConnection,
 ) -> (JoinSet<()>, mpsc::Receiver<Result<Event, ProtocolError>>) {
     let (sender, receiver) = mpsc::channel(4);
     let mut tasks = JoinSet::new();
@@ -34,7 +35,6 @@ pub(super) fn start(
         }
     });
     tasks.spawn(async move {
-        let budget = Arc::new(Semaphore::new(limits.max_entity_bytes + 8 * (MAX_ENTITY_HEADER + 4)));
         let mut streams = JoinSet::new();
         loop {
             tokio::select! {
@@ -53,9 +53,9 @@ pub(super) fn start(
                         }
                     };
                     let sender = sender.clone();
-                    let budget = Arc::clone(&budget);
+                    let spool = spool.clone();
                     streams.spawn(async move {
-                        let result = receive(stream, layers, limits, budget).await.map(|entity| Event::Entity(Box::new(entity)));
+                        let result = receive(stream, layers, limits, spool).await.map(|entity| Event::Entity(Box::new(entity)));
                         let _ = sender.send(result).await;
                     });
                 }
@@ -69,44 +69,51 @@ async fn receive(
     mut stream: quinn::RecvStream,
     layers: LayerSupport,
     limits: RecursiveLimits,
-    budget: Arc<Semaphore>,
+    spool: SpoolConnection,
 ) -> Result<Received, ProtocolError> {
-    let mut credit = Arc::clone(&budget)
-        .try_acquire_many_owned(0)
-        .map_err(limit_error)?;
-    let mut bytes = Vec::new();
-    while let Some(chunk) = stream.read_chunk(8192, true).await.map_err(frame_error)? {
-        if bytes.len() + chunk.bytes.len() > limits.max_entity_bytes + MAX_ENTITY_HEADER + 4 {
-            return Err(limit_error("Entity Stream exceeds local payload limit"));
-        }
-        // Refuse, rather than wait: incomplete entities must not deadlock each other
-        // while holding all of the connection's receive budget.
-        credit.merge(
-            Arc::clone(&budget)
-                .try_acquire_many_owned(chunk.bytes.len() as u32)
-                .map_err(|_| limit_error("connection receive byte budget exhausted"))?,
-        );
-        bytes.extend_from_slice(&chunk.bytes);
+    let mut prefix = [0; 4];
+    stream.read_exact(&mut prefix).await.map_err(frame_error)?;
+    let length = u32::from_be_bytes(prefix) as usize;
+    if length > MAX_ENTITY_HEADER {
+        return Err(limit_error("entity header exceeds local limit"));
     }
-    let (header, payload) = decode_entity_for(&bytes, layers)?;
-    let length = payload.len();
-    if length > limits.max_entity_bytes {
+    let mut encoded = vec![0; length];
+    stream.read_exact(&mut encoded).await.map_err(frame_error)?;
+    let header = pipestream_core::decode_entity_header_for(&encoded, layers)?;
+    drop(encoded);
+    if header
+        .payload_length
+        .is_some_and(|length| length > limits.max_entity_bytes as u64)
+    {
         return Err(limit_error("entity payload exceeds local limit"));
     }
-    let payload_start = bytes.len() - length;
-    bytes.copy_within(payload_start.., 0);
-    bytes.truncate(length);
-    Ok(Received {
-        header,
-        body: bytes,
-        _credit: credit,
-    })
+    if header
+        .chunk_info
+        .is_some_and(|info| info.total_chunks > limits.max_chunks_per_entity)
+    {
+        return Err(limit_error("chunk count exceeds local limit"));
+    }
+    let mut writer = spool.create().await?;
+    while let Some(chunk) = stream
+        .read_chunk(PAYLOAD_IO_CHUNK, true)
+        .await
+        .map_err(frame_error)?
+    {
+        if writer.len() + chunk.bytes.len() as u64 > limits.max_entity_bytes as u64 {
+            return Err(limit_error("Entity Stream exceeds local payload limit"));
+        }
+        // Refuse rather than wait while incomplete entities hold disk credit.
+        writer = writer.append(&chunk.bytes).await?;
+    }
+    let body = writer.finish().await?;
+    pipestream_core::validate_entity_payload(&header, body.len(), body.digest())?;
+    Ok(Received { header, body })
 }
 
 #[derive(Default)]
 pub(super) struct Chunks {
     entities: BTreeMap<EntityKey, BTreeMap<u64, Received>>,
-    bytes: usize,
+    bytes: u64,
 }
 
 impl Chunks {
@@ -114,7 +121,7 @@ impl Chunks {
         self.entities.is_empty()
     }
 
-    pub fn insert(
+    pub async fn insert(
         &mut self,
         received: Received,
         limits: RecursiveLimits,
@@ -125,7 +132,7 @@ impl Chunks {
         if info.total_chunks > limits.max_chunks_per_entity {
             return Err(limit_error("chunk count exceeds local limit"));
         }
-        if self.bytes + received.body.len() > limits.max_entity_bytes {
+        if self.bytes + received.body.len() > limits.max_entity_bytes as u64 {
             return Err(limit_error("aggregate chunk payload exceeds local limit"));
         }
         let key = EntityKey {
@@ -151,10 +158,10 @@ impl Chunks {
         }
         let mut ordered: Vec<_> = self.entities.remove(&key).unwrap().into_values().collect();
         ordered.sort_by_key(|chunk| chunk.header.chunk_info.unwrap().chunk_offset);
-        let length: usize = ordered.iter().map(|chunk| chunk.body.len()).sum();
+        let length: u64 = ordered.iter().map(|chunk| chunk.body.len()).sum();
         let mut offset = 0;
         for chunk in &ordered {
-            if chunk.header.chunk_info.unwrap().chunk_offset != offset as u64 {
+            if chunk.header.chunk_info.unwrap().chunk_offset != offset {
                 return Err(entity_error(
                     "chunk ranges contain a gap, overlap, or duplicate offset",
                 ));
@@ -164,14 +171,12 @@ impl Chunks {
         self.bytes -= length;
         let mut ordered = ordered.into_iter();
         let mut result = ordered.next().unwrap();
-        result.body.reserve(length - result.body.len());
-        for chunk in ordered {
-            result._credit.merge(chunk._credit);
-            result.body.extend_from_slice(&chunk.body);
-        }
+        let mut parts = vec![result.body];
+        parts.extend(ordered.map(|chunk| chunk.body));
+        result.body = Payload::concatenate(parts).await?;
         result.header.chunk_info = None;
-        result.header.payload_length = Some(length as u64);
-        result.header.checksum = Some(Sha256::digest(&result.body).into());
+        result.header.payload_length = Some(length);
+        result.header.checksum = Some(result.body.digest());
         Ok(Some(result))
     }
 }

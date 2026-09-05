@@ -139,12 +139,54 @@ enabled. The implemented Layer 2 scope is intentionally narrow. Automatic retry
 scheduling, claim federation between unrelated persistence domains, and the
 other optional resilience behaviors are not claimed.
 
-The recursive receiver reads control and data independently, identifies
-streams from their headers, and bounds buffered payload octets across
-incomplete streams and chunk assemblies. It supports up to eight concurrent
-stream readers. This is bounded whole-entity processing, not a spool-backed
-incremental payload API. Allocation capacity, decoded metadata, QUIC receive
-buffers, and transient reassembly copies add overhead beyond payload bytes.
+## File-backed receive payloads
+
+The recursive receiver reads and validates the bounded CBOR header first,
+then writes payload octets in 8 KiB pieces to temporary files. Measured length
+and SHA-256 are checked at FIN before admission. It retains up to eight stream
+readers per connection. QUIC receive windows are explicitly 1 MiB per connection
+and 64 KiB per stream; these flow-control windows are not a total memory limit.
+
+`ProcessContext::payload` is now a file-backed `spool::Payload`, not a byte
+slice. `reader()` implements `std::io::Read`; `len()` and `digest()` describe the
+validated input. Processing returns `Result<ProcessingDisposition, ProtocolError>`
+so read failures cannot become successful processing. The exemplar hashes input
+through an 8 KiB buffer. Chunk assemblies retain ordered file segments and
+verify each segment before calculating the combined digest. They do not build
+a contiguous payload buffer or a second assembled temporary file.
+
+`FileEntityStore::open_with_spool_limits` configures temporary receive quotas:
+
+| Scope | Bytes | Files |
+|---|---:|---:|
+| Store directory, shared by handles in one process | 256 MiB | 4,096 |
+| Authenticated authority/principal, across connections | 128 MiB | 1,024 |
+| Connection | `max_entity_bytes` | 512 |
+
+At most 1,024 principal budget entries may be active; anonymous connections
+share one identity bucket. A payload reader or clone retains its disk credit.
+Empty files consume file credit. Exhaustion is `PIPESTREAM_LIMIT_EXCEEDED`,
+not an unbounded wait while incomplete items hold all the capacity. File I/O
+owns its credit until it finishes even if the receiver is cancelled. Failed
+cleanup retains credit instead of claiming disk space was reclaimed.
+
+Restart counts abandoned files against the store quota without deleting them.
+Live handles for the same directory share accounting and cannot reset it with
+different limits. Accounting is not coordinated between separate operating
+system processes. Temporary receive budgets do not limit retained entity files,
+SQLite state, or the filesystem cache. Durable storage quotas, restartable job
+descriptors, and explicit orphan reclamation remain required before production
+multi-tenant use. Do not run multiple writer processes against this spool root.
+
+`cargo test -p pipestream-quinn --test spool_resources -- --nocapture` sends
+32 MiB over real QUIC without allocating an input-sized client buffer. It gates
+instrumented Rust heap growth below 12 MiB and individual allocations below
+4 MiB, verifies the persisted digest, and requires temporary disk credit to
+return to zero. One local run on 2026-09-05 measured 132,968 bytes of heap growth
+and a largest allocation of 15,972 bytes. This is a single-transfer allocation
+measurement, not a process-RSS, concurrency, or throughput claim.
+
+## Execution still to finish
 
 Pending checkpoints use monotonic deadlines, but a synchronous callback still
 blocks the connection's dispatch loop. Application processing, rehydration,
@@ -174,7 +216,7 @@ successful. The next execution increment must cover those restart boundaries.
 Without the explicit mutual-TLS settings, the standalone prototype authenticates
 only the server and remains suitable solely for trusted local demonstrations.
 Even with mutual TLS, per-principal resource gates, retained recovery outcomes,
-asynchronous dispatch and spool-backed processing, and a complete resilience capability remain
+asynchronous dispatch, durable storage quotas and restartable inputs, and a complete resilience capability remain
 unfinished. It MUST NOT yet be described as a production multi-tenant durable
 work service. Its Layer 2 boolean still advertises more than the tested subset.
 

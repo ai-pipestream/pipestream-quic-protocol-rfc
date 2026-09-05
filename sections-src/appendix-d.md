@@ -101,8 +101,9 @@ conformance. The common command exercises one-entity transfers, not the
 entire mandatory manifest and recycling lifecycle. Rust's recursive path
 adds independent control/data reception, identity-based stream dispatch,
 pending checkpoints with deadlines, negotiated depth enforcement, and
-fenced recovery-result publication. Its payload processing is whole-entity
-buffered and its application callbacks are synchronous.
+fenced recovery-result publication. Its recursive receiver incrementally
+spools payloads to temporary files with byte and file quotas. Application
+callbacks consume file-backed readers but remain synchronous.
 
 The durable Rust prototype now has optional mutual-TLS principal/session
 binding, but lacks retained recovery outcomes, per-principal resource gates,
@@ -131,8 +132,16 @@ publication and no longer invokes application callbacks under database
 transactions. Tests cover simultaneous lease acquisition, expiry, stale
 publication after reopen and reacquisition, callback database re-entry, and
 revocation during a callback. Dispatch remains synchronous, and restartable
-processing inputs, bounded asynchronous workers, and retained recovery-request
+processing descriptors, bounded asynchronous workers, and retained recovery-request
 outcomes remain unfinished.
+
+Spool tests cover quota exhaustion, file-backed chunk assembly, corruption
+before assembly, cancellation-safe disk credit, and abandoned-file accounting.
+A real-QUIC 32 MiB transfer measures Rust heap allocations while streaming
+input and verifies the persisted payload digest and released temporary credit.
+This is not a total process-memory or concurrent-workload performance claim.
+Temporary quota accounting does not yet cover permanent storage or coordinate
+independent writer processes.
 
 The repository's protocol-neutral Rust driver starts each executable as a separate process and tests all nine client/server pairings. The driver has no dependency on a PipeStream implementation and does not encode or decode PipeStream frames. The implementations share the normative specification, CDDL, and golden vector corpus, but no protocol implementation code. The current suite verifies binary and UTF-8 payload transfer, parent identity, status progression, checkpoint acknowledgement, cursor advancement, graceful GOAWAY, and byte-exact delivery. The result is reproducible evidence for the listed protocol subset, not a claim of complete support for every optional field or extension in this document.
 

@@ -26,7 +26,9 @@ certificate-mapped principals, retained authority/owner records, and session
 revocation. This is the authentication prerequisite for recovery, not the
 retained-outcome or asynchronous-executor implementation. Durable attempt
 fences now protect result publication, and callbacks run outside database
-transactions. They remain synchronous. The full remaining
+transactions. Receive payloads are now incrementally spooled to bounded
+temporary files and processed through readers; callbacks remain synchronous.
+The full remaining
 goal is tracked in [the implementation plan](docs/standards/recovery-execution-java-plan.md).
 
 ## Authoring Workflow

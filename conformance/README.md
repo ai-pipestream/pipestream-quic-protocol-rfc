@@ -54,6 +54,15 @@ reopen and stale-epoch refusal, transactional rollback, callback database
 re-entry over QUIC, callback expiry, and revocation during processing. They
 do not claim bounded asynchronous dispatch or full crash-boundary coverage.
 
+The Rust `spool_resources` test runs in its own test binary with an instrumented
+allocator. It sends 32 MiB over real QUIC from fixed-size input blocks, checks
+heap growth below 12 MiB and individual allocations below 4 MiB, verifies the
+persisted SHA-256, and requires temporary disk credit to return to zero. Other
+spool tests cover per-principal/global limits, zero-byte file exhaustion,
+cancelled I/O, handle reopening, abandoned files, and chunk corruption. The
+measurement excludes native allocations and the filesystem cache; it is not
+a total RSS bound or a concurrent-workload benchmark.
+
 ```bash
 ./conformance/run_all.sh
 ```
