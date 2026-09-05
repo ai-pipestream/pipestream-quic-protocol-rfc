@@ -24,7 +24,9 @@ Java/C++ implementations of that profile remain unfinished.
 Java now has an independent sealed declaration codec, SQLite state machine,
 file-backed payload store, and public Netty `SealedClient`. The payload library
 validates incremental reception and immutable installation before admission;
-it is not yet integrated into a Java sealed server.
+`SealedExecutor` commits durable processing/rehydration jobs and runs fenced
+callbacks in bounded workers. These libraries are not yet integrated into a
+Java sealed server.
 Real Java-to-Rust tests exercise nested work,
 out-of-order chunks, scoped checkpoints, declaration replay after restart,
 and malformed responses. The Java listener and standalone commands still

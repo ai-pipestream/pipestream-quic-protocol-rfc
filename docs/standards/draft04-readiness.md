@@ -463,6 +463,40 @@ every external example. The new Java API passed Javadoc with
 `-Xdoclint:all -Werror`. Draft -04 passed idnits with zero errors, flaws, and
 warnings and one informational FIPS reference comment.
 
+### Java durable execution for server integration
+
+Java database format 2 adds managed entities and a typed, checksummed durable
+job queue. Admission and processing dispatch commit together; child closure,
+parent resolution, and rehydration dispatch share another transaction. Queue
+overflow rolls back both the work transition and dispatch. Version-1 Java
+stores are refused without conversion. Existing manual lifecycle calls cannot
+bypass fences on managed work.
+
+`SealedExecutor` invokes callbacks outside storage transactions using reopened,
+verified file-backed inputs. Global/per-session worker limits and per-job
+physical exclusion survive lease expiry and shutdown until callbacks actually
+return. Durable epochs and expiry prevent stale publication after restart.
+Refusals are retained separately from entity success/failure; even a zero
+diagnostic refusal does not make an entity complete. Missing or corrupt job
+records prevent completion checks.
+
+Tests cover transaction rollback, global/per-session capacity, retained metadata
+charges after completion, recursive and failed-child closure, cross-handle lease
+acquisition, abrupt exit, stale publication, callback re-entry, independent work
+during a stall, corrupt input, and executor shutdown/restart. A 32 MiB input also
+executes through the worker under a 24 MiB Java heap cap. This does not establish
+QUIC control responsiveness, native-memory/RSS bounds, or tenant isolation.
+The Java sealed listener and Rust-to-Java interoperability remain unfinished.
+Logical descriptor/outcome reservations are not physical SQLite/WAL quotas or
+reservations for every future child or rehydration job.
+
+The final `./conformance/run_all.sh` passed with 164 Rust workspace tests,
+74 Java tests with no skips (19 new execution/storage tests), C++, all nine
+existing Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks,
+and all external examples. Changed/new public Java APIs passed Javadoc with
+`-Xdoclint:all -Werror`. Draft -04 passed idnits with zero errors, flaws, and
+warnings and one informational FIPS reference comment.
+
 ### Reproducible suite and earlier landings
 
 `./conformance/run_all.sh` runs Rust formatting, Clippy with warnings denied,

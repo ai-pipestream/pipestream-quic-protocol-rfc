@@ -33,7 +33,9 @@ Coverage:
     durable SQLite membership and closure state, and a public Netty producer.
     A file-backed payload library adds bounded incremental reception and
     immutable retained inputs. Payload installation does not itself admit or
-    complete work. The sealed Java server remains unimplemented.
+    complete work. A separate executor commits processing and rehydration jobs
+    with state transitions, then runs fenced callbacks in bounded workers.
+    The sealed Java server remains unimplemented.
 
 Licensing:
 :   MIT.
@@ -140,6 +142,16 @@ A 32 MiB receive/install/read test runs with a 24 MiB Java heap limit. It does
 not exercise QUIC or establish native-memory, RSS, physical filesystem, or
 concurrent-workload bounds. No new network interoperability is inferred from
 these storage tests.
+
+Java's durable execution tests cover atomic admission and dispatch, bounded
+queued jobs and retained descriptors, recursive rehydration, stale executor
+refusal after restart, and independent progress during a stalled callback.
+Callbacks run outside database transactions and consume verified file-backed
+input. Shutdown retains physical ownership until active work returns. These
+are local library tests, not evidence of responsive Netty sealed-session
+controls or reverse-direction interoperability. Per-session labels are not
+authenticated tenants, and logical record quotas do not bound SQLite/WAL
+pages or every future completion allocation.
 
 Authentication tests cover missing, untrusted, expired and unmapped client
 certificates; refusal of anonymous downgrade; principal and authority checks;

@@ -244,6 +244,31 @@ approval as part of a repository landing.
   warnings denied. Draft -04 passed idnits with zero errors/flaws/warnings and
   one informational FIPS reference comment. This does not complete the Java
   server, reverse-direction interoperability, or the full goal.
+- Java durable execution integration: Java database version 2 atomically stores
+  admission/processing jobs and child closure/rehydration jobs. Version-1 Java
+  stores are refused without conversion. Descriptors, attempt fences, and
+  outcomes are checksummed and retained under fixed global/per-session logical
+  byte and count policies. Manual lifecycle methods refuse managed work, and
+  completion checks reject corrupt or missing jobs. Queue overflow rolls back
+  the associated admission or closure transition.
+  `SealedExecutor` runs file-backed processing and rehydration outside database
+  transactions, with physical global/per-session worker limits and no duplicate
+  callback for a still-running local attempt. Shutdown keeps canonical-database
+  ownership until actual callbacks and started storage calls return. Input
+  corruption and callback exceptions become retained refusals, not successful
+  work or automatic retries. Epoch and expiry checks reject stale publication;
+  an interrupted expired attempt can be reacquired after restart.
+  This is execution used by the forthcoming Java server, not a Netty sealed
+  listener. Per-session limits do not substitute for authenticated principal
+  quotas, and logical outcome reservations do not establish physical DB/WAL
+  bounds or reserve every future rehydration job. The full objective remains
+  incomplete, including reverse-direction QUIC and connection-control evidence.
+  The final `./conformance/run_all.sh` passed with 164 Rust workspace tests,
+  74 Java tests with no skips (19 new execution/storage tests), C++, all nine
+  existing Layer 0 pairings, 32 capability probes, recursive/recovery CLI
+  checks, and all external examples. Changed/new public Java APIs passed
+  Javadoc with doclint and warnings denied. Draft -04 passed idnits with zero
+  errors/flaws/warnings and one informational FIPS reference comment.
 - Not yet implemented: physical database/WAL and Rust retained-payload quotas,
   completion-space reservations, orphan reclamation,
   and the independent Java
