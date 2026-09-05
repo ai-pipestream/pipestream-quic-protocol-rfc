@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const SESSION_FORMAT_VERSION: u16 = 5;
+pub const SESSION_FORMAT_VERSION: u16 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EntityKey {
@@ -179,6 +179,8 @@ pub struct Session {
     pub owner: Option<crate::authorization::SessionOwner>,
     pub executions: BTreeMap<crate::execution::ExecutionKey, crate::execution::ExecutionRecord>,
     pub jobs: BTreeMap<crate::execution::ExecutionKey, crate::jobs::JobRecord>,
+    pub recovery_receipts: BTreeMap<[u8; 16], crate::recovery::RecoveryReceipt>,
+    pub revoked_claims: BTreeSet<u64>,
 }
 
 impl Session {
@@ -221,6 +223,8 @@ impl Session {
             owner: None,
             executions: BTreeMap::new(),
             jobs: BTreeMap::new(),
+            recovery_receipts: BTreeMap::new(),
+            revoked_claims: BTreeSet::new(),
         })
     }
 
@@ -737,6 +741,7 @@ impl Session {
         state_checksum: [u8; 32],
         now_micros: u64,
     ) -> Result<Vec<u8>, ProtocolError> {
+        self.authorize_claim(claim_id)?;
         let claim = self
             .claims
             .get(&claim_id)

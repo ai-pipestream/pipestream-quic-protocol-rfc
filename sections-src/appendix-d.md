@@ -106,9 +106,9 @@ spools payloads to temporary files with byte and file quotas. Application
 callbacks consume file-backed readers in bounded asynchronous workers.
 
 The durable Rust prototype now has optional mutual-TLS principal/session
-binding, but lacks retained recovery-request outcomes, permanent storage quotas,
+binding and retained authenticated recovery, but lacks permanent storage quotas,
 automatic retry scheduling, bidirectional work-set origination, scoped
-cursor recycling, and an ambiguous-redemption-outcome operation. Its
+cursor recycling, and full resilience semantics. Its
 Layer 2 advertisement does not identify the narrower implemented subset.
 It is unsuitable for untrusted multi-tenant deployment without additional
 implementation work. Java and C++ do not yet provide independent evidence
@@ -131,8 +131,19 @@ The Rust service durably fences process, rehydrate, and resume result
 publication and no longer invokes application callbacks under database
 transactions. Tests cover simultaneous lease acquisition, expiry, stale
 publication after reopen and reacquisition, callback database re-entry, and
-revocation during a callback. Retained recovery-request outcomes and permanent
-storage quotas remain unfinished.
+revocation during a callback. Permanent storage quotas remain unfinished.
+
+The separate Rust-only Section 10.6.5 profile uses authority-qualified request
+identities and immutable acceptance receipts with 24-hour retention. Recovery
+acceptance commits redemption and a resume job together. Terminal outcomes
+explicitly distinguish completion from refusal and echo the complete receipt.
+Tests cover owner and authority refusals, expiry, irreversible claim revocation,
+concurrent acceptance, queue rollback, abrupt process exit, lost receipt replay
+after restart, and retained application refusal without automatic retry. Public
+clients reject malformed responses and mismatched receipts or outcomes.
+Twenty frozen wire cases and separate CDDL fixtures cover the new frames.
+This does not add recovery to the sealed-work profile or establish independent
+cross-language recovery interoperability.
 
 The Rust core has typed job descriptors and a transactionally bounded
 unfinished-job index with retained outcomes. Storage tests exercise limits,

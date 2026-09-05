@@ -144,7 +144,9 @@ fn ready_at(session: &Session, key: &ExecutionKey) -> Result<Option<i64>, StoreE
         }
     };
     Ok(
-        if session.owner.as_ref().is_some_and(|owner| owner.revoked) {
+        if session.owner.as_ref().is_some_and(|owner| owner.revoked)
+            || matches!(key.stage, crate::execution::ExecutionStage::Resume { claim_id } if session.revoked_claims.contains(&claim_id))
+        {
             None
         } else {
             Some(timestamp(ready)?)

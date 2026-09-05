@@ -23,8 +23,11 @@ implementations of that profile remain unfinished.
 
 The Rust durable service also supports negotiated mutual-TLS session binding:
 certificate-mapped principals, retained authority/owner records, and session
-revocation. This is the authentication prerequisite for recovery, not the
-retained recovery-request protocol. Durable attempt
+revocation. The separate opt-in `authenticated-recovery-v1` profile adds
+authority-qualified requests, immutable 24-hour acceptance receipts, and
+correlated retained completion or refusal outcomes across reconnects and
+restarts. It does not activate Layer 2 recovery in sealed-work sessions.
+Durable attempt
 fences now protect result publication, and callbacks run outside database
 transactions. Receive payloads are now incrementally spooled to bounded
 temporary files and processed through readers. The service submits typed jobs

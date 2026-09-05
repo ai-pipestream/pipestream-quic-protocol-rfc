@@ -16,6 +16,10 @@ use pipestream_core::execution::{
     ExecutionKey, ExecutionLease, ExecutionStage, MAX_EXECUTION_LEASE_MICROS,
 };
 use pipestream_core::jobs::{JobInput, JobOutput, JobState, ProcessOutcome};
+use pipestream_core::recovery::{
+    self, EXTENSION_AUTHENTICATED_RECOVERY, FRAME_RECOVERY, RecoveryFrame, RecoveryOutcome,
+    RecoveryReceipt, RecoveryRequest,
+};
 use pipestream_core::work_set::{self, EXTENSION_SEALED_WORK_SETS, FRAME_WORK_SET, WorkSetFrame};
 
 use anyhow::{Context, Result, bail};
@@ -600,6 +604,18 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
     /// Require mutual TLS and use this authority's explicit principal mapping.
     pub fn with_authentication(mut self, policy: AuthenticationPolicy) -> Self {
         self.authentication = Some(Arc::new(policy));
+        if !self
+            .capabilities
+            .extensions
+            .supported
+            .contains(&EXTENSION_AUTHENTICATED_RECOVERY)
+        {
+            self.capabilities
+                .extensions
+                .supported
+                .push(EXTENSION_AUTHENTICATED_RECOVERY);
+            self.capabilities.extensions.supported.sort_unstable();
+        }
         for ids in [
             &mut self.capabilities.extensions.supported,
             &mut self.capabilities.extensions.required,
@@ -700,6 +716,27 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             ));
         }
         let layers = layers(&negotiated);
+        let authenticated_recovery = negotiated
+            .extensions
+            .supported
+            .contains(&EXTENSION_AUTHENTICATED_RECOVERY);
+        if authenticated_recovery
+            && (!layers.layer2_resilience
+                || sealed
+                || self.caller.is_none()
+                || !negotiated
+                    .extensions
+                    .required
+                    .contains(&EXTENSION_AUTHENTICATED_SESSIONS)
+                || !negotiated
+                    .extensions
+                    .required
+                    .contains(&EXTENSION_AUTHENTICATED_RECOVERY))
+        {
+            return Err(extension_error(
+                "authenticated recovery requires mutual TLS, required session binding and Layer 2 without sealed work",
+            ));
+        }
         write_control(&mut control_send, &encode_capabilities(&negotiated)?).await?;
         write_control(
             &mut control_send,
@@ -1059,7 +1096,58 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                         .ok_or_else(|| frame_error("checkpoint timeout overflows clock"))?;
                     checkpoints.entry(key).or_insert((request, deadline));
                 }
+                FRAME_RECOVERY => {
+                    if !authenticated_recovery {
+                        return Err(extension_error("authenticated recovery was not negotiated"));
+                    }
+                    let RecoveryFrame::Request(request) = recovery::decode(&payload)? else {
+                        return Err(frame_error("recovery request carries receipt fields"));
+                    };
+                    if self
+                        .caller
+                        .as_ref()
+                        .is_none_or(|caller| caller.authority != request.authority)
+                    {
+                        return Err(unauthorized());
+                    }
+                    if current_session
+                        .as_ref()
+                        .or(establishing_session.as_ref())
+                        .is_some_and(|id| id != &request.session_id)
+                    {
+                        return Err(entity_error("connection changed session identity"));
+                    }
+                    if replies.len() + preparing.len() + initial_entities.len() >= MAX_JOB_OBSERVERS
+                    {
+                        return Err(limit_error("connection job observation limit exhausted"));
+                    }
+                    let receipt = self
+                        .transact(&request.session_id, |session| {
+                            session.accept_recovery(
+                                self.caller.as_ref(),
+                                &request,
+                                now_micros().map_err(storage_error)?,
+                            )
+                        })
+                        .map_err(|error| match error {
+                            StoreError::NotFound(_) => unauthorized(),
+                            other => store_error(other),
+                        })?
+                        .0;
+                    current_session = Some(request.session_id);
+                    write_control(
+                        &mut control_send,
+                        &recovery::encode(&RecoveryFrame::Receipt(receipt.clone()))?,
+                    )
+                    .await?;
+                    replies.insert(receipt.execution_key(), JobReply::Recovery(receipt));
+                }
                 FRAME_CLAIM_REDEMPTION => {
+                    if authenticated_recovery {
+                        return Err(extension_error(
+                            "use retained recovery requests in this profile",
+                        ));
+                    }
                     if sealed {
                         return Err(extension_error(
                             "claim redemption is outside the sealed-work profile",
@@ -1420,10 +1508,35 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         let now = now_micros().map_err(storage_error)?;
         let mut sent = Vec::new();
         for (key, reply) in replies.iter() {
+            if let JobReply::Recovery(receipt) = reply
+                && session.recovery_receipt(self.caller.as_ref(), &receipt.request, now)?
+                    != Some(receipt)
+            {
+                return Err(entity_error("observed recovery receipt changed"));
+            }
             let job = session
                 .jobs
                 .get(key)
                 .ok_or_else(|| entity_error("observed durable job is absent"))?;
+            if let JobReply::Recovery(receipt) = reply {
+                let outcome = match &job.state {
+                    JobState::Finished(JobOutput::Resumed) => Some(RecoveryOutcome::Complete),
+                    JobState::Refused(failure) => Some(RecoveryOutcome::Refused(failure.clone())),
+                    _ => None,
+                };
+                if let Some(outcome) = outcome {
+                    write_control(
+                        control,
+                        &recovery::encode(&RecoveryFrame::Outcome {
+                            receipt: receipt.clone(),
+                            outcome,
+                        })?,
+                    )
+                    .await?;
+                    sent.push(*key);
+                    continue;
+                }
+            }
             let output = match &job.state {
                 JobState::Finished(output) => output,
                 JobState::Refused(failure) => return Err(failure.protocol_error()),
@@ -1509,6 +1622,7 @@ enum JobReply {
     Process,
     Rehydrate,
     Resume(ClaimRedemption),
+    Recovery(RecoveryReceipt),
 }
 
 #[derive(Debug)]
@@ -1733,18 +1847,30 @@ pub struct RecursiveClient {
     control_recv: quinn::RecvStream,
     layers: LayerSupport,
     sealed: bool,
+    authenticated_recovery: bool,
 }
 
 impl RecursiveClient {
     pub async fn connect(options: &RecursiveClientOptions) -> Result<Self> {
-        Self::connect_profile(options, false).await
+        Self::connect_profile(options, false, false).await
     }
 
     pub async fn connect_sealed(options: &RecursiveClientOptions) -> Result<Self> {
-        Self::connect_profile(options, true).await
+        Self::connect_profile(options, true, false).await
     }
 
-    async fn connect_profile(options: &RecursiveClientOptions, sealed: bool) -> Result<Self> {
+    pub async fn connect_recovery(options: &RecursiveClientOptions) -> Result<Self> {
+        if options.identity.is_none() {
+            bail!("PIPESTREAM_UNAUTHORIZED: recovery requires a client identity");
+        }
+        Self::connect_profile(options, false, true).await
+    }
+
+    async fn connect_profile(
+        options: &RecursiveClientOptions,
+        sealed: bool,
+        authenticated_recovery: bool,
+    ) -> Result<Self> {
         let mut roots = rustls::RootCertStore::empty();
         for cert in CertificateDer::pem_file_iter(&options.ca_certificate)
             .context("read CA PEM")?
@@ -1794,6 +1920,16 @@ impl RecursiveClient {
                 .required
                 .push(EXTENSION_AUTHENTICATED_SESSIONS);
         }
+        if authenticated_recovery {
+            offered
+                .extensions
+                .supported
+                .push(EXTENSION_AUTHENTICATED_RECOVERY);
+            offered
+                .extensions
+                .required
+                .push(EXTENSION_AUTHENTICATED_RECOVERY);
+        }
         if let Err(error) = write_control(&mut control_send, &encode_capabilities(&offered)?).await
         {
             return Err(peer_failure(&connection, error).await);
@@ -1807,6 +1943,15 @@ impl RecursiveClient {
         }
         let negotiated = match decode_capabilities(&response).and_then(|peer| {
             offered.validate_response(&peer)?;
+            if authenticated_recovery
+                && (!peer.layer2_resilience
+                    || !peer
+                        .extensions
+                        .required
+                        .contains(&EXTENSION_AUTHENTICATED_SESSIONS))
+            {
+                return Err(frame_error("invalid authenticated recovery selection"));
+            }
             Ok(peer)
         }) {
             Ok(peer) => peer,
@@ -1823,7 +1968,69 @@ impl RecursiveClient {
             control_recv,
             layers: layers(&negotiated),
             sealed,
+            authenticated_recovery,
         })
+    }
+
+    /// Accept or replay one recovery request. The receipt is not application completion.
+    /// Consume its outcome or reconnect before issuing another request on this client.
+    pub async fn accept_recovery(&mut self, request: &RecoveryRequest) -> Result<RecoveryReceipt> {
+        if !self.authenticated_recovery {
+            bail!("PIPESTREAM_EXTENSION_UNSUPPORTED: recovery was not negotiated");
+        }
+        write_control(
+            &mut self.control_send,
+            &recovery::encode(&RecoveryFrame::Request(request.clone()))?,
+        )
+        .await?;
+        let (kind, bytes) = self.read_response().await?;
+        let receipt = if kind == FRAME_RECOVERY {
+            recovery::decode(&bytes)
+        } else {
+            Err(frame_error("expected recovery receipt"))
+        };
+        match receipt {
+            Ok(RecoveryFrame::Receipt(receipt)) if &receipt.request == request => Ok(receipt),
+            Err(error) => {
+                self.connection
+                    .close(error.code.into(), error.to_string().as_bytes());
+                Err(error.into())
+            }
+            _ => {
+                self.connection
+                    .close(ERROR_ENTITY_INVALID.into(), b"recovery receipt mismatch");
+                bail!("PIPESTREAM_ENTITY_INVALID: recovery receipt mismatch");
+            }
+        }
+    }
+
+    pub async fn wait_recovery(&mut self, receipt: &RecoveryReceipt) -> Result<RecoveryOutcome> {
+        receipt.validate()?;
+        if !self.authenticated_recovery {
+            bail!("PIPESTREAM_EXTENSION_UNSUPPORTED: recovery was not negotiated");
+        }
+        let (kind, bytes) = self.read_response().await?;
+        let frame = if kind == FRAME_RECOVERY {
+            recovery::decode(&bytes)
+        } else {
+            Err(frame_error("expected recovery outcome"))
+        };
+        match frame {
+            Ok(RecoveryFrame::Outcome {
+                receipt: observed,
+                outcome,
+            }) if &observed == receipt => Ok(outcome),
+            Err(error) => {
+                self.connection
+                    .close(error.code.into(), error.to_string().as_bytes());
+                Err(error.into())
+            }
+            _ => {
+                self.connection
+                    .close(ERROR_ENTITY_INVALID.into(), b"recovery outcome mismatch");
+                bail!("PIPESTREAM_ENTITY_INVALID: recovery outcome mismatch");
+            }
+        }
     }
 
     pub async fn declare_work(&mut self, request: &WorkSetFrame) -> Result<()> {
@@ -2117,6 +2324,7 @@ impl RecursiveClient {
                         kind,
                         FRAME_BARRIER
                             | FRAME_WORK_SET
+                            | FRAME_RECOVERY
                             | FRAME_CAPABILITIES
                             | FRAME_CHECKPOINT
                             | FRAME_CLAIM_REDEMPTION
