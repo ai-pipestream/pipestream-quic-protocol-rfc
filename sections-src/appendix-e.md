@@ -36,11 +36,9 @@ entire Layer 0 lifecycle.
 
 ## Extension Negotiation
 
-Closed capability maps cannot bootstrap arbitrary new members. A base
-supported/required extension identifier mechanism is needed, with bounded
-lists, activation rules, and refusal of unknown required extensions.
-Unknown-frame skipping alone does not mean an extension was negotiated.
-The broad Layer 2 boolean also needs either complete implementation or
+Section 3.4.3 now defines bounded supported/required identifier lists,
+activation rules, and refusal of unsupported requirements. The broad
+Layer 2 boolean still needs either complete implementation or
 separately negotiated, precisely named resilience profiles. A private
 README profile is not an interoperable wire capability.
 

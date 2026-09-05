@@ -15,7 +15,7 @@ temporary files and gives those files directly to the CDDL validator. It does
 not extract messages from PipeStream frames or otherwise parse protocol bytes.
 
 `pipestream-conformance` is a protocol-neutral Rust process driver. It has no
-dependency on `pipestream-core` or either transport library. It generates
+dependency on `pipestream-core` or the PipeStream transport libraries. It generates
 temporary test certificates, starts each compiled server on an ephemeral UDP
 port, and invokes every compiled client against it. A pair passes only when the
 processes complete their own state machines and the driver observes byte-exact
@@ -58,6 +58,7 @@ For focused checks after the Rust workspace has been built:
 ```bash
 implementations/rust-quinn/target/release/pipestream-conformance verify
 implementations/rust-quinn/target/release/pipestream-conformance interop
+implementations/rust-quinn/target/release/pipestream-conformance extensions
 implementations/rust-quinn/target/release/pipestream-conformance recursive
 implementations/rust-quinn/target/release/pipestream-conformance examples
 ```
@@ -79,3 +80,23 @@ passes the recursive checks. It does not encode or decode protocol frames.
 These checks strengthen evidence for the tested subset. They do not establish
 complete protocol conformance. The full list of open work is in
 [draft-04 readiness](../docs/standards/draft04-readiness.md).
+
+## Extension negotiation
+
+`test-vectors/extension-negotiation.tsv` freezes 35 codec/negotiation cases
+consumed by Rust, Java, and C++. The positive cases select synthetic test
+identifiers; none is advertised by the shipped services. The additional
+`test-vectors/cddl/extensions.tsv` fixtures check the schema's list size,
+identifier range, and type constraints. Ordering and subset constraints
+are tested in the codecs, not claimed as CDDL validation.
+
+The `extensions` command sends frozen CAPABILITIES bodies over raw Quinn
+connections to all three standalone servers and the Rust recursive server.
+Its 32 probes check exact response bytes, named QUIC refusal codes, and no
+entity storage after server exit, including an invalid offer followed by
+a valid offer, PENDING and a submitted Entity Stream. It also presents
+invalid responses to all four client paths and
+checks that they fail before sending an Entity Stream. The probe parses
+only UCF type/length framing and does not use a PipeStream implementation
+to decide expected semantics. No production extension is enabled to make
+these tests pass.

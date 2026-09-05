@@ -716,9 +716,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "quinn",
  "rcgen",
+ "rustls",
  "sha2",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

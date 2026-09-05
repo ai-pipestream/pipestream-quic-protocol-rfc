@@ -223,6 +223,7 @@ struct ServerSession : std::enable_shared_from_this<ServerSession> {
 
   void control_frame(const ControlFrame& frame) {
     std::lock_guard lock(mutex);
+    if (failed.load()) return;
     try {
       if (!capabilities) {
         if (frame.type != kFrameCapabilities) {
@@ -287,6 +288,7 @@ struct ServerSession : std::enable_shared_from_this<ServerSession> {
 
   void received_entity(std::vector<std::uint8_t> bytes) {
     std::lock_guard lock(mutex);
+    if (failed.load()) return;
     try {
       entity = decode_entity(bytes);
       maybe_process_locked();
@@ -296,7 +298,7 @@ struct ServerSession : std::enable_shared_from_this<ServerSession> {
   }
 
   void maybe_process_locked() {
-    if (!pending || !entity) return;
+    if (failed.load() || !capabilities || !pending || !entity) return;
     if (entity->header.entity_id != *pending) {
       throw ProtocolError(kErrorEntityInvalid, "PIPESTREAM_ENTITY_INVALID", "PENDING and EntityHeader IDs differ");
     }
@@ -536,7 +538,7 @@ struct ClientSession : std::enable_shared_from_this<ClientSession> {
         if (frame.type != kFrameCapabilities) {
           throw ProtocolError(kErrorFrame, "PIPESTREAM_FRAME_ERROR", "server did not answer capabilities");
         }
-        (void)decode_capabilities(frame.payload);
+        Capabilities{}.validate_response(decode_capabilities(frame.payload));
         capabilities = true;
         send_bytes(
             api,

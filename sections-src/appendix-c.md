@@ -51,6 +51,9 @@ serialization-format = uint .le 255
 ; Capabilities (exchanged during CONNECT on Stream 0)
 ; -----------------------------------------------------------
 
+extension-id = 1..65534
+extension-list = [0*32 extension-id]
+
 capabilities = {
   layer0-core: bool,              ; MUST be true
   layer1-recursive: bool,
@@ -63,6 +66,8 @@ capabilities = {
                                   ; (Section 9.1)
   ? serialization-format: serialization-format,
   ? keepalive-timeout-ms: uint,   ; Default: 30000 (30s)
+  ? supported-extensions: extension-list, ; Default: []
+  ? required-extensions: extension-list,  ; Default: []
 }
 
 ; -----------------------------------------------------------

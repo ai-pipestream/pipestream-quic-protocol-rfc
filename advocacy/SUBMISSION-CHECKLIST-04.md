@@ -13,6 +13,8 @@ the design is complete or that the IETF has adopted it.
 - [x] Check idnits: zero errors, flaws, or warnings; one FIPS 180-4 comment.
 - [x] Confirm IANA section numbering and Appendix A through E in rendered text.
 - [x] Compare shared CDDL definitions to Appendix C, not only to fixtures.
+- [x] Define supported/required extension negotiation and its proposed registry,
+      with shared independent-codec cases and actual QUIC refusal tests.
 
 ## Author confirmation and submission
 
@@ -32,6 +34,6 @@ change the filename alone to advance the draft revision.
 
 No mailing-list announcement, chair contact, draft submission, or IANA
 registration is implied by merging this repository. Before requesting
-adoption, resolve Appendix E's identity, work-set closure, and negotiation
-choices and obtain review from independent implementers. Two or three
+adoption, resolve Appendix E's identity, work-set closure, and authenticated
+profile choices and obtain review from independent implementers. Two or three
 languages maintained by one project do not constitute IETF approval.

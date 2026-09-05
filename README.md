@@ -13,6 +13,11 @@ an approved IETF standard or a fully conformant production implementation.
 See [draft-04 readiness](docs/standards/draft04-readiness.md) for tested changes
 and the remaining interoperability and security work.
 
+Draft -04 now defines supported/required extension negotiation, implemented
+independently in Rust, Java, and C++. Unknown requirements fail CONNECT;
+optional unknown identifiers are not activated. Sealed work sets and
+authenticated resilience profiles remain separate, unfinished work.
+
 ## Authoring Workflow
 
 This repository uses a modular authoring workflow for IETF drafts. The monolithic draft is treated as a build artifact and is not checked into the repository.

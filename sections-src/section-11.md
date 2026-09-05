@@ -84,7 +84,8 @@ PipeStream error codes are used as QUIC application error codes in CONNECTION_CL
 | 0x0C | PIPESTREAM_LAYER_UNSUPPORTED | Protocol layer not supported |
 | 0x0D | PIPESTREAM_FRAME_ERROR | Malformed frame or improper stream usage |
 | 0x0E | PIPESTREAM_CHECKPOINT_TIMEOUT | Pending checkpoint deadline expired |
-| 0x0F-0x3F | Unassigned | Available for registration |
+| 0x0F | PIPESTREAM_EXTENSION_UNSUPPORTED | Required extension or selected combination unavailable |
+| 0x10-0x3F | Unassigned | Available for registration |
 | 0x40-0xFF | Private Use | Requires explicit agreement |
 
 The registry has an 8-bit value space. QUIC application error codes have
@@ -226,3 +227,27 @@ An unknown yield reason does not change the YIELDED lifecycle state or
 authorize automatic retries. An unknown status code has no defined
 state transition; absent a negotiated extension defining it, the receiver
 MUST reject it with PIPESTREAM_ENTITY_INVALID (0x05).
+
+## Extension Identifier Registry
+
+IANA is requested to create the 16-bit "PipeStream Extension Identifiers"
+registry, used by the supported and required lists in Section 3.4.3.
+An identifier names one immutable extension contract. An incompatible
+revision requires a new identifier; an identifier is not a version range.
+
+| Value | Use | Registration Policy |
+|-------|-----|---------------------|
+| 0 | Reserved | Not assignable |
+| 1-65279 | Unassigned | Specification Required |
+| 65280-65534 | Private Use | Explicit agreement |
+| 65535 | Reserved | Not assignable |
+
+Registrations include an identifier, name, contact, permanent specification,
+prerequisite layers and extensions, incompatible combinations, and
+security considerations. The specification must define all mandatory
+behavior, wire values, failure handling, and test vectors. Registration
+of an extension does not allocate its frame types or status values;
+those require their own registry entries. Designated experts apply
+Section 11.7 and check that activation is unambiguous and dependencies
+can be evaluated during CONNECT. Private-use values MUST NOT be used
+without prior agreement on the same contract and are not IANA assignments.

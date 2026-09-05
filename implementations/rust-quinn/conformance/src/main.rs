@@ -1,5 +1,6 @@
 //! Protocol-neutral process orchestration and immutable-corpus verification.
 
+mod extensions;
 mod receipts;
 mod schema;
 
@@ -33,6 +34,7 @@ enum Task {
     Interop,
     Recursive,
     Examples,
+    Extensions,
 }
 
 #[derive(Debug, Clone)]
@@ -61,6 +63,7 @@ fn run(cli: Cli) -> Result<()> {
         Task::Interop => interop(),
         Task::Recursive => recursive(),
         Task::Examples => examples(),
+        Task::Extensions => extensions::run(),
     }
 }
 
@@ -218,7 +221,12 @@ fn validate_cddl(root: &Path) -> Result<()> {
         .tempdir()?;
     let mut accepted_paths = Vec::new();
     let mut refused_paths = Vec::new();
-    let index = fs::read_to_string(root.join("test-vectors/cddl/index.tsv"))?;
+    let mut index = fs::read_to_string(root.join("test-vectors/cddl/index.tsv"))?;
+    let extensions = fs::read_to_string(root.join("test-vectors/cddl/extensions.tsv"))?;
+    for row in extensions.lines().skip(1) {
+        index.push_str(row);
+        index.push('\n');
+    }
     let mut lines = index.lines();
     ensure!(
         lines.next() == Some("name\texpectation\thex"),

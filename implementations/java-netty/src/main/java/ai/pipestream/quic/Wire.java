@@ -14,7 +14,9 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.TreeSet;
 
 /** Independent Java codec for the PipeStream Layer 0 wire contract. */
 public final class Wire {
@@ -44,6 +46,7 @@ public final class Wire {
   public static final long ERROR_LIMIT_EXCEEDED = 0x06;
   public static final long ERROR_LAYER_UNSUPPORTED = 0x0c;
   public static final long ERROR_FRAME = 0x0d;
+  public static final long ERROR_EXTENSION_UNSUPPORTED = 0x0f;
 
   private static final TypeReference<LinkedHashMap<String, Object>> MAP_TYPE = new TypeReference<>() {};
   private static final ObjectMapper CBOR = new ObjectMapper(
@@ -65,7 +68,51 @@ public final class Wire {
       boolean layer2Resilience,
       long maxWindowSize,
       int serializationFormat,
-      long keepaliveTimeoutMs) {
+      long keepaliveTimeoutMs,
+      List<Integer> supportedExtensions,
+      List<Integer> requiredExtensions) {
+    public Capabilities {
+      supportedExtensions = List.copyOf(supportedExtensions);
+      requiredExtensions = List.copyOf(requiredExtensions);
+    }
+
+    public Capabilities(boolean layer0Core, boolean layer1Recursive, boolean layer2Resilience,
+        long maxWindowSize, int serializationFormat, long keepaliveTimeoutMs) {
+      this(layer0Core, layer1Recursive, layer2Resilience, maxWindowSize, serializationFormat,
+          keepaliveTimeoutMs, List.of(), List.of());
+    }
+
+    private void validateExtensions() throws ProtocolException {
+      for (List<Integer> ids : List.of(supportedExtensions, requiredExtensions)) {
+        int previous = 0;
+        if (ids.size() > 32) throw frame("too many extension identifiers");
+        for (int id : ids) {
+          if (id <= previous || id >= 65535) throw frame("invalid extension identifier list");
+          previous = id;
+        }
+      }
+      if (!supportedExtensions.containsAll(requiredExtensions)) {
+        throw frame("required extension not advertised as supported");
+      }
+    }
+
+    public void validateResponse(Capabilities response) throws ProtocolException {
+      validateExtensions();
+      response.validateExtensions();
+      if (!supportedExtensions.containsAll(response.supportedExtensions)) {
+        throw frame("server selected an unoffered extension");
+      }
+      if (!response.supportedExtensions.containsAll(requiredExtensions)) throw extensionUnsupported();
+      if (!response.requiredExtensions.containsAll(requiredExtensions)) {
+        throw frame("server omitted a client requirement");
+      }
+      if (!response.layer0Core || (response.layer1Recursive && !layer1Recursive)
+          || (response.layer2Resilience && (!layer2Resilience || !response.layer1Recursive))
+          || response.maxWindowSize < 1 || response.maxWindowSize > maxWindowSize
+          || response.keepaliveTimeoutMs > keepaliveTimeoutMs || response.serializationFormat != 0) {
+        throw frame("server exceeded offered capabilities");
+      }
+    }
     /** @return conservative reference capabilities */
     public static Capabilities defaults() {
       return new Capabilities(true, false, false, 1024, 0, 30_000);
@@ -79,6 +126,13 @@ public final class Wire {
      * @throws ProtocolException when Layer 0 or resource constraints are invalid
      */
     public Capabilities negotiate(Capabilities peer) throws ProtocolException {
+      validateExtensions();
+      peer.validateExtensions();
+      if (!supportedExtensions.containsAll(peer.requiredExtensions)
+          || !peer.supportedExtensions.containsAll(requiredExtensions)) throw extensionUnsupported();
+      List<Integer> selected = supportedExtensions.stream().filter(peer.supportedExtensions::contains).toList();
+      TreeSet<Integer> required = new TreeSet<>(requiredExtensions);
+      required.addAll(peer.requiredExtensions);
       if (!peer.layer0Core) {
         throw layerUnsupported("Layer 0 is mandatory");
       }
@@ -92,7 +146,7 @@ public final class Wire {
           layer1 && layer2Resilience && peer.layer2Resilience,
           Math.min(maxWindowSize, peer.maxWindowSize),
           0,
-          Math.min(keepaliveTimeoutMs, peer.keepaliveTimeoutMs));
+          Math.min(keepaliveTimeoutMs, peer.keepaliveTimeoutMs), selected, List.copyOf(required));
     }
   }
 
@@ -193,6 +247,7 @@ public final class Wire {
 
   /** @return encoded default capabilities UCF */
   public static byte[] encodeCapabilities(Capabilities capabilities) throws ProtocolException {
+    capabilities.validateExtensions();
     LinkedHashMap<String, Object> map = new LinkedHashMap<>();
     map.put("layer0-core", capabilities.layer0Core);
     map.put("max-window-size", capabilities.maxWindowSize);
@@ -200,6 +255,8 @@ public final class Wire {
     map.put("layer2-resilience", capabilities.layer2Resilience);
     map.put("keepalive-timeout-ms", capabilities.keepaliveTimeoutMs);
     map.put("serialization-format", capabilities.serializationFormat);
+    if (!capabilities.supportedExtensions.isEmpty()) map.put("supported-extensions", capabilities.supportedExtensions);
+    if (!capabilities.requiredExtensions.isEmpty()) map.put("required-extensions", capabilities.requiredExtensions);
     return encodeControl(FRAME_CAPABILITIES, encodeMap(map));
   }
 
@@ -224,8 +281,11 @@ public final class Wire {
     long keepalive = number(map, "keepalive-timeout-ms", 30_000);
     rejectUnknown(map,
         "layer0-core", "max-window-size", "layer1-recursive", "layer2-resilience",
-        "keepalive-timeout-ms", "serialization-format", "max-scope-depth", "max-entities-per-scope");
-    Capabilities result = new Capabilities(layer0, layer1, layer2, maxWindow, serialization, keepalive);
+        "keepalive-timeout-ms", "serialization-format", "max-scope-depth", "max-entities-per-scope",
+        "supported-extensions", "required-extensions");
+    Capabilities result = new Capabilities(layer0, layer1, layer2, maxWindow, serialization, keepalive,
+        extensionList(map, "supported-extensions"), extensionList(map, "required-extensions"));
+    result.validateExtensions();
     if (!layer0) {
       throw layerUnsupported("Layer 0 is mandatory");
     }
@@ -526,6 +586,13 @@ public final class Wire {
           generator.writeNumber(integer);
         } else if (value instanceof Long number) {
           generator.writeNumber(number);
+        } else if (value instanceof List<?> ids) {
+          generator.writeStartArray(ids, ids.size());
+          for (Object id : ids) {
+            if (!(id instanceof Integer integer)) throw frame("extension identifier must be uint16");
+            generator.writeNumber(integer);
+          }
+          generator.writeEndArray();
         } else {
           throw frame("unsupported CBOR value");
         }
@@ -544,6 +611,26 @@ public final class Wire {
     } catch (IOException exception) {
       throw frame("CBOR decode failed: " + exception.getMessage());
     }
+  }
+
+  private static List<Integer> extensionList(Map<String, Object> map, String key) throws ProtocolException {
+    if (!map.containsKey(key)) return List.of();
+    if (!(map.get(key) instanceof List<?> ids) || ids.size() > 32) {
+      throw frame("invalid extension array");
+    }
+    var result = new java.util.ArrayList<Integer>(ids.size());
+    for (Object id : ids) {
+      if (!(id instanceof Integer integer) || integer < 1 || integer >= 65535) {
+        throw frame("extension identifier must be uint16 in 1..65534");
+      }
+      result.add(integer);
+    }
+    return result;
+  }
+
+  private static ProtocolException extensionUnsupported() {
+    return new ProtocolException(ERROR_EXTENSION_UNSUPPORTED, "PIPESTREAM_EXTENSION_UNSUPPORTED",
+        "a required extension is not supported by both peers");
   }
 
   private static boolean requiredBoolean(Map<String, Object> map, String key) throws ProtocolException {

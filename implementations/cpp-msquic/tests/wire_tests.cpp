@@ -10,6 +10,49 @@
 
 namespace {
 
+std::vector<std::uint8_t> unhex(const std::string& text) {
+  std::vector<std::uint8_t> bytes;
+  for (std::size_t i = 0; i < text.size(); i += 2) {
+    bytes.push_back(static_cast<std::uint8_t>(std::stoul(text.substr(i, 2), nullptr, 16)));
+  }
+  return bytes;
+}
+
+std::string hex(const std::vector<std::uint8_t>& bytes) {
+  std::string result;
+  for (auto byte : bytes) {
+    result += "0123456789abcdef"[byte >> 4];
+    result += "0123456789abcdef"[byte & 15];
+  }
+  return result;
+}
+
+void extension_vectors(const std::filesystem::path& root) {
+  std::ifstream input(root / "extension-negotiation.tsv");
+  if (!input) throw std::runtime_error("missing extension negotiation vectors");
+  std::string row;
+  std::getline(input, row);
+  while (std::getline(input, row)) {
+    std::vector<std::string> fields;
+    std::istringstream columns(row);
+    std::string field;
+    while (std::getline(columns, field, '\t')) fields.push_back(field);
+    if (fields.size() != 5) throw std::runtime_error("malformed extension vector");
+    std::string actual = "ok";
+    try {
+      const auto peer = pipestream::decode_capabilities(unhex(fields[3]));
+      if (fields[1] != "decode") {
+        const auto local = pipestream::decode_capabilities(unhex(fields[2]));
+        if (fields[1] == "response") local.validate_response(peer);
+        else if (fields[1] == "negotiate") {
+          actual = hex(pipestream::decode_control(pipestream::encode_capabilities(local.negotiate(peer))).payload);
+        } else throw std::runtime_error("unknown extension vector operation");
+      }
+    } catch (const pipestream::ProtocolError& error) { actual = error.name(); }
+    if (actual != fields[4]) throw std::runtime_error(fields[0] + ": " + actual + " != " + fields[4]);
+  }
+}
+
 std::vector<std::uint8_t> read(const std::filesystem::path& path) {
   std::ifstream input(path, std::ios::binary);
   if (!input) throw std::runtime_error("cannot read " + path.string());
@@ -42,6 +85,7 @@ void decode_named(const std::string& name, const std::vector<std::uint8_t>& byte
 int main() {
   try {
     const std::filesystem::path root = PIPESTREAM_VECTOR_ROOT;
+    extension_vectors(root);
     std::ifstream optional(root / "optional-fields.tsv");
     if (!optional) throw std::runtime_error("cannot read optional-field vectors");
     std::string optional_row;

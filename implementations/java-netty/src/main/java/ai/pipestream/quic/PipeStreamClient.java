@@ -176,7 +176,7 @@ public final class PipeStreamClient {
           if (frame.type() != Wire.FRAME_CAPABILITIES) {
             throw Wire.frame("server did not answer capabilities");
           }
-          Wire.decodeCapabilities(frame.payload());
+          Wire.Capabilities.defaults().validateResponse(Wire.decodeCapabilities(frame.payload()));
           capabilities.complete(null);
           return;
         }

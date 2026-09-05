@@ -6,7 +6,7 @@ This document provides implementation guidance and recommended data structures f
 
 Executable Layer 0 implementations now live under [`implementations/`](implementations/): Java/Netty, Rust/Quinn, and C++/MsQuic. Each directory builds a reusable library plus a standalone client/server. Their codecs and protocol state machines are separate implementations.
 
-The checked-in [`test-vectors/`](test-vectors/) corpus supplies frozen valid and invalid bytes. A protocol-neutral Rust driver runs every client against every server as separate processes; it has no dependency on any protocol implementation and does not encode or decode PipeStream frames. The language-native applications in [`examples/`](examples/) exercise cross-language transfer, application-profile recovery, and three-node scatter/reassembly.
+The checked-in [`test-vectors/`](test-vectors/) corpus supplies frozen valid and invalid bytes. A protocol-neutral Rust driver runs every client against every server as separate processes; it has no dependency on any PipeStream implementation. Its raw QUIC capability probes frame frozen CBOR bodies without using a protocol codec. The language-native applications in [`examples/`](examples/) exercise cross-language transfer, application-profile recovery, and three-node scatter/reassembly.
 
 All three implementations cover a documented Layer 0 subset, not all mandatory
 Layer 0 behavior. Rust additionally exercises recursive scopes and selected

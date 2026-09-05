@@ -13,6 +13,30 @@ final class WireTest {
   private static final Path VECTORS = Path.of("..", "..", "test-vectors");
 
   @Test
+  void extensionNegotiationMatchesSharedVectors() throws Exception {
+    var hex = java.util.HexFormat.of();
+    for (String row : Files.readAllLines(VECTORS.resolve("extension-negotiation.tsv")).stream().skip(1).toList()) {
+      String[] fields = row.split("\t");
+      String actual;
+      try {
+        var peer = Wire.decodeCapabilities(hex.parseHex(fields[3]));
+        actual = "ok";
+        if (!fields[1].equals("decode")) {
+          var local = Wire.decodeCapabilities(hex.parseHex(fields[2]));
+          if (fields[1].equals("response")) local.validateResponse(peer);
+          else {
+            assertEquals("negotiate", fields[1]);
+            actual = hex.formatHex(Wire.decodeControl(Wire.encodeCapabilities(local.negotiate(peer))).payload());
+          }
+        }
+      } catch (ProtocolException error) {
+        actual = error.errorName();
+      }
+      assertEquals(fields[4], actual, fields[0]);
+    }
+  }
+
+  @Test
   void optionalFieldsDoNotChangeDeterministicValidation() throws Exception {
     for (String row : Files.readAllLines(VECTORS.resolve("optional-fields.tsv")).stream().skip(1).toList()) {
       String[] fields = row.split("\t");

@@ -24,6 +24,7 @@ standard. No implementation in this repository demonstrates full conformance.
 | Resource handling | Independent bounded stream readers; aggregate receive/chunk budgets; incremental control-body allocation | Stalled-stream and aggregate-chunk-limit wire tests |
 | URI | Typed session/entity/claim locators, explicit port and numeric bounds, no userinfo or bearer secrets | Core URI acceptance and refusal tests |
 | Evidence integrity | Actual Appendix C/CDDL definition comparison; independent expected local receipt calculation | Conformance schema drift test and recursive CLI receipt equality checks |
+| Extension negotiation | Bounded supported/required sets, exact intersection and requirement union, named refusal, client response validation | 35 shared codec cases and raw QUIC probes, detailed below |
 
 The wire tests are in `implementations/rust-quinn/quinn/tests/draft04_wire.rs`.
 The coverage above is a review-finding matrix, not a requirement-to-test matrix
@@ -48,6 +49,37 @@ verified. All implementations still need that complete matrix.
   reasons, and checkpoint-timeout error 0x0E. Error 0x06 is named
   PIPESTREAM_LIMIT_EXCEEDED to cover payload and aggregate resource limits.
 - Factual implementation status and an explicit open-issues appendix.
+- Supported/required extension negotiation, one exchange per connection,
+  explicit activation and downgrade rules, and a proposed 16-bit registry.
+  No extension identifiers are assigned or enabled by the shipped services.
+
+## Extension requirement coverage
+
+This follow-up builds on the first draft-04 landing (`89711e1`). It closes
+the base negotiation mechanism needed before adding sealed work sets and
+authenticated recovery profiles. It does not implement those features.
+
+All three independent codecs consume `test-vectors/extension-negotiation.tsv`.
+The positive selection cases use synthetic identifiers solely as test data;
+they do not assert implementation or registration of an extension.
+
+| Section 3.4.3 requirement | Evidence |
+|---|---|
+| Bounded, sorted, unique identifier lists and required subset | `too-many`, `unsorted`, `duplicate`, reserved/type cases, `required-not-supported` |
+| Received CBOR determinism before defaults | Empty-list, non-minimal array/integer, indefinite array, float and trailing-item cases |
+| Intersection of supported sets and union of requirements | `intersection-required-union`, `maximum-required-union` |
+| Both parties' requirements must be supported | `client-required-unknown`, `server-required-unknown` |
+| Client rejects omitted requirements or unsolicited selections | Missing-required, missing-echo and unsolicited-response cases |
+| Response cannot escalate capabilities | Layer, window, timeout and serialization cases |
+| Unsupported requirements fail before admission with error 0x0F | Raw QUIC probes verify the application close code and no stored entity |
+| Optional unknown IDs are not activated; no repeated negotiation | Raw QUIC probes compare exact response bytes, then require duplicate-CAPABILITIES refusal |
+| Application work waits for a valid response | Malformed-server probes against Java, C++, Rust one-entity and Rust recursive clients |
+| Negotiation refusal is terminal | `rejected-then-valid` pipelines a second offer, PENDING and an Entity Stream; no stored entity after server exit |
+
+The raw probes use Quinn as a transport and frozen message bodies, without
+importing any PipeStream codec or state machine. Extension dependency and
+conflict handling will need extension-specific tests when identifiers are
+defined. Authenticated profiles and durable capability binding remain open.
 
 ## Validation
 
@@ -55,8 +87,18 @@ verified. All implementations still need that complete matrix.
 the workspace tests, Java tests, C++ CTest, both Rust example suites, the
 frozen-vector and CDDL checks, all nine client/server pairings, both recursive
 and recovery CLI scenarios, and all three cross-language applications.
-The complete command passed locally on 2026-09-05, including 45 Rust workspace
-tests, the admission and aggregate-budget regressions, and all nine pairings.
+The first landing passed locally on 2026-09-05 with 45 Rust workspace tests.
+The follow-up passed the complete command locally on 2026-09-05 with
+46 Rust workspace tests, 35 shared extension cases, and 32 raw QUIC
+capability probes. All three language suites, nine transfer pairings,
+recursive/recovery scenarios, and external examples passed. The conformance
+runner also builds separately from the rest of the Cargo workspace.
+
+The adversarial pass also fixed terminal failure handling: Java completes
+both public waiters and ignores callbacks after the first failure; C++
+will not process buffered frames or entities after failure; Rust drains
+its endpoint before a one-shot server exits following a refusal. The raw
+probes require the actual close code and inspect storage after server exit.
 
 `./build.sh core 04` produced XML, text, and HTML. idnits reported zero errors,
 zero flaws, zero warnings, and one informational possible-downref comment
@@ -74,8 +116,8 @@ xml2rfc renderer remains confined to document authoring.
    recycling epochs or non-reuse, scoped cursors, and GOAWAY's identity cut.
    The admission restriction improves current checkpoints but does not solve
    the complete descendant-set problem.
-2. Add interoperable supported/required extension negotiation and an
-   authenticated resilience profile with principal-bound claims, durable
+2. Define and implement an authenticated resilience profile using the new
+   supported/required negotiation mechanism, with principal-bound claims, durable
    executor fencing, and retained outcomes for lost redemption ACKs. The
    current Layer 2 boolean advertises more than the prototype implements.
 3. Add bounded spool-backed payload processing and an asynchronous application
