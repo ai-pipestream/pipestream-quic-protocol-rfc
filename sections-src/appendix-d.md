@@ -159,8 +159,16 @@ connection and ingress tasks. Tests also cover pipelined first admission and
 checkpoint accounting for received payloads awaiting installation.
 Physical permits are shared within one
 process, not across independent writer processes. Synchronous metadata I/O and
-unbounded retained storage remain limitations; temporary quotas and worker
-counts are not a complete multi-tenant resource guarantee.
+unbounded retained payload storage remain limitations; temporary quotas and
+worker counts are not a complete multi-tenant resource guarantee.
+
+Rust now applies persistent global and authority/principal quotas to serialized
+session bytes and retained-session counts, including completed and revoked work.
+State, accounting, and job-index changes share a transaction; readers validate
+state and accounting in one snapshot. Tests cover concurrent capacity admission,
+restart, atomic refusal, missing accounting, bounded serialization, and real-QUIC
+declaration replay and rollback at quota limits. This is not a physical database
+or payload-file quota, nor a reservation for every future completion record.
 
 Spool tests cover quota exhaustion, file-backed chunk assembly, corruption
 before assembly, cancellation-safe disk credit, and abandoned-file accounting.

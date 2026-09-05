@@ -15,6 +15,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[path = "retained_recovery.rs"]
 mod retained_recovery;
 
+#[path = "storage_quotas.rs"]
+mod storage_quotas;
+
 #[derive(Default)]
 struct Processor {
     processed: AtomicUsize,

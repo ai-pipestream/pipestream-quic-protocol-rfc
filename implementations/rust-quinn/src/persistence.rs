@@ -12,6 +12,8 @@ use std::{
 
 mod queue;
 pub use queue::{JobQueueLimits, ReadyJob};
+mod storage;
+pub use storage::{StorageLimits, StorageUsage};
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS pipestream_sessions (
@@ -97,11 +99,12 @@ pub trait SessionStore: Send + Sync {
 pub struct SqliteSessionStore {
     path: PathBuf,
     job_limits: JobQueueLimits,
+    storage_limits: StorageLimits,
 }
 
 impl SqliteSessionStore {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, StoreError> {
-        Self::open_configured(path.into(), None)
+        Self::open_configured(path.into(), None, None)
     }
 
     /// Queue limits are durable database policy. Reopening cannot silently replace them.
@@ -110,12 +113,25 @@ impl SqliteSessionStore {
         limits: JobQueueLimits,
     ) -> Result<Self, StoreError> {
         limits.validate()?;
-        Self::open_configured(path.into(), Some(limits))
+        Self::open_configured(path.into(), Some(limits), None)
+    }
+
+    /// Configure persistent queue and serialized-state policy when creating a store.
+    /// Reopening cannot silently change either policy or account an existing unbounded store.
+    pub fn open_with_limits(
+        path: impl Into<PathBuf>,
+        jobs: JobQueueLimits,
+        storage: StorageLimits,
+    ) -> Result<Self, StoreError> {
+        jobs.validate()?;
+        storage.validate()?;
+        Self::open_configured(path.into(), Some(jobs), Some(storage))
     }
 
     fn open_configured(
         path: PathBuf,
         requested: Option<JobQueueLimits>,
+        storage_limits: Option<StorageLimits>,
     ) -> Result<Self, StoreError> {
         let parent = path
             .parent()
@@ -126,10 +142,12 @@ impl SqliteSessionStore {
         let mut store = Self {
             path,
             job_limits: JobQueueLimits::default(),
+            storage_limits: StorageLimits::default(),
         };
         let mut connection = store.connect()?;
         connection.execute_batch(SCHEMA)?;
         store.job_limits = queue::initialize(&mut connection, requested)?;
+        store.storage_limits = storage::initialize(&mut connection, storage_limits)?;
         drop(connection);
         sync_directory(&parent)?;
         Ok(store)
@@ -142,6 +160,21 @@ impl SqliteSessionStore {
 
     pub fn job_limits(&self) -> JobQueueLimits {
         self.job_limits
+    }
+
+    pub fn storage_limits(&self) -> StorageLimits {
+        self.storage_limits
+    }
+
+    pub fn storage_usage(&self) -> Result<StorageUsage, StoreError> {
+        storage::usage(&self.connect()?, None)
+    }
+
+    pub fn principal_storage_usage(
+        &self,
+        principal: Option<&crate::authorization::PrincipalBinding>,
+    ) -> Result<StorageUsage, StoreError> {
+        storage::usage(&self.connect()?, Some(principal))
     }
 
     pub fn transact<T>(
@@ -186,6 +219,7 @@ impl SqliteSessionStore {
             )));
         }
         queue::verify_index(&transaction)?;
+        storage::verify_index(&transaction)?;
         transaction.commit()?;
         Ok(())
     }
@@ -227,7 +261,9 @@ impl SessionStore for SqliteSessionStore {
         }
         let mut connection = self.connect()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let (state, checksum) = encode_state(session)?;
+        storage::verify_index(&transaction)?;
+        let (state, checksum) =
+            encode_state(session, storage::read_limits(&transaction)?.record_bytes)?;
         let inserted = transaction.execute(
             "INSERT OR IGNORE INTO pipestream_sessions
              (session_id, format_version, revision, state, checksum, updated_at_micros)
@@ -249,6 +285,7 @@ impl SessionStore for SqliteSessionStore {
             });
         }
         queue::replace_index(&transaction, session)?;
+        storage::replace_index(&transaction, session, state.len(), &checksum)?;
         transaction.commit()?;
         Ok(VersionedSession {
             revision: 1,
@@ -257,8 +294,11 @@ impl SessionStore for SqliteSessionStore {
     }
 
     fn load(&self, session_id: &str) -> Result<Option<VersionedSession>, StoreError> {
-        let connection = self.connect()?;
-        load_from(&connection, session_id)
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction()?;
+        let retained = load_from(&transaction, session_id)?;
+        transaction.commit()?;
+        Ok(retained)
     }
 
     fn save(
@@ -284,16 +324,17 @@ fn load_from(
     connection: &Connection,
     session_id: &str,
 ) -> Result<Option<VersionedSession>, StoreError> {
+    let limit = storage::read_limits(connection)?.record_bytes;
     let row = connection
         .query_row(
-            "SELECT format_version, revision, state, checksum
+            "SELECT format_version, revision, CASE WHEN length(state) <= ?2 THEN state ELSE NULL END, checksum
              FROM pipestream_sessions WHERE session_id = ?1",
-            [session_id],
+            params![session_id, limit as i64],
             |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, i64>(1)?,
-                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, Option<Vec<u8>>>(2)?,
                     row.get::<_, Vec<u8>>(3)?,
                 ))
             },
@@ -307,6 +348,8 @@ fn load_from(
             "unsupported stored session version {format_version}"
         )));
     }
+    let state =
+        state.ok_or_else(|| StoreError::Corrupt("stored session exceeds record budget".into()))?;
     let revision = u64::try_from(revision)
         .map_err(|_| StoreError::Corrupt("negative session revision".to_owned()))?;
     let expected: [u8; 32] = checksum
@@ -331,6 +374,7 @@ fn load_from(
     session
         .validate_recovery()
         .map_err(|error| StoreError::Corrupt(error.to_string()))?;
+    storage::validate_entry(connection, &session, state.len(), &expected)?;
     Ok(Some(VersionedSession { revision, session }))
 }
 
@@ -340,6 +384,7 @@ fn persist_update(
     next_revision: u64,
     session: &Session,
 ) -> Result<(), StoreError> {
+    storage::verify_index(connection)?;
     if let Some(previous) = load_from(connection, &session.session_id)? {
         session
             .validate_retained_jobs(&previous.session)
@@ -352,7 +397,7 @@ fn persist_update(
         .map_err(|_| StoreError::Corrupt("session revision exceeds SQLite integer".to_owned()))?;
     let next = i64::try_from(next_revision)
         .map_err(|_| StoreError::Corrupt("session revision exceeds SQLite integer".to_owned()))?;
-    let (state, checksum) = encode_state(session)?;
+    let (state, checksum) = encode_state(session, storage::read_limits(connection)?.record_bytes)?;
     let changed = connection.execute(
         "UPDATE pipestream_sessions
          SET format_version = ?1, revision = ?2, state = ?3, checksum = ?4,
@@ -384,10 +429,11 @@ fn persist_update(
             None => Err(StoreError::NotFound(session.session_id.clone())),
         };
     }
-    queue::replace_index(connection, session)
+    queue::replace_index(connection, session)?;
+    storage::replace_index(connection, session, state.len(), &checksum)
 }
 
-fn encode_state(session: &Session) -> Result<(Vec<u8>, [u8; 32]), StoreError> {
+fn encode_state(session: &Session, limit: usize) -> Result<(Vec<u8>, [u8; 32]), StoreError> {
     if session.format_version != SESSION_FORMAT_VERSION {
         return Err(StoreError::Corrupt(format!(
             "unsupported in-memory session version {}",
@@ -396,8 +442,7 @@ fn encode_state(session: &Session) -> Result<(Vec<u8>, [u8; 32]), StoreError> {
     }
     session.validate_jobs().map_err(StoreError::Protocol)?;
     session.validate_recovery().map_err(StoreError::Protocol)?;
-    let state =
-        postcard::to_stdvec(session).map_err(|error| StoreError::Codec(error.to_string()))?;
+    let state = storage::encode(session, limit)?;
     let checksum = Sha256::digest(&state).into();
     Ok((state, checksum))
 }

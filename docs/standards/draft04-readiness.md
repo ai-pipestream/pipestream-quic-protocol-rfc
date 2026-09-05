@@ -304,6 +304,31 @@ broader multi-principal resource measurements remain required. Metadata database
 operations and lineage writes remain synchronous on the connection path, and
 physical worker/spool accounting does not cover independent writer processes.
 
+## Retained-state quotas
+
+Rust's `StorageLimits` bounds serialized bytes and retained-session counts
+globally and per authority/principal. Completion and revocation do not free
+these charges. State changes, their accounting entry, and the unfinished-job
+index commit in one transaction. Reads validate accounting in the same snapshot
+as the session, avoiding false corruption from concurrent commits. Serialization
+refuses growth at the record cap; oversized stored blobs are not copied into
+Rust before refusal. Existing unaccounted stores are refused, not converted.
+
+Thirteen core tests cover byte/count exhaustion, anonymous and authority-qualified
+budgets, concurrent admission and reads, exact rollback, abrupt exit, corrupted
+or missing accounting/policy, invalid limits, and bounded serialization. Two
+real-QUIC tests exercise both owner/global session limits and oversized work-set
+updates; previously acknowledged declarations remain replayable after refusal
+and restart. The wire format and CDDL are unchanged. Section 10.3 clarifies that
+retained obligations do not become free capacity merely because work finishes.
+
+This increment passed `./conformance/run_all.sh` with 153 Rust workspace tests
+(79 core, 27 Quinn unit, 44 wire, one allocation gate, two runner tests), five
+Java tests, the C++ vector test, nine transfer pairings, 32 capability probes,
+and all external examples. Physical database/WAL and payload quotas, completion
+headroom reservations, orphan reconciliation, and storage-stall isolation still
+need implementation and measurement. A logical byte quota is not their proof.
+
 ## Validation
 
 `./conformance/run_all.sh` runs Rust formatting, Clippy with warnings denied,
