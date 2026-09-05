@@ -86,7 +86,8 @@ PipeStream error codes are used as QUIC application error codes in CONNECTION_CL
 | 0x0D | PIPESTREAM_FRAME_ERROR | Malformed frame or improper stream usage |
 | 0x0E | PIPESTREAM_CHECKPOINT_TIMEOUT | Pending checkpoint deadline expired |
 | 0x0F | PIPESTREAM_EXTENSION_UNSUPPORTED | Required extension or selected combination unavailable |
-| 0x10-0x3F | Unassigned | Available for registration |
+| 0x10 | PIPESTREAM_UNAUTHORIZED | Principal or authority not authorized for durable work |
+| 0x11-0x3F | Unassigned | Available for registration |
 | 0x40-0xFF | Private Use | Requires explicit agreement |
 
 The registry has an 8-bit value space. QUIC application error codes have

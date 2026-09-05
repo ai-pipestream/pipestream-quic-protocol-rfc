@@ -53,7 +53,8 @@ verified. All implementations still need that complete matrix.
 - Supported/required extension negotiation, one exchange per connection,
   explicit activation and downgrade rules, and a proposed 16-bit registry.
   No public extension identifiers are assigned. The Rust recursive service
-  additionally offers private-use profile 65281 by explicit peer agreement.
+  additionally offers private-use profiles 65281 and, when mutual TLS is
+  configured, 65282 by explicit peer agreement.
 - Section 9.8's client-owned work-set lifecycle, identity non-reuse, declaration
   and seal hashing, scope-qualified checkpoints, and root GOAWAY cut.
 
@@ -125,6 +126,31 @@ is made. The local lineage digest now commits to the profile's producer and
 scope seals under a distinct domain tag; it is still not an authenticated
 content receipt or proof of correct computation.
 
+## Authenticated-session binding prerequisite
+
+The Rust service implements private-use `authenticated-session-v1` (65282),
+defined in Section 10.6.4. It requires mutual TLS and explicit certificate-to-
+principal mapping. The initial admission or declaration atomically binds the
+session to a stable principal and issuing authority. Mutation transactions
+and background recovery check that binding and durable session revocation.
+An anonymous listener sharing the database cannot operate on protected work.
+Clients configured with an identity require the extension and cannot silently
+fall back to anonymous processing.
+
+`quinn/tests/draft04/authenticated_sessions.rs` tests missing, untrusted,
+expired, and unmapped credentials; downgrade refusal; cross-principal and
+cross-authority access to a retained session; explicit certificate rotation;
+live/reconnected revocation; and recovery authorization. Core tests reopen
+owner/revocation records. These are transport/session-binding tests, not
+evidence for retained redemption outcomes or an asynchronous executor.
+
+Stored format is now version 3. Version-1 and version-2 records are refused
+without writes; no operational database was converted. Principal maps are
+startup configuration, not a live authorization directory. Per-claim
+revocation, portable authority-qualified recovery requests, retained outcomes,
+executor fencing, and per-principal resource gates remain goal requirements.
+See [the full implementation plan](recovery-execution-java-plan.md).
+
 ## Validation
 
 `./conformance/run_all.sh` runs Rust formatting, Clippy with warnings denied,
@@ -144,6 +170,14 @@ eight sealed-work QUIC tests), 20 new frozen work-set inputs, the Java and
 C++ suites, all nine transfer pairings, 32 capability probes, and every
 recursive/recovery scenario and external example.
 
+The authenticated-session increment passed the full command locally on
+2026-09-05 with 71 Rust workspace tests, including six mutual-TLS wire tests,
+the owner/revocation store test, and principal-map validation. Java/C++ tests,
+all nine transfer pairings, 32 capability probes, and every example passed.
+The authentication path also disables TLS resumption to require a fresh
+credential check on each connection. This does not establish the remaining
+goal's recovery, asynchronous execution, or Java sealed-work requirements.
+
 The adversarial pass also fixed terminal failure handling: Java completes
 both public waiters and ignores callbacks after the first failure; C++
 will not process buffered frames or entities after failure; Rust drains
@@ -162,9 +196,9 @@ xml2rfc renderer remains confined to document authoring.
 
 ## Still required before a conformance or deployment claim
 
-1. Define and implement an authenticated resilience profile using the new
-   supported/required negotiation mechanism, with principal-bound claims, durable
-   executor fencing, and retained outcomes for lost redemption ACKs. The
+1. Build on the authenticated-session binding with an explicit recovery
+   profile, authority-qualified requests, durable executor fencing, and
+   retained outcomes for lost redemption ACKs. The
    current Layer 2 boolean advertises more than the prototype implements.
 2. Add bounded spool-backed payload processing and an asynchronous fenced
    application executor, with crash-boundary and measured resource gates.
@@ -176,8 +210,9 @@ xml2rfc renderer remains confined to document authoring.
 Additional gaps include Layer 0 dehydration, arbitrary bidirectional work
 origination, child-before-parent admission buffering, automatic retry/timer
 policies, authorization tests, crash-boundary coverage, and measured resource
-and performance gates. The standalone durable service authenticates only the
-server and must not be exposed as an untrusted multi-tenant service.
+and performance gates. The standalone durable service supports optional mutual
+TLS but still lacks the resource and execution guarantees required for an
+untrusted multi-tenant service.
 
 SQLite IMMEDIATE transactions prevent simultaneous recovery callbacks through
 one database, including separate store handles. They serialize writers and

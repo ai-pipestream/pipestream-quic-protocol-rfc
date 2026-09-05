@@ -297,6 +297,7 @@ async fn public_client_replays_an_unobserved_seal_ack_after_server_restart() -> 
     )?;
     let server = RecursiveServer::bind(&peer.options, service)?;
     let client_options = RecursiveClientOptions {
+        identity: None,
         remote: server.local_addr()?,
         ca_certificate: peer.options.certificate.clone(),
         server_name: "localhost".into(),
@@ -385,6 +386,7 @@ async fn public_client_refuses_changed_or_malformed_work_set_ack() -> Result<()>
                 .unwrap()
         });
         let mut client = RecursiveClient::connect_sealed(&RecursiveClientOptions {
+            identity: None,
             remote: address,
             ca_certificate: options.certificate,
             server_name: "localhost".into(),

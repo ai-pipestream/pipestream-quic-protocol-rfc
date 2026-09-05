@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fmt};
 
+pub mod authorization;
+pub use authorization::ERROR_UNAUTHORIZED;
 mod deterministic;
 pub mod extensions;
 pub mod persistence;

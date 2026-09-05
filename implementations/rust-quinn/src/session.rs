@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const SESSION_FORMAT_VERSION: u16 = 2;
+pub const SESSION_FORMAT_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EntityKey {
@@ -176,6 +176,7 @@ pub struct Session {
     pub checkpoints: BTreeMap<(u32, u64), StoredCheckpoint>,
     pub claims: BTreeMap<u64, ClaimRecord>,
     pub work_sets: Option<crate::work_set::WorkSets>,
+    pub owner: Option<crate::authorization::SessionOwner>,
 }
 
 impl Session {
@@ -215,6 +216,7 @@ impl Session {
             checkpoints: BTreeMap::new(),
             claims: BTreeMap::new(),
             work_sets: None,
+            owner: None,
         })
     }
 

@@ -9,6 +9,9 @@ use std::{collections::BTreeMap, fs, sync::Arc, time::Duration};
 #[path = "draft04/sealed_work.rs"]
 mod sealed_work;
 
+#[path = "draft04/authenticated_sessions.rs"]
+mod authenticated_sessions;
+
 // Raw QUIC peers exercise ordering and refusal behavior independently of RecursiveClient.
 struct Fixture {
     dir: tempfile::TempDir,
@@ -511,6 +514,7 @@ async fn r9_mismatched_checkpoint_ack_is_refused() -> Result<()> {
         connection.closed().await;
     });
     let mut client = RecursiveClient::connect(&RecursiveClientOptions {
+        identity: None,
         remote: address,
         ca_certificate: options.certificate,
         server_name: "localhost".to_owned(),

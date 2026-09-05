@@ -21,6 +21,12 @@ the opt-in private-use `sealed-work-sets-v1` profile (Section 9.8).
 Authenticated resilience, bidirectional producers, and independent Java/C++
 implementations of that profile remain unfinished.
 
+The Rust durable service also supports negotiated mutual-TLS session binding:
+certificate-mapped principals, retained authority/owner records, and session
+revocation. This is the authentication prerequisite for recovery, not the
+retained-outcome or asynchronous-executor implementation. The full remaining
+goal is tracked in [the implementation plan](docs/standards/recovery-execution-java-plan.md).
+
 ## Authoring Workflow
 
 This repository uses a modular authoring workflow for IETF drafts. The monolithic draft is treated as a build artifact and is not checked into the repository.

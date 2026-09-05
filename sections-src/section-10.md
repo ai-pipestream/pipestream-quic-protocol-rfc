@@ -150,6 +150,59 @@ stopping-point checksum to the redeeming application through an authenticated
 application context. The fixed Claim Check status extension intentionally does
 not disclose that additional context.
 
+### Authenticated Session Binding (Private-Use Profile)
+
+The `authenticated-session-v1` profile uses private-use extension identifier
+65282 (0xFF02) by explicit agreement. It can accompany the sealed-work profile
+in Section 9.8 or another negotiated lifecycle. It does not itself activate
+Layer 2, change claim replay semantics, or provide retained recovery outcomes.
+This is an authentication binding, not a complete resilience profile.
+
+Both endpoints MUST require this extension on a connection using this profile.
+The server MUST require and verify a client certificate during the QUIC TLS
+handshake. Verification includes proof of possession, the configured trust
+chain, certificate validity, and client authentication usage. Anonymous clients
+MUST NOT be accepted. The client MUST authenticate the server as required by
+the QUIC TLS mapping. Supplying a client certificate is not sufficient evidence
+that the server enforces caller identity; successful extension negotiation is
+also required. Refusal MUST NOT trigger an anonymous retry.
+If TLS session resumption is enabled, the implementation MUST reapply the
+current credential validity and authorization policy, or refuse resumption
+and require a full handshake. Cached authentication MUST NOT bypass expiry
+or removal of the identity mapping.
+
+The deployment MUST explicitly map the verified certificate to a stable
+principal. A trusted certificate without an authorized mapping is refused
+with PIPESTREAM_UNAUTHORIZED (0x10). An implementation MAY use configured
+SHA-256 fingerprints of complete DER leaf certificates for this mapping;
+the fingerprint is an identifier, not a replacement for certificate and
+signature verification. Operators may map rotated certificates to the same
+principal. Removing an identity mapping affects subsequent authentication;
+immediate denial of existing work requires revoking that session's access.
+
+Before acknowledging the first durable admission or declaration, the server
+MUST atomically bind the session to its authenticated principal and configured
+issuing authority. Claims inherit this durable session binding. The server
+MUST verify the binding before revealing retained state, admitting further
+work, or executing a claim. Metadata, producer labels, and numeric claim IDs
+cannot override it. The authority identifier is deployment configuration, not
+a string chosen by a request. This binding alone does not define portable
+claim transfer between independent authorities.
+
+An existing anonymous session MUST NOT be converted implicitly. A bound
+session MUST NOT be served by an anonymous connection or by another principal
+or authority, even if an operator exposes the same database through another
+listener. Such access is PIPESTREAM_UNAUTHORIZED. Denial responses MUST NOT
+include private session contents or claim state.
+
+Session-access revocation MUST be durable and apply to live and reconnected
+clients. Authorization MUST be checked in the transaction that admits or
+commits work, not only at connection establishment. Background recovery MUST
+also check the retained binding, current authority policy, and revocation
+before execution. These checks do not cancel an external effect already
+committed before revocation; asynchronous executors additionally require
+fencing and application idempotency under Section 10.6.1.
+
 ## Encryption Key Management
 
 When using FileStorageReference with encryption:
