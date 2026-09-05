@@ -331,6 +331,32 @@ and all external examples. Physical database/WAL and payload quotas, completion
 headroom reservations and orphan reconciliation still
 need implementation and measurement. A logical byte quota is not their proof.
 
+## Rust SQLite file-length bounds
+
+The bundled Unix SQLite backend now has separate immutable caps for database,
+WAL, rollback-journal and shared-memory file lengths. Every store connection
+uses the guard and a main-page limit. Writes, enlarging truncates and WAL-index
+mappings check their caps before growth; size-hint preallocation, chunk rounding
+and database mmap cannot bypass them. A checksummed 72-byte policy is synced
+before database creation. Reopen cannot change it or convert a nonempty store
+that lacks it. Unsupported backends and file aliases refuse explicitly.
+
+Eleven core tests cover each actual file cap, size-hint/truncate bypass attempts,
+policy corruption and changes, alias/legacy refusal, held-reader exhaustion,
+job/session rollback, checkpoint busy reporting, abrupt-exit WAL recovery,
+and concurrent sidecar creation/unlink during connection churn.
+One real-QUIC test fills WAL under a read snapshot, requires the named capacity
+refusal, and verifies retained declaration replay after reclamation. These are
+cooperative-writer file-length bounds, not allocated filesystem blocks or
+process memory. Completion-space reservations, Rust retained-payload accounting,
+Java JDBC bounds, and orphan reconciliation remain due. Session format 7 and
+the normative wire/CDDL are unchanged; no operational database was converted.
+
+The final full suite passed with 176 Rust workspace tests, 89 Java tests
+(no errors, failures or skips), C++, all nine Layer 0 pairings, 32 capability
+probes, recursive/recovery CLI checks and all external examples. Draft -04
+passed idnits with zero errors/flaws/warnings and one FIPS reference comment.
+
 ## Connection storage isolation
 
 Connection metadata and lineage operations use eight physical slots per canonical

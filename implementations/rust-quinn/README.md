@@ -262,15 +262,62 @@ The session payload format is version 7; old nonempty databases without
 the accounting schema are refused. No operational database is migrated or
 silently assigned new quotas. Preserve old stores with their matching binary.
 
-These are logical serialized-state quotas, not bounds on database pages, WAL,
-indexes, retained payload files, or total process memory. SQLite can retain WAL
-pages while readers hold snapshots; an automatic checkpoint is not a hard disk
-limit ([SQLite WAL documentation](https://sqlite.org/wal.html)). Completion-space
+These are logical serialized-state quotas, separate from the SQLite file caps
+below. They do not bound retained payload files or total process memory. Completion-space
 reservations are also unfinished: admission does not reserve every possible
 future outcome's bytes, and quota exhaustion can refuse a later publication.
 Such work remains unfinished and charged; no successful completion is invented.
-Physical file quotas and orphan reconciliation remain
-part of the full execution requirement.
+Retained-payload quotas and orphan reconciliation remain part of the full
+execution requirement.
+
+### SQLite file-length caps
+
+Every `SqliteSessionStore` connection now uses a non-default VFS guard over
+bundled SQLite's `unix` backend. Defaults are 256 MiB for the main database,
+64 MiB each for WAL and rollback journal, and 512 KiB for shared memory.
+`open_with_all_limits` additionally accepts `PhysicalLimits`; `physical_limits`
+returns the retained policy and `physical_usage` samples the current lengths.
+The fixed 72-byte `.pslimits` sidecar stores the version, four limits, and SHA-256.
+It is synced before database writes. All limits are positive multiples of
+64 KiB, capped at 16 GiB per file and 16 MiB for shared memory.
+
+The guard rejects growth before writes, enlarging truncates, and WAL-index
+mappings. Size hints cannot preallocate space, chunk-size rounding is disabled,
+and the database mmap path is disabled. Every connection also sets a main-page
+limit so WAL cannot commit a database too large to checkpoint. Temporary SQL
+storage stays in memory; unnamed/unregistered disk files cannot be opened
+through the guard. `SQLITE_FULL` becomes `PIPESTREAM_LIMIT_EXCEEDED`, including
+over QUIC; a failed transaction does not publish its session or job state.
+
+Held readers can prevent WAL reset. At capacity, writes refuse until enough
+space is reclaimed; there is no automatic eviction of admitted work.
+`checkpoint()` now returns busy when TRUNCATE could not reclaim the WAL, rather
+than reporting success from an unread PRAGMA result. See
+[SQLite's WAL checkpoint rules](https://sqlite.org/wal.html) and
+[VFS file methods](https://sqlite.org/c3ref/io_methods.html).
+
+Reopen reads the immutable policy. Changed/missing/corrupt policies, nonempty
+unaccounted databases, oversized sidecars, symlinks, hardlink aliases, and
+reserved database suffixes are refused without conversion. Preserve older
+databases with their matching binary. Session payload version 7 is unchanged;
+the file policy has its own version. No operational database is migrated.
+At most 64 guarded database identities may be live in one process.
+
+This guard currently requires the bundled Unix VFS and OS pages no larger than
+64 KiB; unsupported backends refuse, with no unbounded fallback. Use a private
+directory and cooperating writers. External unguarded SQLite connections or
+filesystem writers are outside the enforcement boundary. The limits cover
+file lengths, not filesystem allocation, snapshots, native memory, payloads,
+or completion-space reservations. They do not lift the service's single-writer-
+process restriction for other resource accounting. Java JDBC needs a separate
+storage-bound implementation.
+
+Eleven core tests exercise main-page, WAL, rollback-journal and actual shared-memory
+exhaustion, growth-control bypass attempts, immutable/corrupt policies, aliases,
+transaction rollback, held-reader checkpoint refusal, abrupt-exit recovery,
+and concurrent connection/sidecar churn.
+A real-QUIC test verifies the named refusal, preserved declaration and replay
+after checkpointing. These checks are not a throughput benchmark.
 
 ### Durable queue APIs
 

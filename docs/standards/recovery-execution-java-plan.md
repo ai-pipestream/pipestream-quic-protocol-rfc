@@ -295,7 +295,27 @@ approval as part of a repository landing.
   checks, and all external examples. Changed public Java APIs passed Javadoc
   with doclint and warnings denied. Draft -04 passed idnits with zero errors,
   flaws, and warnings and one informational FIPS reference comment.
-- Not yet implemented: physical database/WAL and Rust retained-payload quotas,
+- Rust SQLite file-length increment: every store connection uses a non-default
+  guard over the bundled Unix VFS and an explicit main-page cap. Immutable,
+  checksummed policy bounds database, WAL, rollback-journal and shared-memory
+  lengths. Write/truncate/map checks precede growth; preallocation and database
+  mmap are disabled. Nonempty stores without policy, policy changes, aliases,
+  and unsupported backends refuse without operational conversion. Quota failures
+  roll back state and job admission and propagate as named capacity refusals.
+  Eleven focused core tests exhaust each file type, audit growth controls, hold a
+  WAL reader, corrupt policy, and exit abruptly before reopening retained state.
+  Concurrent connection churn covers sidecars unlinked during metadata sampling;
+  a zero-link observation is not misclassified as a hardlink alias.
+  A real-QUIC test preserves declared membership at WAL exhaustion and resumes
+  declaration replay after checkpointing. This does not establish allocated
+  filesystem bounds, Java JDBC bounds, retained-payload quotas, or completion
+  reservations. The final `./conformance/run_all.sh` passed with 176 Rust
+  workspace tests (91 core, 33 Quinn unit, 49 wire, one allocation gate, two
+  runner tests), 89 Java tests with no skips, C++, all nine Layer 0 pairings,
+  32 capability probes, recursive/recovery CLI checks, and all external
+  examples. Draft -04 passed idnits with zero errors, flaws, and warnings
+  and one informational FIPS reference comment.
+- Not yet implemented: Java physical database/WAL and Rust retained-payload quotas,
   completion-space reservations, orphan reclamation,
   persistent producer observations, and the remaining independent Java
   profile requirement matrix. Physical execution limits and temporary spools are coordinated only
@@ -311,8 +331,9 @@ requiring retained admission and completion use the negotiated recovery profile.
 The service now populates job descriptors and reopens retained input. Lease
 expiry is not callback cancellation. Periodic dispatch can reacquire unfinished
 expired attempts, but does not retry application-refused jobs automatically.
-Temporary spool accounting is process-local and excludes permanent entity files
-and physical SQLite storage. Add physical quotas, completion reservations, and
+Temporary spool accounting is process-local and excludes permanent entity files.
+Rust SQLite file-length caps are now independent of that accounting. Add Java
+database bounds, retained-payload quotas, completion reservations, and
 explicit orphan reconciliation without
 deleting a live generation or treating missing input as completed work.
 Do not treat recovery receipts or publication fencing as completion of bounded

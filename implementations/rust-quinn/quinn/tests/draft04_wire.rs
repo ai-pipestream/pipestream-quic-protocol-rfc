@@ -411,7 +411,8 @@ async fn r7_negotiated_depth_is_enforced_before_payload_storage() -> Result<()> 
     peer.statuses(2).await?;
     peer.entity(1, true, "complete", LayerSupport::LAYER2)
         .await?;
-    assert!(peer.refused().await?.contains("PIPESTREAM_DEPTH_EXCEEDED"));
+    let refusal = peer.refused().await?;
+    assert!(refusal.contains("PIPESTREAM_DEPTH_EXCEEDED"), "{refusal}");
     use pipestream_core::persistence::SessionStore;
     let store = SqliteSessionStore::open(&peer.options.state_database)?;
     let session = store.load("review-session")?.unwrap().session;

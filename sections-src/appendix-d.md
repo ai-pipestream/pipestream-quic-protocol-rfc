@@ -218,6 +218,17 @@ restart, atomic refusal, missing accounting, bounded serialization, and real-QUI
 declaration replay and rollback at quota limits. This is not a physical database
 or payload-file quota, nor a reservation for every future completion record.
 
+A separate Rust guard now bounds main database, WAL, rollback-journal, and
+shared-memory file lengths for the bundled SQLite Unix backend. An immutable,
+checksummed policy precedes database creation; nonempty unaccounted stores and
+policy changes are refused without conversion. Growth is checked at file writes,
+truncates, and shared-memory mappings, with preallocation and database mmap
+disabled. Tests exhaust each file budget, hold WAL readers, interrupt a process,
+and verify transaction rollback and a named capacity refusal over real QUIC.
+This is a file-length boundary for cooperating writers in a private directory,
+not a filesystem-allocation quota. Java JDBC bounds, retained Rust payload
+accounting, completion reservations, and orphan reconciliation remain unfinished.
+
 Spool tests cover quota exhaustion, file-backed chunk assembly, corruption
 before assembly, cancellation-safe disk credit, and abandoned-file accounting.
 A real-QUIC 32 MiB transfer measures Rust heap allocations while streaming
