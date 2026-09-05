@@ -77,6 +77,15 @@ effects. A rejected or missing payload remains outstanding. No cancellation
 tombstone, authenticated claim redemption, or server-originated work is
 implemented in this profile.
 
+`sealed-scenario --connect HOST:PORT --ca ca.crt --session-id UNIQUE_ID` runs
+the public sealed producer against a server implementing the exemplar actions.
+It declares two roots, three children, and two grandchildren, sends out-of-order
+chunks, verifies recursive closure and scoped checkpoints, reconnects to replay
+declarations and the root ACK, and checks changed-owner/request refusals. The
+Java interoperability suite runs this command against `SealedServer`. This is
+an application scenario, not a complete conformance oracle or persistent
+producer recovery ledger.
+
 Stored session format is now version 7, including durable owner, claim/session
 revocation, execution attempts, typed jobs, retained recovery receipts, and the
 original optional checkpoint scope. An omitted root scope and explicit zero

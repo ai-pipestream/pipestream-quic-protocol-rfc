@@ -90,7 +90,8 @@ polyglot negotiation probes do not establish their interoperability.
 ## Sealed-work requirement coverage
 
 Section 9.8 uses private-use identifier 65281, `sealed-work-sets-v1`.
-Only Rust implements it. The public `connect_sealed` and `declare_work`
+Rust and the separate Java sealed APIs implement tested parts of it. The Rust
+public `connect_sealed` and `declare_work`
 APIs require negotiation and exact ACK correlation. The producer label is
 durable identity data, not a principal or credential.
 
@@ -497,6 +498,44 @@ and all external examples. Changed/new public Java APIs passed Javadoc with
 `-Xdoclint:all -Werror`. Draft -04 passed idnits with zero errors, flaws, and
 warnings and one informational FIPS reference comment.
 
+### Java sealed listener and reverse interoperability
+
+The independent public `SealedServer` connects the Java codec, SQLite store,
+payload library, and executor without importing Rust protocol/state code.
+`SealedServerTest` covers actual-QUIC recursive/chunked completion, held-SQLite
+deadline enforcement and immediate refusal, independent completion during a
+stalled callback, duplicate clocks, storage backlog overflow, STRICT child
+failure, forged-digest rollback, reset streams, and unobserved ACK replay after
+server restart. The `sealed-interop` profile runs the Rust public producer's
+`sealed-scenario` against this server, including reconnect replay and named
+changed-owner/checkpoint refusals. This complements the earlier Java-to-Rust
+tests rather than replacing them with shared protocol code or scripted peers.
+
+Java database format 3 retains checkpoint request identity and ACK state, with
+ownership-bound checksums and aggregate history accounting. Missing rows or
+changed ACK bits cannot remove pending obligations. `SealedCheckpointStoreTest`
+covers unsigned/optional-field correlation, nested readiness across reopen,
+corruption, atomic history-write rollback, retained capacity, and refusal of
+the old format without conversion. The Rust state format and wire schema are
+unchanged. The existing Java standalone commands remain Layer 0.
+
+The listener uses bounded file, metadata, application, and cleanup workers.
+No application callback or file/SQLite operation runs on its event loop.
+Outstanding payloads, results, and nested checkpoints prevent a completion
+ACK; timeout remains authoritative even if a storage operation later commits.
+A 32 MiB real-QUIC receive/install/execute gate passes with a 24 MiB Java heap.
+These tests do not establish native-memory/RSS, physical disk/WAL, concurrent
+tenant bounds, completion-space reservations, or full producer recovery.
+The complete profile requirement matrix remains due.
+
+The final `./conformance/run_all.sh` passed with 164 Rust workspace tests,
+89 Java tests with no skips (nine server and six checkpoint-store tests), C++,
+all nine Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks,
+and every external example. Changed public Java APIs passed Javadoc with
+`-Xdoclint:all -Werror`. Draft -04 passed idnits with zero errors, flaws, and
+warnings and one informational FIPS reference comment. These are local gates,
+not hosted CI, independent implementer review, or an IETF conformance claim.
+
 ### Reproducible suite and earlier landings
 
 `./conformance/run_all.sh` runs Rust formatting, Clippy with warnings denied,
@@ -585,8 +624,9 @@ xml2rfc renderer remains confined to document authoring.
 2. Complete the asynchronous executor's storage/resource guarantees: durable
    quotas, orphan reconciliation, further crash-boundary
    tests, and concurrent-workload resource gates.
-3. Implement the clarified sealed-work profile independently in Java, and
-   cross-test declaration, lost ACK, reconnect, and descendant completion.
+3. Complete the Java profile's requirement matrix, persistent producer
+   observations, and expanded cross-language crash/reconnect/resource coverage.
+   Its separate Netty server now has recursive and replay interoperability.
    C++ follows as the third implementation; the full requirement matrix
    remains necessary for every implementation.
 

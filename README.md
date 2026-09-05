@@ -18,20 +18,23 @@ independently in Rust, Java, and C++. Unknown requirements fail CONNECT;
 optional unknown identifiers are not activated. Sealed work sets and
 their durable producer/session binding are now available in Rust through
 the opt-in private-use `sealed-work-sets-v1` profile (Section 9.8).
-Authenticated resilience, bidirectional producers, and the complete independent
-Java/C++ implementations of that profile remain unfinished.
+Bidirectional producers and a complete profile conformance matrix remain
+unfinished. C++ still implements only the Layer 0 subset.
 
 Java now has an independent sealed declaration codec, SQLite state machine,
 file-backed payload store, and public Netty `SealedClient`. The payload library
 validates incremental reception and immutable installation before admission;
 `SealedExecutor` commits durable processing/rehydration jobs and runs fenced
-callbacks in bounded workers. These libraries are not yet integrated into a
-Java sealed server.
+callbacks in bounded workers. The separate public `SealedServer` integrates
+these components into a sealed-only Netty listener with bounded ingress and
+metadata pools, pending checkpoint deadlines, and durable replay identity.
 Real Java-to-Rust tests exercise nested work,
 out-of-order chunks, scoped checkpoints, declaration replay after restart,
-and malformed responses. The Java listener and standalone commands still
-expose only Layer 0; the sealed Java server and reverse-direction tests remain
-unfinished. See the
+and malformed responses. A Rust public-client scenario now exercises the Java
+server's nested/chunked completion, reconnect replay, and named refusals.
+The existing Java standalone commands remain Layer 0. Persistent producer-side
+observations and broader crash/resource/conformance evidence remain unfinished.
+See the
 [Java implementation boundary](implementations/java-netty/README.md#sealed-work-library-foundation).
 
 The Rust durable service also supports negotiated mutual-TLS session binding:

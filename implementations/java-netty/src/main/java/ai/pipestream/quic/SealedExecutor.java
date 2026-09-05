@@ -216,6 +216,13 @@ public final class SealedExecutor implements AutoCloseable {
     finally { endStorage(); }
   }
 
+  SealedJobs.Closure confirmScope(String session, UUID producer, SealedScope.Digest expected)
+      throws IOException, SQLException, ProtocolException {
+    beginStorage();
+    try { return jobs.confirmScope(session, producer, expected); }
+    finally { endStorage(); }
+  }
+
   /** Returns physical activity without waiting for storage.
    * @return current activity snapshot
    */

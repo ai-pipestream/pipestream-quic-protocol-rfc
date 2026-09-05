@@ -3,6 +3,7 @@ package ai.pipestream.quic;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -35,12 +36,12 @@ public final class SealedSessionStore {
     /** At least one child failed; the parent durably entered FAILED. */
     FAILED
   }
-  private static final int VERSION = 2;
+  private static final int VERSION = 3;
   private static final long MAX_SESSIONS = 512;
   private static final long MAX_DECLARATIONS = 65_536;
   private static final long MAX_SESSION_DECLARATIONS = 16_384;
   private static final Set<String> TABLES = Set.of("ps_java_meta", "ps_java_sessions",
-      "ps_java_scopes", "ps_java_batches", "ps_java_entities", "ps_java_jobs", "ps_java_job_policy");
+      "ps_java_scopes", "ps_java_batches", "ps_java_entities", "ps_java_jobs", "ps_java_job_policy", "ps_java_checkpoints", "ps_java_checkpoint_history");
   private final Path database;
 
   private SealedSessionStore(Path database) { this.database = database; }
@@ -101,6 +102,8 @@ public final class SealedSessionStore {
               ) STRICT
               """);
           SealedJobs.createSchema(connection);
+          statement.execute("CREATE TABLE ps_java_checkpoints (session TEXT NOT NULL, scope INTEGER NOT NULL, sequence BLOB NOT NULL CHECK(length(sequence)=8), request BLOB NOT NULL CHECK(length(request) BETWEEN 1 AND 4096), checksum BLOB NOT NULL CHECK(length(checksum)=32), acknowledged INTEGER NOT NULL CHECK(acknowledged IN (0,1)), PRIMARY KEY(session,scope,sequence), FOREIGN KEY(session,scope) REFERENCES ps_java_scopes(session,id)) STRICT");
+          statement.execute("CREATE TABLE ps_java_checkpoint_history (session TEXT PRIMARY KEY REFERENCES ps_java_sessions(id), records INTEGER NOT NULL CHECK(records BETWEEN 0 AND 1024), checksum BLOB NOT NULL CHECK(length(checksum)=32)) STRICT");
         } else if (!present.equals(TABLES)) {
           throw new SQLException("unknown or incomplete Java sealed-work schema; no conversion performed");
         }
@@ -154,6 +157,9 @@ public final class SealedSessionStore {
         try (PreparedStatement insert = connection.prepareStatement("INSERT INTO ps_java_sessions VALUES (?,?,?,?)")) {
           insert.setString(1, request.sessionId()); insert.setBytes(2, SealedWork.producerBytes(request.producerId()));
           insert.setInt(3, maxDepth); insert.setLong(4, maxEntitiesPerScope); insert.executeUpdate();
+        }
+        try (var insert = connection.prepareStatement("INSERT INTO ps_java_checkpoint_history VALUES (?,0,?)")) {
+          insert.setString(1, request.sessionId()); insert.setBytes(2, SealedWork.sha256().digest()); insert.executeUpdate();
         }
       }
       Scope scope = scope(connection, request.sessionId(), request.scopeId());
@@ -265,6 +271,155 @@ public final class SealedSessionStore {
   }
 
   Path database() { return database; }
+
+  record ScopeInfo(long id, SealedWork.EntityKey parent, int depth, boolean closed) {}
+  record EntityInfo(int state, List<ScopeInfo> ancestry) {}
+
+  EntityInfo describe(String session, UUID producer, SealedWork.EntityKey key) throws SQLException, ProtocolException {
+    return transaction(connection -> new EntityInfo(status(connection, session, producer, key), ancestry(connection, session, producer, key.scopeId())));
+  }
+
+  List<ScopeInfo> ancestry(String session, UUID producer, long scopeId) throws SQLException, ProtocolException {
+    return transaction(connection -> { owner(connection, session, producer); return ancestry(connection, session, producer, scopeId); });
+  }
+
+  private static List<ScopeInfo> ancestry(Connection connection, String session, UUID producer, long scopeId) throws SQLException, ProtocolException {
+    List<ScopeInfo> result = new ArrayList<>();
+    for (int depth = 0; depth <= 7; depth++) {
+      Scope current = scope(connection, session, scopeId);
+      if (current == null) throw SealedScope.invalid("scope is absent");
+      verifyDeclaration(connection, session, producer, current);
+      result.add(new ScopeInfo(current.id(), current.parent(), current.depth(), current.closure() != null));
+      if (current.parent() == null) return List.copyOf(result);
+      scopeId = current.parent().scopeId();
+    }
+    throw Wire.integrity("scope ancestry exceeds depth bound");
+  }
+
+  void registerCheckpoint(String session, UUID producer, SealedTransport.Checkpoint request) throws SQLException, ProtocolException {
+    byte[] encoded = checkpointRequest(request);
+    long scopeId = request.scopeId() == null ? 0 : request.scopeId();
+    transaction(connection -> {
+      owner(connection, session, producer);
+      auditCheckpoints(connection, session, producer);
+      Scope scope = scope(connection, session, scopeId);
+      if (scope == null) throw SealedScope.invalid("checkpoint scope is absent");
+      verifyDeclaration(connection, session, producer, scope);
+      if (checkpointRecord(connection, session, request, encoded) != null) return null;
+      if (count(connection, "SELECT count(*) FROM ps_java_checkpoints", null) >= 4096
+          || count(connection, "SELECT count(*) FROM ps_java_checkpoints WHERE session=?", session) >= 1024) throw Wire.limit("retained checkpoint capacity exhausted");
+      try (var insert = connection.prepareStatement("INSERT INTO ps_java_checkpoints VALUES (?,?,?,?,?,0)")) {
+        insert.setString(1, session); insert.setLong(2, scopeId); insert.setBytes(3, sequence(request.sequence()));
+        insert.setBytes(4, encoded); insert.setBytes(5, checkpointChecksum(session, producer, encoded, false)); insert.executeUpdate();
+      }
+      saveCheckpointHistory(connection, session);
+      return null;
+    });
+  }
+
+  boolean acknowledgeCheckpoint(String session, UUID producer, SealedTransport.Checkpoint request) throws SQLException, ProtocolException {
+    byte[] encoded = checkpointRequest(request);
+    long scopeId = request.scopeId() == null ? 0 : request.scopeId();
+    return transaction(connection -> {
+      owner(connection, session, producer);
+      auditCheckpoints(connection, session, producer);
+      if (checkpointRecord(connection, session, request, encoded) == null) throw Wire.entity("checkpoint was not registered");
+      if (!checkpointReady(connection, session, producer, scopeId, request.lastId())) return false;
+      try (var query = connection.prepareStatement("SELECT scope FROM ps_java_checkpoints WHERE session=? AND acknowledged=0 AND scope<>?")) {
+        query.setString(1, session); query.setLong(2, scopeId);
+        try (var rows = query.executeQuery()) {
+          int checked = 0;
+          while (rows.next()) {
+            if (++checked > 1024) throw Wire.integrity("retained checkpoint count exceeds policy");
+            for (ScopeInfo ancestor : ancestry(connection, session, producer, rows.getLong(1))) if (ancestor.id() == scopeId) return false;
+          }
+        }
+      }
+      try (var update = connection.prepareStatement("UPDATE ps_java_checkpoints SET acknowledged=1,checksum=? WHERE session=? AND scope=? AND sequence=?")) {
+        update.setBytes(1, checkpointChecksum(session, producer, encoded, true));
+        update.setString(2, session); update.setLong(3, scopeId); update.setBytes(4, sequence(request.sequence())); update.executeUpdate();
+      }
+      saveCheckpointHistory(connection, session);
+      return true;
+    });
+  }
+
+  private static byte[] checkpointRequest(SealedTransport.Checkpoint request) throws ProtocolException {
+    if (request.flags() != 0) throw Wire.entity("checkpoint request carries ACK");
+    byte[] encoded = SealedTransport.checkpoint(request);
+    if (encoded.length > 4096) throw Wire.limit("checkpoint identity exceeds local bound");
+    return encoded;
+  }
+
+  private static Boolean checkpointRecord(Connection connection, String session, SealedTransport.Checkpoint request, byte[] encoded) throws SQLException, ProtocolException {
+    try (var query = connection.prepareStatement("SELECT CASE WHEN length(request) BETWEEN 1 AND 4096 THEN request END,checksum,acknowledged FROM ps_java_checkpoints WHERE session=? AND scope=? AND sequence=?")) {
+      query.setString(1, session); query.setLong(2, request.scopeId() == null ? 0 : request.scopeId()); query.setBytes(3, sequence(request.sequence()));
+      try (var rows = query.executeQuery()) {
+        if (!rows.next()) return null;
+        byte[] stored = rows.getBytes(1);
+        // auditCheckpoints validates identity, row-key correlation, and mutable ACK state first.
+        if (stored == null) throw Wire.integrity("retained checkpoint identity is corrupt");
+        if (!Arrays.equals(stored, encoded)) throw Wire.entity("checkpoint sequence reused with changed fields");
+        return rows.getInt(3) == 1;
+      }
+    }
+  }
+
+  private static byte[] checkpointChecksum(String session, UUID producer, byte[] request, boolean acknowledged) {
+    var hash = SealedWork.sha256();
+    hash.update("pipestream-java-checkpoint-v1".getBytes(StandardCharsets.US_ASCII));
+    byte[] identity = session.getBytes(StandardCharsets.US_ASCII);
+    hash.update(ByteBuffer.allocate(4).putInt(identity.length).array()); hash.update(identity);
+    hash.update(SealedWork.producerBytes(producer)); hash.update(request); hash.update((byte) (acknowledged ? 1 : 0));
+    return hash.digest();
+  }
+
+  private static void auditCheckpoints(Connection connection, String session, UUID producer) throws SQLException, ProtocolException {
+    long globalCount = count(connection, "SELECT count(*) FROM ps_java_checkpoints", null);
+    if (globalCount > 4096 || globalCount != count(connection, "SELECT coalesce(sum(records),0) FROM ps_java_checkpoint_history", null)
+        || count(connection, "SELECT count(*) FROM ps_java_checkpoint_history", null) != count(connection, "SELECT count(*) FROM ps_java_sessions", null)) throw Wire.integrity("checkpoint history violates global accounting");
+    var history = SealedWork.sha256(); int count = 0;
+    try (var query = connection.prepareStatement("SELECT scope,sequence,CASE WHEN length(request) BETWEEN 1 AND 4096 THEN request END,checksum,acknowledged FROM ps_java_checkpoints WHERE session=? ORDER BY scope,sequence")) {
+      query.setString(1, session);
+      try (var rows = query.executeQuery()) {
+        while (rows.next()) {
+          if (++count > 1024) throw Wire.integrity("checkpoint history exceeds session policy");
+          byte[] encoded = rows.getBytes(3); int acknowledged = rows.getInt(5);
+          if (encoded == null || (acknowledged != 0 && acknowledged != 1)
+              || !MessageDigest.isEqual(checkpointChecksum(session, producer, encoded, acknowledged == 1), rows.getBytes(4))) throw Wire.integrity("retained checkpoint state is corrupt");
+          var frame = Wire.decodeControl(encoded);
+          if (frame.type() != Wire.FRAME_CHECKPOINT) throw Wire.integrity("retained checkpoint has wrong frame type");
+          var request = SealedTransport.checkpoint(frame.payload());
+          if (request.flags() != 0 || rows.getLong(1) != (request.scopeId() == null ? 0 : request.scopeId())
+              || !Arrays.equals(rows.getBytes(2), sequence(request.sequence()))) throw Wire.integrity("retained checkpoint key changed");
+          history.update(rows.getBytes(4));
+        }
+      }
+    }
+    try (var query = connection.prepareStatement("SELECT records,checksum FROM ps_java_checkpoint_history WHERE session=?")) {
+      query.setString(1, session);
+      try (var rows = query.executeQuery()) {
+        if (!rows.next() || rows.getInt(1) != count || !MessageDigest.isEqual(history.digest(), rows.getBytes(2))) throw Wire.integrity("retained checkpoint history is incomplete or corrupt");
+      }
+    }
+  }
+
+  private static void saveCheckpointHistory(Connection connection, String session) throws SQLException, ProtocolException {
+    var hash = SealedWork.sha256(); int count = 0;
+    try (var query = connection.prepareStatement("SELECT checksum FROM ps_java_checkpoints WHERE session=? ORDER BY scope,sequence")) {
+      query.setString(1, session);
+      try (var rows = query.executeQuery()) {
+        while (rows.next()) {
+          if (++count > 1024) throw Wire.limit("checkpoint history exceeds session policy");
+          hash.update(rows.getBytes(1));
+        }
+      }
+    }
+    try (var update = connection.prepareStatement("UPDATE ps_java_checkpoint_history SET records=?,checksum=? WHERE session=?")) {
+      update.setInt(1, count); update.setBytes(2, hash.digest()); update.setString(3, session);
+      if (update.executeUpdate() != 1) throw Wire.integrity("retained checkpoint history is absent");
+    }
+  }
 
   static int status(Connection connection, String session, UUID producer, SealedWork.EntityKey key)
       throws SQLException, ProtocolException {
@@ -447,7 +602,11 @@ public final class SealedSessionStore {
   public boolean checkpointReady(String sessionId, UUID producerId, long scopeId, long inclusiveLastId)
       throws ProtocolException, SQLException {
     if (scopeId < 0 || scopeId > 0xffff_ffffL || inclusiveLastId < 1 || inclusiveLastId > Wire.MAX_ENTITY_ID) throw Wire.entity("invalid checkpoint identity");
-    return transaction(connection -> {
+    return transaction(connection -> checkpointReady(connection, sessionId, producerId, scopeId, inclusiveLastId));
+  }
+
+  private static boolean checkpointReady(Connection connection, String sessionId, UUID producerId, long scopeId, long inclusiveLastId)
+      throws SQLException, ProtocolException {
       owner(connection, sessionId, producerId);
       SealedJobs.audit(connection);
       Scope scope = scope(connection, sessionId, scopeId);
@@ -456,7 +615,6 @@ public final class SealedSessionStore {
       if (leaves == null) return false;
       if (leaves.getLast().entityId() != inclusiveLastId) throw Wire.entity("checkpoint does not name the entire sealed scope");
       return true;
-    });
   }
 
   private static void setOutcome(Connection connection, String session, SealedWork.EntityKey key,
