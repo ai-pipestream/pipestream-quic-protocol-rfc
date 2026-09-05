@@ -76,8 +76,8 @@ effects. A rejected or missing payload remains outstanding. No cancellation
 tombstone, authenticated claim redemption, or server-originated work is
 implemented in this profile.
 
-Stored session format is now version 3, including durable owner and revocation
-state. Version-1 and version-2 records are refused without conversion or
+Stored session format is now version 4, including durable owner, revocation,
+and execution-attempt state. Version-1, version-2, and version-3 records are refused without conversion or
 modification; preserve old databases with their matching binary.
 The implementation caps each session at 1,000,000 declared IDs, in addition
 to negotiated per-scope limits. SQLite still serializes the whole session
@@ -146,18 +146,35 @@ stream readers. This is bounded whole-entity processing, not a spool-backed
 incremental payload API. Allocation capacity, decoded metadata, QUIC receive
 buffers, and transient reassembly copies add overhead beyond payload bytes.
 
-Pending checkpoints keep processing active and use monotonic deadlines.
-Application callbacks remain synchronous and must be bounded. Resume callbacks
-execute under an SQLite IMMEDIATE transaction, excluding simultaneous recovery
-executors that use the same database. Callbacks must not re-enter the store.
-This deliberately serializes writers; long-running applications need an
-asynchronous fenced executor. A crash after an external effect but before
-commit still requires application idempotency.
+Pending checkpoints use monotonic deadlines, but a synchronous callback still
+blocks the connection's dispatch loop. Application processing, rehydration,
+and resume callbacks now run outside database transactions and may re-enter
+the store. Each runs with a durably acquired `ExecutionLease`. Publication
+atomically checks the session owner, revocation, operation, epoch, executor
+identity, and expiry before applying its result and marking the attempt done.
+Expired or superseded attempts cannot publish, including after reopening the
+database. An active attempt prevents another store handle from acquiring it.
+
+The default lease is 300 seconds; embedded services can use
+`with_execution_lease` to choose 1 microsecond through 300 seconds. Lease
+expiry rejects publication; it does not cancel a callback, bound its memory,
+or renew automatically. The issuer uses Unix microseconds, so clock changes
+can delay recovery or expire work early. Epoch checks remain necessary even
+when the clock moves backward. Applications must use idempotency or enforce
+their own transactional fence for external effects. A lease is not a wire
+credential and does not prove exactly-once execution.
+
+Resume recovery can reacquire expired attempts through the existing recovery
+entry point. There is not yet a periodic durable job dispatcher, automatic
+processing/rehydration replay, or retained recovery-request outcome. In
+particular, persisted processing attempts do not yet retain a reconstructible
+header/spool descriptor. An interrupted admission remains incomplete, never
+successful. The next execution increment must cover those restart boundaries.
 
 Without the explicit mutual-TLS settings, the standalone prototype authenticates
 only the server and remains suitable solely for trusted local demonstrations.
 Even with mutual TLS, per-principal resource gates, retained recovery outcomes,
-fenced asynchronous execution, and a complete resilience capability remain
+asynchronous dispatch and spool-backed processing, and a complete resilience capability remain
 unfinished. It MUST NOT yet be described as a production multi-tenant durable
 work service. Its Layer 2 boolean still advertises more than the tested subset.
 

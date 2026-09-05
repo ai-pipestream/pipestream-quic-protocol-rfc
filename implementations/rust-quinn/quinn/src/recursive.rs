@@ -1,10 +1,15 @@
 //! Durable Layer 1 and Layer 2 service built on the transport-independent core.
 
+#[cfg(test)]
+mod execution_tests;
 mod ingress;
 
 use crate::authentication::{AuthenticationPolicy, ClientIdentity};
 use pipestream_core::authorization::{
     EXTENSION_AUTHENTICATED_SESSIONS, PrincipalBinding, unauthorized,
+};
+use pipestream_core::execution::{
+    ExecutionKey, ExecutionLease, ExecutionStage, MAX_EXECUTION_LEASE_MICROS,
 };
 use pipestream_core::work_set::{self, EXTENSION_SEALED_WORK_SETS, FRAME_WORK_SET, WorkSetFrame};
 
@@ -131,6 +136,7 @@ pub struct EntityChunk {
 
 #[derive(Debug, Clone)]
 pub struct ProcessContext<'a> {
+    pub execution: &'a ExecutionLease,
     pub session_id: &'a str,
     pub header: &'a EntityHeader,
     pub payload: &'a [u8],
@@ -139,12 +145,14 @@ pub struct ProcessContext<'a> {
 
 #[derive(Debug, Clone)]
 pub struct RehydrateContext<'a> {
+    pub execution: &'a ExecutionLease,
     pub session: &'a Session,
     pub parent: EntityKey,
 }
 
 #[derive(Debug, Clone)]
 pub struct ResumeContext<'a> {
+    pub execution: &'a ExecutionLease,
     pub session: &'a Session,
     pub entity: EntityKey,
     pub continuation_token: &'a [u8],
@@ -168,9 +176,9 @@ pub enum ProcessingDisposition {
 
 /// Application behavior embedded in the generic recursive server.
 ///
-/// Calls are synchronous and execute on a connection task. Implementations should remain
-/// bounded, move expensive work to their own executor, and make external side effects
-/// idempotent. The service persists every protocol transition before exposing it to a peer.
+/// Calls are synchronous but run outside database transactions. The execution lease
+/// fences protocol publication, not external effects; applications must make those
+/// idempotent or fence them transactionally. Callbacks must finish within the lease.
 pub trait EntityProcessor: Send + Sync + 'static {
     fn process(&self, context: ProcessContext<'_>) -> ProcessingDisposition;
 
@@ -363,6 +371,7 @@ pub struct RecursiveService<P, E = FileEntityStore> {
     limits: RecursiveLimits,
     authentication: Option<Arc<AuthenticationPolicy>>,
     caller: Option<PrincipalBinding>,
+    execution_lease_micros: u64,
 }
 
 impl<P, E> Clone for RecursiveService<P, E> {
@@ -375,6 +384,7 @@ impl<P, E> Clone for RecursiveService<P, E> {
             limits: self.limits,
             authentication: self.authentication.clone(),
             caller: self.caller.clone(),
+            execution_lease_micros: self.execution_lease_micros,
         }
     }
 }
@@ -420,12 +430,25 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             limits,
             authentication: None,
             caller: None,
+            execution_lease_micros: MAX_EXECUTION_LEASE_MICROS,
         })
     }
 
     #[must_use]
     pub fn store(&self) -> &Arc<SqliteSessionStore> {
         &self.store
+    }
+
+    /// Set the publication lease, not a callback cancellation or CPU-time limit.
+    pub fn with_execution_lease(mut self, duration: Duration) -> Result<Self> {
+        let micros = u64::try_from(duration.as_micros())?;
+        if !(1..=MAX_EXECUTION_LEASE_MICROS).contains(&micros) {
+            bail!(
+                "PIPESTREAM_LIMIT_EXCEEDED: execution lease must be 1 microsecond to 300 seconds"
+            );
+        }
+        self.execution_lease_micros = micros;
+        Ok(self)
     }
 
     /// Require mutual TLS and use this authority's explicit principal mapping.
@@ -495,16 +518,12 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         Ok(recovered)
     }
 
-    // IMMEDIATE transactions serialize executors across connections and processes using
-    // this database. Callbacks must be bounded and must not re-enter the session store.
-    // A crash can roll back the transaction after an external effect: application-level
-    // idempotency is still required. This is not an exactly-once execution guarantee.
     fn resume_claim(
         &self,
         session_id: &str,
         claim_id: u64,
     ) -> Result<(bool, pipestream_core::persistence::VersionedSession), StoreError> {
-        self.transact(session_id, |session| {
+        let (lease, versioned) = self.transact(session_id, |session| {
             let claim = session
                 .claims
                 .get(&claim_id)
@@ -512,16 +531,39 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             if claim.redeemed_at_micros.is_none()
                 || session.entities[&claim.entity].state != EntityState::Processing
             {
-                return Ok(false);
+                return Ok(None);
             }
             let entity = claim.entity;
-            let output_digest = self.processor.resume(ResumeContext {
-                session,
-                entity,
-                continuation_token: &claim.token,
-            });
-            session.complete_entity(entity, output_digest)?;
-            Ok(true)
+            session.acquire_execution(
+                self.caller.as_ref(),
+                ExecutionKey {
+                    entity,
+                    stage: ExecutionStage::Resume { claim_id },
+                },
+                now_micros().map_err(storage_error)?,
+                self.execution_lease_micros,
+            )
+        })?;
+        let Some(lease) = lease else {
+            return Ok((false, versioned));
+        };
+        let claim = &versioned.session.claims[&claim_id];
+        let output_digest = self.processor.resume(ResumeContext {
+            execution: &lease,
+            session: &versioned.session,
+            entity: claim.entity,
+            continuation_token: &claim.token,
+        });
+        self.transact(session_id, |session| {
+            session.publish_execution(
+                self.caller.as_ref(),
+                &lease,
+                now_micros().map_err(storage_error)?,
+                |session| {
+                    session.complete_entity(claim.entity, output_digest)?;
+                    Ok(true)
+                },
+            )
         })
     }
 
@@ -1089,20 +1131,38 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         self.entities
             .put(&session_id, key, body)
             .map_err(storage_error)?;
+        let (lease, _) = self
+            .transact(&session_id, |session| {
+                session.acquire_execution(
+                    self.caller.as_ref(),
+                    ExecutionKey {
+                        entity: key,
+                        stage: ExecutionStage::Process,
+                    },
+                    now_micros().map_err(storage_error)?,
+                    self.execution_lease_micros,
+                )
+            })
+            .map_err(store_error)?;
+        let lease = lease.ok_or_else(|| entity_error("entity execution is already claimed"))?;
+        let disposition = self.processor.process(ProcessContext {
+            execution: &lease,
+            session_id: &session_id,
+            header,
+            payload: body,
+            now_micros: now,
+        });
+        if matches!(disposition, ProcessingDisposition::Yield { .. })
+            && (!negotiated.layer2_resilience || sealed)
+        {
+            return Err(layer_error("processor yield requires negotiated Layer 2"));
+        }
         let (applied, _) = self
             .transact(&session_id, |session| {
-                let disposition = self.processor.process(ProcessContext {
-                    session_id: &session_id,
-                    header,
-                    payload: body,
-                    now_micros: now,
-                });
-                if matches!(disposition, ProcessingDisposition::Yield { .. })
-                    && (!negotiated.layer2_resilience || sealed)
-                {
-                    return Err(layer_error("processor yield requires negotiated Layer 2"));
-                }
-                apply_disposition(session, key, disposition, now)
+                let completed_at = now_micros().map_err(storage_error)?;
+                session.publish_execution(self.caller.as_ref(), &lease, completed_at, |session| {
+                    apply_disposition(session, key, disposition, completed_at)
+                })
             })
             .map_err(store_error)?;
 
@@ -1190,22 +1250,48 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             .get(&expected.scope_id)
             .and_then(|scope| scope.parent)
             .ok_or_else(|| entity_error("scope parent is absent"))?;
-        let (actual, versioned) = self
+        let ((actual, lease), mut versioned) = self
             .transact(session_id, |session| {
                 let actual = session.close_scope_with_expected(&expected)?;
                 match session.entities[&parent].state {
                     EntityState::Dehydrating => session.begin_rehydration(parent)?,
                     EntityState::Rehydrating => {}
-                    EntityState::Complete => return Ok(actual),
+                    EntityState::Complete => return Ok((actual, None)),
                     _ => return Err(entity_error("scope parent cannot rehydrate")),
                 }
-                let output_digest = self
-                    .processor
-                    .rehydrate(RehydrateContext { session, parent });
-                session.complete_rehydration(parent, output_digest)?;
-                Ok(actual)
+                let lease = session.acquire_execution(
+                    self.caller.as_ref(),
+                    ExecutionKey {
+                        entity: parent,
+                        stage: ExecutionStage::Rehydrate,
+                    },
+                    now_micros().map_err(storage_error)?,
+                    self.execution_lease_micros,
+                )?;
+                Ok((actual, lease))
             })
             .map_err(store_error)?;
+        if let Some(lease) = lease {
+            let output_digest = self.processor.rehydrate(RehydrateContext {
+                execution: &lease,
+                session: &versioned.session,
+                parent,
+            });
+            versioned = self
+                .transact(session_id, |session| {
+                    session.publish_execution(
+                        self.caller.as_ref(),
+                        &lease,
+                        now_micros().map_err(storage_error)?,
+                        |session| session.complete_rehydration(parent, output_digest),
+                    )
+                })
+                .map_err(store_error)?
+                .1;
+        }
+        if versioned.session.entities[&parent].state != EntityState::Complete {
+            return Err(entity_error("parent rehydration is already executing"));
+        }
         write_control(control, &encode_scope_digest(&actual)?).await?;
         let depth = versioned.session.entities[&parent].depth;
         write_status(control, EntityState::Rehydrating, parent, depth, None).await?;
@@ -1232,6 +1318,9 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         let (_, completed) = self
             .resume_claim(&request.session_id, request.claim_id)
             .map_err(store_error)?;
+        if completed.session.entities[&entity].state != EntityState::Complete {
+            return Err(entity_error("claim recovery is already executing"));
+        }
         if let Ok(lineage) = completed.session.final_lineage_digest() {
             self.entities
                 .put_lineage(&request.session_id, lineage)
@@ -2259,7 +2348,7 @@ mod tests {
     use super::*;
     use pipestream_core::ChunkInfo;
 
-    fn test_options(directory: &Path, name: &str) -> RecursiveServerOptions {
+    pub(super) fn test_options(directory: &Path, name: &str) -> RecursiveServerOptions {
         let rcgen::CertifiedKey { cert, signing_key } =
             rcgen::generate_simple_self_signed(["localhost".to_owned()]).unwrap();
         let certificate = directory.join(format!("{name}.crt"));
@@ -2308,7 +2397,7 @@ mod tests {
         (address, task)
     }
 
-    fn client_options(
+    pub(super) fn client_options(
         options: &RecursiveServerOptions,
         remote: SocketAddr,
     ) -> RecursiveClientOptions {
@@ -2390,7 +2479,22 @@ mod tests {
             first.transition(key, EntityState::Processing).unwrap();
             first.complete_entity(key, [id as u8; 32]).unwrap();
         }
+        first.close_scope(1).unwrap();
+        first.begin_rehydration(root).unwrap();
+        let execution = first
+            .acquire_execution(
+                None,
+                ExecutionKey {
+                    entity: root,
+                    stage: ExecutionStage::Rehydrate,
+                },
+                10,
+                100,
+            )
+            .unwrap()
+            .unwrap();
         let digest = processor.rehydrate(RehydrateContext {
+            execution: &execution,
             session: &first,
             parent: root,
         });
@@ -2398,6 +2502,7 @@ mod tests {
         assert_eq!(
             digest,
             processor.rehydrate(RehydrateContext {
+                execution: &execution,
                 session: &first,
                 parent: root,
             })
@@ -2596,7 +2701,7 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_recovery_serializes_resume_across_store_handles() {
+    fn concurrent_recovery_fences_resume_across_store_handles() {
         let directory = tempfile::tempdir().unwrap();
         let options = test_options(directory.path(), "interrupted-resume");
         let store = Arc::new(SqliteSessionStore::open(&options.state_database).unwrap());

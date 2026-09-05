@@ -6,6 +6,7 @@ use std::{collections::BTreeMap, fmt};
 pub mod authorization;
 pub use authorization::ERROR_UNAUTHORIZED;
 mod deterministic;
+pub mod execution;
 pub mod extensions;
 pub mod persistence;
 pub mod session;

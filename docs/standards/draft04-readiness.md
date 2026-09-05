@@ -19,7 +19,7 @@ standard. No implementation in this repository demonstrates full conformance.
 | R8 | A processor yield cannot emit Layer 2 statuses on a Layer 0 connection | `r8_layer0_never_receives_layer2_statuses` |
 | R9 | Checkpoint ACK identity is compared exactly; claim, digest, and barrier correlation is also checked | `r9_mismatched_checkpoint_ack_is_refused`; happy-path recursive and recovery scenarios |
 | R10 | Quorum uses shortest exact CBOR floats and an integer-computed success threshold | Deterministic encoding tests, corrected recursive vector, `quorum_threshold_uses_exact_integer_rounding` |
-| R11 | Recovery and redemption callbacks serialize under the same SQLite transaction mechanism | `concurrent_recovery_serializes_resume_across_store_handles` checks one callback across concurrent recoverers |
+| R11 | Durable acquisition and publication fences coordinate recovery across store handles | `concurrent_recovery_fences_resume_across_store_handles` checks one live attempt; stale-attempt tests check publication refusal |
 | Admission | Invalid parent/depth/identity and digest failures occur before application callbacks or payload writes | Callback counters and absent-child-storage assertions in wire tests |
 | Resource handling | Independent bounded stream readers; aggregate receive/chunk budgets; incremental control-body allocation | Stalled-stream and aggregate-chunk-limit wire tests |
 | URI | Typed session/entity/claim locators, explicit port and numeric bounds, no userinfo or bearer secrets | Core URI acceptance and refusal tests |
@@ -144,12 +144,39 @@ live/reconnected revocation; and recovery authorization. Core tests reopen
 owner/revocation records. These are transport/session-binding tests, not
 evidence for retained redemption outcomes or an asynchronous executor.
 
-Stored format is now version 3. Version-1 and version-2 records are refused
+This increment introduced format version 3. Version-1 and version-2 records are refused
 without writes; no operational database was converted. Principal maps are
 startup configuration, not a live authorization directory. Per-claim
 revocation, portable authority-qualified recovery requests, retained outcomes,
-executor fencing, and per-principal resource gates remain goal requirements.
+the complete asynchronous executor, and per-principal resource gates remain goal requirements.
 See [the full implementation plan](recovery-execution-java-plan.md).
+
+## Durable execution publication fences
+
+The Rust process, rehydrate, and resume paths acquire an execution lease in
+a short transaction, invoke the application outside it, then atomically
+publish the result and completion marker under the same fence. Publication
+checks owner, revocation, session, operation, epoch, executor identity, and
+expiry. Reacquiring expired work advances the epoch. Separate store handles
+cannot acquire the same unexpired attempt. Callbacks may overlap after lease
+expiry, so external effects still require application-level idempotency or
+transactional fencing. Section 10.6.1 now distinguishes result publication
+from stopping a stale callback.
+
+Core tests cover simultaneous acquisitions, durable reopen and reacquisition,
+stale/expired publication, clock and counter bounds, wrong owner/authority,
+session substitution, revocation, and rollback of result plus completion.
+QUIC tests exercise all three callbacks re-entering SQLite as writers,
+publication refusal after a slow callback, and session revocation during a
+callback. These are not yet complete asynchronous-executor crash tests.
+An injected resume-callback panic also leaves an unfinished attempt across
+SQLite reopen; recovery reacquires it after expiry under the next epoch.
+
+This adds format version 4. Earlier versions are refused without conversion;
+no operational database was changed. The service still lacks asynchronous
+dispatch, spool-backed input, periodic recovery of every operation, and
+retained recovery-request outcomes. An execution lease is neither a client
+credential nor a callback resource limit. No new wire capability is advertised.
 
 ## Validation
 
@@ -178,6 +205,12 @@ The authentication path also disables TLS resumption to require a fresh
 credential check on each connection. This does not establish the remaining
 goal's recovery, asynchronous execution, or Java sealed-work requirements.
 
+The execution-fencing increment passed the complete command locally on
+2026-09-05 with 81 Rust workspace tests, Java/C++ tests, all nine transfer
+pairings, 32 capability probes, and every external example. The new tests
+cover acquisition/publication, callback re-entry and expiry, revocation while
+processing, and an interrupted resume callback recovered after lease expiry.
+
 The adversarial pass also fixed terminal failure handling: Java completes
 both public waiters and ignores callbacks after the first failure; C++
 will not process buffered frames or entities after failure; Rust drains
@@ -197,7 +230,7 @@ xml2rfc renderer remains confined to document authoring.
 ## Still required before a conformance or deployment claim
 
 1. Build on the authenticated-session binding with an explicit recovery
-   profile, authority-qualified requests, durable executor fencing, and
+   profile, authority-qualified requests, and
    retained outcomes for lost redemption ACKs. The
    current Layer 2 boolean advertises more than the prototype implements.
 2. Add bounded spool-backed payload processing and an asynchronous fenced
@@ -214,10 +247,11 @@ and performance gates. The standalone durable service supports optional mutual
 TLS but still lacks the resource and execution guarantees required for an
 untrusted multi-tenant service.
 
-SQLite IMMEDIATE transactions prevent simultaneous recovery callbacks through
-one database, including separate store handles. They serialize writers and
-require bounded, non-reentrant callbacks. They do not guarantee exactly-once
-effects across a crash, nor do they fence unrelated databases.
+SQLite transactions serialize lease acquisition and result publication through
+one database, including separate store handles. Application callbacks no longer
+hold the write transaction. Expired callbacks are fenced from protocol
+publication, not forcibly stopped. These records do not guarantee exactly-once
+external effects or fence unrelated databases.
 
 ## Submission and adoption
 

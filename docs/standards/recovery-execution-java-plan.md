@@ -54,7 +54,8 @@ approval as part of a repository landing.
 - Starting point: `ed1a468`, clean main on 2026-09-05. Section 9.8 is implemented
   only in Rust. Durable sessions are not caller-authenticated, callbacks are
   synchronous, and payloads are whole-entity buffered.
-- Implemented locally: required mutual-TLS session negotiation and durable
+- Landed through Forgejo PR #7 at `53e2a7c`, also verified on GitHub main:
+  required mutual-TLS session negotiation and durable
   principal/authority binding, including denial through unprotected listeners.
   Ownership and session revocation are checked inside mutation transactions
   and on background recovery. Focused wire tests exercise credentials,
@@ -65,15 +66,29 @@ approval as part of a repository landing.
   `./conformance/run_all.sh` passed with 71 Rust workspace tests, all language
   suites, nine pairings, 32 capability probes, and the examples. Draft -04
   builds with zero idnits errors/flaws/warnings and one FIPS 180-4 comment.
-- Not yet implemented: retained recovery outcomes, fenced asynchronous
-  execution, spool-backed processing, and the independent Java profile.
+- Execution increment: process, rehydrate, and resume callbacks now run outside
+  database transactions. Session format 4 retains per-operation execution
+  epochs, executor identities, expiry, and completion records. Acquisition and
+  publication are separate transactions with owner/revocation checks. Expired
+  and superseded attempts cannot publish. Focused tests cover separate store
+  handles, reopen/reacquisition, transactional rollback, stale clocks/fences,
+  callback re-entry, overlong callbacks, and revocation during a QUIC callback.
+  An interrupted resume callback is reacquired after expiry and SQLite reopen.
+  The full suite passed with 81 Rust workspace tests, Java/C++ tests, all nine
+  transfer pairings, 32 capability probes, and the external examples. Draft -04
+  again passed idnits with zero errors/flaws/warnings and one FIPS 180-4 comment.
+- Not yet implemented: retained recovery outcomes, asynchronous job dispatch,
+  spool-backed processing, periodic restart recovery for every operation, and
+  the independent Java profile. Callback execution itself is still synchronous.
 
 Implementation evidence must replace these status entries as it lands. A
 transport-authentication increment alone does not satisfy authenticated recovery.
 
-Next implementation boundary: authority-qualified recovery requests with stable
-request identity, retained outcomes, expiry/revocation rules, and durable fenced
-execution records. The current CLAIM_REDEMPTION path still refuses a duplicate
-after a lost ACK and runs synchronous callbacks inside SQLite transactions.
-Do not treat its mutual-TLS protection as completion of either recovery or
-asynchronous execution. Java still implements only the earlier Layer 0 subset.
+Next implementation boundaries: authority-qualified recovery requests with
+stable request identity, retained outcomes, expiry/revocation/retention rules;
+and spool-backed durable dispatch with bounded per-principal/global workers.
+The current CLAIM_REDEMPTION path still refuses a duplicate after a lost ACK.
+Processing attempts lack restartable header/spool descriptors; lease expiry
+is not callback cancellation. No automatic execution retry is advertised.
+Do not treat authentication or publication fencing as completion of recovery
+or asynchronous execution. Java still implements only the earlier Layer 0 subset.

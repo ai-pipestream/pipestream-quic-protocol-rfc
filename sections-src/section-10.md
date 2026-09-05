@@ -113,13 +113,22 @@ lifetime. Retention and maximum lifetime are deployment policy, and the
 advertised expiry MUST be bounded by the issuer's retention commitment.
 The default maximum lifetime is 86400 seconds.
 
-Implementations MUST serialize recovery execution for a claim across
-concurrent executors, including after reconnection. A lock local to one
-connection is insufficient. Durable fencing or a transactional executor
-can enforce this exclusion. Crash recovery can still repeat an external
-effect that committed before the protocol state was saved. Applications
-MUST provide idempotency or transactional integration for such effects;
-this protocol does not guarantee exactly-once external execution.
+Implementations MUST serialize acceptance of recovery results for a claim
+across concurrent executors, including after reconnection. A lock local to
+one connection is insufficient. Each attempt MUST have a durable fence;
+publication MUST atomically verify that the attempt is still authorized
+and current before committing the result and completion state. A stale
+attempt MUST NOT overwrite a successor's result or produce a successful
+completion acknowledgment.
+
+When a lease is used, expiry MUST invalidate publication by that attempt,
+even if no successor has acquired the work. Reacquisition MUST advance the
+durable fence without reusing a prior value. Clock rollback MUST NOT make
+a superseded fence valid. A lease is not a mechanism for stopping an old
+worker: callbacks can overlap after expiry or a network partition, and
+revocation cannot undo an external effect already committed. Applications
+MUST provide idempotency or transactional fencing at external-effect sinks.
+This protocol does not guarantee exactly-once external execution.
 
 ### Yield Token Replay
 
