@@ -270,8 +270,12 @@ async fn payload_copy_is_immutable_and_never_requires_whole_entity_allocation() 
         scope_id: 0,
         entity_id: 1,
     };
-    entities.put_payload("session", key, &payload).unwrap();
-    entities.put_payload("session", key, &payload).unwrap();
+    entities
+        .put_payload(None, "session", key, &payload)
+        .unwrap();
+    entities
+        .put_payload(None, "session", key, &payload)
+        .unwrap();
     let changed = connection
         .create()
         .await
@@ -284,7 +288,7 @@ async fn payload_copy_is_immutable_and_never_requires_whole_entity_allocation() 
         .unwrap();
     assert_eq!(
         entities
-            .put_payload("session", key, &changed)
+            .put_payload(None, "session", key, &changed)
             .unwrap_err()
             .kind(),
         io::ErrorKind::AlreadyExists

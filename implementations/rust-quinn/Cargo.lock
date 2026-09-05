@@ -746,6 +746,7 @@ dependencies = [
  "quinn",
  "rcgen",
  "rusqlite",
+ "rustix",
  "rustls",
  "sha2",
  "tempfile",

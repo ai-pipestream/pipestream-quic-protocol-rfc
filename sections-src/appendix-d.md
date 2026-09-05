@@ -116,7 +116,8 @@ spools payloads to temporary files with byte and file quotas. Application
 callbacks consume file-backed readers in bounded asynchronous workers.
 
 The durable Rust prototype now has optional mutual-TLS principal/session
-binding and retained authenticated recovery, but lacks permanent storage quotas,
+binding, retained authenticated recovery and retained-storage quotas, but lacks
+completion-space reservations and explicit orphan reconciliation,
 automatic retry scheduling, bidirectional work-set origination, scoped
 cursor recycling, and full resilience semantics. Its
 Layer 2 advertisement does not identify the narrower implemented subset.
@@ -171,7 +172,8 @@ The Rust service durably fences process, rehydrate, and resume result
 publication and no longer invokes application callbacks under database
 transactions. Tests cover simultaneous lease acquisition, expiry, stale
 publication after reopen and reacquisition, callback database re-entry, and
-revocation during a callback. Permanent storage quotas remain unfinished.
+revocation during a callback. Storage quotas do not reserve all future completion
+space or establish a complete resource guarantee.
 
 The separate Rust-only Section 10.6.5 profile uses authority-qualified request
 identities and immutable acceptance receipts with 24-hour retention. Recovery
@@ -198,8 +200,7 @@ capacity still occupied by a callback. Listener cancellation aborts its owned
 connection and ingress tasks. Tests also cover pipelined first admission and
 checkpoint accounting for received payloads awaiting installation.
 Physical permits are shared within one
-process, not across independent writer processes. Unbounded retained payload
-storage remains a limitation; temporary quotas and
+process, not across independent writer processes. Temporary quotas and
 worker counts are not a complete multi-tenant resource guarantee.
 
 Connection metadata and lineage I/O use separately bounded blocking workers.
@@ -226,16 +227,30 @@ truncates, and shared-memory mappings, with preallocation and database mmap
 disabled. Tests exhaust each file budget, hold WAL readers, interrupt a process,
 and verify transaction rollback and a named capacity refusal over real QUIC.
 This is a file-length boundary for cooperating writers in a private directory,
-not a filesystem-allocation quota. Java JDBC bounds, retained Rust payload
-accounting, completion reservations, and orphan reconciliation remain unfinished.
+not a filesystem-allocation quota. Java JDBC bounds, completion reservations,
+and orphan reconciliation remain unfinished.
+
+The Rust retained-payload store separately reserves global and authority/principal
+bytes and object counts, including lineage, before disk creation. An immutable
+checksummed policy survives reopen. Interrupted copies retain staging credit;
+incomplete metadata and empty canonical directories remain globally charged.
+Matching prefix replay can finish publication without overwriting admitted
+input. A verified, synced receipt precedes successful installation. Tests cover
+process exit, prefix images, policy and alias refusal, shared handles, and an
+exclusive writer lock retained by readers and outstanding I/O. A real-QUIC test
+checks named exhaustion, unchanged declared membership and independent principal
+progress. These are bounded file-length reservations for a private single-writer
+root, not filesystem-allocation, full power-loss or concurrent-tenant performance
+proof. No orphan is silently deleted and completion reservations remain due.
 
 Spool tests cover quota exhaustion, file-backed chunk assembly, corruption
 before assembly, cancellation-safe disk credit, and abandoned-file accounting.
 A real-QUIC 32 MiB transfer measures Rust heap allocations while streaming
 input and verifies the persisted payload digest and released temporary credit.
 This is not a total process-memory or concurrent-workload performance claim.
-Temporary quota accounting does not yet cover permanent storage or coordinate
-independent writer processes.
+Temporary quotas remain separate from retained-storage quotas. Their accounting
+does not coordinate independent writer processes; the retained root now refuses
+a second cooperating writer process.
 
 The repository's protocol-neutral Rust driver starts each executable as a separate process and tests all nine client/server pairings. The driver has no dependency on a PipeStream implementation and does not encode or decode PipeStream frames. The implementations share the normative specification, CDDL, and golden vector corpus, but no protocol implementation code. The current suite verifies binary and UTF-8 payload transfer, parent identity, status progression, checkpoint acknowledgement, cursor advancement, graceful GOAWAY, and byte-exact delivery. The result is reproducible evidence for the listed protocol subset, not a claim of complete support for every optional field or extension in this document.
 

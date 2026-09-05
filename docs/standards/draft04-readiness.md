@@ -357,6 +357,49 @@ The final full suite passed with 176 Rust workspace tests, 89 Java tests
 probes, recursive/recovery CLI checks and all external examples. Draft -04
 passed idnits with zero errors/flaws/warnings and one FIPS reference comment.
 
+## Rust retained-payload reservations
+
+The file store now enforces immutable global and authority/principal byte and
+object policies for retained payloads and lineage, separate from temporary
+spools and SQLite. Staging is reserved before copying and remains charged until
+physical cleanup. Fixed checksummed metadata and receipts bind immutable input,
+owner and publication. Same-process handles share accounting; an exclusive Unix
+root lock prevents a second cooperating writer and survives store-handle drop
+while readers, spool loans or object operations still hold it.
+
+Eighteen focused tests cover retained and staging quotas, lineage, immutable replay,
+cross-owner/authority refusal, incremental oversized-input rejection, process
+exit and copy resumption, partial metadata and receipt publication, accounting
+rollback, empty-directory bounds, alias refusal and unrelated work during a
+held reader. Prefix-only metadata stays globally charged without inventing
+an owner or blocking unrelated admitted work. Full corrupt metadata is refused,
+not rewritten; these process-exit/image checks do not establish every power-loss
+boundary. Reopen preserves unused canonical directories and counts them against
+a fixed metadata budget. Orphan reconciliation is still explicit unfinished work.
+
+A real-QUIC test reaches a principal's payload object limit, observes
+`PIPESTREAM_LIMIT_EXCEEDED`, checks that the refused entity remains declared but
+unadmitted, and completes another principal's work. Declaration replay remains
+possible at capacity. The credential-refusal test now pins the two startup
+policy/lock files and zero retained/spool usage rather than expecting an empty
+root. Capability probes compare startup output byte-for-byte with no exempt
+filenames; a regression test detects additions and mutations. No authentication
+or negotiation refusal is weakened to allow payload installation.
+
+The new local policy refuses nonempty unaccounted payload stores without
+conversion. Session format 7, normative wire messages and CDDL are unchanged.
+File-length reservations are not allocated-disk or total-memory bounds and do
+not reserve every future completion publication. Java JDBC bounds, completion
+reservations, orphan reconciliation, persistent producer observations and the
+broader cross-language crash/resource matrix remain required.
+
+The final `./conformance/run_all.sh` passed with 196 Rust workspace tests
+(91 core, 51 Quinn unit, 50 wire, one allocation gate, three runner tests),
+89 Java tests without errors/failures/skips, C++, all nine Layer 0 pairings,
+32 capability probes, recursive/recovery CLI scenarios and every external
+example. Draft -04 passed idnits with zero errors/flaws/warnings and one
+informational FIPS reference comment. These are local validation results.
+
 ## Connection storage isolation
 
 Connection metadata and lineage operations use eight physical slots per canonical

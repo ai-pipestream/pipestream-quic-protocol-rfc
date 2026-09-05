@@ -5,7 +5,9 @@ mod control;
 mod execution_tests;
 pub mod executor;
 mod ingress;
+mod retained;
 pub mod spool;
+pub use retained::{RetainedLimits, RetainedUsage};
 mod storage;
 use spool::{PAYLOAD_IO_CHUNK, Payload, SpoolLimits, SpoolStore};
 
@@ -46,16 +48,16 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
-    fs::{self, OpenOptions},
-    io::{Read, Write},
+    fs,
+    io::Read,
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+#[cfg(test)]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const SESSION_METADATA_KEY: &str = "pipestream.session-id";
 pub const ACTION_METADATA_KEY: &str = "pipestream.action";
@@ -309,6 +311,7 @@ pub trait EntityStore: Send + Sync + 'static {
 
     fn put_payload(
         &self,
+        principal: Option<&PrincipalBinding>,
         session_id: &str,
         key: EntityKey,
         payload: &Payload,
@@ -318,186 +321,140 @@ pub trait EntityStore: Send + Sync + 'static {
 
     fn load_payload(
         &self,
+        principal: Option<&PrincipalBinding>,
         session_id: &str,
         key: EntityKey,
         length: u64,
         digest: [u8; 32],
     ) -> std::io::Result<Payload>;
 
-    fn put_lineage(&self, session_id: &str, digest: [u8; 32]) -> std::io::Result<()>;
+    fn put_lineage(
+        &self,
+        principal: Option<&PrincipalBinding>,
+        session_id: &str,
+        digest: [u8; 32],
+    ) -> std::io::Result<()>;
 }
 
-/// Immutable, fsync-backed payload storage for the standalone server.
+/// Immutable retained storage with durable owner and quota accounting.
 #[derive(Debug)]
 pub struct FileEntityStore {
-    root: PathBuf,
-    nonce: AtomicU64,
+    retained: Arc<retained::RetainedRoot>,
     spool: Arc<SpoolStore>,
 }
 
 impl FileEntityStore {
     pub fn open(root: impl Into<PathBuf>) -> std::io::Result<Self> {
-        Self::open_with_spool_limits(root, SpoolLimits::default())
+        Self::open_configured(root.into(), SpoolLimits::default(), None)
     }
 
     pub fn open_with_spool_limits(
         root: impl Into<PathBuf>,
         limits: SpoolLimits,
     ) -> std::io::Result<Self> {
-        let root = root.into();
-        fs::create_dir_all(&root)?;
-        sync_directory(&root)?;
-        Ok(Self {
-            spool: SpoolStore::new(root.join(".spool"), limits).map_err(std::io::Error::other)?,
-            root,
-            nonce: AtomicU64::new(1),
-        })
+        Self::open_configured(root.into(), limits, None)
+    }
+
+    pub fn open_with_limits(
+        root: impl Into<PathBuf>,
+        spool: SpoolLimits,
+        retained: RetainedLimits,
+    ) -> std::io::Result<Self> {
+        Self::open_configured(root.into(), spool, Some(retained))
+    }
+
+    fn open_configured(
+        root: PathBuf,
+        limits: SpoolLimits,
+        requested: Option<RetainedLimits>,
+    ) -> std::io::Result<Self> {
+        let retained = retained::RetainedRoot::open(root, requested)?;
+        let spool =
+            SpoolStore::new(retained.path.join(".spool"), limits).map_err(std::io::Error::other)?;
+        spool
+            .retain_root(retained.clone())
+            .map_err(std::io::Error::other)?;
+        Ok(Self { retained, spool })
     }
 
     #[must_use]
     pub fn root(&self) -> &Path {
-        &self.root
+        &self.retained.path
     }
 
-    fn sync_payload_directories(&self, directory: &Path) -> std::io::Result<()> {
-        let mut current = directory;
-        loop {
-            sync_directory(current)?;
-            if current == self.root {
-                return Ok(());
-            }
-            current = current
-                .parent()
-                .ok_or_else(|| std::io::Error::other("payload directory escaped store root"))?;
-        }
+    pub fn retained_limits(&self) -> RetainedLimits {
+        self.retained.limits()
     }
-
-    fn entity_path(&self, session_id: &str, key: EntityKey) -> PathBuf {
-        self.root
-            .join(session_id)
-            .join(format!("scope-{}", key.scope_id))
-            .join(format!("entity-{}.bin", key.entity_id))
+    pub fn retained_usage(&self) -> std::io::Result<RetainedUsage> {
+        self.retained.usage(None)
     }
-
-    fn write_immutable(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-        let parent = path.parent().expect("stored paths always have a parent");
-        fs::create_dir_all(parent)?;
-        if path.exists() {
-            let existing = fs::read(path)?;
-            if existing == bytes {
-                return Ok(());
-            }
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                "immutable PipeStream object exists with different bytes",
-            ));
-        }
-        let nonce = self.nonce.fetch_add(1, Ordering::Relaxed);
-        let temporary = parent.join(format!(".pipestream-{}-{nonce}.tmp", std::process::id()));
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        match fs::hard_link(&temporary, path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let existing = fs::read(path)?;
-                if existing != bytes {
-                    let _ = fs::remove_file(&temporary);
-                    return Err(error);
-                }
-            }
-            Err(error) => {
-                let _ = fs::remove_file(&temporary);
-                return Err(error);
-            }
-        }
-        fs::remove_file(&temporary)?;
-        sync_directory(parent)
+    pub fn principal_retained_usage(
+        &self,
+        principal: Option<&PrincipalBinding>,
+    ) -> std::io::Result<RetainedUsage> {
+        self.retained.usage(Some(principal))
     }
 }
 
 impl EntityStore for FileEntityStore {
-    fn load_payload(
+    fn put(&self, session_id: &str, key: EntityKey, payload: &[u8]) -> std::io::Result<()> {
+        self.retained.install(
+            None,
+            session_id,
+            Some(key),
+            payload.len() as u64,
+            Sha256::digest(payload).into(),
+            std::io::Cursor::new(payload),
+        )
+    }
+
+    fn put_payload(
         &self,
+        principal: Option<&PrincipalBinding>,
         session_id: &str,
         key: EntityKey,
-        length: u64,
-        digest: [u8; 32],
-    ) -> std::io::Result<Payload> {
-        validate_storage_session_id(session_id)?;
-        Payload::open_retained(self.entity_path(session_id, key), length, digest)
+        payload: &Payload,
+    ) -> std::io::Result<()> {
+        self.retained.install(
+            principal,
+            session_id,
+            Some(key),
+            payload.len(),
+            payload.digest(),
+            payload.reader(),
+        )
     }
 
     fn spool(&self) -> &Arc<SpoolStore> {
         &self.spool
     }
 
-    fn put_payload(
+    fn load_payload(
         &self,
+        principal: Option<&PrincipalBinding>,
         session_id: &str,
         key: EntityKey,
-        payload: &Payload,
-    ) -> std::io::Result<()> {
-        validate_storage_session_id(session_id)?;
-        let destination = self.entity_path(session_id, key);
-        let parent = destination.parent().expect("entity parent directory");
-        fs::create_dir_all(parent)?;
-        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-        let mut reader = payload.reader();
-        let mut bytes = [0; PAYLOAD_IO_CHUNK];
-        let mut digest = Sha256::new();
-        let mut length = 0u64;
-        loop {
-            let count = reader.read(&mut bytes)?;
-            if count == 0 {
-                break;
-            }
-            temporary.write_all(&bytes[..count])?;
-            digest.update(&bytes[..count]);
-            length += count as u64;
-        }
-        let actual: [u8; 32] = digest.finalize().into();
-        if length != payload.len() || actual != payload.digest() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "spooled payload changed before persistence",
-            ));
-        }
-        temporary.as_file().sync_all()?;
-        match temporary.persist_noclobber(&destination) {
-            Ok(_) => self.sync_payload_directories(parent),
-            Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let mut existing = fs::File::open(&destination)?;
-                let mut digest = Sha256::new();
-                let mut length = 0u64;
-                loop {
-                    let count = existing.read(&mut bytes)?;
-                    if count == 0 {
-                        break;
-                    }
-                    length += count as u64;
-                    digest.update(&bytes[..count]);
-                }
-                let actual: [u8; 32] = digest.finalize().into();
-                if length != payload.len() || actual != payload.digest() {
-                    return Err(error.error);
-                }
-                self.sync_payload_directories(parent)
-            }
-            Err(error) => Err(error.error),
-        }
-    }
-    fn put(&self, session_id: &str, key: EntityKey, payload: &[u8]) -> std::io::Result<()> {
-        validate_storage_session_id(session_id)?;
-        self.write_immutable(&self.entity_path(session_id, key), payload)
+        length: u64,
+        digest: [u8; 32],
+    ) -> std::io::Result<Payload> {
+        self.retained
+            .load(principal, session_id, key, length, digest)
     }
 
-    fn put_lineage(&self, session_id: &str, digest: [u8; 32]) -> std::io::Result<()> {
-        validate_storage_session_id(session_id)?;
-        self.write_immutable(&self.root.join(session_id).join("lineage.sha256"), &digest)
+    fn put_lineage(
+        &self,
+        principal: Option<&PrincipalBinding>,
+        session_id: &str,
+        digest: [u8; 32],
+    ) -> std::io::Result<()> {
+        self.retained.install(
+            principal,
+            session_id,
+            None,
+            32,
+            Sha256::digest(digest).into(),
+            std::io::Cursor::new(digest),
+        )
     }
 }
 
@@ -680,7 +637,8 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     recovered += 1;
                 }
                 if let Ok(lineage) = current.session.final_lineage_digest() {
-                    self.entities.put_lineage(&job.session_id, lineage)?;
+                    self.entities
+                        .put_lineage(job.principal.as_ref(), &job.session_id, lineage)?;
                 }
             }
         }
@@ -1354,8 +1312,8 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     {
                         service
                             .entities
-                            .put_lineage(&id, lineage)
-                            .map_err(storage_error)?;
+                            .put_lineage(service.caller.as_ref(), &id, lineage)
+                            .map_err(entity_store_error)?;
                     }
                     Ok(ack)
                 })
@@ -1517,8 +1475,8 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         // Installation precedes atomic admission. Failure never creates a runnable job.
         // An interrupted installation can leave an orphan, not a successful receipt.
         self.entities
-            .put_payload(&session_id, key.entity, body)
-            .map_err(storage_error)?;
+            .put_payload(self.caller.as_ref(), &session_id, key.entity, body)
+            .map_err(entity_store_error)?;
         if existing.is_some() {
             self.transact(&session_id, admit).map_err(store_error)?;
         } else {
@@ -1694,8 +1652,8 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                         self.storage(move |service| {
                             service
                                 .entities
-                                .put_lineage(&id, lineage)
-                                .map_err(storage_error)
+                                .put_lineage(service.caller.as_ref(), &id, lineage)
+                                .map_err(entity_store_error)
                         })
                         .await?;
                     }
@@ -3010,6 +2968,14 @@ fn store_error(error: StoreError) -> ProtocolError {
         StoreError::Protocol(error) => error,
         other => storage_error(other),
     }
+}
+
+fn entity_store_error(error: std::io::Error) -> ProtocolError {
+    error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<ProtocolError>())
+        .cloned()
+        .unwrap_or_else(|| storage_error(error))
 }
 
 fn close_for_error(connection: &quinn::Connection, error: &ProtocolError) {

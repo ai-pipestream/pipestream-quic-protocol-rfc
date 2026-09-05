@@ -193,3 +193,103 @@ async fn wal_exhaustion_is_a_named_wire_refusal_and_retained_work_resumes_after_
     replay.disconnect();
     Ok(())
 }
+
+#[tokio::test]
+async fn retained_payload_quota_preserves_declared_work_and_allows_another_principal() -> Result<()>
+{
+    let mut fixture = AuthFixture::new()?;
+    let files = FileEntityStore::open_with_limits(
+        &fixture.options.entity_directory,
+        spool::SpoolLimits::default(),
+        RetainedLimits {
+            bytes: 4096,
+            principal_bytes: 2048,
+            objects: 2,
+            principal_objects: 1,
+            staging_bytes: 1024,
+            staging_objects: 2,
+            principals: 4,
+        },
+    )?;
+    let alice = fixture.listen(Some("issuer-a"), Some(0))?;
+    let mut client = RecursiveClient::connect_sealed(&alice).await?;
+    let request = work("payload-alice", 0, vec![1, 2], Some(&[1, 2]));
+    client.declare_work(&request).await?;
+    let mut header = EntityHeader {
+        entity_id: 1,
+        parent_id: None,
+        scope_id: None,
+        parent_scope_id: None,
+        layer: 0,
+        content_type: None,
+        payload_length: Some(1),
+        checksum: None,
+        metadata: BTreeMap::from([
+            (SESSION_METADATA_KEY.to_owned(), "payload-alice".to_owned()),
+            (ACTION_METADATA_KEY.to_owned(), "complete".to_owned()),
+        ]),
+        chunk_info: None,
+        completion_policy: None,
+    };
+    assert_eq!(
+        client
+            .send_entity(&header, b"x", 0)
+            .await?
+            .last()
+            .unwrap()
+            .status
+            .state,
+        STATUS_COMPLETE
+    );
+    header.entity_id = 2;
+    let error = tokio::time::timeout(Duration::from_secs(5), client.send_entity(&header, b"x", 0))
+        .await?
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("PIPESTREAM_LIMIT_EXCEEDED"),
+        "{error:#}"
+    );
+    let retained = fixture.store.load("payload-alice")?.unwrap().session;
+    assert_eq!(retained.entities.len(), 1);
+    assert_eq!(retained.jobs.len(), 1);
+    assert!(!retained.work_scope_ready(0));
+    assert_eq!(
+        retained.work_sets.as_ref().unwrap().scopes[&0].ids,
+        std::collections::BTreeSet::from([1, 2])
+    );
+    assert!(
+        !fixture
+            .options
+            .entity_directory
+            .join("payload-alice/scope-0/entity-2.bin")
+            .exists()
+    );
+    let bob = fixture.listen(Some("issuer-a"), Some(2))?;
+    let mut client = RecursiveClient::connect_sealed(&bob).await?;
+    client
+        .declare_work(&work("payload-bob", 0, vec![1], Some(&[1])))
+        .await?;
+    header.entity_id = 1;
+    header
+        .metadata
+        .insert(SESSION_METADATA_KEY.to_owned(), "payload-bob".into());
+    assert_eq!(
+        client
+            .send_entity(&header, b"x", 0)
+            .await?
+            .last()
+            .unwrap()
+            .status
+            .state,
+        STATUS_COMPLETE
+    );
+    assert_eq!(files.retained_usage()?.objects, 2);
+    assert_eq!(files.retained_usage()?.staging_objects, 0);
+    let mut replay = RecursiveClient::connect_sealed(&alice).await?;
+    replay.declare_work(&request).await?;
+    assert_eq!(files.retained_usage()?.objects, 2);
+    fixture.store.integrity_check()?;
+    client.disconnect();
+    replay.disconnect();
+    Ok(())
+}

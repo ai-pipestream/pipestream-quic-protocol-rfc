@@ -3,7 +3,7 @@
 use crate::*;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
-use std::sync::Arc;
+use std::{collections::BTreeMap, ffi::OsString, io::Read, sync::Arc};
 
 const CASES: &str = include_str!("../../../../test-vectors/extension-negotiation.tsv");
 
@@ -43,6 +43,7 @@ pub fn run() -> Result<()> {
             } else {
                 start_server(&root, program, &temporary.path().join(name), &certs)?
             };
+            let startup_files = startup_snapshot(&server.output)?;
             let input = fixture(
                 if name == "rejected-then-valid" {
                     "client-required-unknown"
@@ -98,8 +99,8 @@ pub fn run() -> Result<()> {
                 },
             )?;
             ensure!(
-                fs::read_dir(&server.output)?.next().is_none(),
-                "work admitted before negotiation"
+                startup_snapshot(&server.output)? == startup_files,
+                "retained output changed before negotiation"
             );
             println!("PASS {} server capabilities {name}", program.name);
             count += 1;
@@ -168,6 +169,27 @@ pub fn run() -> Result<()> {
     }
     println!("all {count} raw QUIC capability probes passed");
     Ok(())
+}
+
+// Capture implementation-owned startup files without interpreting or exempting
+// any filename. A refused connection must leave exactly the same bytes behind.
+fn startup_snapshot(directory: &Path) -> Result<BTreeMap<OsString, Vec<u8>>> {
+    let mut snapshot = BTreeMap::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        ensure!(snapshot.len() < 64, "too many startup files");
+        ensure!(
+            entry.file_type()?.is_file(),
+            "unexpected retained output directory or alias"
+        );
+        let mut bytes = Vec::new();
+        fs::File::open(entry.path())?
+            .take(65_537)
+            .read_to_end(&mut bytes)?;
+        ensure!(bytes.len() <= 65_536, "startup file exceeds snapshot bound");
+        snapshot.insert(entry.file_name(), bytes);
+    }
+    Ok(snapshot)
 }
 
 fn fixture(name: &str, column: usize) -> Result<Vec<u8>> {
@@ -256,4 +278,24 @@ async fn expect_close(connection: &quinn::Connection, code: u64) -> Result<()> {
         other => bail!("expected named QUIC application close, got {other}"),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn startup_snapshot_detects_added_and_changed_output_without_exempt_names() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".policy"), b"initial").unwrap();
+        let initial = startup_snapshot(dir.path()).unwrap();
+        assert_eq!(initial, startup_snapshot(dir.path()).unwrap());
+        fs::write(dir.path().join(".policy"), b"changed").unwrap();
+        assert_ne!(initial, startup_snapshot(dir.path()).unwrap());
+        fs::write(dir.path().join(".policy"), b"initial").unwrap();
+        fs::write(dir.path().join("payload"), b"admitted").unwrap();
+        assert_ne!(initial, startup_snapshot(dir.path()).unwrap());
+        fs::create_dir(dir.path().join("scope-0")).unwrap();
+        assert!(startup_snapshot(dir.path()).is_err());
+    }
 }
