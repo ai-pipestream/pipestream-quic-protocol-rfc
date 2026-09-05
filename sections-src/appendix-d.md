@@ -103,10 +103,10 @@ adds independent control/data reception, identity-based stream dispatch,
 pending checkpoints with deadlines, negotiated depth enforcement, and
 fenced recovery-result publication. Its recursive receiver incrementally
 spools payloads to temporary files with byte and file quotas. Application
-callbacks consume file-backed readers but remain synchronous.
+callbacks consume file-backed readers in bounded asynchronous workers.
 
 The durable Rust prototype now has optional mutual-TLS principal/session
-binding, but lacks retained recovery outcomes, per-principal resource gates,
+binding, but lacks retained recovery-request outcomes, permanent storage quotas,
 automatic retry scheduling, bidirectional work-set origination, scoped
 cursor recycling, and an ambiguous-redemption-outcome operation. Its
 Layer 2 advertisement does not identify the narrower implemented subset.
@@ -124,22 +124,32 @@ Its presence does not establish cross-language sealed-work interoperability.
 Authentication tests cover missing, untrusted, expired and unmapped client
 certificates; refusal of anonymous downgrade; principal and authority checks;
 certificate rotation; live and reconnected session revocation; and background
-recovery authorization. These do not establish crash-safe asynchronous
-execution or solve ambiguous outcomes after a lost redemption ACK.
+recovery authorization. These authentication tests do not themselves establish
+execution durability or solve ambiguous outcomes after a lost redemption ACK.
 
 The Rust service durably fences process, rehydrate, and resume result
 publication and no longer invokes application callbacks under database
 transactions. Tests cover simultaneous lease acquisition, expiry, stale
 publication after reopen and reacquisition, callback database re-entry, and
-revocation during a callback. Dispatch remains synchronous, and restartable
-processing descriptors, bounded asynchronous workers, and retained recovery-request
-outcomes remain unfinished.
+revocation during a callback. Retained recovery-request outcomes and permanent
+storage quotas remain unfinished.
 
 The Rust core has typed job descriptors and a transactionally bounded
 unfinished-job index with retained outcomes. Storage tests exercise limits,
 rollback, interrupted attempts, and index integrity. The transport service
-does not yet use this queue, so these tests do not establish asynchronous
-execution or recovery of admitted payloads after restart.
+uses this queue for processing, rehydration, and resume operations. Bounded
+admission workers install payloads before committing their job descriptors;
+execution workers reopen and verify retained input before callbacks. Tests
+cover abrupt process exit after admission and detached execution after reopen.
+Raw QUIC tests exercise independent completion and deadline progress during
+stalled callbacks. Shutdown stops dispatch without falsely releasing physical
+capacity still occupied by a callback. Listener cancellation aborts its owned
+connection and ingress tasks. Tests also cover pipelined first admission and
+checkpoint accounting for received payloads awaiting installation.
+Physical permits are shared within one
+process, not across independent writer processes. Synchronous metadata I/O and
+unbounded retained storage remain limitations; temporary quotas and worker
+counts are not a complete multi-tenant resource guarantee.
 
 Spool tests cover quota exhaustion, file-backed chunk assembly, corruption
 before assembly, cancellation-safe disk credit, and abandoned-file accounting.

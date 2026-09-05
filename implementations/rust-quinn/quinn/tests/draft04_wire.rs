@@ -15,6 +15,9 @@ mod authenticated_sessions;
 #[path = "draft04/spooled_ingress.rs"]
 mod spooled_ingress;
 
+#[path = "draft04/asynchronous_execution.rs"]
+mod asynchronous_execution;
+
 // Raw QUIC peers exercise ordering and refusal behavior independently of RecursiveClient.
 struct Fixture {
     dir: tempfile::TempDir,
@@ -96,15 +99,55 @@ impl Fixture {
         processor: Arc<P>,
         spool_limits: spool::SpoolLimits,
     ) -> Result<Self> {
+        Self::with_runtime_limits(
+            capabilities,
+            processor,
+            spool_limits,
+            pipestream_core::persistence::JobQueueLimits::default(),
+            executor::ExecutionLimits::default(),
+        )
+        .await
+    }
+
+    async fn with_runtime_limits<P: EntityProcessor>(
+        capabilities: Capabilities,
+        processor: Arc<P>,
+        spool_limits: spool::SpoolLimits,
+        job_limits: pipestream_core::persistence::JobQueueLimits,
+        execution_limits: executor::ExecutionLimits,
+    ) -> Result<Self> {
+        Self::with_runtime_mode(
+            capabilities,
+            processor,
+            spool_limits,
+            job_limits,
+            execution_limits,
+            true,
+        )
+        .await
+    }
+
+    async fn with_runtime_mode<P: EntityProcessor>(
+        capabilities: Capabilities,
+        processor: Arc<P>,
+        spool_limits: spool::SpoolLimits,
+        job_limits: pipestream_core::persistence::JobQueueLimits,
+        execution_limits: executor::ExecutionLimits,
+        once: bool,
+    ) -> Result<Self> {
         let depth = capabilities.effective_max_scope_depth();
         let layers = LayerSupport {
             layer1_recursive: capabilities.layer1_recursive,
             layer2_resilience: capabilities.layer2_resilience,
         };
         let dir = tempfile::tempdir()?;
-        let options = options(dir.path());
+        let mut options = options(dir.path());
+        options.once = once;
         let service = RecursiveService::with_limits(
-            Arc::new(SqliteSessionStore::open(&options.state_database)?),
+            Arc::new(SqliteSessionStore::open_with_job_limits(
+                &options.state_database,
+                job_limits,
+            )?),
             Arc::new(FileEntityStore::open_with_spool_limits(
                 &options.entity_directory,
                 spool_limits,
@@ -116,10 +159,11 @@ impl Fixture {
                 max_entity_bytes: options.max_entity_bytes,
                 max_chunks_per_entity: options.max_chunks_per_entity,
             },
-        )?;
+        )?
+        .with_execution_limits(execution_limits)?;
         let server = RecursiveServer::bind(&options, service)?;
         let address = server.local_addr()?;
-        let server = tokio::spawn(server.run(true));
+        let server = tokio::spawn(server.run(once));
         let mut roots = rustls::RootCertStore::empty();
         for cert in CertificateDer::pem_file_iter(&options.certificate)? {
             roots.add(cert?)?;

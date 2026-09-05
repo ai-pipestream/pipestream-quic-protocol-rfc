@@ -357,10 +357,32 @@ async fn sealed_set_ownership_and_revocation_apply_to_live_and_reconnected_clien
 async fn background_recovery_obeys_durable_owner_and_revocation() -> Result<()> {
     let mut fixture = AuthFixture::new()?;
     let options = fixture.listen(Some("issuer-a"), Some(0))?;
+    let mut requests = Vec::new();
     for id in ["recover-allowed", "recover-revoked"] {
         let request = begin_durable_yield(&options, id).await?;
+        requests.push((id, request));
+    }
+    // Exercise the blocking recovery API with no periodic dispatcher racing the assertions.
+    for server in fixture.servers.drain(..) {
+        server.abort();
+        let _ = server.await;
+    }
+    for (id, request) in requests {
         fixture.store.transact(id, |session| {
             session.redeem_claim(request.claim_id, request.state_checksum, 1)?;
+            let key = pipestream_core::execution::ExecutionKey {
+                entity: session.claims[&request.claim_id].entity,
+                stage: pipestream_core::execution::ExecutionStage::Resume {
+                    claim_id: request.claim_id,
+                },
+            };
+            session.enqueue_job(
+                key,
+                pipestream_core::jobs::JobInput::Resume {
+                    claim_id: request.claim_id,
+                },
+                1,
+            )?;
             if id == "recover-revoked" {
                 session.revoke_access()?;
             }
