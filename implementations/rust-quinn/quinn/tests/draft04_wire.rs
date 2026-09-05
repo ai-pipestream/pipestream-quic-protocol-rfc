@@ -18,6 +18,9 @@ mod spooled_ingress;
 #[path = "draft04/asynchronous_execution.rs"]
 mod asynchronous_execution;
 
+#[path = "draft04/storage_stalls.rs"]
+mod storage_stalls;
+
 // Raw QUIC peers exercise ordering and refusal behavior independently of RecursiveClient.
 struct Fixture {
     dir: tempfile::TempDir,

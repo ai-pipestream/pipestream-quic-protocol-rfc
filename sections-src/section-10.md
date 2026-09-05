@@ -73,6 +73,11 @@ MAY operate on admitted data only if effects can be discarded on failure.
 Control readers MUST remain able to make progress when a data stream
 stalls. Implementations SHOULD separate control parsing, payload reception,
 worker completion, and deadline handling as described in {{RFC9308}}.
+Queues between these activities MUST have bounded capacity. Offloading a
+blocking operation MUST NOT allow cancelled waiters to release its resource
+charge while the operation still runs. A full control backlog MUST produce a
+named resource refusal, not discard a parsed request or suspend a checkpoint
+clock indefinitely behind a storage operation.
 
 ## Amplification Attacks
 

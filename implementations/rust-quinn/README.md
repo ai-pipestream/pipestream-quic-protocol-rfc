@@ -258,7 +258,7 @@ limit ([SQLite WAL documentation](https://sqlite.org/wal.html)). Completion-spac
 reservations are also unfinished: admission does not reserve every possible
 future outcome's bytes, and quota exhaustion can refuse a later publication.
 Such work remains unfinished and charged; no successful completion is invented.
-Physical file quotas, orphan reconciliation, and storage-stall isolation remain
+Physical file quotas and orphan reconciliation remain
 part of the full execution requirement.
 
 ### Durable queue APIs
@@ -329,9 +329,36 @@ checkpoint deadline progress during a stalled callback, immediate control
 refusals, and queue overflow without losing admitted jobs. Pipelined roots
 received during the first admission wait within the same observation and spool
 budgets. Known entities still being assembled or installed block covered
-checkpoints even without a PENDING announcement. SQLite metadata
-operations and lineage writes still execute synchronously in the connection
-path; responsive handling under storage stalls remains unfinished.
+checkpoints even without a PENDING announcement. Replies for covered entities
+and descendants are delivered before their checkpoint ACK, including when a
+worker commits between the reply and checkpoint snapshots.
+
+Connection metadata operations and lineage writes run in a separate storage
+pool: eight physical operations per canonical database, at most four per
+authority/principal. Anonymous connections share one bucket. Handles in one
+process share these bounds; excess operations receive a named capacity refusal.
+Started operations keep their permits after their connection waiter is cancelled,
+until the actual operation returns. This does not cancel SQLite transactions or
+filesystem calls, bound their latency, or coordinate separate writer processes.
+
+The control reader starts checkpoint clocks on complete-frame reception, before
+database admission. A watchdog runs independently of ordered dispatch and output
+writes. Heartbeats, malformed controls, duplicate capabilities, and oversized
+frames do not wait for storage. The ingress backlog holds at most 32 complete
+events, with each control body capped at 1 MiB and each payload quota-charged.
+A full control backlog closes with `PIPESTREAM_LIMIT_EXCEEDED`; it cannot suspend
+deadline enforcement. Up to 1,024 parsed checkpoint requests are tracked, counting
+duplicates. Repeated pending requests do not extend their original deadline, and
+an ACK does not remove clocks belonging to copies still queued for dispatch.
+
+Raw QUIC tests hold a SQLite writer through a checkpoint timeout, send invalid
+controls during that stall, exhaust the control backlog, and hold lineage I/O
+while another connection completes work. No checkpoint ACK is sent after its
+deadline even if persistence later finishes. Durable state may have committed
+without an observed ACK; reconnect/replay remains necessary. State-dependent
+operations on one connection remain ordered and may wait behind its storage
+operation. These tests do not establish concurrent-workload performance or a
+filesystem-wide resource bound.
 
 The default lease is 300 seconds; embedded services can use
 `with_execution_lease` to choose 1 microsecond through 300 seconds. Lease
@@ -367,7 +394,7 @@ still occupies the sole worker slot.
 Without the explicit mutual-TLS settings, the standalone prototype authenticates
 only the server and remains suitable solely for trusted local demonstrations.
 Even with mutual TLS, retained recovery, and bounded workers, durable storage
-quotas, orphan reclamation, storage-stall handling, and a complete resilience capability remain
+quotas, orphan reclamation, and a complete resilience capability remain
 unfinished. It MUST NOT yet be described as a production multi-tenant durable
 work service. Its Layer 2 boolean still advertises more than the tested subset.
 
