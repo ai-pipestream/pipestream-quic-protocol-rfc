@@ -223,7 +223,28 @@ approval as part of a repository landing.
   external example. New Java APIs passed Javadoc with doclint and warnings
   denied. Draft -04 passed idnits with zero errors/flaws/warnings and one
   informational FIPS reference comment.
-- Not yet implemented: physical database/WAL and retained-payload quotas,
+- Java payload-store increment: independent incremental receivers validate FIN
+  length/checksum and retain quota-charged file receipts. Complete chunk sets
+  are streamed into immutable checksummed objects before any session admission.
+  Installation reserves staging/final-name capacity and uses synced no-replace
+  publication. Replays verify the retained object without new publication
+  capacity; changed input is refused. Reopen counts abandoned files and refuses
+  changed policy or foreign layouts. Tests cover abrupt exit before admission,
+  corruption, chunk geometry, capacity refusal, concurrent installation and
+  cancellation, and cross-process locking after a rejected local open.
+  A 32 MiB input is received, installed, and read under a 24 MiB Java heap cap.
+  These are blocking library calls and logical file-length/count quotas, not
+  Netty integration, per-principal quotas, physical filesystem bounds, or a
+  whole-process memory measurement. The Java SQLite and Rust session formats
+  are unchanged; the Java payload directory has a separate version-1 policy.
+  The full `./conformance/run_all.sh` passed with 164 Rust workspace tests,
+  55 Java tests with no skips (15 new payload tests), C++, all nine existing
+  Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks, and
+  all external examples. The new public API passed Javadoc with doclint and
+  warnings denied. Draft -04 passed idnits with zero errors/flaws/warnings and
+  one informational FIPS reference comment. This does not complete the Java
+  server, reverse-direction interoperability, or the full goal.
+- Not yet implemented: physical database/WAL and Rust retained-payload quotas,
   completion-space reservations, orphan reclamation,
   and the independent Java
   profile. Physical execution limits and temporary spools are coordinated only

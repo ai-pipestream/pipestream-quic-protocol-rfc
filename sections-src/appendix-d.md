@@ -29,6 +29,12 @@ Maturity:
 Coverage:
 :   TLS 1.3 with ALPN `pipestream/1`; no 0-RTT; deterministic CBOR Capabilities, EntityHeader, and Checkpoint messages; STATUS heartbeat and entity progression; cursor advancement; parent identity; SHA-256 payload validation; checkpoint request/acknowledgement; and GOAWAY. The standalone command handles one entity per connection and does not implement Layers 1 or 2.
 
+    Separate Java libraries implement the Section 9.8 declaration codec,
+    durable SQLite membership and closure state, and a public Netty producer.
+    A file-backed payload library adds bounded incremental reception and
+    immutable retained inputs. Payload installation does not itself admit or
+    complete work. The sealed Java server remains unimplemented.
+
 Licensing:
 :   MIT.
 
@@ -126,6 +132,14 @@ ACK, and named protocol refusals. Fault-injection peers check Java's rejection
 of changed ACKs, downgrade, oversized replies, and Layer 2 frames. This is
 one-direction interoperability, not a complete Java server or proof of the
 entire profile. The Java listener/CLI and C++ endpoints remain Layer 0.
+
+Java payload-library tests additionally cover chunk geometry, immutable replay,
+file-length and file-count quotas, cancellation-safe accounting, writer
+exclusion, corruption, and abrupt exit between installation and admission.
+A 32 MiB receive/install/read test runs with a 24 MiB Java heap limit. It does
+not exercise QUIC or establish native-memory, RSS, physical filesystem, or
+concurrent-workload bounds. No new network interoperability is inferred from
+these storage tests.
 
 Authentication tests cover missing, untrusted, expired and unmapped client
 certificates; refusal of anonymous downgrade; principal and authority checks;
