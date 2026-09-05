@@ -77,9 +77,11 @@ effects. A rejected or missing payload remains outstanding. No cancellation
 tombstone, authenticated claim redemption, or server-originated work is
 implemented in this profile.
 
-Stored session format is now version 6, including durable owner, claim/session
-revocation, execution attempts, typed jobs, and retained recovery receipts.
-Versions 1 through 5 are refused without conversion or
+Stored session format is now version 7, including durable owner, claim/session
+revocation, execution attempts, typed jobs, retained recovery receipts, and the
+original optional checkpoint scope. An omitted root scope and explicit zero
+are both valid, but remain distinct for ACK correlation and replay identity.
+Versions 1 through 6 are refused without conversion or
 modification; preserve old databases with their matching binary.
 The implementation caps each session at 1,000,000 declared IDs, in addition
 to negotiated per-scope limits. SQLite still serializes the whole session
@@ -247,7 +249,7 @@ Every write verifies checksummed accounting metadata before using its capacity;
 missing or altered entries cannot create free space for another session. This
 scan is bounded by the session-count policy, not constant-time. No large-store
 throughput claim is made.
-The session payload format remains version 6, but old nonempty databases without
+The session payload format is version 7; old nonempty databases without
 the accounting schema are refused. No operational database is migrated or
 silently assigned new quotas. Preserve old stores with their matching binary.
 
@@ -390,6 +392,13 @@ shutdown or expired callback cannot make an unfinished job count as complete.
 Tests cover abrupt process exit after durable admission, input corruption,
 detached rehydration/resume, and replacement executors while an expired callback
 still occupies the sole worker slot.
+
+`RecursiveClient::disconnect` requests transport close without waiting. Before
+stopping the client's async runtime, use `disconnect_gracefully().await`; it
+keeps the endpoint alive through QUIC shutdown. The `begin-yield` CLI now uses
+this path. An isolated-runtime regression test verifies that the server exits
+without waiting for its idle timeout and that the claim remains unredeemed and
+the entity DEFERRED. Transport shutdown is not a work-completion barrier.
 
 Without the explicit mutual-TLS settings, the standalone prototype authenticates
 only the server and remains suitable solely for trusted local demonstrations.

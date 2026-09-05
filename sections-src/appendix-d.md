@@ -111,15 +111,21 @@ automatic retry scheduling, bidirectional work-set origination, scoped
 cursor recycling, and full resilience semantics. Its
 Layer 2 advertisement does not identify the narrower implemented subset.
 It is unsuitable for untrusted multi-tenant deployment without additional
-implementation work. Java and C++ do not yet provide independent evidence
-for recursive or resilience semantics. These limitations remain open;
+implementation work. Java's independent sealed producer now exercises recursive
+work against Rust; its sealed server and reverse-direction evidence remain
+unfinished. C++ does not yet provide recursive or resilience evidence.
+These limitations remain open;
 passing vectors or document checks does not resolve them.
 
-Rust-only tests exercise Section 9.8 with frozen wire fixtures, reordered
+Rust tests exercise Section 9.8 with frozen wire fixtures, reordered
 descendants, missing declarations and payloads, immutable seal refusals,
 and a public-client reconnect after an unobserved declaration ACK and
-server restart. Java and C++ do not implement this private-use profile.
-Its presence does not establish cross-language sealed-work interoperability.
+server restart. Java-to-Rust QUIC tests additionally cover nested/chunked
+completion, scoped checkpoints, replay after restart and a discarded declaration
+ACK, and named protocol refusals. Fault-injection peers check Java's rejection
+of changed ACKs, downgrade, oversized replies, and Layer 2 frames. This is
+one-direction interoperability, not a complete Java server or proof of the
+entire profile. The Java listener/CLI and C++ endpoints remain Layer 0.
 
 Authentication tests cover missing, untrusted, expired and unmapped client
 certificates; refusal of anonymous downgrade; principal and authority checks;

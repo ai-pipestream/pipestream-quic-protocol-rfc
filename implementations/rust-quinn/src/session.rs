@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const SESSION_FORMAT_VERSION: u16 = 6;
+pub const SESSION_FORMAT_VERSION: u16 = 7;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EntityKey {
@@ -149,7 +149,7 @@ pub struct StoredCheckpoint {
     pub checkpoint_id: String,
     pub sequence_number: u64,
     pub checkpoint_entity_id: u32,
-    pub scope_id: u32,
+    pub scope_id: Option<u32>,
     pub timeout_ms: Option<u64>,
     pub acknowledged: bool,
 }
@@ -552,6 +552,7 @@ impl Session {
         if let Some(existing) = self.checkpoints.get(&key) {
             if existing.checkpoint_id == checkpoint.checkpoint_id
                 && existing.checkpoint_entity_id == checkpoint.checkpoint_entity_id
+                && existing.scope_id == checkpoint.scope_id
                 && existing.timeout_ms == checkpoint.timeout_ms
             {
                 return Ok(());
@@ -566,7 +567,7 @@ impl Session {
                 checkpoint_id: checkpoint.checkpoint_id.clone(),
                 sequence_number: checkpoint.sequence_number,
                 checkpoint_entity_id: checkpoint.checkpoint_entity_id,
-                scope_id,
+                scope_id: checkpoint.scope_id,
                 timeout_ms: checkpoint.timeout_ms,
                 acknowledged: false,
             },
@@ -654,7 +655,7 @@ impl Session {
             checkpoint_id: stored.checkpoint_id.clone(),
             sequence_number: stored.sequence_number,
             checkpoint_entity_id: stored.checkpoint_entity_id,
-            scope_id: (stored.scope_id != 0).then_some(stored.scope_id),
+            scope_id: stored.scope_id,
             flags: CHECKPOINT_ACK,
             timeout_ms: stored.timeout_ms,
         })

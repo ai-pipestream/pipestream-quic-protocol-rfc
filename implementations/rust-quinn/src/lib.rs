@@ -716,21 +716,15 @@ fn validate_checkpoint(checkpoint: &Checkpoint, layers: LayerSupport) -> Result<
     if checkpoint.checkpoint_entity_id == 0 || checkpoint.checkpoint_entity_id > MAX_ENTITY_ID {
         return Err(ProtocolError::entity("invalid checkpoint-entity-id"));
     }
-    if let Some(scope) = checkpoint.scope_id {
-        if scope == 0 {
-            return Err(ProtocolError::new(
-                ERROR_SCOPE_INVALID,
-                "PIPESTREAM_SCOPE_INVALID",
-                "root checkpoint must omit scope-id",
-            ));
-        }
-        if !layers.layer1_recursive {
-            return Err(ProtocolError::new(
-                ERROR_LAYER_UNSUPPORTED,
-                "PIPESTREAM_LAYER_UNSUPPORTED",
-                "checkpoint scope requires Layer 1",
-            ));
-        }
+    if let Some(scope) = checkpoint.scope_id
+        && scope != 0
+        && !layers.layer1_recursive
+    {
+        return Err(ProtocolError::new(
+            ERROR_LAYER_UNSUPPORTED,
+            "PIPESTREAM_LAYER_UNSUPPORTED",
+            "checkpoint scope requires Layer 1",
+        ));
     }
     if checkpoint.flags > CHECKPOINT_ACK {
         return Err(ProtocolError::frame("unknown checkpoint flags"));

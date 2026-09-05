@@ -195,6 +195,34 @@ approval as part of a repository landing.
   Java/Rust recursive and reconnect interoperability remain unimplemented.
   The Java listener still advertises only Layer 0. No Rust state format or
   protocol wire format changed, and no operational database was converted.
+- Java producer increment: the independent public Netty `SealedClient` and
+  transport codecs now send file-backed nested and out-of-order chunked work
+  to the Rust service. Exact declaration, scope digest, checkpoint, and GOAWAY
+  correlation precede success. Five real-QUIC tests cover recursive completion,
+  declaration and checkpoint replay across restarts, a discarded declaration
+  ACK, ownership-label and retained-limit refusals, and checkpoint timeout/bound
+  failures. Scripted transports inject altered ACKs, downgrade, oversized
+  replies, and Layer 2 frames; they are not independent reference servers.
+  Rust now accepts explicit root checkpoint scope zero and preserves its
+  presence through durable replay. Stored-session format 7 is required;
+  versions 1 through 6 are refused without operational database conversion.
+  Java operations are serialized and blocking, with bounded encoded reply
+  queues and fixed-size file reads. The producer's observed-state ledger is
+  not persistent; declaration replay does not reconstruct previous admission
+  observations. A pending checkpoint blocks the client's next operation.
+  This is one-direction interoperability, not the full Java profile.
+  The full-suite recovery CLI also exposed a runtime-exit race: requesting
+  disconnect without draining Quinn could leave the peer waiting for idle
+  timeout. An isolated client-runtime regression reproduced it before the fix.
+  `begin-yield` now awaits graceful transport shutdown; the regression also
+  checks that the durable entity remains DEFERRED and its claim unredeemed.
+  After both corrections, `./conformance/run_all.sh` passed with 164 Rust
+  workspace tests (80 core, 33 Quinn unit, 48 wire, one allocation gate, two
+  runner tests), 40 Java tests with no skips, C++, all nine existing Layer 0
+  pairings, 32 capability probes, recursive/recovery CLI checks, and every
+  external example. New Java APIs passed Javadoc with doclint and warnings
+  denied. Draft -04 passed idnits with zero errors/flaws/warnings and one
+  informational FIPS reference comment.
 - Not yet implemented: physical database/WAL and retained-payload quotas,
   completion-space reservations, orphan reclamation,
   and the independent Java
@@ -216,8 +244,10 @@ and physical SQLite storage. Add physical quotas, completion reservations, and
 explicit orphan reconciliation without
 deleting a live generation or treating missing input as completed work.
 Do not treat recovery receipts or publication fencing as completion of bounded
-asynchronous execution. Java's network endpoints still implement only the
-earlier Layer 0 subset. Wire the independent Java sealed state machine into
-the Netty server and public client, then prove positive and adversarial
-Java/Rust interoperability over actual QUIC, including lost ACKs, reconnect,
-scoped checkpoints, and recursive completion.
+asynchronous execution. Java now has a separate public sealed producer, but
+its listener and CLI still implement only the earlier Layer 0 subset. Wire the
+independent Java sealed state machine into the Netty server with durable
+payload storage, bounded asynchronous work, and responsive pending checkpoints.
+Prove Rust-to-Java positive and adversarial sequences over actual QUIC, and
+extend the existing Java-to-Rust tests through full retained-work resumption,
+including lost ACKs, reconnect, scoped checkpoints, and recursive completion.

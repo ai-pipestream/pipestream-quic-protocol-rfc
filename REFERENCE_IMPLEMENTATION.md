@@ -13,8 +13,9 @@ Layer 0 behavior. Rust additionally exercises recursive scopes and selected
 durable-yield and claim-redemption operations. Its separate sealed-work-set
 profile is explicitly negotiated as private-use extension 65281 and excludes
 Layer 2; the legacy resilience subset still lacks its own narrower capability.
-Java has an independent sealed declaration codec and durable recursive state
-foundation, but its network endpoints and the C++ endpoints remain Layer 0.
+Java has independent sealed codecs, a durable recursive state foundation, and
+a public Netty producer tested against Rust over QUIC. Its sealed server remains
+unfinished; the Java listener/CLI and C++ endpoints remain Layer 0.
 See [draft-04 readiness](docs/standards/draft04-readiness.md)
 for the evidence and open work. The algorithms below are informative and
 are not implied by a successful interoperability run.

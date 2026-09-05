@@ -20,7 +20,7 @@ cargo test --locked --workspace --manifest-path implementations/rust-quinn/Cargo
 cargo build --release --locked --workspace --manifest-path implementations/rust-quinn/Cargo.toml
 implementations/rust-quinn/target/release/pipestream-conformance verify
 
-mvn install -q -f implementations/java-netty/pom.xml
+mvn install -q -Psealed-interop -f implementations/java-netty/pom.xml
 mvn verify -q -f examples/java-to-rust/pom.xml
 
 cmake -S implementations/cpp-msquic -B implementations/cpp-msquic/build \

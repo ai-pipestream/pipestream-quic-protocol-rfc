@@ -133,10 +133,19 @@ restart with an unobserved ACK. Core tests also reopen the SQLite WAL store,
 pin immutable state on refusal, check the maximum entity ID, and refuse old
 session-format records without conversion.
 
-These are Rust-only profile tests. Java and C++ still refuse this required
-extension; their existing Layer 0 transfer matrix is not evidence for
-sealed-work interoperability. No authenticated recovery or bidirectional
-producer support is implied.
+The independent Java `SealedInteropTest`, enabled through Maven's
+`sealed-interop` profile, runs the public Netty producer against the compiled
+Rust server over real QUIC. It covers nested completion, out-of-order chunks,
+scoped cuts, restart/replay, discarded declaration ACKs, retained-limit and
+ownership-label refusals, and checkpoint timeouts. Scripted fault-injection
+transports also verify changed ACK, downgrade, oversized-frame, and Layer 2
+refusals. The full suite explicitly enables this profile after building Rust;
+a missing Rust executable fails the tests.
+
+The Java listener/CLI and C++ endpoints still refuse the required sealed
+extension. The existing nine-pair Layer 0 matrix is not sealed-work evidence,
+and Rust-to-Java tests still require an independent sealed Java server. These
+tests imply neither authenticated recovery nor bidirectional producer support.
 
 ## Authenticated-session evidence
 
