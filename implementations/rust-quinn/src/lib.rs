@@ -4,6 +4,7 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fmt};
 
 mod deterministic;
+pub mod extensions;
 pub mod persistence;
 pub mod session;
 pub mod uri;
@@ -45,6 +46,7 @@ pub const ERROR_ENTITY_INVALID: u32 = 0x05;
 pub const ERROR_LIMIT_EXCEEDED: u32 = 0x06;
 pub const ERROR_LAYER_UNSUPPORTED: u32 = 0x0c;
 pub const ERROR_FRAME: u32 = 0x0d;
+pub const ERROR_EXTENSION_UNSUPPORTED: u32 = 0x0f;
 pub const ERROR_DEPTH_EXCEEDED: u32 = 0x07;
 pub const ERROR_WINDOW_EXCEEDED: u32 = 0x08;
 pub const ERROR_SCOPE_INVALID: u32 = 0x09;
@@ -102,6 +104,7 @@ pub struct Capabilities {
     pub max_window_size: u32,
     pub serialization_format: u8,
     pub keepalive_timeout_ms: u64,
+    pub extensions: extensions::Extensions,
 }
 
 impl Default for Capabilities {
@@ -115,6 +118,7 @@ impl Default for Capabilities {
             max_window_size: 1024,
             serialization_format: 0,
             keepalive_timeout_ms: 30_000,
+            extensions: extensions::Extensions::default(),
         }
     }
 }
@@ -136,6 +140,7 @@ impl Capabilities {
     }
 
     pub fn negotiate(&self, peer: &Self) -> Result<Self, ProtocolError> {
+        let extensions = self.extensions.negotiate(&peer.extensions)?;
         if !peer.layer0_core {
             return Err(ProtocolError::new(
                 ERROR_LAYER_UNSUPPORTED,
@@ -164,7 +169,28 @@ impl Capabilities {
             max_window_size: self.max_window_size.min(peer.max_window_size),
             serialization_format: 0,
             keepalive_timeout_ms: self.keepalive_timeout_ms.min(peer.keepalive_timeout_ms),
+            extensions,
         })
+    }
+
+    pub fn validate_response(&self, response: &Self) -> Result<(), ProtocolError> {
+        self.extensions.validate_response(&response.extensions)?;
+        if !response.layer0_core
+            || (response.layer1_recursive && !self.layer1_recursive)
+            || (response.layer2_resilience
+                && (!self.layer2_resilience || !response.layer1_recursive))
+            || response.max_window_size == 0
+            || response.max_window_size > self.max_window_size
+            || response.effective_max_scope_depth() > self.effective_max_scope_depth()
+                && response.layer1_recursive
+            || response.effective_max_entities_per_scope() > self.effective_max_entities_per_scope()
+                && response.layer1_recursive
+            || response.keepalive_timeout_ms > self.keepalive_timeout_ms
+            || response.serialization_format != 0
+        {
+            return Err(ProtocolError::frame("server exceeded offered capabilities"));
+        }
+        Ok(())
     }
 }
 
@@ -372,11 +398,14 @@ pub fn decode_ucf(data: &[u8]) -> Result<(u8, &[u8]), ProtocolError> {
 }
 
 pub fn encode_capabilities(capabilities: &Capabilities) -> Result<Vec<u8>, ProtocolError> {
+    capabilities.extensions.validate()?;
     let mut body = Vec::new();
     let mut encoder = Encoder::new(&mut body);
     let fields = 6
         + usize::from(capabilities.max_scope_depth.is_some())
-        + usize::from(capabilities.max_entities_per_scope.is_some());
+        + usize::from(capabilities.max_entities_per_scope.is_some())
+        + usize::from(!capabilities.extensions.supported.is_empty())
+        + usize::from(!capabilities.extensions.required.is_empty());
     encoder.map(fields as u64).map_err(cbor_encode)?;
     encoder
         .str("layer0-core")
@@ -405,6 +434,11 @@ pub fn encode_capabilities(capabilities: &Capabilities) -> Result<Vec<u8>, Proto
         .map_err(cbor_encode)?
         .bool(capabilities.layer2_resilience)
         .map_err(cbor_encode)?;
+    encode_extensions(
+        &mut encoder,
+        "required-extensions",
+        &capabilities.extensions.required,
+    )?;
     encoder
         .str("keepalive-timeout-ms")
         .map_err(cbor_encode)?
@@ -415,6 +449,11 @@ pub fn encode_capabilities(capabilities: &Capabilities) -> Result<Vec<u8>, Proto
         .map_err(cbor_encode)?
         .u8(capabilities.serialization_format)
         .map_err(cbor_encode)?;
+    encode_extensions(
+        &mut encoder,
+        "supported-extensions",
+        &capabilities.extensions.supported,
+    )?;
     if let Some(max_entities_per_scope) = capabilities.max_entities_per_scope {
         encoder
             .str("max-entities-per-scope")
@@ -423,6 +462,35 @@ pub fn encode_capabilities(capabilities: &Capabilities) -> Result<Vec<u8>, Proto
             .map_err(cbor_encode)?;
     }
     encode_ucf(FRAME_CAPABILITIES, &body)
+}
+
+fn encode_extensions(
+    encoder: &mut Encoder<&mut Vec<u8>>,
+    key: &str,
+    ids: &[u16],
+) -> Result<(), ProtocolError> {
+    if !ids.is_empty() {
+        encoder
+            .str(key)
+            .map_err(cbor_encode)?
+            .array(ids.len() as u64)
+            .map_err(cbor_encode)?;
+        for id in ids {
+            encoder.u16(*id).map_err(cbor_encode)?;
+        }
+    }
+    Ok(())
+}
+
+fn decode_extensions(decoder: &mut Decoder<'_>) -> Result<Vec<u16>, ProtocolError> {
+    let count = decoder
+        .array()
+        .map_err(cbor_decode)?
+        .filter(|count| *count <= extensions::MAX_EXTENSIONS as u64)
+        .ok_or_else(|| ProtocolError::frame("invalid extension array length"))?;
+    (0..count)
+        .map(|_| decoder.u16().map_err(cbor_decode))
+        .collect()
 }
 
 pub fn decode_capabilities(payload: &[u8]) -> Result<Capabilities, ProtocolError> {
@@ -440,6 +508,7 @@ pub fn decode_capabilities(payload: &[u8]) -> Result<Capabilities, ProtocolError
     let mut max_window = MAX_WINDOW;
     let mut serialization = 0;
     let mut keepalive = 30_000;
+    let mut extensions = extensions::Extensions::default();
     for _ in 0..count {
         let key = decoder.str().map_err(cbor_decode)?;
         match key {
@@ -453,6 +522,8 @@ pub fn decode_capabilities(payload: &[u8]) -> Result<Capabilities, ProtocolError
             "max-window-size" => max_window = decoder.u32().map_err(cbor_decode)?,
             "serialization-format" => serialization = decoder.u8().map_err(cbor_decode)?,
             "keepalive-timeout-ms" => keepalive = decoder.u64().map_err(cbor_decode)?,
+            "supported-extensions" => extensions.supported = decode_extensions(&mut decoder)?,
+            "required-extensions" => extensions.required = decode_extensions(&mut decoder)?,
             _ => {
                 return Err(ProtocolError::frame(format!(
                     "unknown capabilities field {key}"
@@ -473,7 +544,9 @@ pub fn decode_capabilities(payload: &[u8]) -> Result<Capabilities, ProtocolError
         max_window_size: max_window,
         serialization_format: serialization,
         keepalive_timeout_ms: keepalive,
+        extensions,
     };
+    result.extensions.validate()?;
     if !result.layer0_core {
         return Err(ProtocolError::new(
             ERROR_LAYER_UNSUPPORTED,
@@ -1732,6 +1805,7 @@ mod tests {
             max_window_size: 4_096,
             serialization_format: 0,
             keepalive_timeout_ms: 15_000,
+            extensions: extensions::Extensions::default(),
         };
         let encoded = encode_capabilities(&capabilities).unwrap();
         let (frame_type, payload) = decode_ucf(&encoded).unwrap();

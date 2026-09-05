@@ -29,6 +29,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Standalone Netty server for the PipeStream Layer 0 reference contract. */
 public final class PipeStreamServer implements AutoCloseable {
@@ -175,6 +176,7 @@ public final class PipeStreamServer implements AutoCloseable {
     private final CompletableFuture<Long> pendingEntity = new CompletableFuture<>();
     private volatile QuicStreamChannel control;
     private volatile boolean entityComplete;
+    private final AtomicBoolean failed = new AtomicBoolean();
 
     private Session(QuicChannel connection, PipeStreamServer server) {
       this.connection = connection;
@@ -182,7 +184,10 @@ public final class PipeStreamServer implements AutoCloseable {
     }
 
     private void fail(Throwable failure) {
+      if (!failed.compareAndSet(false, true)) return;
       server.firstEntity.completeExceptionally(failure);
+      server.firstSessionComplete.completeExceptionally(failure);
+      pendingEntity.completeExceptionally(failure);
       long code = failure instanceof ProtocolException protocol ? protocol.errorCode() : Wire.ERROR_FRAME;
       connection.close(
           true,
@@ -191,6 +196,7 @@ public final class PipeStreamServer implements AutoCloseable {
     }
 
     private void writeControl(byte[] frame) {
+      if (failed.get()) return;
       QuicStreamChannel channel = control;
       if (channel == null) {
         fail(Wire.frame("control stream is not initialized"));
@@ -211,6 +217,7 @@ public final class PipeStreamServer implements AutoCloseable {
 
     @Override
     protected void channelRead0(ChannelHandlerContext context, ByteBuf input) {
+      if (session.failed.get()) return;
       byte[] bytes = new byte[input.readableBytes()];
       input.readBytes(bytes);
       try {
@@ -309,6 +316,7 @@ public final class PipeStreamServer implements AutoCloseable {
     public void channelRead(ChannelHandlerContext context, Object message) {
       ByteBuf bytes = (ByteBuf) message;
       try {
+        if (session.failed.get()) return;
         if ((long) input.size() + bytes.readableBytes()
             > (long) Wire.MAX_PAYLOAD + Wire.MAX_ENTITY_HEADER + 4) {
           session.fail(Wire.limit("entity stream exceeds local limit"));
@@ -338,13 +346,14 @@ public final class PipeStreamServer implements AutoCloseable {
     }
 
     private void process(ChannelHandlerContext context) {
-      if (processed) {
+      if (processed || session.failed.get()) {
         return;
       }
       processed = true;
       try {
         Wire.Entity entity = Wire.decodeEntity(input.toByteArray());
         session.pendingEntity.whenCompleteAsync((pending, failure) -> {
+          if (session.failed.get()) return;
           if (failure != null) {
             session.fail(failure);
             return;

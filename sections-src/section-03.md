@@ -66,7 +66,12 @@ capabilities = {
                                    ; see Section 9.1)
   ? serialization-format: serialization-format, ; Default: CBOR
   ? keepalive-timeout-ms: uint,    ; Default: 30000 (30s)
+  ? supported-extensions: extension-list, ; Default: []
+  ? required-extensions: extension-list,  ; Default: []
 }
+
+extension-id = 1..65534
+extension-list = [0*32 extension-id]
 ~~~~
 
 Peers negotiate down to common capabilities. If Layer 2 is requested but Layer 1 is not supported, Layer 2 MUST be disabled.
@@ -85,6 +90,11 @@ PipeStream protocol versioning is carried in two places: the ALPN identifier and
 A future major version of PipeStream (e.g., `pipestream/2`) would register a new ALPN identifier. QUIC's native ALPN negotiation during the TLS handshake provides version selection: if a client offers both `pipestream/2` and `pipestream/1` and the server supports only `pipestream/1`, the TLS handshake selects `pipestream/1` without additional round trips. This mechanism is consistent with the versioning approach used by HTTP/3 {{RFC9114}} and DNS over QUIC {{RFC9250}}.
 
 Minor, backward-compatible extensions do not require a new ALPN identifier. Such extensions use newly registered frame or status values and explicit capability negotiation as specified by the extension. The maps defined by this document are closed: an endpoint that receives an unrecognized map member before negotiating an extension that defines it MUST close the connection with PIPESTREAM_FRAME_ERROR (0x0D). An extension therefore cannot add an optional member to a core map without also defining how support for that member is negotiated.
+
+The initial CAPABILITIES map remains closed even when extensions are
+offered. Extension-specific members MUST NOT appear in this exchange.
+The identifier lists in Section 3.4.3 bootstrap negotiation; any additional
+parameters use messages defined by the activated extension after CONNECT.
 
 ### Serialization Format Negotiation
 
@@ -110,3 +120,61 @@ Negotiation proceeds as follows:
 4. If preferences differ, if either peer omits the field, or if a peer advertises a value the other does not recognize, the peers MUST fall back to CBOR {{RFC8949}}.
 
 The initial Capabilities exchange on a new connection MUST use the default CBOR format for both the client's initiation and the server's response. The negotiated serialization format and resource limits take effect immediately following the successful completion of this initial Capabilities exchange (one request and one response). If a peer cannot decode the initial Capabilities exchange, it MUST close the connection with PIPESTREAM_FRAME_ERROR (0x0D).
+
+### Extension Negotiation
+
+`supported-extensions` and `required-extensions` are arrays of identifiers
+from Section 11.9. Omission means an empty array. Each array MUST contain
+at most 32 identifiers in strictly increasing numeric order, with no
+duplicates. Values 0 and 65535 are reserved and MUST NOT appear. Every
+required identifier MUST also appear in the sender's supported array.
+Invalid types, lengths, ordering, or membership cause
+PIPESTREAM_FRAME_ERROR (0x0D). These semantic constraints supplement CDDL.
+
+The client offers the extensions it implements and is willing to activate.
+The server computes the intersection with its own enabled supported set.
+If either endpoint's required set is not contained in this intersection,
+the server MUST close with PIPESTREAM_EXTENSION_UNSUPPORTED (0x0F),
+without acknowledging capabilities or admitting application work.
+Unknown optional identifiers have no effect and MUST NOT be selected.
+
+In the response, `supported-extensions` is the selected intersection,
+not the server's entire supported set. `required-extensions` is the union
+of both required sets. The client MUST verify that the response selects
+only offered identifiers and includes every client-required identifier.
+A missing required selection causes PIPESTREAM_EXTENSION_UNSUPPORTED;
+an unsolicited selection or omitted required-set echo causes
+PIPESTREAM_FRAME_ERROR. A response MUST NOT enable an unoffered layer,
+enable Layer 2 without Layer 1, increase an offered resource limit or
+keepalive timeout, or select a serialization format outside Section 3.4.2.
+The client MUST reject such a response with PIPESTREAM_FRAME_ERROR.
+
+Only the selected identifiers become active, after the server sends and
+the client validates the response. Neither endpoint may send
+extension-dependent work before this point. An endpoint MUST NOT
+advertise an identifier merely because its codec can parse the identifier.
+It MUST implement that extension's complete mandatory behavior. Layer
+booleans remain independent promises and MUST NOT stand for partial
+implementations of a layer. An extension profile that reuses a layer's
+messages without implementing the entire layer must define its own
+activation conditions, permitted messages, and refusal behavior.
+
+An extension specification MUST identify its prerequisite layers and
+extensions, resource bounds, state transitions, and incompatible
+combinations. If a selected combination cannot be activated, the server
+MUST refuse CONNECT with PIPESTREAM_EXTENSION_UNSUPPORTED. It MUST NOT
+silently drop required behavior. No extensions are assigned by this draft.
+
+CAPABILITIES is exchanged once per connection. A subsequent CAPABILITIES
+frame causes PIPESTREAM_FRAME_ERROR; reconnect to renegotiate. Every
+connection, including one resuming durable work, negotiates independently.
+The application MUST require all capabilities needed by the resumed work.
+Skipping an unknown frame does not constitute extension activation.
+
+Earlier drafts have closed capability maps without these list members.
+Sending either member to such a peer can therefore fail CONNECT. Empty
+lists SHOULD be omitted for compatibility. A client MUST NOT silently
+retry without required extensions following any negotiation failure.
+TLS protects the exchange in transit, but cannot make a peer's advertised
+implementation truthful. Applications still need authorization and
+conformance evidence for security-sensitive extensions.

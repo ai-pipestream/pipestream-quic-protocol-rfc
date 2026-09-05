@@ -12,6 +12,9 @@ entity-id = 1..4294967292
 
 serialization-format = uint .le 255
 
+extension-id = 1..65534
+extension-list = [0*32 extension-id]
+
 capabilities = {
   layer0-core: bool,
   layer1-recursive: bool,
@@ -21,6 +24,8 @@ capabilities = {
   ? max-window-size: uint .le 2147483646,
   ? serialization-format: serialization-format,
   ? keepalive-timeout-ms: uint,
+  ? supported-extensions: extension-list,
+  ? required-extensions: extension-list,
 }
 
 entity-header = {

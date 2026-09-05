@@ -1132,6 +1132,7 @@ fn recursive_capabilities(
         max_window_size: 1024,
         serialization_format: 0,
         keepalive_timeout_ms: 30_000,
+        extensions: Default::default(),
     };
     capabilities
         .negotiate(&capabilities)
@@ -1181,6 +1182,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveServer<P, E> {
             let connection = incoming.await.context("establish QUIC connection")?;
             if let Err(error) = self.service.handle_connection(&connection).await {
                 close_for_error(&connection, &error);
+                self.endpoint.wait_idle().await;
                 return Err(error.into());
             }
         } else {
@@ -1272,7 +1274,17 @@ impl RecursiveClient {
         if frame_type != FRAME_CAPABILITIES {
             bail!("PIPESTREAM_FRAME_ERROR: server did not answer capabilities");
         }
-        let negotiated = decode_capabilities(&response)?;
+        let negotiated = match decode_capabilities(&response).and_then(|peer| {
+            offered.validate_response(&peer)?;
+            Ok(peer)
+        }) {
+            Ok(peer) => peer,
+            Err(error) => {
+                connection.close(error.code.into(), error.to_string().as_bytes());
+                endpoint.wait_idle().await;
+                return Err(error.into());
+            }
+        };
         Ok(Self {
             endpoint,
             connection,

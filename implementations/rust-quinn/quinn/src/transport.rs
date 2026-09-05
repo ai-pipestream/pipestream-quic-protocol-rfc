@@ -73,6 +73,7 @@ pub async fn serve(options: ServerOptions) -> Result<()> {
         let connection = incoming.await.context("accept QUIC connection")?;
         if let Err(error) = handle_connection(&connection, &options.output_directory).await {
             close_for_error(&connection, &error);
+            endpoint.wait_idle().await;
             return Err(error.into());
         }
         handled += 1;
@@ -247,7 +248,13 @@ pub async fn send(options: ClientOptions) -> Result<()> {
     if frame_type != FRAME_CAPABILITIES {
         bail!("PIPESTREAM_FRAME_ERROR: server did not answer capabilities");
     }
-    decode_capabilities(&response)?;
+    if let Err(error) = decode_capabilities(&response)
+        .and_then(|peer| Capabilities::default().validate_response(&peer))
+    {
+        close_for_error(&connection, &error);
+        endpoint.wait_idle().await;
+        return Err(error.into());
+    }
     write_all(
         &mut control_send,
         &encode_status(Status {

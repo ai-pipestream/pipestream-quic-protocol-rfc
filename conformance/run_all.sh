@@ -37,5 +37,6 @@ for example in rust-to-cpp-recovery three-node-scatter; do
 done
 
 implementations/rust-quinn/target/release/pipestream-conformance interop
+implementations/rust-quinn/target/release/pipestream-conformance extensions
 implementations/rust-quinn/target/release/pipestream-conformance recursive
 implementations/rust-quinn/target/release/pipestream-conformance examples

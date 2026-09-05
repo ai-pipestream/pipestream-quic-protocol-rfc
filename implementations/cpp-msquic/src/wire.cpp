@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <sstream>
 #include <string_view>
@@ -119,6 +120,18 @@ class Decoder {
     return value;
   }
 
+  std::vector<std::uint16_t> extensions() {
+    const auto [major, count] = head();
+    if (major != 4 || count > 32) frame_error("invalid extension array length");
+    std::vector<std::uint16_t> result;
+    for (std::uint64_t i = 0; i < count; ++i) {
+      const auto value = uint_value();
+      if (value == 0 || value >= 65535) frame_error("invalid extension identifier");
+      result.push_back(static_cast<std::uint16_t>(value));
+    }
+    return result;
+  }
+
   std::string key() {
     const std::size_t start = position_;
     std::string result = text();
@@ -230,9 +243,39 @@ std::array<std::uint8_t, 32> sha256(std::span<const std::uint8_t> input) {
   return output;
 }
 
+bool contains_all(const std::vector<std::uint16_t>& haystack, const std::vector<std::uint16_t>& needles) {
+  return std::includes(haystack.begin(), haystack.end(), needles.begin(), needles.end());
+}
+
+void validate_extensions(const Capabilities& capabilities) {
+  for (const auto* ids : {&capabilities.supported_extensions, &capabilities.required_extensions}) {
+    if (ids->size() > 32 || std::any_of(ids->begin(), ids->end(), [](auto id) { return id == 0 || id == 65535; }) ||
+        std::adjacent_find(ids->begin(), ids->end(), [](auto a, auto b) { return a >= b; }) != ids->end()) {
+      frame_error("invalid extension identifier list");
+    }
+  }
+  if (!contains_all(capabilities.supported_extensions, capabilities.required_extensions)) {
+    frame_error("required extension not advertised as supported");
+  }
+}
+
+[[noreturn]] void extension_unsupported() {
+  throw ProtocolError(kErrorExtensionUnsupported, "PIPESTREAM_EXTENSION_UNSUPPORTED",
+                      "a required extension is not supported by both peers");
+}
+
+void encode_extensions(std::vector<std::uint8_t>& output, std::string_view key,
+                       const std::vector<std::uint16_t>& ids) {
+  if (ids.empty()) return;
+  encode_text(output, key);
+  encode_head(output, 4, ids.size());
+  for (auto id : ids) encode_uint(output, id);
+}
+
 std::vector<std::uint8_t> encode_capability_payload(const Capabilities& capabilities) {
+  validate_extensions(capabilities);
   std::vector<std::uint8_t> output;
-  encode_head(output, 5, 6);
+  encode_head(output, 5, 6 + !capabilities.supported_extensions.empty() + !capabilities.required_extensions.empty());
   encode_text(output, "layer0-core");
   encode_bool(output, capabilities.layer0_core);
   encode_text(output, "max-window-size");
@@ -241,10 +284,12 @@ std::vector<std::uint8_t> encode_capability_payload(const Capabilities& capabili
   encode_bool(output, capabilities.layer1_recursive);
   encode_text(output, "layer2-resilience");
   encode_bool(output, capabilities.layer2_resilience);
+  encode_extensions(output, "required-extensions", capabilities.required_extensions);
   encode_text(output, "keepalive-timeout-ms");
   encode_uint(output, capabilities.keepalive_timeout_ms);
   encode_text(output, "serialization-format");
   encode_uint(output, capabilities.serialization_format);
+  encode_extensions(output, "supported-extensions", capabilities.supported_extensions);
   return output;
 }
 
@@ -308,6 +353,10 @@ ProtocolError::ProtocolError(std::uint64_t code, std::string name, std::string d
     : std::runtime_error(name + ": " + detail), code_(code), name_(std::move(name)) {}
 
 Capabilities Capabilities::negotiate(const Capabilities& peer) const {
+  validate_extensions(*this);
+  validate_extensions(peer);
+  if (!contains_all(supported_extensions, peer.required_extensions) ||
+      !contains_all(peer.supported_extensions, required_extensions)) extension_unsupported();
   if (!peer.layer0_core) {
     layer_error("Layer 0 is mandatory");
   }
@@ -315,12 +364,37 @@ Capabilities Capabilities::negotiate(const Capabilities& peer) const {
     limit_error("invalid max-window-size");
   }
   const bool layer1 = layer1_recursive && peer.layer1_recursive;
-  return Capabilities{true,
+  Capabilities result{true,
                       layer1,
                       layer1 && layer2_resilience && peer.layer2_resilience,
                       std::min(max_window_size, peer.max_window_size),
                       0,
-                      std::min(keepalive_timeout_ms, peer.keepalive_timeout_ms)};
+                      std::min(keepalive_timeout_ms, peer.keepalive_timeout_ms), {}, {}};
+  std::set_intersection(supported_extensions.begin(), supported_extensions.end(),
+                        peer.supported_extensions.begin(), peer.supported_extensions.end(),
+                        std::back_inserter(result.supported_extensions));
+  std::set_union(required_extensions.begin(), required_extensions.end(),
+                 peer.required_extensions.begin(), peer.required_extensions.end(),
+                 std::back_inserter(result.required_extensions));
+  return result;
+}
+
+void Capabilities::validate_response(const Capabilities& response) const {
+  validate_extensions(*this);
+  validate_extensions(response);
+  if (!contains_all(supported_extensions, response.supported_extensions)) {
+    frame_error("server selected an unoffered extension");
+  }
+  if (!contains_all(response.supported_extensions, required_extensions)) extension_unsupported();
+  if (!contains_all(response.required_extensions, required_extensions)) {
+    frame_error("server omitted a client requirement");
+  }
+  if (!response.layer0_core || (response.layer1_recursive && !layer1_recursive) ||
+      (response.layer2_resilience && (!layer2_resilience || !response.layer1_recursive)) ||
+      response.max_window_size == 0 || response.max_window_size > max_window_size ||
+      response.keepalive_timeout_ms > keepalive_timeout_ms || response.serialization_format != 0) {
+    frame_error("server exceeded offered capabilities");
+  }
 }
 
 std::vector<std::uint8_t> encode_control(
@@ -388,11 +462,16 @@ Capabilities decode_capabilities(std::span<const std::uint8_t> payload) {
     } else if (key == "max-entities-per-scope") {
       const auto value = decoder.uint_value();
       if (value == 0 || value > kMaxEntityId) limit_error("invalid max-entities-per-scope");
+    } else if (key == "supported-extensions") {
+      result.supported_extensions = decoder.extensions();
+    } else if (key == "required-extensions") {
+      result.required_extensions = decoder.extensions();
     } else {
       frame_error("unknown capabilities field " + key);
     }
   }
   if (decoder.position() != payload.size()) frame_error("trailing CBOR octets");
+  validate_extensions(result);
   if (!has_layer0 || !has_layer1 || !has_layer2) frame_error("missing mandatory capability boolean");
   if (!result.layer0_core) layer_error("Layer 0 is mandatory");
   if (result.max_window_size == 0 || result.max_window_size > kMaxWindow) {

@@ -37,6 +37,7 @@ inline constexpr std::uint64_t kErrorEntityInvalid = 0x05;
 inline constexpr std::uint64_t kErrorLimitExceeded = 0x06;
 inline constexpr std::uint64_t kErrorLayerUnsupported = 0x0c;
 inline constexpr std::uint64_t kErrorFrame = 0x0d;
+inline constexpr std::uint64_t kErrorExtensionUnsupported = 0x0f;
 
 class ProtocolError final : public std::runtime_error {
  public:
@@ -62,8 +63,11 @@ struct Capabilities {
   std::uint32_t max_window_size{1024};
   std::uint8_t serialization_format{0};
   std::uint64_t keepalive_timeout_ms{30000};
+  std::vector<std::uint16_t> supported_extensions;
+  std::vector<std::uint16_t> required_extensions;
 
   [[nodiscard]] Capabilities negotiate(const Capabilities& peer) const;
+  void validate_response(const Capabilities& response) const;
   bool operator==(const Capabilities&) const = default;
 };
 
