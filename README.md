@@ -21,6 +21,12 @@ the opt-in private-use `sealed-work-sets-v1` profile (Section 9.8).
 Authenticated resilience, bidirectional producers, and independent Java/C++
 implementations of that profile remain unfinished.
 
+Java now has an independent sealed declaration codec and SQLite state-machine
+foundation, including recursive closure and STRICT rehydration readiness.
+Its network listener and client still expose only Layer 0. This library work
+is not yet Java/Rust sealed-work interoperability; see the
+[Java implementation boundary](implementations/java-netty/README.md#sealed-work-library-foundation).
+
 The Rust durable service also supports negotiated mutual-TLS session binding:
 certificate-mapped principals, retained authority/owner records, and session
 revocation. The separate opt-in `authenticated-recovery-v1` profile adds
