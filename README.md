@@ -6,7 +6,12 @@
 
 ## Overview
 
-PipeStream is a recursive entity streaming protocol designed for high-performance distributed document processing over QUIC transport. It implements a scatter-gather pattern where documents are "dehydrated" (scattered) into constituent entities, processed in parallel across distributed nodes, and "rehydrated" (gathered) back into complete processed documents with strong consistency guarantees.
+PipeStream is a proposed application protocol over QUIC for recursive work
+decomposition, entity streaming, completion barriers, and durable continuation
+references. The draft and implementations are under development. They are not
+an approved IETF standard or a fully conformant production implementation.
+See [draft-04 readiness](docs/standards/draft04-readiness.md) for tested changes
+and the remaining interoperability and security work.
 
 ## Authoring Workflow
 
@@ -16,7 +21,7 @@ This repository uses a modular authoring workflow for IETF drafts. The monolithi
 
 - **`sections-src/`**: **The Source of Truth.** Individual Markdown files for each RFC section. Edit these files directly.
 - **`draft-template.md`**: The master kramdown-rfc template that includes all sections in the correct order.
-- **`cddl/`**: Machine-readable Layer 0 CDDL synchronized with Appendix C.
+- **`cddl/`**: Machine-readable serialized-message CDDL, checked against Appendix C.
 - **`test-vectors/`**: Checked-in golden valid and invalid wire inputs with named expected refusals.
 - **`conformance/`**: Vector checks and the black-box client/server interoperability runner.
 - **`implementations/`**: Independent Java/Netty, Rust/Quinn, and C++/MsQuic libraries and executables.
@@ -116,7 +121,7 @@ ignored build artifacts.
 Always run `idnits` on the generated `.txt` file before submitting to ensure there are no formatting errors or non-ASCII characters:
 
 ```bash
-idnits --verbose draft-krickert-pipestream-01.txt
+idnits --verbose draft-krickert-pipestream-04.txt
 ```
 
 ## Submission

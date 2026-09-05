@@ -1,17 +1,19 @@
 //! Durable Layer 1 and Layer 2 service built on the transport-independent core.
 
+mod ingress;
+
 use anyhow::{Context, Result, bail};
 use pipestream_core::{
-    Barrier, CHECKPOINT_ACK, CONNECTION_LEVEL, Capabilities, Checkpoint, ChunkInfo,
-    ClaimRedemption, ERROR_ENTITY_INVALID, ERROR_FRAME, ERROR_LAYER_UNSUPPORTED,
-    ERROR_LIMIT_EXCEEDED, ERROR_NO_ERROR, EntityHeader, FRAME_BARRIER, FRAME_CAPABILITIES,
-    FRAME_CHECKPOINT, FRAME_CLAIM_REDEMPTION, FRAME_GOAWAY, FRAME_SCOPE_DIGEST, FRAME_STATUS,
-    LayerSupport, MAX_CONTROL_FRAME, MAX_ENTITY_HEADER, MAX_PAYLOAD, ProtocolError, ScopeDigest,
-    Status, StatusExtension, StatusFrame, StoppingPointValidation, decode_barrier,
-    decode_capabilities, decode_checkpoint_for, decode_claim_redemption, decode_entity_for,
-    decode_goaway, decode_scope_digest, decode_status_frame, decode_ucf, encode_barrier,
-    encode_capabilities, encode_checkpoint_for, encode_claim_redemption, encode_entity_for,
-    encode_goaway, encode_scope_digest, encode_status, encode_status_frame,
+    Barrier, CHECKPOINT_ACK, CONNECTION_LEVEL, Capabilities, Checkpoint, ClaimRedemption,
+    ERROR_ENTITY_INVALID, ERROR_FRAME, ERROR_LAYER_UNSUPPORTED, ERROR_LIMIT_EXCEEDED,
+    ERROR_NO_ERROR, EntityHeader, FRAME_BARRIER, FRAME_CAPABILITIES, FRAME_CHECKPOINT,
+    FRAME_CLAIM_REDEMPTION, FRAME_GOAWAY, FRAME_SCOPE_DIGEST, FRAME_STATUS, LayerSupport,
+    MAX_CONTROL_FRAME, MAX_ENTITY_HEADER, MAX_PAYLOAD, ProtocolError, ScopeDigest, Status,
+    StatusExtension, StatusFrame, StoppingPointValidation, decode_barrier, decode_capabilities,
+    decode_checkpoint_for, decode_claim_redemption, decode_entity_for, decode_goaway,
+    decode_scope_digest, decode_status_frame, encode_barrier, encode_capabilities,
+    encode_checkpoint_for, encode_claim_redemption, encode_entity_for, encode_goaway,
+    encode_scope_digest, encode_status, encode_status_frame,
     persistence::{SessionStore, SqliteSessionStore, StoreError},
     session::{
         ClaimRecord, EntityKey, EntityState, NewEntity, Session, merkle_root, validate_session_id,
@@ -421,19 +423,8 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                 {
                     continue;
                 }
-                let output_digest = self.processor.resume(ResumeContext {
-                    session: &versioned.session,
-                    entity: claim.entity,
-                    continuation_token: &claim.token,
-                });
-                let entity = claim.entity;
-                self.store.transact(&session_id, |session| {
-                    if session.entities[&entity].state == EntityState::Processing {
-                        session.complete_entity(entity, output_digest)?;
-                    }
-                    Ok(())
-                })?;
-                recovered += 1;
+                let (executed, _) = self.resume_claim(&session_id, claim.claim_id)?;
+                recovered += usize::from(executed);
             }
             if let Some(current) = self.store.load(&session_id)?
                 && let Ok(lineage) = current.session.final_lineage_digest()
@@ -442,6 +433,36 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             }
         }
         Ok(recovered)
+    }
+
+    // IMMEDIATE transactions serialize executors across connections and processes using
+    // this database. Callbacks must be bounded and must not re-enter the session store.
+    // A crash can roll back the transaction after an external effect: application-level
+    // idempotency is still required. This is not an exactly-once execution guarantee.
+    fn resume_claim(
+        &self,
+        session_id: &str,
+        claim_id: u64,
+    ) -> Result<(bool, pipestream_core::persistence::VersionedSession), StoreError> {
+        self.store.transact(session_id, |session| {
+            let claim = session
+                .claims
+                .get(&claim_id)
+                .ok_or_else(|| claim_error("claim does not exist"))?;
+            if claim.redeemed_at_micros.is_none()
+                || session.entities[&claim.entity].state != EntityState::Processing
+            {
+                return Ok(false);
+            }
+            let entity = claim.entity;
+            let output_digest = self.processor.resume(ResumeContext {
+                session,
+                entity,
+                continuation_token: &claim.token,
+            });
+            session.complete_entity(entity, output_digest)?;
+            Ok(true)
+        })
     }
 
     pub async fn handle_connection(
@@ -471,9 +492,28 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         .await?;
 
         let mut current_session: Option<String> = None;
+        let (_readers, mut incoming) =
+            ingress::start(connection.clone(), control_recv, layers, self.limits);
+        let mut announcements: BTreeMap<EntityKey, StatusFrame> = BTreeMap::new();
+        let mut chunks = ingress::Chunks::default();
+        let mut checkpoints: BTreeMap<(u32, u64), (Checkpoint, tokio::time::Instant)> =
+            BTreeMap::new();
+        let mut tick = tokio::time::interval(Duration::from_millis(10));
         loop {
-            let (frame_type, payload) = match read_control(&mut control_recv).await {
-                Ok(frame) => frame,
+            self.flush_checkpoints(
+                &mut control_send,
+                current_session.as_deref(),
+                &mut checkpoints,
+                &announcements,
+                layers,
+            )
+            .await?;
+            let event = tokio::select! {
+                _ = tick.tick() => continue,
+                event = incoming.recv() => event.ok_or_else(|| frame_error("connection readers stopped"))?,
+            };
+            let event = match event {
+                Ok(event) => event,
                 Err(_error)
                     if self
                         .accepts_durable_disconnect(connection, current_session.as_deref())
@@ -482,6 +522,62 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     return Ok(());
                 }
                 Err(error) => return Err(error),
+            };
+            let (frame_type, payload) = match event {
+                ingress::Event::Control(kind, bytes) => (kind, bytes),
+                ingress::Event::Entity(received) => {
+                    let Some(received) = chunks.insert(*received, self.limits)? else {
+                        continue;
+                    };
+                    let header = &received.header;
+                    let key = EntityKey {
+                        scope_id: header.scope_id.unwrap_or(0),
+                        entity_id: header.entity_id,
+                    };
+                    let depth = if key.scope_id == 0 {
+                        0
+                    } else {
+                        let session_id = current_session
+                            .as_deref()
+                            .ok_or_else(|| entity_error("child precedes root admission"))?;
+                        let current = self
+                            .store
+                            .load(session_id)
+                            .map_err(store_error)?
+                            .ok_or_else(|| entity_error("session is absent"))?;
+                        let parent = EntityKey {
+                            scope_id: header.parent_scope_id.unwrap_or(0),
+                            entity_id: header.parent_id.unwrap_or(0),
+                        };
+                        current
+                            .session
+                            .entities
+                            .get(&parent)
+                            .ok_or_else(|| entity_error("parent is not admitted"))?
+                            .depth
+                            + 1
+                    };
+                    let pending = announcements.remove(&key).unwrap_or(StatusFrame {
+                        status: Status {
+                            state: pipestream_core::STATUS_PENDING,
+                            entity_id: key.entity_id,
+                            scope_id: key.scope_id,
+                            depth,
+                            cursor: None,
+                        },
+                        extension: None,
+                    });
+                    self.receive_entity(
+                        &mut control_send,
+                        &mut current_session,
+                        &pending,
+                        header,
+                        &received.body,
+                        &negotiated,
+                    )
+                    .await?;
+                    continue;
+                }
             };
             match frame_type {
                 FRAME_STATUS => {
@@ -497,17 +593,34 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     {
                         return Err(entity_error("entity announcement must be plain PENDING"));
                     }
-                    let (header, body) = receive_entity(connection, layers, self.limits).await?;
-                    self.receive_entity(
-                        &mut control_send,
-                        &mut current_session,
-                        &pending,
-                        &header,
-                        &body,
-                    )
-                    .await?;
+                    let key = EntityKey {
+                        scope_id: pending.status.scope_id,
+                        entity_id: pending.status.entity_id,
+                    };
+                    if let Some(session_id) = current_session.as_deref()
+                        && let Some(current) = self.store.load(session_id).map_err(store_error)?
+                        && let Some(entity) = current.session.entities.get(&key)
+                    {
+                        if entity.depth != pending.status.depth {
+                            return Err(entity_error(
+                                "late PENDING depth differs from admitted entity",
+                            ));
+                        }
+                        continue;
+                    }
+                    if announcements.len() >= negotiated.max_window_size as usize {
+                        return Err(limit_error("PENDING window exhausted"));
+                    }
+                    if let Some(previous) = announcements.insert(key, pending.clone())
+                        && previous != pending
+                    {
+                        return Err(entity_error("conflicting PENDING announcement"));
+                    }
                 }
                 FRAME_SCOPE_DIGEST => {
+                    if !layers.layer1_recursive {
+                        return Err(layer_error("SCOPE_DIGEST requires Layer 1"));
+                    }
                     let session_id = current_session.as_deref().ok_or_else(|| {
                         entity_error("SCOPE_DIGEST precedes session establishment")
                     })?;
@@ -519,6 +632,9 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     .await?;
                 }
                 FRAME_BARRIER => {
+                    if !layers.layer1_recursive {
+                        return Err(layer_error("BARRIER requires Layer 1"));
+                    }
                     let request = decode_barrier(&payload)?;
                     if request.released {
                         return Err(entity_error("BARRIER request has the released bit set"));
@@ -542,22 +658,17 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     let session_id = current_session
                         .as_deref()
                         .ok_or_else(|| entity_error("CHECKPOINT precedes session establishment"))?;
-                    let (ack, versioned) = self
-                        .store
-                        .transact(session_id, |session| {
-                            session.request_checkpoint(&request)?;
-                            session.acknowledge_checkpoint(
-                                request.scope_id.unwrap_or(0),
-                                request.sequence_number,
-                            )
-                        })
+                    self.store
+                        .transact(session_id, |session| session.request_checkpoint(&request))
                         .map_err(store_error)?;
-                    if let Ok(lineage) = versioned.session.final_lineage_digest() {
-                        self.entities
-                            .put_lineage(session_id, lineage)
-                            .map_err(storage_error)?;
+                    let key = (request.scope_id.unwrap_or(0), request.sequence_number);
+                    if checkpoints.len() >= 1024 && !checkpoints.contains_key(&key) {
+                        return Err(limit_error("pending checkpoint limit exhausted"));
                     }
-                    write_control(&mut control_send, &encode_checkpoint_for(&ack, layers)?).await?;
+                    let deadline = tokio::time::Instant::now()
+                        .checked_add(Duration::from_millis(request.timeout_ms.unwrap_or(30_000)))
+                        .ok_or_else(|| frame_error("checkpoint timeout overflows clock"))?;
+                    checkpoints.entry(key).or_insert((request, deadline));
                 }
                 FRAME_CLAIM_REDEMPTION => {
                     if !layers.layer2_resilience {
@@ -577,15 +688,82 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     self.redeem_claim(&mut control_send, request).await?;
                 }
                 FRAME_GOAWAY => {
+                    if !checkpoints.is_empty() || !announcements.is_empty() || !chunks.is_empty() {
+                        return Err(entity_error("GOAWAY precedes outstanding work"));
+                    }
                     let last = decode_goaway(&payload)?;
                     write_control(&mut control_send, &encode_goaway(last)?).await?;
                     control_send.finish().map_err(frame_error)?;
                     let _ = tokio::time::timeout(Duration::from_secs(5), connection.closed()).await;
                     return Ok(());
                 }
-                _ => return Err(frame_error("frame is not valid in the recursive profile")),
+                FRAME_CAPABILITIES => return Err(frame_error("duplicate CAPABILITIES")),
+                _ => continue,
             }
         }
+    }
+
+    async fn flush_checkpoints(
+        &self,
+        control: &mut quinn::SendStream,
+        session_id: Option<&str>,
+        pending: &mut BTreeMap<(u32, u64), (Checkpoint, tokio::time::Instant)>,
+        announcements: &BTreeMap<EntityKey, StatusFrame>,
+        layers: LayerSupport,
+    ) -> Result<(), ProtocolError> {
+        let Some(session_id) = session_id else {
+            return Ok(());
+        };
+        let mut resolved = Vec::new();
+        for (&(scope, sequence), (request, deadline)) in pending.iter() {
+            if tokio::time::Instant::now() >= *deadline {
+                return Err(ProtocolError::new(
+                    0x0e,
+                    "PIPESTREAM_CHECKPOINT_TIMEOUT",
+                    "checkpoint deadline expired",
+                ));
+            }
+            if announcements.keys().any(|key| {
+                key.scope_id == scope
+                    && pipestream_core::session::is_before(
+                        key.entity_id,
+                        request.checkpoint_entity_id,
+                    )
+            }) {
+                continue;
+            }
+            let current = self
+                .store
+                .load(session_id)
+                .map_err(store_error)?
+                .ok_or_else(|| entity_error("session is absent"))?;
+            if !current.session.checkpoint_satisfied(scope, sequence)? {
+                continue;
+            }
+            let (ack, versioned) = self
+                .store
+                .transact(session_id, |session| {
+                    if session.checkpoint_satisfied(scope, sequence)? {
+                        session.acknowledge_checkpoint(scope, sequence).map(Some)
+                    } else {
+                        Ok(None)
+                    }
+                })
+                .map_err(store_error)?;
+            if let Some(ack) = ack {
+                if let Ok(lineage) = versioned.session.final_lineage_digest() {
+                    self.entities
+                        .put_lineage(session_id, lineage)
+                        .map_err(storage_error)?;
+                }
+                write_control(control, &encode_checkpoint_for(&ack, layers)?).await?;
+                resolved.push((scope, sequence));
+            }
+        }
+        for key in resolved {
+            pending.remove(&key);
+        }
+        Ok(())
     }
 
     fn accepts_durable_disconnect(
@@ -619,6 +797,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         pending: &StatusFrame,
         header: &EntityHeader,
         body: &[u8],
+        negotiated: &Capabilities,
     ) -> Result<(), ProtocolError> {
         let scope_id = header.scope_id.unwrap_or(0);
         if pending.status.entity_id != header.entity_id || pending.status.scope_id != scope_id {
@@ -642,41 +821,37 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             return Err(entity_error("entity metadata changed session identity"));
         }
         let now = now_micros().map_err(storage_error)?;
-        let disposition = self.processor.process(ProcessContext {
-            session_id: &session_id,
-            header,
-            payload: body,
-            now_micros: now,
-        });
         let key = EntityKey {
             scope_id,
             entity_id: header.entity_id,
         };
-        self.entities
-            .put(&session_id, key, body)
-            .map_err(storage_error)?;
-        let applied = if current_session.is_none() {
+        if current_session.is_none() {
             if scope_id != 0 || header.parent_id.is_some() {
                 return Err(entity_error("first entity must be a root entity"));
             }
             let mut session = Session::new(
                 &session_id,
-                self.capabilities.effective_max_scope_depth(),
-                self.capabilities.effective_max_entities_per_scope(),
+                negotiated.effective_max_scope_depth(),
+                negotiated.effective_max_entities_per_scope(),
             )?;
             session.add_root(new_entity(header, body))?;
             if pending.status.depth != 0 {
                 return Err(entity_error("root PENDING depth is not zero"));
             }
             session.transition(key, EntityState::Processing)?;
-            let applied = apply_disposition(&mut session, key, disposition, now)?;
             self.store.create(&session).map_err(store_error)?;
             *current_session = Some(session_id.clone());
-            applied
-        } else {
-            if scope_id == 0 {
-                return Err(entity_error("a connection carries only one root entity"));
+        } else if scope_id == 0 {
+            if header.parent_id.is_some() || pending.status.depth != 0 {
+                return Err(entity_error("root entity has a parent or nonzero depth"));
             }
+            self.store
+                .transact(&session_id, |session| {
+                    session.add_root(new_entity(header, body))?;
+                    session.transition(key, EntityState::Processing)
+                })
+                .map_err(store_error)?;
+        } else {
             let parent = EntityKey {
                 scope_id: header
                     .parent_scope_id
@@ -700,8 +875,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             if pending.status.depth != expected_depth {
                 return Err(entity_error("PENDING depth differs from parent depth"));
             }
-            let (applied, _) = self
-                .store
+            self.store
                 .transact(&session_id, |session| {
                     match session.scopes.get(&scope_id) {
                         None => session.open_child_scope(parent, scope_id, now)?,
@@ -710,11 +884,30 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     }
                     session.add_child(scope_id, new_entity(header, body))?;
                     session.transition(key, EntityState::Processing)?;
-                    apply_disposition(session, key, disposition, now)
+                    Ok(())
                 })
                 .map_err(store_error)?;
-            applied
-        };
+        }
+        self.entities
+            .put(&session_id, key, body)
+            .map_err(storage_error)?;
+        let (applied, _) = self
+            .store
+            .transact(&session_id, |session| {
+                let disposition = self.processor.process(ProcessContext {
+                    session_id: &session_id,
+                    header,
+                    payload: body,
+                    now_micros: now,
+                });
+                if matches!(disposition, ProcessingDisposition::Yield { .. })
+                    && !negotiated.layer2_resilience
+                {
+                    return Err(layer_error("processor yield requires negotiated Layer 2"));
+                }
+                apply_disposition(session, key, disposition, now)
+            })
+            .map_err(store_error)?;
 
         write_status(
             control,
@@ -800,10 +993,6 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             .get(&expected.scope_id)
             .and_then(|scope| scope.parent)
             .ok_or_else(|| entity_error("scope parent is absent"))?;
-        let output_digest = self.processor.rehydrate(RehydrateContext {
-            session: &current.session,
-            parent,
-        });
         let (actual, versioned) = self
             .store
             .transact(session_id, |session| {
@@ -811,13 +1000,12 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                 match session.entities[&parent].state {
                     EntityState::Dehydrating => session.begin_rehydration(parent)?,
                     EntityState::Rehydrating => {}
-                    EntityState::Complete
-                        if session.entities[&parent].output_digest == Some(output_digest) =>
-                    {
-                        return Ok(actual);
-                    }
+                    EntityState::Complete => return Ok(actual),
                     _ => return Err(entity_error("scope parent cannot rehydrate")),
                 }
+                let output_digest = self
+                    .processor
+                    .rehydrate(RehydrateContext { session, parent });
                 session.complete_rehydration(parent, output_digest)?;
                 Ok(actual)
             })
@@ -834,7 +1022,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         request: ClaimRedemption,
     ) -> Result<(), ProtocolError> {
         let now = now_micros().map_err(storage_error)?;
-        let ((entity, token), versioned) = self
+        let (entity, _) = self
             .store
             .transact(&request.session_id, |session| {
                 let entity = session
@@ -842,20 +1030,12 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     .get(&request.claim_id)
                     .ok_or_else(|| claim_error("claim does not exist"))?
                     .entity;
-                let token = session.redeem_claim(request.claim_id, request.state_checksum, now)?;
-                Ok((entity, token))
+                session.redeem_claim(request.claim_id, request.state_checksum, now)?;
+                Ok(entity)
             })
             .map_err(store_error)?;
-        let output_digest = self.processor.resume(ResumeContext {
-            session: &versioned.session,
-            entity,
-            continuation_token: &token,
-        });
         let (_, completed) = self
-            .store
-            .transact(&request.session_id, |session| {
-                session.complete_entity(entity, output_digest)
-            })
+            .resume_claim(&request.session_id, request.claim_id)
             .map_err(store_error)?;
         if let Ok(lineage) = completed.session.final_lineage_digest() {
             self.entities
@@ -1093,16 +1273,6 @@ impl RecursiveClient {
             bail!("PIPESTREAM_FRAME_ERROR: server did not answer capabilities");
         }
         let negotiated = decode_capabilities(&response)?;
-        let (frame_type, response) = read_control(&mut control_recv).await?;
-        if frame_type != FRAME_STATUS {
-            bail!("PIPESTREAM_FRAME_ERROR: server did not send initial heartbeat");
-        }
-        let heartbeat = decode_status_frame(&response, layers(&negotiated))?;
-        if heartbeat.status.state != pipestream_core::STATUS_UNSPECIFIED
-            || heartbeat.status.entity_id != CONNECTION_LEVEL
-        {
-            bail!("PIPESTREAM_ENTITY_INVALID: invalid initial heartbeat");
-        }
         Ok(Self {
             endpoint,
             connection,
@@ -1229,6 +1399,11 @@ impl RecursiveClient {
             bail!("PIPESTREAM_FRAME_ERROR: expected SCOPE_DIGEST confirmation");
         }
         let observed = decode_scope_digest(&response)?;
+        if &observed != digest {
+            self.connection
+                .close(ERROR_ENTITY_INVALID.into(), b"scope digest ACK mismatch");
+            bail!("PIPESTREAM_ENTITY_INVALID: scope digest acknowledgement differs");
+        }
         let mut statuses = Vec::with_capacity(2);
         for expected in [
             pipestream_core::STATUS_REHYDRATING,
@@ -1261,7 +1436,13 @@ impl RecursiveClient {
         if frame_type != FRAME_BARRIER {
             bail!("PIPESTREAM_FRAME_ERROR: expected BARRIER response");
         }
-        Ok(decode_barrier(&response)?)
+        let barrier = decode_barrier(&response)?;
+        if barrier.scope_id != scope_id || barrier.parent_entity_id != parent_entity_id {
+            self.connection
+                .close(ERROR_ENTITY_INVALID.into(), b"barrier identity mismatch");
+            bail!("PIPESTREAM_ENTITY_INVALID: barrier response identity differs");
+        }
+        Ok(barrier)
     }
 
     pub async fn checkpoint(&mut self, checkpoint: &Checkpoint) -> Result<Checkpoint> {
@@ -1275,8 +1456,12 @@ impl RecursiveClient {
             bail!("PIPESTREAM_FRAME_ERROR: expected CHECKPOINT acknowledgement");
         }
         let acknowledgement = decode_checkpoint_for(&response, self.layers)?;
-        if acknowledgement.flags != CHECKPOINT_ACK {
-            bail!("PIPESTREAM_ENTITY_INVALID: checkpoint lacks ACK");
+        let mut expected = checkpoint.clone();
+        expected.flags = CHECKPOINT_ACK;
+        if acknowledgement != expected {
+            self.connection
+                .close(ERROR_ENTITY_INVALID.into(), b"checkpoint ACK mismatch");
+            bail!("PIPESTREAM_ENTITY_INVALID: checkpoint acknowledgement differs");
         }
         Ok(acknowledgement)
     }
@@ -1295,8 +1480,12 @@ impl RecursiveClient {
             bail!("PIPESTREAM_FRAME_ERROR: expected claim acknowledgement");
         }
         let acknowledgement = decode_claim_redemption(&response)?;
-        if !acknowledgement.acknowledged {
-            bail!("PIPESTREAM_ENTITY_INVALID: claim acknowledgement lacks ACK");
+        let mut expected = redemption.clone();
+        expected.acknowledged = true;
+        if acknowledgement != expected {
+            self.connection
+                .close(ERROR_ENTITY_INVALID.into(), b"claim ACK mismatch");
+            bail!("PIPESTREAM_ENTITY_INVALID: claim acknowledgement differs");
         }
         let mut statuses = Vec::with_capacity(2);
         for expected in [
@@ -1335,22 +1524,49 @@ impl RecursiveClient {
     }
 
     async fn read_response(&mut self) -> Result<(u8, Vec<u8>)> {
-        match read_control(&mut self.control_recv).await {
-            Ok(frame) => Ok(frame),
-            Err(protocol_error) => {
-                let close_reason = match self.connection.close_reason() {
-                    Some(reason) => Some(reason),
-                    None => tokio::time::timeout(Duration::from_secs(1), self.connection.closed())
-                        .await
-                        .ok(),
-                };
-                if let Some(quinn::ConnectionError::ApplicationClosed(close)) = close_reason {
-                    let reason = String::from_utf8_lossy(&close.reason);
-                    if !reason.is_empty() {
-                        bail!("{reason}");
+        loop {
+            match read_control(&mut self.control_recv).await {
+                Ok((FRAME_STATUS, payload)) => {
+                    let status = decode_status_frame(&payload, self.layers)?;
+                    if status.status.state == pipestream_core::STATUS_UNSPECIFIED
+                        && status.status.entity_id == CONNECTION_LEVEL
+                        && status.status.cursor.is_none()
+                    {
+                        continue;
                     }
+                    return Ok((FRAME_STATUS, payload));
                 }
-                Err(protocol_error.into())
+                Ok((kind, _))
+                    if !matches!(
+                        kind,
+                        FRAME_BARRIER
+                            | FRAME_CAPABILITIES
+                            | FRAME_CHECKPOINT
+                            | FRAME_CLAIM_REDEMPTION
+                            | FRAME_GOAWAY
+                            | FRAME_SCOPE_DIGEST
+                    ) =>
+                {
+                    continue;
+                }
+                Ok(frame) => return Ok(frame),
+                Err(protocol_error) => {
+                    let close_reason = match self.connection.close_reason() {
+                        Some(reason) => Some(reason),
+                        None => {
+                            tokio::time::timeout(Duration::from_secs(1), self.connection.closed())
+                                .await
+                                .ok()
+                        }
+                    };
+                    if let Some(quinn::ConnectionError::ApplicationClosed(close)) = close_reason {
+                        let reason = String::from_utf8_lossy(&close.reason);
+                        if !reason.is_empty() {
+                            bail!("{reason}");
+                        }
+                    }
+                    return Err(protocol_error.into());
+                }
             }
         }
     }
@@ -1574,119 +1790,6 @@ fn expect_states(statuses: &[StatusFrame], expected: &[EntityState]) -> Result<(
     Ok(())
 }
 
-async fn receive_entity(
-    connection: &quinn::Connection,
-    layers: LayerSupport,
-    limits: RecursiveLimits,
-) -> Result<(EntityHeader, Vec<u8>), ProtocolError> {
-    let (first_header, first_payload) =
-        receive_entity_stream(connection, layers, limits.max_entity_bytes).await?;
-    let Some(first_info) = first_header.chunk_info else {
-        return Ok((first_header, first_payload));
-    };
-    if first_info.total_chunks > limits.max_chunks_per_entity {
-        return Err(ProtocolError::new(
-            ERROR_LIMIT_EXCEEDED,
-            "PIPESTREAM_LIMIT_EXCEEDED",
-            "chunk count exceeds local limit",
-        ));
-    }
-    let total = usize::try_from(first_info.total_chunks).map_err(|_| {
-        ProtocolError::new(
-            ERROR_LIMIT_EXCEEDED,
-            "PIPESTREAM_LIMIT_EXCEEDED",
-            "chunk count exceeds local address space",
-        )
-    })?;
-    let mut chunks = BTreeMap::new();
-    insert_chunk(
-        &mut chunks,
-        &first_header,
-        first_info,
-        first_payload,
-        &first_header,
-    )?;
-    while chunks.len() < total {
-        let (header, payload) =
-            receive_entity_stream(connection, layers, limits.max_entity_bytes).await?;
-        let info = header.chunk_info.ok_or_else(|| {
-            entity_error("one Entity Stream in a chunked entity lacks chunk-info")
-        })?;
-        insert_chunk(&mut chunks, &first_header, info, payload, &header)?;
-    }
-
-    let mut ranges = chunks.into_values().collect::<Vec<_>>();
-    ranges.sort_by_key(|(offset, _)| *offset);
-    let mut assembled = Vec::new();
-    for (offset, payload) in ranges {
-        if offset != assembled.len() as u64 {
-            return Err(entity_error(
-                "chunk ranges contain a gap, overlap, or duplicate offset",
-            ));
-        }
-        let next_length = assembled
-            .len()
-            .checked_add(payload.len())
-            .ok_or_else(|| limit_error("reassembled payload length overflows"))?;
-        if next_length > limits.max_entity_bytes {
-            return Err(limit_error(
-                "reassembled entity exceeds local payload limit",
-            ));
-        }
-        assembled.extend_from_slice(&payload);
-    }
-    let mut header = first_header;
-    header.chunk_info = None;
-    header.payload_length = Some(assembled.len() as u64);
-    header.checksum = Some(Sha256::digest(&assembled).into());
-    Ok((header, assembled))
-}
-
-async fn receive_entity_stream(
-    connection: &quinn::Connection,
-    layers: LayerSupport,
-    max_entity_bytes: usize,
-) -> Result<(EntityHeader, Vec<u8>), ProtocolError> {
-    let mut stream = connection.accept_uni().await.map_err(frame_error)?;
-    let bytes = match stream
-        .read_to_end(max_entity_bytes + MAX_ENTITY_HEADER + 4)
-        .await
-    {
-        Ok(bytes) => bytes,
-        Err(quinn::ReadToEndError::TooLong) => {
-            return Err(limit_error("Entity Stream exceeds local payload limit"));
-        }
-        Err(quinn::ReadToEndError::Read(error)) => return Err(frame_error(error)),
-    };
-    let (header, payload) = decode_entity_for(&bytes, layers)?;
-    Ok((header, payload.to_vec()))
-}
-
-fn insert_chunk(
-    chunks: &mut BTreeMap<u64, (u64, Vec<u8>)>,
-    first: &EntityHeader,
-    info: ChunkInfo,
-    payload: Vec<u8>,
-    current: &EntityHeader,
-) -> Result<(), ProtocolError> {
-    let first_info = first
-        .chunk_info
-        .expect("chunk collection starts with chunk-info");
-    if info.total_chunks != first_info.total_chunks {
-        return Err(entity_error("total-chunks changed within one entity"));
-    }
-    if !same_chunk_identity(first, current) {
-        return Err(entity_error("entity identity changed between chunks"));
-    }
-    if chunks
-        .insert(info.chunk_index, (info.chunk_offset, payload))
-        .is_some()
-    {
-        return Err(entity_error("chunk-index is duplicated"));
-    }
-    Ok(())
-}
-
 fn same_chunk_identity(first: &EntityHeader, current: &EntityHeader) -> bool {
     first.entity_id == current.entity_id
         && first.parent_id == current.parent_id
@@ -1730,13 +1833,16 @@ async fn read_control(stream: &mut quinn::RecvStream) -> Result<(u8, Vec<u8>), P
             "control frame exceeds local limit",
         ));
     }
-    let mut payload = vec![0; length];
-    stream.read_exact(&mut payload).await.map_err(frame_error)?;
-    let mut complete = Vec::with_capacity(5 + length);
-    complete.extend_from_slice(&header);
-    complete.extend_from_slice(&payload);
-    let (frame_type, parsed) = decode_ucf(&complete)?;
-    Ok((frame_type, parsed.to_vec()))
+    let mut payload = Vec::new();
+    while payload.len() < length {
+        let chunk = stream
+            .read_chunk((length - payload.len()).min(8192), true)
+            .await
+            .map_err(frame_error)?
+            .ok_or_else(|| frame_error("truncated control body"))?;
+        payload.extend_from_slice(&chunk.bytes);
+    }
+    Ok((header[0], payload))
 }
 
 async fn write_control(stream: &mut quinn::SendStream, bytes: &[u8]) -> Result<(), ProtocolError> {
@@ -1834,6 +1940,7 @@ fn sync_directory(path: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pipestream_core::ChunkInfo;
 
     fn test_options(directory: &Path, name: &str) -> RecursiveServerOptions {
         let rcgen::CertifiedKey { cert, signing_key } =
@@ -2171,12 +2278,27 @@ mod tests {
     }
 
     #[test]
-    fn startup_recovery_finishes_a_redeemed_claim_exactly_once() {
+    fn concurrent_recovery_serializes_resume_across_store_handles() {
         let directory = tempfile::tempdir().unwrap();
         let options = test_options(directory.path(), "interrupted-resume");
         let store = Arc::new(SqliteSessionStore::open(&options.state_database).unwrap());
         let entities = Arc::new(FileEntityStore::open(&options.entity_directory).unwrap());
-        let processor = Arc::new(ExemplarProcessor::default());
+        #[derive(Default)]
+        struct CountingResume(AtomicU64);
+        impl EntityProcessor for CountingResume {
+            fn process(&self, _: ProcessContext<'_>) -> ProcessingDisposition {
+                unreachable!()
+            }
+            fn rehydrate(&self, _: RehydrateContext<'_>) -> [u8; 32] {
+                unreachable!()
+            }
+            fn resume(&self, context: ResumeContext<'_>) -> [u8; 32] {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(50));
+                ExemplarProcessor::default().resume(context)
+            }
+        }
+        let processor = Arc::new(CountingResume::default());
         let mut session = Session::new("interrupted-resume-1", 7, 1_000).unwrap();
         let entity = session
             .add_root(NewEntity {
@@ -2224,8 +2346,31 @@ mod tests {
                 .state
         );
 
-        let service = RecursiveService::new(store.clone(), entities, processor, 7, 1_000).unwrap();
-        assert_eq!(1, service.recover_interrupted_resumptions().unwrap());
+        let service =
+            RecursiveService::new(store.clone(), entities.clone(), processor.clone(), 7, 1_000)
+                .unwrap();
+        let second = RecursiveService::new(
+            Arc::new(SqliteSessionStore::open(&options.state_database).unwrap()),
+            entities,
+            processor.clone(),
+            7,
+            1_000,
+        )
+        .unwrap();
+        let start = std::sync::Barrier::new(2);
+        let count = std::thread::scope(|threads| {
+            let a = threads.spawn(|| {
+                start.wait();
+                service.recover_interrupted_resumptions().unwrap()
+            });
+            let b = threads.spawn(|| {
+                start.wait();
+                second.recover_interrupted_resumptions().unwrap()
+            });
+            a.join().unwrap() + b.join().unwrap()
+        });
+        assert_eq!(1, count);
+        assert_eq!(1, processor.0.load(Ordering::SeqCst));
         assert_eq!(0, service.recover_interrupted_resumptions().unwrap());
         let recovered = store.load("interrupted-resume-1").unwrap().unwrap();
         assert_eq!(

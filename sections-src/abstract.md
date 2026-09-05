@@ -5,15 +5,15 @@ of complex, arbitrary workloads into constituent sub-tasks, their
 transmission across distributed processing nodes, and subsequent
 rehydration (gathering) at destination endpoints.
 
-While application-layer protocols like gRPC provide stream multiplexing,
-PipeStream embeds a hierarchical state machine directly into the
-protocol. It employs a dual-stream architecture consisting of a data
-stream for payload transmission and a control stream for tracking
-completion status and maintaining distributed consistency.
+PipeStream defines a hierarchical work state machine in an application
+protocol directly over QUIC. It uses independent Entity Streams for
+payload transmission and a Control Stream for lifecycle reports,
+completion barriers, and recovery coordination.
 
 PipeStream defines a generic 2-bit Data Layer field for entity
 representation, leaving the concrete payload semantics to application
-profiles. To ensure consistency across parallel processing pipelines,
-the protocol implements checkpoint blocking, guaranteeing that all
-constituent parts of a decomposed workload are successfully processed
-before rehydration operations commence.
+profiles. Checkpoints and completion policies distinguish pending work,
+successful completion, and partial outcomes. Status digests summarize
+reported completion; they are not proofs of correct computation. The
+draft records implementation coverage and remaining interoperability
+questions.

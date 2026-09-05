@@ -24,6 +24,13 @@ cargo run --release --locked \
 
 The vectors are protocol evidence, not serialized internal state.
 
+`optional-fields.tsv` contains independently specified hexadecimal maps
+covering omitted defaults, richer capability maps, non-minimal integers,
+duplicate keys, key ordering, and invalid UTF-8. All three codecs consume it.
+The -04 review corrected the recursive quorum fixture from binary32 0.75
+to its required binary16 encoding and reduced its header length accordingly.
+Tests do not regenerate either corpus.
+
 The current corpus covers deterministic CBOR, capability bounds, entity and
 parent identifiers, exact payload length, SHA-256 integrity, Layer 0 status and
 cursor rules, heartbeat handling, CHECKPOINT request/acknowledgement flags,

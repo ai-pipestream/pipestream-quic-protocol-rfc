@@ -2,7 +2,11 @@
 
 ## Transport Security
 
-PipeStream inherits security from QUIC {{RFC9000}} and TLS 1.3 {{RFC9846}}. All connections MUST use TLS 1.3 or later. Implementations MUST NOT provide mechanisms to disable encryption.
+PipeStream uses the QUIC transport {{RFC9000}} and QUIC TLS mapping
+{{RFC9001}}, with TLS 1.3 {{RFC9846}}. Implementations MUST follow the
+QUIC TLS mapping, including ALPN and peer authentication. Implementations
+MUST NOT provide mechanisms to disable encryption. TLS is not a separate
+record-layer wrapper around UDP datagrams.
 
 PipeStream frames MUST NOT be sent or processed in 0-RTT early data (Section 5.3), which removes the replay exposure that early data would otherwise introduce for capability negotiation and status frames.
 
@@ -44,6 +48,22 @@ Implementations MUST enforce all resource limits listed above. Exceeding any lim
 
 To prevent memory-exhaustion attacks, implementations MUST NOT pre-allocate memory for variable-length payloads based solely on the 32-bit Length field in the UCF header (Section 6.1.1). Memory MUST be allocated incrementally as octets are received, or capped at a smaller initial buffer until the message type and context are verified.
 
+The entity-count and window defaults are identifier-space maxima, not safe
+memory allocations. Receivers MUST additionally bound aggregate buffered
+octets, incomplete streams, metadata, chunks, and pending checkpoints per
+connection and per authenticated principal. Per-chunk limits alone are
+insufficient: every arriving chunk MUST be charged to the entity and
+connection budgets before buffering. A budget failure MUST NOT silently
+drop a child or convert an incomplete checkpoint into success.
+
+Identity, parent linkage, negotiated depth and count limits, payload
+integrity, and authorization MUST be checked before invoking application
+callbacks with irreversible effects. Speculative incremental processing
+MAY operate on admitted data only if effects can be discarded on failure.
+Control readers MUST remain able to make progress when a data stream
+stalls. Implementations SHOULD separate control parsing, payload reception,
+worker completion, and deadline handling as described in {{RFC9308}}.
+
 ## Amplification Attacks
 
 A single dehydration operation can produce an arbitrary number of child entities from a small input, creating a potential amplification vector. To mitigate this:
@@ -69,6 +89,37 @@ PipeStream entity headers and control stream frames carry metadata that may reve
 4. **Identifiers**: Application-level input identifiers and filenames carried inside profile-defined payload envelopes are not interpreted by PipeStream Core but may still be logged by intermediate processing nodes. Implementations SHOULD provide mechanisms to redact or pseudonymize such identifiers at pipeline boundaries. This recommendation may be relaxed when all nodes in the pipeline are operated by the same administrative entity.
 
 ## Replay and Token Reuse
+
+### Authentication and Authorization
+
+A claim ID is a public lookup identifier, not a bearer credential. Neither
+its randomness nor a state checksum grants access. A deployment MUST
+authenticate a principal before admitting durable work or redeeming a
+claim, and MUST authorize that principal for the session, entity, and
+issuing authority. Server authentication alone does not authenticate the
+requesting principal. Mutual TLS is one possible profile mechanism;
+another mechanism requires an explicit authenticated application profile.
+
+The issuer MUST retain the principal binding and authorization policy with
+the durable claim record and apply revocation and expiry before execution.
+Session names supplied in entity metadata MUST NOT override that binding.
+A receiving authority MUST NOT accept a claim issued by an unrelated
+authority solely because it has the same numeric ID. Profiles using bearer
+credentials MUST carry a separate secret with at least 128 bits of
+unpredictability, transported confidentially and excluded from locators.
+
+The issuer's clock determines expiry. A reconnect does not extend claim
+lifetime. Retention and maximum lifetime are deployment policy, and the
+advertised expiry MUST be bounded by the issuer's retention commitment.
+The default maximum lifetime is 86400 seconds.
+
+Implementations MUST serialize recovery execution for a claim across
+concurrent executors, including after reconnection. A lock local to one
+connection is insufficient. Durable fencing or a transactional executor
+can enforce this exclusion. Crash recovery can still repeat an external
+effect that committed before the protocol state was saved. Applications
+MUST provide idempotency or transactional integration for such effects;
+this protocol does not guarantee exactly-once external execution.
 
 ### Yield Token Replay
 

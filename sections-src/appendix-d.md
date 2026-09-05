@@ -44,7 +44,10 @@ Organization:
 :   PipeStream AI
 
 Description:
-:   Rust feature-complete exemplar using Quinn and Minicbor. Transport-independent protocol logic, Quinn transport, and the runnable server are separate crates. The implementation remains non-normative and is implemented independently from the Java and C++ implementations.
+:   Rust prototype using Quinn and Minicbor. Transport-independent protocol
+    logic, Quinn transport, and the runnable server are separate crates.
+    It is not feature-complete or fully conformant. Implementations and
+    test vectors are non-normative and may require correction against the text.
 
 Maturity:
 :   Prototype, publicly available in the `implementations/rust-quinn` directory of this document's source repository.
@@ -85,6 +88,23 @@ Contact:
 :   Kristian Rickert (kristian.rickert@pipestream.ai)
 
 ## Interoperability Evidence
+
+As of 2026-09-05, none of these prototypes demonstrates complete Layer 0
+conformance. The common command exercises one-entity transfers, not the
+entire mandatory manifest and recycling lifecycle. Rust's recursive path
+adds independent control/data reception, identity-based stream dispatch,
+pending checkpoints with deadlines, negotiated depth enforcement, and
+serialized recovery execution. Its payload processing is whole-entity
+buffered and its application callbacks are synchronous.
+
+The durable Rust prototype lacks authenticated principal/session binding,
+automatic retry scheduling, a general sealed-work-set protocol, scoped
+cursor recycling, and an ambiguous-redemption-outcome operation. Its
+Layer 2 advertisement does not identify the narrower implemented subset.
+It is unsuitable for untrusted multi-tenant deployment without additional
+implementation work. Java and C++ do not yet provide independent evidence
+for recursive or resilience semantics. These limitations remain open;
+passing vectors or document checks does not resolve them.
 
 The repository's protocol-neutral Rust driver starts each executable as a separate process and tests all nine client/server pairings. The driver has no dependency on a PipeStream implementation and does not encode or decode PipeStream frames. The implementations share the normative specification, CDDL, and golden vector corpus, but no protocol implementation code. The current suite verifies binary and UTF-8 payload transfer, parent identity, status progression, checkpoint acknowledgement, cursor advancement, graceful GOAWAY, and byte-exact delivery. The result is reproducible evidence for the listed protocol subset, not a claim of complete support for every optional field or extension in this document.
 

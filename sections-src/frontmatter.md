@@ -5,8 +5,7 @@ docname: draft-krickert-pipestream-04
 category: std
 submissiontype: IETF
 number:
-date: 2026-09-04
-consensus: true
+date: 2026-09-05
 v: 3
 area: "Applications and Real-Time"
 workgroup: "Individual Submission"
@@ -31,6 +30,7 @@ normative:
   RFC2119:
   RFC8174:
   RFC9000:
+  RFC9001:
   RFC9846:
   RFC8126:
   RFC8949:
@@ -57,7 +57,7 @@ informative:
     date: 2026-03
     target: https://github.com/ai-pipestream/pipestream-quic-protocol-rfc/tree/main/docproc
   RFC9114:
-  RFC9297:
+  WEBTRANSPORT: I-D.ietf-webtrans-http3
   RFC9308:
     title: "Applicability of the QUIC Transport Protocol"
     author:
@@ -70,20 +70,6 @@ informative:
       RFC: "9308"
     target: https://www.rfc-editor.org/rfc/rfc9308
   RFC9250:
-  RFC9260:
-    title: "Stream Control Transmission Protocol"
-    author:
-      - ins: "R. Stewart"
-        name: "Randall Stewart"
-      - ins: "M. Tuexen"
-        name: "Michael Tuexen"
-      - ins: "K. Nielsen"
-        name: "Kirsty Nielsen"
-    date: 2022-06
-    seriesinfo:
-      RFC: "9260"
-    target: https://www.rfc-editor.org/rfc/rfc9260
-  RFC7574:
   RFC7696:
   MOQT: I-D.ietf-moq-transport
   scatter-gather:

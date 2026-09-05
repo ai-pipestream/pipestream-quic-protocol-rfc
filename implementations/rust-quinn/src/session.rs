@@ -877,7 +877,7 @@ impl Session {
                     .policy
                     .min_success_ratio
                     .ok_or_else(|| entity_error("quorum policy is missing min-success-ratio"))?;
-                (complete as f64 / manifest.children.len() as f64) >= f64::from(ratio)
+                complete as u64 >= quorum_threshold(ratio, manifest.children.len() as u32)
             }
         };
         Ok(if !accepted {
@@ -901,6 +901,25 @@ impl Session {
             current = parent.scope_id;
         }
         false
+    }
+}
+
+// Compute ceil(ratio * count) from the exact finite binary32 representation.
+// The admitted ratio is in [0, 1], and count is bounded by the uint32 ID space.
+fn quorum_threshold(ratio: f32, count: u32) -> u64 {
+    let bits = ratio.to_bits() & 0x7fff_ffff;
+    let exponent = bits >> 23;
+    let fraction = bits & 0x7f_ffff;
+    let (significand, shift) = if exponent == 0 {
+        (fraction, 149)
+    } else {
+        (fraction | 0x80_0000, 150 - exponent)
+    };
+    let product = u64::from(significand) * u64::from(count);
+    if shift >= 64 {
+        u64::from(product != 0)
+    } else {
+        product.div_ceil(1u64 << shift)
     }
 }
 
@@ -957,7 +976,7 @@ pub fn validate_session_id(value: &str) -> Result<(), ProtocolError> {
         || value.len() > 128
         || !value
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
     {
         return Err(entity_error("invalid session ID"));
     }
@@ -1020,6 +1039,16 @@ fn claim_not_found(detail: impl Into<String>) -> ProtocolError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quorum_threshold_uses_exact_integer_rounding() {
+        assert_eq!(quorum_threshold(0.75, 3), 3);
+        assert_eq!(quorum_threshold(0.75, 4), 3);
+        assert_eq!(quorum_threshold(1.0, u32::MAX), u64::from(u32::MAX));
+        assert_eq!(quorum_threshold(0.0, u32::MAX), 0);
+        assert_eq!(quorum_threshold(f32::from_bits(1), u32::MAX), 1);
+        assert_eq!(quorum_threshold(0.5, u32::MAX), 2_147_483_648);
+    }
 
     fn digest(value: &[u8]) -> [u8; 32] {
         Sha256::digest(value).into()

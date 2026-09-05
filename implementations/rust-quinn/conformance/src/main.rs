@@ -1,5 +1,8 @@
 //! Protocol-neutral process orchestration and immutable-corpus verification.
 
+mod receipts;
+mod schema;
+
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Parser, Subcommand};
 use rcgen::{
@@ -194,6 +197,10 @@ fn verify_vector_index(root: &Path) -> Result<()> {
 fn validate_cddl(root: &Path) -> Result<()> {
     let bundle = executable(&["bundle", "bundle3.3"])?;
     let schema = root.join("cddl/pipestream-layer0.cddl");
+    schema::synchronized(
+        &fs::read_to_string(&schema)?,
+        &fs::read_to_string(root.join("sections-src/appendix-c.md"))?,
+    )?;
     run_checked_owned(
         root,
         &[
@@ -464,8 +471,9 @@ fn recursive() -> Result<()> {
         "recursive CLI did not report the verified tree"
     );
     ensure!(
-        fs::read(server.output.join(session_id).join("lineage.sha256"))?.len() == 32,
-        "recursive CLI did not persist a lineage digest"
+        fs::read(server.output.join(session_id).join("lineage.sha256"))?
+            == receipts::recursive(session_id),
+        "recursive CLI lineage differs from independent expected receipt"
     );
     println!("PASS Rust Layer 1 recursive CLI and durable lineage");
 
@@ -517,8 +525,9 @@ fn recursive() -> Result<()> {
         "redeem CLI did not acknowledge the claim"
     );
     ensure!(
-        fs::read(second.output.join(recovery_session).join("lineage.sha256"))?.len() == 32,
-        "claim redemption did not persist a lineage digest"
+        fs::read(second.output.join(recovery_session).join("lineage.sha256"))?
+            == receipts::recovery(recovery_session),
+        "claim redemption lineage differs from independent expected receipt"
     );
 
     let mut replay_server = start_recursive_server(&root, &program, &layer2, &certs)?;

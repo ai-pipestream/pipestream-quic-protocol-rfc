@@ -64,3 +64,18 @@ implementations/rust-quinn/target/release/pipestream-conformance examples
 
 Test certificates are generated in a temporary directory and are never
 production credentials.
+
+## Draft-04 regression evidence
+
+`quinn/tests/draft04_wire.rs` uses raw QUIC peers for reordered and stalled
+streams, optional PENDING, unknown frames, pending checkpoints, timeout,
+negotiated depth and layer refusals, and incorrect ACK identity.
+`conformance/src/schema.rs` compares every shared machine-readable CDDL
+definition to Appendix C after normalizing comments and formatting.
+`conformance/src/receipts.rs` independently computes expected local exemplar
+receipts from the scenario inputs; a file containing any 32 octets no longer
+passes the recursive checks. It does not encode or decode protocol frames.
+
+These checks strengthen evidence for the tested subset. They do not establish
+complete protocol conformance. The full list of open work is in
+[draft-04 readiness](../docs/standards/draft04-readiness.md).

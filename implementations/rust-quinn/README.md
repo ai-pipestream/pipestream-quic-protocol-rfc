@@ -1,9 +1,10 @@
-# Rust feature-complete exemplar
+# Rust protocol prototype
 
-The Rust implementation is the feature-complete exemplar for PipeStream Layers
-0 and 1 plus the draft's narrow durable-yield Layer 2 profile. It remains
-non-normative: the specification, CDDL, and frozen conformance vectors are the
-authority.
+The Rust implementation exercises selected PipeStream Layer 0, Layer 1,
+and Layer 2 behaviors. It is not feature-complete or fully conformant.
+The specification is authoritative; codecs and vectors must be corrected
+when they contradict it. See [draft-04 readiness](../../docs/standards/draft04-readiness.md)
+for tested requirements and remaining design and implementation gaps.
 
 The workspace separates protocol behavior from transport and deployment:
 
@@ -57,3 +58,29 @@ All transport paths require TLS 1.3 with ALPN `pipestream/1`; 0-RTT is never
 enabled. The implemented Layer 2 scope is intentionally narrow. Automatic retry
 scheduling, claim federation between unrelated persistence domains, and the
 other optional resilience behaviors are not claimed.
+
+The recursive receiver reads control and data independently, identifies
+streams from their headers, and bounds buffered payload octets across
+incomplete streams and chunk assemblies. It supports up to eight concurrent
+stream readers. This is bounded whole-entity processing, not a spool-backed
+incremental payload API. Allocation capacity, decoded metadata, QUIC receive
+buffers, and transient reassembly copies add overhead beyond payload bytes.
+
+Pending checkpoints keep processing active and use monotonic deadlines.
+Application callbacks remain synchronous and must be bounded. Resume callbacks
+execute under an SQLite IMMEDIATE transaction, excluding simultaneous recovery
+executors that use the same database. Callbacks must not re-enter the store.
+This deliberately serializes writers; long-running applications need an
+asynchronous fenced executor. A crash after an external effect but before
+commit still requires application idempotency.
+
+The standalone prototype authenticates the server, not the caller. It has
+no principal/session authorization binding and MUST NOT be exposed as a
+multi-tenant or Internet-facing durable-work service. Its Layer 2 boolean
+does not yet distinguish the implemented subset on the wire. The missing
+authenticated profile and narrower capability negotiation are open work,
+not hidden guarantees supplied by TLS or checksums.
+
+The core `uri` module parses typed `pipestream://` session, entity, and claim
+locators with explicit ports. Parsing grants no access and does not perform
+network I/O. The scheme is proposed, not registered by this repository.

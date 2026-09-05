@@ -42,6 +42,30 @@ void decode_named(const std::string& name, const std::vector<std::uint8_t>& byte
 int main() {
   try {
     const std::filesystem::path root = PIPESTREAM_VECTOR_ROOT;
+    std::ifstream optional(root / "optional-fields.tsv");
+    if (!optional) throw std::runtime_error("cannot read optional-field vectors");
+    std::string optional_row;
+    std::getline(optional, optional_row);
+    while (std::getline(optional, optional_row)) {
+      std::istringstream columns(optional_row);
+      std::string name, kind, expectation, hex;
+      std::getline(columns, name, '\t');
+      std::getline(columns, kind, '\t');
+      std::getline(columns, expectation, '\t');
+      std::getline(columns, hex, '\t');
+      std::vector<std::uint8_t> bytes;
+      for (std::size_t i = 0; i < hex.size(); i += 2) {
+        bytes.push_back(static_cast<std::uint8_t>(std::stoul(hex.substr(i, 2), nullptr, 16)));
+      }
+      try {
+        if (kind == "capabilities") (void)pipestream::decode_capabilities(bytes);
+        else if (kind == "checkpoint") (void)pipestream::decode_checkpoint(bytes);
+        else throw std::runtime_error("unknown vector kind");
+        if (expectation == "invalid") throw std::runtime_error("accepted " + name);
+      } catch (const pipestream::ProtocolError& error) {
+        if (expectation == "valid" || error.name() != "PIPESTREAM_FRAME_ERROR") throw;
+      }
+    }
     std::ifstream index(root / "index.tsv");
     if (!index) throw std::runtime_error("cannot read vector index");
     std::string row;

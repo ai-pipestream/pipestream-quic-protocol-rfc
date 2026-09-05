@@ -3,8 +3,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fmt};
 
+mod deterministic;
 pub mod persistence;
 pub mod session;
+pub mod uri;
 
 pub const ALPN: &[u8] = b"pipestream/1";
 pub const FRAME_STATUS: u8 = 0x50;
@@ -424,6 +426,7 @@ pub fn encode_capabilities(capabilities: &Capabilities) -> Result<Vec<u8>, Proto
 }
 
 pub fn decode_capabilities(payload: &[u8]) -> Result<Capabilities, ProtocolError> {
+    deterministic::validate(payload)?;
     let mut decoder = Decoder::new(payload);
     let count = decoder
         .map()
@@ -494,12 +497,6 @@ pub fn decode_capabilities(payload: &[u8]) -> Result<Capabilities, ProtocolError
     {
         return Err(ProtocolError::limit("invalid max-entities-per-scope"));
     }
-    let canonical = encode_capabilities(&result)?;
-    if canonical[5..] != *payload {
-        return Err(ProtocolError::frame(
-            "capabilities CBOR is not deterministic",
-        ));
-    }
     Ok(result)
 }
 
@@ -563,6 +560,7 @@ pub fn decode_checkpoint_for(
     payload: &[u8],
     layers: LayerSupport,
 ) -> Result<Checkpoint, ProtocolError> {
+    deterministic::validate(payload)?;
     let mut decoder = Decoder::new(payload);
     let count = decoder
         .map()
@@ -608,10 +606,6 @@ pub fn decode_checkpoint_for(
         timeout_ms,
     };
     validate_checkpoint(&result, layers)?;
-    let canonical = encode_checkpoint_for(&result, layers)?;
-    if canonical[5..] != *payload {
-        return Err(ProtocolError::frame("checkpoint CBOR is not deterministic"));
-    }
     Ok(result)
 }
 
@@ -768,7 +762,7 @@ pub fn decode_status_frame(
 fn encode_status_extension(extension: &StatusExtension) -> Result<Vec<u8>, ProtocolError> {
     match extension {
         StatusExtension::Yield { reason, token } => {
-            if !(1..=5).contains(reason) || token.len() > 0x00ff_ffff {
+            if token.len() > 0x00ff_ffff {
                 return Err(ProtocolError::entity("invalid yield extension"));
             }
             let length = token.len() as u32;
@@ -805,7 +799,7 @@ fn decode_status_extension(state: u8, extension: &[u8]) -> Result<StatusExtensio
             let reason = extension[0];
             let token_length =
                 u32::from_be_bytes([0, extension[1], extension[2], extension[3]]) as usize;
-            if !(1..=5).contains(&reason) || extension.len() != 4 + token_length {
+            if extension.len() != 4 + token_length {
                 return Err(ProtocolError::frame("yield extension is invalid"));
             }
             Ok(StatusExtension::Yield {
@@ -1096,7 +1090,7 @@ fn validate_claim_redemption(redemption: &ClaimRedemption) -> Result<(), Protoco
         || !redemption
             .session_id
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
     {
         return Err(ProtocolError::entity("invalid session-id"));
     }
@@ -1282,6 +1276,7 @@ pub fn decode_entity_for(
     if payload.len() > MAX_PAYLOAD {
         return Err(ProtocolError::limit("entity payload exceeds local limit"));
     }
+    deterministic::validate(encoded)?;
     let mut decoder = Decoder::new(encoded);
     let count = decoder
         .map()
@@ -1344,12 +1339,6 @@ pub fn decode_entity_for(
         completion_policy,
     };
     validate_entity_header_for(&header, payload, layers)?;
-    let canonical = encode_entity_for(&header, payload, layers)?;
-    if canonical[4..4 + header_length] != *encoded {
-        return Err(ProtocolError::frame(
-            "entity header CBOR is not deterministic",
-        ));
-    }
     Ok((header, payload))
 }
 
@@ -1592,11 +1581,12 @@ fn encode_completion_policy(
             .map_err(cbor_encode)?;
     }
     if let Some(ratio) = policy.min_success_ratio {
-        encoder
-            .str("min-success-ratio")
-            .map_err(cbor_encode)?
-            .f32(ratio)
-            .map_err(cbor_encode)?;
+        encoder.str("min-success-ratio").map_err(cbor_encode)?;
+        if deterministic::fits_f16(ratio) {
+            encoder.f16(ratio).map_err(cbor_encode)?;
+        } else {
+            encoder.f32(ratio).map_err(cbor_encode)?;
+        }
     }
     Ok(())
 }
@@ -1682,6 +1672,35 @@ fn cbor_decode(error: minicbor::decode::Error) -> ProtocolError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optional_fields_preserve_received_representation() {
+        for row in include_str!("../../../test-vectors/optional-fields.tsv")
+            .lines()
+            .skip(1)
+        {
+            let fields: Vec<_> = row.split('\t').collect();
+            let bytes: Vec<_> = fields[3]
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+                .collect();
+            let result = match fields[1] {
+                "capabilities" => decode_capabilities(&bytes).map(|_| ()),
+                "checkpoint" => decode_checkpoint(&bytes).map(|_| ()),
+                _ => panic!("unknown vector kind"),
+            };
+            assert_eq!(
+                result.is_ok(),
+                fields[2] == "valid",
+                "{}: {result:?}",
+                fields[0]
+            );
+            if let Err(error) = result {
+                assert_eq!(error.name, "PIPESTREAM_FRAME_ERROR");
+            }
+        }
+    }
     use std::{fs, path::PathBuf};
 
     #[test]

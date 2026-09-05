@@ -8,7 +8,13 @@ Executable Layer 0 implementations now live under [`implementations/`](implement
 
 The checked-in [`test-vectors/`](test-vectors/) corpus supplies frozen valid and invalid bytes. A protocol-neutral Rust driver runs every client against every server as separate processes; it has no dependency on any protocol implementation and does not encode or decode PipeStream frames. The language-native applications in [`examples/`](examples/) exercise cross-language transfer, application-profile recovery, and three-node scatter/reassembly.
 
-All three implementations cover the documented Layer 0 subset. The Rust exemplar additionally implements Layer 1 recursive scopes and the narrow Layer 2 durable-yield and claim-redemption profile described in the draft. The Java and C++ implementations do not claim those layers yet. The algorithms below remain informative guidance and are not implied by a Layer 0 interoperability run.
+All three implementations cover a documented Layer 0 subset, not all mandatory
+Layer 0 behavior. Rust additionally exercises recursive scopes and selected
+durable-yield and claim-redemption operations. There is not yet a negotiated
+wire capability identifying that narrower subset. Java and C++ do not
+implement those layers. See [draft-04 readiness](docs/standards/draft04-readiness.md)
+for the evidence and open work. The algorithms below are informative and
+are not implied by a successful interoperability run.
 
 ## 1. Rehydration Readiness Tracking (Fibonacci Heap)
 

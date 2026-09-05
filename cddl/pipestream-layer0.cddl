@@ -48,7 +48,7 @@ completion-policy = {
   ? max-retries: uint,
   ? retry-delay-ms: uint,
   ? timeout-ms: uint,
-  ? min-success-ratio: float32,
+  ? min-success-ratio: float16 / float32,
   ? on-timeout: failure-action,
   ? on-failure: failure-action,
 }
