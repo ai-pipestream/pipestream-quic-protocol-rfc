@@ -175,6 +175,26 @@ approval as part of a repository landing.
   five Java tests, the C++ test, nine transfer pairings, 32 capability probes,
   and every external example. Draft -04 passed idnits with zero errors, flaws,
   and warnings, and one informational FIPS reference comment.
+- Java state-machine increment: independent deterministic CBOR and WORK_SET
+  codecs preserve uint64 values and consume the frozen declaration corpus.
+  A separate SQLite store durably retains declaration history, membership,
+  payload admission, outcomes, child closure, and STRICT parent resolution.
+  Replay and completion checks compare acknowledged history with retained scope
+  membership; missing payloads cannot become completion. Status Merkle summaries
+  match frozen frames and literal odd-node-promotion hashes. Scoped readiness
+  uses the entire sealed inclusive cut, not a received-so-far cursor.
+  Tests cover concurrent handles, failed-transaction rollback, retained global
+  and session limits, missing/corrupt membership, and abrupt process exits after
+  declaration and child closure. The full `./conformance/run_all.sh` passed
+  with 162 Rust workspace tests, 30 Java tests, the C++ test, nine existing
+  transfer pairings, 32 capability probes, and all external examples. New Java
+  public APIs passed Javadoc with doclint and warnings denied. Draft -04 passed
+  idnits with zero errors/flaws/warnings and one informational FIPS comment.
+  This is a library foundation, not the full Java profile: Netty integration,
+  connection state, chunk/payload storage, public sealed client, and real
+  Java/Rust recursive and reconnect interoperability remain unimplemented.
+  The Java listener still advertises only Layer 0. No Rust state format or
+  protocol wire format changed, and no operational database was converted.
 - Not yet implemented: physical database/WAL and retained-payload quotas,
   completion-space reservations, orphan reclamation,
   and the independent Java
@@ -196,4 +216,8 @@ and physical SQLite storage. Add physical quotas, completion reservations, and
 explicit orphan reconciliation without
 deleting a live generation or treating missing input as completed work.
 Do not treat recovery receipts or publication fencing as completion of bounded
-asynchronous execution. Java still implements only the earlier Layer 0 subset.
+asynchronous execution. Java's network endpoints still implement only the
+earlier Layer 0 subset. Wire the independent Java sealed state machine into
+the Netty server and public client, then prove positive and adversarial
+Java/Rust interoperability over actual QUIC, including lost ACKs, reconnect,
+scoped checkpoints, and recursive completion.

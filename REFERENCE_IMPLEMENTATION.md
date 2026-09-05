@@ -13,8 +13,9 @@ Layer 0 behavior. Rust additionally exercises recursive scopes and selected
 durable-yield and claim-redemption operations. Its separate sealed-work-set
 profile is explicitly negotiated as private-use extension 65281 and excludes
 Layer 2; the legacy resilience subset still lacks its own narrower capability.
-Java and C++ do not
-implement those layers. See [draft-04 readiness](docs/standards/draft04-readiness.md)
+Java has an independent sealed declaration codec and durable recursive state
+foundation, but its network endpoints and the C++ endpoints remain Layer 0.
+See [draft-04 readiness](docs/standards/draft04-readiness.md)
 for the evidence and open work. The algorithms below are informative and
 are not implied by a successful interoperability run.
 
@@ -22,7 +23,13 @@ are not implied by a successful interoperability run.
 
 ### 1.1. Overview
 
-Due to the distributed nature of PipeStream processing, child entities MAY complete out of order. The protocol requires implementations to efficiently track Assembly Manifest resolution order with O(1) insertion and amortized O(log n) minimum extraction (see Section 9.5 of the protocol specification).
+Child entities can complete out of order. Section 9.6 requires tracking
+rehydration readiness but leaves the algorithm and representation to the
+implementation; it does not mandate the complexity bounds below. Under the
+sealed-work profile, a zero count of outstanding received children is not
+sufficient: membership must also be sealed, every declared child admitted and
+resolved, and descendant scopes closed. STRICT additionally requires every
+child to succeed.
 
 A **Fibonacci heap** is the recommended data structure for this purpose, due to its O(1) amortized decrease-key operation, which maps naturally to the "child completed" event that moves a manifest entry closer to rehydration readiness.
 

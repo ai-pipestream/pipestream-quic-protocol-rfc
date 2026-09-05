@@ -357,6 +357,36 @@ warnings, and one informational FIPS reference comment.
 
 ## Validation
 
+### Independent Java sealed-work foundation
+
+Java now has separate deterministic CBOR, WORK_SET, and SCOPE_DIGEST codecs
+plus SQLite declaration, admission, result, and child-closure storage. It
+consumes the frozen work-set and scope-digest inputs without importing Rust
+protocol or state code. Strict unsigned decoding and exact ACK correlation
+avoid numeric coercion or changed-request replay. Declaration checksums and
+membership checks precede replay or completion decisions.
+
+The state machine waits for sealed membership, missing declared payloads,
+terminal statuses, and all descendant closures. STRICT rehydration requires
+every child to succeed; a failed child instead fails its parent. Scope summaries
+commit only to direct identifiers and statuses. Tests exercise nested scopes
+with out-of-order arrival, WAL reopen, abrupt exit after declaration/closure,
+concurrent handles, quota exhaustion, corruption, and transactional rollback.
+
+The Java public network client and listener remain Layer 0. This foundation
+does not activate sealed work on Netty, add payload storage or executor fencing,
+or establish Java/Rust sealed-work interoperability. Logical declaration quotas
+are not physical storage bounds. The remaining connection and interoperability
+work is explicit in the [Java README](../../implementations/java-netty/README.md).
+
+The complete `./conformance/run_all.sh` passed with 162 Rust workspace tests,
+30 Java tests (25 new), the C++ test, all nine existing transfer pairings,
+32 capability probes, and all external examples. New Java APIs also passed
+Javadoc with `-Xdoclint:all -Werror`. Draft -04 passed idnits with zero errors,
+flaws, and warnings, and one informational FIPS reference comment.
+
+### Reproducible suite and earlier landings
+
 `./conformance/run_all.sh` runs Rust formatting, Clippy with warnings denied,
 the workspace tests, Java tests, C++ CTest, both Rust example suites, the
 frozen-vector and CDDL checks, all nine client/server pairings, both recursive
