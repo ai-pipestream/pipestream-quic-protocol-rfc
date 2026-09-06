@@ -51,6 +51,13 @@ approval as part of a repository landing.
 
 ## Evidence and progress
 
+The [acceptance audit of implementation `5df4ec3`](recovery-execution-java-acceptance.md)
+maps every requirement above to current code and executable evidence. It records
+the final whole-suite and resource checks and distinguishes these three delivered
+features from broader protocol work. The increment sections below are historical:
+their counts and statements about work still due describe those increments,
+not the current acceptance status.
+
 ### Validated increment: failed descendant resolution
 
 Branch `fix/sealed-parent-failure-propagation` starts at PR #37's merge
@@ -1096,8 +1103,11 @@ No operational database has been migrated, and this increment is not a release.
 Implementation evidence must replace these status entries as it lands. A
 transport-authentication increment alone does not satisfy authenticated recovery.
 
-Next implementation boundaries: complete storage/resource guarantees around
-the asynchronous workers and independent Java sealed-work interoperability.
+Current implementation and verification status is recorded in the
+[acceptance audit](recovery-execution-java-acceptance.md). The following limits
+remain explicit; they are not claims that the delivered profiles cover the entire
+future protocol:
+
 Legacy CLAIM_REDEMPTION still refuses a duplicate after a lost ACK. Clients
 requiring retained admission and completion use the negotiated recovery profile.
 The service now populates job descriptors and reopens retained input. Lease
@@ -1105,11 +1115,12 @@ expiry is not callback cancellation. Periodic dispatch can reacquire unfinished
 expired attempts, but does not retry application-refused jobs automatically.
 Temporary spool accounting is process-local and excludes permanent entity files.
 Rust and Java SQLite file-length caps are now independent of that accounting.
-With independent Java physical completion headroom, Rust explicit orphan
-reconciliation and Java producer observations implemented, complete validation and
-the remaining crash/resource matrix without treating missing input as completed work.
-Do not treat recovery receipts or publication fencing as completion of bounded
-asynchronous execution. Java now has a separate sealed listener and public
-producer; its original listener and CLI remain Layer 0. Extend the existing
-cross-language tests through full retained-work resumption,
-including lost ACKs, reconnect, scoped checkpoints, and recursive completion.
+Independent Java physical completion headroom, Rust explicit orphan reconciliation
+and Java producer observations are implemented and covered by the acceptance
+evidence. Java has a separate sealed listener and public producer; its original
+listener and CLI remain Layer 0. Real cross-language tests now cover retained
+observations across restart, lost declaration ACKs, reconnect, scoped checkpoints
+and recursive success/failure. This does not add outcome lookup or automatic retry
+for unobserved sealed input. Missing input remains pending, never completed by
+inference. Recovery receipts and publication fencing alone are not the evidence
+for bounded execution; the audit separately maps the resource and worker tests.
