@@ -51,6 +51,58 @@ approval as part of a repository landing.
 
 ## Evidence and progress
 
+### In progress: Java durable producer observations
+
+Branch `feat/java-producer-observations` starts at PR #33's merge `80f38d6`.
+The package-private `SealedProducerJournal` now stores immutable request intents
+separately from verified observations. Each intent allocates its complete bounded
+observation image before it can be sent; observation updates replace that image
+without increasing the logical reservation. A protected append frontier detects
+missing records, including a deleted last row, rather than reusing their identities.
+Identical request replay retains the same slot; changed requests and changed final
+observations refuse. An intent without verified evidence remains unresolved.
+
+The journal has its own strict SQLite schema, immutable peer-context digest and
+storage limits, and checksummed row/observation bindings. It refuses server databases
+and foreign schemas without conversion. A single cooperating writer owns the
+journal through a process lock and one exclusive SQLite connection. The existing
+guarded VFS bounds database and sidecar lengths; this journal uses DELETE rollback
+journals, not a WAL shared with server execution. Startup audits one bounded request
+at a time. These are local persistence primitives, not authentication credentials,
+server execution state, or a whole-process memory bound.
+
+The focused tests exercise restart, abrupt process exit, hot-journal rollback,
+logical and physical exhaustion, immutable replay, stale observations, corrupted
+records/frontiers, cross-record and cross-journal substitution, foreign schemas,
+and same-JVM/separate-JVM writer exclusion. The writer tests exposed a POSIX lock
+hazard: opening then closing a second descriptor could drop the owner's process
+lock. A canonical-path ownership registry now refuses same-JVM opens before they
+open another lock descriptor; the subprocess test verifies the lock remains held.
+
+Foundation validation: all 12 focused tests pass. Final `./conformance/run_all.sh`
+passed with 297 Rust workspace tests and 170 Java tests, with no Java failures,
+errors or skips counted from JUnit XML, native SQLite/C++ checks, all nine
+implementation pairings, 32 capability probes, recursive/recovery CLI checks and
+all three external examples. Strict package-level Javadoc for the new type passed
+with `-Xdoclint:all -Werror`. Draft -04 passed idnits with zero errors, flaws or
+warnings and one FIPS reference comment. The wire tests cover existing transport
+behavior, not durable-client integration that has yet to be written.
+
+This is unfinished implementation, not a landed public-client feature. The journal
+is not yet called by `SealedClient`. Remaining work on this branch must add typed
+producer records, bind the actual TLS peer context, persist intents before network
+effects and verified responses before returning them, restore recursive observations
+and checkpoint identities, and expose unresolved attempts without blindly retrying
+admitted payloads. Complete real Java/Rust reconnect, lost-response and crash tests
+and the full suite before publishing the integrated client. Wire/CDDL are unchanged.
+
+Two current transport constraints must survive integration: Java's sealed server
+refuses PENDING/payload replay for previously admitted IDs, and declaration replay
+does not subscribe to their retained processing outcomes. A missing observation
+therefore cannot authorize a blind resend. Also, GOAWAY needs an acknowledged root
+checkpoint on its current connection; remembering an older ACK does not replace
+the exact checkpoint exchange after reconnecting.
+
 ### Validated increment: Rust offline orphan reconciliation
 
 Branch `feat/rust-orphan-reconciliation` starts from PR #32's merge `7906d3c`.
@@ -864,10 +916,11 @@ No operational database has been migrated, and this increment is not a release.
   reference comment. These are local results, not proof of full-goal completion.
 - Java physical DB/WAL completion reservations passed their conformance gate;
   see the current increment above.
-  Not yet implemented: Rust orphan reclamation,
-  persistent producer observations, and the remaining independent Java
-  profile requirement matrix. Physical execution limits and temporary spools are coordinated only
-  within one writer process; broader tenant/resource stress evidence remains due.
+  At that increment, Rust orphan reclamation was not implemented; PR #33's
+  evidence above now covers it. Persistent producer observations and the remaining
+  independent Java profile requirement matrix are still unfinished. Physical
+  execution limits and temporary spools are coordinated only within one writer
+  process; broader tenant/resource stress evidence remains due.
 
 Implementation evidence must replace these status entries as it lands. A
 transport-authentication increment alone does not satisfy authenticated recovery.
@@ -881,9 +934,9 @@ expiry is not callback cancellation. Periodic dispatch can reacquire unfinished
 expired attempts, but does not retry application-refused jobs automatically.
 Temporary spool accounting is process-local and excludes permanent entity files.
 Rust and Java SQLite file-length caps are now independent of that accounting.
-With independent Java physical completion headroom implemented, complete
-Rust explicit orphan reconciliation without
-deleting a live generation or treating missing input as completed work.
+With independent Java physical completion headroom and Rust explicit orphan
+reconciliation implemented, complete Java producer-side persistence and the
+remaining crash/resource matrix without treating missing input as completed work.
 Do not treat recovery receipts or publication fencing as completion of bounded
 asynchronous execution. Java now has a separate sealed listener and public
 producer; its original listener and CLI remain Layer 0. Extend the existing
