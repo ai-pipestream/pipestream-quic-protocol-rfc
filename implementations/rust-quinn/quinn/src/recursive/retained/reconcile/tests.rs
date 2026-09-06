@@ -225,6 +225,47 @@ fn every_admitted_state_is_protected_including_refused_revoked_and_waiting_paren
 }
 
 #[test]
+fn final_owner_release_unlocks_despite_an_inherited_file_description() {
+    let (_dir, store, files) = fixture();
+    let root = files.root().to_owned();
+    files.put("work", key(1), b"orphan").unwrap();
+    // An unrelated fork/exec child temporarily inherits this open-file
+    // description even with CLOEXEC. A duplicate models that interval without
+    // scheduling-dependent process creation or an unsafe post-fork callback.
+    let inherited = files.retained._lock.file.try_clone().unwrap();
+    drop(files);
+    let report = reconcile(&root, &store);
+    assert_eq!(report.orphan_bodies_removed, 1);
+    assert_eq!(inherited.metadata().unwrap().len(), 0);
+    drop(inherited);
+}
+
+#[test]
+fn inherited_nonowner_guard_does_not_unlock_the_original_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("lock");
+    let file = File::create(&path).unwrap();
+    let owner = RootLock::acquire(file).unwrap();
+    // Model the child's process identity without fork or unsafe test code.
+    let copied = RootLock {
+        file: owner.file.try_clone().unwrap(),
+        owner_process: std::process::id().wrapping_add(1),
+    };
+    drop(copied);
+    let other = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    assert_eq!(
+        lock_root(&other).unwrap_err().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    drop(owner);
+    lock_root(&other).unwrap();
+}
+
+#[test]
 fn missing_corrupt_or_caller_managed_input_refuses_before_any_orphan_or_spool_deletion() {
     for fault in [
         "missing",

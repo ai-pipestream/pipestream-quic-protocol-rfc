@@ -390,7 +390,35 @@ pub(crate) struct RetainedRoot {
     identity: StoreIdentity,
     binding: Mutex<Option<PayloadBinding>>,
     exclusive: bool,
-    _lock: File,
+    _lock: RootLock,
+}
+
+#[derive(Debug)]
+struct RootLock {
+    file: File,
+    owner_process: u32,
+}
+
+impl RootLock {
+    fn acquire(file: File) -> io::Result<Self> {
+        lock_root(&file)?;
+        Ok(Self {
+            file,
+            owner_process: std::process::id(),
+        })
+    }
+}
+
+impl Drop for RootLock {
+    fn drop(&mut self) {
+        // flock belongs to the open-file description. Close alone can leave
+        // ownership with an unrelated child's inherited descriptor until exec.
+        // A forked child dropping a copied guard must not unlock its parent.
+        #[cfg(unix)]
+        if self.owner_process == std::process::id() {
+            let _ = rustix::fs::flock(&self.file, rustix::fs::FlockOperation::Unlock);
+        }
+    }
 }
 
 impl RetainedRoot {
@@ -466,7 +494,7 @@ impl RetainedRoot {
             .read(true)
             .write(true)
             .open(&lock_path)?;
-        lock_root(&lock)?;
+        let lock = RootLock::acquire(lock)?;
         let policy = root.join(".retained-policy");
         if regular_length(&policy, 1)?.is_none() {
             for entry in fs::read_dir(&root)? {
