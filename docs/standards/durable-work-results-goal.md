@@ -72,8 +72,13 @@ coordination complexity is a possible benefit; faster transport is not assumed.
 
 ## Execution decisions
 
-- Reducing mandatory version-1 behavior requires a new major protocol mapping;
-  do not weaken what `pipestream/1` or an existing extension ID promises.
+- The resumed goal explicitly requires the entire current contract in Rust and
+  Java, with no backward-compatibility requirement. Historical version-1 tests
+  remain regression evidence, not a reason to preserve a conflicting design
+  or defer current behavior. The selected target is Section 12/Appendix F's
+  durable-work plus result-delivery combination. All failure-driver and
+  equivalent-workload deliverables remain required; milestones do not finish
+  the goal.
 - Separate work identity from attempt identity and result delivery observations.
   Neither disconnect nor result-stream reset authorizes execution.
 - Use Rust for the independent model/driver. No Python implementation,
@@ -323,3 +328,68 @@ transport, persistent client/authority state and resource transactions, durable
 executors, real crash/cleanup tests, cross-language V2 driver scenarios, and
 task 3's equivalent streaming-gRPC workload measurements. No V2 conformance,
 IETF acceptance, submission, merge, deployment or performance win is claimed.
+
+### Task 2 implementation progress: Rust authority transactions, 2026-09-06
+
+The resumed implementation adds `v2/authority/`, a normalized STRICT SQLite
+store using WAL, FULL synchronization, the guarded physical VFS and typed
+canonical records. It is actual persistent library behavior, not an activated
+endpoint or a replacement for the complete execution contract.
+
+- Session creation atomically allocates the authority generation, owner creation
+  sequence and root scope. Matching requests replay the same binding; changed
+  policy/profile, future sequence, retired creation history and exhausted
+  counters have named refusals. Limits and exact retention policies are retained.
+- Reopening never initializes a missing/empty database. New issuing history
+  requires explicit `initialize` against a nonexistent database path. Startup
+  checks stored authority and policy and syncs the directory. This prevents
+  accidental reset on reopen; it cannot prove an operator's stale backup is safe.
+- Declaration commits membership, counters, whole-scope seal and immutable
+  operation receipt together. Sealing uses a fallible SQLite cursor and a
+  constant-memory incremental hasher. Replay precedes new-capacity checks.
+  Bounded pages and revision snapshots are read-only. An empty sealed scope
+  closes; a sealed scope with missing declared inputs remains unresolved.
+- Authorization is checked before retained lookup and rechecked before mutation
+  commit. UTC high-water is durable; rollback/untrusted time refuses new
+  mutations without denying authorized retained evidence. Integer persistence
+  uses checked signed-63-bit conversions, not floating point or JSON.
+- Tests exercise concurrent identical and conflicting operations, policy
+  withdrawal before commit, restart replay, independent principals, changed
+  profiles, batch-independent seals, exact IDs above 2^53, quotas and physical
+  exhaustion with whole-batch rollback. Four subprocess exits bracket creation
+  and declaration commits, proving both uncommitted absence and committed
+  replay after the acknowledgment was never delivered to a caller.
+
+The authority tests are in `v2/authority/tests.rs`; frozen wire tests remain in
+`v2/tests.rs`. Focused command: `cargo test --locked -p pipestream-core v2::`.
+There are 35 passing tests (17 wire/library tests and 18 authority tests,
+including the subprocess entry point). The physical test limits database, WAL
+and rollback journal to 128 KiB each and SHM to 64 KiB. These are file-length
+ceilings, not filesystem-block, heap/RSS, or future-completion funding evidence.
+
+A negative-first regression caught an empty-root closure accepting a timestamp
+whose creation-receipt retention would overflow the wire integer range. Closure
+now checks that entire interval before committing its seal, summary or receipt;
+the maximum exactly representable deadline is accepted. The refusal rolls back
+both the operation and UTC high-water update.
+
+Still required in this store: staged immutable payloads, admission funding and
+jobs, attempts/worker leases, cancellation/revocation settlement, nonempty
+closure, result publication/read leases, independent expiry and retirement,
+crash-safe cleanup and accounting reconciliation. No incomplete profile is
+advertised. Next implementation work is payload staging plus atomic funded
+admission, followed by execution/result/recovery integration. Independent Java,
+the neutral cross-language failure driver and the equivalent streaming-gRPC
+workload remain part of the active goal.
+
+Verification: `./conformance/run_all.sh` exited 0, including 193 Java tests
+(20 Surefire reports, zero failures/errors/skips), native/C++ checks, frozen
+vectors, all nine black-box pairs, 32 raw capability probes, models and all
+three external examples. After the final retention-overflow correction, strict
+workspace clippy and all 377 Rust workspace tests passed. No draft wire bytes,
+CDDL or normative Section 12 text changed in this increment. Local logs:
+
+- `/tmp/pipestream-v2-authority-suite-20260906.log`
+- `/tmp/pipestream-v2-authority-final-clippy.log`
+- `/tmp/pipestream-v2-authority-final-workspace.log`
+- `/tmp/pipestream-v2-authority-retention-red.log` (deliberate pre-fix failure)

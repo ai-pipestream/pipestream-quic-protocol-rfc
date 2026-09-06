@@ -44,10 +44,22 @@ chunks but neither stores them nor runs callbacks. An endpoint must drive
 its deadline checks even when no bytes arrive, and invoke `finish` only for
 an actual successful FIN, never a stream reset.
 
-The durable V2 authority, client journal, mTLS integration, SQLite state and
-quota transactions, restartable executor, cleanup and independent Java
-implementation are not implemented by these helpers. V1 storage and ALPN
-remain unchanged. See the
+`v2::authority::AuthorityStore` adds normalized SQLite session/creation history,
+declarations, immutable operation receipts, bounded pages/revision snapshots and
+empty sealed closure. It checks current local authorization, trusted UTC,
+logical quotas and guarded database/WAL file-length limits. `initialize` is an
+explicit new-store operation; `open` fails on missing/empty history. The caller
+must supply a verified principal, a bounded local authorization policy and a
+trusted clock. An accepted forward jump is treated as real UTC; the store refuses
+later regression. Operators must reject unjustified jumps in the clock provider
+and must not restore stale issuing history without external anti-reuse proof.
+
+This authority does not yet implement payload staging, funded admission/jobs,
+workers, cancellation settlement, nonempty closure, results or cleanup. Physical
+file caps do not reserve future completion space. Client journals, V2 mTLS/QUIC
+integration and independent Java V2 implementation also remain outstanding.
+The current contract has no backward-compatibility requirement; historical V1
+tests are regression evidence only. See the
 [V2 acceptance ledger](../../docs/standards/durable-work-v2-test-plan.md).
 
 The original `serve` and `send` commands retain the common Layer 0 black-box

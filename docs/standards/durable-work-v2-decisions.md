@@ -6,6 +6,11 @@ the version-2 profiles yet. The existing version-1 specification and
 frozen vectors retain their meanings. The complete acceptance scope is in
 [the execution record](durable-work-results-goal.md).
 
+The user's resumed goal removes backward compatibility as an implementation
+requirement. The current Section 12/Appendix F contract is the target in both
+languages; historical protocol behavior must not constrain its implementation.
+The original failure-testing and workload-comparison deliverables are unchanged.
+
 ## Version and layering
 
 Use a new major ALPN mapping for the reduced Core. A required capability is a

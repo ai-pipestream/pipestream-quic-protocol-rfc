@@ -60,6 +60,47 @@ session and operation journals; real durable authority/storage/execution;
 restart/cleanup/resource measurements; neutral Rust cross-language scenarios.
 The library helpers do not satisfy these outstanding acceptance gates.
 
+### Rust authority storage evidence, 2026-09-06
+
+`src/v2/authority/` now implements persistent session creation/attachment,
+declaration, operation replay/lookup, membership pages, revision snapshots and
+empty sealed closure. Its 18 tests (including the subprocess entry point) run
+under the same `cargo test --locked -p pipestream-core v2::` command; 35 tests
+pass together with the 17 wire-library tests.
+
+- V2-SESSION/V2-OP: `creation_replays_after_reopen_without_reissuing_identity`,
+  `simultaneous_creation_and_declaration_commit_once`,
+  `different_concurrent_parameters_cannot_share_an_operation`, and
+  `counter_exhaustion_and_retired_creation_never_reuse_identity` exercise actual
+  transactions and retained identity. The retired-history case seeds a synthetic
+  high-water row; it is not a retirement/cleanup implementation test.
+- V2-AUTH/V2-TIME: `authorization_precedes_lookup_and_revocation_denies_replay`,
+  `policy_withdrawal_before_commit_rolls_back_mutation_and_receipt`, and
+  `clock_rollback_refuses_mutation_but_preserves_retained_evidence` use explicit
+  local policy/clock implementations. They do not validate TLS or prove revoked
+  work settlement. The revocation case sets the retained denial flag directly.
+- V2-SET/V2-CLOSE: declaration/replay/page, batch-independent seal, missing input,
+  and empty scope tests distinguish membership from admission and completion.
+  Nonempty descendant closure is still unimplemented in this store.
+- V2-STORE: `process_crash_on_each_side_of_creation_and_declaration_commit`
+  runs four child-process exits without SQLite/Rust destructors. Reopen verifies
+  pre-commit absence and post-commit replay. This covers metadata commits, not
+  payload installation, worker execution, transport ACK loss or cleanup.
+- V2-STORE: `physical_exhaustion_rolls_back_whole_batch_and_preserves_replay`
+  exercises 128 KiB DB/WAL/journal caps and a 64 KiB SHM cap; committed evidence
+  remains readable/replayable after refusal and reopen. This measures file
+  lengths, not allocated blocks or future completion/WAL reservations.
+- Reopen/initialization tests prevent accidental empty-store creation during
+  recovery. Exact large-integer tests include values above 2^53 and the maximum
+  signed-63-bit entity ID. No JSON or floating-point persistence is used.
+- V2-TIME: `empty_root_closure_refuses_unrepresentable_receipt_retention`
+  failed before the fix and now checks overflow refusal without a committed seal
+  or operation, plus acceptance at the exact maximum representable deadline.
+
+The full cross-language gates below remain open. Funded payload admission,
+workers/leases/cancellation, nonempty closure, results/read pins, retirement and
+cleanup are the next authority implementation work, not implied by these tests.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

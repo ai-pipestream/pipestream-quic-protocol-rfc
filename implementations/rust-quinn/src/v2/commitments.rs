@@ -164,35 +164,65 @@ pub fn scope_seal<I>(
 where
     I: IntoIterator<Item = Id>,
 {
-    scope.check()?;
-    producer.check()?;
-    declared.check()?;
-    if let Some(parent) = parent {
-        parent.check()?;
-    }
-    scope_identity(scope, producer, parent)?;
-    let mut w = Writer::new();
-    w.array(7);
-    session.write(&mut w)?;
-    scope.write(&mut w);
-    producer.write(&mut w);
-    if let Some(parent) = parent {
-        parent.write(&mut w);
-    } else {
-        w.null();
-    }
-    // The full membership is not a wire batch and can exceed 256 entries.
-    // Its CBOR array length is a u64, including on 32-bit mobile platforms.
-    w.array_u64(declared.0);
-    let mut hasher = Sha256::new();
-    hasher.update(b"pipestream-scope-seal-v2");
-    hasher.update(w.finish());
-    let mut count = 0u64;
-    let mut previous = 0;
+    let mut seal = ScopeSeal::new(session, scope, producer, parent, declared)?;
     for id in ids {
+        seal.push(id)?;
+    }
+    seal.finish()
+}
+
+/// Incremental seal builder for fallible database/file cursors. A failed read
+/// can propagate without buffering membership or manufacturing a missing ID.
+pub struct ScopeSeal {
+    hasher: Sha256,
+    declared: Number,
+    count: u64,
+    previous: u64,
+}
+
+impl ScopeSeal {
+    pub fn new(
+        session: &SessionIdentity,
+        scope: Number,
+        producer: Producer,
+        parent: Option<&WorkKey>,
+        declared: Number,
+    ) -> Result<Self, Error> {
+        scope.check()?;
+        producer.check()?;
+        declared.check()?;
+        if let Some(parent) = parent {
+            parent.check()?;
+        }
+        scope_identity(scope, producer, parent)?;
+        let mut w = Writer::new();
+        w.array(7);
+        session.write(&mut w)?;
+        scope.write(&mut w);
+        producer.write(&mut w);
+        if let Some(parent) = parent {
+            parent.write(&mut w);
+        } else {
+            w.null();
+        }
+        // The full membership is not a wire batch and can exceed 256 entries.
+        // Its CBOR array length is a u64, including on 32-bit mobile platforms.
+        w.array_u64(declared.0);
+        let mut hasher = Sha256::new();
+        hasher.update(b"pipestream-scope-seal-v2");
+        hasher.update(w.finish());
+        Ok(Self {
+            hasher,
+            declared,
+            count: 0,
+            previous: 0,
+        })
+    }
+
+    pub fn push(&mut self, id: Id) -> Result<(), Error> {
         id.check()?;
         require(
-            count < declared.0 && id.0 > previous,
+            self.count < self.declared.0 && id.0 > self.previous,
             "seal membership count/order mismatch",
         )?;
         let mut encoded = minicbor::Encoder::new(minicbor::encode::write::Cursor::new([0; 9]));
@@ -200,12 +230,16 @@ where
             .u64(id.0)
             .expect("nine bytes encode any unsigned integer");
         let cursor = encoded.into_writer();
-        hasher.update(&cursor.get_ref()[..cursor.position()]);
-        previous = id.0;
-        count += 1;
+        self.hasher.update(&cursor.get_ref()[..cursor.position()]);
+        self.previous = id.0;
+        self.count += 1;
+        Ok(())
     }
-    require(count == declared.0, "truncated seal membership")?;
-    Ok(Digest(hasher.finalize().into()))
+
+    pub fn finish(self) -> Result<Digest, Error> {
+        require(self.count == self.declared.0, "truncated seal membership")?;
+        Ok(Digest(self.hasher.finalize().into()))
+    }
 }
 
 record!(StatusLeaf { work: WorkKey, state: State, attempt: Number, manifest_digest: Option<Digest>, child_status_root: Option<Digest> } |s| {

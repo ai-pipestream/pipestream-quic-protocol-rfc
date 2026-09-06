@@ -124,7 +124,7 @@ pub struct PhysicalUsage {
 }
 
 #[derive(Debug)]
-pub(super) struct Guard {
+pub(crate) struct Guard {
     pub path: PathBuf,
     pub limits: PhysicalLimits,
     paths: [PathBuf; 4],
@@ -274,7 +274,7 @@ fn checked_length(path: &Path) -> Result<Option<u64>, StoreError> {
     Ok(Some(metadata.len()))
 }
 
-pub(super) const VFS_NAME: &str = "pipestream-bounded-unix-v1";
+pub(crate) const VFS_NAME: &str = "pipestream-bounded-unix-v1";
 
 #[cfg(test)]
 mod tests;

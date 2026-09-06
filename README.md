@@ -31,7 +31,10 @@ advertised yet; the existing interoperability evidence is for version 1.
 The Rust `pipestream_core::v2` library now implements typed codecs for every
 version-2 message and record, frozen commitments, negotiation checks, bounded
 client correlation and incremental object validation. This is a library
-foundation, not a durable version-2 endpoint. The
+foundation, not a durable version-2 endpoint. Its `v2::authority` module now
+adds transactional session identity, declaration/operation replay and bounded
+retained-state reads, with subprocess commit-crash tests. Payload admission,
+execution, results and cleanup remain to be implemented for that authority. The
 [V2 acceptance ledger](docs/standards/durable-work-v2-test-plan.md) keeps Java,
 authenticated transport, storage, execution and process-level evidence open.
 

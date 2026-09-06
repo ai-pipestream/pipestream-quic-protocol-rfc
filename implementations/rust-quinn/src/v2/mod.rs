@@ -4,6 +4,7 @@
 //! authorization, negotiated budgets and retained-state commitments still require
 //! validation by the authority/client before a message can affect durable state.
 
+pub mod authority;
 mod codec;
 mod commitments;
 mod correlation;

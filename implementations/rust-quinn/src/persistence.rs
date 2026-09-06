@@ -26,6 +26,7 @@ pub use queue::{JobQueueLimits, JobQueueUsage, ReadyJob};
 mod storage;
 pub use storage::{StorageLimits, StorageUsage};
 mod physical;
+pub(crate) use physical::{Guard as PhysicalGuard, VFS_NAME as GUARDED_VFS};
 pub use physical::{PhysicalLimits, PhysicalUsage};
 
 const SCHEMA: &str = "
@@ -502,13 +503,13 @@ fn now_micros() -> Result<i64, StoreError> {
 }
 
 #[cfg(unix)]
-fn sync_directory(path: &Path) -> Result<(), StoreError> {
+pub(crate) fn sync_directory(path: &Path) -> Result<(), StoreError> {
     fs::File::open(path)?.sync_all()?;
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn sync_directory(_path: &Path) -> Result<(), StoreError> {
+pub(crate) fn sync_directory(_path: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
