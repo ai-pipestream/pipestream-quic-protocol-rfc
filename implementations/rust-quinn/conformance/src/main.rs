@@ -3,6 +3,8 @@
 mod extensions;
 mod receipts;
 mod schema;
+mod scope_model;
+mod work_model;
 
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Parser, Subcommand};
@@ -35,6 +37,13 @@ enum Task {
     Recursive,
     Examples,
     Extensions,
+    /// Explore the independent, bounded durable-work lifecycle model.
+    Modelcheck {
+        #[arg(long, default_value_t = 32)]
+        depth: usize,
+        #[arg(long, default_value_t = 1_000_000)]
+        max_states: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +73,10 @@ fn run(cli: Cli) -> Result<()> {
         Task::Recursive => recursive(),
         Task::Examples => examples(),
         Task::Extensions => extensions::run(),
+        Task::Modelcheck { depth, max_states } => {
+            work_model::run(depth, max_states)?;
+            scope_model::run(depth, max_states)
+        }
     }
 }
 

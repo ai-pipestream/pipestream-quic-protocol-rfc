@@ -22,6 +22,11 @@ payload integrity, and durable caller authentication. Appendix E retains the
 unresolved identity, result-delivery, retention, and profile-composition choices;
 this is a reviewed draft, not a claim those features are already implemented.
 
+The [durable-work/results goal](docs/standards/durable-work-results-goal.md)
+tracks the next contract, independent Rust/Java implementation, and equivalent
+streaming-gRPC workload evidence. Its initial executable lifecycle models are
+design checks; no version-2 endpoint or wire profile is available yet.
+
 Draft -04 now defines supported/required extension negotiation, implemented
 independently in Rust, Java, and C++. Unknown requirements fail CONNECT;
 optional unknown identifiers are not activated. Sealed work sets and

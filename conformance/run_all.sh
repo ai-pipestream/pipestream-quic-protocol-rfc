@@ -19,6 +19,7 @@ cargo clippy --locked --workspace --all-targets --manifest-path implementations/
 cargo test --locked --workspace --manifest-path implementations/rust-quinn/Cargo.toml
 cargo build --release --locked --workspace --manifest-path implementations/rust-quinn/Cargo.toml
 implementations/rust-quinn/target/release/pipestream-conformance verify
+implementations/rust-quinn/target/release/pipestream-conformance modelcheck --depth 32 --max-states 1000000
 
 mvn install -q -Psealed-interop -f implementations/java-netty/pom.xml
 mvn verify -q -f examples/java-to-rust/pom.xml

@@ -80,6 +80,29 @@ implementations/rust-quinn/target/release/pipestream-conformance examples
 Test certificates are generated in a temporary directory and are never
 production credentials.
 
+## Successor lifecycle models
+
+`pipestream-conformance modelcheck --depth 32 --max-states 1000000` runs two
+independent abstract models, not the production protocol libraries. The full
+suite runs this command. The work model explores one declared logical item,
+two attempts, owner/foreign callers, transaction staging/commit, lost replies,
+crash/reconnect, staged output, cancellation, revocation, deadline and retention.
+The scope model explores two root members and two possible descendants, sealed
+membership, four final-state count buckets and scope-qualified shutdown.
+
+The runner reports reached states, checked edges, shortest counterexamples for
+deliberately broken rules, and the depth frontier. A state-budget overrun or an
+undetected negative control fails as inconclusive. Zero frontier means the
+finite abstract graph was exhausted, not an unbounded protocol proof. Metadata
+transactions are assumed atomic; file installation is a separate persistent
+step. Cryptography, wire codecs, arbitrary depth/cardinality, real storage crash
+consistency, liveness, and the composition of the two models are not proved.
+
+These are design checks for [the successor contract](../docs/standards/durable-work-v2-decisions.md).
+They do not enable a new wire profile or replace the cross-language failure
+driver and implementation evidence required by
+[the complete goal](../docs/standards/durable-work-results-goal.md).
+
 ## Draft-04 regression evidence
 
 `quinn/tests/draft04_wire.rs` uses raw QUIC peers for reordered and stalled
