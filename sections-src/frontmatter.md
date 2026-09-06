@@ -31,6 +31,7 @@ normative:
   RFC8174:
   RFC9000:
   RFC9001:
+  RFC9525:
   RFC9846:
   RFC8126:
   RFC8949:

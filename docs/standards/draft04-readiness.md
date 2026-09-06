@@ -189,6 +189,9 @@ verified. All implementations still need that complete matrix.
 
 - Normative QUIC TLS mapping reference, corrected WebTransport comparison,
   and explicit UDP connection-failure behavior.
+- Explicit RFC 9525 service-identity checks before application frames: DNS/IP
+  SAN matching and no Common-Name fallback. Both Java clients now enforce this;
+  a full certificate-edge-case matrix across all implementations remains due.
 - Precise omitted-field and binary16/binary32 representation rules.
 - Exact quorum threshold and partial-success semantics.
 - Pending-checkpoint timeout, duplicate-request deadline behavior, and an
@@ -1069,6 +1072,46 @@ and every external example. Changed public Java APIs passed Javadoc with
 `-Xdoclint:all -Werror`. Draft -04 passed idnits with zero errors, flaws, and
 warnings and one informational FIPS reference comment. These are local gates,
 not hosted CI, independent implementer review, or an IETF conformance claim.
+
+### Java durable producer observations and service identity
+
+The opt-in `SealedClient.connectDurable` now persists request intents before
+network writes and validated observations before reporting them. Its independent
+SQLite journal restores declaration membership, immutable file/chunk commitments,
+recursive parent observations and checkpoint identities. It retains original
+unacknowledged requests and uncertain input identities instead of assuming a lost
+response means no admission. It never blindly resends payloads. Reconnect replays
+the original root declaration and requires a fresh root-checkpoint ACK before
+GOAWAY; acknowledged shutdown prevents further use of that journal.
+
+The local binding fixes the exact CA PEM bytes, configured service name, ALPN and
+sealed profile, not the server IP/port or a producer credential. Both Java clients
+now independently check the actual server certificate's DNS/IP SAN after chain
+validation and before opening the application control stream. A real-QUIC wrong
+DNS-name test failed against the earlier Java client and passes with the fix.
+Additional tests cover DNS wildcard depth, IPv4/IPv6, an IP written in a DNS SAN,
+Common-Name-only certificates and ASCII validation before Unicode case folding.
+
+Focused validation passed 35 tests with no failures, errors or skips: journal and
+input-descriptor tests, name-matching tests, public Java client/server sequences,
+and Java-to-Rust/fault-injection sequences. Coverage includes three abrupt producer
+exits, recursive restart, dropped/changed declaration ACKs, interrupted rehydration,
+checkpoint timeout before a later seal, and quota refusal before payload admission.
+A 32 MiB actual-QUIC transfer, journaling and observation restore passes in a JVM
+with a 24 MiB heap and no duplicate execution. Strict Javadoc passes for all five
+production types in this increment. These are component/heap tests, not RSS, native-memory
+or concurrent-load measurements. The full integrated suite passed with 297 Rust
+workspace tests and 192 Java tests, zero Java failures/errors/skips from JUnit XML,
+native SQLite/C++ checks, all nine implementation pairings, 32 capability probes,
+recursive/recovery CLI checks and all three external examples. Draft -04 passed
+idnits with zero errors, flaws or warnings and one FIPS reference comment. These
+are local gates, not hosted CI or a complete-goal conformance claim.
+
+There is still no retained input-outcome query in this sealed profile. Remembered
+observations are not a substitute for that exchange, authenticated recovery or
+exactly-once effects. The broader resource and bidirectional adversarial test
+matrix remains part of the goal. Wire/CDDL and frozen frame bytes are unchanged;
+Section 10 now references RFC 9525 for service identity.
 
 ### Reproducible suite and earlier landings
 

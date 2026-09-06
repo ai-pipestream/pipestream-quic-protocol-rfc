@@ -8,6 +8,16 @@ QUIC TLS mapping, including ALPN and peer authentication. Implementations
 MUST NOT provide mechanisms to disable encryption. TLS is not a separate
 record-layer wrapper around UDP datagrams.
 
+A client MUST validate the server's certificate chain and verify its service
+identity under {{RFC9525}} before sending any PipeStream application frame.
+The reference identity MUST come from the client's configured target or an
+authenticated discovery mechanism, not from a name asserted by the unverified
+peer. DNS targets use dNSName subjectAltName entries; IP-literal targets use
+iPAddress subjectAltName entries. Implementations MUST NOT fall back to the
+certificate subject's Common Name. Wildcards in DNS identities are supported
+only as a complete left-most label matching exactly one reference label.
+Certificate trust alone does not establish the intended service identity.
+
 PipeStream frames MUST NOT be sent or processed in 0-RTT early data (Section 5.3), which removes the replay exposure that early data would otherwise introduce for capability negotiation and status frames.
 
 ## Entity Payload Integrity

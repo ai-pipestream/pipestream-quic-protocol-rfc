@@ -58,6 +58,72 @@ final class SealedInteropTest {
     }
   }
 
+  @Test void durableJavaProducerRestoresRecursiveWorkAcrossRustRestarts() throws Exception {
+    Path certs = certificates(), state = directory.resolve("durable-rust");
+    var durable = SealedClient.Durability.at(directory.resolve("producer.db"));
+    var root = new SealedWork.EntityKey(0, 1);
+    var cut = new SealedTransport.Checkpoint("durable-root", SealedCbor.MAX_UINT, 2, null, 0, BigInteger.valueOf(5000));
+    try (var server = new RustServer(state, certs);
+        var client = SealedClient.connectDurable(server.address, certs.resolve("ca.crt"), "localhost", SealedTransport.Limits.defaults(), Duration.ofSeconds(10), durable)) {
+      client.declare(declaration(0, null, 0, List.of(1L, 2L), List.of(1L, 2L)));
+      send(client, root, null, "dehydrate", "root");
+      send(client, new SealedWork.EntityKey(0, 2), null, "complete", "other-root");
+      client.declare(declaration(7, root, 0, List.of(10L, 20L), List.of(10L, 20L)));
+      send(client, new SealedWork.EntityKey(7, 10), root, "complete", "child");
+      var chunked = new SealedWork.EntityKey(7, 20);
+      client.sendChunks(List.of(chunk(chunked, root, 1, 3, "def"), chunk(chunked, root, 0, 0, "abc")));
+    }
+    try (var server = new RustServer(state, certs);
+        var client = SealedClient.connectDurable(server.address, certs.resolve("ca.crt"), "localhost", SealedTransport.Limits.defaults(), Duration.ofSeconds(10), durable)) {
+      assertEquals(6, client.observedStatus(root).orElseThrow().state());
+      assertEquals(3, client.observedStatus(new SealedWork.EntityKey(7, 20)).orElseThrow().state());
+      assertTrue(client.unresolvedInputs().isEmpty());
+      assertEquals(BigInteger.TWO, client.closeScope(7).succeeded());
+      assertEquals(cut.acknowledgement(), client.checkpoint(cut));
+    }
+    try (var server = new RustServer(state, certs);
+        var client = SealedClient.connectDurable(server.address, certs.resolve("ca.crt"), "localhost", SealedTransport.Limits.defaults(), Duration.ofSeconds(10), durable)) {
+      assertEquals(3, client.observedStatus(root).orElseThrow().state());
+      assertTrue(client.scopesAwaitingClosure().isEmpty());
+      assertEquals(cut.acknowledgement(), client.checkpoint(cut)); client.goaway(2);
+    }
+  }
+
+  @Test void durableDeclarationIntentSurvivesADroppedOrChangedAck() throws Exception {
+    Path certs = certificates();
+    var request = declaration(0, null, 0, List.of(1L, 2L), List.of(1L, 2L));
+    for (boolean changed : List.of(false, true)) {
+      var durable = SealedClient.Durability.at(directory.resolve("producer-" + changed + ".db"));
+      var calls = new java.util.concurrent.atomic.AtomicInteger();
+      var retained = SealedSessionStore.open(directory.resolve("receiver-" + changed + ".db"));
+      try (var server = new SealedTestPeer.ScriptServer(certs, frame -> {
+        if (frame.type() == Wire.FRAME_CAPABILITIES) return List.of(SealedTransport.capabilities(SealedTransport.Limits.defaults()));
+        assertEquals(SealedWork.FRAME, frame.type());
+        var declaration = SealedWork.decodePayload(frame.payload());
+        var ack = retained.declare(declaration, 7, 16384);
+        if (calls.incrementAndGet() == 1) {
+          if (!changed) return List.of();
+          return List.of(SealedWork.encode(new SealedWork.Declaration(ack.sessionId(), ack.producerId(), ack.scopeId(), ack.parent(),
+              BigInteger.ONE, ack.entityIds(), ack.flags(), ack.sealDigest())));
+        }
+        return List.of(SealedWork.encode(ack));
+      })) {
+        try (var client = SealedClient.connectDurable(server.address(), certs.resolve("ca.crt"), "localhost", SealedTransport.Limits.defaults(), Duration.ofSeconds(1), durable)) {
+          if (changed) assertEquals(5, assertThrows(ProtocolException.class, () -> client.declare(request)).errorCode());
+          else assertThrows(java.util.concurrent.TimeoutException.class, () -> client.declare(request));
+          assertEquals(List.of(request), client.declarationsAwaitingAcknowledgement());
+          assertTrue(client.observedStatus(new SealedWork.EntityKey(0, 1)).isEmpty());
+        }
+        try (var client = SealedClient.connectDurable(server.address(), certs.resolve("ca.crt"), "localhost", SealedTransport.Limits.defaults(), Duration.ofSeconds(5), durable)) {
+          assertTrue(client.declarationsAwaitingAcknowledgement().isEmpty());
+          assertTrue(client.observedStatus(new SealedWork.EntityKey(0, 1)).isEmpty());
+          assertEquals(request.acknowledgement(), client.declare(request));
+        }
+        assertEquals(3, calls.get());
+      }
+    }
+  }
+
   @Test void javaReconnectReplaysDeclaredMembershipAfterRustRestartAndRejectsOwnerChanges() throws Exception {
     Path certs = certificates(), state = directory.resolve("restart");
     var root = declaration(0, null, 0, List.of(1L, 2L), List.of(1L, 2L));

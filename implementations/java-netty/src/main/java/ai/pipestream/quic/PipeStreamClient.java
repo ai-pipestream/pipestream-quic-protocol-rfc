@@ -10,6 +10,7 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioDatagramChannel;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
+import io.netty.handler.ssl.SslHandshakeCompletionEvent;
 import io.netty.incubator.codec.quic.QuicChannel;
 import io.netty.incubator.codec.quic.QuicClientCodecBuilder;
 import io.netty.incubator.codec.quic.QuicSslContext;
@@ -50,7 +51,17 @@ public final class PipeStreamClient {
     send(remote, caCertificate, serverName, entityId, input, contentType, null);
   }
 
-  /** Sends one child entity and waits for terminal status and graceful completion. */
+  /**
+   * Sends one child entity and waits for terminal status and graceful completion.
+   * @param remote server UDP address
+   * @param caCertificate trusted CA PEM
+   * @param serverName certificate DNS name or IP literal, with IDNA names supplied as ASCII A-labels
+   * @param entityId Layer 0 entity identifier
+   * @param input payload path
+   * @param contentType MIME type
+   * @param parentId optional parent entity identifier
+   * @throws Exception for TLS identity, transport or protocol failure
+   */
   public static void send(
       InetSocketAddress remote,
       Path caCertificate,
@@ -86,8 +97,20 @@ public final class PipeStreamClient {
           .sync()
           .channel();
       ClientControlHandler handler = new ClientControlHandler(entityId);
+      var authenticated = new CompletableFuture<Void>();
       connection = QuicChannel.newBootstrap(datagram)
-          .handler(new ChannelInboundHandlerAdapter())
+          .handler(new ChannelInboundHandlerAdapter() {
+            @Override public void userEventTriggered(ChannelHandlerContext context, Object event) {
+              if (event instanceof SslHandshakeCompletionEvent handshake) {
+                try {
+                  if (!handshake.isSuccess()) throw new java.io.IOException("QUIC TLS handshake failed", handshake.cause());
+                  TlsPeerIdentity.verify(((QuicChannel) context.channel()).sslEngine().getSession(), serverName);
+                  authenticated.complete(null);
+                } catch (Exception failure) { authenticated.completeExceptionally(failure); context.close(); }
+              }
+              context.fireUserEventTriggered(event);
+            }
+          })
           .streamHandler(new ChannelInboundHandlerAdapter() {
             @Override
             public void channelActive(ChannelHandlerContext context) {
@@ -97,6 +120,7 @@ public final class PipeStreamClient {
           .remoteAddress(remote)
           .connect()
           .get(10, TimeUnit.SECONDS);
+      authenticated.get(10, TimeUnit.SECONDS);
       QuicStreamChannel control = connection.createStream(
           QuicStreamType.BIDIRECTIONAL,
           new io.netty.channel.ChannelInitializer<QuicStreamChannel>() {
