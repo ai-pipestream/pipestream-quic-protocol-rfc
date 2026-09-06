@@ -137,6 +137,55 @@ final class SealedServerTest {
     }
   }
 
+  @Test void reservedRehydrationCommitsOverQuicWhileOrdinaryProcessingQueueIsFull() throws Exception {
+    Path certs = certificates(); var blocked = new CountDownLatch(2); var release = new CountDownLatch(1);
+    try (var fixture = new Fixture(certs, (context, input) -> {
+      if (context.operation() == SealedExecutor.Operation.PROCESS && context.identity().entity().scopeId() == 0) {
+        if (context.identity().entity().equals(ROOT)) {
+          input.transferTo(java.io.OutputStream.nullOutputStream()); return new SealedExecutor.Decision(6, null);
+        }
+        blocked.countDown();
+        if (!release.await(20, TimeUnit.SECONDS)) throw new IllegalStateException("test callback not released");
+      }
+      return complete(input);
+    }); var raw = new SealedTestPeer.RawClient(fixture.server.address(), certs)) {
+      try {
+        var roots = java.util.stream.LongStream.rangeClosed(1, 33).boxed().toList();
+        declare(raw, declaration(0, null, 0, roots, roots));
+        payload(raw, ROOT, null, "parent", true);
+        assertEquals(2, SealedTransport.status(raw.response().payload()).state());
+        assertEquals(6, SealedTransport.status(raw.response().payload()).state());
+        declare(raw, declaration(7, ROOT, 0, List.of(1L), List.of(1L)));
+        payload(raw, new SealedWork.EntityKey(7, 1), ROOT, "child", true);
+        assertEquals(2, SealedTransport.status(raw.response().payload()).state());
+        assertEquals(3, SealedTransport.status(raw.response().payload()).state());
+        for (int id = 2; id <= 33; id++) {
+          payload(raw, new SealedWork.EntityKey(0, id), null, "queued", true);
+          var response = raw.response(); assertEquals(Wire.FRAME_STATUS, response.type());
+          var status = SealedTransport.status(response.payload()); assertEquals(2, status.state()); assertEquals(id, status.entityId());
+        }
+        assertTrue(blocked.await(5, TimeUnit.SECONDS));
+        assertEquals(32, fixture.sessions.jobUsage().processingJobs());
+        var summary = SealedScope.summarize(7, List.of(new SealedScope.Terminal(1, 3)));
+        raw.send(SealedScope.encode(summary));
+        var closure = raw.response(); assertEquals(SealedScope.FRAME, closure.type());
+        assertEquals(summary, SealedScope.decode(Wire.encodeControl(closure.type(), closure.payload())));
+        assertEquals(7, SealedTransport.status(raw.response().payload()).state());
+        assertEquals(1, fixture.sessions.jobUsage().rehydrationJobs());
+        assertEquals(0, fixture.sessions.jobUsage().waitingParents());
+        release.countDown();
+        for (int completed = 0; completed < 33; completed++) {
+          var status = SealedTransport.status(raw.response().payload()); assertEquals(3, status.state());
+        }
+        var cut = checkpoint("reserved", BigInteger.ONE, 33, null, 5000);
+        raw.send(SealedTransport.checkpoint(cut));
+        assertEquals(cut.acknowledgement(), SealedTransport.checkpoint(raw.response().payload()));
+        assertEquals(0, fixture.sessions.jobUsage().processingJobs());
+        assertEquals(0, fixture.sessions.jobUsage().rehydrationJobs());
+      } finally { release.countDown(); }
+    }
+  }
+
   @Test void walCapacityRefusesOverQuicWithoutLosingDeclaredWorkAndReplayResumesAfterCheckpoint() throws Exception {
     Path certs = certificates(), database = directory.resolve("sessions.sqlite3");
     var policy = new SealedSessionStore.FileLimits(4L << 20, 65536, 2L << 20, 65536);

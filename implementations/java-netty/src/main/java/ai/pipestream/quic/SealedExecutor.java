@@ -153,7 +153,7 @@ public final class SealedExecutor implements AutoCloseable {
   /**
    * Starts bounded periodic dispatch, including retained queued or expired attempts.
    * Startup audits durable jobs before executing any application code.
-   * @param sessions Java version-2 session database
+   * @param sessions Java session database with durable completion reservations
    * @param payloads open retained-payload store, owned and closed by the caller
    * @param processor application callback
    * @param limits worker and lease policy

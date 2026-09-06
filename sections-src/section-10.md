@@ -56,6 +56,14 @@ state-byte limits do not bound temporary files, retained payloads, database
 journals, indexes, or other physical storage overhead; implementations need
 separate resource policies for those objects.
 
+When an implementation reserves completion capacity, unrelated admissions MUST
+NOT consume that capacity. Waiting on child scopes or losing a connection does
+not itself make the reservation unused. Converting a reservation into retained
+completion state MUST preserve the applicable storage charge. Implementations
+MUST distinguish reserved completion capacity from admission limits for new
+descendants and payloads; reserving a parent's completion does not promise
+unlimited future work or exempt it from those limits.
+
 To prevent memory-exhaustion attacks, implementations MUST NOT pre-allocate memory for variable-length payloads based solely on the 32-bit Length field in the UCF header (Section 6.1.1). Memory MUST be allocated incrementally as octets are received, or capped at a smaller initial buffer until the message type and context are verified.
 
 The entity-count and window defaults are identifier-space maxima, not safe
