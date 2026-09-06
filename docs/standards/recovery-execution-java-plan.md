@@ -384,8 +384,37 @@ approval as part of a repository landing.
   nine Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks and
   every external example. Strict public Javadoc passed. Draft -04 passed idnits
   with zero errors/flaws/warnings and one informational FIPS reference comment.
-- Not yet implemented: physical completion-space reservations, Rust outcome
-  reservations, orphan reclamation,
+- Rust publication reservation increment: storage policy version 2 protects
+  the serialized growth of every admitted job's outcome, entity output digest
+  and execution attempt. Layer 2 processing reserves its explicit continuation
+  budget and bounded claim validation fields. The default token budget is 64 KiB,
+  configurable independently of the unchanged wire ceiling; callbacks receive
+  the smaller of that budget and the usable STATUS frame limit before execution
+  (zero without Layer 2). Exact-frame and one-byte-over QUIC cases pin the limit.
+  Oversized results become retained named refusals rather
+  than claims, truncated tokens or successful completion. Direct store mutations
+  enforce the same policy. Charges are bound to session checksums, recomputed on
+  reopen, and protected from unrelated admissions under record/principal/global
+  limits. Actual publication converts reserved bytes; retained outcomes stay charged.
+  Ten core tests cover exact-quota publication for all current stages/outcomes,
+  serialization and map-prefix boundaries, rollback, reservation corruption,
+  concurrent principal admission, revocation and abrupt process exit. Two real
+  authenticated QUIC tests publish a held yield after other work fills the store,
+  verify the callback's budget, retain an oversized-result refusal and complete
+  authenticated recovery for an in-budget claim. Old storage policies are refused
+  without conversion; session format 7 and wire/CDDL are unchanged.
+  These are admitted-job logical reservations, not future rehydration admission,
+  physical DB/WAL publication space, final-lineage headroom or orphan cleanup.
+  The final `./conformance/run_all.sh` passed with 208 Rust workspace tests
+  (101 core, 51 Quinn unit, 52 wire, one allocation gate, three runner tests),
+  104 Java tests without errors/failures/skips, native SQLite and C++ tests, all
+  nine Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks and
+  every external example. Strict workspace clippy and touched-file rustfmt checks
+  passed. Draft -04 passed idnits with zero errors/flaws/warnings and one
+  informational FIPS reference comment. These are local results, not a complete
+  goal, independent implementer review or hosted CI result.
+- Not yet implemented: physical completion-space reservations, future Rust
+  rehydration slots/bytes, final-lineage headroom, orphan reclamation,
   persistent producer observations, and the remaining independent Java
   profile requirement matrix. Physical execution limits and temporary spools are coordinated only
   within one writer process; broader tenant/resource stress evidence remains due.
@@ -402,7 +431,7 @@ expiry is not callback cancellation. Periodic dispatch can reacquire unfinished
 expired attempts, but does not retry application-refused jobs automatically.
 Temporary spool accounting is process-local and excludes permanent entity files.
 Rust and Java SQLite file-length caps are now independent of that accounting.
-Add physical publication headroom, Rust outcome reservations, and
+Add physical publication headroom, future Rust rehydration reservations, and
 explicit orphan reconciliation without
 deleting a live generation or treating missing input as completed work.
 Do not treat recovery receipts or publication fencing as completion of bounded

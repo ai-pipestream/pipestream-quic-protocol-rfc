@@ -1,6 +1,167 @@
 use super::*;
 use pipestream_core::persistence::{JobQueueLimits, PhysicalLimits, StorageLimits, StoreError};
 
+struct ReleasePublication(Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>);
+impl Drop for ReleasePublication {
+    fn drop(&mut self) {
+        *self.0.0.lock().unwrap() = true;
+        self.0.1.notify_all();
+    }
+}
+
+#[tokio::test]
+async fn authenticated_yield_uses_its_reservation_after_other_admissions_fill_the_store()
+-> Result<()> {
+    let mut fixture = fixture(StorageLimits {
+        total_bytes: 8192,
+        principal_bytes: 8192,
+        record_bytes: 8192,
+        yield_token_bytes: 4096,
+        ..StorageLimits::default()
+    })?;
+    let gate = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let release = ReleasePublication(gate.clone());
+    fixture.processor = Arc::new(Processor {
+        process_gate: Some(gate),
+        token_bytes: Some(4096),
+        expected_token_budget: Some(4096),
+        ..Processor::default()
+    });
+    let options = fixture.listen(Some("issuer-a"), Some(0))?;
+    let worker_options = options.clone();
+    let pending_work =
+        tokio::spawn(async move { begin_durable_yield(&worker_options, "reserved-yield").await });
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while fixture.processor.processed.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await?;
+    let before = fixture.store.load("reserved-yield")?.unwrap();
+    let usage = fixture.store.storage_usage()?;
+    assert!(usage.completion_reserved_bytes > 4096);
+    let mut filler = pipestream_core::session::Session::new("filler", 7, 1000)?;
+    filler.bind_owner(before.session.owner.as_ref().unwrap().binding.clone())?;
+    fixture.store.create(&filler)?;
+    let mut refused_growth = false;
+    for id in 1..1000 {
+        match fixture.store.transact("filler", |s| {
+            s.add_root(pipestream_core::session::NewEntity {
+                entity_id: id,
+                layer: 0,
+                payload_digest: [0; 32],
+                policy: None,
+            })
+        }) {
+            Ok(_) => {}
+            Err(StoreError::Protocol(error)) if error.code == ERROR_LIMIT_EXCEEDED => {
+                refused_growth = true;
+                break;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    assert!(refused_growth);
+    assert!(
+        !fixture
+            .store
+            .load("filler")?
+            .unwrap()
+            .session
+            .entities
+            .is_empty()
+    );
+    let full = fixture.store.storage_usage()?;
+    assert_eq!(
+        full.completion_reserved_bytes,
+        usage.completion_reserved_bytes
+    );
+    let mut rejected = RecursiveClient::connect_sealed(&options).await?;
+    let error = rejected
+        .declare_work(&work("cannot-spend-reserve", 0, vec![1], Some(&[1])))
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("PIPESTREAM_LIMIT_EXCEEDED"),
+        "{error:#}"
+    );
+    assert!(fixture.store.load("cannot-spend-reserve")?.is_none());
+    assert_eq!(fixture.store.load("reserved-yield")?, Some(before));
+    drop(release);
+    let claim = tokio::time::timeout(Duration::from_secs(3), pending_work).await???;
+    let retained = fixture.store.load("reserved-yield")?.unwrap().session;
+    assert_eq!(retained.claims[&claim.claim_id].token, vec![255; 4096]);
+    assert_eq!(
+        retained.entities[&retained.claims[&claim.claim_id].entity].state,
+        pipestream_core::session::EntityState::Deferred
+    );
+    assert_eq!(fixture.store.storage_usage()?.completion_reserved_bytes, 0);
+    assert!(fixture.store.storage_usage()?.charged_bytes() <= full.charged_bytes());
+    fixture.store.integrity_check()?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn callback_yield_budget_is_explicit_and_oversized_results_are_retained_refusals()
+-> Result<()> {
+    let frame_budget = MAX_CONTROL_FRAME - 24;
+    for (policy, budget, bytes) in [
+        (32, 32, 32),
+        (32, 32, 33),
+        (2 << 20, frame_budget, frame_budget),
+        (2 << 20, frame_budget, frame_budget + 1),
+    ] {
+        let mut fixture = fixture(StorageLimits {
+            yield_token_bytes: policy,
+            ..StorageLimits::default()
+        })?;
+        fixture.processor = Arc::new(Processor {
+            token_bytes: Some(bytes),
+            expected_token_budget: Some(budget),
+            ..Processor::default()
+        });
+        let options = fixture.listen(Some("issuer-a"), Some(0))?;
+        let outcome = begin_durable_yield(&options, "bounded-yield").await;
+        if bytes == budget {
+            let claim = outcome?;
+            assert_eq!(
+                fixture.store.load("bounded-yield")?.unwrap().session.claims[&claim.claim_id]
+                    .token
+                    .len(),
+                bytes
+            );
+            let mut client = RecursiveClient::connect_recovery(&options).await?;
+            let request = pipestream_core::recovery::RecoveryRequest {
+                authority: "issuer-a".into(),
+                session_id: claim.session_id,
+                request_id: [3; 16],
+                claim_id: claim.claim_id,
+                state_checksum: claim.state_checksum,
+            };
+            let receipt = client.accept_recovery(&request).await?;
+            assert_eq!(
+                client.wait_recovery(&receipt).await?,
+                pipestream_core::recovery::RecoveryOutcome::Complete
+            );
+            client.disconnect_gracefully().await;
+            assert_eq!(fixture.processor.resumed.load(Ordering::SeqCst), 1);
+        } else {
+            let error = outcome.unwrap_err();
+            assert!(
+                format!("{error:#}").contains("PIPESTREAM_LIMIT_EXCEEDED"),
+                "{error:#}"
+            );
+            let retained = fixture.store.load("bounded-yield")?.unwrap().session;
+            assert!(retained.claims.is_empty());
+            assert!(retained.jobs.values().all(|job| matches!(&job.state, pipestream_core::jobs::JobState::Refused(failure) if failure.code == ERROR_LIMIT_EXCEEDED)));
+            assert!(retained.entities.values().all(|entity| entity.state == pipestream_core::session::EntityState::Processing));
+        }
+        assert_eq!(fixture.store.storage_usage()?.completion_reserved_bytes, 0);
+        fixture.store.integrity_check()?;
+    }
+    Ok(())
+}
+
 fn fixture(limits: StorageLimits) -> Result<AuthFixture> {
     let mut fixture = AuthFixture::new()?;
     fixture.options.state_database = fixture._dir.path().join("quota.sqlite3");

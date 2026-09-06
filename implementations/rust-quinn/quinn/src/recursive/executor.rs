@@ -8,6 +8,11 @@ use std::{
 };
 use tokio::task::{JoinHandle, JoinSet};
 
+// STATUS has 16 fixed body bytes, a 4-byte extension length and the 4-byte
+// YIELD prefix. The service emits no cursor in this response. QUIC tests pin
+// the largest token against the actual public codec and receiver frame limit.
+const YIELD_STATUS_OVERHEAD: usize = 16 + 4 + 4;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExecutionLimits {
     pub workers: usize,
@@ -255,6 +260,14 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                 digest,
                 layers,
             } => {
+                let max_yield_token_bytes = if layers.layer2_resilience {
+                    self.store
+                        .storage_limits()
+                        .yield_token_bytes
+                        .min(MAX_CONTROL_FRAME - YIELD_STATUS_OVERHEAD)
+                } else {
+                    0
+                };
                 let payload = self
                     .entities
                     .load_payload(
@@ -277,11 +290,21 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     header,
                     payload: &payload,
                     now_micros: now_micros().map_err(storage_error)?,
+                    max_yield_token_bytes,
                 })?;
                 if matches!(result, ProcessingDisposition::Yield { .. })
                     && !layers.layer2_resilience
                 {
                     return Err(layer_error("processor yield requires negotiated Layer 2"));
+                }
+                if let ProcessingDisposition::Yield {
+                    continuation_token, ..
+                } = &result
+                    && continuation_token.len() > max_yield_token_bytes
+                {
+                    return Err(limit_error(
+                        "continuation token exceeds reserved publication budget",
+                    ));
                 }
                 Ok(Computed::Process(result))
             }

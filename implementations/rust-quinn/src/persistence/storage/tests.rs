@@ -42,6 +42,7 @@ fn global_and_principal_bytes_survive_reopen_without_policy_reset() {
         record_bytes: bytes,
         sessions: 10,
         principal_sessions: 10,
+        ..StorageLimits::default()
     };
     let store =
         SqliteSessionStore::open_with_limits(&path, JobQueueLimits::default(), limits).unwrap();
@@ -55,6 +56,7 @@ fn global_and_principal_bytes_survive_reopen_without_policy_reset() {
         store.storage_usage().unwrap(),
         StorageUsage {
             state_bytes: (bytes * 3) as u64,
+            completion_reserved_bytes: 0,
             sessions: 3
         }
     );
@@ -64,6 +66,7 @@ fn global_and_principal_bytes_survive_reopen_without_policy_reset() {
             .unwrap(),
         StorageUsage {
             state_bytes: (bytes * 2) as u64,
+            completion_reserved_bytes: 0,
             sessions: 2
         }
     );
@@ -127,6 +130,7 @@ fn failed_growth_rolls_back_state_revision_and_accounting_for_save_and_transacti
         record_bytes: size(&grown),
         sessions: 10,
         principal_sessions: 10,
+        ..StorageLimits::default()
     };
     let store = SqliteSessionStore::open_with_limits(
         dir.path().join("state.sqlite3"),
@@ -409,6 +413,7 @@ fn finished_and_revoked_work_remains_charged() {
         store.principal_storage_usage(Some(&owner)).unwrap(),
         StorageUsage {
             sessions: 1,
+            completion_reserved_bytes: 0,
             state_bytes: size(&retained) as u64
         }
     );
@@ -437,6 +442,14 @@ fn invalid_limits_and_missing_empty_store_policy_are_refused() {
         },
         StorageLimits {
             principal_sessions: 5000,
+            ..StorageLimits::default()
+        },
+        StorageLimits {
+            yield_token_bytes: 0,
+            ..StorageLimits::default()
+        },
+        StorageLimits {
+            yield_token_bytes: 0x0100_0000,
             ..StorageLimits::default()
         },
     ] {

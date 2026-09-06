@@ -499,7 +499,7 @@ rehydration, releases blocked callbacks and receives the full root checkpoint AC
 Schema version 4 changes local admission semantics, not wire/CDDL. No operational
 store was converted. Section 10.3 clarifies that reserved completion credit cannot
 be borrowed by unrelated admissions. These are logical metadata/queue guarantees;
-physical publication headroom, Rust outcome reservations, orphan reconciliation,
+physical publication headroom, future Rust rehydration reservations, orphan reconciliation,
 persistent producer observations and the full crash/resource matrix remain due.
 
 The final `./conformance/run_all.sh` passed with 196 Rust workspace tests,
@@ -510,6 +510,39 @@ passed idnits with zero errors/flaws/warnings and one FIPS reference comment.
 These are local results, not hosted CI or independent implementer review.
 
 ## Validation
+
+### Rust admitted-job publication reservations
+
+Storage policy version 2 charges the possible serialized result and execution
+growth of admitted jobs before dispatch. The calculation covers processing,
+rehydration, resume, full bounded refusals, output digests and attempt fields.
+Layer 2 processing reserves an explicitly configured token budget (64 KiB by
+default) and bounded claim validation; the callback sees the smaller of this policy
+and the usable STATUS frame limit in advance, or zero without Layer 2.
+Oversized results are retained named refusals, not truncated tokens or completion.
+All store writes protect actual plus reserved bytes under the existing global,
+principal and record caps. Reopen checks the derived reservation against its
+checksummed accounting. Existing version-1 storage policies refuse without
+conversion; the session payload remains version 7 and the wire/CDDL is unchanged.
+
+Ten core tests pin serializer-derived growth, exact-quota publication for every
+current job stage/outcome, claim and map-prefix boundaries, rollback, corrupt
+accounting, concurrent principal admission, revocation and abrupt exit. Two
+authenticated QUIC tests cover a held yield publishing after unrelated work
+fills the store, exact callback budgets, an oversized-result refusal with no
+claim, and successful authenticated recovery for an in-budget token, including
+the exact frame boundary and one byte over. Section
+10.3 requires application-result budgets to be exposed and enforced before commit.
+Physical publication headroom, future Rust rehydration admission, final lineage
+reservations, orphan reconciliation and broader resource/crash evidence remain due.
+
+The final `./conformance/run_all.sh` passed with 208 Rust workspace tests,
+104 Java tests without errors/failures/skips, native SQLite and C++ tests, all
+nine Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks and
+every external example. Strict workspace clippy and touched-file rustfmt passed.
+Draft -04 passed idnits with zero errors/flaws/warnings and one informational
+FIPS reference comment. These are local results, not independent implementer
+review, hosted CI or proof that the full goal is complete.
 
 ### Independent Java sealed-work foundation
 

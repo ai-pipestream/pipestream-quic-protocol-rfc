@@ -322,8 +322,7 @@ impl SessionStore for SqliteSessionStore {
         let mut connection = self.connect()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         storage::verify_index(&transaction)?;
-        let (state, checksum) =
-            encode_state(session, storage::read_limits(&transaction)?.record_bytes)?;
+        let (state, checksum) = encode_state(session, storage::read_limits(&transaction)?)?;
         let inserted = transaction.execute(
             "INSERT OR IGNORE INTO pipestream_sessions
              (session_id, format_version, revision, state, checksum, updated_at_micros)
@@ -457,7 +456,7 @@ fn persist_update(
         .map_err(|_| StoreError::Corrupt("session revision exceeds SQLite integer".to_owned()))?;
     let next = i64::try_from(next_revision)
         .map_err(|_| StoreError::Corrupt("session revision exceeds SQLite integer".to_owned()))?;
-    let (state, checksum) = encode_state(session, storage::read_limits(connection)?.record_bytes)?;
+    let (state, checksum) = encode_state(session, storage::read_limits(connection)?)?;
     let changed = connection.execute(
         "UPDATE pipestream_sessions
          SET format_version = ?1, revision = ?2, state = ?3, checksum = ?4,
@@ -493,7 +492,10 @@ fn persist_update(
     storage::replace_index(connection, session, state.len(), &checksum)
 }
 
-fn encode_state(session: &Session, limit: usize) -> Result<(Vec<u8>, [u8; 32]), StoreError> {
+fn encode_state(
+    session: &Session,
+    limits: StorageLimits,
+) -> Result<(Vec<u8>, [u8; 32]), StoreError> {
     if session.format_version != SESSION_FORMAT_VERSION {
         return Err(StoreError::Corrupt(format!(
             "unsupported in-memory session version {}",
@@ -502,6 +504,14 @@ fn encode_state(session: &Session, limit: usize) -> Result<(Vec<u8>, [u8; 32]), 
     }
     session.validate_jobs().map_err(StoreError::Protocol)?;
     session.validate_recovery().map_err(StoreError::Protocol)?;
+    let limit = limits
+        .record_bytes
+        .checked_sub(storage::completion_reservation(session, limits)?)
+        .ok_or_else(|| {
+            StoreError::Protocol(ProtocolError::limit(
+                "completion reservation exceeds record budget",
+            ))
+        })?;
     let state = storage::encode(session, limit)?;
     let checksum = Sha256::digest(&state).into();
     Ok((state, checksum))

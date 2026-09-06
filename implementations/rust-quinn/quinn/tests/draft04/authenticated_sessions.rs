@@ -24,11 +24,31 @@ struct Processor {
     resumed: AtomicUsize,
     revoke_during_process: Option<Arc<SqliteSessionStore>>,
     panic_resume: bool,
+    process_gate: Option<Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>>,
+    token_bytes: Option<usize>,
+    expected_token_budget: Option<usize>,
 }
 
 impl EntityProcessor for Processor {
     fn process(&self, context: ProcessContext<'_>) -> Result<ProcessingDisposition, ProtocolError> {
         self.processed.fetch_add(1, Ordering::SeqCst);
+        if let Some(expected) = self.expected_token_budget {
+            assert_eq!(context.max_yield_token_bytes, expected);
+        }
+        if let Some(gate) = &self.process_gate {
+            let (_released, timeout) = gate
+                .1
+                .wait_timeout_while(
+                    gate.0.lock().unwrap(),
+                    Duration::from_secs(20),
+                    |released| !*released,
+                )
+                .unwrap();
+            assert!(
+                !timeout.timed_out(),
+                "publication test did not release callback"
+            );
+        }
         if let Some(store) = &self.revoke_during_process {
             store
                 .transact(
@@ -37,7 +57,17 @@ impl EntityProcessor for Processor {
                 )
                 .unwrap();
         }
-        ExemplarProcessor::default().process(context)
+        let mut result = ExemplarProcessor::default().process(context)?;
+        if let (
+            Some(bytes),
+            ProcessingDisposition::Yield {
+                continuation_token, ..
+            },
+        ) = (self.token_bytes, &mut result)
+        {
+            *continuation_token = vec![255; bytes];
+        }
+        Ok(result)
     }
     fn rehydrate(&self, context: RehydrateContext<'_>) -> [u8; 32] {
         ExemplarProcessor::default().rehydrate(context)
