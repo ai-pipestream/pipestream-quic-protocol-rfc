@@ -120,6 +120,18 @@ ready merely because a claim was issued. An input that produces no
 children completes directly without allocating an empty child scope.
 Partial completion is not a claim that all work succeeded.
 
+Once the child scope has closed with a verified SCOPE_DIGEST, if its terminal
+outcomes do not satisfy the parent's completion policy, the receiver MUST
+resolve the parent as FAILED without invoking rehydration. Without Layer 2,
+the default STRICT policy applies. The receiver MUST retain the child scope,
+its digest, and the parent's failed resolution together before reporting that
+resolution. It MUST NOT fabricate a successful result or discard failed
+children. The receiver echoes the verified SCOPE_DIGEST followed by a FAILED
+STATUS identifying that scope's parent; no REHYDRATING status is required for
+this path. An identical closure replay MUST report the same failed parent.
+A missing, unresolved, or still-retryable child does not meet these conditions
+and MUST NOT be treated as a closed scope with a failed policy.
+
 | Mode | Description |
 |------|-------------|
 | TRANSFORM | 1:1 entity transformation |

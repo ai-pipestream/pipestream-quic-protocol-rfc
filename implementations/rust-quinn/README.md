@@ -82,6 +82,16 @@ reconnect after an interrupted exchange. Other client methods do not yet share
 this cancellation guard. The caller still owns manifest persistence and the
 construction of the digest from actual descendant observations.
 
+Closing a scope whose terminal children fail the parent's completion policy
+now durably resolves that parent as FAILED. The server echoes the validated
+digest followed by the failed parent's status, without starting a rehydration
+callback or inventing an output. Child records remain intact. The closure and
+failed resolution commit together; an identical closure replay returns the
+same failure after reconnect or restart. Missing or retryable children still
+prevent closure. Existing completion reservations cover this resolution at
+logical queue/storage capacity and at a pinned-reader WAL ceiling; retired
+logical credit does not reclaim the preallocated state image.
+
 After a connection loss, connect with the same profile and replay the original
 root sequence-0 request to attach to the retained session. Identical batches
 replay the same ACK; changed identities, sequences, or seals are refused.

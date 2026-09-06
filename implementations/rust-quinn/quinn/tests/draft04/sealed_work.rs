@@ -90,6 +90,136 @@ async fn sealed_checkpoint_waits_for_missing_entity_and_seal_over_quic() -> Resu
 }
 
 #[tokio::test]
+async fn failed_scope_refuses_forged_digest_and_replays_lost_resolution_without_callback()
+-> Result<()> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    #[derive(Default)]
+    struct Processor(AtomicUsize);
+    impl EntityProcessor for Processor {
+        fn process(
+            &self,
+            context: ProcessContext<'_>,
+        ) -> Result<ProcessingDisposition, ProtocolError> {
+            ExemplarProcessor::default().process(context)
+        }
+        fn rehydrate(&self, context: RehydrateContext<'_>) -> [u8; 32] {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            ExemplarProcessor::default().rehydrate(context)
+        }
+        fn resume(&self, context: ResumeContext<'_>) -> [u8; 32] {
+            ExemplarProcessor::default().resume(context)
+        }
+    }
+    for forged in [true, false] {
+        let processor = Arc::new(Processor::default());
+        let mut caps = offer(LayerSupport::LAYER1, 7);
+        caps.extensions.supported = vec![work_set::EXTENSION_SEALED_WORK_SETS];
+        caps.extensions.required = caps.extensions.supported.clone();
+        let mut peer = Fixture::with_capabilities(caps, processor.clone()).await?;
+        let root = EntityKey {
+            scope_id: 0,
+            entity_id: 1,
+        };
+        let request = declaration(0, 0, &[1], Some(&[1]));
+        declare(&mut peer, &request).await?;
+        peer.entity(1, false, "dehydrate", LayerSupport::LAYER1)
+            .await?;
+        assert_eq!(
+            peer.statuses(2).await?,
+            [STATUS_PROCESSING, STATUS_DEHYDRATING]
+        );
+        declare(&mut peer, &declaration(1, 0, &[1, 2], Some(&[1, 2]))).await?;
+        for (id, action, status) in [(1, "fail", STATUS_FAILED), (2, "complete", STATUS_COMPLETE)] {
+            peer.entity(id, true, action, LayerSupport::LAYER1).await?;
+            assert_eq!(peer.statuses(2).await?, [STATUS_PROCESSING, status]);
+        }
+        let store = Arc::new(SqliteSessionStore::open(&peer.options.state_database)?);
+        let before = store.load("review-session")?.unwrap();
+        let mut digest = ScopeDigest {
+            scope_id: 1,
+            entities_processed: 2,
+            entities_succeeded: 1,
+            entities_failed: 1,
+            entities_deferred: 0,
+            merkle_root: pipestream_core::session::merkle_root(&[
+                (1, EntityState::Failed),
+                (2, EntityState::Complete),
+            ])?,
+        };
+        if forged {
+            digest.entities_failed = 0;
+            peer.send.write_all(&encode_scope_digest(&digest)?).await?;
+            assert!(peer.refused().await?.contains("PIPESTREAM_INTEGRITY_ERROR"));
+            assert_eq!(store.load("review-session")?.unwrap(), before);
+            assert_eq!(processor.0.load(Ordering::SeqCst), 0);
+            continue;
+        }
+        // Let the durable resolution commit, but discard all its response frames.
+        peer.send.write_all(&encode_scope_digest(&digest)?).await?;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if store.load("review-session")?.unwrap().session.entities[&root].state
+                    == EntityState::Failed
+                {
+                    break Result::<()>::Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await??;
+        peer.server.abort();
+        let _ = (&mut peer.server).await;
+        let service = RecursiveService::with_limits(
+            store.clone(),
+            Arc::new(FileEntityStore::open(&peer.options.entity_directory)?),
+            processor.clone(),
+            RecursiveLimits {
+                max_scope_depth: 7,
+                max_entities_per_scope: 100,
+                max_entity_bytes: 1024,
+                max_chunks_per_entity: 16,
+            },
+        )?;
+        let server = RecursiveServer::bind(&peer.options, service)?;
+        let options = RecursiveClientOptions {
+            identity: None,
+            remote: server.local_addr()?,
+            ca_certificate: peer.options.certificate.clone(),
+            server_name: "localhost".into(),
+        };
+        peer.server = tokio::spawn(server.run(true));
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut client = RecursiveClient::connect_sealed(&options).await?;
+            client.declare_work(&request).await?;
+            let (confirmed, statuses) = client.close_scope(&digest, root, 0).await?;
+            assert_eq!(confirmed, digest);
+            assert_eq!(statuses.len(), 1);
+            assert_eq!(statuses[0].status.state, STATUS_FAILED);
+            let mut cp = checkpoint(2000);
+            cp.checkpoint_entity_id = 1;
+            assert_eq!(client.checkpoint(&cp).await?.flags, CHECKPOINT_ACK);
+            client.goaway(1).await?;
+            Result::<()>::Ok(())
+        })
+        .await??;
+        let after = store.load("review-session")?.unwrap().session;
+        assert_eq!(after.entities[&root].state, EntityState::Failed);
+        assert_eq!(after.entities[&root].output_digest, None);
+        assert_eq!(
+            after.manifests[&root].children,
+            before.session.manifests[&root].children
+        );
+        assert_eq!(after.jobs, before.session.jobs);
+        assert_eq!(after.executions, before.session.executions);
+        assert!(after.work_scope_ready(0));
+        assert_eq!(store.unfinished_job_count()?, 0);
+        assert_eq!(processor.0.load(Ordering::SeqCst), 0);
+        store.integrity_check()?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn sealed_descendants_rehydrate_and_root_checkpoint_accounts_for_them() -> Result<()> {
     let mut peer = fixture().await?;
     declare(&mut peer, &declaration(0, 0, &[1], Some(&[1]))).await?;
