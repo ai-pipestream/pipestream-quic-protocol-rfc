@@ -831,6 +831,17 @@ Tests cover abrupt process exit after durable admission, input corruption,
 detached rehydration/resume, and replacement executors while an expired callback
 still occupies the sole worker slot.
 
+`RecursiveClient::send_entity` and `send_chunked_entity` retain at most 128 STATUS
+frames and 4 MiB of aggregate encoded STATUS data per operation. Both budgets
+include the terminal frame, extension bytes, and five-byte UCF headers. Exact
+boundaries succeed without clipping status history or yield tokens. Exhaustion
+closes the connection with `PIPESTREAM_LIMIT_EXCEEDED` (0x06) and returns an error,
+not partial success. A full count budget without a terminal state refuses without
+waiting for another frame. These are fixed local client limits, not negotiated
+wire limits or evidence of remote cancellation/completion. The incoming frame
+buffer and temporary decoding allocations are separate from retained history;
+this is not a 4 MiB bound on total process memory.
+
 `RecursiveClient::disconnect` requests transport close without waiting. Before
 stopping the client's async runtime, use `disconnect_gracefully().await`; it
 keeps the endpoint alive through QUIC shutdown. The `begin-yield` CLI now uses
