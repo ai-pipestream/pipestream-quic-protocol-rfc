@@ -64,6 +64,13 @@ MUST distinguish reserved completion capacity from admission limits for new
 descendants and payloads; reserving a parent's completion does not promise
 unlimited future work or exempt it from those limits.
 
+Where completion reservations depend on bounded application results, an
+implementation MUST make those bounds available to the application before
+dispatch and enforce them before committing the resulting state. A result
+exceeding its admission budget MUST NOT be represented as successful completion.
+Retaining an explicit refusal also requires capacity; such a refusal does not
+discharge the entity's unresolved obligations.
+
 To prevent memory-exhaustion attacks, implementations MUST NOT pre-allocate memory for variable-length payloads based solely on the 32-bit Length field in the UCF header (Section 6.1.1). Memory MUST be allocated incrementally as octets are received, or capped at a smaller initial buffer until the message type and context are verified.
 
 The entity-count and window defaults are identifier-space maxima, not safe

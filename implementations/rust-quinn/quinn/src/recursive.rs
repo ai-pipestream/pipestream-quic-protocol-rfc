@@ -155,6 +155,9 @@ pub struct ProcessContext<'a> {
     pub header: &'a EntityHeader,
     pub payload: &'a Payload,
     pub now_micros: u64,
+    /// Usable continuation-token budget: durable policy capped by the STATUS frame
+    /// limit, or zero when Layer 2 is not negotiated. This is not a heap limit.
+    pub max_yield_token_bytes: usize,
 }
 
 #[derive(Debug, Clone)]

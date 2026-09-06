@@ -241,7 +241,9 @@ measurement, not a process-RSS, concurrency, or throughput claim.
 both durable policies when creating a database. Default state limits are
 128 MiB and 4,096 sessions globally, 32 MiB and 1,024 sessions per authority and
 principal, and 8 MiB per serialized record. Anonymous sessions share one bucket.
-`storage_usage` and `principal_storage_usage` report retained bytes and counts.
+`storage_usage` and `principal_storage_usage` report retained bytes, protected
+publication growth, and counts. Their `charged_bytes()` sum is the byte charge
+against all three limits: global, principal and individual record.
 
 All create/save/transaction paths commit the state charge, session revision,
 and job index atomically. Completing, refusing, or revoking work does not erase
@@ -259,17 +261,58 @@ Every write verifies checksummed accounting metadata before using its capacity;
 missing or altered entries cannot create free space for another session. This
 scan is bounded by the session-count policy, not constant-time. No large-store
 throughput claim is made.
-The session payload format is version 7; old nonempty databases without
-the accounting schema are refused. No operational database is migrated or
+The session payload format is version 7. Storage policy version 2 adds protected
+publication charges and the immutable continuation-token limit; version-1 policies
+and unaccounted stores are refused without conversion. No operational database is migrated or
 silently assigned new quotas. Preserve old stores with their matching binary.
 
-These are logical serialized-state quotas, separate from the SQLite file caps
-below. They do not bound retained payload files or total process memory. Completion-space
-reservations are also unfinished: admission does not reserve every possible
-future outcome's bytes, and quota exhaustion can refuse a later publication.
-Such work remains unfinished and charged; no successful completion is invented.
-Retained payloads have the separate policy below. Orphan reconciliation remains
-part of the full execution requirement.
+### Protected publication growth
+
+Before persisting a new job, the store charges its current serialized bytes and
+the possible growth of its outcome, entity output digest and execution record.
+Queued attempts reserve their future map entry; running attempts retain space for
+larger epochs/timestamps and the completion timestamp. Refusals reserve the full
+512-byte diagnostic allowance. Layer 2 processing additionally reserves a claim
+with the configured maximum token and all supported validation fields, including
+the 256-byte checkpoint reference. Map-length prefix growth is charged separately.
+The calculation uses the pinned Postcard serializer's size counter for the actual
+types, without cloning the full session or allocating a maximum-sized token.
+
+`StorageLimits::yield_token_bytes` is a configurable 64 KiB default, not a change
+to the protocol's 24-bit token ceiling. `ProcessContext::max_yield_token_bytes`
+exposes the smaller of the retained policy and the usable STATUS frame budget
+before calling application code, or zero if Layer 2 was not negotiated. The
+current frame budget is 1 MiB minus its 24-byte STATUS/YIELD overhead. Configure enough
+record, principal and global credit for the requested budget; otherwise admission
+refuses. The service checks a returned token before installing the claim. A token
+outside the admission budget produces a retained `PIPESTREAM_LIMIT_EXCEEDED`
+refusal, not a truncated token or a successful entity. Direct store callers face
+the same bound, with transaction rollback before any claim/outcome commit.
+
+All store mutation paths protect these reservations from unrelated work. The
+serialized record cap is reduced by outstanding reservations before serialization,
+and the checksummed accounting entry binds actual and reserved bytes to the session.
+Reopen recomputes the reservation from retained jobs. Acquisition, lease expiry,
+revocation and disconnect do not discard it. A terminal job converts needed credit
+to actual bytes and releases only unused publication credit; its retained outcome
+stays charged. Callback-created memory and external effects are not bounded by
+this policy, and application idempotency/fencing is still required.
+
+Tests exercise every current processing outcome, rehydration and resume at the
+exact logical quota, full refusal diagnostics, token/prefix boundaries, concurrent
+principal admission, revocation, corruption, rollback and abrupt process exit.
+Real authenticated QUIC tests hold a callback while other admissions fill the
+store, then publish its reserved yield. Another test checks the exact token limit,
+retained oversized-result refusal and authenticated resume of an in-budget claim,
+including the exact frame boundary and one byte over it.
+
+These are logical serialized-state reservations, not reserved DB/WAL pages,
+filesystem blocks, payload storage or total process memory. A processing job's
+DEHYDRATING outcome is covered; admission of the later rehydration job is still
+subject to ordinary queue and byte limits. Future rehydration slots/bytes, physical
+publication headroom, final-lineage headroom, and orphan reconciliation remain
+unfinished. Physical exhaustion may still refuse publication, leaving work
+unfinished and charged rather than inventing successful completion.
 
 ### Retained payload and lineage reservations
 
@@ -375,8 +418,8 @@ directory and cooperating writers. External unguarded SQLite connections or
 filesystem writers are outside the enforcement boundary. The limits cover
 file lengths, not filesystem allocation, snapshots, native memory, payloads,
 or completion-space reservations. They do not lift the service's single-writer-
-process restriction for other resource accounting. Java JDBC needs a separate
-storage-bound implementation.
+process restriction for other resource accounting. Java JDBC has its own independent
+file-length guard, described in the Java implementation README.
 
 Eleven core tests exercise main-page, WAL, rollback-journal and actual shared-memory
 exhaustion, growth-control bypass attempts, immutable/corrupt policies, aliases,

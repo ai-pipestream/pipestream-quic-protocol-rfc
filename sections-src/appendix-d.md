@@ -262,7 +262,22 @@ Tests cover queue and metadata saturation, rollback, exact descriptor conversion
 abrupt exit and real-QUIC completion. Discovery interleaves sessions in bounded
 pages. These are not physical DB/WAL publication reservations or guarantees of
 admitting unknown future descendants. Older Java schemas are refused without
-conversion. Rust outcome reservations and the full resource matrix remain due.
+conversion. Rust's admitted-job publication reservations are described below;
+physical publication headroom and the full resource matrix remain due.
+
+Rust storage policy version 2 reserves logical outcome, entity-digest and executor
+record growth for admitted processing, rehydration and resume jobs. Layer 2
+processing additionally reserves its configured continuation-token budget and
+bounded claim metadata. The default token budget is 64 KiB and is exposed to the
+application before dispatch, capped by the usable STATUS frame limit; this is a
+local policy, not a wire-format reduction.
+An oversized application result becomes a retained named refusal, without a
+claim or successful entity transition. Checksummed actual/reserved charges commit
+with session and job state and survive reopen. Old storage policies are refused
+without conversion; session payload format 7 is unchanged. Tests pin serialized
+growth, exact-quota publication, process exit, concurrent principal admission and
+authenticated QUIC yield/recovery. These reservations do not fund a future child
+scope, new rehydration job, final lineage file or physical DB/WAL growth.
 
 The Rust retained-payload store separately reserves global and authority/principal
 bytes and object counts, including lineage, before disk creation. An immutable

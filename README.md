@@ -59,8 +59,10 @@ exclusive writer ownership. Interrupted copies and incomplete metadata stay
 charged across reopen. Java now has independent database/WAL/journal/shared-memory
 file-length enforcement through a small SQLite extension packaged with JDBC.
 Java admission now protects logical rehydration descriptor bytes and completion
-slots, including across restart and processing-queue saturation. Physical
-completion-space reservations, Rust outcome reservations, and explicit orphan
+slots, including across restart and processing-queue saturation. Rust now reserves
+logical result and attempt growth for admitted processing, rehydration and resume
+jobs, with an explicit callback continuation-token budget. Physical
+completion-space reservations, future Rust rehydration admission, and explicit orphan
 reconciliation remain unfinished.
 Connection metadata and lineage operations now run in a bounded storage pool.
 An independent control reader enforces checkpoint deadlines during those
