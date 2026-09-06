@@ -156,6 +156,29 @@ explicit `RecoveryOutcome::Complete` or `RecoveryOutcome::Refused(JobFailure)`.
 A refusal is not success even if its diagnostic code is zero. Consume the
 outcome or reconnect before sending another recovery request on that client.
 
+The client retains one accepted receipt on its connection and refuses unrelated
+operations before writing any frames while its outcome remains unconsumed. Passing
+a different receipt to `wait_recovery` refuses locally without consuming the queued
+response. Consuming the matching terminal frame releases that local obligation;
+both successful and refused outcomes allow a subsequent exchange. Legacy redemption
+is refused locally on this profile even when no outcome is pending.
+
+If `accept_recovery` or `wait_recovery` is cancelled after polling begins, or fails
+during network I/O, its exchange guard closes the connection. A partial frame cannot
+be consumed as the next response. Callers reconnect and replay their persisted
+request; closing the connection neither cancels an accepted server job nor claims
+completion. These APIs still require application-owned request persistence before
+transmission. The connection's receipt tracking is not a durable producer journal,
+and this guard does not claim cancellation safety for every other client operation.
+
+Real-QUIC tests interrupt receipt and outcome reads before response bytes, inside
+the frame header and inside the body. A separate authenticated-service test holds
+a resume callback, cancels the client's wait, verifies the job remains unfinished,
+then lets it publish and replays its exact receipt/outcome after server restart and
+client certificate rotation. Callback and attempt counts remain one. The negative
+response tests continue to pin exact wire refusal codes; local wait cancellation
+closes normally without presenting it as a malformed request or successful GOAWAY.
+
 After a lost response, resend the identical persisted request. During the
 receipt's 24-hour interval, it returns the same receipt and retained terminal
 outcome when available, without enqueueing again. Claim expiry gates first

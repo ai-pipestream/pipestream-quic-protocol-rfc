@@ -1113,6 +1113,37 @@ exactly-once effects. The broader resource and bidirectional adversarial test
 matrix remains part of the goal. Wire/CDDL and frozen frame bytes are unchanged;
 Section 10 now references RFC 9525 for service identity.
 
+### Rust recovery exchange ownership and cancellation
+
+The public Rust client now keeps one accepted receipt until its correlated terminal
+outcome is consumed. Unrelated operations refuse locally before network writes,
+and a wrong caller-supplied receipt cannot consume the pending response. Legacy
+redemption is also refused locally on the authenticated-recovery profile. A real
+QUIC regression failed before this change because a second recovery receipt was
+accepted while the first outcome remained pending.
+
+Cancelling `accept_recovery` or `wait_recovery` during exchange I/O now closes the
+connection through an owned guard. An incompletely read frame cannot become the
+next operation's response. This does not cancel an admitted server job or report
+successful shutdown. Actual malformed or mismatched responses retain their named
+protocol refusal codes. Request persistence remains the embedding application's
+responsibility; this is not a Rust durable-client journal or general cancellation
+safety for all recursive-client methods.
+
+Eight focused retained-recovery tests pass, including six injected partial-response
+boundaries and an authenticated real-service test that holds a resume callback,
+cancels the client wait, verifies retained unfinished work, then replays completion
+after server restart with a rotated certificate for the same principal. Callback
+and attempt counts remain one. Strict workspace Rustdoc passes with warnings
+denied. The full suite passed with 300 Rust workspace tests and 192 Java tests,
+zero Java failures/errors/skips from JUnit XML, native SQLite/C++ checks, all nine
+implementation pairings, 32 capability probes, recursive/recovery CLI checks and
+all three external examples. Draft -04 passed idnits with zero errors, flaws or
+warnings and one FIPS reference comment. These are local gates, not hosted CI or
+full-goal completion. Wire/CDDL and storage formats are unchanged. Appendix E now distinguishes the implemented
+retained recovery profile from legacy redemption and the still-separate sealed
+input-outcome lookup gap.
+
 ### Reproducible suite and earlier landings
 
 `./conformance/run_all.sh` runs Rust formatting, Clippy with warnings denied,

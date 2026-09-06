@@ -25,6 +25,7 @@ struct Processor {
     revoke_during_process: Option<Arc<SqliteSessionStore>>,
     panic_resume: bool,
     process_gate: Option<Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>>,
+    resume_gate: Option<Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>>,
     token_bytes: Option<usize>,
     expected_token_budget: Option<usize>,
 }
@@ -74,6 +75,20 @@ impl EntityProcessor for Processor {
     }
     fn resume(&self, context: ResumeContext<'_>) -> [u8; 32] {
         self.resumed.fetch_add(1, Ordering::SeqCst);
+        if let Some(gate) = &self.resume_gate {
+            let (_released, timeout) = gate
+                .1
+                .wait_timeout_while(
+                    gate.0.lock().unwrap(),
+                    Duration::from_secs(10),
+                    |released| !*released,
+                )
+                .unwrap();
+            assert!(
+                !timeout.timed_out(),
+                "recovery test did not release callback"
+            );
+        }
         assert!(!self.panic_resume, "injected resume failure");
         ExemplarProcessor::default().resume(context)
     }

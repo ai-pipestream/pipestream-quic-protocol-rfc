@@ -42,11 +42,13 @@ README profile is not an interoperable wire capability.
 
 ## Recovery Outcomes and Authenticated Receipts
 
-Single-use redemption does not tell a requester whether its first request
-committed when the acknowledgment was lost. A future revision needs an
-idempotent redemption request identity and an authorized retained-outcome
-lookup, with retention, expiry, and revocation rules. Existing duplicate
-refusal prevents an ordinary replay but does not solve ambiguous outcomes.
+Single-use CLAIM_REDEMPTION does not tell a requester whether its first request
+committed when the acknowledgment was lost. Section 10.6.5 now specifies an
+opt-in authenticated recovery profile with immutable request identity, retained
+admission and terminal outcomes, expiry, and revocation. This resolves that
+ambiguity only for negotiated recovery requests; it does not change legacy
+redemption or add outcome lookup to sealed-work sessions. Independent recovery
+implementations and broader failure-boundary evidence remain necessary.
 
 A versioned content receipt could commit to a sealed manifest, payload and
 result digests, parent identity, policy, and nested receipts. It would also

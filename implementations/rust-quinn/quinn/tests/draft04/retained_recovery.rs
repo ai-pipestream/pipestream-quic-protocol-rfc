@@ -117,6 +117,302 @@ fn request(claim: &ClaimRedemption) -> RecoveryRequest {
     }
 }
 
+#[tokio::test]
+async fn public_recovery_client_preserves_its_pending_outcome_before_other_operations() -> Result<()>
+{
+    let mut fixture = AuthFixture::new()?;
+    let options = fixture.listen(Some("issuer-a"), Some(0))?;
+    let claim = begin_durable_yield(&options, "one-recovery-at-a-time").await?;
+    let request = request(&claim);
+    let mut client = RecursiveClient::connect_recovery(&options).await?;
+    let receipt = client.accept_recovery(&request).await?;
+    let header = EntityHeader {
+        entity_id: 2,
+        parent_id: None,
+        scope_id: None,
+        parent_scope_id: None,
+        layer: 0,
+        content_type: None,
+        payload_length: Some(1),
+        checksum: None,
+        metadata: BTreeMap::from([(SESSION_METADATA_KEY.into(), request.session_id.clone())]),
+        chunk_info: None,
+        completion_policy: None,
+    };
+    let digest = ScopeDigest {
+        scope_id: 1,
+        entities_processed: 1,
+        entities_succeeded: 1,
+        entities_failed: 0,
+        entities_deferred: 0,
+        merkle_root: [0; 32],
+    };
+    for error in [
+        client.accept_recovery(&request).await.unwrap_err(),
+        client.barrier(1, 1).await.unwrap_err(),
+        client.redeem_claim(&claim).await.unwrap_err(),
+        client.send_chunked_entity(&[], 0).await.unwrap_err(),
+        client.send_entity(&header, b"x", 0).await.unwrap_err(),
+        client.checkpoint(&checkpoint(100)).await.unwrap_err(),
+        client.close_scope(&digest).await.unwrap_err(),
+    ] {
+        assert!(
+            error.to_string().contains("unconsumed recovery outcome"),
+            "{error}"
+        );
+    }
+    let mut changed = receipt.clone();
+    changed.acceptance.accepted_at_micros += 1;
+    changed.acceptance.retain_until_micros += 1;
+    assert!(
+        client
+            .wait_recovery(&changed)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("pending recovery receipt")
+    );
+    assert_eq!(
+        client.wait_recovery(&receipt).await?,
+        RecoveryOutcome::Complete
+    );
+    let replayed = client.accept_recovery(&request).await?;
+    assert_eq!(receipt, replayed);
+    assert_eq!(
+        client.wait_recovery(&replayed).await?,
+        RecoveryOutcome::Complete
+    );
+    assert_eq!(fixture.processor.resumed.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        fixture
+            .store
+            .load(&request.session_id)?
+            .unwrap()
+            .session
+            .entities
+            .len(),
+        1
+    );
+    assert!(
+        client
+            .redeem_claim(&claim)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("PIPESTREAM_EXTENSION_UNSUPPORTED")
+    );
+    client.disconnect_gracefully().await;
+    let mut client = RecursiveClient::connect_recovery(&options).await?;
+    client.accept_recovery(&request).await?;
+    assert!(
+        client
+            .goaway(1)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("unconsumed recovery outcome")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancelled_recovery_wait_keeps_admitted_work_and_replays_after_server_restart() -> Result<()>
+{
+    struct Release(Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            *self.0.0.lock().unwrap() = true;
+            self.0.1.notify_all();
+        }
+    }
+    let mut fixture = AuthFixture::new()?;
+    let gate = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let release = Release(gate.clone());
+    fixture.processor = Arc::new(Processor {
+        resume_gate: Some(gate),
+        ..Processor::default()
+    });
+    let options = fixture.listen(Some("issuer-a"), Some(0))?;
+    let claim = begin_durable_yield(&options, "cancelled-recovery-job").await?;
+    let request = request(&claim);
+    let request_path = fixture._dir.path().join("recovery-request.cbor");
+    fs::write(
+        &request_path,
+        recovery::encode(&RecoveryFrame::Request(request.clone()))?,
+    )?;
+    fs::File::open(&request_path)?.sync_all()?;
+    fs::File::open(fixture._dir.path())?.sync_all()?;
+    let mut client = RecursiveClient::connect_recovery(&options).await?;
+    let receipt = client.accept_recovery(&request).await?;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while fixture.processor.resumed.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await?;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), client.wait_recovery(&receipt))
+            .await
+            .is_err()
+    );
+    client.disconnect_gracefully().await;
+    assert_eq!(fixture.store.unfinished_job_count()?, 1);
+    let state = fixture.store.load(&claim.session_id)?.unwrap().session;
+    assert_eq!(state.recovery_receipts[&request.request_id], receipt);
+    assert_ne!(
+        state.entities[&receipt.acceptance.entity].state,
+        pipestream_core::session::EntityState::Complete
+    );
+    drop(release);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while fixture.store.unfinished_job_count().unwrap() != 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await?;
+    while let Some(server) = fixture.servers.pop() {
+        server.abort();
+        let _ = server.await;
+    }
+    fixture.store = Arc::new(SqliteSessionStore::open(&fixture.options.state_database)?);
+    let options = fixture.listen(Some("issuer-a"), Some(1))?;
+    let bytes = fs::read(request_path)?;
+    let (kind, payload) = decode_ucf(&bytes)?;
+    assert_eq!(kind, recovery::FRAME_RECOVERY);
+    let RecoveryFrame::Request(saved) = recovery::decode(payload)? else {
+        panic!("expected saved request");
+    };
+    let mut client = RecursiveClient::connect_recovery(&options).await?;
+    let replayed = client.accept_recovery(&saved).await?;
+    assert_eq!(replayed, receipt);
+    assert_eq!(
+        client.wait_recovery(&replayed).await?,
+        RecoveryOutcome::Complete
+    );
+    assert_eq!(fixture.processor.resumed.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        fixture
+            .store
+            .load(&claim.session_id)?
+            .unwrap()
+            .session
+            .executions[&receipt.execution_key()]
+            .epoch,
+        1
+    );
+    fixture.store.integrity_check()?;
+    client.disconnect_gracefully().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancelled_recovery_receipt_and_outcome_reads_close_the_connection() -> Result<()> {
+    for terminal in [false, true] {
+        for prefix in [0, 2, 7] {
+            let fixture = AuthFixture::new()?;
+            let certs = CertificateDer::pem_file_iter(&fixture.options.certificate)?
+                .collect::<Result<Vec<_>, _>>()?;
+            let key = PrivateKeyDer::from_pem_file(&fixture.options.private_key)?;
+            let verifier =
+                rustls::server::WebPkiClientVerifier::builder(Arc::new(fixture.roots.clone()))
+                    .build()?;
+            let mut tls = rustls::ServerConfig::builder()
+                .with_client_cert_verifier(verifier)
+                .with_single_cert(certs, key)?;
+            tls.alpn_protocols = vec![ALPN.to_vec()];
+            let endpoint = quinn::Endpoint::server(
+                quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls)?)),
+                "127.0.0.1:0".parse()?,
+            )?;
+            let address = endpoint.local_addr()?;
+            let (ready, received) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(async move {
+                let connection = endpoint.accept().await.unwrap().await.unwrap();
+                let (mut send, mut recv) = connection.accept_bi().await.unwrap();
+                let (_, bytes) = read(&mut recv).await.unwrap();
+                send.write_all(
+                    &encode_capabilities(&decode_capabilities(&bytes).unwrap()).unwrap(),
+                )
+                .await
+                .unwrap();
+                let (_, bytes) = read(&mut recv).await.unwrap();
+                let RecoveryFrame::Request(request) = recovery::decode(&bytes).unwrap() else {
+                    panic!("expected request");
+                };
+                let receipt = recovery::RecoveryReceipt {
+                    request,
+                    acceptance: recovery::RecoveryAcceptance {
+                        entity: pipestream_core::session::EntityKey {
+                            scope_id: 0,
+                            entity_id: 1,
+                        },
+                        accepted_at_micros: 20,
+                        retain_until_micros: 20 + recovery::RECEIPT_RETENTION_MICROS,
+                    },
+                };
+                let receipt_frame =
+                    recovery::encode(&RecoveryFrame::Receipt(receipt.clone())).unwrap();
+                let response = if terminal {
+                    send.write_all(&receipt_frame).await.unwrap();
+                    recovery::encode(&RecoveryFrame::Outcome {
+                        receipt,
+                        outcome: RecoveryOutcome::Complete,
+                    })
+                    .unwrap()
+                } else {
+                    receipt_frame
+                };
+                send.write_all(&response[..prefix]).await.unwrap();
+                ready.send(()).unwrap();
+                tokio::time::timeout(Duration::from_secs(2), connection.closed()).await
+            });
+            let mut client = RecursiveClient::connect_recovery(&RecursiveClientOptions {
+                identity: Some(fixture.identities[0].clone()),
+                remote: address,
+                ca_certificate: fixture.options.certificate.clone(),
+                server_name: "localhost".into(),
+            })
+            .await?;
+            let request = RecoveryRequest {
+                authority: "issuer-a".into(),
+                session_id: "cancelled".into(),
+                request_id: [7; 16],
+                claim_id: 99,
+                state_checksum: [2; 32],
+            };
+            if terminal {
+                let receipt = client.accept_recovery(&request).await?;
+                received.await?;
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(50), client.wait_recovery(&receipt))
+                        .await
+                        .is_err()
+                );
+            } else {
+                // The server signal proves the request was transmitted before cancellation.
+                let exchange = client.accept_recovery(&request);
+                tokio::pin!(exchange);
+                tokio::select! {
+                    result = &mut exchange => panic!("incomplete response unexpectedly returned: {result:?}"),
+                    result = received => result?,
+                }
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(50), &mut exchange)
+                        .await
+                        .is_err()
+                );
+            }
+            let closed = server.await?;
+            assert!(
+                matches!(closed, Ok(quinn::ConnectionError::ApplicationClosed(ref error)) if error.error_code == ERROR_NO_ERROR.into()),
+                "cancelled terminal={terminal}, prefix={prefix} must close: {closed:?}"
+            );
+            client.disconnect_gracefully().await;
+        }
+    }
+    Ok(())
+}
+
 async fn raw(
     options: &RecursiveClientOptions,
     recovery: bool,
