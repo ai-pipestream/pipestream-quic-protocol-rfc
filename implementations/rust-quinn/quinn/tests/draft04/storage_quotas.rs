@@ -10,6 +10,81 @@ impl Drop for ReleasePublication {
 }
 
 #[tokio::test]
+async fn authenticated_callback_publishes_while_unrelated_writes_saturate_reserved_wal()
+-> Result<()> {
+    let mut fixture = AuthFixture::new()?;
+    fixture.options.state_database = fixture._dir.path().join("publication.sqlite3");
+    let physical = PhysicalLimits {
+        database_bytes: 2 << 20,
+        wal_bytes: 1 << 20,
+        journal_bytes: 1 << 20,
+        shared_memory_bytes: 64 << 10,
+    };
+    fixture.store = Arc::new(SqliteSessionStore::open_with_all_limits(
+        &fixture.options.state_database,
+        JobQueueLimits::default(),
+        StorageLimits::default(),
+        physical,
+    )?);
+    let gate = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let release = ReleasePublication(gate.clone());
+    fixture.processor = Arc::new(Processor {
+        process_gate: Some(gate),
+        token_bytes: Some(64 << 10),
+        expected_token_budget: Some(64 << 10),
+        ..Processor::default()
+    });
+    let options = fixture.listen(Some("issuer-a"), Some(0))?;
+    let worker_options = options.clone();
+    let pending =
+        tokio::spawn(async move { begin_durable_yield(&worker_options, "wal-yield").await });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while fixture.processor.processed.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await?;
+    let before = fixture.store.load("wal-yield")?.unwrap();
+    let mut filler = fixture
+        .store
+        .create(&pipestream_core::session::Session::new(
+            "wal-filler",
+            7,
+            32,
+        )?)?;
+    fixture.store.checkpoint()?;
+    let reader = rusqlite::Connection::open_with_flags(
+        &fixture.options.state_database,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    reader.execute_batch("BEGIN; SELECT count(*) FROM pipestream_sessions")?;
+    let mut saturated = false;
+    for _ in 0..1000 {
+        match fixture.store.save(filler.revision, &filler.session) {
+            Ok(next) => filler = next,
+            Err(StoreError::Protocol(error)) if error.code == ERROR_LIMIT_EXCEEDED => {
+                saturated = true;
+                break;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    assert!(saturated);
+    assert_eq!(fixture.store.load("wal-filler")?, Some(filler));
+    assert_eq!(fixture.store.load("wal-yield")?, Some(before));
+    drop(release);
+    let claim = tokio::time::timeout(Duration::from_secs(5), pending).await???;
+    let retained = fixture.store.load("wal-yield")?.unwrap().session;
+    assert_eq!(retained.claims[&claim.claim_id].token, vec![255; 64 << 10]);
+    assert_eq!(fixture.store.unfinished_job_count()?, 0);
+    assert!(fixture.store.physical_usage()?.wal_bytes <= physical.wal_bytes);
+    fixture.store.integrity_check()?;
+    drop(reader);
+    fixture.store.checkpoint()?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn authenticated_yield_uses_its_reservation_after_other_admissions_fill_the_store()
 -> Result<()> {
     let mut fixture = fixture(StorageLimits {

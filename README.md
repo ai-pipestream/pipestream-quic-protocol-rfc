@@ -67,13 +67,15 @@ slot, so waiting parents do not fill the processing queue needed by their childr
 Rust payload installation now also reserves final-lineage file quota before
 admission, including its metadata, receipt and staging allowance across restart.
 This protects configured file-length headroom, not allocated filesystem blocks.
-Physical DB/WAL completion-space reservations and explicit orphan reconciliation
-remain unfinished.
-Rust queue and storage-accounting indexes now update only changed rows instead
-of deleting and rebuilding each session's entries. This removes unrelated index
-writes from lease and publication transactions; the session blob and full
-pre-write integrity audit remain. It is a prerequisite, not a physical
-completion-space reservation or a whole-service throughput result.
+Rust now allocates fixed-capacity session, dispatch and accounting images at
+admission and protects WAL/shared-memory headroom for the remaining execution
+stages. Unrelated writes cannot spend an admitted job's acquisition/publication
+credit, including with a pinned WAL reader. The bound is tied to bundled SQLite
+3.53.2 and the cooperating-writer file-length policy, not filesystem-block
+preallocation. Whole-session serialization and retained-row scans remain;
+large sessions require proportionally more completion credit. Older storage
+layouts are refused without conversion. Java physical completion reservations,
+explicit orphan reconciliation and the broader resource matrix remain unfinished.
 Connection metadata and lineage operations now run in a bounded storage pool.
 An independent control reader enforces checkpoint deadlines during those
 operations; held-storage tests also exercise protocol refusals and progress

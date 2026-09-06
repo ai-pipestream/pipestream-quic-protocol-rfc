@@ -51,6 +51,109 @@ approval as part of a repository landing.
 
 ## Evidence and progress
 
+### Validated increment: Rust physical publication reservations
+
+Branch `feat/sqlite-completion-reservations` starts from the PR #27 merge.
+The new `unrelated_writes_cannot_spend_an_admitted_jobs_publication_space`
+test reproduces the missing guarantee: with a WAL reader pinned, unrelated saves
+exhaust the file cap and an already-acquired processing job cannot publish.
+Admission enforcement now makes it pass; the final cross-language validation
+and cost audit are recorded below.
+
+The current edit changes the session table to a fixed-capacity SQLite BLOB image.
+Admission allocates actual serialized bytes plus protected logical result growth;
+updates within that capacity use incremental BLOB I/O, not SQL row replacement.
+The checksummed header binds session identity, payload version, revision, timestamp,
+logical length, capacity and state checksum. Padding is zero and verified, never a
+placeholder outcome. The session payload remains version 7; the outer image uses
+`PSIMG001`, and `PSDBL002` refuses previous SQLite file policies without conversion.
+Four image tests cover in-place acquisition/publication at a fixed database page
+cap, corruption, growth rollback, and WAL extent with cache spilling at 512-,
+4,096- and 65,536-byte page sizes. Whole-transaction coverage was added separately
+as recorded below; these image-only tests do not establish that bound themselves.
+The initial local core run passed 121 tests and failed only the new competing-write
+reservation test. That negative result preceded admission enforcement; it is not
+the current state of the branch.
+
+Mutable dispatch and accounting now use 32- and 56-byte images with immutable
+SQL keys. Future rehydration slots are allocated with processing and become
+active or retired in place. Retired entries are not runnable and do not consume
+unfinished-job quota. Allocated session capacity remains charged after unused
+logical growth is released. Queue policy 3 and storage policy 4 refuse older
+layouts. SQL triggers do not intercept incremental BLOB writes; rollback tests
+now inject real SQLite refusal with an expression index that prevents opening
+the target column for writing. Byte comparisons verify changed images and retained
+row identities, separately from SQL insert/update/delete auditing.
+
+The new reservation model counts queued acquisition/publication, running
+publication, and future rehydration conversion/acquisition/publication. Renewal
+of an expired running attempt cannot spend its publication credit. Each remaining
+stage funds the allocated session image, two dispatch images, an accounting image,
+the possible final commit-frame repeat and 64 KiB sector padding. Enlarging a
+session also funds the higher cost of its old jobs. Under SQLite's actual writer
+transaction, each public mutation computes the next state's aggregate reserve
+before any image write. A per-connection VFS ceiling protects that reserve through
+commit or rollback. Main and WAL handles share that connection's ceiling, not a
+process-global value that could race another writer's commit. The usable WAL
+extent is also constrained by its WAL-index shared-memory policy. Reopening an
+existing queue/accounting policy no longer recreates indexes or writes policy rows.
+
+The original 256 KiB Layer 2 fixture cannot fund five future maximum-image writes
+under this model and is now an explicit admission-refusal case. The saturation
+acceptance case uses a 1 MiB WAL, then fills ordinary writes to refusal as before.
+Large index-only tests explicitly configure enough WAL/index capacity for their
+hundreds of retained jobs; production defaults and admission checks are unchanged.
+These are real capacity costs of serializing the entire session, not a throughput
+claim or an assumption that the default WAL can fund arbitrarily large work sets.
+
+Current tests cover saturated publication, two owners' queued acquisition and
+full 64 KiB token publication at 512-, 4,096- and 65,536-byte pages, concurrent
+admission, expired reacquisition, future rehydration, authenticated resume with
+retained receipt replay, and abrupt process exit after admission into a pinned WAL.
+A new authenticated real-QUIC test releases a held callback after unrelated writes
+exhaust their ceiling and verifies full-token publication while the reader stays
+pinned. The corrected full Rust workspace run passes 131 core, 62 Quinn unit,
+55 wire, one allocation and three runner tests. The full `conformance/run_all.sh`
+run passed with those 252 Rust tests, 105 Java tests without errors/failures/skips,
+native SQLite/C++ checks, all nine language pairings, 32 raw capability probes,
+recursive/recovery CLI checks, and all examples. Workspace formatting and strict
+clippy passed in that run. After the subsequent defensive changes, the final
+`./conformance/run_all.sh` passed with 258 Rust workspace tests (137 core,
+62 Quinn unit, 55 wire, one allocation gate and three runner tests), 105 Java
+tests without errors/failures/skips, native SQLite/C++ checks, all nine pairings,
+32 capability probes, recursive/recovery CLI checks and every external example.
+Workspace formatting/clippy and strict Rustdoc passed. Draft -04 passed idnits
+with zero errors/flaws/warnings and one informational FIPS reference comment.
+These are local results, not hosted CI or proof of full-goal completion.
+
+The completed whole-transaction cost audit measures 144 acquisition/publication
+transactions across 72 cases with a two-page cache and spilling enabled. Three
+page sizes, eight token budgets through 8 MiB, and complete/full-diagnostic
+refused/maximum-field deferred outcomes all fit the production stage bound.
+The test fixes the database page cap at its current count, forbids SQL image
+replacement, pins row identity and capacity, and verifies the exact retained
+state after each transaction. This includes mutable dispatch and accounting,
+not just the session image. The default physical policy is unchanged.
+
+Five defensive regression tests now cover corrupt fixed-field discriminants,
+timestamps and padding; oversized dispatch/accounting metadata; invalid session
+identities; and missing/changed owned schema. Discovery checks shapes before
+decoding identities; exact audit comparisons remain inside SQLite. Retained
+session IDs are length-gated before materialization. Schema refusal verifies
+unchanged schema, main database and WAL bytes instead of silently rebuilding
+indexes. README, Rust README, readiness and Appendix D now describe allocated
+capacity, retained-row scan costs and the pinned SQLite boundary.
+
+Publication follows exact-diff and live-remote review, then a Forgejo commit/PR
+and merge with automatic GitHub-mirror verification. Git history and live remote
+refs, not this validation entry, are the authority for publication status.
+
+Filesystem block allocation, arbitrary external writers and unbounded callback
+effects remain outside the existing cooperating-writer file-length contract.
+No operational database has been migrated, and this increment is not a release.
+
+### Landed increments
+
 - Starting point: `ed1a468`, clean main on 2026-09-05. Section 9.8 is implemented
   only in Rust. Durable sessions are not caller-authenticated, callbacks are
   synchronous, and payloads are whole-entity buffered.
@@ -488,7 +591,7 @@ approval as part of a repository landing.
   and every external example. Workspace formatting/clippy and strict Rustdoc
   passed. Draft -04 passed idnits with zero errors/flaws/warnings and one FIPS
   reference comment. These are local results, not proof of full-goal completion.
-- Not yet implemented: physical DB/WAL completion-space reservations,
+- Not yet implemented: Java physical DB/WAL completion-space reservations,
   orphan reclamation,
   persistent producer observations, and the remaining independent Java
   profile requirement matrix. Physical execution limits and temporary spools are coordinated only
@@ -506,7 +609,7 @@ expiry is not callback cancellation. Periodic dispatch can reacquire unfinished
 expired attempts, but does not retry application-refused jobs automatically.
 Temporary spool accounting is process-local and excludes permanent entity files.
 Rust and Java SQLite file-length caps are now independent of that accounting.
-Add physical DB/WAL publication headroom and
+Complete independent Java physical DB/WAL publication headroom and
 explicit orphan reconciliation without
 deleting a live generation or treating missing input as completed work.
 Do not treat recovery receipts or publication fencing as completion of bounded

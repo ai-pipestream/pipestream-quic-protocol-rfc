@@ -219,14 +219,21 @@ fn closure_failure_rolls_back_reservation_conversion_and_retry_can_finish() {
     let usage = store.job_queue_usage().unwrap();
     let bytes = store.storage_usage().unwrap();
     let connection = Connection::open(store.path()).unwrap();
-    connection.execute_batch("CREATE TRIGGER fail_rehydration BEFORE UPDATE ON pipestream_jobs
-        WHEN NEW.rehydration = 1 AND NEW.reserved = 0 BEGIN SELECT RAISE(ABORT, 'injected closure failure'); END;").unwrap();
-    assert!(store.transact("parent", |s| close(s, 1, key)).is_err());
+    connection
+        .execute_batch("CREATE INDEX fail_rehydration ON pipestream_jobs(length(image))")
+        .unwrap();
+    assert!(
+        store
+            .transact("parent", |s| close(s, 1, key))
+            .unwrap_err()
+            .to_string()
+            .contains("cannot open indexed column for writing")
+    );
     assert_eq!(store.load("parent").unwrap().unwrap(), before);
     assert_eq!(store.job_queue_usage().unwrap(), usage);
     assert_eq!(store.storage_usage().unwrap(), bytes);
     connection
-        .execute_batch("DROP TRIGGER fail_rehydration")
+        .execute_batch("DROP INDEX fail_rehydration")
         .unwrap();
     store.transact("parent", |s| close(s, 1, key)).unwrap();
     store.integrity_check().unwrap();
@@ -235,11 +242,11 @@ fn closure_failure_rolls_back_reservation_conversion_and_retry_can_finish() {
 #[test]
 fn missing_or_altered_future_slots_cannot_admit_unrelated_work() {
     for mutation in [
-        "DELETE FROM pipestream_jobs WHERE reserved = 1",
-        "UPDATE pipestream_jobs SET reserved = 0 WHERE reserved = 1",
-        "UPDATE pipestream_jobs SET principal = x'00ff' WHERE reserved = 1",
-        "UPDATE pipestream_jobs SET enqueued_at_micros = 99 WHERE reserved = 1",
-        "PRAGMA ignore_check_constraints = ON; UPDATE pipestream_jobs SET reserved = 2 WHERE reserved = 1; PRAGMA ignore_check_constraints = OFF;",
+        "DELETE FROM pipestream_jobs WHERE substr(image,2,1) = x'01'",
+        "UPDATE pipestream_jobs SET image = CAST(substr(image,1,1) || x'00' || substr(image,3) AS BLOB) WHERE substr(image,2,1) = x'01'",
+        "UPDATE pipestream_jobs SET principal = x'00ff' WHERE substr(image,2,1) = x'01'",
+        "UPDATE pipestream_jobs SET image = CAST(substr(image,1,11) || x'0000000000000063' || substr(image,20) AS BLOB) WHERE substr(image,2,1) = x'01'",
+        "UPDATE pipestream_jobs SET image = CAST(substr(image,1,1) || x'02' || substr(image,3) AS BLOB) WHERE substr(image,2,1) = x'01'",
     ] {
         let dir = tempfile::tempdir().unwrap();
         let store = SqliteSessionStore::open(dir.path().join("state.sqlite3")).unwrap();
@@ -417,13 +424,11 @@ fn older_queue_and_storage_policies_are_refused_without_conversion() {
                 )
                 .unwrap();
         }
-        let snapshot = || -> (Vec<u8>, i64, Vec<(String, String)>) {
-            let (state, revision) = connection
-                .query_row(
-                    "SELECT state, revision FROM pipestream_sessions",
-                    [],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
+        let snapshot = || -> (Vec<u8>, Vec<(String, String)>) {
+            let image = connection
+                .query_row("SELECT image FROM pipestream_sessions", [], |row| {
+                    row.get(0)
+                })
                 .unwrap();
             let schema = connection
                 .prepare("SELECT name, sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY name")
@@ -432,7 +437,7 @@ fn older_queue_and_storage_policies_are_refused_without_conversion() {
                 .unwrap()
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap();
-            (state, revision, schema)
+            (image, schema)
         };
         let before = snapshot();
         drop(store);

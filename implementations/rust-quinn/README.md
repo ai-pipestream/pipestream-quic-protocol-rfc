@@ -170,7 +170,8 @@ and result publication; already-committed external effects are not undone.
 Revoked unfinished jobs remain charged to the durable queue. Each session
 retains at most 1,024 recovery receipts; expired entries are not evicted to
 admit new requests. Separate retained-state and payload quotas apply;
-completion-space reservations and reclamation remain unfinished.
+admitted-job SQLite completion reservations apply as described below. Receipt
+reclamation remains unfinished.
 
 ## Other prototype paths and limitations
 
@@ -221,8 +222,8 @@ Restart counts abandoned files against the store quota without deleting them.
 Live handles for the same directory share accounting and cannot reset it with
 different limits. Accounting is not coordinated between separate operating
 system processes. Temporary receive budgets do not limit retained entity files,
-SQLite state, or the filesystem cache. Completion-space reservations and explicit
-orphan reclamation remain required before production
+SQLite state, or the filesystem cache. Explicit orphan reclamation and broader
+resource verification remain required before production
 multi-tenant use. Do not run multiple writer processes against this spool root.
 
 `cargo test -p pipestream-quinn --test spool_resources -- --nocapture` sends
@@ -242,8 +243,11 @@ both durable policies when creating a database. Default state limits are
 128 MiB and 4,096 sessions globally, 32 MiB and 1,024 sessions per authority and
 principal, and 8 MiB per serialized record. Anonymous sessions share one bucket.
 `storage_usage` and `principal_storage_usage` report retained bytes, protected
-publication growth, and counts. Their `charged_bytes()` sum is the byte charge
-against all three limits: global, principal and individual record.
+publication growth, allocated state capacity, and counts. `charged_bytes()` is
+the larger of allocated capacity and actual bytes plus protected growth. Padding
+remains charged after unused logical growth is released. Record capacity also
+stays within the individual record limit; the image header and SQLite overhead
+are covered by the physical file policy.
 
 All create/save/transaction paths commit the state charge, session revision,
 and job index atomically. Completing, refusing, or revoking work does not erase
@@ -261,11 +265,12 @@ Every write verifies checksummed accounting metadata before using its capacity;
 missing or altered entries cannot create free space for another session. This
 scan is bounded by the session-count policy, not constant-time. No large-store
 throughput claim is made.
-The session payload format is version 7. Storage policy version 3 adds future
-rehydration charges to the protected publication and continuation-token policy.
-Queue policy version 2 distinguishes ordinary jobs from reserved/active rehydration.
-Version-1 and version-2 storage policies, the old unversioned queue policy,
-and unaccounted stores are refused without conversion. No operational database is migrated or
+The session payload remains version 7 inside a new `PSIMG001` fixed-capacity
+image. Storage policy 4 charges allocated capacity; queue policy 3 uses fixed
+dispatch images, including preallocated future rehydration rows. The physical
+policy is `PSDBL002`. Older images, policies and unaccounted stores are refused
+without conversion. Missing or changed owned tables/indexes refuse on reopen
+instead of being rebuilt over retained work. No operational database is migrated or
 silently assigned new quotas. Preserve old stores with their matching binary.
 
 ### Protected publication growth
@@ -319,12 +324,11 @@ together. Ordinary terminal/refused processing releases only unused future credi
 actual outcomes remain charged. A retained rehydration refusal does not complete
 its parent or erase its unresolved obligations.
 
-These are logical serialized-state reservations, not reserved DB/WAL pages,
-filesystem blocks, payload storage or total process memory. Physical
-DB/WAL publication headroom and orphan reconciliation remain unfinished.
-Final-lineage file quota is protected separately below. Physical exhaustion may
-still refuse publication, leaving work unfinished and charged rather than
-inventing successful completion.
+These logical reservations fund the fixed-capacity images and WAL budget
+described below. They do not reserve filesystem blocks, payload storage or total
+process memory. Final-lineage file quota is protected separately. Filesystem
+exhaustion or I/O failure can still prevent publication, leaving work unfinished
+and charged rather than inventing successful completion.
 
 ### Retained payload and lineage reservations
 
@@ -418,8 +422,7 @@ exact-quota publication and concurrent owner limits. Authenticated QUIC tests
 hold admitted callbacks while two principals fill the complete retained budget,
 then verify real lineage bytes, checkpoint ACKs and GOAWAY. A missing declared
 payload instead times out without a final lineage or successful checkpoint.
-Physical DB/WAL completion-space reservations,
-explicit orphan reconciliation and broader tenant stress remain unfinished.
+Explicit orphan reconciliation and broader tenant stress remain unfinished.
 
 ### SQLite file-length caps
 
@@ -440,8 +443,9 @@ storage stays in memory; unnamed/unregistered disk files cannot be opened
 through the guard. `SQLITE_FULL` becomes `PIPESTREAM_LIMIT_EXCEEDED`, including
 over QUIC; a failed transaction does not publish its session or job state.
 
-Held readers can prevent WAL reset. At capacity, writes refuse until enough
-space is reclaimed; there is no automatic eviction of admitted work.
+Held readers can prevent WAL reset. Ordinary writes refuse when they would spend
+protected completion credit; admitted execution stages can consume their own
+reservation as described below. There is no automatic eviction of admitted work.
 `checkpoint()` now returns busy when TRUNCATE could not reclaim the WAL, rather
 than reporting success from an unread PRAGMA result. See
 [SQLite's WAL checkpoint rules](https://sqlite.org/wal.html) and
@@ -458,8 +462,9 @@ This guard currently requires the bundled Unix VFS and OS pages no larger than
 64 KiB; unsupported backends refuse, with no unbounded fallback. Use a private
 directory and cooperating writers. External unguarded SQLite connections or
 filesystem writers are outside the enforcement boundary. The limits cover
-file lengths, not filesystem allocation, snapshots, native memory, payloads,
-or completion-space reservations. They do not lift the service's single-writer-
+file lengths, not filesystem allocation, snapshots, native memory or payloads.
+Completion-space enforcement is an additional layer below. These limits do not
+lift the service's single-writer-
 process restriction for other resource accounting. Java JDBC has its own independent
 file-length guard, described in the Java implementation README.
 
@@ -469,6 +474,59 @@ transaction rollback, held-reader checkpoint refusal, abrupt-exit recovery,
 and concurrent connection/sidecar churn.
 A real-QUIC test verifies the named refusal, preserved declaration and replay
 after checkpointing. These checks are not a throughput benchmark.
+
+### Physical SQLite completion reservations
+
+Admission allocates a session image containing a 104-byte checksummed header,
+the serialized state, and zero padding for its protected logical growth. The
+header binds identity, version, revision, timestamp, capacity and state checksum.
+Reads validate the bounded header before allocating state and check padding in
+8 KiB pieces. This padding is storage capacity, never a fabricated result.
+Dispatch and accounting use fixed 32- and 56-byte images. Updates within capacity
+use SQLite's [incremental BLOB API](https://www.sqlite.org/c3ref/blob_open.html),
+without replacing SQL rows or allocating new B-tree pages. New admission or
+capacity growth remains an ordinary, quota-checked write.
+
+Each queued job reserves acquisition and publication; a running job retains
+publication credit. Possible rehydration reserves conversion, acquisition and
+publication. Lease renewal does not release publication credit, so repeated
+expiry cannot spend another job's allowance. Enlarging a session must also fund
+the increased write cost of its existing jobs. Terminal outcomes remain retained;
+unused logical credit does not shrink the allocated image.
+
+Before its first write, each mutation holds SQLite's actual writer transaction
+and derives all remaining reservations from retained state. A per-connection VFS
+ceiling subtracts that reserve from usable WAL capacity. The main and WAL handles
+share the same ceiling through commit or rollback, without a process-global
+ceiling race. Usable capacity also accounts for the configured WAL-index
+shared-memory limit. Reopen re-derives credit; it does not depend on a surviving
+in-memory counter or recreate indexes.
+
+The bound is pinned to bundled SQLite 3.53.2, zero page-reserved bytes, page sizes
+512 through 65,536, and sectors no larger than 64 KiB. Each stage funds the whole
+allocated session image, up to two dispatch images and one accounting image,
+plus WAL frame headers, a possible commit-frame repeat and sector padding.
+Unsupported geometry or an unfunded reservation refuses explicitly. This is a
+configured file-length guarantee for cooperating writers, not preallocation of
+filesystem blocks, immunity to I/O failure, or capacity for unknown descendants
+and unrelated checkpoint requests. Ordinary writes still need unreserved space.
+
+Tests pin readers while unrelated writes saturate the WAL, then acquire/publish
+queued jobs for two principals, convert and finish rehydration, and resume an
+authenticated claim with retained receipt replay. They cover concurrent admission,
+lease renewal, reopen and abrupt process exit. A real authenticated QUIC test
+publishes a full-budget token after saturation while the reader remains pinned.
+The whole-transaction cost matrix uses a two-page cache at 512-, 4,096- and
+65,536-byte pages, token budgets across varint/page boundaries through 8 MiB,
+complete/refused/deferred outcomes, and a fixed main-page cap. Every measured
+acquisition/publication stays within its production stage bound without changing
+row identities or image capacity. Corruption tests refuse malformed dispatch,
+oversized metadata and altered schemas without converting them into free capacity.
+
+The cost is deliberately conservative: large sessions multiplied by many pending
+stages may exhaust the default WAL reservation budget before logical queue limits.
+The engine still serializes whole sessions, audits retained state and scans
+retired dispatch rows. These are not constant-time or throughput guarantees.
 
 ### Durable queue APIs
 
@@ -502,7 +560,10 @@ authority/principal buckets and preferring rehydration within each bucket. A
 large ready queue from one principal therefore does not fill a multi-owner page
 before the others' first eligible job. This is not a global fairness guarantee.
 The discovery page is bounded by the ordinary queue limit even though the
-completion queue can be larger. A future reservation is never runnable.
+completion queue can be larger. Future and retired rows are never runnable.
+Completed/refused rows are retained, so discovery scans can grow with retained
+history even when few jobs are unfinished. Fixed-field shape checks precede
+discovery/count queries; malformed flags cannot silently hide work.
 An unexpired attempt is
 not returned; lease expiry makes it discoverable again but does not grant
 execution. `acquire_job` still checks authorization and the durable fence.
@@ -513,24 +574,23 @@ audit these rows against retained session state before counting free capacity,
 so missing or altered reservations cannot admit unrelated work. These bounded
 scans and discovery ordering are not constant-time or large-store throughput claims.
 
-Queue reconciliation preserves unchanged rows, updates changed entries in place,
-deletes obsolete entries before inserting new work, and leaves an unchanged
-storage-accounting row untouched. Limits are checked against other sessions plus
-the desired replacement, without temporarily deleting this session's charges.
-The pre-write integrity audit is unchanged: corrupt or missing index entries
-cannot become admission credit. State, revision, index changes and accounting
-still commit or roll back together. No schema, policy or session-format change
-is required.
+Queue reconciliation preserves unchanged rows and updates changed images in
+place. Future rehydration rows are allocated with processing admission and become
+active or retired in place; finished/refused job rows are retired, not deleted.
+Retired rows do not consume unfinished-job quota. Limits are checked against
+other sessions plus the desired state, without temporarily deleting charges.
+The pre-write integrity audit remains: corrupt or missing entries cannot become
+admission credit. State, revision, index changes and accounting commit or roll
+back together under the new queue/storage policies described above.
 
 Six index-delta tests check row identity across no-op saves, acquisition,
 publication, revocation and reopen; replacement at full quota; and failures during
-new insertion or accounting after selective deletion. An isolated index-only WAL
-test with 1, 128 and 512 jobs adds zero bytes for unchanged reconciliation. Forced
-full replacement of the same indexes adds 28,872, 61,832 and 144,232 WAL bytes,
-respectively, in the local bundled-SQLite run. This comparison excludes the
-session update: a public save still rewrites the whole serialized record and
-advances its revision. The measurements neither bound a publication transaction
-nor establish physical DB/WAL completion reservations or service throughput.
+new insertion or accounting after in-place retirement. Fault tests use actual
+SQLite refusal of writes to an indexed BLOB column; SQL UPDATE/DELETE triggers
+do not intercept incremental BLOB I/O. An isolated index-only WAL test with 1,
+128 and 512 jobs still requires zero bytes for unchanged reconciliation. This
+comparison excludes the session update; whole-transaction funding is tested
+separately above. No service-throughput improvement is inferred.
 
 Ten focused storage tests cover exact-quota scope closure and publication,
 identifier/map-prefix boundaries, concurrent owner admission, revocation,
@@ -652,7 +712,7 @@ the entity DEFERRED. Transport shutdown is not a work-completion barrier.
 Without the explicit mutual-TLS settings, the standalone prototype authenticates
 only the server and remains suitable solely for trusted local demonstrations.
 Even with mutual TLS, retained recovery, bounded workers and retained-storage
-quotas, completion reservations, orphan reclamation, and a complete resilience capability remain
+quotas and admitted-job completion reservations, orphan reclamation and a complete resilience capability remain
 unfinished. It MUST NOT yet be described as a production multi-tenant durable
 work service. Its Layer 2 boolean still advertises more than the tested subset.
 

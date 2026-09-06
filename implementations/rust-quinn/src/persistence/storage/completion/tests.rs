@@ -336,7 +336,7 @@ fn oversized_yield_rolls_back_claim_and_can_publish_a_reserved_refusal() {
 #[test]
 fn reservation_corruption_cannot_create_capacity_for_another_session() {
     for alteration in [
-        "UPDATE pipestream_storage_sessions SET completion_bytes=0",
+        "UPDATE pipestream_storage_sessions SET image = CAST(substr(image,1,8) || zeroblob(8) || substr(image,17) AS BLOB)",
         "DELETE FROM pipestream_storage_sessions",
     ] {
         let (session, _) = queued(LayerSupport::LAYER2);
@@ -422,7 +422,7 @@ fn old_policy_and_changed_yield_budget_are_refused_without_conversion() {
         )
         .unwrap();
     let state: Vec<u8> = connection
-        .query_row("SELECT state FROM pipestream_sessions", [], |r| r.get(0))
+        .query_row("SELECT image FROM pipestream_sessions", [], |r| r.get(0))
         .unwrap();
     assert!(matches!(
         SqliteSessionStore::open(store.path()),
@@ -439,7 +439,7 @@ fn old_policy_and_changed_yield_budget_are_refused_without_conversion() {
     );
     assert_eq!(
         connection
-            .query_row("SELECT state FROM pipestream_sessions", [], |r| r
+            .query_row("SELECT image FROM pipestream_sessions", [], |r| r
                 .get::<_, Vec<u8>>(0))
             .unwrap(),
         state

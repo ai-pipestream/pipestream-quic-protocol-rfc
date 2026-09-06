@@ -204,66 +204,33 @@ fn prior_session_format_is_refused_without_conversion() {
     let store = SqliteSessionStore::open(&path).unwrap();
     store.create(&session()).unwrap();
     let conn = rusqlite::Connection::open(&path).unwrap();
-    conn.execute("UPDATE pipestream_sessions SET format_version = 1", [])
-        .unwrap();
     let before: Vec<u8> = conn
-        .query_row("SELECT state FROM pipestream_sessions", [], |r| r.get(0))
+        .query_row("SELECT image FROM pipestream_sessions", [], |r| r.get(0))
         .unwrap();
-    assert!(
-        matches!(store.load("sealed-1"),Err(StoreError::Corrupt(message)) if message.contains("unsupported stored session version 1"))
-    );
-    let after: Vec<u8> = conn
-        .query_row("SELECT state FROM pipestream_sessions", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(before, after);
-    conn.execute("UPDATE pipestream_sessions SET format_version = 6", [])
-        .unwrap();
-    assert!(
-        matches!(store.load("sealed-1"), Err(StoreError::Corrupt(message)) if message.contains("unsupported stored session version 6"))
-    );
-    assert!(store.save(1, &session()).is_err());
-    let after: Vec<u8> = conn
-        .query_row("SELECT state FROM pipestream_sessions", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(before, after);
-    conn.execute("UPDATE pipestream_sessions SET format_version = 5", [])
-        .unwrap();
-    assert!(
-        matches!(store.load("sealed-1"), Err(StoreError::Corrupt(message)) if message.contains("unsupported stored session version 5"))
-    );
-    assert!(store.save(1, &session()).is_err());
-    let after: Vec<u8> = conn
-        .query_row("SELECT state FROM pipestream_sessions", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(before, after);
-    conn.execute("UPDATE pipestream_sessions SET format_version = 2", [])
-        .unwrap();
-    assert!(
-        matches!(store.load("sealed-1"), Err(StoreError::Corrupt(message)) if message.contains("unsupported stored session version 2"))
-    );
-    let after: Vec<u8> = conn
-        .query_row("SELECT state FROM pipestream_sessions", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(before, after);
-    conn.execute("UPDATE pipestream_sessions SET format_version = 3", [])
-        .unwrap();
-    assert!(
-        matches!(store.load("sealed-1"), Err(StoreError::Corrupt(message)) if message.contains("unsupported stored session version 3"))
-    );
-    let after: Vec<u8> = conn
-        .query_row("SELECT state FROM pipestream_sessions", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(before, after);
-    conn.execute("UPDATE pipestream_sessions SET format_version = 4", [])
-        .unwrap();
-    assert!(
-        matches!(store.load("sealed-1"), Err(StoreError::Corrupt(message)) if message.contains("unsupported stored session version 4"))
-    );
-    assert!(store.save(1, &session()).is_err());
-    let after: Vec<u8> = conn
-        .query_row("SELECT state FROM pipestream_sessions", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(before, after);
+    for version in 1..=6u64 {
+        let mut old = before.clone();
+        old[8..16].copy_from_slice(&version.to_be_bytes());
+        // Retain a valid image checksum: refusal must be for the old payload
+        // version, not merely a damaged envelope.
+        let mut digest = Sha256::new();
+        digest.update(b"pipestream-session-image-v1");
+        digest.update(8u64.to_be_bytes());
+        digest.update(b"sealed-1");
+        digest.update(((old.len() - 104) as u64).to_be_bytes());
+        digest.update(&old[..72]);
+        old[72..104].copy_from_slice(&digest.finalize());
+        conn.execute("UPDATE pipestream_sessions SET image = ?1", [&old])
+            .unwrap();
+        assert!(
+            matches!(store.load("sealed-1"), Err(StoreError::Corrupt(message))
+            if message == format!("unsupported stored session version {version}"))
+        );
+        assert!(store.save(1, &session()).is_err());
+        let after: Vec<u8> = conn
+            .query_row("SELECT image FROM pipestream_sessions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(old, after);
+    }
 }
 
 #[test]
