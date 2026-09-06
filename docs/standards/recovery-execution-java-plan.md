@@ -413,8 +413,34 @@ approval as part of a repository landing.
   passed. Draft -04 passed idnits with zero errors/flaws/warnings and one
   informational FIPS reference comment. These are local results, not a complete
   goal, independent implementer review or hosted CI result.
-- Not yet implemented: physical completion-space reservations, future Rust
-  rehydration slots/bytes, final-lineage headroom, orphan reclamation,
+- Rust future-rehydration increment: queue policy version 2 reserves a possible
+  rehydration slot at PROCESS admission, independently of ordinary PROCESS/RESUME
+  capacity. Defaults remain 128 global/32 principal ordinary jobs; future/active
+  rehydration has separate 65,536 global/16,384 principal limits, with no added
+  physical workers. Waiting DEHYDRATING parents retain slots across revocation
+  and restart without occupying the processing slots needed by their children.
+  Storage policy version 3 funds the maximum serialized rehydration descriptor,
+  outcome, attempt, output and scope-close digest, including collective job/attempt
+  map-prefix growth. Closure and job admission convert bytes and slots atomically.
+  Retained refusals do not count as successful work. Every store mutation audits
+  queue rows against checksummed sessions before using free capacity; discovery
+  interleaves principal buckets within bounded pages. These are bounded scans,
+  not constant-time or global fairness claims. Old queue/storage policies refuse
+  without conversion; the session payload remains version 7 and wire/CDDL unchanged.
+  Ten core tests cover exact byte/slot capacity, map and identifier boundaries,
+  concurrent owner admission, revocation, rollback, corruption, abrupt process
+  exit before/after conversion, policy refusal, and independent-owner discovery.
+  One real-QUIC sealed test completes a parent's rehydration while a held callback
+  fills ordinary processing, then verifies full root checkpoint and GOAWAY.
+  The final `./conformance/run_all.sh` passed with 219 Rust workspace tests
+  (111 core, 51 Quinn unit, 53 wire, one allocation gate, three runner tests),
+  104 Java tests without errors/failures/skips, native SQLite and C++ tests,
+  all nine Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks
+  and all external examples. Workspace formatting/clippy and strict Rustdoc
+  passed. Draft -04 passed idnits with zero errors/flaws/warnings and one FIPS
+  reference comment. These are local results, not hosted CI or full-goal completion.
+- Not yet implemented: physical completion-space reservations,
+  final-lineage headroom, orphan reclamation,
   persistent producer observations, and the remaining independent Java
   profile requirement matrix. Physical execution limits and temporary spools are coordinated only
   within one writer process; broader tenant/resource stress evidence remains due.
@@ -431,7 +457,7 @@ expiry is not callback cancellation. Periodic dispatch can reacquire unfinished
 expired attempts, but does not retry application-refused jobs automatically.
 Temporary spool accounting is process-local and excludes permanent entity files.
 Rust and Java SQLite file-length caps are now independent of that accounting.
-Add physical publication headroom, future Rust rehydration reservations, and
+Add physical publication headroom, final-lineage reservations, and
 explicit orphan reconciliation without
 deleting a live generation or treating missing input as completed work.
 Do not treat recovery receipts or publication fencing as completion of bounded

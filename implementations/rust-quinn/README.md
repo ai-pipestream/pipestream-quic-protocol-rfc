@@ -261,8 +261,10 @@ Every write verifies checksummed accounting metadata before using its capacity;
 missing or altered entries cannot create free space for another session. This
 scan is bounded by the session-count policy, not constant-time. No large-store
 throughput claim is made.
-The session payload format is version 7. Storage policy version 2 adds protected
-publication charges and the immutable continuation-token limit; version-1 policies
+The session payload format is version 7. Storage policy version 3 adds future
+rehydration charges to the protected publication and continuation-token policy.
+Queue policy version 2 distinguishes ordinary jobs from reserved/active rehydration.
+Version-1 and version-2 storage policies, the old unversioned queue policy,
 and unaccounted stores are refused without conversion. No operational database is migrated or
 silently assigned new quotas. Preserve old stores with their matching binary.
 
@@ -306,10 +308,19 @@ store, then publish its reserved yield. Another test checks the exact token limi
 retained oversized-result refusal and authenticated resume of an in-budget claim,
 including the exact frame boundary and one byte over it.
 
+Processing admission additionally reserves its possible rehydration descriptor,
+maximum outcome/attempt, parent output digest and child scope-close digest. The
+future scope identifier and counters use their maximum serialized widths; map
+prefix growth covers all outstanding job and attempt insertions together. Waiting
+DEHYDRATING parents keep that credit, including across revocation and restart.
+Creating the child scope and admitting descendants still require their own capacity.
+Scope closure, rehydration admission and conversion of the reservation commit
+together. Ordinary terminal/refused processing releases only unused future credit;
+actual outcomes remain charged. A retained rehydration refusal does not complete
+its parent or erase its unresolved obligations.
+
 These are logical serialized-state reservations, not reserved DB/WAL pages,
-filesystem blocks, payload storage or total process memory. A processing job's
-DEHYDRATING outcome is covered; admission of the later rehydration job is still
-subject to ordinary queue and byte limits. Future rehydration slots/bytes, physical
+filesystem blocks, payload storage or total process memory. Physical
 publication headroom, final-lineage headroom, and orphan reconciliation remain
 unfinished. Physical exhaustion may still refuse publication, leaving work
 unfinished and charged rather than inventing successful completion.
@@ -440,20 +451,43 @@ cannot remove a retained job or rewrite a terminal outcome. An application
 refusal is retained separately from entity completion.
 
 `SqliteSessionStore::open_with_job_limits` sets database-wide unfinished-job
-limits. Defaults are 128 queued/running jobs globally and 32 per authority and
-principal; anonymous work shares one bucket. Limits persist across reopen, and
+limits. Defaults are 128 queued/running PROCESS/RESUME jobs globally and 32 per
+authority/principal. REHYDRATE has separate limits of 65,536 future/active slots
+globally and 16,384 per authority/principal; anonymous work shares one bucket.
+`JobQueueLimits::rehydration_total` and `rehydration_per_principal` configure
+these on creation. The larger completion queue does not add physical workers.
+Waiting parents do not consume ordinary slots needed by their children, and
+an existing rehydration reservation cannot be consumed by a new admission.
+`job_queue_usage()` audits and reports ordinary jobs, future rehydration slots
+and active rehydration jobs. `unfinished_job_count()` counts actual queued/running
+jobs only. Limits persist across reopen, and
 a handle cannot silently replace them. Queue admission and the session revision
 commit together. Exhaustion returns `PIPESTREAM_LIMIT_EXCEEDED` and rolls both
 back, including through `create` and `save`. Revoked work remains charged but
 is not returned for execution.
 
-`ready_jobs(now, limit)` uses a bounded SQLite index. An unexpired attempt is
+`ready_jobs(now, limit)` returns a bounded page from the SQLite index, interleaving
+authority/principal buckets and preferring rehydration within each bucket. A
+large ready queue from one principal therefore does not fill a multi-owner page
+before the others' first eligible job. This is not a global fairness guarantee.
+The discovery page is bounded by the ordinary queue limit even though the
+completion queue can be larger. A future reservation is never runnable.
+An unexpired attempt is
 not returned; lease expiry makes it discoverable again but does not grant
 execution. `acquire_job` still checks authorization and the durable fence.
 `integrity_check` audits queue rows against checksummed session records in one
 read snapshot, including missing and extra entries. This full audit scans one
-session at a time, not an in-memory list of all sessions. It is an explicit
-operation, not a periodic background task.
+session at a time, not an in-memory list of all sessions. Store mutations also
+audit these rows against retained session state before counting free capacity,
+so missing or altered reservations cannot admit unrelated work. These bounded
+scans and discovery ordering are not constant-time or large-store throughput claims.
+
+Ten focused storage tests cover exact-quota scope closure and publication,
+identifier/map-prefix boundaries, concurrent owner admission, revocation,
+transaction rollback, missing/altered future slots, abrupt exit before or after
+conversion, immutable policies, and independent-principal discovery. A real-QUIC
+sealed-work test fills the ordinary queue with a held callback while another
+parent rehydrates and later crosses the full root checkpoint.
 
 The transport service now uses these APIs. Bounded admission workers perform
 chunk hashing and immutable payload installation before committing admission

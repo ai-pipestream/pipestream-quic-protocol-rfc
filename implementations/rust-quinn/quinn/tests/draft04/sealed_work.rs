@@ -5,7 +5,12 @@ use pipestream_core::{
     work_set::{self, WorkSetFrame},
 };
 
-fn declaration(scope: u32, seq: u64, ids: &[u32], sealed: Option<&[u32]>) -> WorkSetFrame {
+pub(super) fn declaration(
+    scope: u32,
+    seq: u64,
+    ids: &[u32],
+    sealed: Option<&[u32]>,
+) -> WorkSetFrame {
     let parent = (scope != 0).then_some(EntityKey {
         scope_id: 0,
         entity_id: 1,
@@ -37,7 +42,7 @@ async fn fixture() -> Result<Fixture> {
     Fixture::with_capabilities(caps, Arc::new(ExemplarProcessor::default())).await
 }
 
-async fn declare(peer: &mut Fixture, frame: &WorkSetFrame) -> Result<()> {
+pub(super) async fn declare(peer: &mut Fixture, frame: &WorkSetFrame) -> Result<()> {
     peer.send.write_all(&work_set::encode(frame)?).await?;
     let (kind, body) = tokio::time::timeout(Duration::from_secs(2), read(&mut peer.recv)).await??;
     assert_eq!(kind, work_set::FRAME_WORK_SET);

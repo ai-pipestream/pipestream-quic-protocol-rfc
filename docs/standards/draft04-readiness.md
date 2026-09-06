@@ -499,7 +499,7 @@ rehydration, releases blocked callbacks and receives the full root checkpoint AC
 Schema version 4 changes local admission semantics, not wire/CDDL. No operational
 store was converted. Section 10.3 clarifies that reserved completion credit cannot
 be borrowed by unrelated admissions. These are logical metadata/queue guarantees;
-physical publication headroom, future Rust rehydration reservations, orphan reconciliation,
+physical publication headroom, orphan reconciliation,
 persistent producer observations and the full crash/resource matrix remain due.
 
 The final `./conformance/run_all.sh` passed with 196 Rust workspace tests,
@@ -533,7 +533,7 @@ fills the store, exact callback budgets, an oversized-result refusal with no
 claim, and successful authenticated recovery for an in-budget token, including
 the exact frame boundary and one byte over. Section
 10.3 requires application-result budgets to be exposed and enforced before commit.
-Physical publication headroom, future Rust rehydration admission, final lineage
+Physical publication headroom, final lineage
 reservations, orphan reconciliation and broader resource/crash evidence remain due.
 
 The final `./conformance/run_all.sh` passed with 208 Rust workspace tests,
@@ -543,6 +543,45 @@ every external example. Strict workspace clippy and touched-file rustfmt passed.
 Draft -04 passed idnits with zero errors/flaws/warnings and one informational
 FIPS reference comment. These are local results, not independent implementer
 review, hosted CI or proof that the full goal is complete.
+
+### Rust future-rehydration reservations
+
+Queue policy version 2 separates ordinary processing/resume capacity from
+reserved/active rehydration. Defaults are 128 global/32 authority-principal
+ordinary jobs and 65,536 global/16,384 authority-principal rehydration slots.
+PROCESS admission protects its possible rehydration; waiting parents keep
+that slot without blocking admission of their own children. Worker limits
+remain unchanged. `job_queue_usage()` audits and distinguishes ordinary,
+future and active counts; future reservations are never executable jobs.
+
+Storage policy version 3 protects the future descriptor, maximum outcome and
+attempt, parent output and child scope-close digest. Postcard size accounting
+covers job/attempt map prefixes collectively. Closure converts these charges
+and its queue slot atomically. New descendants, payloads and checkpoint requests
+still need ordinary admission capacity. Mutations audit queue rows against
+checksummed session state before using free capacity; changed/missing reservation
+rows cannot create capacity for another session. This bounded full scan and
+principal-interleaved discovery are not constant-time or global fairness claims.
+Old queue/storage policies are refused without conversion; session payload
+version 7 and the wire/CDDL are unchanged.
+
+Ten core tests exercise exact-quota closure/publication, large identifiers and
+map-prefix boundaries, independent/concurrent principals, revocation, admission
+rollback, corrupted reservations, policy compatibility and abrupt process exit
+before and after conversion. A real sealed-work QUIC test keeps ordinary
+processing full with a held callback while a parent rehydrates, then verifies
+the complete root checkpoint and GOAWAY. Physical DB/WAL publication space,
+final-lineage headroom, orphan reclamation, persistent producer observations,
+and the remaining crash/resource/conformance matrix are still open.
+
+The final `./conformance/run_all.sh` passed with 219 Rust workspace tests
+(111 core, 51 Quinn unit, 53 wire, one allocation gate, three runner tests),
+104 Java tests without errors/failures/skips, native SQLite and C++ tests,
+all nine Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks
+and every external example. Workspace formatting/clippy and strict Rustdoc
+passed. Draft -04 passed idnits with zero errors/flaws/warnings and one FIPS
+reference comment. These are local results, not hosted CI or proof of full
+goal completion.
 
 ### Independent Java sealed-work foundation
 

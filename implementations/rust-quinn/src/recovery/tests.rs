@@ -439,6 +439,7 @@ fn queue_exhaustion_rolls_back_redemption_receipt_and_job() {
         crate::persistence::JobQueueLimits {
             total: 1,
             per_principal: 1,
+            ..crate::persistence::JobQueueLimits::default()
         },
     )
     .unwrap();

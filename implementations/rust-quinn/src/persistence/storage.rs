@@ -9,7 +9,7 @@ pub(super) use completion::reserved_bytes as completion_reservation;
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS pipestream_storage_limits (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    version INTEGER NOT NULL CHECK (version = 2),
+    version INTEGER NOT NULL CHECK (version = 3),
     total_bytes INTEGER NOT NULL CHECK (total_bytes > 0),
     principal_bytes INTEGER NOT NULL CHECK (principal_bytes > 0),
     record_bytes INTEGER NOT NULL CHECK (record_bytes > 0),
@@ -123,7 +123,7 @@ pub(super) fn initialize(
     transaction.execute_batch(SCHEMA)?;
     let initial = requested.unwrap_or_default();
     transaction.execute(
-        "INSERT OR IGNORE INTO pipestream_storage_limits VALUES (1, 2, ?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT OR IGNORE INTO pipestream_storage_limits VALUES (1, 3, ?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             initial.total_bytes as i64,
             initial.principal_bytes as i64,
@@ -147,13 +147,13 @@ pub(super) fn read_limits(connection: &Connection) -> Result<StorageLimits, Stor
         [],
         |row| row.get(0),
     )?;
-    if version != 2 {
+    if version != 3 {
         return Err(StoreError::Corrupt(
             "unsupported storage reservation policy version".into(),
         ));
     }
     let (total, principal, record, sessions, principal_sessions, yield_token_bytes) = connection.query_row(
-        "SELECT total_bytes, principal_bytes, record_bytes, sessions, principal_sessions, yield_token_bytes FROM pipestream_storage_limits WHERE singleton = 1 AND version = 2",
+        "SELECT total_bytes, principal_bytes, record_bytes, sessions, principal_sessions, yield_token_bytes FROM pipestream_storage_limits WHERE singleton = 1 AND version = 3",
         [], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?,
             row.get::<_, u32>(2)?, row.get::<_, u32>(3)?, row.get::<_, u32>(4)?, row.get::<_, u32>(5)?)),
     )?;
@@ -188,7 +188,7 @@ fn charge_checksum(
     state_checksum: &[u8],
 ) -> [u8; 32] {
     let mut digest = Sha256::new();
-    digest.update(b"pipestream-state-charge-v2");
+    digest.update(b"pipestream-state-charge-v3");
     digest.update((id.len() as u64).to_be_bytes());
     digest.update(id.as_bytes());
     digest.update((principal.len() as u64).to_be_bytes());

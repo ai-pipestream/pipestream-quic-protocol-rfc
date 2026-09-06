@@ -56,6 +56,128 @@ impl Drop for ReleaseOnDrop {
     }
 }
 
+#[tokio::test]
+async fn sealed_parent_rehydrates_while_new_work_fills_the_processing_queue() -> Result<()> {
+    struct Processor(Arc<HeldProcessor>);
+    impl EntityProcessor for Processor {
+        fn process(
+            &self,
+            context: ProcessContext<'_>,
+        ) -> Result<ProcessingDisposition, ProtocolError> {
+            if context
+                .header
+                .metadata
+                .get(ACTION_METADATA_KEY)
+                .is_some_and(|action| action == "hold")
+            {
+                self.0.hold_stage();
+            }
+            ExemplarProcessor::default().process(context)
+        }
+        fn rehydrate(&self, context: RehydrateContext<'_>) -> [u8; 32] {
+            ExemplarProcessor::default().rehydrate(context)
+        }
+        fn resume(&self, context: ResumeContext<'_>) -> [u8; 32] {
+            ExemplarProcessor::default().resume(context)
+        }
+    }
+    let gate = Arc::new(HeldProcessor::default());
+    let _release = ReleaseOnDrop(gate.clone());
+    let mut caps = offer(LayerSupport::LAYER1, 7);
+    caps.extensions.supported = vec![work_set::EXTENSION_SEALED_WORK_SETS];
+    caps.extensions.required = caps.extensions.supported.clone();
+    let mut peer = Fixture::with_runtime_limits(
+        caps,
+        Arc::new(Processor(gate.clone())),
+        spool::SpoolLimits::default(),
+        JobQueueLimits {
+            total: 1,
+            per_principal: 1,
+            rehydration_total: 2,
+            rehydration_per_principal: 2,
+        },
+        executor::ExecutionLimits {
+            workers: 2,
+            workers_per_principal: 2,
+        },
+    )
+    .await?;
+    sealed_work::declare(
+        &mut peer,
+        &sealed_work::declaration(0, 0, &[1, 2], Some(&[1, 2])),
+    )
+    .await?;
+    peer.entity(1, false, "dehydrate", LayerSupport::LAYER1)
+        .await?;
+    assert_eq!(
+        peer.statuses(2).await?,
+        [STATUS_PROCESSING, STATUS_DEHYDRATING]
+    );
+    sealed_work::declare(&mut peer, &sealed_work::declaration(1, 0, &[1], Some(&[1]))).await?;
+    peer.entity(1, true, "complete", LayerSupport::LAYER1)
+        .await?;
+    assert_eq!(
+        peer.statuses(2).await?,
+        [STATUS_PROCESSING, STATUS_COMPLETE]
+    );
+    peer.entity(2, false, "hold", LayerSupport::LAYER1).await?;
+    assert_eq!(peer.statuses(1).await?, [STATUS_PROCESSING]);
+    gate.started(1).await?;
+    let store = SqliteSessionStore::open(&peer.options.state_database)?;
+    assert_eq!(
+        store.job_queue_usage()?,
+        pipestream_core::persistence::JobQueueUsage {
+            ordinary: 1,
+            rehydration_reserved: 2,
+            rehydration_active: 0,
+        }
+    );
+    let digest = store
+        .load("review-session")?
+        .unwrap()
+        .session
+        .scope_digest(1)?;
+    peer.send.write_all(&encode_scope_digest(&digest)?).await?;
+    let (kind, body) = tokio::time::timeout(Duration::from_secs(2), read(&mut peer.recv)).await??;
+    assert_eq!(kind, FRAME_SCOPE_DIGEST);
+    assert_eq!(decode_scope_digest(&body)?, digest);
+    assert_eq!(
+        peer.statuses(2).await?,
+        [STATUS_REHYDRATING, STATUS_COMPLETE]
+    );
+    assert_eq!(
+        gate.active.load(Ordering::SeqCst),
+        1,
+        "rehydration did not wait for ordinary capacity"
+    );
+    let parent = EntityKey {
+        scope_id: 0,
+        entity_id: 1,
+    };
+    assert_eq!(
+        store.load("review-session")?.unwrap().session.entities[&parent].state,
+        EntityState::Complete
+    );
+    assert_eq!(store.job_queue_usage()?.ordinary, 1);
+    let cp = checkpoint(2000);
+    peer.send.write_all(&encode_checkpoint(&cp)?).await?;
+    gate.release();
+    assert_eq!(peer.statuses(1).await?, [STATUS_COMPLETE]);
+    let (kind, body) = tokio::time::timeout(Duration::from_secs(2), read(&mut peer.recv)).await??;
+    assert_eq!(kind, FRAME_CHECKPOINT);
+    let mut ack = cp;
+    ack.flags = CHECKPOINT_ACK;
+    assert_eq!(decode_checkpoint(&body)?, ack);
+    assert_eq!(
+        store.job_queue_usage()?,
+        pipestream_core::persistence::JobQueueUsage::default()
+    );
+    store.integrity_check()?;
+    peer.send.write_all(&encode_goaway(2)?).await?;
+    assert_eq!(read(&mut peer.recv).await?.0, FRAME_GOAWAY);
+    Ok(())
+}
+
 impl EntityProcessor for HeldProcessor {
     fn process(&self, context: ProcessContext<'_>) -> Result<ProcessingDisposition, ProtocolError> {
         let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
@@ -288,6 +410,7 @@ async fn queue_overload_refuses_admission_without_losing_earlier_jobs() -> Resul
         JobQueueLimits {
             total: 2,
             per_principal: 2,
+            ..JobQueueLimits::default()
         },
         executor::ExecutionLimits {
             workers: 1,
