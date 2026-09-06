@@ -51,6 +51,50 @@ approval as part of a repository landing.
 
 ## Evidence and progress
 
+### Validated increment: Java payload/database ownership before orphan reconciliation
+
+Branch `feat/java-payload-store-binding` starts from PR #29's merge `52d2717`.
+Managed admission previously trusted the metadata in a `Stored` handle after its
+store closed, and an executor accepted handles from another payload root. Admission
+now revalidates the retained file and holds the store open through its transaction;
+executors reject foreign handles before admission. Schema 6 and payload policy 2
+retain separate persistent identities and require one matching database/root pair.
+A synced file claim precedes the database claim. Both are ownership records, not
+admission evidence, and complete interrupted claims can replay without changing the
+pair. Corrupt or partial markers refuse without automatic deletion or conversion.
+
+The 14 focused tests pass: pair/reopen, both wrong-store directions, failed
+startup ownership release, foreign/stale input handles, missing/corrupt payloads,
+actual BLOB-write rollback with retained file claim, competing roots, a held SQLite
+writer with a pinned admission, corrupt-marker reopen, older-format refusal,
+abrupt process exit between claims, missing bound claims and corrupt images.
+The first full Java/interoperability run passed 143 tests before the final three
+defensive tests and retry-sync correction. The next repository run passed all 146
+Java tests, the Rust workspace and nine transfer pairings, then failed the C++
+invalid-capability-response probe with empty stderr. A traced diagnostic rerun
+passed all 32 probes, so the original failure was intermittent and did not retain
+enough exit information to identify its exact cause.
+
+Inspection found two concrete C++ shutdown lifetime errors: the caller's failure
+path could reuse a connection already closed by its callback, and stack completion
+state could die before registration teardown drained callbacks. Failure shutdown
+now uses the still-owned registration, and completion state outlives runtime
+teardown in both client and server. The capability oracle now rejects signal
+termination even with a named stderr line, and reports the case, exit status,
+stdout and stderr on failure. A runner unit test covers those refusal diagnostics.
+All 32 capability probes then passed three consecutive focused runs without
+increasing deadlines or weakening the required refusal. Structural Javadoc
+(`all,-missing`) passes; strict Javadoc still reports 100 missing-comment warnings
+in four unchanged Layer 0 types. Draft -04 builds with zero idnits errors, flaws
+or warnings and one FIPS reference comment.
+Final `./conformance/run_all.sh` passed: 146 Java tests with zero failures/errors/skips
+(independently counted from JUnit XML), 259 Rust workspace tests, native SQLite/C++
+checks, all nine transfer pairings, 32 capability probes, recursive/recovery CLI
+checks and all three external examples. Workspace formatting and strict clippy
+passed in that run. These are local results, not hosted CI, a deployment or a
+complete-goal claim. Explicit orphan reclamation, persistent producer observations
+and the full resource/interoperability goal remain unfinished.
+
 ### Validated increment: Java physical completion reservations
 
 Branch `feat/java-completion-reservations` starts from the Rust reservation

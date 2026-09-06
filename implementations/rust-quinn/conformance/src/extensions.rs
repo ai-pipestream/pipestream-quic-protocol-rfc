@@ -156,18 +156,24 @@ pub fn run() -> Result<()> {
             }));
             let output = wait_output(child, Duration::from_secs(10))?;
             probe.with_context(|| format!("{} client probe {name}", program.name))?;
-            ensure!(
-                !output.status.success()
-                    && String::from_utf8_lossy(&output.stderr).contains("PIPESTREAM_FRAME_ERROR"),
-                "{} client did not name invalid response refusal: {}",
-                program.name,
-                String::from_utf8_lossy(&output.stderr)
-            );
+            verify_client_refusal(program.name, name, &output)?;
             println!("PASS {} client capabilities {name}", program.name);
             count += 1;
         }
     }
     println!("all {count} raw QUIC capability probes passed");
+    Ok(())
+}
+
+fn verify_client_refusal(program: &str, case: &str, output: &Output) -> Result<()> {
+    ensure!(
+        output.status.code().is_some_and(|code| code != 0)
+            && String::from_utf8_lossy(&output.stderr).contains("PIPESTREAM_FRAME_ERROR"),
+        "{program} client probe {case} did not exit with a named invalid-response refusal ({})\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     Ok(())
 }
 
@@ -283,6 +289,31 @@ async fn expect_close(connection: &quinn::Connection, code: u64) -> Result<()> {
 #[cfg(test)]
 mod snapshot_tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn client_refusal_requires_ordinary_failure_and_preserves_exit_diagnostics() {
+        use std::os::unix::process::ExitStatusExt;
+        let mut output = Output {
+            status: std::process::ExitStatus::from_raw(1 << 8),
+            stdout: b"stdout marker".to_vec(),
+            stderr: b"PIPESTREAM_FRAME_ERROR: invalid response".to_vec(),
+        };
+        assert!(verify_client_refusal("client", "window-escalation", &output).is_ok());
+        output.status = std::process::ExitStatus::from_raw(11);
+        let refusal = verify_client_refusal("client", "window-escalation", &output)
+            .unwrap_err()
+            .to_string();
+        assert!(refusal.contains("client probe window-escalation"));
+        assert!(refusal.contains("signal: 11"));
+        assert!(refusal.contains("stdout marker"));
+        assert!(refusal.contains("PIPESTREAM_FRAME_ERROR"));
+        output.status = std::process::ExitStatus::from_raw(0);
+        assert!(verify_client_refusal("client", "window-escalation", &output).is_err());
+        output.status = std::process::ExitStatus::from_raw(1 << 8);
+        output.stderr.clear();
+        assert!(verify_client_refusal("client", "window-escalation", &output).is_err());
+    }
 
     #[test]
     fn startup_snapshot_detects_added_and_changed_output_without_exempt_names() {

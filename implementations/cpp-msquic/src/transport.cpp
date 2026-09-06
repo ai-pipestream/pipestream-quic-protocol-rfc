@@ -418,7 +418,7 @@ struct ServerRunner {
   const QUIC_API_TABLE* api;
   HQUIC configuration;
   std::filesystem::path output_directory;
-  Completion completion;
+  Completion& completion;
 };
 
 QUIC_STATUS QUIC_API server_listener_callback(HQUIC, void* context, QUIC_LISTENER_EVENT* event) {
@@ -743,6 +743,8 @@ QUIC_SETTINGS settings(bool server) {
 
 void serve(const ServerOptions& options) {
   std::filesystem::create_directories(options.output_directory);
+  // RegistrationClose drains callbacks during Runtime destruction.
+  Completion completion;
   Runtime runtime;
   const QUIC_SETTINGS server_settings = settings(true);
   Configuration configuration(runtime, server_settings);
@@ -755,7 +757,7 @@ void serve(const ServerOptions& options) {
   check(runtime.api()->ConfigurationLoadCredential(configuration.handle(), &credential),
         "ConfigurationLoadCredential(server)");
 
-  ServerRunner server{runtime.api(), configuration.handle(), options.output_directory, {}};
+  ServerRunner server{runtime.api(), configuration.handle(), options.output_directory, completion};
   HQUIC listener = nullptr;
   check(runtime.api()->ListenerOpen(
             runtime.registration(), server_listener_callback, &server, &listener),
@@ -795,6 +797,7 @@ void send(const ClientOptions& options) {
   if (options.entity_id == 0 || options.entity_id > kMaxEntityId) {
     throw std::invalid_argument("entity-id is reserved");
   }
+  Completion completion;
   Runtime runtime;
   const QUIC_SETTINGS client_settings = settings(false);
   Configuration configuration(runtime, client_settings);
@@ -809,7 +812,6 @@ void send(const ClientOptions& options) {
   check(runtime.api()->ConfigurationLoadCredential(configuration.handle(), &credential),
         "ConfigurationLoadCredential(client)");
 
-  Completion completion;
   auto session = std::make_shared<ClientSession>(
       runtime.api(),
       &completion,
@@ -844,7 +846,9 @@ void send(const ClientOptions& options) {
     completion.wait(std::chrono::seconds(60));
     std::cout << "SENT " << options.entity_id << ' ' << session->payload.size() << '\n';
   } catch (...) {
-    runtime.api()->ConnectionShutdown(connection, QUIC_CONNECTION_SHUTDOWN_FLAG_SILENT, kErrorFrame);
+    // A shutdown callback may already have closed the connection handle.
+    // The registration stays owned until Runtime drains the remaining callbacks.
+    runtime.api()->RegistrationShutdown(runtime.registration(), QUIC_CONNECTION_SHUTDOWN_FLAG_SILENT, kErrorFrame);
     throw;
   }
 }

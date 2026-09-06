@@ -2,7 +2,9 @@
 
 This is the independent Java implementation's local storage contract, not a
 new wire extension or a full sealed-work conformance claim. `PSJDB002` file
-policy and Java schema 5 refuse older layouts without conversion.
+policy and Java schema 6 refuse older layouts without conversion. The fixed job,
+entity and closure images and reservation model were introduced in schema 5;
+schema 6 additionally binds the database to one persistent payload-store identity.
 
 ## What admission funds
 

@@ -1,5 +1,6 @@
 package ai.pipestream.quic;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.sql.Connection;
@@ -96,10 +97,10 @@ final class SealedJobs {
     if (entity != null && entity.value().managed()) throw Wire.entity("managed work requires durable dispatch and an executor fence");
   }
 
-  void admit(SealedPayloadStore.Stored stored) throws SQLException, ProtocolException {
+  void admit(SealedPayloadStore.Stored stored) throws IOException, SQLException, ProtocolException {
     Input input = new Input(stored.identity(), stored.header(), stored.length(), stored.digest(), null);
     byte[] descriptor = encode(input);
-    sessions.fundedTransaction((connection, funding) -> {
+    stored.withAdmission(sessions, (connection, funding) -> {
       audit(connection);
       if (descriptor.length + CHILD_DESCRIPTOR_BYTES > MAX_DESCRIPTOR) throw Wire.limit("future rehydration descriptor exceeds its bound");
       funding.adjust(funding.model().admission(descriptor.length + CHILD_DESCRIPTOR_BYTES));

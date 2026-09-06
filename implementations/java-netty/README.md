@@ -37,8 +37,9 @@ construction, including odd-node promotion.
 
 `SealedSessionStore.open(path)` creates a separate SQLite database with strict
 typed tables, WAL, and synchronous FULL commits. The Java database format is
-now version 5, with fixed-capacity job, entity and closure images, preallocated future jobs,
-protected rehydration reservations, and checksummed checkpoint request/ACK history. Version-1 through version-4
+now version 6, with a durable database/payload-store pairing, fixed-capacity job,
+entity and closure images, preallocated future jobs, protected rehydration
+reservations, and checksummed checkpoint request/ACK history. Version-1 through version-5
 stores are refused without conversion; keep them with their
 matching binary. Do not point this API at a Rust
 store. Unknown table sets or policy versions are refused without conversion.
@@ -103,7 +104,7 @@ big-endian limits, and a SHA-256 checksum. The empty `.psjlock` file coordinates
 policy creation. Nonempty databases or sidecars without policy are refused
 before SQLite opens them. Policy changes, corrupt or oversized files, symlinks,
 and hardlink aliases are refused. File policy `PSJDB002` is separate from the
-version-5 Java schema. Previous file-policy versions are refused: keep each with its
+version-6 Java schema. Previous file-policy versions are refused: keep each with its
 matching binary. No automatic conversion or operational migration is supplied.
 
 This backend requires 64-bit Linux, the pinned JDBC SQLite version, private
@@ -177,6 +178,39 @@ runs in a JVM with a 24 MiB maximum heap; it is not a QUIC, native-memory, RSS,
 or concurrent-throughput measurement. The sealed listener below uses these
 APIs; explicit orphan reconciliation remains unfinished.
 
+### Database and payload-store ownership
+
+Each version-6 database has a random persistent identity and one initially unbound
+payload-store identity in a fixed 72-byte checksummed image. The version-2 payload
+policy separately records its own persistent identity. Executor startup and every
+managed admission require the same pair. A database cannot switch payload roots,
+and a payload root cannot serve another database, even when session/producer/entity
+labels happen to match. These are storage identities, not authenticated principals.
+
+Binding first syncs a 72-byte `session-store.bin` claim in the exclusively owned
+payload root, then claims the database under SQLite's writer lock. No work is
+admitted by either step. A complete file claim left by a failed database transaction
+can be retried with the same pair after reopening. A competing root cannot overwrite
+the database winner. A partial or corrupt marker is refused without removal or
+invented admission; it is not automatically repaired. These fixed policy/ownership
+files are outside the variable payload-file counters.
+
+Admission revalidates the installed object's full metadata and digest and pins the
+store until the admission transaction returns. A closed handle cannot admit cached
+metadata, including after reopening the directory through another handle. The
+executor also refuses an input from a different live store handle. This adds a
+file-backed verification pass before admission, not a whole-entity memory copy.
+
+Old Java database and payload policies are refused without conversion; preserve
+their matching binaries. Back up and restore the database and its payload root as
+a matched pair, including policy and ownership records. Cloned stores retain their
+identities and must not be used as independent writers to the same payload root.
+As with the existing directory lock, these guarantees require private local
+directories, one loaded library copy, and cooperating writers. The manual digest-only
+`SealedSessionStore.admit` API still requires caller-managed payload retention;
+it does not validate or associate external files with this managed payload store.
+The pairing is a prerequisite for explicit orphan reconciliation, not a cleanup API.
+
 ## Durable sealed-work execution
 
 `SealedExecutor.start(sessions, payloads, processor, limits)` starts a periodic
@@ -216,7 +250,7 @@ state determines these charges; no independently mutable counter can create free
 capacity. `SealedSessionStore.jobUsage()` audits and reports them in one snapshot.
 Earlier schema policies are refused without conversion.
 
-The version-5 job image contains a format marker, state, executor epoch and
+The job image introduced in schema 5 contains a format marker, state, executor epoch and
 identity, expiry, outcome length, at most 128 outcome bytes, verified zero
 padding, and the existing identity-bound state checksum. Acquisition and
 publication use SQLite's fixed-size BLOB API through the guarded connection;
