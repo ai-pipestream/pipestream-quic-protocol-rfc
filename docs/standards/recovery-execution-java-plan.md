@@ -466,6 +466,28 @@ approval as part of a repository landing.
   external example. Workspace formatting/clippy and strict Rustdoc passed;
   draft -04 had zero idnits errors/flaws/warnings and one FIPS reference comment.
   These are local results, not hosted CI or proof of full-goal completion.
+- Rust incremental-index prerequisite: queue reconciliation now preserves
+  unchanged entries and updates changed rows in place. Obsolete entries are
+  deleted before replacement admission; accounting rows are updated only when
+  their charge or checksum changes. Quota evaluation excludes the current session
+  without deleting its index first, and full pre-write integrity audits remain.
+  Six tests cover no-op/acquisition/completion/revocation row identity, reopen,
+  full-quota replacement and transactional rollback on deletion-followed-by-insert
+  or accounting failures. The focused persistence run passed all 63 tests.
+  An index-only comparison at 1, 128 and 512 jobs emitted zero WAL bytes for
+  unchanged reconciliation versus 28,872, 61,832 and 144,232 for full replacement.
+  Public saves still rewrite the serialized session and advance its revision;
+  these measurements are not a transaction-space or service-throughput bound.
+  No session format, queue/storage policy or wire/CDDL changed. Physical DB/WAL
+  reservations are still required; this removes unrelated index writes before
+  deriving and enforcing that capacity guarantee.
+  The full `./conformance/run_all.sh` passed with 237 Rust workspace tests
+  (117 core, 62 Quinn unit, 54 wire, one allocation gate, three runner tests),
+  105 Java tests without errors/failures/skips, native SQLite/C++ checks, all
+  nine Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks
+  and every external example. Workspace formatting/clippy and strict Rustdoc
+  passed. Draft -04 passed idnits with zero errors/flaws/warnings and one FIPS
+  reference comment. These are local results, not proof of full-goal completion.
 - Not yet implemented: physical DB/WAL completion-space reservations,
   orphan reclamation,
   persistent producer observations, and the remaining independent Java

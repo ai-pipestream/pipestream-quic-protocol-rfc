@@ -630,6 +630,42 @@ consecutive focused runs. Workspace formatting/clippy and strict Rustdoc passed.
 Draft -04 passed idnits with zero errors/flaws/warnings and one FIPS reference
 comment. These are local results, not independent review or full-goal completion.
 
+## Rust incremental queue and accounting indexes
+
+Session mutations no longer delete and rebuild every queue row and the accounting
+row. Reconciliation leaves unchanged values untouched, preserves row IDs on
+updates, and deletes obsolete entries before admitting replacements. Global and
+principal quotas are evaluated against other sessions plus the proposed state.
+Full pre-write integrity audits remain mandatory; missing or corrupt entries
+cannot be silently repaired into apparent free capacity. The same transaction
+still commits session revision, state, queue and checksummed charges together.
+Session payload 7, storage policy 3, queue policy 2 and normative wire/CDDL remain
+unchanged. No operational database was converted.
+
+Six tests in `persistence::index_delta_tests` check no-op saves, one-row acquisition,
+selective completion, revocation, reopen, replacement at full quota, new-row
+insertion failure and rollback after selective deletion/accounting failure.
+The earlier acquisition, rehydration-conversion and accounting fault tests now
+inject failures on the actual UPDATE path; new INSERT failure coverage remains.
+The focused persistence run passed all 63 tests.
+
+An isolated index reconciliation experiment pins a WAL reader and compares the
+same retained state with forced full index replacement. At 1, 128 and 512 jobs,
+unchanged reconciliation adds zero WAL bytes; full replacement adds 28,872,
+61,832 and 144,232 bytes in the local bundled-SQLite run. This is index-only
+evidence. A public save still updates its revision and rewrites the whole session
+blob, and audits still scan bounded retained state. These changes remove
+unrelated index writes as a prerequisite to a useful publication-space bound;
+they do not implement physical DB/WAL reservations or prove service throughput.
+
+The full `./conformance/run_all.sh` passed with 237 Rust workspace tests
+(117 core, 62 Quinn unit, 54 wire, one allocation gate, three runner tests),
+105 Java tests without errors/failures/skips, native SQLite and C++ checks,
+all nine Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks
+and every external example. Workspace formatting/clippy and strict Rustdoc
+passed. Draft -04 passed idnits with zero errors/flaws/warnings and one FIPS
+reference comment. These are local results, not hosted CI or full-goal completion.
+
 ### Independent Java sealed-work foundation
 
 Java now has separate deterministic CBOR, WORK_SET, and SCOPE_DIGEST codecs

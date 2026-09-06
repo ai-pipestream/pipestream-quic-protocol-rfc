@@ -289,6 +289,16 @@ These reservations do not fund new child membership or payload admission,
 checkpoint requests or physical DB/WAL growth. Final-lineage file quota is
 reserved separately below.
 
+Rust queue and storage-accounting indexes are reconciled incrementally within
+the session transaction. Unchanged rows are retained; obsolete rows are removed
+before replacement admission. Tests pin row preservation, exact-quota replacement
+and rollback after selective deletion, insertion or accounting failure. Unchanged
+index-only reconciliation emits no new WAL frames in the tested 1-, 128- and
+512-job cases, unlike rebuilding all entries. The authoritative session is still
+serialized as a whole and the full pre-write integrity audit remains. These
+checks do not establish physical completion-space reservations or a throughput
+bound. No wire or stored-format changes are involved.
+
 The Rust retained-payload store separately reserves global and authority/principal
 bytes and object counts before disk creation. An immutable
 checksummed policy survives reopen. Interrupted copies retain staging credit;

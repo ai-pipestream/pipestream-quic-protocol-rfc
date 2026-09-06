@@ -513,6 +513,25 @@ audit these rows against retained session state before counting free capacity,
 so missing or altered reservations cannot admit unrelated work. These bounded
 scans and discovery ordering are not constant-time or large-store throughput claims.
 
+Queue reconciliation preserves unchanged rows, updates changed entries in place,
+deletes obsolete entries before inserting new work, and leaves an unchanged
+storage-accounting row untouched. Limits are checked against other sessions plus
+the desired replacement, without temporarily deleting this session's charges.
+The pre-write integrity audit is unchanged: corrupt or missing index entries
+cannot become admission credit. State, revision, index changes and accounting
+still commit or roll back together. No schema, policy or session-format change
+is required.
+
+Six index-delta tests check row identity across no-op saves, acquisition,
+publication, revocation and reopen; replacement at full quota; and failures during
+new insertion or accounting after selective deletion. An isolated index-only WAL
+test with 1, 128 and 512 jobs adds zero bytes for unchanged reconciliation. Forced
+full replacement of the same indexes adds 28,872, 61,832 and 144,232 WAL bytes,
+respectively, in the local bundled-SQLite run. This comparison excludes the
+session update: a public save still rewrites the whole serialized record and
+advances its revision. The measurements neither bound a publication transaction
+nor establish physical DB/WAL completion reservations or service throughput.
+
 Ten focused storage tests cover exact-quota scope closure and publication,
 identifier/map-prefix boundaries, concurrent owner admission, revocation,
 transaction rollback, missing/altered future slots, abrupt exit before or after

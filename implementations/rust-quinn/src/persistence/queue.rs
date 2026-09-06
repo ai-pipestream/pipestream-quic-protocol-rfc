@@ -212,11 +212,20 @@ pub struct JobQueueUsage {
 }
 
 fn usage(connection: &Connection, principal: Option<&[u8]>) -> Result<JobQueueUsage, StoreError> {
+    usage_excluding(connection, principal, None)
+}
+
+fn usage_excluding(
+    connection: &Connection,
+    principal: Option<&[u8]>,
+    session: Option<&str>,
+) -> Result<JobQueueUsage, StoreError> {
     Ok(connection.query_row(
         "SELECT coalesce(sum(rehydration = 0), 0), coalesce(sum(reserved = 1), 0),
          coalesce(sum(rehydration = 1 AND reserved = 0), 0)
-         FROM pipestream_jobs WHERE ?1 IS NULL OR principal = ?1",
-        [principal],
+         FROM pipestream_jobs WHERE (?1 IS NULL OR principal = ?1)
+         AND (?2 IS NULL OR session_id != ?2)",
+        params![principal, session],
         |row| {
             Ok(JobQueueUsage {
                 ordinary: row.get(0)?,
@@ -315,18 +324,11 @@ pub(super) fn verify_index(connection: &Connection) -> Result<(), StoreError> {
 }
 
 pub(super) fn replace_index(connection: &Connection, session: &Session) -> Result<(), StoreError> {
-    connection.execute(
-        "DELETE FROM pipestream_jobs WHERE session_id = ?1",
-        [&session.session_id],
-    )?;
     let principal = encode(&session.owner.as_ref().map(|owner| &owner.binding))?;
     let entries = entries(session)?;
-    if entries.is_empty() {
-        return Ok(());
-    }
     let limits = read_limits(connection)?;
-    let total = usage(connection, None)?;
-    let owned = usage(connection, Some(&principal))?;
+    let total = usage_excluding(connection, None, Some(&session.session_id))?;
+    let owned = usage_excluding(connection, Some(&principal), Some(&session.session_id))?;
     let ordinary = entries.values().filter(|entry| !entry.rehydration).count() as u64;
     let rehydration = entries.len() as u64 - ordinary;
     if u64::from(total.ordinary) + ordinary > u64::from(limits.total)
@@ -340,18 +342,80 @@ pub(super) fn replace_index(connection: &Connection, session: &Session) -> Resul
             "durable job queue is full",
         )));
     }
+    // Callers audit the old index before changing authoritative session state.
+    // Keep unchanged rows and their rowids; only actual state changes touch the
+    // queue B-trees. In particular, one lease does not rewrite every sibling.
+    let mut query = connection.prepare(
+        "SELECT execution_key, principal, ready_at_micros, enqueued_at_micros, rehydration, reserved
+         FROM pipestream_jobs WHERE session_id = ?1",
+    )?;
+    let existing = query
+        .query_map([&session.session_id], |row| {
+            Ok((
+                row.get::<_, Vec<u8>>(0)?,
+                (
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                ),
+            ))
+        })?
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let desired = entries
+        .into_iter()
+        .map(|(key, entry)| Ok((encode(&key)?, entry)))
+        .collect::<Result<BTreeMap<_, _>, StoreError>>()?;
+    let mut delete = connection
+        .prepare("DELETE FROM pipestream_jobs WHERE session_id = ?1 AND execution_key = ?2")?;
+    let mut update = connection.prepare(
+        "UPDATE pipestream_jobs SET ready_at_micros = ?3, enqueued_at_micros = ?4,
+         rehydration = ?5, reserved = ?6 WHERE session_id = ?1 AND execution_key = ?2",
+    )?;
+    let mut update_principal = connection.prepare(
+        "UPDATE pipestream_jobs SET principal = ?3 WHERE session_id = ?1 AND execution_key = ?2",
+    )?;
     let mut insert =
         connection.prepare("INSERT INTO pipestream_jobs VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)")?;
-    for (key, entry) in entries {
-        insert.execute(params![
-            session.session_id,
-            encode(&key)?,
-            principal,
-            entry.ready,
-            entry.enqueued,
-            entry.rehydration,
-            entry.reserved
-        ])?;
+    // Release obsolete rows first so replacement work can reuse their pages.
+    for key in existing.keys().filter(|key| !desired.contains_key(*key)) {
+        delete.execute(params![session.session_id, key])?;
+    }
+    for (key, entry) in desired {
+        let old = existing.get(&key);
+        if old.is_some_and(|old| {
+            old.0 == principal
+                && old.1 == entry.ready
+                && old.2 == entry.enqueued
+                && old.3 == i64::from(entry.rehydration)
+                && old.4 == i64::from(entry.reserved)
+        }) {
+            continue;
+        }
+        if let Some(old) = old {
+            update.execute(params![
+                session.session_id,
+                key,
+                entry.ready,
+                entry.enqueued,
+                entry.rehydration,
+                entry.reserved
+            ])?;
+            if old.0 != principal {
+                update_principal.execute(params![session.session_id, key, principal])?;
+            }
+        } else {
+            insert.execute(params![
+                session.session_id,
+                key,
+                principal,
+                entry.ready,
+                entry.enqueued,
+                entry.rehydration,
+                entry.reserved
+            ])?;
+        }
     }
     Ok(())
 }

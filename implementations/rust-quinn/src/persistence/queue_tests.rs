@@ -175,7 +175,7 @@ fn queue_write_failure_rolls_back_session_and_index_together() {
     let before = store.create(&session).unwrap();
     let ready = store.ready_jobs(100, 1).unwrap();
     let connection = Connection::open(&path).unwrap();
-    connection.execute_batch("CREATE TRIGGER fail_queue BEFORE INSERT ON pipestream_jobs BEGIN SELECT RAISE(ABORT, 'injected queue failure'); END;").unwrap();
+    connection.execute_batch("CREATE TRIGGER fail_queue BEFORE UPDATE ON pipestream_jobs BEGIN SELECT RAISE(ABORT, 'injected queue failure'); END;").unwrap();
     assert!(
         store
             .transact("work", |s| s.acquire_job(None, key, 100, 50))

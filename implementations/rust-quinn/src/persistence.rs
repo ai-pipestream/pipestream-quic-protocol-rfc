@@ -11,6 +11,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(test)]
+mod index_delta_tests;
 mod queue;
 #[cfg(test)]
 mod rehydration_tests;
