@@ -5,11 +5,47 @@ Updated 2026-09-06. The original draft-04 landing starts from `00531de` and addr
 The specification remains an individual Internet-Draft, not an approved
 standard. No implementation in this repository demonstrates full conformance.
 The increment sections retain their original validation counts and limitations;
-later sections identify the guarantees that supersede them. Current Rust storage
+dated follow-ups identify the guarantees that supersede them. Current Java storage
+uses database schema 6 and payload policy 3. Current Rust storage
 uses the physical completion-reservation layout described below, not the older
 policies recorded in the incremental-index prerequisite.
 
 ## Changes and regression coverage
+
+### Java explicit orphan reconciliation (2026-09-06)
+
+Java now offers a blocking offline maintenance API for a closed, paired managed
+payload root. Exclusive ownership and SQLite's writer lock cover the audit and
+filesystem sequence. Every managed input and immutable object must verify before
+any abandoned receive/install name is removed. Caller-managed admission and
+unbound/wrong pairs refuse without guessed ownership. All admitted bodies remain
+retained, including completed and refused work.
+
+Unadmitted bodies become `.commit` records: the original encoded metadata and
+SHA-256 remain after a synced rename followed by truncation. They do not constitute
+input admission or completion. Matching retransmission restores the body; changed
+bytes or headers refuse. Interrupted cleanup retains the remaining actual file
+lengths and resumes only through another explicit call. A restored admitted object
+allows removal of its redundant commitment name, never its body.
+
+Payload policy 3 introduces commitment records and refuses prior policies without
+conversion. Database schema 6, wire/CDDL and frozen vectors are unchanged. Focused
+tests cover quota, concurrent/chunked restoration, corruption, ownership, I/O
+failure, four subprocess exit phases and a 32 MiB body under a 24 MiB Java heap.
+Actual QUIC covers pending checkpoint timeout, changed retransmission refusal and
+matching completion after reopening the reconciled store. This is not a full-goal
+or whole-process resource claim. Rust reclamation,
+persistent producer observations and broader resource/interoperability work remain.
+
+The 12 focused tests and final `./conformance/run_all.sh` passed locally. The full
+run includes 158 Java tests with no failures/errors/skips, 259 Rust workspace tests,
+native SQLite/C++ checks, nine transfer pairings, 32 capability probes,
+recursive/recovery CLI checks and three external examples. Formatting and strict
+clippy passed. Draft -04 has zero idnits errors/flaws/warnings and one FIPS reference
+comment. The changed payload API passed strict Javadoc and whole-module structural
+Javadoc passed; strict whole-module Javadoc retains 100
+missing-comment warnings in four unchanged Layer 0 types. No hosted CI, operational
+cleanup, migration, deployment, release or draft submission is claimed.
 
 ### Java payload-store pairing (2026-09-06)
 

@@ -12,6 +12,7 @@ import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.sql.SQLException;
@@ -32,6 +33,8 @@ import java.util.UUID;
  * Calls belong outside Netty event loops. A directory lock permits one cooperative
  * writer on a local filesystem. Identities are labels, not authorization.
  * Installing bytes does not admit an entity or acknowledge application completion.
+ * Explicit offline reconciliation may discard unadmitted bodies while retaining
+ * their immutable headers and digests for checked retransmission.
  */
 public final class SealedPayloadStore implements AutoCloseable {
   private static final int BLOCK = 8192;
@@ -95,6 +98,138 @@ public final class SealedPayloadStore implements AutoCloseable {
    */
   public record Usage(long temporaryBytes, int temporaryFiles, long retainedBytes, int retainedFiles, int activeHandles) {}
 
+  /**
+   * Completed offline reclamation, measured as logical file lengths, not filesystem blocks.
+   * Declared identities, payload commitments and all admitted inputs remain retained.
+   * @param admittedPayloads verified payloads retained for managed jobs, including terminal jobs
+   * @param temporaryFilesRemoved abandoned receive files removed
+   * @param stagingFilesRemoved abandoned installation names removed
+   * @param payloadsReclaimed unadmitted payload objects converted to commitment-only records
+   * @param commitmentsRetained commitment-only records left for immutable retransmission
+   * @param temporaryBytesReleased reduction in charged temporary file lengths
+   * @param retainedBytesReleased reduction in charged retained and staging file lengths
+   */
+  public record Reconciliation(long admittedPayloads, long temporaryFilesRemoved, long stagingFilesRemoved,
+      long payloadsReclaimed, long commitmentsRetained, long temporaryBytesReleased, long retainedBytesReleased) {}
+
+  /**
+   * Explicitly reclaims abandoned files from a closed, previously paired managed store.
+   * Obtains exclusive payload ownership and holds the database writer lock throughout
+   * audit and reclamation. All admitted inputs and immutable records are checked before
+   * deletion begins. No lifecycle state changes, admission or completion are inferred.
+   * Unadmitted bodies become commitment-only records; identical retransmission can restore
+   * their bytes. Completed and refused jobs retain their original payloads.
+   * Filesystem failure can leave partial reclamation, which a later explicit call resumes.
+   * This blocking operation must not run on a network event loop.
+   * @param directory dedicated, closed payload directory
+   * @param limits exact retained payload policy
+   * @param sessions database previously paired with this directory
+   * @return counters after all requested changes and directory synchronization complete
+   * @throws IOException for an open store, lock failure or filesystem failure
+   * @throws SQLException for database failure
+   * @throws ProtocolException for a mismatched/unbound pair, caller-managed admission,
+   *     missing or corrupt admitted input, invalid records or capacity refusal
+   */
+  public static Reconciliation reconcile(Path directory, Limits limits, SealedSessionStore sessions)
+      throws IOException, SQLException, ProtocolException {
+    return reconcile(directory, limits, sessions, null);
+  }
+
+  // Package-local fault boundaries exercise the actual filesystem sequence in
+  // subprocess tests. The public API never accepts an application callback.
+  enum ReconcilePhase { AUDITED, STAGING_REMOVED, COMMITMENTS_PUBLISHED, BODY_TRUNCATED }
+  @FunctionalInterface interface ReconciliationProbe { void reached(ReconcilePhase phase) throws IOException; }
+
+  static Reconciliation reconcile(Path directory, Limits limits, SealedSessionStore sessions, ReconciliationProbe probe)
+      throws IOException, SQLException, ProtocolException {
+    Objects.requireNonNull(sessions);
+    if (!Files.isRegularFile(directory.resolve("policy.cbor"), LinkOption.NOFOLLOW_LINKS)) {
+      throw Wire.integrity("payload maintenance requires an existing store policy");
+    }
+    try (var payloads = open(directory, limits)) {
+      var binding = payloads.retainedBinding();
+      if (binding == null) throw Wire.entity("payload maintenance requires a previously paired managed store");
+      return sessions.withPayloadMaintenance(binding, connection -> payloads.reclaim(connection, probe));
+    }
+  }
+
+  private Reconciliation reclaim(java.sql.Connection connection, ReconciliationProbe probe) throws IOException, SQLException, ProtocolException {
+    Usage before = usage();
+    List<Path> spools = snapshot(root.resolve("spool"), limits.temporaryFiles);
+    List<Path> objects = snapshot(root.resolve("objects"), limits.retainedFiles);
+    Set<Path> references = new HashSet<>();
+    Set<Path> admitted = new HashSet<>();
+    SealedJobs.visitRetainedInputs(connection, input -> {
+      Metadata expected = new Metadata(input.identity(), input.header(), input.length(), input.digest());
+      Path path = objectPath(input.identity());
+      verify(path, expected);
+      admitted.add(path);
+    });
+    // Audit every immutable object before deleting even an unrelated spool.
+    for (Path path : objects) {
+      String name = path.getFileName().toString();
+      if (name.endsWith(".pay")) verify(path, readMetadata(path));
+      else if (name.endsWith(".commit")) references.add(path);
+    }
+    if (probe != null) probe.reached(ReconcilePhase.AUDITED);
+    for (Path path : spools) Files.delete(path);
+    syncDirectory(root.resolve("spool"));
+    long staging = 0;
+    for (Path path : objects) {
+      if (path.getFileName().toString().endsWith(".tmp")) { Files.delete(path); staging++; }
+    }
+    syncDirectory(root.resolve("objects"));
+    if (probe != null) probe.reached(ReconcilePhase.STAGING_REMOVED);
+    long reclaimed = 0, commitments = 0;
+    for (Path path : objects) {
+      if (!path.getFileName().toString().endsWith(".pay") || admitted.contains(path)) continue;
+      Metadata metadata = readMetadata(path);
+      Path reference = commitmentPath(metadata.identity);
+      Metadata retained = commitment(metadata.identity);
+      if (retained == null) Files.move(path, reference, StandardCopyOption.ATOMIC_MOVE);
+      else {
+        requireCommitment(metadata, retained);
+        Files.delete(path);
+      }
+      // Persist the commitment name before discarding any bytes it binds.
+      syncDirectory(path.getParent());
+      references.add(reference);
+      reclaimed++;
+    }
+    if (probe != null) probe.reached(ReconcilePhase.COMMITMENTS_PUBLISHED);
+    for (Path path : references) {
+      boolean redundant;
+      try (var channel = FileChannel.open(path, StandardOpenOption.READ, StandardOpenOption.WRITE,
+          LinkOption.NOFOLLOW_LINKS)) {
+        Metadata metadata = readMetadata(channel, true);
+        redundant = admitted.contains(objectPath(metadata.identity));
+        if (!redundant) {
+          channel.truncate(channel.position()); channel.force(true); commitments++;
+          if (probe != null) probe.reached(ReconcilePhase.BODY_TRUNCATED);
+        }
+      }
+      // A restored admitted payload and its job retain the same commitment.
+      if (redundant) Files.delete(path);
+    }
+    syncDirectory(root.resolve("objects"));
+    temporaryBytes = 0; retainedBytes = 0; temporaryFiles = 0; retainedFiles = 0;
+    scan("spool", false); scan("objects", true);
+    Usage after = usage();
+    return new Reconciliation(admitted.size(), spools.size(), staging, reclaimed, commitments,
+        before.temporaryBytes - after.temporaryBytes, before.retainedBytes - after.retainedBytes);
+  }
+
+  private static List<Path> snapshot(Path directory, int maximum) throws IOException, ProtocolException {
+    List<Path> paths = new ArrayList<>();
+    try (var entries = Files.newDirectoryStream(directory)) {
+      for (Path path : entries) {
+        if (paths.size() >= maximum) throw Wire.integrity("payload maintenance snapshot exceeds file policy");
+        paths.add(path);
+      }
+    }
+    return paths;
+  }
+
   private SealedPayloadStore(Path root, Limits limits, UUID storeId, FileChannel channel, FileLock lock) {
     this.root = root; this.limits = limits; this.storeId = storeId; this.lockChannel = channel; this.lock = lock;
   }
@@ -143,7 +278,7 @@ public final class SealedPayloadStore implements AutoCloseable {
       } else {
         byte[] encoded = readBounded(policyPath, 4096);
         var fields = SealedCbor.decode(encoded, 4096);
-        if (!"pipestream-java-payload-v2".equals(fields.get("format"))) throw Wire.integrity("payload policy or format differs; no conversion performed");
+        if (!"pipestream-java-payload-v3".equals(fields.get("format"))) throw Wire.integrity("payload policy or format differs; no conversion performed");
         ByteBuffer identity = ByteBuffer.wrap(SealedWork.bytes(fields, "store-id", 16));
         storeId = new UUID(identity.getLong(), identity.getLong());
         if (storeId.equals(SealedStoreBinding.UNBOUND) || !Arrays.equals(policy(limits, storeId), encoded)) {
@@ -348,6 +483,8 @@ public final class SealedPayloadStore implements AutoCloseable {
    * Installs a complete entity or chunk set without overwriting an existing identity.
    * A staging file is synced, hard-linked without replacement, and its directory
    * synced before success. Both names are reserved before any retained-file writes.
+   * When restoring a reclaimed body, its retained commitment is checked first and
+   * staging is atomically renamed instead; one additional payload name is reserved.
    * @param received complete set of receipts from this store, in any arrival order
    * @return immutable retained input, not an admission or execution receipt
    * @throws IOException for file/lock failure or unavailable receipt
@@ -376,9 +513,18 @@ public final class SealedPayloadStore implements AutoCloseable {
       byte[] placeholder = encode(provisional);
       long objectBytes = Math.addExact(12L + 32 + placeholder.length, length);
       Path target = objectPath(first.identity);
+      boolean restoring;
       synchronized (publication) {
+        Metadata commitment = commitment(first.identity);
+        restoring = commitment != null;
+        if (commitment != null) {
+          byte[] digest = hashInputs(inputs, null);
+          var incoming = new Metadata(first.identity, assembled(first.header, length, digest), length, digest);
+          if (!Arrays.equals(encode(incoming), encode(commitment))) throw Wire.entity("reclaimed payload bytes or commitments changed");
+        }
         if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
           Metadata existing = readMetadata(target);
+          requireCommitment(existing, commitment);
           if (!existing.identity.equals(first.identity) || existing.length != length
               || !sameApplicationHeader(existing.header, first.header)) throw Wire.entity("retained payload identity or header changed");
           byte[] digest = hashInputs(inputs, null);
@@ -388,9 +534,11 @@ public final class SealedPayloadStore implements AutoCloseable {
           return new Stored(target, existing);
         }
       }
-      Credit credit = reserve(true, Math.multiplyExact(objectBytes, 2), 2);
+      // A retained commitment protects replay identity while restoration atomically
+      // renames its staging file. No second payload link is needed on that path.
+      Credit credit = reserve(true, Math.multiplyExact(objectBytes, restoring ? 1 : 2), restoring ? 1 : 2);
       Path staging = root.resolve("objects").resolve("install-" + UUID.randomUUID() + ".tmp");
-      boolean published = false;
+      boolean published = false, moved = false, publicationAttempted = false;
       try {
         Metadata actual;
         try (FileChannel output = FileChannel.open(staging, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
@@ -405,19 +553,34 @@ public final class SealedPayloadStore implements AutoCloseable {
           output.force(true);
         }
         synchronized (publication) {
+          requireCommitment(actual, commitment(first.identity));
           if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
             Metadata existing = readMetadata(target);
             if (!Arrays.equals(encode(existing), encode(actual))) throw Wire.entity("concurrent installation changed retained input");
             verify(target, existing); syncDirectory(target.getParent());
           } else {
-            Files.createLink(target, staging); published = true;
+            if (restoring) {
+              publicationAttempted = true;
+              Files.move(staging, target, StandardCopyOption.ATOMIC_MOVE); moved = true;
+            } else Files.createLink(target, staging);
+            published = true;
             syncDirectory(target.getParent());
           }
         }
-        Files.delete(staging); syncDirectory(staging.getParent());
+        if (!moved) Files.delete(staging);
+        syncDirectory(staging.getParent());
         credit.keep(published ? objectBytes : 0, published ? 1 : 0);
         return new Stored(target, actual);
       } catch (IOException | ProtocolException | RuntimeException failure) {
+        if (restoring) {
+          // An uncertain atomic move owns at most one payload name. Keep its
+          // entire allowance until reopen rather than guessing that it vanished.
+          boolean keep = publicationAttempted;
+          try { Files.deleteIfExists(staging); syncDirectory(staging.getParent()); }
+          catch (IOException cleanup) { keep = true; failure.addSuppressed(cleanup); }
+          credit.keep(keep ? objectBytes : 0, keep ? 1 : 0);
+          throw failure;
+        }
         long keptBytes = published ? objectBytes : 0; int keptFiles = published ? 1 : 0;
         try { Files.deleteIfExists(staging); syncDirectory(staging.getParent()); }
         catch (IOException cleanup) { keptBytes += objectBytes; keptFiles++; failure.addSuppressed(cleanup); }
@@ -442,7 +605,7 @@ public final class SealedPayloadStore implements AutoCloseable {
   /**
    * Loads an immutable input and verifies its bounded metadata and complete payload.
    * @param identity expected identity, never authorization
-   * @return retained input, or empty if no object was installed
+   * @return retained input, or empty if no object was installed or its unadmitted body was reclaimed
    * @throws IOException for closed store or filesystem failure
    * @throws ProtocolException for corruption or invalid identity
    */
@@ -450,8 +613,10 @@ public final class SealedPayloadStore implements AutoCloseable {
     validateIdentity(identity); pin();
     try {
       Path path = objectPath(identity);
+      Metadata commitment = commitment(identity);
       if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return Optional.empty();
       Metadata metadata = readMetadata(path);
+      requireCommitment(metadata, commitment);
       if (!metadata.identity.equals(identity)) throw Wire.integrity("retained payload identity differs");
       verify(path, metadata); return Optional.of(new Stored(path, metadata));
     } finally { unpin(); }
@@ -501,6 +666,7 @@ public final class SealedPayloadStore implements AutoCloseable {
         channel = readChannel(path);
         Metadata current = readMetadata(channel);
         if (!Arrays.equals(encode(current), encode(metadata))) throw Wire.integrity("retained input metadata changed");
+        requireCommitment(current, commitment(current.identity));
         long offset = channel.position(); verifyBody(channel, metadata); channel.position(offset);
         return new FilterInputStream(Channels.newInputStream(channel)) {
           private boolean readerClosed;
@@ -594,6 +760,9 @@ public final class SealedPayloadStore implements AutoCloseable {
     try (FileChannel channel = readChannel(path)) { return readMetadata(channel); }
   }
   private Metadata readMetadata(FileChannel channel) throws IOException, ProtocolException {
+    return readMetadata(channel, false);
+  }
+  private Metadata readMetadata(FileChannel channel, boolean commitment) throws IOException, ProtocolException {
     ByteBuffer prefix = ByteBuffer.allocate(12); readExactly(channel, prefix); prefix.flip();
     byte[] magic = new byte[8]; prefix.get(magic); int length = prefix.getInt();
     if (!Arrays.equals(magic, MAGIC) || length < 1 || length > MAX_METADATA) throw Wire.integrity("unsupported retained payload format");
@@ -612,14 +781,32 @@ public final class SealedPayloadStore implements AutoCloseable {
     validate(identity, header);
     long bytes = SealedWork.bounded(fields, "length", limits.entityBytes);
     byte[] digest = SealedWork.bytes(fields, "digest", 32);
-    if (channel.size() != channel.position() + bytes || (header.payloadLength() != null && !header.payloadLength().equals(BigInteger.valueOf(bytes)))
+    long body = channel.size() - channel.position();
+    if ((commitment ? body < 0 || body > bytes : body != bytes) || (header.payloadLength() != null && !header.payloadLength().equals(BigInteger.valueOf(bytes)))
         || (header.checksum() != null && !MessageDigest.isEqual(header.checksum(), digest))) throw Wire.integrity("retained payload geometry or commitments differ");
     return new Metadata(identity, header, bytes, digest);
+  }
+
+  private Metadata commitment(Identity identity) throws IOException, ProtocolException {
+    Path path = commitmentPath(identity);
+    if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return null;
+    try (var channel = readChannel(path)) {
+      Metadata metadata = readMetadata(channel, true);
+      if (!metadata.identity.equals(identity)) throw Wire.integrity("retained commitment identity differs");
+      return metadata;
+    }
+  }
+
+  private static void requireCommitment(Metadata payload, Metadata commitment) throws ProtocolException {
+    if (commitment != null && !Arrays.equals(encode(payload), encode(commitment))) {
+      throw Wire.integrity("retained payload differs from its reclaimed commitment");
+    }
   }
   private void verify(Path path, Metadata metadata) throws IOException, ProtocolException {
     try (FileChannel channel = readChannel(path)) {
       Metadata actual = readMetadata(channel);
       if (!Arrays.equals(encode(actual), encode(metadata))) throw Wire.integrity("retained metadata changed during verification");
+      requireCommitment(actual, commitment(actual.identity));
       verifyBody(channel, actual);
     }
   }
@@ -677,12 +864,19 @@ public final class SealedPayloadStore implements AutoCloseable {
       for (Path path : entries) {
         String file = path.getFileName().toString();
         boolean object = retained && file.matches("[0-9a-f]{64}\\.pay");
+        boolean commitment = retained && file.matches("[0-9a-f]{64}\\.commit");
         boolean temporary = file.matches((retained ? "install-" : "") + "[0-9a-f-]{36}\\.tmp");
-        if ((!object && !temporary) || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) throw Wire.integrity("unexpected payload-store entry");
+        if ((!object && !commitment && !temporary) || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) throw Wire.integrity("unexpected payload-store entry");
         reserve(retained, Files.size(path), 1);
         if (object) {
           Metadata metadata = readMetadata(path);
           if (!objectPath(metadata.identity).equals(path)) throw Wire.integrity("payload name does not bind its identity");
+          requireCommitment(metadata, commitment(metadata.identity));
+        } else if (commitment) {
+          try (var channel = readChannel(path)) {
+            Metadata metadata = readMetadata(channel, true);
+            if (!commitmentPath(metadata.identity).equals(path)) throw Wire.integrity("commitment name does not bind its identity");
+          }
         }
       }
     }
@@ -691,6 +885,11 @@ public final class SealedPayloadStore implements AutoCloseable {
     byte[] key = SealedCbor.encode(Map.of("session", identity.session, "producer", SealedWork.producerBytes(identity.producer),
         "scope", identity.entity.scopeId(), "entity", identity.entity.entityId()), 1024);
     return root.resolve("objects").resolve(HexFormat.of().formatHex(SealedWork.sha256().digest(key)) + ".pay");
+  }
+  private Path commitmentPath(Identity identity) throws ProtocolException {
+    Path object = objectPath(identity);
+    String name = object.getFileName().toString();
+    return object.resolveSibling(name.substring(0, name.length() - 4) + ".commit");
   }
   private static void validate(Identity identity, SealedTransport.Header header) throws ProtocolException {
     validateIdentity(identity); SealedTransport.header(header);
@@ -704,7 +903,7 @@ public final class SealedPayloadStore implements AutoCloseable {
         || identity.entity.entityId() < 1 || identity.entity.entityId() > Wire.MAX_ENTITY_ID) throw Wire.entity("invalid durable payload identity");
   }
   private static byte[] policy(Limits limits, UUID identity) throws ProtocolException {
-    return SealedCbor.encode(Map.of("format", "pipestream-java-payload-v2", "store-id", SealedWork.producerBytes(identity), "temporary-bytes", limits.temporaryBytes,
+    return SealedCbor.encode(Map.of("format", "pipestream-java-payload-v3", "store-id", SealedWork.producerBytes(identity), "temporary-bytes", limits.temporaryBytes,
         "temporary-files", limits.temporaryFiles, "retained-bytes", limits.retainedBytes, "retained-files", limits.retainedFiles,
         "entity-bytes", limits.entityBytes, "chunks", limits.chunks), 4096);
   }

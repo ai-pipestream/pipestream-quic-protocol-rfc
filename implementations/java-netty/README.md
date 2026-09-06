@@ -142,6 +142,9 @@ with a no-replace hard link, and syncs the directory. The installed filename
 hashes the scoped identity; request text never becomes a path component.
 Identical replay reuses and verifies the existing object without requiring
 new retained-file headroom. Changed bytes or commitments are refused.
+Restoring an explicitly reclaimed body first verifies the retained commitment,
+then atomically renames synced staging into the payload name. The commitment
+remains charged; this path reserves one additional object, not two hard-link names.
 `find(identity)` and `Stored.openStream()` verify retained metadata and the
 complete payload before exposing input to an application. The latter then
 reads from that same opened file; this adds a verification pass, not a
@@ -166,7 +169,8 @@ release a JVM's locks on that file ([JDK FileLock documentation](https://docs.or
 Use one loaded copy of this library for a store in a process. Locks are advisory;
 unrelated filesystem writers, separate class loaders sharing a store, and network
 filesystem semantics are outside this implementation's supported boundary.
-The filesystem must support hard links and directory synchronization.
+The filesystem must support hard links, atomic same-directory rename, and
+directory synchronization.
 
 These calls are blocking and must run outside Netty event loops. Installing a
 payload does not admit or complete an entity: the session store must still
@@ -176,12 +180,12 @@ chunk geometry, integrity, concurrent installation/close, immutable replay at
 capacity, and cross-process writer exclusion. A 32 MiB receive/install/read test
 runs in a JVM with a 24 MiB maximum heap; it is not a QUIC, native-memory, RSS,
 or concurrent-throughput measurement. The sealed listener below uses these
-APIs; explicit orphan reconciliation remains unfinished.
+APIs. Offline orphan reconciliation is described below.
 
 ### Database and payload-store ownership
 
 Each version-6 database has a random persistent identity and one initially unbound
-payload-store identity in a fixed 72-byte checksummed image. The version-2 payload
+payload-store identity in a fixed 72-byte checksummed image. The version-3 payload
 policy separately records its own persistent identity. Executor startup and every
 managed admission require the same pair. A database cannot switch payload roots,
 and a payload root cannot serve another database, even when session/producer/entity
@@ -209,7 +213,56 @@ As with the existing directory lock, these guarantees require private local
 directories, one loaded library copy, and cooperating writers. The manual digest-only
 `SealedSessionStore.admit` API still requires caller-managed payload retention;
 it does not validate or associate external files with this managed payload store.
-The pairing is a prerequisite for explicit orphan reconciliation, not a cleanup API.
+The pairing is required by the separate offline reconciliation API below.
+
+### Explicit offline orphan reconciliation
+
+`SealedPayloadStore.reconcile(directory, limits, sessions)` acquires exclusive
+payload ownership and holds SQLite's writer lock throughout its audit and cleanup.
+Stop and fully drain the owning server/executor, close the payload store, then
+invoke this blocking API off network event loops. It requires an existing matched
+database/root pair and the exact payload policy; it does not bind a new pair or
+guess ownership. Any caller-managed digest-only admission causes refusal because
+that API supplies no managed file-retention contract.
+
+Before deleting any file, reconciliation audits database records and verifies
+every managed input, including queued, running, completed and refused jobs. It
+also verifies all unadmitted payload objects and retained commitment metadata.
+Missing admitted input, corrupt objects or descriptors, unknown names, and symlinks
+refuse without cleanup. Admitted inputs are retained regardless of job state.
+This is orphan-body reclamation, not retention expiry or general garbage collection.
+
+Abandoned receive and install staging names are removed. An unadmitted `.pay`
+is atomically renamed to `.commit`, and the directory is synced before its body
+is truncated. The commitment preserves the original checked metadata, scoped
+identity, encoded header, payload length and SHA-256. It is not executable input:
+`find` returns empty until matching retransmission restores the body and a separate
+admission transaction succeeds. Changed bytes or headers receive
+`PIPESTREAM_ENTITY_INVALID`; no identity is recycled and no declared work resolves.
+
+An interrupted cleanup may leave a commitment with some or all of its old body;
+these extra bytes remain charged on reopen and are never used as admitted input.
+A later explicit reconciliation finishes truncation. A restored admitted payload
+keeps its body; reconciliation only removes its now-redundant commitment name.
+No application callback runs during maintenance and no lifecycle row is changed.
+Filesystem changes are not rolled back with SQLite: an I/O failure can leave
+partial reclamation, so only a successful return reports released capacity.
+
+The returned `Reconciliation` reports admitted objects, removed staging/receive
+files, reclaimed objects, retained commitments and released logical file lengths.
+Commitments continue consuming retained bytes and file slots. Snapshot lists are
+bounded by the file policy; verification materializes one input descriptor at a
+time and streams bodies through fixed buffers. Ordinary reopen never cleans up.
+Payload policy 3 introduces commitment records and refuses earlier policies
+without conversion; Java database schema 6 and the wire format are unchanged.
+
+Tests cover exact-quota restoration, changed replay, chunk-boundary changes,
+concurrent restoration, ownership and writer exclusion, audit failures before
+deletion, explicit I/O failure, and abrupt process exit at four filesystem phases.
+A 32 MiB body is reclaimed and restored under a 24 MiB Java heap. An actual-QUIC
+test reopens the cleaned store, verifies the missing-work checkpoint timeout and
+changed-payload refusal, then restores and completes matching input. These are
+not native-memory/RSS, multi-tenant stress or full-profile conformance claims.
 
 ## Durable sealed-work execution
 
@@ -398,7 +451,7 @@ The `sealed-interop` profile also runs the Rust public producer against this
 Java server. A separate 32 MiB QUIC transfer/install/execute test runs with
 a 24 MiB Java heap limit; it does not measure native memory or RSS.
 Persistent producer-side observations, broader crash-boundary and
-resource stress coverage and orphan reconciliation remain unfinished;
+resource stress coverage remain unfinished;
 this is not a full conformance claim.
 
 ## Sealed-work network producer

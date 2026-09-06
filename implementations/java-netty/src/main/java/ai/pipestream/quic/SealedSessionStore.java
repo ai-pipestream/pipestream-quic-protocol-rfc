@@ -1,6 +1,7 @@
 package ai.pipestream.quic;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -878,6 +879,25 @@ public final class SealedSessionStore {
       if (!current.equals(expected)) SealedSqliteImages.replace(connection, "ps_java_meta", "binding", 1, expected.encode());
       return null;
     });
+  }
+
+  <T> T withPayloadMaintenance(SealedStoreBinding expected, Maintenance<T> operation)
+      throws IOException, SQLException, ProtocolException {
+    try {
+      return transaction(connection -> {
+        if (!binding(connection).equals(expected)) throw Wire.integrity("payload maintenance requires the retained database/store pair");
+        try { return operation.apply(connection); }
+        catch (IOException failure) { throw new UncheckedIOException(failure); }
+      });
+    } catch (UncheckedIOException failure) {
+      IOException cause = failure.getCause();
+      for (Throwable suppressed : failure.getSuppressed()) cause.addSuppressed(suppressed);
+      throw cause;
+    }
+  }
+
+  @FunctionalInterface interface Maintenance<T> {
+    T apply(Connection connection) throws IOException, SQLException, ProtocolException;
   }
 
   <T> T transaction(Operation<T> operation) throws SQLException, ProtocolException {
