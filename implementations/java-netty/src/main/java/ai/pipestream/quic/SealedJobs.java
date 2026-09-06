@@ -19,9 +19,16 @@ final class SealedJobs {
   static final int PROCESS = 0, REHYDRATE = 1;
   static final int QUEUED = 0, RUNNING = 1, FINISHED = 2, REFUSED = 3;
   static final int MAX_QUEUED = 128, MAX_SESSION_QUEUED = 32;
+  // One completion slot per admitted entity; waiting parents must not occupy
+  // ordinary processing slots needed by their own children.
+  private static final int MAX_COMPLETIONS = 65_536, MAX_SESSION_COMPLETIONS = 16_384;
   private static final int MAX_DESCRIPTOR = Wire.MAX_ENTITY_HEADER + 2048;
   private static final long MAX_RETAINED = 64L << 20, MAX_SESSION_RETAINED = 16L << 20;
   private static final int RESERVED_OUTCOME = 256;
+  // Five- and six-member descriptor maps both have a one-byte CBOR header.
+  // Adding "child" costs six key bytes, two byte-string header bytes and a
+  // fixed 77-byte SCOPE_DIGEST frame. Tests pin conversion to actual descriptors.
+  private static final int CHILD_DESCRIPTOR_BYTES = 6 + 2 + 77;
   private static final String COLUMNS = "session,scope,entity,kind,CASE WHEN length(input) BETWEEN 1 AND "
       + MAX_DESCRIPTOR + " THEN input END,input_hash,state,epoch,worker,expires,"
       + "CASE WHEN length(outcome) BETWEEN 1 AND 128 THEN outcome END,length(outcome),checksum";
@@ -148,7 +155,9 @@ final class SealedJobs {
     return sessions.transaction(connection -> {
       audit(connection);
       List<Key> result = new ArrayList<>();
-      try (var query = connection.prepareStatement("SELECT " + COLUMNS + " FROM ps_java_jobs WHERE state=0 OR (state=1 AND expires<=?) ORDER BY state,expires,session,scope,entity,kind LIMIT ?")) {
+      // Round-robin the bounded page across sessions. A large reserved queue in
+      // one session must not hide other sessions behind its occupied workers.
+      try (var query = connection.prepareStatement("SELECT " + COLUMNS + " FROM ps_java_jobs WHERE state=0 OR (state=1 AND expires<=?) ORDER BY row_number() OVER (PARTITION BY session ORDER BY kind DESC,state,expires,scope,entity),session LIMIT ?")) {
         query.setLong(1, now); query.setInt(2, limit);
         try (var rows = query.executeQuery()) { while (rows.next()) result.add(decode(rows).key()); }
       }
@@ -205,21 +214,14 @@ final class SealedJobs {
   void audit() throws SQLException, ProtocolException { sessions.transaction(connection -> { audit(connection); return null; }); }
 
   private static void enqueue(Connection connection, Key key, byte[] descriptor) throws SQLException, ProtocolException {
-    try (var query = connection.prepareStatement("SELECT count(*) FILTER (WHERE state<2),count(*) FILTER (WHERE state<2 AND session=?),coalesce(sum(length(input)+?),0),coalesce(sum(CASE WHEN session=? THEN length(input)+? ELSE 0 END),0) FROM ps_java_jobs")) {
-      query.setString(1, key.identity().session()); query.setInt(2, RESERVED_OUTCOME);
-      query.setString(3, key.identity().session()); query.setInt(4, RESERVED_OUTCOME);
-      try (var rows = query.executeQuery()) {
-        if (!rows.next()) throw Wire.integrity("job accounting is absent");
-        long charge = descriptor.length + RESERVED_OUTCOME;
-        if (rows.getLong(1) >= MAX_QUEUED || rows.getLong(2) >= MAX_SESSION_QUEUED
-            || charge > MAX_RETAINED - rows.getLong(3) || charge > MAX_SESSION_RETAINED - rows.getLong(4)) throw Wire.limit("durable job capacity exhausted");
-      }
-    }
     byte[] hash = SealedWork.sha256().digest(descriptor);
     try (var insert = connection.prepareStatement("INSERT INTO ps_java_jobs VALUES (?,?,?,?,?,?,0,0,NULL,0,NULL,?)")) {
       bindKey(insert, key); insert.setBytes(5, descriptor); insert.setBytes(6, hash);
       insert.setBytes(7, checksum(key, hash, QUEUED, 0, null, 0, null)); insert.executeUpdate();
     }
+    // Check the resulting transaction: inserting rehydration consumes its parent's
+    // existing reservation instead of briefly charging both and refusing at capacity.
+    audit(connection, true);
   }
 
   private static void writeState(Connection connection, Job job, int state, Lease lease, Outcome outcome) throws SQLException, ProtocolException {
@@ -233,6 +235,7 @@ final class SealedJobs {
       update.setLong(9, job.key().identity().entity().entityId()); update.setInt(10, job.key().kind());
       if (update.executeUpdate() != 1) throw Wire.integrity("job disappeared during publication");
     }
+    audit(connection);
   }
 
   private static Job required(Connection connection, Key key) throws SQLException, ProtocolException {
@@ -254,23 +257,25 @@ final class SealedJobs {
     }
   }
 
-  static void audit(Connection connection) throws SQLException, ProtocolException {
+  static SealedSessionStore.JobUsage audit(Connection connection) throws SQLException, ProtocolException {
+    return audit(connection, false);
+  }
+
+  private static SealedSessionStore.JobUsage audit(Connection connection, boolean admission) throws SQLException, ProtocolException {
     try (var statement = connection.createStatement(); var rows = statement.executeQuery("SELECT 1 FROM ps_java_entities e WHERE managed=1 AND (NOT EXISTS(SELECT 1 FROM ps_java_jobs j WHERE j.session=e.session AND j.scope=e.scope AND j.entity=e.id AND j.kind=0) OR (e.state=7 AND NOT EXISTS(SELECT 1 FROM ps_java_jobs j WHERE j.session=e.session AND j.scope=e.scope AND j.entity=e.id AND j.kind=1))) LIMIT 1")) {
       if (rows.next()) throw Wire.integrity("managed entity has no durable job");
     }
-    long retained = 0; int queued = 0, count = 0;
+    long retained = 0, reserved = 0;
+    int processing = 0, rehydrating = 0, futureSlots = 0, waiting = 0, count = 0;
     Map<String, Long> sessionBytes = new java.util.HashMap<>();
     Map<String, Integer> sessionQueued = new java.util.HashMap<>();
+    Map<String, Integer> sessionCompletions = new java.util.HashMap<>();
     try (var statement = connection.createStatement(); var rows = statement.executeQuery("SELECT " + COLUMNS + " FROM ps_java_jobs ORDER BY session,scope,entity,kind")) {
       while (rows.next()) {
         if (++count > 131_072) throw Wire.integrity("retained job count exceeds entity policy");
         Job job = decode(rows); var identity = job.key().identity();
         long charge = rows.getBytes(5).length + RESERVED_OUTCOME;
-        retained += charge;
-        long scopeBytes = sessionBytes.merge(identity.session(), charge, Long::sum);
-        if (retained > MAX_RETAINED || scopeBytes > MAX_SESSION_RETAINED || sessionBytes.size() > 512) throw Wire.integrity("retained job bytes exceed policy");
-        if (job.state() < FINISHED && (++queued > MAX_QUEUED
-            || sessionQueued.merge(identity.session(), 1, Integer::sum) > MAX_SESSION_QUEUED)) throw Wire.integrity("unfinished jobs exceed policy");
+        boolean futureRehydration = job.key().kind() == PROCESS && job.state() < FINISHED;
         try (var entity = connection.prepareStatement("SELECT managed,state,payload_digest,output_digest,producer FROM ps_java_entities e JOIN ps_java_sessions s ON e.session=s.id WHERE e.session=? AND e.scope=? AND e.id=?")) {
           bindEntity(entity, identity.session(), identity.entity());
           try (var record = entity.executeQuery()) {
@@ -293,11 +298,42 @@ final class SealedJobs {
                   }
                 }
               }
+              if (state == 6) {
+                if (rehydration != null) throw Wire.integrity("waiting parent already has a rehydration job");
+                futureRehydration = true;
+                waiting++;
+              }
             }
           }
         }
+        long futureCharge = futureRehydration ? charge + CHILD_DESCRIPTOR_BYTES : 0;
+        if (futureRehydration && charge - RESERVED_OUTCOME + CHILD_DESCRIPTOR_BYTES > MAX_DESCRIPTOR) {
+          throw admission ? Wire.limit("future rehydration descriptor exceeds its bound")
+              : Wire.integrity("reserved rehydration descriptor cannot be represented");
+        }
+        retained += charge;
+        reserved += futureCharge;
+        long scopeBytes = sessionBytes.merge(identity.session(), charge + futureCharge, Long::sum);
+        if (retained + reserved > MAX_RETAINED || scopeBytes > MAX_SESSION_RETAINED || sessionBytes.size() > 512) {
+          throw admission ? Wire.limit("durable job completion-byte capacity exhausted")
+              : Wire.integrity("retained jobs and completion reservations exceed policy");
+        }
+        if (job.state() < FINISHED && job.key().kind() == PROCESS && (++processing > MAX_QUEUED
+            || sessionQueued.merge(identity.session(), 1, Integer::sum) > MAX_SESSION_QUEUED)) {
+          throw admission ? Wire.limit("durable processing queue is full")
+              : Wire.integrity("unfinished processing jobs exceed policy");
+        }
+        boolean activeRehydration = job.state() < FINISHED && job.key().kind() == REHYDRATE;
+        if (activeRehydration) rehydrating++;
+        if (futureRehydration) futureSlots++;
+        if ((futureRehydration || activeRehydration) && (futureSlots + rehydrating > MAX_COMPLETIONS
+            || sessionCompletions.merge(identity.session(), 1, Integer::sum) > MAX_SESSION_COMPLETIONS)) {
+          throw admission ? Wire.limit("durable completion reservations are full")
+              : Wire.integrity("durable completion reservations exceed entity policy");
+        }
       }
     }
+    return new SealedSessionStore.JobUsage(retained, reserved, processing, rehydrating, futureSlots, waiting);
   }
 
   private static Job decode(ResultSet rows) throws SQLException, ProtocolException {

@@ -59,6 +59,18 @@ public final class SealedSessionStore {
    * @param sharedMemoryBytes shared-memory bytes
    */
   public record FileUsage(long databaseBytes, long walBytes, long journalBytes, long sharedMemoryBytes) {}
+
+  /**
+   * Logical durable-job charges, separate from database file lengths.
+   * @param retainedJobBytes retained descriptors plus their bounded outcome allowances
+   * @param rehydrationReservedBytes capacity held for future rehydration descriptors and outcomes
+   * @param processingJobs queued or running ordinary processing jobs
+   * @param rehydrationJobs queued or running rehydration jobs consuming reserved slots
+   * @param reservedRehydrationSlots slots held for possible future rehydration
+   * @param waitingParents dehydrated parents retaining a future execution slot
+   */
+  public record JobUsage(long retainedJobBytes, long rehydrationReservedBytes, int processingJobs,
+      int rehydrationJobs, int reservedRehydrationSlots, int waitingParents) {}
   /** Parent resolution when its child scope is examined under the Layer 1 STRICT policy. */
   public enum ChildResolution {
     /** The child scope is missing or has not closed. */
@@ -68,7 +80,7 @@ public final class SealedSessionStore {
     /** At least one child failed; the parent durably entered FAILED. */
     FAILED
   }
-  private static final int VERSION = 3;
+  private static final int VERSION = 4;
   private static final long MAX_SESSIONS = 512;
   private static final long MAX_DECLARATIONS = 65_536;
   private static final long MAX_SESSION_DECLARATIONS = 16_384;
@@ -114,6 +126,14 @@ public final class SealedSessionStore {
    * @throws IOException for corruption, aliasing, or over-budget files
    */
   public FileUsage fileUsage() throws IOException { return files.usage(); }
+
+  /**
+   * Audits retained jobs and reports their completion reservations in one snapshot.
+   * @return logical job and reservation charges
+   * @throws SQLException for storage failure
+   * @throws ProtocolException for corrupt job state or capacity failure
+   */
+  public JobUsage jobUsage() throws SQLException, ProtocolException { return transaction(SealedJobs::audit); }
 
   private static SealedSessionStore openConfigured(Path database, FileLimits limits) throws IOException, SQLException {
     SealedSessionStore store = new SealedSessionStore(SealedSqliteFiles.open(database, limits));

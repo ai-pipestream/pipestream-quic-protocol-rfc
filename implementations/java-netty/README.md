@@ -37,8 +37,8 @@ construction, including odd-node promotion.
 
 `SealedSessionStore.open(path)` creates a separate SQLite database with strict
 typed tables, WAL, and synchronous FULL commits. The Java database format is
-now version 3, with managed entity state, durable jobs, persistent dispatch
-policy, and checksummed checkpoint request/ACK history. Version-1 and version-2
+now version 4, with managed entity state, durable jobs, protected rehydration
+reservations, and checksummed checkpoint request/ACK history. Version-1 through version-3
 stores are refused without conversion; keep them with their
 matching binary. Do not point this API at a Rust
 store. Unknown table sets or policy versions are refused without conversion.
@@ -102,8 +102,8 @@ A synced `.psjlimits` sidecar retains the 72-byte `PSJDB001` version, four
 big-endian limits, and a SHA-256 checksum. The empty `.psjlock` file coordinates
 policy creation. Nonempty databases or sidecars without policy are refused
 before SQLite opens them. Policy changes, corrupt or oversized files, symlinks,
-and hardlink aliases are refused. Java schema version 3 is unchanged, but an
-older unbounded store still lacks the required file policy: keep it with its
+and hardlink aliases are refused. File policy `PSJDB001` is separate from the
+version-4 Java schema. An older unbounded store lacks this policy: keep it with its
 matching binary. No automatic conversion or operational migration is supplied.
 
 This backend requires 64-bit Linux, the pinned JDBC SQLite version, private
@@ -122,7 +122,8 @@ and abruptly exit with an uncheckpointed WAL. A real-QUIC test checks the named
 capacity refusal, unchanged acknowledged membership, zero accidental payload/job
 admission, and declaration replay after checkpointing and reopen. File caps do
 not reserve space for every future completion record or provide authenticated
-principal quotas; completion reservations and broader resource gates remain due.
+principal quotas. The logical rehydration reservations below do not reserve
+physical DB/WAL publication space; that and broader resource gates remain due.
 
 ## Sealed-work payload storage
 
@@ -184,23 +185,43 @@ dispatcher and bounded application workers, independently of client connections.
 One executor owns a canonical Java database within this process. Reuse it across
 listeners rather than starting one per connection. `admit(stored)` commits
 payload admission and its processing descriptor together. `closeScope` commits
-child closure, parent resolution, and any required rehydration job together;
-a queue refusal rolls all those changes back. STRICT child failure propagates
+child closure, parent resolution, and conversion of its reserved rehydration
+capacity together. Storage failure rolls all those changes back. STRICT child failure propagates
 FAILED without a rehydration callback.
 
 The internal typed queue retains immutable, checksummed input descriptors and
-outcomes. Its fixed persistent policy permits 128 queued/running jobs globally
-and 32 per session, with 64 MiB of retained descriptor charges globally and
-16 MiB per session. Each descriptor reserves a further 256 logical bytes for
-its bounded result and attempt fields. Completed/refused jobs remain charged;
-reopen cannot reset the budget. These are logical record bounds, not SQLite
-page/WAL quotas or reserved physical space for every future descendant or
-rehydration job. Session and producer labels are not authenticated principals;
+outcomes. Its fixed persistent policy permits 128 queued/running PROCESS jobs
+globally and 32 per session. REHYDRATE jobs use separately reserved completion
+slots: at most 65,536 reserved or queued/running slots globally and 16,384 per
+session, one per admitted entity. This is a larger, separately bounded durable
+queue, not additional workers. Waiting parents do not occupy processing slots
+needed by their children, and a full processing queue cannot refuse conversion
+of an already-held rehydration slot.
+
+Admission charges the processing descriptor and a 256-byte logical allowance
+for its result/attempt fields, plus the exact future rehydration descriptor and
+another 256-byte allowance. A rehydration descriptor adds a fixed 85-byte CBOR
+member to the existing processing descriptor. The combined retained and reserved
+charges must fit 64 MiB globally and 16 MiB per session. Ordinary terminal or
+refused processing releases only its unused future reservation; retained records
+stay charged. DEHYDRATING parents hold their future bytes and slot until child
+closure converts them to a rehydration job or STRICT failure makes it unnecessary.
+Reopen and disconnect cannot release a reservation. The checksummed job/entity
+state determines these charges; no independently mutable counter can create free
+capacity. `SealedSessionStore.jobUsage()` audits and reports them in one snapshot.
+Version-3 stores are refused without conversion to the stronger admission policy.
+
+These are logical record/queue reservations, not reserved physical DB/WAL space
+or a promise to admit unknown future children, payloads or checkpoint requests.
+Those remain subject to their own admission limits. Session and producer labels are not authenticated principals;
 these limits do not provide tenant isolation. Reads bound blob materialization,
 and integrity checks reject missing jobs, changed descriptors, and outcomes
 that disagree with entity state before executing or acknowledging completion.
-The dispatcher audits retained records, not just the ready-job index. That
-bounded full scan is not a large-session throughput claim.
+The dispatcher audits retained records, not just the ready-job index. Discovery
+interleaves sessions within each bounded page and prefers their rehydration work,
+so one large completion queue cannot fill the page with only its own jobs. That
+bounded full scan and SQL ordering are not a large-session throughput or global
+fairness claim.
 
 Defaults are four workers, at most two per session, with five-minute leases.
 Acquisition and publication check a durable increasing epoch, executor identity,
@@ -230,7 +251,8 @@ until `isTerminated()` is true. Closing a connection does not cancel or complete
 its durable jobs. The executor does not bound application-created threads,
 callback memory, or external effects.
 
-Tests exercise queue rollback, recursive closure, independent session progress
+Tests exercise queue rollback, recursive closure, exact conversion at processing
+and metadata capacity, waiting parents admitting children, independent session progress
 during a stalled callback, callback storage re-entry, stale publication after
 abrupt exit and reopen, cancellation-safe ownership, corrupt input, retained
 refusals, and metadata capacity retained by completed jobs. A 32 MiB retained
@@ -267,7 +289,7 @@ Complete checkpoint receipt starts a monotonic deadline on the network event
 loop before SQLite queueing. Pending requests do not block eligible payloads
 or control parsing; duplicates retain the original deadline. Covered ingress,
 unsent outcomes, and nested checkpoints prevent ACK. An operation completing
-after timeout cannot emit a late ACK on that connection. The version-3 store
+after timeout cannot emit a late ACK on that connection. The version-4 store
 retains exact request identity, optional root-scope presence, unsigned counters,
 and ACK state under checksums and history accounting. Missing records cannot
 erase outstanding obligations. Limits are 4,096 retained checkpoints globally,
@@ -291,7 +313,7 @@ The `sealed-interop` profile also runs the Rust public producer against this
 Java server. A separate 32 MiB QUIC transfer/install/execute test runs with
 a 24 MiB Java heap limit; it does not measure native memory or RSS.
 Persistent producer-side observations, broader crash-boundary and
-resource stress coverage, and completion-space
+resource stress coverage, and physical completion-space
 reservations remain unfinished; this is not a full conformance claim.
 
 ## Sealed-work network producer

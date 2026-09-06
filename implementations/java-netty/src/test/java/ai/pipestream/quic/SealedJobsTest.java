@@ -34,6 +34,10 @@ final class SealedJobsTest {
       assertEquals(0, scalar("SELECT count(*) FROM ps_java_jobs"));
       sql("DROP TRIGGER fail_job");
       jobs.admit(input);
+      var reserved = sessions.jobUsage();
+      assertEquals(1, reserved.processingJobs()); assertEquals(1, reserved.reservedRehydrationSlots());
+      assertEquals(0, reserved.waitingParents());
+      assertTrue(reserved.rehydrationReservedBytes() > reserved.retainedJobBytes());
       assertEquals(List.of(key(SESSION, ROOT, SealedJobs.PROCESS)), jobs.ready(0, 8));
       assertThrows(ProtocolException.class, () -> sessions.processed(SESSION, PRODUCER, ROOT, 3, input.digest()));
       var reopened = new SealedJobs(sessions());
@@ -42,7 +46,12 @@ final class SealedJobsTest {
       var otherOwner = new SealedJobs.Key(new SealedPayloadStore.Identity(SESSION, UUID.randomUUID(), ROOT), 0);
       assertThrows(ProtocolException.class, () -> reopened.find(otherOwner));
       var lease = reopened.acquire(key(SESSION, ROOT, 0), WORKER, 10, 100);
+      assertEquals(reserved, sessions.jobUsage(), "acquisition must retain completion credit");
       reopened.publish(lease, 20, SealedJobs.Outcome.complete(input.digest()));
+      assertEquals(reserved.retainedJobBytes(), sessions.jobUsage().retainedJobBytes());
+      assertEquals(0, sessions.jobUsage().rehydrationReservedBytes());
+      assertEquals(0, sessions.jobUsage().processingJobs());
+      assertEquals(0, sessions.jobUsage().reservedRehydrationSlots());
       assertTrue(sessions.checkpointReady(SESSION, PRODUCER, 0, 1));
       assertTrue(reopened.ready(30, 8).isEmpty()); reopened.audit();
     }
@@ -87,6 +96,9 @@ final class SealedJobsTest {
       assertEquals(SealedJobs.REFUSED, retained.state()); assertEquals(0L, retained.outcome().refusal());
       assertFalse(sessions.checkpointReady(SESSION, PRODUCER, 0, 1));
       assertTrue(jobs.ready(1000, 8).isEmpty());
+      assertEquals(0, sessions.jobUsage().rehydrationReservedBytes());
+      assertEquals(0, sessions.jobUsage().processingJobs());
+      assertEquals(0, sessions.jobUsage().reservedRehydrationSlots());
       assertThrows(ProtocolException.class, () -> jobs.acquire(lease.key(), UUID.randomUUID(), 1000, 100));
       jobs.publish(lease, 1000, SealedJobs.Outcome.refused(0));
     }
@@ -139,25 +151,49 @@ final class SealedJobsTest {
       assertTrue(jobs.find(key(SESSION, ROOT, 1)).isEmpty());
       assertEquals(4, jobs.closeScope(SESSION, PRODUCER, 7).orElseThrow().state());
       assertTrue(sessions.checkpointReady(SESSION, PRODUCER, 0, 1));
+      assertEquals(0, sessions.jobUsage().rehydrationReservedBytes());
+      assertEquals(0, sessions.jobUsage().processingJobs());
+      assertEquals(0, sessions.jobUsage().reservedRehydrationSlots());
+      assertEquals(0, sessions.jobUsage().waitingParents());
     }
   }
 
-  @Test void fullQueueRollsBackBothScopeClosureAndRehydrationTransition() throws Exception {
-    var sessions = sessions(); declare(sessions, SESSION, 0, null, LongStream.rangeClosed(1, 33).boxed().toList());
+  @Test void fullQueueCannotConsumeWaitingParentReservationAndStorageFailureRollsBackClosure() throws Exception {
+    var sessions = sessions(); declare(sessions, SESSION, 0, null, LongStream.rangeClosed(1, 34).boxed().toList());
     var jobs = new SealedJobs(sessions); var child = new SealedWork.EntityKey(7, 1);
     try (var payloads = payloads()) {
       process(jobs, input(payloads, SESSION, ROOT, null), SealedJobs.Outcome.dehydrate());
       declare(sessions, SESSION, 7, ROOT, List.of(1L));
       var input = input(payloads, SESSION, child, ROOT); process(jobs, input, SealedJobs.Outcome.complete(input.digest()));
       for (int id = 2; id <= 33; id++) jobs.admit(input(payloads, SESSION, new SealedWork.EntityKey(0, id), null));
-      assertEquals(Wire.ERROR_LIMIT_EXCEEDED, assertThrows(ProtocolException.class, () -> jobs.closeScope(SESSION, PRODUCER, 7)).errorCode());
+      var before = sessions.jobUsage();
+      assertEquals(32, before.processingJobs()); assertEquals(1, before.waitingParents());
+      assertEquals(33, before.reservedRehydrationSlots()); assertEquals(0, before.rehydrationJobs());
+      assertEquals(32, jobs.ready(3, 128).size());
+      var excess = input(payloads, SESSION, new SealedWork.EntityKey(0, 34), null);
+      assertEquals(Wire.ERROR_LIMIT_EXCEEDED, assertThrows(ProtocolException.class, () -> jobs.admit(excess)).errorCode());
+      assertEquals(1, scalar("SELECT count(*) FROM ps_java_entities WHERE scope=0 AND id=34 AND state IS NULL AND managed=0"));
+      assertEquals(before, sessions().jobUsage(), "reopen must retain the parent reservation");
+      sql("CREATE TRIGGER fail_rehydrate BEFORE INSERT ON ps_java_jobs WHEN NEW.kind=1 BEGIN SELECT RAISE(ABORT,'injected rehydration failure'); END");
+      assertThrows(SQLException.class, () -> jobs.closeScope(SESSION, PRODUCER, 7));
       assertEquals(1, scalar("SELECT count(*) FROM ps_java_scopes WHERE id=7 AND closure IS NULL"));
       assertEquals(6, scalar("SELECT state FROM ps_java_entities WHERE scope=0 AND id=1"));
       assertEquals(0, scalar("SELECT count(*) FROM ps_java_jobs WHERE kind=1"));
-      var key = key(SESSION, new SealedWork.EntityKey(0, 2), 0);
-      jobs.publish(jobs.acquire(key, WORKER, 1, 100), 2, SealedJobs.Outcome.failed());
-      assertEquals(7, jobs.closeScope(SESSION, PRODUCER, 7).orElseThrow().state());
-      assertEquals(32, jobs.ready(3, 128).size());
+      assertEquals(before, sessions.jobUsage());
+      sql("DROP TRIGGER fail_rehydrate");
+      assertEquals(7, new SealedJobs(sessions()).closeScope(SESSION, PRODUCER, 7).orElseThrow().state());
+      assertEquals(33, jobs.ready(3, 128).size());
+      var after = sessions.jobUsage();
+      assertEquals(32, after.processingJobs()); assertEquals(0, after.waitingParents());
+      assertEquals(32, after.reservedRehydrationSlots()); assertEquals(1, after.rehydrationJobs());
+      assertEquals(before.retainedJobBytes() + before.rehydrationReservedBytes(), after.retainedJobBytes() + after.rehydrationReservedBytes());
+      assertEquals(scalar("SELECT length(input)+256 FROM ps_java_jobs WHERE kind=1"), before.rehydrationReservedBytes() - after.rehydrationReservedBytes());
+      jobs.publish(jobs.acquire(key(SESSION, ROOT, 1), WORKER, 1, 100), 2, SealedJobs.Outcome.complete(new byte[32]));
+      assertEquals(32, sessions.jobUsage().processingJobs());
+      assertEquals(0, sessions.jobUsage().rehydrationJobs());
+      var completed = sessions.jobUsage();
+      jobs.closeScope(SESSION, PRODUCER, 7).orElseThrow();
+      assertEquals(completed, sessions.jobUsage(), "closure replay must not allocate another job or reservation");
     }
   }
 
@@ -177,6 +213,59 @@ final class SealedJobsTest {
     }
   }
 
+  @Test void waitingParentsDoNotBlockTheirChildrenAndReservedQueuesCannotHideOtherSessions() throws Exception {
+    var sessions = sessions(); var jobs = new SealedJobs(sessions);
+    declare(sessions, SESSION, 0, null, LongStream.rangeClosed(1, 32).boxed().toList());
+    try (var payloads = payloads()) {
+      for (int id = 1; id <= 32; id++) {
+        process(jobs, input(payloads, SESSION, new SealedWork.EntityKey(0, id), null), SealedJobs.Outcome.dehydrate());
+      }
+      assertEquals(32, sessions.jobUsage().waitingParents());
+      assertEquals(0, sessions.jobUsage().processingJobs());
+      for (int id = 1; id <= 9; id++) {
+        var parent = new SealedWork.EntityKey(0, id); var child = new SealedWork.EntityKey(id, 1);
+        declare(sessions, SESSION, id, parent, List.of(1L));
+        var stored = input(payloads, SESSION, child, parent);
+        process(jobs, stored, SealedJobs.Outcome.complete(stored.digest()));
+        jobs.closeScope(SESSION, PRODUCER, id).orElseThrow();
+      }
+      assertEquals(23, sessions.jobUsage().waitingParents());
+      assertEquals(9, sessions.jobUsage().rehydrationJobs());
+      String independent = "zzz-independent";
+      declare(sessions, independent, 0, null, List.of(1L));
+      jobs.admit(input(payloads, independent, ROOT, null));
+      var page = jobs.ready(3, 4);
+      assertEquals(4, page.size());
+      assertTrue(page.contains(key(independent, ROOT, 0)), "one session cannot monopolize bounded discovery");
+      assertEquals(3, page.stream().filter(item -> item.kind() == SealedJobs.REHYDRATE).count());
+      new SealedJobs(sessions()).audit();
+    }
+  }
+
+  @Test void largeMetadataAndMaximumIdentifiersConsumeExactlyTheirReservedDescriptor() throws Exception {
+    var sessions = sessions(); var jobs = new SealedJobs(sessions);
+    String session = "s".repeat(128);
+    var root = new SealedWork.EntityKey(0, Wire.MAX_ENTITY_ID);
+    var child = new SealedWork.EntityKey(0xffff_ffffL, Wire.MAX_ENTITY_ID);
+    declare(sessions, session, 0, null, List.of(root.entityId()));
+    try (var payloads = payloads()) {
+      var stored = input(payloads, session, root, null, Map.of("data", "x".repeat(65_000)));
+      process(jobs, stored, SealedJobs.Outcome.dehydrate());
+      declare(sessions, session, child.scopeId(), root, List.of(child.entityId()));
+      var leaf = input(payloads, session, child, root);
+      process(jobs, leaf, SealedJobs.Outcome.complete(leaf.digest()));
+      var before = sessions.jobUsage();
+      assertTrue(before.rehydrationReservedBytes() > 65_000);
+      new SealedJobs(sessions()).closeScope(session, PRODUCER, child.scopeId()).orElseThrow();
+      var after = sessions.jobUsage();
+      assertEquals(0, after.rehydrationReservedBytes());
+      assertEquals(before.retainedJobBytes() + before.rehydrationReservedBytes(), after.retainedJobBytes());
+      assertEquals(before.rehydrationReservedBytes(), scalar("SELECT length(input)+256 FROM ps_java_jobs WHERE kind=1"));
+      jobs.publish(jobs.acquire(key(session, root, 1), WORKER, 1, 100), 2, SealedJobs.Outcome.complete(stored.digest()));
+      assertTrue(sessions.checkpointReady(session, PRODUCER, 0, root.entityId()));
+    }
+  }
+
   @Test void missingChangedAndOversizedJobRecordsFailClosed() throws Exception {
     var sessions = sessions(); declare(sessions, SESSION, 0, null, List.of(1L));
     var jobs = new SealedJobs(sessions);
@@ -193,7 +282,7 @@ final class SealedJobsTest {
     }
   }
 
-  @Test void completedJobsKeepTheirRetainedMetadataChargeAcrossReopen() throws Exception {
+  @Test void terminalMetadataCannotSpendTheWaitingParentsReservedBytesAcrossReopen() throws Exception {
     var sessions = sessions();
     var all = LongStream.rangeClosed(1, 270).boxed().toList();
     sessions.declare(new SealedWork.Declaration(SESSION, PRODUCER, 0, null, BigInteger.ZERO,
@@ -202,7 +291,11 @@ final class SealedJobsTest {
         all.subList(256, all.size()), SealedWork.SEAL, SealedWork.sealDigest(SESSION, PRODUCER, 0, null, all)), 7, 1024);
     var jobs = new SealedJobs(sessions); int completed = 0; boolean refused = false;
     try (var payloads = payloads()) {
-      for (long id : all) {
+      process(jobs, input(payloads, SESSION, ROOT, null, Map.of("application-data", "x".repeat(65_000))), SealedJobs.Outcome.dehydrate());
+      declare(sessions, SESSION, 7, ROOT, List.of(1L));
+      var child = input(payloads, SESSION, new SealedWork.EntityKey(7, 1), ROOT);
+      process(jobs, child, SealedJobs.Outcome.complete(child.digest()));
+      for (long id : all.subList(1, all.size())) {
         var entity = new SealedWork.EntityKey(0, id);
         var identity = new SealedPayloadStore.Identity(SESSION, PRODUCER, entity);
         var header = new SealedTransport.Header(entity, null, 0, null, BigInteger.ONE, null, Map.of("application-data", "x".repeat(65_000)), null);
@@ -215,7 +308,7 @@ final class SealedJobsTest {
         catch (ProtocolException error) {
           assertEquals(Wire.ERROR_LIMIT_EXCEEDED, error.errorCode());
           assertTrue(completed >= 250, "quota must permit the expected metadata before refusing");
-          assertEquals(completed, scalar("SELECT count(*) FROM ps_java_jobs"));
+          assertEquals(completed + 2, scalar("SELECT count(*) FROM ps_java_jobs"));
           assertEquals(0, scalar("SELECT count(*) FROM ps_java_jobs WHERE state<2"));
           assertEquals(1, scalar("SELECT count(*) FROM ps_java_entities WHERE id=" + id + " AND state IS NULL AND managed=0"));
           assertEquals(Wire.ERROR_LIMIT_EXCEEDED, assertThrows(ProtocolException.class, () -> new SealedJobs(sessions()).admit(input)).errorCode());
@@ -225,6 +318,16 @@ final class SealedJobsTest {
         completed++;
       }
       assertTrue(refused, "retained terminal metadata must have a finite budget");
+      var before = sessions.jobUsage();
+      assertEquals(1, before.waitingParents()); assertEquals(1, before.reservedRehydrationSlots());
+      assertTrue(before.rehydrationReservedBytes() > 65_000);
+      assertEquals(before, sessions().jobUsage());
+      var reopened = new SealedJobs(sessions());
+      reopened.closeScope(SESSION, PRODUCER, 7).orElseThrow();
+      var after = sessions.jobUsage();
+      assertEquals(0, after.rehydrationReservedBytes());
+      assertEquals(before.retainedJobBytes() + before.rehydrationReservedBytes(), after.retainedJobBytes());
+      reopened.publish(reopened.acquire(key(SESSION, ROOT, 1), WORKER, 1, 100), 2, SealedJobs.Outcome.complete(new byte[32]));
       assertFalse(sessions.checkpointReady(SESSION, PRODUCER, 0, all.getLast()));
     }
   }
@@ -237,6 +340,14 @@ final class SealedJobsTest {
     assertEquals(0, scalar("SELECT count(*) FROM sqlite_master WHERE name LIKE 'ps_java_job%'"));
   }
 
+  @Test void versionThreeCannotBeReopenedWithStrongerReservationSemantics() throws Exception {
+    sessions(); sql("UPDATE ps_java_meta SET version=3");
+    byte[] before = Files.readAllBytes(directory.resolve("sessions.sqlite3"));
+    assertThrows(SQLException.class, this::sessions);
+    assertEquals(3, scalar("SELECT version FROM ps_java_meta"));
+    assertArrayEquals(before, Files.readAllBytes(directory.resolve("sessions.sqlite3")));
+  }
+
   @Test void abruptExitAfterAcquisitionRetainsDispatchAndRequiresANewerFence() throws Exception {
     Process process = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin/java").toString(),
         "--enable-native-access=ALL-UNNAMED", "-cp", System.getProperty("java.class.path"), SealedJobsTest.class.getName(), directory.toString())
@@ -246,6 +357,7 @@ final class SealedJobsTest {
       assertEquals(0, process.exitValue(), () -> read(directory.resolve("child.log")));
     } finally { if (process.isAlive()) process.destroyForcibly().waitFor(5, TimeUnit.SECONDS); }
     var jobs = new SealedJobs(sessions()); var key = key(SESSION, ROOT, 0);
+    assertEquals(1, sessions().jobUsage().reservedRehydrationSlots());
     assertTrue(jobs.ready(109, 8).isEmpty()); assertEquals(List.of(key), jobs.ready(110, 8));
     var replacement = jobs.acquire(key, UUID.randomUUID(), 110, 100);
     assertEquals(2, replacement.epoch());
@@ -257,10 +369,40 @@ final class SealedJobsTest {
     assertTrue(sessions().checkpointReady(SESSION, PRODUCER, 0, 1));
   }
 
+  @Test void abruptExitWhileWaitingRetainsTheParentsBytesAndCompletionSlot() throws Exception {
+    Path log = directory.resolve("waiting-child.log");
+    Process process = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin/java").toString(),
+        "--enable-native-access=ALL-UNNAMED", "-cp", System.getProperty("java.class.path"),
+        SealedJobsTest.class.getName(), directory.toString(), "waiting")
+        .redirectErrorStream(true).redirectOutput(log.toFile()).start();
+    try {
+      assertTrue(process.waitFor(30, TimeUnit.SECONDS)); assertEquals(37, process.exitValue(), () -> read(log));
+    } finally { if (process.isAlive()) process.destroyForcibly().waitFor(5, TimeUnit.SECONDS); }
+    var sessions = sessions(); var jobs = new SealedJobs(sessions);
+    var before = sessions.jobUsage();
+    assertEquals(1, before.waitingParents()); assertEquals(1, before.reservedRehydrationSlots());
+    assertEquals(0, before.processingJobs()); assertEquals(0, before.rehydrationJobs());
+    assertTrue(before.rehydrationReservedBytes() > 0);
+    jobs.closeScope(SESSION, PRODUCER, 7).orElseThrow();
+    assertEquals(before.retainedJobBytes() + before.rehydrationReservedBytes(), sessions.jobUsage().retainedJobBytes());
+    jobs.publish(jobs.acquire(key(SESSION, ROOT, 1), WORKER, 1, 100), 2, SealedJobs.Outcome.complete(new byte[32]));
+    assertTrue(sessions.checkpointReady(SESSION, PRODUCER, 0, 1));
+    assertEquals(0, sessions.jobUsage().reservedRehydrationSlots());
+  }
+
   public static void main(String[] args) throws Exception {
     var test = new SealedJobsTest(); test.directory = Path.of(args[0]);
     var sessions = test.sessions(); declare(sessions, SESSION, 0, null, List.of(1L));
     var jobs = new SealedJobs(sessions);
+    if (args.length == 2 && args[1].equals("waiting")) {
+      try (var payloads = test.payloads()) {
+        process(jobs, input(payloads, SESSION, ROOT, null), SealedJobs.Outcome.dehydrate());
+        declare(sessions, SESSION, 7, ROOT, List.of(1L));
+        var child = input(payloads, SESSION, new SealedWork.EntityKey(7, 1), ROOT);
+        process(jobs, child, SealedJobs.Outcome.complete(child.digest()));
+        Runtime.getRuntime().halt(37);
+      }
+    }
     try (var payloads = test.payloads()) { jobs.admit(input(payloads, SESSION, ROOT, null)); }
     jobs.acquire(key(SESSION, ROOT, 0), WORKER, 10, 100);
     Runtime.getRuntime().halt(0);
@@ -278,8 +420,11 @@ final class SealedJobsTest {
         SealedWork.sealDigest(session, PRODUCER, scope, parent, ids)), 7, 1024);
   }
   private static SealedPayloadStore.Stored input(SealedPayloadStore payloads, String session, SealedWork.EntityKey key, SealedWork.EntityKey parent) throws Exception {
+    return input(payloads, session, key, parent, Map.of());
+  }
+  private static SealedPayloadStore.Stored input(SealedPayloadStore payloads, String session, SealedWork.EntityKey key, SealedWork.EntityKey parent, Map<String, String> metadata) throws Exception {
     var identity = new SealedPayloadStore.Identity(session, PRODUCER, key);
-    var header = new SealedTransport.Header(key, parent, 0, null, BigInteger.ONE, null, Map.of(), null);
+    var header = new SealedTransport.Header(key, parent, 0, null, BigInteger.ONE, null, metadata, null);
     try (var receiver = payloads.begin(identity, header)) {
       receiver.write(new byte[] {42}, 0, 1);
       try (var received = receiver.finish()) { return payloads.install(List.of(received)); }

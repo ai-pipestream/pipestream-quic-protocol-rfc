@@ -471,6 +471,44 @@ and strict public Javadoc passed. Draft -04 passed idnits with zero errors,
 flaws and warnings and one informational FIPS reference comment. These are
 local validation results, not independent review or a full conformance claim.
 
+## Java protected rehydration reservations
+
+The version-4 Java store charges the exact future rehydration descriptor and its
+bounded outcome allowance when admitting processing. A waiting parent's credit
+survives disconnect, reopen and unrelated admissions. Child closure atomically
+converts it to a queued rehydration job; STRICT failure instead releases unused
+future credit. Terminal/refused retained records stay charged. `jobUsage()` audits
+and reports both retained and reserved metadata and execution-slot counts.
+
+Ordinary processing retains its 128-global/32-session queued/running limit.
+Reserved and queued/running rehydration slots have a separate 65,536-global/
+16,384-session bound, one per admitted entity, within the same combined 64 MiB/
+16 MiB metadata budget. Waiting parents therefore do not prevent their children
+from using ordinary slots. Physical worker limits stay four global/two session.
+Discovery interleaves sessions in bounded pages and prioritizes rehydration within
+each session; a large reserved queue cannot fill a page exclusively with its jobs.
+
+Tests saturate both ordinary processing and retained metadata while preserving
+the parent's conversion credit, inject a closure-write failure, pin the exact
+descriptor delta for large metadata and maximum identifiers, reopen after abrupt
+process exit, and refuse version-3 stores without writes. Thirty-two waiting
+parents still admit children, and bounded discovery includes another session.
+A real-QUIC test fills ordinary processing, closes the child scope into reserved
+rehydration, releases blocked callbacks and receives the full root checkpoint ACK.
+
+Schema version 4 changes local admission semantics, not wire/CDDL. No operational
+store was converted. Section 10.3 clarifies that reserved completion credit cannot
+be borrowed by unrelated admissions. These are logical metadata/queue guarantees;
+physical publication headroom, Rust outcome reservations, orphan reconciliation,
+persistent producer observations and the full crash/resource matrix remain due.
+
+The final `./conformance/run_all.sh` passed with 196 Rust workspace tests,
+104 Java tests without errors/failures/skips, native SQLite and C++ tests, all
+nine Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks and
+every external example. Changed public APIs passed strict Javadoc. Draft -04
+passed idnits with zero errors/flaws/warnings and one FIPS reference comment.
+These are local results, not hosted CI or independent implementer review.
+
 ## Validation
 
 ### Independent Java sealed-work foundation

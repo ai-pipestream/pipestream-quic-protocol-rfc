@@ -361,7 +361,31 @@ approval as part of a repository landing.
   every external example. Native address/undefined-behavior sanitizer checks
   and strict public Javadoc passed. Draft -04 passed idnits with zero errors,
   flaws and warnings and one informational FIPS reference comment.
-- Not yet implemented: completion-space reservations, orphan reclamation,
+- Java rehydration reservation increment: version-4 stores charge possible
+  rehydration descriptors/outcomes at PROCESS admission. Waiting parents retain
+  completion slots independently of the ordinary processing queue, so parents
+  do not block their own children and closure does not compete with new work.
+  Child closure, parent transition and reservation conversion commit together.
+  STRICT failure and ordinary terminal/refused processing release only unused
+  future credit; retained records remain charged. Reopen derives reservations
+  from checksummed job/entity state. Ordinary processing remains bounded at
+  128 global/32 session jobs; reserved/active rehydration slots are separately
+  bounded by 65,536 global/16,384 session entities and the combined 64/16 MiB
+  metadata policy. Physical worker limits are unchanged. Bounded discovery pages
+  interleave sessions so a large reserved queue does not hide other sessions.
+  Tests cover exact conversion with maximum identifiers/large metadata, saturated
+  ordinary and metadata budgets, transactional rollback, waiting parents admitting
+  children, version-3 refusal without writes, and abrupt process exit. A real-QUIC
+  test fills ordinary processing, commits rehydration, releases held callbacks,
+  and completes the whole-scope checkpoint. These are logical reservations,
+  not physical DB/WAL space or admission of unlimited future descendants.
+  The final `./conformance/run_all.sh` passed with 196 Rust workspace tests,
+  104 Java tests without errors/failures/skips, native SQLite and C++ tests, all
+  nine Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks and
+  every external example. Strict public Javadoc passed. Draft -04 passed idnits
+  with zero errors/flaws/warnings and one informational FIPS reference comment.
+- Not yet implemented: physical completion-space reservations, Rust outcome
+  reservations, orphan reclamation,
   persistent producer observations, and the remaining independent Java
   profile requirement matrix. Physical execution limits and temporary spools are coordinated only
   within one writer process; broader tenant/resource stress evidence remains due.
@@ -378,7 +402,7 @@ expiry is not callback cancellation. Periodic dispatch can reacquire unfinished
 expired attempts, but does not retry application-refused jobs automatically.
 Temporary spool accounting is process-local and excludes permanent entity files.
 Rust and Java SQLite file-length caps are now independent of that accounting.
-Add completion reservations and
+Add physical publication headroom, Rust outcome reservations, and
 explicit orphan reconciliation without
 deleting a live generation or treating missing input as completed work.
 Do not treat recovery receipts or publication fencing as completion of bounded

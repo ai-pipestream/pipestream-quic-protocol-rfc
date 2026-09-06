@@ -250,6 +250,20 @@ The current backend supports private local directories and cooperating writers
 on 64-bit Linux. These are file-length limits, not filesystem-allocation quotas,
 authenticated principal quotas or future completion-space reservations.
 
+Java version-4 stores separately reserve logical rehydration descriptor bytes
+and completion slots at processing admission. Waiting parents retain that credit
+across reopen, without occupying ordinary processing slots needed by children.
+Closure converts the reservation and queues rehydration in the same transaction;
+unrelated admissions cannot consume its metadata allowance. Processing stays
+bounded at 128 global and 32 per-session queued/running jobs. Reserved or active
+rehydration slots are separately bounded by 65,536 global and 16,384 per-session
+entities within the combined metadata quota; physical worker limits are unchanged.
+Tests cover queue and metadata saturation, rollback, exact descriptor conversion,
+abrupt exit and real-QUIC completion. Discovery interleaves sessions in bounded
+pages. These are not physical DB/WAL publication reservations or guarantees of
+admitting unknown future descendants. Older Java schemas are refused without
+conversion. Rust outcome reservations and the full resource matrix remain due.
+
 The Rust retained-payload store separately reserves global and authority/principal
 bytes and object counts, including lineage, before disk creation. An immutable
 checksummed policy survives reopen. Interrupted copies retain staging credit;
