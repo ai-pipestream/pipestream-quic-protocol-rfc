@@ -159,6 +159,19 @@ and be retried by the same pair; a corrupt marker is refused. This is local
 storage ownership, not producer authentication, a wire extension or orphan cleanup.
 Earlier Java storage layouts are refused without conversion.
 
+Java also provides explicit offline orphan reconciliation under exclusive payload
+ownership and a database writer transaction. It audits managed input and retained
+objects before deleting abandoned staging names. Unadmitted payload bodies become
+commitment-only records retaining their immutable metadata and digest. Missing
+input remains pending, changed retransmission is refused, and all admitted payloads
+remain retained. Interrupted cleanup resumes only through another explicit call;
+ordinary reopen counts remaining bytes without deleting them. Tests cover full
+quota, concurrent and chunked restoration, process exit at filesystem boundaries,
+and a real-QUIC timeout/refusal followed by matching restoration and completion.
+Payload policy 3 refuses earlier policies without conversion; schema 6 and the
+wire profile are unchanged. This is not retention expiry or whole-process resource
+evidence, and Rust orphan reconciliation remains unfinished.
+
 Java's durable execution tests cover atomic admission and dispatch, bounded
 queued jobs and retained descriptors, recursive rehydration, stale executor
 refusal after restart, and independent progress during a stalled callback.

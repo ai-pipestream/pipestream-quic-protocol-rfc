@@ -81,7 +81,10 @@ recursive conversion and rollback followed by retry. Java now durably pairs each
 managed database with one payload-store identity and revalidates/pins retained
 input through admission; closed or foreign-store handles cannot admit cached
 metadata. Earlier Java database/payload policies are refused without conversion.
-Explicit orphan reconciliation,
+Java now provides explicit offline orphan reconciliation: it audits the matched
+database and payload root before removing abandoned staging files or replacing
+unadmitted bodies with retained immutable commitments. Matching retransmission
+can restore those bodies; missing input remains pending. Rust orphan reconciliation,
 persistent producer observations and the broader resource matrix remain unfinished.
 Connection metadata and lineage operations now run in a bounded storage pool.
 An independent control reader enforces checkpoint deadlines during those

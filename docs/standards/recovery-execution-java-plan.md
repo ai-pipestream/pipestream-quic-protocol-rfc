@@ -51,6 +51,44 @@ approval as part of a repository landing.
 
 ## Evidence and progress
 
+### Validated increment: Java offline orphan reconciliation
+
+Branch `feat/java-orphan-reconciliation` starts from PR #30's merge `c18dcda`.
+The public offline `SealedPayloadStore.reconcile` requires a closed, previously
+paired payload root and holds SQLite's writer lock while auditing and reclaiming.
+Every managed input and immutable object is checked before deleting any file.
+Caller-managed admitted input, corrupt records, wrong pairs, missing admitted
+payloads and unknown filesystem entries refuse; no inferred ownership is allowed.
+
+Abandoned spool/install names are removed. Unadmitted bodies are atomically renamed
+to commitment records before truncation, preserving encoded headers, identity,
+length and digest. Identical retransmission can restore input without changing the
+original publication quota; changed replay refuses. Admitted bodies remain retained
+in every state, including completion and refusal. No lifecycle row changes and no
+missing entity completes. Partial filesystem reclamation survives an I/O failure
+or process exit and can resume explicitly without relying on SQLite rollback to
+undo file operations. Payload policy 3 refuses older policies without conversion;
+database schema 6, normative wire/CDDL and frozen vectors are unchanged.
+
+The 12 focused tests pass and cover full quota, immutable and chunked
+replay, concurrent restoration, older-policy refusal, corrupt input/job records,
+writer exclusion, I/O failure and process exit at four actual filesystem phases.
+A 32 MiB body is reclaimed/restored under a 24 MiB Java heap. The real-QUIC test
+checks missing-work timeout, changed replay refusal and matching completion after
+offline reclamation. These do not prove native-memory/RSS or multi-tenant bounds.
+Rust orphan reconciliation, persistent producer observations and the remaining
+resource/interoperability acceptance matrix are still required by the full goal.
+
+Final `./conformance/run_all.sh` passed locally: 158 Java tests with no
+failures/errors/skips (counted from JUnit XML), all 259 Rust workspace tests,
+native SQLite/C++ checks, nine executable transfer pairings, 32 capability probes,
+recursive/recovery CLI checks and all three external examples. Formatting and
+strict clippy passed. Draft -04 builds with zero idnits errors/flaws/warnings and
+one FIPS reference comment. The changed payload API passes strict Javadoc, and
+whole-module structural Javadoc passes; strict whole-module Javadoc
+still reports 100 missing-comment warnings in the same four unchanged Layer 0
+types. This is not hosted CI, a deployment, migration, release or draft submission.
+
 ### Validated increment: Java payload/database ownership before orphan reconciliation
 
 Branch `feat/java-payload-store-binding` starts from PR #29's merge `52d2717`.
@@ -739,7 +777,7 @@ No operational database has been migrated, and this increment is not a release.
   reference comment. These are local results, not proof of full-goal completion.
 - Java physical DB/WAL completion reservations passed their conformance gate;
   see the current increment above.
-  Not yet implemented: orphan reclamation,
+  Not yet implemented: Rust orphan reclamation,
   persistent producer observations, and the remaining independent Java
   profile requirement matrix. Physical execution limits and temporary spools are coordinated only
   within one writer process; broader tenant/resource stress evidence remains due.
@@ -757,7 +795,7 @@ expired attempts, but does not retry application-refused jobs automatically.
 Temporary spool accounting is process-local and excludes permanent entity files.
 Rust and Java SQLite file-length caps are now independent of that accounting.
 With independent Java physical completion headroom implemented, complete
-explicit orphan reconciliation without
+Rust explicit orphan reconciliation without
 deleting a live generation or treating missing input as completed work.
 Do not treat recovery receipts or publication fencing as completion of bounded
 asynchronous execution. Java now has a separate sealed listener and public

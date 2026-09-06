@@ -115,6 +115,49 @@ final class SealedServerTest {
     }
   }
 
+  @Test void reclaimedInputStaysPendingUntilMatchingPayloadReturnsOverQuic() throws Exception {
+    Path certs = certificates(), payloadRoot = directory.resolve("payloads");
+    var sessions = SealedSessionStore.open(directory.resolve("sessions.sqlite3"));
+    var root = declaration(0, null, 0, List.of(1L), List.of(1L));
+    sessions.declare(root, 7, 1024);
+    byte[] bytes = "retained input".getBytes(StandardCharsets.UTF_8);
+    var header = new SealedTransport.Header(ROOT, null, 0, "text/plain", BigInteger.valueOf(bytes.length),
+        SealedWork.sha256().digest(bytes), Map.of(), null);
+    try (var payloads = SealedPayloadStore.open(payloadRoot, SealedPayloadStore.Limits.defaults())) {
+      payloads.bind(sessions);
+      try (var receiver = payloads.begin(new SealedPayloadStore.Identity(SESSION, PRODUCER, ROOT), header)) {
+        receiver.write(bytes, 0, bytes.length);
+        try (var receipt = receiver.finish()) { payloads.install(List.of(receipt)); }
+      }
+    }
+    assertEquals(1, SealedPayloadStore.reconcile(payloadRoot, SealedPayloadStore.Limits.defaults(), sessions).payloadsReclaimed());
+    var calls = new AtomicInteger();
+    try (var fixture = new Fixture(certs, (context, input) -> { calls.incrementAndGet(); return complete(input); })) {
+      var cut = checkpoint("reclaimed", BigInteger.ONE, 1, null, 150);
+      try (var missing = new SealedTestPeer.RawClient(fixture.server.address(), certs)) {
+        declare(missing, root); missing.send(SealedTransport.checkpoint(cut));
+        assertEquals(14L, missing.closeCode.get(2, TimeUnit.SECONDS));
+      }
+      try (var changed = connect(fixture.server, certs)) {
+        changed.declare(root);
+        byte[] replacement = bytes.clone(); replacement[0] ^= 1;
+        Path file = directory.resolve("changed.bin"); Files.write(file, replacement);
+        var badHeader = new SealedTransport.Header(ROOT, null, 0, "text/plain", BigInteger.valueOf(bytes.length),
+            SealedWork.sha256().digest(replacement), Map.of(), null);
+        assertEquals(Wire.ERROR_ENTITY_INVALID, assertThrows(ProtocolException.class, () -> changed.send(badHeader, file)).errorCode());
+      }
+      assertEquals(0, calls.get()); assertEquals(0, fixture.sessions.jobUsage().processingJobs());
+      assertFalse(fixture.sessions.checkpointReady(SESSION, PRODUCER, 0, 1));
+      try (var client = connect(fixture.server, certs)) {
+        client.declare(root); Path file = directory.resolve("original.bin"); Files.write(file, bytes);
+        assertEquals(3, client.send(header, file).getLast().state());
+        assertEquals(cut.acknowledgement(), client.checkpoint(cut)); client.goaway(1);
+      }
+      assertEquals(1, calls.get());
+    }
+    assertEquals(1, SealedPayloadStore.reconcile(payloadRoot, SealedPayloadStore.Limits.defaults(), sessions).admittedPayloads());
+  }
+
   @Test void heldSqliteCannotStopCheckpointDeadlineOrImmediateProtocolRefusal() throws Exception {
     Path certs = certificates();
     try (var fixture = new Fixture(certs, (context, input) -> complete(input));

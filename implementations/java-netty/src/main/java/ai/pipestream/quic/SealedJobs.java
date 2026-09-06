@@ -341,6 +341,30 @@ final class SealedJobs {
     return audit(connection, false);
   }
 
+  /** The caller holds the maintenance writer lock; each input is materialized separately. */
+  static void visitRetainedInputs(Connection connection, InputVisitor visitor)
+      throws IOException, SQLException, ProtocolException {
+    audit(connection);
+    // The audited image has a four-byte state followed by a four-byte managed flag.
+    // Digest-only manual admission provides no managed file-retention contract.
+    try (var query = connection.createStatement(); var rows = query.executeQuery(
+        "SELECT 1 FROM ps_java_entities WHERE substr(image,9,4)<>zeroblob(4) AND substr(image,13,4)=zeroblob(4) LIMIT 1")) {
+      if (rows.next()) throw Wire.entity("payload maintenance cannot classify caller-managed admitted input");
+    }
+    try (var query = connection.createStatement(); var rows = query.executeQuery(
+        "SELECT " + COLUMNS + " FROM ps_java_jobs WHERE kind=0")) {
+      int count = 0;
+      while (rows.next()) {
+        if (++count > 65_536) throw Wire.integrity("retained input count exceeds entity policy");
+        visitor.accept(decode(rows).input());
+      }
+    }
+  }
+
+  @FunctionalInterface interface InputVisitor {
+    void accept(Input input) throws IOException, ProtocolException;
+  }
+
   static long completionBytes(Connection connection, SealedCompletionReservations.Model model)
       throws SQLException, ProtocolException {
     audit(connection);
