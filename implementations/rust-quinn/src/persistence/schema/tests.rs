@@ -34,7 +34,11 @@ fn reopen_refuses_missing_or_changed_owned_schema_without_repair() {
             .execute_batch("PRAGMA foreign_keys=OFF;")
             .unwrap();
         connection.execute_batch(alteration).unwrap();
-        store.checkpoint().unwrap();
+        // The public checkpoint now checks the root ownership schema too. Use
+        // the already-held diagnostic connection to snapshot deliberate corruption.
+        connection
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .unwrap();
         let before = schema_image(&connection);
         let database = fs::read(&path).unwrap();
         let wal_path = path.with_file_name("schema.sqlite3-wal");

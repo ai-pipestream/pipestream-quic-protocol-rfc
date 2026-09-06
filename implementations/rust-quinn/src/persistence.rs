@@ -11,7 +11,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+mod binding;
 mod image;
+pub use binding::{PAYLOAD_BINDING_BYTES, PayloadBinding, StoreIdentity};
 #[cfg(test)]
 mod index_delta_tests;
 mod queue;
@@ -28,6 +30,10 @@ const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS pipestream_sessions (
     session_id TEXT PRIMARY KEY NOT NULL,
     image BLOB NOT NULL CHECK (length(image) > 104)
+) STRICT;
+CREATE TABLE IF NOT EXISTS pipestream_payload_binding (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    image BLOB NOT NULL CHECK (length(image) = 72)
 ) STRICT;
 ";
 
@@ -110,6 +116,7 @@ pub struct SqliteSessionStore {
     job_limits: JobQueueLimits,
     storage_limits: StorageLimits,
     physical: Arc<physical::Guard>,
+    identity: Option<StoreIdentity>,
 }
 
 impl SqliteSessionStore {
@@ -167,9 +174,11 @@ impl SqliteSessionStore {
             job_limits: JobQueueLimits::default(),
             storage_limits: StorageLimits::default(),
             physical,
+            identity: None,
         };
         let mut connection = store.connect()?;
-        schema::initialize_root(&connection, SCHEMA)?;
+        schema::initialize_root(&mut connection, SCHEMA)?;
+        store.identity = Some(binding::read(&connection)?.database());
         store.job_limits = queue::initialize(&mut connection, requested)?;
         store.storage_limits = storage::initialize(&mut connection, storage_limits)?;
         drop(connection);
@@ -311,6 +320,13 @@ impl SqliteSessionStore {
              PRAGMA synchronous=FULL;
              PRAGMA foreign_keys=ON;",
         )?;
+        if let Some(identity) = self.identity
+            && binding::read(&connection)?.database() != identity
+        {
+            return Err(StoreError::Corrupt(
+                "retained database identity changed".into(),
+            ));
+        }
         Ok(connection)
     }
 }

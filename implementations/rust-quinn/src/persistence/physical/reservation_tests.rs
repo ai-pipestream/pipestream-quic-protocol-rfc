@@ -57,6 +57,56 @@ fn unfulfillable_completion_promise_is_refused_before_admission() {
 }
 
 #[test]
+fn payload_binding_cannot_spend_admitted_completion_credit_at_wal_exhaustion() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = configured(&dir.path().join("binding.sqlite3"), 2 << 20);
+    let (mut session, key, input) = fixture("admitted", None);
+    session.enqueue_job(key, input, 100).unwrap();
+    store.create(&session).unwrap();
+    store
+        .create(&Session::new("other", 7, 32).unwrap())
+        .unwrap();
+    store.checkpoint().unwrap();
+    let reader = store.connect().unwrap();
+    reader
+        .execute_batch("BEGIN; SELECT count(*) FROM pipestream_sessions")
+        .unwrap();
+    saturate(&store);
+    let original = store.payload_binding().unwrap();
+    let pair = crate::persistence::PayloadBinding::new(
+        original.database(),
+        crate::persistence::StoreIdentity::generate().unwrap(),
+    );
+    match store.bind_payload_store(pair) {
+        Ok(()) => assert_eq!(store.payload_binding().unwrap(), pair),
+        Err(error) => {
+            limit(error);
+            assert_eq!(store.payload_binding().unwrap(), original);
+        }
+    }
+    let lease = store
+        .transact("admitted", |s| s.acquire_job(None, key, 100, 1000))
+        .unwrap()
+        .0
+        .unwrap();
+    saturate(&store);
+    store
+        .transact("admitted", |s| {
+            s.publish_job(None, &lease, 200, |s| {
+                s.complete_entity(key.entity, [7; 32])?;
+                Ok(JobOutput::Processed(ProcessOutcome::Complete))
+            })
+        })
+        .unwrap();
+    assert_eq!(store.unfinished_job_count().unwrap(), 0);
+    assert!(store.physical_usage().unwrap().wal_bytes <= 2 << 20);
+    store.integrity_check().unwrap();
+    drop(reader);
+    store.checkpoint().unwrap();
+    store.bind_payload_store(pair).unwrap();
+}
+
+#[test]
 fn queued_work_for_two_owners_acquires_and_publishes_after_saturation_and_reopen() {
     for page_size in [512, 4096, 65536] {
         let dir = tempfile::tempdir().unwrap();

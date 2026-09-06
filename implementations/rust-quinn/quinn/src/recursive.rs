@@ -310,6 +310,12 @@ fn tagged_payload_digest(tag: &[u8], payload: &Payload) -> Result<[u8; 32], Prot
 }
 
 pub trait EntityStore: Send + Sync + 'static {
+    /// Durably establish this store's exclusive database pairing before service
+    /// admission or dispatch. Custom backends must enforce their own retained
+    /// ownership record; protocol session labels are not sufficient evidence.
+    fn bind_session_store(&self, store: &SqliteSessionStore)
+    -> std::result::Result<(), StoreError>;
+
     fn put(&self, session_id: &str, key: EntityKey, payload: &[u8]) -> std::io::Result<()>;
 
     fn put_payload(
@@ -411,6 +417,13 @@ impl FileEntityStore {
 }
 
 impl EntityStore for FileEntityStore {
+    fn bind_session_store(
+        &self,
+        store: &SqliteSessionStore,
+    ) -> std::result::Result<(), StoreError> {
+        self.retained.bind_sessions(store)
+    }
+
     fn put(&self, session_id: &str, key: EntityKey, payload: &[u8]) -> std::io::Result<()> {
         self.retained.install_payload(
             None,
@@ -542,6 +555,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
             .extensions
             .supported
             .push(EXTENSION_SEALED_WORK_SETS);
+        entities.bind_session_store(&store).map_err(store_error)?;
         let storage_pool = storage::StoragePool::open(store.path())?;
         Ok(Self {
             store,

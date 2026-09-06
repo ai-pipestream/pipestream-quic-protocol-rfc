@@ -230,12 +230,19 @@ async fn missing_untrusted_and_unmapped_credentials_cannot_admit_work() -> Resul
     let mut fixture = AuthFixture::new()?;
     for identity in [None, Some(3), Some(4), Some(5)] {
         let options = fixture.listen(Some("issuer-a"), identity)?;
+        let binding = fixture.store.payload_binding()?;
+        let claim = fs::read(fixture.options.entity_directory.join(".session-store"))?;
         let result = tokio::time::timeout(
             Duration::from_secs(3),
             begin_durable_yield(&options, "must-not-exist"),
         )
         .await?;
         assert!(result.is_err());
+        assert_eq!(fixture.store.payload_binding()?, binding);
+        assert_eq!(
+            fs::read(fixture.options.entity_directory.join(".session-store"))?,
+            claim
+        );
         if identity == Some(3) {
             let error = format!("{:#}", result.unwrap_err());
             assert!(error.contains("PIPESTREAM_UNAUTHORIZED"), "{error}");
@@ -249,9 +256,14 @@ async fn missing_untrusted_and_unmapped_credentials_cannot_admit_work() -> Resul
         .collect::<std::io::Result<std::collections::BTreeSet<_>>>()?;
     assert_eq!(
         names,
-        [".retained-lock", ".retained-policy"]
-            .map(std::ffi::OsString::from)
-            .into()
+        [
+            ".retained-lock",
+            ".retained-policy",
+            ".retained-identity",
+            ".session-store"
+        ]
+        .map(std::ffi::OsString::from)
+        .into()
     );
     let files = FileEntityStore::open(&fixture.options.entity_directory)?;
     assert_eq!(files.retained_usage()?, RetainedUsage::default());

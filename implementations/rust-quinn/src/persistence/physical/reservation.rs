@@ -83,6 +83,18 @@ pub(in crate::persistence) fn protect(
     proposed: &Session,
     required_capacity: usize,
 ) -> Result<(), StoreError> {
+    protect_proposed(connection, Some((proposed, required_capacity)))
+}
+
+/// Preserve every admitted execution allowance while writing unrelated metadata.
+pub(in crate::persistence) fn protect_unchanged(connection: &Connection) -> Result<(), StoreError> {
+    protect_proposed(connection, None)
+}
+
+fn protect_proposed(
+    connection: &Connection,
+    proposed: Option<(&Session, usize)>,
+) -> Result<(), StoreError> {
     // SAFETY: this read-only SQLite call borrows the live connection handle.
     let transaction_state =
         unsafe { rusqlite::ffi::sqlite3_txn_state(connection.handle(), c"main".as_ptr()) };
@@ -119,7 +131,7 @@ pub(in crate::persistence) fn protect(
         return Err(corrupt("unsupported SQLite completion page geometry"));
     }
     let limits = storage::read_limits(connection)?;
-    let mut capacity = required_capacity;
+    let mut capacity = proposed.map_or(0, |(_, capacity)| capacity);
     let mut reserved = 0u64;
     let mut query = connection.prepare(schema::SESSION_IDS)?;
     let mut rows = query.query([])?;
@@ -127,7 +139,7 @@ pub(in crate::persistence) fn protect(
         let id = schema::session_id(row, 0)?;
         let header = image::header(connection, &id, limits.record_bytes)?
             .ok_or_else(|| corrupt("session missing during completion audit"))?;
-        if id == proposed.session_id {
+        if proposed.is_some_and(|(session, _)| id == session.session_id) {
             capacity = capacity.max(header.capacity);
         } else {
             let retained = load_from(connection, &id)?
@@ -141,9 +153,11 @@ pub(in crate::persistence) fn protect(
                 .ok_or_else(exhausted)?;
         }
     }
-    reserved = reserved
-        .checked_add(session_bytes(proposed, capacity, page_size)?)
-        .ok_or_else(exhausted)?;
+    if let Some((session, _)) = proposed {
+        reserved = reserved
+            .checked_add(session_bytes(session, capacity, page_size)?)
+            .ok_or_else(exhausted)?;
+    }
     vfs::reserve(connection, page_size, reserved)
 }
 

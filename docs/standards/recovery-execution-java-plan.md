@@ -51,6 +51,46 @@ approval as part of a repository landing.
 
 ## Evidence and progress
 
+### Validated increment: Rust database/payload pairing before orphan reconciliation
+
+Branch `feat/rust-payload-store-binding` starts from PR #31's merge `b7509f5`.
+Rust lacked a durable database/root association. Reclamation cannot safely use an
+arbitrary database's absence of jobs as evidence that another root's bodies are
+unadmitted. Service startup now requires explicit durable pairing through the
+`EntityStore` contract, with no default no-op for custom backends.
+
+A checked singleton database image retains its identity and once-assigned payload
+identity. The file root records its own identity and syncs the complete pair before
+the database claim. Complete interrupted claims replay; wrong pairs, missing bound
+claims, partial/corrupt images and stale database identities refuse. The database
+write preserves every unchanged job's physical completion allowance under the
+writer transaction. New `PSDBL003`/`PSRET003` policies refuse older layouts without
+conversion; session format 7 and wire/CDDL are unchanged. This is a pairing
+prerequisite, not implementation of Rust reclamation or proof of payload admission.
+
+Seventeen focused tests pass, including concurrent claims, actual BLOB-write
+failure, held-writer ordering, process exit and completion after WAL saturation.
+The real authenticated-recovery restart test additionally pins the retained pair.
+The first full-conformance run found an existing corruption-test
+setup calling the public checkpoint after deliberately damaging the root schema;
+the new early identity/schema check now refuses that call. The fixture uses its
+already-held diagnostic connection for snapshot preparation while retaining its
+no-repair assertions. A second run reached the wire tests and found their old
+two-file unauthorized-client inventory; it now explicitly includes the startup
+identity/claim files and asserts that rejected clients cannot change the pair.
+All 20 authenticated-session/recovery wire tests pass in a focused run, and
+strict workspace Rustdoc passes. Rust reclamation, persistent producer observations and the
+remaining resource/interoperability acceptance criteria remain required.
+
+Final `./conformance/run_all.sh` passed locally: 276 Rust workspace tests
+(145 core, 71 Quinn unit, 55 wire, one allocation gate and four runner tests),
+158 Java tests with zero failures/errors/skips counted from JUnit XML, native
+SQLite/C++ checks, nine executable pairings, 32 capability probes,
+recursive/recovery CLI checks and all three external examples. Formatting and
+strict clippy passed, as did strict workspace Rustdoc. Draft -04 passed idnits
+with zero errors/flaws/warnings and one FIPS reference comment. No hosted CI,
+operational migration, cleanup, deployment, release or draft submission is claimed.
+
 ### Validated increment: Java offline orphan reconciliation
 
 Branch `feat/java-orphan-reconciliation` starts from PR #30's merge `c18dcda`.

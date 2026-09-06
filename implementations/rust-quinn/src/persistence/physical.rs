@@ -18,9 +18,10 @@ mod reservation;
 #[cfg(test)]
 mod reservation_tests;
 pub(super) use reservation::protect;
+pub(super) use reservation::protect_unchanged;
 mod vfs;
 
-const MAGIC: &[u8; 8] = b"PSDBL002";
+const MAGIC: &[u8; 8] = b"PSDBL003";
 const POLICY_BYTES: u64 = 72;
 const MAX_OPEN_STORES: usize = 64;
 const SUFFIXES: [&str; 4] = ["", "-wal", "-journal", "-shm"];

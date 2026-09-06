@@ -338,6 +338,13 @@ struct HeldInstallation {
 }
 
 impl EntityStore for HeldInstallation {
+    fn bind_session_store(
+        &self,
+        store: &SqliteSessionStore,
+    ) -> std::result::Result<(), StoreError> {
+        self.files.bind_session_store(store)
+    }
+
     fn put(&self, id: &str, key: EntityKey, payload: &[u8]) -> std::io::Result<()> {
         self.files.put(id, key, payload)
     }

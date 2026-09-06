@@ -158,6 +158,13 @@ async fn control_backlog_is_bounded_and_oversized_frames_refuse_during_storage_s
     Ok(())
 }
 impl EntityStore for HeldLineage {
+    fn bind_session_store(
+        &self,
+        store: &SqliteSessionStore,
+    ) -> std::result::Result<(), pipestream_core::persistence::StoreError> {
+        self.inner.bind_session_store(store)
+    }
+
     fn put(&self, id: &str, key: EntityKey, payload: &[u8]) -> std::io::Result<()> {
         self.inner.put(id, key, payload)
     }

@@ -18,7 +18,9 @@ const RECORD_BYTES: usize = 512;
 const RECEIPT_BYTES: u64 = 32;
 const POLICY_BYTES: usize = 96;
 const MAX_ROOTS: usize = 64;
+mod binding;
 mod lineage;
+use pipestream_core::persistence::{PayloadBinding, StoreIdentity};
 type Owner = Option<(String, String)>;
 type Key = (String, Option<EntityKey>);
 
@@ -80,7 +82,7 @@ impl RetainedLimits {
 
     fn encode(self) -> [u8; POLICY_BYTES] {
         let mut bytes = [0; POLICY_BYTES];
-        bytes[..8].copy_from_slice(b"PSRET002");
+        bytes[..8].copy_from_slice(b"PSRET003");
         for (slot, value) in bytes[8..64].chunks_exact_mut(8).zip(self.values()) {
             slot.copy_from_slice(&value.to_be_bytes());
         }
@@ -91,7 +93,7 @@ impl RetainedLimits {
 
     fn read(path: &Path) -> io::Result<Self> {
         let bytes = read_fixed::<POLICY_BYTES>(path)?;
-        if &bytes[..8] != b"PSRET002" || Sha256::digest(&bytes[..64])[..] != bytes[64..] {
+        if &bytes[..8] != b"PSRET003" || Sha256::digest(&bytes[..64])[..] != bytes[64..] {
             return Err(corrupt("retained policy checksum or version mismatch"));
         }
         let mut values = [0; 7];
@@ -354,6 +356,8 @@ pub(crate) struct RetainedRoot {
     pub(crate) path: PathBuf,
     limits: RetainedLimits,
     state: Mutex<State>,
+    identity: StoreIdentity,
+    binding: Mutex<Option<PayloadBinding>>,
     _lock: File,
 }
 
@@ -415,10 +419,13 @@ impl RetainedRoot {
                     ));
                 }
             }
+            binding::create_identity(&root)?;
             write_new(&policy, &requested.unwrap_or_default().encode())?;
             sync_directory(&root)?;
         }
         let limits = RetainedLimits::read(&policy)?;
+        let identity = binding::read_identity(&root)?;
+        let binding = binding::read_claim(&root, identity)?;
         if requested.is_some_and(|requested| requested != limits) {
             return Err(corrupt("retained policy cannot change on reopen"));
         }
@@ -431,6 +438,8 @@ impl RetainedRoot {
             path: root.clone(),
             limits,
             state: Mutex::new(state),
+            identity,
+            binding: Mutex::new(binding),
             _lock: lock,
         });
         roots.insert(root, Arc::downgrade(&store));
@@ -464,6 +473,16 @@ impl RetainedRoot {
     fn verify_policy(&self) -> io::Result<()> {
         if RetainedLimits::read(&self.path.join(".retained-policy"))? != self.limits {
             return Err(corrupt("retained policy changed"));
+        }
+        if binding::read_identity(&self.path)? != self.identity {
+            return Err(corrupt("retained-store identity changed"));
+        }
+        let binding = self
+            .binding
+            .lock()
+            .map_err(|_| corrupt("retained binding lock poisoned"))?;
+        if binding::read_claim(&self.path, self.identity)? != *binding {
+            return Err(corrupt("retained database claim changed or disappeared"));
         }
         Ok(())
     }
@@ -746,14 +765,19 @@ fn scan(root: &Path, limits: RetainedLimits) -> io::Result<State> {
         for entry in fs::read_dir(&dir)? {
             let entry = entry?;
             count += 1;
-            if count > 6 * limits.objects + 4 {
+            if count > 6 * limits.objects + 6 {
                 return Err(limit("retained directory metadata budget exhausted"));
             }
             let path = entry.path();
             let kind = entry.file_type()?;
             if depth == 0
-                && [".retained-policy", ".retained-lock"]
-                    .contains(&entry.file_name().to_str().unwrap_or(""))
+                && [
+                    ".retained-policy",
+                    ".retained-lock",
+                    ".retained-identity",
+                    ".session-store",
+                ]
+                .contains(&entry.file_name().to_str().unwrap_or(""))
             {
                 regular_length(&path, 1)?;
                 continue;
