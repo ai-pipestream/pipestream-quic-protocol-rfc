@@ -62,8 +62,8 @@ public final class SealedSessionStore {
 
   /**
    * Logical durable-job charges, separate from database file lengths.
-   * @param retainedJobBytes retained descriptors plus their bounded outcome allowances
-   * @param rehydrationReservedBytes capacity held for future rehydration descriptors and outcomes
+   * @param retainedJobBytes allocated descriptors and state images outside reserved futures, including retired rows
+   * @param rehydrationReservedBytes allocated input and state-image capacity held by reserved futures
    * @param processingJobs queued or running ordinary processing jobs
    * @param rehydrationJobs queued or running rehydration jobs consuming reserved slots
    * @param reservedRehydrationSlots slots held for possible future rehydration
@@ -80,7 +80,7 @@ public final class SealedSessionStore {
     /** At least one child failed; the parent durably entered FAILED. */
     FAILED
   }
-  private static final int VERSION = 4;
+  private static final int VERSION = 5;
   private static final long MAX_SESSIONS = 512;
   private static final long MAX_DECLARATIONS = 65_536;
   private static final long MAX_SESSION_DECLARATIONS = 16_384;
@@ -133,7 +133,7 @@ public final class SealedSessionStore {
    * @throws SQLException for storage failure
    * @throws ProtocolException for corrupt job state or capacity failure
    */
-  public JobUsage jobUsage() throws SQLException, ProtocolException { return transaction(SealedJobs::audit); }
+  public JobUsage jobUsage() throws SQLException, ProtocolException { return readTransaction(SealedJobs::audit); }
 
   private static SealedSessionStore openConfigured(Path database, FileLimits limits) throws IOException, SQLException {
     SealedSessionStore store = new SealedSessionStore(SealedSqliteFiles.open(database, limits));
@@ -155,13 +155,13 @@ public final class SealedSessionStore {
                 parent_scope INTEGER, parent_id INTEGER,
                 depth INTEGER NOT NULL CHECK(depth BETWEEN 0 AND 7),
                 next_sequence BLOB NOT NULL CHECK(length(next_sequence)=8),
-                sealed INTEGER NOT NULL CHECK(sealed IN (0,1)), digest BLOB, closure BLOB,
+                sealed INTEGER NOT NULL CHECK(sealed IN (0,1)), digest BLOB,
+                closure_image BLOB NOT NULL CHECK(length(closure_image)=128),
                 PRIMARY KEY(session,id), UNIQUE(session,parent_scope,parent_id),
                 FOREIGN KEY(session,parent_scope,parent_id) REFERENCES ps_java_entities(session,scope,id),
                 CHECK((id=0 AND parent_scope IS NULL AND parent_id IS NULL AND depth=0)
                    OR (id>0 AND parent_scope IS NOT NULL AND parent_id IS NOT NULL AND depth>0)),
-                CHECK((sealed=0 AND digest IS NULL) OR (sealed=1 AND digest IS NOT NULL AND length(digest)=32)),
-                CHECK(closure IS NULL OR (id>0 AND sealed=1 AND length(closure)=77))
+                CHECK((sealed=0 AND digest IS NULL) OR (sealed=1 AND digest IS NOT NULL AND length(digest)=32))
               ) STRICT
               """);
           statement.execute("CREATE TABLE ps_java_batches (session TEXT NOT NULL, scope INTEGER NOT NULL, sequence BLOB NOT NULL CHECK(length(sequence)=8), request BLOB NOT NULL CHECK(length(request) BETWEEN 1 AND 8192), checksum BLOB NOT NULL CHECK(length(checksum)=32), PRIMARY KEY(session,scope,sequence), FOREIGN KEY(session,scope) REFERENCES ps_java_scopes(session,id)) STRICT");
@@ -169,16 +169,9 @@ public final class SealedSessionStore {
               CREATE TABLE ps_java_entities (
                 session TEXT NOT NULL, scope INTEGER NOT NULL,
                 id INTEGER NOT NULL CHECK(id BETWEEN 1 AND 4294967292),
-                state INTEGER, payload_digest BLOB, output_digest BLOB,
-                managed INTEGER NOT NULL DEFAULT 0 CHECK(managed IN (0,1)),
+                image BLOB NOT NULL CHECK(length(image)=112),
                 PRIMARY KEY(session,scope,id),
-                FOREIGN KEY(session,scope) REFERENCES ps_java_scopes(session,id),
-                CHECK((state IS NULL AND payload_digest IS NULL AND output_digest IS NULL)
-                   OR (state IS NOT NULL AND state IN (2,3,4,6,7)
-                     AND payload_digest IS NOT NULL AND length(payload_digest)=32)),
-                CHECK(managed=0 OR state IS NOT NULL),
-                CHECK((state=3 AND output_digest IS NOT NULL AND length(output_digest)=32)
-                   OR ((state IS NULL OR state<>3) AND output_digest IS NULL))
+                FOREIGN KEY(session,scope) REFERENCES ps_java_scopes(session,id)
               ) STRICT
               """);
           SealedJobs.createSchema(connection);
@@ -273,13 +266,17 @@ public final class SealedSessionStore {
             try (ResultSet rows = query.executeQuery()) { if (rows.next()) throw Wire.entity("parent already owns a child scope"); }
           }
         }
-        try (PreparedStatement insert = connection.prepareStatement("INSERT INTO ps_java_scopes VALUES (?,?,?,?,?,?,0,NULL,NULL)")) {
+        try (PreparedStatement insert = connection.prepareStatement("INSERT INTO ps_java_scopes VALUES (?,?,?,?,?,?,0,NULL,?)")) {
           insert.setString(1, request.sessionId()); insert.setLong(2, request.scopeId());
           insert.setObject(3, request.parent() == null ? null : request.parent().scopeId());
           insert.setObject(4, request.parent() == null ? null : request.parent().entityId());
-          insert.setInt(5, depth); insert.setBytes(6, sequence(BigInteger.ZERO)); insert.executeUpdate();
+          insert.setInt(5, depth); insert.setBytes(6, sequence(BigInteger.ZERO));
+          insert.setBytes(7, SealedStateImages.closure(request.sessionId(), SealedWork.producerBytes(request.producerId()),
+              request.scopeId(), request.parent(), null));
+          insert.executeUpdate();
         }
-        scope = new Scope(request.scopeId(), request.parent(), depth, BigInteger.ZERO, false, null, null);
+        scope = scope(connection, request.sessionId(), request.scopeId());
+        if (scope == null) throw Wire.integrity("new scope disappeared");
       }
       if (!Objects.equals(scope.parent(), request.parent()) || scope.sealed() || !scope.nextSequence().equals(request.sequence())) {
         throw Wire.entity("scope binding, seal, or next sequence differs");
@@ -299,9 +296,12 @@ public final class SealedSessionStore {
       }
       BigInteger next = request.sequence().add(BigInteger.ONE);
       if (next.compareTo(SealedCbor.MAX_UINT) > 0) throw Wire.entity("declaration sequence exhausted");
-      try (PreparedStatement insert = connection.prepareStatement("INSERT INTO ps_java_entities(session,scope,id) VALUES (?,?,?)")) {
+      try (PreparedStatement insert = connection.prepareStatement("INSERT INTO ps_java_entities(session,scope,id,image) VALUES (?,?,?,?)")) {
         for (long id : request.entityIds()) {
-          insert.setString(1, request.sessionId()); insert.setLong(2, request.scopeId()); insert.setLong(3, id); insert.addBatch();
+          insert.setString(1, request.sessionId()); insert.setLong(2, request.scopeId()); insert.setLong(3, id);
+          insert.setBytes(4, SealedStateImages.entity(request.sessionId(), SealedWork.producerBytes(request.producerId()),
+              new SealedWork.EntityKey(request.scopeId(), id), new SealedStateImages.Entity(null, false, null, null)));
+          insert.addBatch();
         }
         insert.executeBatch();
       }
@@ -338,6 +338,11 @@ public final class SealedSessionStore {
 
   static void admit(Connection connection, String sessionId, UUID producerId, SealedWork.EntityKey key,
       SealedWork.EntityKey parent, byte[] payloadDigest) throws ProtocolException, SQLException {
+    admit(connection, sessionId, producerId, key, parent, payloadDigest, false);
+  }
+
+  static void admit(Connection connection, String sessionId, UUID producerId, SealedWork.EntityKey key,
+      SealedWork.EntityKey parent, byte[] payloadDigest, boolean managed) throws ProtocolException, SQLException {
     if (payloadDigest == null || payloadDigest.length != 32) throw Wire.integrity("payload digest must be SHA-256");
     byte[] digest = payloadDigest.clone();
     owner(connection, sessionId, producerId);
@@ -345,9 +350,8 @@ public final class SealedSessionStore {
     EntityState entity = entity(connection, sessionId, key);
     if (scope == null || !Objects.equals(scope.parent(), parent) || entity == null || entity.state() != null) throw Wire.entity("payload is undeclared, repeated, or has a different parent");
     verifyDeclaration(connection, sessionId, producerId, scope);
-    try (PreparedStatement update = connection.prepareStatement("UPDATE ps_java_entities SET state=2,payload_digest=? WHERE session=? AND scope=? AND id=?")) {
-      update.setBytes(1, digest); update.setString(2, sessionId); update.setLong(3, key.scopeId()); update.setLong(4, key.entityId()); update.executeUpdate();
-    }
+    SealedSqliteImages.replace(connection, "ps_java_entities", "image", entity.rowid(),
+        SealedStateImages.entity(sessionId, entity.producer(), key, new SealedStateImages.Entity(2, managed, digest, null)));
   }
 
   Path database() { return database; }
@@ -356,11 +360,11 @@ public final class SealedSessionStore {
   record EntityInfo(int state, List<ScopeInfo> ancestry) {}
 
   EntityInfo describe(String session, UUID producer, SealedWork.EntityKey key) throws SQLException, ProtocolException {
-    return transaction(connection -> new EntityInfo(status(connection, session, producer, key), ancestry(connection, session, producer, key.scopeId())));
+    return readTransaction(connection -> new EntityInfo(status(connection, session, producer, key), ancestry(connection, session, producer, key.scopeId())));
   }
 
   List<ScopeInfo> ancestry(String session, UUID producer, long scopeId) throws SQLException, ProtocolException {
-    return transaction(connection -> { owner(connection, session, producer); return ancestry(connection, session, producer, scopeId); });
+    return readTransaction(connection -> { owner(connection, session, producer); return ancestry(connection, session, producer, scopeId); });
   }
 
   private static List<ScopeInfo> ancestry(Connection connection, String session, UUID producer, long scopeId) throws SQLException, ProtocolException {
@@ -551,7 +555,7 @@ public final class SealedSessionStore {
    * @throws SQLException for persistence failure
    */
   public List<Long> declared(String sessionId, UUID producerId, long scopeId) throws ProtocolException, SQLException {
-    return transaction(connection -> {
+    return readTransaction(connection -> {
       owner(connection, sessionId, producerId);
       Scope scope = scope(connection, sessionId, scopeId);
       if (scope == null) throw Wire.entity("scope is absent");
@@ -582,6 +586,13 @@ public final class SealedSessionStore {
 
   static Optional<SealedScope.Digest> closeScope(Connection connection, String sessionId, UUID producerId, long scopeId)
       throws ProtocolException, SQLException {
+    var digest = previewScope(connection, sessionId, producerId, scopeId);
+    if (digest.isPresent()) commitClosure(connection, sessionId, producerId, digest.get());
+    return digest;
+  }
+
+  static Optional<SealedScope.Digest> previewScope(Connection connection, String sessionId, UUID producerId, long scopeId)
+      throws ProtocolException, SQLException {
     SealedScope.childScope(scopeId);
     SealedJobs.audit(connection);
     owner(connection, sessionId, producerId);
@@ -590,13 +601,18 @@ public final class SealedSessionStore {
     List<SealedScope.Terminal> leaves = terminalScope(connection, sessionId, producerId, scope, 0);
     if (leaves == null) return Optional.empty();
     SealedScope.Digest digest = SealedScope.summarize(scopeId, leaves);
-    if (scope.closure() == null) {
-      try (PreparedStatement update = connection.prepareStatement("UPDATE ps_java_scopes SET closure=? WHERE session=? AND id=?")) {
-        update.setBytes(1, SealedScope.encode(digest)); update.setString(2, sessionId); update.setLong(3, scopeId);
-        update.executeUpdate();
-      }
-    }
     return Optional.of(digest);
+  }
+
+  static void commitClosure(Connection connection, String sessionId, UUID producerId, SealedScope.Digest digest)
+      throws SQLException, ProtocolException {
+    long scopeId = digest.scopeId();
+    Scope scope = scope(connection, sessionId, scopeId);
+    if (scope == null) throw Wire.integrity("closure scope disappeared");
+    if (scope.closure() == null) {
+      SealedSqliteImages.replace(connection, "ps_java_scopes", "closure_image", scope.rowid(),
+          SealedStateImages.closure(sessionId, SealedWork.producerBytes(producerId), scopeId, scope.parent(), SealedScope.encode(digest)));
+    }
   }
 
   /**
@@ -682,7 +698,7 @@ public final class SealedSessionStore {
   public boolean checkpointReady(String sessionId, UUID producerId, long scopeId, long inclusiveLastId)
       throws ProtocolException, SQLException {
     if (scopeId < 0 || scopeId > 0xffff_ffffL || inclusiveLastId < 1 || inclusiveLastId > Wire.MAX_ENTITY_ID) throw Wire.entity("invalid checkpoint identity");
-    return transaction(connection -> checkpointReady(connection, sessionId, producerId, scopeId, inclusiveLastId));
+    return readTransaction(connection -> checkpointReady(connection, sessionId, producerId, scopeId, inclusiveLastId));
   }
 
   private static boolean checkpointReady(Connection connection, String sessionId, UUID producerId, long scopeId, long inclusiveLastId)
@@ -698,14 +714,20 @@ public final class SealedSessionStore {
   }
 
   private static void setOutcome(Connection connection, String session, SealedWork.EntityKey key,
-      int state, byte[] digest) throws SQLException {
-    try (PreparedStatement update = connection.prepareStatement("UPDATE ps_java_entities SET state=?,output_digest=? WHERE session=? AND scope=? AND id=?")) {
-      update.setInt(1, state); update.setBytes(2, digest); update.setString(3, session);
-      update.setLong(4, key.scopeId()); update.setLong(5, key.entityId()); update.executeUpdate();
-    }
+      int state, byte[] digest) throws SQLException, ProtocolException {
+    EntityState entity = entity(connection, session, key);
+    if (entity == null) throw Wire.integrity("entity disappeared during publication");
+    SealedSqliteImages.replace(connection, "ps_java_entities", "image", entity.rowid(),
+        SealedStateImages.entity(session, entity.producer(), key,
+            new SealedStateImages.Entity(state, entity.value().managed(), entity.value().payloadDigest(), digest)));
   }
 
-  private static Scope child(Connection connection, String session, SealedWork.EntityKey parent) throws SQLException {
+  static byte[] childClosure(Connection connection, String session, SealedWork.EntityKey parent) throws SQLException, ProtocolException {
+    Scope child = child(connection, session, parent);
+    return child == null ? null : child.closure();
+  }
+
+  private static Scope child(Connection connection, String session, SealedWork.EntityKey parent) throws SQLException, ProtocolException {
     try (PreparedStatement query = connection.prepareStatement("SELECT id FROM ps_java_scopes WHERE session=? AND parent_scope=? AND parent_id=?")) {
       query.setString(1, session); query.setLong(2, parent.scopeId()); query.setLong(3, parent.entityId());
       try (ResultSet rows = query.executeQuery()) {
@@ -721,14 +743,16 @@ public final class SealedSessionStore {
     verifyDeclaration(connection, session, producer, scope);
     boolean ready = scope.sealed();
     List<SealedScope.Terminal> leaves = new ArrayList<>();
-    try (PreparedStatement query = connection.prepareStatement("SELECT id,state FROM ps_java_entities WHERE session=? AND scope=? ORDER BY id")) {
+    try (PreparedStatement query = connection.prepareStatement("SELECT id,CASE WHEN length(image)=112 THEN image END FROM ps_java_entities WHERE session=? AND scope=? ORDER BY id")) {
       query.setString(1, session); query.setLong(2, scope.id());
       try (ResultSet rows = query.executeQuery()) {
         while (rows.next()) {
           if (leaves.size() >= MAX_SESSION_DECLARATIONS) throw Wire.integrity("retained scope exceeds declaration budget");
-          int state = rows.getInt(2);
-          if (rows.wasNull() || (state != Wire.STATUS_COMPLETE && state != Wire.STATUS_FAILED)) ready = false;
-          leaves.add(new SealedScope.Terminal(rows.getLong(1), state));
+          long id = rows.getLong(1);
+          var entity = SealedStateImages.entity(session, SealedWork.producerBytes(producer), new SealedWork.EntityKey(scope.id(), id), rows.getBytes(2));
+          Integer state = entity.state();
+          if (state == null || (state != Wire.STATUS_COMPLETE && state != Wire.STATUS_FAILED)) ready = false;
+          leaves.add(new SealedScope.Terminal(id, state == null ? 0 : state));
         }
       }
     }
@@ -821,11 +845,42 @@ public final class SealedSessionStore {
   }
 
   <T> T transaction(Operation<T> operation) throws SQLException, ProtocolException {
+    return fundedTransaction((connection, funding) -> operation.apply(connection));
+  }
+
+  /** Observations hold a checked read snapshot, never SQLite's writer lock. */
+  <T> T readTransaction(Operation<T> operation) throws SQLException, ProtocolException {
+    try (Connection connection = connection(); var statement = connection.createStatement()) {
+      statement.execute("PRAGMA query_only=ON");
+      statement.execute("BEGIN");
+      try {
+        policy(connection);
+        SealedJobs.audit(connection);
+        T result = operation.apply(connection);
+        statement.execute("COMMIT");
+        return result;
+      } catch (SQLException | ProtocolException | RuntimeException failure) {
+        rollback(connection, failure);
+        throw failure;
+      }
+    } catch (SQLException failure) {
+      if (SealedSqliteFiles.isFull(failure)) {
+        ProtocolException refusal = Wire.limit("SQLite file capacity exhausted");
+        refusal.initCause(failure);
+        throw refusal;
+      }
+      throw failure;
+    }
+  }
+
+  <T> T fundedTransaction(FundedOperation<T> operation) throws SQLException, ProtocolException {
     try (Connection connection = connection(); var statement = connection.createStatement()) {
       statement.execute("BEGIN IMMEDIATE");
       try {
         policy(connection);
-        T result = operation.apply(connection);
+        var funding = SealedCompletionReservations.protect(connection, files.limits());
+        T result = operation.apply(connection, funding);
+        funding.verify();
         statement.execute("COMMIT");
         return result;
       } catch (SQLException | ProtocolException | RuntimeException failure) {
@@ -880,27 +935,28 @@ public final class SealedSessionStore {
     }
   }
 
-  private static Scope scope(Connection connection, String session, long id) throws SQLException {
-    try (PreparedStatement query = connection.prepareStatement("SELECT parent_scope,parent_id,depth,next_sequence,sealed,digest,CASE WHEN length(closure)=77 THEN closure END,length(closure) FROM ps_java_scopes WHERE session=? AND id=?")) {
+  private static Scope scope(Connection connection, String session, long id) throws SQLException, ProtocolException {
+    try (PreparedStatement query = connection.prepareStatement("SELECT parent_scope,parent_id,s.depth,next_sequence,sealed,digest,CASE WHEN length(closure_image)=128 THEN closure_image END,s.rowid,p.producer FROM ps_java_scopes s JOIN ps_java_sessions p ON p.id=s.session WHERE session=? AND s.id=?")) {
       query.setString(1, session); query.setLong(2, id);
       try (ResultSet rows = query.executeQuery()) {
         if (!rows.next()) return null;
         long parentScope = rows.getLong(1);
         boolean root = rows.wasNull();
-        if (rows.getObject(8) != null && rows.getLong(8) != 77) throw new SQLException("stored closure exceeds format bound");
-        return new Scope(id, root ? null : new SealedWork.EntityKey(parentScope, rows.getLong(2)), rows.getInt(3),
-            new BigInteger(1, rows.getBytes(4)), rows.getInt(5) == 1, rows.getBytes(6), rows.getBytes(7));
+        var parent = root ? null : new SealedWork.EntityKey(parentScope, rows.getLong(2));
+        byte[] closure = SealedStateImages.readClosure(session, rows.getBytes(9), id, parent, rows.getBytes(7));
+        boolean sealed = rows.getInt(5) == 1;
+        if (closure != null && !sealed) throw Wire.integrity("unsealed scope contains a closure");
+        return new Scope(id, parent, rows.getInt(3), new BigInteger(1, rows.getBytes(4)), sealed, rows.getBytes(6), closure, rows.getLong(8));
       }
     }
   }
 
-  private static EntityState entity(Connection connection, String session, SealedWork.EntityKey key) throws SQLException {
-    try (PreparedStatement query = connection.prepareStatement("SELECT state FROM ps_java_entities WHERE session=? AND scope=? AND id=?")) {
+  static EntityState entity(Connection connection, String session, SealedWork.EntityKey key) throws SQLException, ProtocolException {
+    try (PreparedStatement query = connection.prepareStatement("SELECT e.rowid,CASE WHEN length(image)=112 THEN image END,s.producer FROM ps_java_entities e JOIN ps_java_sessions s ON s.id=e.session WHERE session=? AND scope=? AND e.id=?")) {
       query.setString(1, session); query.setLong(2, key.scopeId()); query.setLong(3, key.entityId());
       try (ResultSet rows = query.executeQuery()) {
         if (!rows.next()) return null;
-        int state = rows.getInt(1);
-        return new EntityState(rows.wasNull() ? null : state);
+        return new EntityState(rows.getLong(1), rows.getBytes(3), SealedStateImages.entity(session, rows.getBytes(3), key, rows.getBytes(2)));
       }
     }
   }
@@ -920,7 +976,14 @@ public final class SealedSessionStore {
   }
 
   private static byte[] sequence(BigInteger sequence) { return ByteBuffer.allocate(8).putLong(sequence.longValue()).array(); }
-  private record Scope(long id, SealedWork.EntityKey parent, int depth, BigInteger nextSequence, boolean sealed, byte[] digest, byte[] closure) {}
-  private record EntityState(Integer state) {}
+  private record Scope(long id, SealedWork.EntityKey parent, int depth, BigInteger nextSequence, boolean sealed, byte[] digest, byte[] closure, long rowid) {}
+  record EntityState(long rowid, byte[] producer, SealedStateImages.Entity value) {
+    EntityState { producer = producer.clone(); }
+    @Override public byte[] producer() { return producer.clone(); }
+    Integer state() { return value.state(); }
+  }
   @FunctionalInterface interface Operation<T> { T apply(Connection connection) throws SQLException, ProtocolException; }
+  @FunctionalInterface interface FundedOperation<T> {
+    T apply(Connection connection, SealedCompletionReservations funding) throws SQLException, ProtocolException;
+  }
 }

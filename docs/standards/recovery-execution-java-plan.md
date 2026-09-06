@@ -51,6 +51,108 @@ approval as part of a repository landing.
 
 ## Evidence and progress
 
+### Validated increment: Java physical completion reservations
+
+Branch `feat/java-completion-reservations` starts from the Rust reservation
+merge `991b779`. The public-store regression
+`admittedPublicationSurvivesUnrelatedWalExhaustionWithReaderPinned` admits and
+acquires a real job, pins a WAL reader, and submits unrelated declarations until
+the configured 512 KiB WAL refuses another write. The original run committed
+21 declarations and reached 523,296 bytes before publication failed. The test
+still requires successful publication with that reader pinned; it is neither
+disabled nor changed to accept a refusal.
+
+The current Java edit adds a storage-only fixed-BLOB helper and per-connection
+WAL ceiling to the existing JDBC extension. The image helper requires an
+explicit writer transaction, exact bounded capacity and direct invocation;
+bootstrap management remains private. A main handle shares its atomic ceiling
+only with its own WAL, including a WAL opened later. Native tests now obtain
+actual SQLite journal handles instead of constructing filenames without the
+pager association required by `sqlite3_database_file_object`.
+
+Real JDBC evidence ruled out generated columns: SQLite 3.53.4 refuses writable
+BLOB handles on such tables. The Java job table instead stores a fixed 256-byte
+image and immutable SQL keys/input. Java encodes and checks the image, including
+padding, identity-bound checksum and lifecycle fields. Ready queries project
+state and expiry without storing a second copy or indexing mutable image bytes.
+The schema policy is version 5 and refuses earlier policies without conversion.
+Tests verify changed image bytes with unchanged row IDs, rollback after an
+actual BLOB-write refusal, malformed images, and expiry ordering across byte
+boundaries and the maximum signed Java counter.
+
+Focused storage tests passed 15 cases, and the native address/undefined-behavior
+sanitizer gate passed. The subsequent job regression run passed 20 tests and
+failed only the original missing-publication-space case. The full Java run
+`mvn -B test -Psealed-interop` then ran 117 tests, with 116 passing, the same
+publication-space error and no skipped tests. This includes real Rust
+interoperability; the full repository conformance command has not been rerun
+for this unfinished increment. These are local WIP results, not a completed
+reservation guarantee or a full-suite pass.
+
+The subsequent edit allocates 112-byte entity and 128-byte scope-closure images
+at declaration, with Java codecs and identity-bound checksums. A presence flag
+distinguishes an absent closure from the 77-byte committed summary. Fixed-page
+tests execute recursive state changes at 512-, 4,096- and 65,536-byte page sizes
+without allocating main pages. Corruption and invalid lifecycle tests include
+independently recomputed checksums to exercise semantic validation separately
+from checksum rejection.
+
+Every managed PROCESS admission now allocates a second, explicit RESERVED
+rehydration row. Its input has the original descriptor and 85 checked zero bytes;
+it is not a runnable job or a fabricated child result. Closure converts that
+input, hash and state in place. Unneeded futures become RETIRED without deleting
+their rows or releasing their allocated byte charges. Pair validation binds
+future input to processing input and, after conversion, to the actual child
+closure. Missing or corrupt reserved rows refuse lookup, acquisition and
+completion. Tests pin row identity, image length, absence of SQL row mutation,
+full-queue conversion and rollback at the actual BLOB-write failure. The large
+metadata test now audits the allocated bytes of both rows, including retired
+ones, and proves quota exhaustion within one smallest tested pair instead of
+assuming that an unused future disappeared from storage.
+
+The next full Java/interoperability run executed 123 tests, with 122 passing,
+the original publication-space error and no skips. This is still an unfinished
+increment and not a full reservation guarantee.
+
+Admission funding is now implemented. Every public write transaction audits its
+remaining stages under `BEGIN IMMEDIATE` and installs a connection-local ceiling
+before mutation; validated stages release their allowances and a final audit
+checks the resulting credit before commit. The Java-specific model covers
+each fixed-image write set, spill/commit repetition, sector padding and the
+WAL-index capacity. Renewal cannot consume publication credit. `PSJDB002`
+refuses previous file policies without conversion.
+
+The original 512 KiB publication test passed without raising its limit. The
+first funded full Java/interoperability run passed all 123 tests without skips.
+Seven subsequent reservation tests passed, including 54 cost scenarios covering
+378 complete transactions across three page sizes, two cache sizes, three
+metadata lengths and three rehydration outcomes. Recursive pinned-reader tests
+cover successful conversion, STRICT retirement, reopen and shared-memory-first
+exhaustion. A failed-conversion test observes an actual uncommitted WAL tail,
+then verifies unchanged reservations and successful retry with the same reader
+pinned. Native address/undefined-behavior sanitizer tests also passed.
+The first repository-wide conformance attempt exposed a QUIC queue-test timeout.
+The listener had acquired a separate writer transaction for each observation,
+repeating the new reservation audits. Observer lookups now share one bounded
+batch, and read-only operations use enforced query-only snapshots instead of
+competing for SQLite's writer lock. Tests additionally pin batch order, ownership,
+absence/refusal, and observation progress while another writer holds its lock.
+The test peer now reports connection/receive failures instead of only a generic
+timeout. No timeout or reply-queue limit was increased.
+The corrected QUIC queue test passed five consecutive focused runs with unchanged
+timeouts and reply limits. Final `./conformance/run_all.sh` then passed: 258 Rust
+workspace tests (137 core, 62 Quinn, 55 wire, one allocation gate, three runner),
+132 Java tests with zero failures/errors/skips, native SQLite and C++ checks,
+all nine transport pairings, 32 capability probes, recursive/recovery CLI checks
+and all three external examples. JUnit XML independently confirms the Java
+counts. These are local validation results, not hosted CI or full-goal completion.
+See [the derivation](java-completion-reservations.md).
+Strict Javadoc reported pre-existing missing-comment
+warnings in the unchanged Layer 0 APIs; `all,-missing` structural doclint passed.
+The draft -04 build passed with zero idnits errors/flaws/warnings and one FIPS
+reference comment. Keep the larger goal's orphan reconciliation,
+persistent producer observations and resource/interoperability requirements intact.
+
 ### Validated increment: Rust physical publication reservations
 
 Branch `feat/sqlite-completion-reservations` starts from the PR #27 merge.
@@ -591,8 +693,9 @@ No operational database has been migrated, and this increment is not a release.
   and every external example. Workspace formatting/clippy and strict Rustdoc
   passed. Draft -04 passed idnits with zero errors/flaws/warnings and one FIPS
   reference comment. These are local results, not proof of full-goal completion.
-- Not yet implemented: Java physical DB/WAL completion-space reservations,
-  orphan reclamation,
+- Java physical DB/WAL completion reservations passed their conformance gate;
+  see the current increment above.
+  Not yet implemented: orphan reclamation,
   persistent producer observations, and the remaining independent Java
   profile requirement matrix. Physical execution limits and temporary spools are coordinated only
   within one writer process; broader tenant/resource stress evidence remains due.
@@ -609,7 +712,7 @@ expiry is not callback cancellation. Periodic dispatch can reacquire unfinished
 expired attempts, but does not retry application-refused jobs automatically.
 Temporary spool accounting is process-local and excludes permanent entity files.
 Rust and Java SQLite file-length caps are now independent of that accounting.
-Complete independent Java physical DB/WAL publication headroom and
+With independent Java physical completion headroom implemented, complete
 explicit orphan reconciliation without
 deleting a live generation or treating missing input as completed work.
 Do not treat recovery receipts or publication fencing as completion of bounded

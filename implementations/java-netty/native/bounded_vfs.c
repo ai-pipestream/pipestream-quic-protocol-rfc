@@ -4,13 +4,14 @@ SQLITE_EXTENSION_INIT1
 #include <errno.h>
 #include <limits.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define GUARD_NAME "pipestream-java-bounded-unix-v1"
+#define GUARD_NAME "pipestream-java-bounded-unix-v2"
 #define GUARDS 64
 #define POLICY_BYTES 72
 #define GRANULE 65536
@@ -23,11 +24,20 @@ typedef struct Guard {
   unsigned tickets;
 } Guard;
 
+/* One ceiling per SQLite connection, shared with its WAL handle. A different
+   connection to the same guarded path must not change this writer's ceiling. */
+typedef struct WalBudget {
+  _Atomic unsigned refs;
+  _Atomic sqlite3_int64 ceiling;
+} WalBudget;
+
 typedef struct GuardedFile {
   sqlite3_file base;
   sqlite3_file *real;
   Guard *guard;
   sqlite3_int64 limit;
+  WalBudget *wal_budget;
+  int is_wal;
 } GuardedFile;
 
 static pthread_mutex_t registry_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -92,10 +102,19 @@ static Guard *lookup(const char *name, int *kind) {
   return NULL;
 }
 
+static void release_budget(WalBudget *budget) {
+  if (budget && atomic_fetch_sub(&budget->refs, 1) == 1) sqlite3_free(budget);
+}
+
+static sqlite3_int64 effective_limit(const GuardedFile *file) {
+  return file->is_wal ? atomic_load(&file->wal_budget->ceiling) : file->limit;
+}
+
 static int close_file(sqlite3_file *file) {
   GuardedFile *f = (GuardedFile *)file;
   int result = f->real->pMethods->xClose(f->real);
   sqlite3_free(f->real);
+  release_budget(f->wal_budget);
   pthread_mutex_lock(&registry_lock);
   release_guard(f->guard);
   pthread_mutex_unlock(&registry_lock);
@@ -108,12 +127,13 @@ static int read_file(sqlite3_file *file, void *buffer, int count, sqlite3_int64 
 }
 static int write_file(sqlite3_file *file, const void *buffer, int count, sqlite3_int64 offset) {
   GuardedFile *f = (GuardedFile *)file;
-  if (offset < 0 || count < 0 || offset > f->limit || count > f->limit - offset) return SQLITE_FULL;
+  sqlite3_int64 limit = effective_limit(f);
+  if (offset < 0 || count < 0 || offset > limit || count > limit - offset) return SQLITE_FULL;
   return f->real->pMethods->xWrite(f->real, buffer, count, offset);
 }
 static int truncate_file(sqlite3_file *file, sqlite3_int64 length) {
   GuardedFile *f = (GuardedFile *)file;
-  if (length < 0 || length > f->limit) return SQLITE_FULL;
+  if (length < 0 || length > effective_limit(f)) return SQLITE_FULL;
   return f->real->pMethods->xTruncate(f->real, length);
 }
 static int sync_file(sqlite3_file *file, int flags) {
@@ -140,7 +160,7 @@ static int control_file(sqlite3_file *file, int op, void *arg) {
   GuardedFile *f = (GuardedFile *)file;
   if (op == SQLITE_FCNTL_SIZE_HINT) {
     sqlite3_int64 size = *(sqlite3_int64 *)arg;
-    return size < 0 || size > f->limit ? SQLITE_FULL : SQLITE_OK;
+    return size < 0 || size > effective_limit(f) ? SQLITE_FULL : SQLITE_OK;
   }
   if (op == SQLITE_FCNTL_CHUNK_SIZE) {
     int zero = 0;
@@ -206,6 +226,107 @@ static const sqlite3_io_methods journal_methods = {
   .xDeviceCharacteristics = characteristics
 };
 
+static GuardedFile *guarded_main(sqlite3 *database) {
+  sqlite3_file *file = NULL;
+  int result = sqlite3_file_control(database, "main", SQLITE_FCNTL_FILE_POINTER, &file);
+  return result == SQLITE_OK && file && file->pMethods == &methods ? (GuardedFile *)file : NULL;
+}
+
+static const char *identifier_argument(sqlite3_value *value) {
+  if (sqlite3_value_type(value) != SQLITE_TEXT) return NULL;
+  const char *name = (const char *)sqlite3_value_text(value);
+  int length = sqlite3_value_bytes(value);
+  if (!name || length < 1 || length > 128 || (int)strlen(name) != length) return NULL;
+  for (int index = 0; index < length; ++index) {
+    unsigned char ch = (unsigned char)name[index];
+    if (ch != '_' && !(ch >= 'a' && ch <= 'z') && !(ch >= 'A' && ch <= 'Z') &&
+        !(index > 0 && ch >= '0' && ch <= '9')) return NULL;
+  }
+  return name;
+}
+
+/* Generic fixed-size BLOB I/O only. Java owns all encoding, state and quota
+   decisions. No SQL UPDATE, row replacement or resizing is performed here. */
+static void replace_blob(sqlite3_context *context, int count, sqlite3_value **values) {
+  (void)count;
+  sqlite3 *database = sqlite3_context_db_handle(context);
+  const char *table = identifier_argument(values[0]);
+  const char *column = identifier_argument(values[1]);
+  if (!guarded_main(database) || sqlite3_get_autocommit(database) ||
+      sqlite3_txn_state(database, "main") != SQLITE_TXN_WRITE) {
+    sqlite3_result_error(context, "fixed image write requires a guarded writer transaction", -1);
+    return;
+  }
+  if (!table || !column || sqlite3_value_type(values[2]) != SQLITE_INTEGER ||
+      sqlite3_value_int64(values[2]) <= 0 || sqlite3_value_type(values[3]) != SQLITE_BLOB) {
+    sqlite3_result_error_code(context, SQLITE_MISMATCH);
+    return;
+  }
+  int length = sqlite3_value_bytes(values[3]);
+  if (length < 1 || length > 16 * 1024 * 1024) {
+    sqlite3_result_error_code(context, SQLITE_TOOBIG);
+    return;
+  }
+  const void *bytes = sqlite3_value_blob(values[3]);
+  if (!bytes) { sqlite3_result_error_nomem(context); return; }
+  sqlite3_blob *blob = NULL;
+  int result = sqlite3_blob_open(database, "main", table, column,
+      sqlite3_value_int64(values[2]), 1, &blob);
+  if (result != SQLITE_OK) {
+    sqlite3_result_error(context, sqlite3_errmsg(database), -1);
+    sqlite3_result_error_code(context, result);
+    (void)sqlite3_blob_close(blob);
+    return;
+  }
+  if (sqlite3_blob_bytes(blob) != length) {
+    (void)sqlite3_blob_close(blob);
+    sqlite3_result_error(context, "fixed image capacity differs", -1);
+    return;
+  }
+  result = sqlite3_blob_write(blob, bytes, length, 0);
+  int closed = sqlite3_blob_close(blob);
+  if (result == SQLITE_OK) result = closed;
+  if (result == SQLITE_OK) sqlite3_result_int(context, length);
+  else sqlite3_result_error_code(context, result);
+}
+
+static void set_wal_ceiling(sqlite3_context *context, int count, sqlite3_value **values) {
+  (void)count;
+  sqlite3 *database = sqlite3_context_db_handle(context);
+  GuardedFile *main = guarded_main(database);
+  if (!main || sqlite3_get_autocommit(database) || sqlite3_txn_state(database, "main") != SQLITE_TXN_WRITE) {
+    sqlite3_result_error(context, "WAL ceiling requires a guarded writer transaction", -1);
+    return;
+  }
+  sqlite3_int64 ceiling = sqlite3_value_int64(values[0]);
+  if (sqlite3_value_type(values[0]) != SQLITE_INTEGER || ceiling < 0 || ceiling > main->guard->limits[1]) {
+    sqlite3_result_error_code(context, SQLITE_MISMATCH);
+    return;
+  }
+  int reserve = -1;
+  int result = sqlite3_file_control(database, "main", SQLITE_FCNTL_RESERVE_BYTES, &reserve);
+  int sector = sector_size((sqlite3_file *)main);
+  if (result != SQLITE_OK || reserve != 0 || sector < 1 || sector > 65536) {
+    sqlite3_result_error(context, "unsupported SQLite completion page or sector geometry", -1);
+    return;
+  }
+  atomic_store(&main->wal_budget->ceiling, ceiling);
+  sqlite3_result_int64(context, ceiling);
+}
+
+/* Called by SQLite after opening each new connection. Only this named guarded
+   main database receives the helper; management stays bootstrap-only. */
+static int connection_functions(sqlite3 *database, char **error, const sqlite3_api_routines *api) {
+  (void)error;
+  if (api != sqlite3_api) return SQLITE_MISUSE;
+  if (!guarded_main(database)) return SQLITE_OK;
+  int result = sqlite3_create_function_v2(database, "pipestream_blob_replace", 4,
+      SQLITE_UTF8 | SQLITE_DIRECTONLY, NULL, replace_blob, NULL, NULL, NULL);
+  if (result == SQLITE_OK) result = sqlite3_create_function_v2(database, "pipestream_wal_ceiling", 1,
+      SQLITE_UTF8 | SQLITE_DIRECTONLY, NULL, set_wal_ceiling, NULL, NULL, NULL);
+  return result;
+}
+
 static int open_file(sqlite3_vfs *vfs, const char *name, sqlite3_file *file, int flags, int *out) {
   (void)vfs;
   GuardedFile *f = (GuardedFile *)file;
@@ -221,6 +342,27 @@ static int open_file(sqlite3_vfs *vfs, const char *name, sqlite3_file *file, int
   int result = (kind > 2 || (flags & allowed) == 0 || (flags & SQLITE_OPEN_DELETEONCLOSE))
       ? SQLITE_CANTOPEN : guard_paths(guard);
   if (result == SQLITE_OK) {
+    if (kind == 0) {
+      f->wal_budget = sqlite3_malloc64(sizeof(WalBudget));
+      if (!f->wal_budget) result = SQLITE_NOMEM;
+      else {
+        atomic_init(&f->wal_budget->refs, 1);
+        atomic_init(&f->wal_budget->ceiling, guard->limits[1]);
+      }
+    } else {
+      /* Only SQLite's original journal/WAL xOpen filename carries the pager
+         association required by this public VFS API. Never copy that name. */
+      sqlite3_file *main_file = sqlite3_database_file_object(name);
+      GuardedFile *main = (GuardedFile *)main_file;
+      if (!main_file || main_file->pMethods != &methods || main->guard != guard || !main->wal_budget) {
+        result = SQLITE_CANTOPEN;
+      } else {
+        f->wal_budget = main->wal_budget;
+        (void)atomic_fetch_add(&f->wal_budget->refs, 1);
+      }
+    }
+  }
+  if (result == SQLITE_OK) {
     f->real = sqlite3_malloc64((sqlite3_uint64)parent_vfs->szOsFile);
     if (!f->real) result = SQLITE_NOMEM;
     else {
@@ -234,6 +376,7 @@ static int open_file(sqlite3_vfs *vfs, const char *name, sqlite3_file *file, int
   if (result != SQLITE_OK) {
     if (f->real && f->real->pMethods) (void)f->real->pMethods->xClose(f->real);
     sqlite3_free(f->real);
+    release_budget(f->wal_budget);
     pthread_mutex_lock(&registry_lock);
     release_guard(guard);
     pthread_mutex_unlock(&registry_lock);
@@ -241,6 +384,7 @@ static int open_file(sqlite3_vfs *vfs, const char *name, sqlite3_file *file, int
   }
   f->guard = guard;
   f->limit = guard->limits[kind];
+  f->is_wal = kind == 1;
   f->base.pMethods = kind == 0 ? &methods : &journal_methods;
   return SQLITE_OK;
 }
@@ -299,7 +443,7 @@ static void register_path(sqlite3_context *context, int count, sqlite3_value **v
     const void *bytes = sqlite3_value_blob(values[5]);
     if (!bytes) { sqlite3_result_error_nomem(context); return; }
     memcpy(proposed.policy, bytes, POLICY_BYTES);
-    if (memcmp(proposed.policy, "PSJDB001", 8) != 0) result = SQLITE_MISUSE;
+    if (memcmp(proposed.policy, "PSJDB002", 8) != 0) result = SQLITE_MISUSE;
     for (int i = 0; i < 4; ++i) {
       uint64_t limit = 0;
       for (int j = 0; j < 8; ++j) limit = (limit << 8) | proposed.policy[8 + i * 8 + j];
@@ -374,7 +518,11 @@ int sqlite3_pipestream_init(sqlite3 *database, char **error, const sqlite3_api_r
         .xDlSym = dl_sym, .xDlClose = dl_close, .xRandomness = randomness,
         .xSleep = sleep_vfs, .xCurrentTime = time_vfs, .xGetLastError = last_error,
         .xCurrentTimeInt64 = time_int};
-      result = sqlite3_vfs_register(&guarded_vfs, 0);
+      result = sqlite3_auto_extension((void (*)(void))connection_functions);
+      if (result == SQLITE_OK) {
+        result = sqlite3_vfs_register(&guarded_vfs, 0);
+        if (result != SQLITE_OK) (void)sqlite3_cancel_auto_extension((void (*)(void))connection_functions);
+      }
     }
     if (result != SQLITE_OK) parent_vfs = NULL;
   }

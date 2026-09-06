@@ -37,8 +37,8 @@ construction, including odd-node promotion.
 
 `SealedSessionStore.open(path)` creates a separate SQLite database with strict
 typed tables, WAL, and synchronous FULL commits. The Java database format is
-now version 4, with managed entity state, durable jobs, protected rehydration
-reservations, and checksummed checkpoint request/ACK history. Version-1 through version-3
+now version 5, with fixed-capacity job, entity and closure images, preallocated future jobs,
+protected rehydration reservations, and checksummed checkpoint request/ACK history. Version-1 through version-4
 stores are refused without conversion; keep them with their
 matching binary. Do not point this API at a Rust
 store. Unknown table sets or policy versions are refused without conversion.
@@ -98,12 +98,12 @@ or report completion. A reader retaining an old WAL snapshot can exhaust the
 WAL cap before the logical record cap. Releasing that reader and successfully
 checkpointing can permit new writes; a busy checkpoint is not success.
 
-A synced `.psjlimits` sidecar retains the 72-byte `PSJDB001` version, four
+A synced `.psjlimits` sidecar retains the 72-byte `PSJDB002` version, four
 big-endian limits, and a SHA-256 checksum. The empty `.psjlock` file coordinates
 policy creation. Nonempty databases or sidecars without policy are refused
 before SQLite opens them. Policy changes, corrupt or oversized files, symlinks,
-and hardlink aliases are refused. File policy `PSJDB001` is separate from the
-version-4 Java schema. An older unbounded store lacks this policy: keep it with its
+and hardlink aliases are refused. File policy `PSJDB002` is separate from the
+version-5 Java schema. Previous file-policy versions are refused: keep each with its
 matching binary. No automatic conversion or operational migration is supplied.
 
 This backend requires 64-bit Linux, the pinned JDBC SQLite version, private
@@ -120,10 +120,9 @@ JDBC tests exhaust actual database/WAL/journal files, hold WAL readers, check
 rollback and integrity, corrupt retained policy, exhaust registry capacity,
 and abruptly exit with an uncheckpointed WAL. A real-QUIC test checks the named
 capacity refusal, unchanged acknowledged membership, zero accidental payload/job
-admission, and declaration replay after checkpointing and reopen. File caps do
-not reserve space for every future completion record or provide authenticated
-principal quotas. The logical rehydration reservations below do not reserve
-physical DB/WAL publication space; that and broader resource gates remain due.
+admission, and declaration replay after checkpointing and reopen. The transaction
+layer additionally reserves WAL and shared-memory capacity for admitted jobs as
+described below. File caps do not provide authenticated principal quotas.
 
 ## Sealed-work payload storage
 
@@ -198,30 +197,79 @@ queue, not additional workers. Waiting parents do not occupy processing slots
 needed by their children, and a full processing queue cannot refuse conversion
 of an already-held rehydration slot.
 
-Admission charges the processing descriptor and a 256-byte logical allowance
-for its result/attempt fields, plus the exact future rehydration descriptor and
-another 256-byte allowance. A rehydration descriptor adds a fixed 85-byte CBOR
+Admission charges the processing descriptor and its 256-byte state image,
+plus an allocated future rehydration descriptor and another 256-byte state image.
+A rehydration descriptor adds a fixed 85-byte CBOR
 member to the existing processing descriptor. The combined retained and reserved
-charges must fit 64 MiB globally and 16 MiB per session. Ordinary terminal or
-refused processing releases only its unused future reservation; retained records
-stay charged. DEHYDRATING parents hold their future bytes and slot until child
+charges must fit 64 MiB globally and 16 MiB per session. Each PROCESS admission
+allocates both rows atomically. The future row has an explicit RESERVED state;
+its input holds the original descriptor plus 85 verified zero bytes, not a
+fabricated child result. It has no executor or outcome and is neither returned
+as a job nor eligible for discovery or acquisition. Child closure overwrites
+the reserved input, hash and state in place, without inserting another row.
+Ordinary terminal or refused processing marks an unused future RETIRED.
+This releases its execution slot, but the allocated record remains charged;
+it is not deleted or treated as free storage. DEHYDRATING parents hold their future bytes and slot until child
 closure converts them to a rehydration job or STRICT failure makes it unnecessary.
 Reopen and disconnect cannot release a reservation. The checksummed job/entity
 state determines these charges; no independently mutable counter can create free
 capacity. `SealedSessionStore.jobUsage()` audits and reports them in one snapshot.
-Version-3 stores are refused without conversion to the stronger admission policy.
+Earlier schema policies are refused without conversion.
 
-These are logical record/queue reservations, not reserved physical DB/WAL space
-or a promise to admit unknown future children, payloads or checkpoint requests.
+The version-5 job image contains a format marker, state, executor epoch and
+identity, expiry, outcome length, at most 128 outcome bytes, verified zero
+padding, and the existing identity-bound state checksum. Acquisition and
+publication use SQLite's fixed-size BLOB API through the guarded connection;
+they do not replace the job row or update a mutable job index. Ready-job queries
+use read-only projections of the big-endian state and expiry, with a bounded
+full audit before selection. These projections are not generated columns or a
+second stored copy. SQLite rejects writable BLOB handles on generated-column
+tables and indexed images; the Java tests retain both refusals.
+
+Declaration allocates a 112-byte entity image and a 128-byte closure image per
+scope. Their checksums bind the session, producer and scoped identity. Entity
+state explicitly distinguishes missing admission, managed work, input digest
+and optional result digest. Scope closure has a separate presence flag and
+verified unused bytes; allocated capacity is not a completion marker. Admission,
+processing, child resolution and rehydration overwrite these images in place.
+Tests exercise recursive state transitions under a fixed main-page cap at 512-,
+4,096- and 65,536-byte page sizes, plus real write failures and corruption.
+
+The storage guard also provides a per-connection WAL ceiling that remains in
+force through commit or rollback and is inherited by that connection's WAL
+handle. Every public store write transaction audits the remaining execution stages
+under its actual writer lock and installs a ceiling before any mutation.
+Admission adds its acquisition/publication and possible rehydration credit;
+validated stages consume their own allowances. A final audit must match the
+predicted credit before commit. Lease renewal uses ordinary headroom and cannot
+spend publication credit. Rolled-back tails do not erase job reservations or
+prevent retries merely because the physical file retains uncommitted bytes.
+The bound includes spill/commit repetition, sector padding and WAL-index
+capacity under the pinned SQLite 3.53.4 geometry.
+
+The original 512 KiB pinned-reader regression now passes. Whole-transaction
+cost tests cover 54 scenarios and 378 stages; additional tests cover recursive
+completion, STRICT failure, WAL-index-first exhaustion, reopen and retry after
+actual conversion spills. See the
+[derivation and evidence](../../docs/standards/java-completion-reservations.md).
+These reservations do not promise to admit unknown future children, payloads or checkpoint requests.
 Those remain subject to their own admission limits. Session and producer labels are not authenticated principals;
 these limits do not provide tenant isolation. Reads bound blob materialization,
 and integrity checks reject missing jobs, changed descriptors, and outcomes
 that disagree with entity state before executing or acknowledging completion.
-The dispatcher audits retained records, not just the ready-job index. Discovery
+Job lookup also validates its processing/future pair; a missing reserved row is
+corruption, not an optional job that silently disappeared.
+The dispatcher audits retained records, not just the ready-job query. Discovery
 interleaves sessions within each bounded page and prefers their rehydration work,
 so one large completion queue cannot fill the page with only its own jobs. That
 bounded full scan and SQL ordering are not a large-session throughput or global
 fairness claim.
+
+Read-only discovery, status and readiness calls use enforced `query_only`
+snapshots instead of taking SQLite's writer lock. The listener reads its bounded
+observer batch in one snapshot rather than reopening and auditing the store for
+each observed job. A held-writer test pins read progress and write refusal from
+those snapshots; this does not bound arbitrary storage latency.
 
 Defaults are four workers, at most two per session, with five-minute leases.
 Acquisition and publication check a durable increasing epoch, executor identity,
@@ -289,7 +337,7 @@ Complete checkpoint receipt starts a monotonic deadline on the network event
 loop before SQLite queueing. Pending requests do not block eligible payloads
 or control parsing; duplicates retain the original deadline. Covered ingress,
 unsent outcomes, and nested checkpoints prevent ACK. An operation completing
-after timeout cannot emit a late ACK on that connection. The version-4 store
+after timeout cannot emit a late ACK on that connection. The current store
 retains exact request identity, optional root-scope presence, unsigned counters,
 and ACK state under checksums and history accounting. Missing records cannot
 erase outstanding obligations. Limits are 4,096 retained checkpoints globally,
@@ -316,8 +364,8 @@ The `sealed-interop` profile also runs the Rust public producer against this
 Java server. A separate 32 MiB QUIC transfer/install/execute test runs with
 a 24 MiB Java heap limit; it does not measure native memory or RSS.
 Persistent producer-side observations, broader crash-boundary and
-resource stress coverage, and physical completion-space
-reservations remain unfinished; this is not a full conformance claim.
+resource stress coverage and orphan reconciliation remain unfinished;
+this is not a full conformance claim.
 
 ## Sealed-work network producer
 

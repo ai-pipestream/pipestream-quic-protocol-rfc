@@ -19,7 +19,7 @@ static sqlite3_int64 length(const char *path) {
 }
 
 static void make_policy(const char *path, unsigned char *policy) {
-  memcpy(policy, "PSJDB001", 8);
+  memcpy(policy, "PSJDB002", 8);
   for (int i = 0; i < 4; ++i) {
     uint64_t value = i == 0 ? MAIN_CAP : CAP;
     for (int j = 7; j >= 0; --j) { policy[8 + i * 8 + j] = (unsigned char)(value & 255); value >>= 8; }
@@ -31,6 +31,30 @@ static void make_policy(const char *path, unsigned char *policy) {
   CHECK(write(fd, policy, 72) == 72);
   CHECK(fsync(fd) == 0);
   CHECK(close(fd) == 0);
+}
+
+static void check_images(sqlite3 *database) {
+  OK(sqlite3_exec(database, "CREATE TABLE images(image BLOB NOT NULL) STRICT; INSERT INTO images VALUES(zeroblob(4))", NULL, NULL, NULL));
+  CHECK(sqlite3_exec(database, "SELECT pipestream_blob_replace('images','image',1,x'01020304')", NULL, NULL, NULL) == SQLITE_ERROR);
+  CHECK(sqlite3_exec(database, "SELECT pipestream_wal_ceiling(1)", NULL, NULL, NULL) == SQLITE_ERROR);
+  OK(sqlite3_exec(database, "BEGIN IMMEDIATE", NULL, NULL, NULL));
+  CHECK(sqlite3_exec(database, "SELECT pipestream_wal_ceiling(-1)", NULL, NULL, NULL) == SQLITE_MISMATCH);
+  CHECK(sqlite3_exec(database, "SELECT pipestream_wal_ceiling(65537)", NULL, NULL, NULL) == SQLITE_MISMATCH);
+  OK(sqlite3_exec(database, "SELECT pipestream_wal_ceiling(65536)", NULL, NULL, NULL));
+  CHECK(sqlite3_exec(database, "SELECT pipestream_blob_replace('images','image',1,x'0102')", NULL, NULL, NULL) == SQLITE_ERROR);
+  CHECK(sqlite3_exec(database, "SELECT pipestream_blob_replace('images','image',1,zeroblob(16777217))", NULL, NULL, NULL) == SQLITE_TOOBIG);
+  CHECK(sqlite3_exec(database, "SELECT pipestream_blob_replace('images'||char(0),'image',1,x'01020304')", NULL, NULL, NULL) == SQLITE_MISMATCH);
+  OK(sqlite3_exec(database, "SELECT pipestream_blob_replace('images','image',1,x'01020304')", NULL, NULL, NULL));
+  sqlite3_stmt *statement = NULL;
+  OK(sqlite3_prepare_v2(database, "SELECT hex(image) FROM images", -1, &statement, NULL));
+  CHECK(sqlite3_step(statement) == SQLITE_ROW);
+  CHECK(strcmp((const char *)sqlite3_column_text(statement, 0), "01020304") == 0);
+  OK(sqlite3_finalize(statement));
+  OK(sqlite3_exec(database, "ROLLBACK", NULL, NULL, NULL));
+  OK(sqlite3_prepare_v2(database, "SELECT hex(image) FROM images", -1, &statement, NULL));
+  CHECK(sqlite3_step(statement) == SQLITE_ROW);
+  CHECK(strcmp((const char *)sqlite3_column_text(statement, 0), "00000000") == 0);
+  OK(sqlite3_finalize(statement));
 }
 
 int main(int argc, char **argv) {
@@ -58,7 +82,7 @@ int main(int argc, char **argv) {
   OK(sqlite3_bind_blob(statement, 6, policy, 72, SQLITE_STATIC));
   CHECK(sqlite3_step(statement) == SQLITE_ROW);
   OK(sqlite3_finalize(statement));
-  (void)snprintf(uri, sizeof(uri), "file:%s?vfs=pipestream-java-bounded-unix-v1", path);
+  (void)snprintf(uri, sizeof(uri), "file:%s?vfs=pipestream-java-bounded-unix-v2", path);
   OK(sqlite3_open_v2(uri, &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI, NULL));
   OK(sqlite3_prepare_v2(bootstrap, "SELECT pipestream_guard_unregister(?)", -1, &statement, NULL));
   OK(sqlite3_bind_text(statement, 1, path, -1, SQLITE_STATIC));
@@ -66,8 +90,9 @@ int main(int argc, char **argv) {
   OK(sqlite3_finalize(statement));
   OK(sqlite3_close(bootstrap)); /* Registered VFS code must remain loaded. */
   OK(sqlite3_exec(database, "CREATE TABLE retained(value INTEGER)", NULL, NULL, NULL));
+  check_images(database);
 
-  sqlite3_vfs *vfs = sqlite3_vfs_find("pipestream-java-bounded-unix-v1");
+  sqlite3_vfs *vfs = sqlite3_vfs_find("pipestream-java-bounded-unix-v2");
   CHECK(vfs && vfs != sqlite3_vfs_find(NULL));
   sqlite3_file *file = NULL;
   OK(sqlite3_file_control(database, "main", SQLITE_FCNTL_FILE_POINTER, &file));
@@ -104,24 +129,31 @@ int main(int argc, char **argv) {
 
   for (int kind = 0; kind < 2; ++kind) {
     (void)snprintf(sidecar, sizeof(sidecar), "%s%s", path, kind ? "-journal" : "-wal");
-    /* SQLite xOpen names may carry URI parameters beyond the first terminator. */
-    sqlite3_filename name = sqlite3_create_filename(path, kind ? sidecar : "", kind ? "" : sidecar, 0, NULL);
-    CHECK(name);
-    const char *filename = kind ? sqlite3_filename_journal(name) : sqlite3_filename_wal(name);
-    sqlite3_file *journal = sqlite3_malloc(vfs->szOsFile);
-    CHECK(journal);
-    int flags = SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | (kind ? SQLITE_OPEN_MAIN_JOURNAL : SQLITE_OPEN_WAL);
-    OK(vfs->xOpen(vfs, filename, journal, flags, NULL));
+    OK(sqlite3_exec(database, kind ? "PRAGMA journal_mode=DELETE" : "PRAGMA journal_mode=WAL", NULL, NULL, NULL));
+    OK(sqlite3_exec(database, "BEGIN IMMEDIATE; INSERT INTO retained VALUES(1)", NULL, NULL, NULL));
+    /* Obtain SQLite's actual journal/WAL, including its pager-owned xOpen name.
+       sqlite3_create_filename does not create that association. */
+    sqlite3_file *journal = NULL;
+    OK(sqlite3_file_control(database, "main", SQLITE_FCNTL_JOURNAL_POINTER, &journal));
+    CHECK(journal && journal->pMethods);
     CHECK(journal->pMethods->iVersion == 1);
+    if (!kind) {
+      OK(sqlite3_exec(database, "SELECT pipestream_wal_ceiling(32)", NULL, NULL, NULL));
+      CHECK(journal->pMethods->xWrite(journal, &byte, 1, 32) == SQLITE_FULL);
+      CHECK(journal->pMethods->xTruncate(journal, 33) == SQLITE_FULL);
+      hint = 33;
+      CHECK(journal->pMethods->xFileControl(journal, SQLITE_FCNTL_SIZE_HINT, &hint) == SQLITE_FULL);
+      OK(sqlite3_exec(database, "SELECT pipestream_wal_ceiling(65536)", NULL, NULL, NULL));
+    }
     CHECK(journal->pMethods->xWrite(journal, &byte, 1, CAP) == SQLITE_FULL);
     CHECK(journal->pMethods->xTruncate(journal, CAP + 1) == SQLITE_FULL);
     OK(journal->pMethods->xFileControl(journal, SQLITE_FCNTL_CHUNK_SIZE, &chunk));
     OK(journal->pMethods->xWrite(journal, &byte, 1, CAP - 1));
     CHECK(length(sidecar) == CAP);
-    OK(journal->pMethods->xClose(journal));
-    sqlite3_free(journal);
-    OK(vfs->xDelete(vfs, sidecar, 1));
-    sqlite3_free_filename(name);
+    /* The direct write is beyond the valid journal contents. Roll back before
+       SQLite owns subsequent journal recovery or a mode change. */
+    OK(sqlite3_exec(database, "ROLLBACK", NULL, NULL, NULL));
+    if (!kind) OK(sqlite3_exec(database, "PRAGMA wal_checkpoint(TRUNCATE)", NULL, NULL, NULL));
   }
   sqlite3_file *foreign = sqlite3_malloc(vfs->szOsFile);
   CHECK(foreign);
