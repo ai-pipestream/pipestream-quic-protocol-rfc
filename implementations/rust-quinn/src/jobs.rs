@@ -154,7 +154,11 @@ impl Session {
         Ok(())
     }
 
-    fn validate_job_input(&self, key: ExecutionKey, input: &JobInput) -> Result<(), ProtocolError> {
+    pub(crate) fn validate_job_input(
+        &self,
+        key: ExecutionKey,
+        input: &JobInput,
+    ) -> Result<(), ProtocolError> {
         let entity = self
             .entities
             .get(&key.entity)

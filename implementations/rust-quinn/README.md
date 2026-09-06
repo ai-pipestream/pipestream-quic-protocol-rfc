@@ -368,7 +368,7 @@ Previously declared work remains outstanding; no rejected payload becomes an
 admitted job or a successful scope. Authority/principal labels come from the
 authenticated service or durable job, never untrusted entity metadata.
 
-The 96-byte `.retained-policy` uses `PSRET003`, seven big-endian limits and a
+The 96-byte `.retained-policy` uses `PSRET004`, seven big-endian limits and a
 SHA-256 checksum. Each `.meta` uses `PSOBJ001` and commits to session, owner,
 entity/scope or lineage identity, length and digest. The `.done` file contains
 the metadata checksum. Raw entity and lineage bodies keep their original paths
@@ -376,7 +376,7 @@ and bytes. Metadata fsync precedes copying through 8 KiB buffers; verified data
 is fsynced before no-replace hardlink publication, and the receipt and directory
 are synced before installation succeeds. Session format 7 and the wire/CDDL
 are unchanged. The `lineage.reserve` marker uses the separate `PSLIN001`
-encoding and is synced before payload installation. Old `PSRET001`/`PSRET002` policies,
+encoding and is synced before payload installation. Old `PSRET001` through `PSRET003` policies,
 nonempty roots without a policy, and payloads missing a matching reservation
 are refused, not converted. Preserve them with their matching binary.
 
@@ -398,8 +398,8 @@ unattributed subset. Failed owner-quota checks preserve that credit. Partial fin
 lineage metadata and publication receipts use the original allowance, including
 when every byte/object slot is occupied. A missing or corrupt previously durable
 marker fails loading or publication; it cannot become fresh admission capacity.
-Reservations left by failed payload installation stay charged pending explicit
-orphan reconciliation. Reservation alone does not admit a protocol job.
+Final-lineage reservations left by failed payload installation stay charged,
+including after orphan reconciliation. Reservation alone does not admit a protocol job.
 
 The root has an exclusive Unix advisory lock using the existing pinned
 [rustix file-lock API](https://docs.rs/rustix/latest/rustix/fs/fn.flock.html).
@@ -422,7 +422,8 @@ exact-quota publication and concurrent owner limits. Authenticated QUIC tests
 hold admitted callbacks while two principals fill the complete retained budget,
 then verify real lineage bytes, checkpoint ACKs and GOAWAY. A missing declared
 payload instead times out without a final lineage or successful checkpoint.
-Explicit orphan reconciliation and broader tenant stress remain unfinished.
+Explicit orphan reconciliation is described below; broader tenant stress remains
+unfinished.
 
 ### Database and retained-root pairing
 
@@ -457,8 +458,9 @@ WAL/shared-memory credit. Exact binding replay does not rewrite the row. These
 local ownership records are not authentication, payload-admission evidence,
 complete input-integrity audits or an orphan-cleanup API.
 
-`PSDBL003` and `PSRET003` refuse earlier policies without conversion, so an older
-binary cannot silently ignore pairing. Session payload format 7, queue/storage
+`PSDBL003` and the current `PSRET004` refuse earlier policies without conversion,
+so an older binary cannot silently ignore pairing or reclaimed commitments.
+Session payload format 7, queue/storage
 policy, wire/CDDL and the physical completion-cost derivation are unchanged.
 Back up and restore the database, payload root and their policy/identity/claim
 files as one matched set. Cloned identities do not authorize independent writers
@@ -468,8 +470,65 @@ Tests cover both mismatch directions, concurrent roots and connections, a held
 SQLite writer, failed binding BLOB writes, process exit after the file claim,
 old policies, corrupt/missing identities and claims, and completion after WAL
 saturation. The authenticated recovery QUIC test pins the same pair while replaying
-an unobserved receipt after restart. This prerequisite does not complete Rust
-orphan reclamation or the broader resource/interoperability goal.
+an unobserved receipt after restart. Pairing is a prerequisite to the maintenance
+API below, not completion of the broader resource/interoperability goal.
+
+### Explicit offline orphan reconciliation
+
+`FileEntityStore::reconcile(root, spool_limits, &sessions)` opens a previously
+paired root exclusively and acquires SQLite's writer lock. Close all file-store
+handles, retained readers, receive loans and services first; a live owner refuses
+maintenance instead of racing it. The public core `payload_maintenance` guard
+provides the checked database snapshot and a one-session-at-a-time audit cursor.
+It blocks admission and publication until dropped, even after iteration finishes.
+This is an offline storage operation, not an application-callback context.
+Standalone spool handles inside an initialized retained root also retain its
+process lock, including when opened without a `FileEntityStore` handle.
+
+Before deleting anything, reconciliation verifies the complete retained inventory,
+body checksums and every managed PROCESS input, including finished/refused jobs,
+revoked sessions and waiting parents. Caller-managed admission without an original
+PROCESS descriptor refuses. Wrong/unbound pairs, missing admitted bodies, corrupt
+records, unrecognized spool names, symlinks and foreign hardlinks also refuse.
+Supply the receive-file bounds previously used with the root; spool limits are
+not a separate persisted policy. Directory traversal and metadata inventory are
+bounded, payload verification uses 8 KiB buffers, and database decoding remains
+proportional to its configured maximum session record.
+An unpublished stage can contain a rejected full-length copy with a bad checksum.
+It is not admitted input: cleanup removes those bytes while preserving the expected
+digest. A corrupt published body still refuses the entire audit before deletion.
+
+An unadmitted payload's `.meta` is renamed to `.commit` and synced before its
+stage, receipt or body is removed. The original 512-byte `PSOBJ001` identity,
+owner, length and SHA-256 survive. The commitment is not an executable payload or
+admission evidence. Matching retransmission reserves the original body/receipt
+and staging allowance, then renames that same record back to `.meta` before
+installation. It needs no duplicate metadata allocation at an otherwise full
+quota. Changed bytes refuse with `PIPESTREAM_ENTITY_INVALID`; insufficient
+restoration capacity refuses with `PIPESTREAM_LIMIT_EXCEEDED`.
+
+Interrupted maintenance is replayed explicitly. Remaining body/receipt/stage file
+lengths stay charged after reopen; restoration refuses until an interrupted
+cleanup has removed them. A crash after restoration's rename instead leaves a
+fully reserved pending installation. Neither SQLite rollback nor process exit
+is assumed to undo file operations. Missing work stays pending and the database
+state, checkpoint identity and completion markers are never changed by cleanup.
+
+`Reconciliation` reports before/after reservations, counts and removed file-name
+lengths, not allocated disk blocks. Admitted bodies in every state, all immutable
+commitments and their object/owner slots, partial metadata, directories and
+final-lineage allowances remain retained. This is not session expiry or general
+garbage collection. `PSRET004` refuses prior policies without conversion; no
+wire/CDDL, session database layout or completion-cost formula changes.
+
+Tests cover full quota, concurrent and interrupted restoration, matching and
+changed replay, audit refusals, live-handle/reader/spool exclusion, writer locking,
+injected I/O failure and process exit at four filesystem phases. A real-QUIC
+sealed scenario checks missing-input timeout, changed-input refusal, and matching
+out-of-order chunks through checkpoint ACK and GOAWAY. The isolated resource test
+also installs, reclaims and restores a 32 MiB body with less than 1 MiB additional
+Rust-managed heap and no allocation reaching 1 MiB. That gate does not measure
+SQLite native allocation, whole-process RSS or multi-tenant throughput.
 
 ### SQLite file-length caps
 
@@ -759,7 +818,8 @@ the entity DEFERRED. Transport shutdown is not a work-completion barrier.
 Without the explicit mutual-TLS settings, the standalone prototype authenticates
 only the server and remains suitable solely for trusted local demonstrations.
 Even with mutual TLS, retained recovery, bounded workers and retained-storage
-quotas and admitted-job completion reservations, orphan reclamation and a complete resilience capability remain
+quotas, admitted-job completion reservations and offline orphan reconciliation,
+the complete resilience capability and resource/interoperability matrix remain
 unfinished. It MUST NOT yet be described as a production multi-tenant durable
 work service. Its Layer 2 boolean still advertises more than the tested subset.
 

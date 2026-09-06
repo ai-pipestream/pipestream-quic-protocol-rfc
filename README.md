@@ -87,8 +87,12 @@ unadmitted bodies with retained immutable commitments. Matching retransmission
 can restore those bodies; missing input remains pending. Rust now also pairs its
 session database and retained root before service startup, with immutable store
 identities and replayable file-first binding. Older Rust storage policies are
-refused without conversion. Rust orphan reconciliation,
-persistent producer observations and the broader resource matrix remain unfinished.
+refused without conversion. Rust now also supplies explicit offline orphan
+reconciliation under exclusive root ownership and the paired database's writer
+lock. It audits admitted input before reclaiming abandoned files, preserves
+immutable orphan commitments, and allows matching retransmission without
+inventing completion. Persistent producer observations and the broader resource
+matrix remain unfinished.
 Connection metadata and lineage operations now run in a bounded storage pool.
 An independent control reader enforces checkpoint deadlines during those
 operations; held-storage tests also exercise protocol refusals and progress

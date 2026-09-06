@@ -20,7 +20,9 @@ const POLICY_BYTES: usize = 96;
 const MAX_ROOTS: usize = 64;
 mod binding;
 mod lineage;
+mod reconcile;
 use pipestream_core::persistence::{PayloadBinding, StoreIdentity};
+pub use reconcile::Reconciliation;
 type Owner = Option<(String, String)>;
 type Key = (String, Option<EntityKey>);
 
@@ -82,7 +84,7 @@ impl RetainedLimits {
 
     fn encode(self) -> [u8; POLICY_BYTES] {
         let mut bytes = [0; POLICY_BYTES];
-        bytes[..8].copy_from_slice(b"PSRET003");
+        bytes[..8].copy_from_slice(b"PSRET004");
         for (slot, value) in bytes[8..64].chunks_exact_mut(8).zip(self.values()) {
             slot.copy_from_slice(&value.to_be_bytes());
         }
@@ -93,7 +95,7 @@ impl RetainedLimits {
 
     fn read(path: &Path) -> io::Result<Self> {
         let bytes = read_fixed::<POLICY_BYTES>(path)?;
-        if &bytes[..8] != b"PSRET003" || Sha256::digest(&bytes[..64])[..] != bytes[64..] {
+        if &bytes[..8] != b"PSRET004" || Sha256::digest(&bytes[..64])[..] != bytes[64..] {
             return Err(corrupt("retained policy checksum or version mismatch"));
         }
         let mut values = [0; 7];
@@ -277,6 +279,33 @@ struct Entry {
     record: Record,
     committed: bool,
     staging: bool,
+    reclaimed: Option<Reclaimed>,
+}
+
+// A .commit replaces .meta before any orphan body is removed. During an
+// interrupted reconciliation, remaining file lengths stay charged. A restored
+// .meta instead reserves the full original installation allowance again.
+#[derive(Debug, Clone, Copy)]
+struct Reclaimed {
+    bytes: u64,
+    staging_bytes: u64,
+    files_present: bool,
+}
+
+impl Entry {
+    fn charge(&self) -> u64 {
+        self.reclaimed
+            .map_or_else(|| self.record.charge(), |r| r.bytes)
+    }
+
+    fn staging_charge(&self) -> u64 {
+        if !self.staging {
+            0
+        } else {
+            self.reclaimed
+                .map_or(self.record.length, |r| r.staging_bytes)
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -321,14 +350,16 @@ impl State {
             .get(&record.owner)
             .copied()
             .unwrap_or_default();
-        if self.usage.bytes + record.charge() > limits.bytes
+        let charge = entry.charge();
+        let staging_charge = entry.staging_charge();
+        if self.usage.bytes + charge > limits.bytes
             || self.usage.objects >= limits.objects
-            || prior.bytes + record.charge() > limits.principal_bytes
+            || prior.bytes + charge > limits.principal_bytes
             || prior.objects >= limits.principal_objects
             || (!self.principals.contains_key(&record.owner)
                 && self.principals.len() as u64 >= limits.principals)
             || (entry.staging
-                && (self.usage.staging_bytes + record.length > limits.staging_bytes
+                && (self.usage.staging_bytes + staging_charge > limits.staging_bytes
                     || self.usage.staging_objects >= limits.staging_objects))
         {
             return Err(limit(
@@ -337,10 +368,10 @@ impl State {
         }
         let principal = self.principals.entry(record.owner.clone()).or_default();
         for usage in [&mut self.usage, principal] {
-            usage.bytes += record.charge();
+            usage.bytes += charge;
             usage.objects += 1;
             if entry.staging {
-                usage.staging_bytes += record.length;
+                usage.staging_bytes += staging_charge;
                 usage.staging_objects += 1;
             }
         }
@@ -358,11 +389,20 @@ pub(crate) struct RetainedRoot {
     state: Mutex<State>,
     identity: StoreIdentity,
     binding: Mutex<Option<PayloadBinding>>,
+    exclusive: bool,
     _lock: File,
 }
 
 impl RetainedRoot {
     pub(crate) fn open(root: PathBuf, requested: Option<RetainedLimits>) -> io::Result<Arc<Self>> {
+        Self::open_mode(root, requested, false)
+    }
+
+    fn open_mode(
+        root: PathBuf,
+        requested: Option<RetainedLimits>,
+        exclusive: bool,
+    ) -> io::Result<Arc<Self>> {
         if let Some(limits) = requested {
             limits.validate()?;
         }
@@ -372,6 +412,19 @@ impl RetainedRoot {
             return Err(corrupt("retained root must be a directory, not a symlink"));
         }
         let root = std::path::absolute(root)?;
+        if exclusive {
+            // Maintenance only opens a previously initialized, paired root. It
+            // must not bootstrap missing policy, identity or ownership files.
+            RetainedLimits::read(&root.join(".retained-policy"))?;
+            let identity = binding::read_identity(&root)?;
+            if binding::read_claim(&root, identity)?.is_none()
+                || regular_length(&root.join(".retained-lock"), 1)? != Some(0)
+            {
+                return Err(corrupt(
+                    "maintenance requires an existing paired retained root",
+                ));
+            }
+        }
         let mut durable_parent = root.parent().unwrap_or(&root);
         while !durable_parent.try_exists()? {
             durable_parent = durable_parent
@@ -388,6 +441,12 @@ impl RetainedRoot {
             .map_err(|_| corrupt("retained registry poisoned"))?;
         roots.retain(|_, weak| weak.strong_count() != 0);
         if let Some(existing) = roots.get(&root).and_then(Weak::upgrade) {
+            if exclusive || existing.exclusive {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "retained root has a live handle or maintenance owner",
+                ));
+            }
             existing.verify_policy()?;
             if requested.is_some_and(|limits| limits != existing.limits) {
                 return Err(corrupt("retained policy cannot change on reopen"));
@@ -440,6 +499,7 @@ impl RetainedRoot {
             state: Mutex::new(state),
             identity,
             binding: Mutex::new(binding),
+            exclusive,
             _lock: lock,
         });
         roots.insert(root, Arc::downgrade(&store));
@@ -519,8 +579,42 @@ impl RetainedRoot {
             Some(existing) if existing.record != record => {
                 return Err(io::Error::new(
                     io::ErrorKind::AlreadyExists,
-                    "immutable retained object differs",
+                    super::entity_error("immutable retained object differs"),
                 ));
+            }
+            Some(existing) if existing.reclaimed.is_some() => {
+                let reclaimed = existing.reclaimed.expect("checked above");
+                if reclaimed.files_present {
+                    return Err(corrupt(
+                        "interrupted orphan reconciliation must finish before restore",
+                    ));
+                }
+                let extra = record.charge() - reclaimed.bytes;
+                let prior = state
+                    .principals
+                    .get(&record.owner)
+                    .ok_or_else(|| corrupt("reclaimed owner charge missing"))?;
+                if state.usage.bytes + extra > self.limits.bytes
+                    || prior.bytes + extra > self.limits.principal_bytes
+                    || state.usage.staging_bytes + record.length > self.limits.staging_bytes
+                    || state.usage.staging_objects >= self.limits.staging_objects
+                {
+                    return Err(limit("retained restoration reservation budget exhausted"));
+                }
+                state.usage.bytes += extra;
+                state.usage.staging_bytes += record.length;
+                state.usage.staging_objects += 1;
+                let principal = state
+                    .principals
+                    .get_mut(&record.owner)
+                    .expect("checked above");
+                principal.bytes += extra;
+                principal.staging_bytes += record.length;
+                principal.staging_objects += 1;
+                let existing = state.entries.get_mut(&record.key).expect("checked above");
+                existing.reclaimed = None;
+                existing.staging = true;
+                true
             }
             Some(existing) => !existing.committed,
             None => {
@@ -536,6 +630,7 @@ impl RetainedRoot {
                         record: record.clone(),
                         committed: false,
                         staging: true,
+                        reclaimed: None,
                     },
                     self.limits,
                 );
@@ -603,6 +698,24 @@ impl RetainedRoot {
         let metadata = suffix(&path, ".meta");
         let stage = suffix(&path, ".stage");
         let receipt = suffix(&path, ".done");
+        let commitment = suffix(&path, ".commit");
+        if regular_length(&commitment, 1)?.is_some() {
+            if Record::read(&commitment)? != *record {
+                return Err(corrupt(
+                    "orphan commitment is not ready for matching restoration",
+                ));
+            }
+            for file in [&metadata, &path, &stage, &receipt] {
+                if regular_length(file, 2)?.is_some() {
+                    return Err(corrupt("orphan commitment still has installation files"));
+                }
+            }
+            // Rename the existing immutable metadata, never allocate a second
+            // record at full quota. A crash now leaves a fully charged pending
+            // installation that reconciliation or identical input can replay.
+            fs::rename(&commitment, &metadata)?;
+            sync_directory(parent)?;
+        }
         let metadata_length = regular_length(&metadata, 1)?;
         if operation.pending && metadata_length.is_none_or(|size| size < RECORD_BYTES as u64) {
             fs::create_dir_all(parent)?;
@@ -806,10 +919,14 @@ fn scan(root: &Path, limits: RetainedLimits) -> io::Result<State> {
     let mut state = State::default();
     let mut accounted = BTreeSet::new();
     lineage::scan(root, limits, &files, &mut state, &mut accounted)?;
-    for path in files
-        .iter()
-        .filter(|path| path.extension().is_some_and(|e| e == "meta"))
-    {
+    for path in files.iter().filter(|path| {
+        path.extension()
+            .is_some_and(|e| e == "meta" || e == "commit")
+    }) {
+        if path.extension().is_some_and(|e| e == "commit") {
+            reconcile::scan_commitment(root, limits, path, &files, &mut state, &mut accounted)?;
+            continue;
+        }
         let metadata_length =
             regular_length(path, 1)?.ok_or_else(|| corrupt("retained metadata disappeared"))?;
         if metadata_length < RECORD_BYTES as u64 {
@@ -862,8 +979,8 @@ fn scan(root: &Path, limits: RetainedLimits) -> io::Result<State> {
         } else if receipt_length.is_some_and(|length| length > RECEIPT_BYTES) {
             return Err(corrupt("retained receipt exceeds its bound"));
         }
-        if committed
-            && (!files.contains(&base) || read_fixed::<32>(&receipt)?[..] != record.encode()[480..])
+        if (receipt_length.is_some() && !files.contains(&base))
+            || (committed && read_fixed::<32>(&receipt)?[..] != record.encode()[480..])
         {
             return Err(corrupt("retained receipt or payload missing"));
         }
@@ -888,6 +1005,7 @@ fn scan(root: &Path, limits: RetainedLimits) -> io::Result<State> {
                 record,
                 committed,
                 staging,
+                reclaimed: None,
             },
             limits,
         )?;

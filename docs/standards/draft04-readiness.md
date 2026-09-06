@@ -12,6 +12,49 @@ policies recorded in the incremental-index prerequisite.
 
 ## Changes and regression coverage
 
+### Rust explicit orphan reconciliation (2026-09-06)
+
+The Rust file backend now reconciles a closed, previously paired root against a
+writer-locked session snapshot. It audits all managed admitted inputs, including
+terminal/refused work and revoked sessions, before deleting any files. Foreign or
+unbound pairs, caller-managed admission without an original PROCESS descriptor,
+corrupt/missing inputs, live handles/readers/loans and unknown or aliased files
+refuse. No cleanup operation changes session state or supplies a completion ACK.
+
+Before removing an orphan body, its immutable `.meta` becomes a synced `.commit`.
+Identity, owner, original length and digest remain. Matching retransmission
+reserves normal installation capacity and renames the existing record back;
+changed input refuses. Interrupted cleanup keeps remaining file lengths charged
+and resumes explicitly. Admitted bodies, commitment object slots, partial metadata,
+directories and final-lineage allowances are not garbage-collected. `PSRET004`
+refuses prior file policies without conversion; database policy, wire/CDDL and
+frozen vectors are unchanged.
+
+Focused storage and actual-QUIC tests cover quota, replay, named refusals, writer
+and live-handle exclusion, process exit and I/O failure. The sealed wire scenario
+keeps missing declared input pending through timeout and reconnect, rejects changed chunks and
+completes only after matching out-of-order chunks restore the original input.
+The isolated 32 MiB resource case measures 13,048 bytes additional Rust heap and
+a 2,216-byte largest allocation for installation/reclamation/restoration, under
+separate 1 MiB gates. This is not native-allocation/RSS or multi-tenant evidence.
+All 21 new tests pass: five core maintenance, fifteen Quinn storage and one actual
+QUIC test. The final repository conformance command passed with 297 Rust workspace
+tests, 158 Java tests with no failures/errors/skips, native SQLite/C++ checks,
+nine executable pairings, 32 capability probes, recursive/recovery CLI checks and
+all three external examples. Formatting, strict clippy and strict Rustdoc pass.
+Draft -04 has zero idnits errors/flaws/warnings and one FIPS reference comment.
+
+An earlier full run exposed a wire-test timing assumption: a connection deadline
+may expire before checkpoint-request persistence. The corrected test checks that
+neither an absent request nor a retained pending request acknowledges missing
+work. A subsequent full run passed; final review then added the rejected-stage
+regression and the complete suite passed again. Standalone spool handles now hold
+the retained-root process lock too, verified with a subprocess. Rejected staging
+bytes are reclaimable, but corrupt published bodies still refuse before deletion.
+Persistent producer observations and broader resource/interoperability acceptance
+remain unfinished. These are local gates, not hosted CI, an operational cleanup,
+migration, deployment, release or draft submission.
+
 ### Rust payload-store pairing (2026-09-06)
 
 Rust service construction now requires its `EntityStore` to durably bind the
@@ -1112,9 +1155,10 @@ xml2rfc renderer remains confined to document authoring.
 1. Complete the mandatory behavior matrix and independent interoperability
    evidence. Rust's explicit retained-recovery profile is implemented, but the
    current Layer 2 boolean still advertises more than the prototype implements.
-2. Complete the asynchronous executor's storage/resource guarantees: durable
-   quotas, orphan reconciliation, further crash-boundary
-   tests, and concurrent-workload resource gates.
+2. Complete the asynchronous executor's storage/resource evidence, including
+   further crash-boundary tests and concurrent-workload resource gates. Rust and
+   Java now provide durable quotas and explicit offline orphan reconciliation;
+   that does not establish whole-process or multi-tenant bounds.
 3. Complete the Java profile's requirement matrix, persistent producer
    observations, and expanded cross-language crash/reconnect/resource coverage.
    Its separate Netty server now has recursive and replay interoperability.

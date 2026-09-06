@@ -234,4 +234,55 @@ async fn transfer() {
     connection.close(0u32.into(), b"resource test complete");
     endpoint.close(0u32.into(), b"resource test complete");
     server.await.unwrap().unwrap();
+    reconcile_large_input(
+        dir.path(),
+        options
+            .entity_directory
+            .join("large-spool/scope-0/entity-1.bin"),
+        length as u64,
+        checksum,
+    );
+}
+
+fn reconcile_large_input(
+    directory: &std::path::Path,
+    source: std::path::PathBuf,
+    length: u64,
+    digest: [u8; 32],
+) {
+    let root = directory.join("orphan-payloads");
+    let sessions = SqliteSessionStore::open(directory.join("orphan-state.sqlite3")).unwrap();
+    let files = FileEntityStore::open(&root).unwrap();
+    files.bind_session_store(&sessions).unwrap();
+    let payload = spool::Payload::open_retained(source, length, digest).unwrap();
+    let key = pipestream_core::session::EntityKey {
+        scope_id: 0,
+        entity_id: 1,
+    };
+    let baseline = LIVE.load(Ordering::SeqCst);
+    PEAK.store(baseline, Ordering::SeqCst);
+    LARGEST.store(0, Ordering::SeqCst);
+    files.put_payload(None, "orphan", key, &payload).unwrap();
+    drop(files);
+    let report =
+        FileEntityStore::reconcile(&root, spool::SpoolLimits::default(), &sessions).unwrap();
+    assert_eq!(report.orphan_bodies_removed, 1);
+    assert_eq!(report.after.bytes, 1120 + 512);
+    let files = FileEntityStore::open(&root).unwrap();
+    files.put_payload(None, "orphan", key, &payload).unwrap();
+    let restored = files
+        .load_payload(None, "orphan", key, length, digest)
+        .unwrap();
+    assert_eq!(restored.digest(), digest);
+    assert_eq!(restored.len(), length);
+    let peak = PEAK.load(Ordering::SeqCst).saturating_sub(baseline);
+    let largest = LARGEST.load(Ordering::SeqCst);
+    println!(
+        "32 MiB orphan installation/reclamation/restoration: heap increase {peak} bytes, largest allocation {largest} bytes"
+    );
+    assert!(peak < 1 << 20, "reconciliation heap grew by {peak} bytes");
+    assert!(
+        largest < 1 << 20,
+        "payload-sized reconciliation allocation: {largest}"
+    );
 }

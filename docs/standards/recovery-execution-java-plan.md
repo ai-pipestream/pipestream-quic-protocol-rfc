@@ -51,6 +51,53 @@ approval as part of a repository landing.
 
 ## Evidence and progress
 
+### Validated increment: Rust offline orphan reconciliation
+
+Branch `feat/rust-orphan-reconciliation` starts from PR #32's merge `7906d3c`.
+The file backend now requires exclusive root ownership and the matched database's
+writer lock throughout audit and reclamation. The core maintenance cursor audits
+one bounded session at a time, including finished/refused input descriptors;
+caller-managed admission refuses rather than treating a missing job as an orphan.
+All admitted payloads remain protected in every state.
+
+Unadmitted `.meta` records are durably renamed to `.commit` before removing bodies,
+receipts or stages. Immutable identity, owner, length and digest survive; matching
+retransmission restores the original installation using the same metadata record.
+No temporary metadata headroom is needed at a full retained quota. Remaining
+files stay charged through interrupted cleanup. Partial metadata, object identities
+and final-lineage reservations are retained, not silently reclaimed. No lifecycle
+state, admission, checkpoint or completion is fabricated. `PSRET004` refuses prior
+file policies without conversion; database policy and normative wire are unchanged.
+
+Focused tests cover retained quota, live-handle and writer exclusion, corrupt and
+missing input, owner/pair mismatch, concurrent/interrupted restoration, I/O failure
+and four process-exit phases. The real-QUIC sealed scenario verifies pending timeout,
+changed chunk refusal and matching out-of-order restoration through checkpoint and
+GOAWAY. The isolated 32 MiB resource gate measured 13,048 bytes additional Rust heap
+and a largest allocation of 2,216 bytes across installation/reclamation/restoration;
+both gates are below 1 MiB. This does not measure native SQLite memory or RSS.
+Standalone spool handles also hold the retained root's process lock; a subprocess
+test verifies exclusion. Rejected full-length staging bytes can be reclaimed
+without weakening their retained expected digest or published-body corruption checks.
+All 21 new focused tests pass (five core maintenance, fifteen Quinn storage and
+one actual-QUIC test). Final `./conformance/run_all.sh` passed locally with 297
+Rust workspace tests (150 core, 86 Quinn unit, 56 wire, one allocation gate and
+four runner tests), 158 Java tests without failures/errors/skips counted from
+JUnit XML, native SQLite/C++ checks, nine executable pairings, 32 capability
+probes, recursive/recovery CLI checks and all three external examples.
+Formatting, strict clippy and strict workspace Rustdoc passed. Draft -04 passed
+idnits with zero errors/flaws/warnings and one FIPS reference comment.
+
+The first full run exposed a new wire fixture assuming a checkpoint request must
+persist before its connection deadline. Under load, the existing control deadline
+can fire first. The test now checks both valid outcomes: no acknowledged cut,
+unchanged declared work and matching input required after reconnect. A subsequent
+complete run passed before final review added the rejected-full-stage regression;
+the full suite was rerun successfully after that change. Persistent producer
+observations and the remaining resource/interoperability matrix remain required.
+No hosted CI, operational cleanup/migration, deployment, release or draft
+submission is claimed.
+
 ### Validated increment: Rust database/payload pairing before orphan reconciliation
 
 Branch `feat/rust-payload-store-binding` starts from PR #31's merge `b7509f5`.
