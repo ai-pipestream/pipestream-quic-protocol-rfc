@@ -23,6 +23,15 @@ worker epochs, ancestor cancellation, output read/dependency pins and closure.
 These are design evidence, not wire interoperability, real storage
 crash-consistency evidence or an unbounded composition proof.
 
+As of 2026-09-06, a separate Rust transport-independent version-2 module
+implements typed messages and records, canonical/cross-field validation,
+negotiation checks, domain-separated commitments, bounded client correlation
+and incremental payload verification. Library tests consume the frozen
+70 wire examples and 12 commitments, including semantic refusals. Neither
+the Rust nor Java endpoint advertises these profiles. These library tests
+are not version-2 mutual-TLS, durable execution, crash recovery, cross-language
+interoperability or measured resource-conformance evidence.
+
 ## Java/Netty Reference Implementation
 
 Organization:

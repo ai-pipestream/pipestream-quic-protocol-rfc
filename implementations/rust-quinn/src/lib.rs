@@ -13,6 +13,7 @@ pub mod persistence;
 pub mod recovery;
 pub mod session;
 pub mod uri;
+pub mod v2;
 pub mod work_set;
 
 pub const ALPN: &[u8] = b"pipestream/1";

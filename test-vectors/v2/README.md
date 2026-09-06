@@ -30,6 +30,8 @@ normal test path. No test regenerates or rewrites the corpus. The Rust process
 driver checks hashes, framing, exact roots, and Appendix F synchronization, then
 uses the pinned CDDL library with CBOR-only decoding and no JSON fallback.
 
-Semantic and canonical refusal expectations still require independent Rust and
-Java codec tests and authenticated transport/state scenarios. Passing the current
-schema checks does not establish those refusals or version-2 interoperability.
+The Rust `pipestream_core::v2` codec now executes all 70 acceptance/refusal
+expectations and round-trips the accepted bytes exactly. Its typed commitment
+functions also match all 12 frozen commitments. Java codec tests and
+authenticated transport/state scenarios remain outstanding. Passing schema
+checks or one library's codec tests does not establish version-2 interoperability.

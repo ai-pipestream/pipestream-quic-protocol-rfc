@@ -23,6 +23,33 @@ cargo test --locked
 cargo build --release --locked
 ```
 
+## Version-2 library foundation
+
+`pipestream_core::v2` implements Section 12/Appendix F typed wire records,
+control and object-header framing, canonical and cross-field validation,
+profile negotiation, domain-separated commitments, incremental scope seals
+and status trees, bounded client correlation, and constant-memory payload
+length/hash/FIN/deadline validation. All 70 frozen wire expectations and 12
+frozen commitments are tested without regenerating their bytes.
+
+This module does not advertise profiles or run a V2 listener. Its public
+constructed records are revalidated before encoding. `Control::decode` checks
+one complete bounded frame; a transport must use `control_body_length` before
+allocating/receiving it. `object_header_length` supplies the equivalent check
+for object headers. `Control::validate_context` checks direction and selected profiles.
+`Correlation` tracks connection requests and stream responses, including
+known request fields; authenticated session binding and full receipt-digest
+validation remain required in the client. `PayloadReceiver` accepts borrowed
+chunks but neither stores them nor runs callbacks. An endpoint must drive
+its deadline checks even when no bytes arrive, and invoke `finish` only for
+an actual successful FIN, never a stream reset.
+
+The durable V2 authority, client journal, mTLS integration, SQLite state and
+quota transactions, restartable executor, cleanup and independent Java
+implementation are not implemented by these helpers. V1 storage and ALPN
+remain unchanged. See the
+[V2 acceptance ledger](../../docs/standards/durable-work-v2-test-plan.md).
+
 The original `serve` and `send` commands retain the common Layer 0 black-box
 contract documented under `conformance/`. The durable server uses:
 

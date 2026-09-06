@@ -28,6 +28,12 @@ streaming-gRPC workload evidence. Local draft -05 defines the version-2 contract
 in Section 12 and Appendix F, with frozen wire examples. Its executable lifecycle
 models are bounded design checks. No version-2 endpoint is implemented or
 advertised yet; the existing interoperability evidence is for version 1.
+The Rust `pipestream_core::v2` library now implements typed codecs for every
+version-2 message and record, frozen commitments, negotiation checks, bounded
+client correlation and incremental object validation. This is a library
+foundation, not a durable version-2 endpoint. The
+[V2 acceptance ledger](docs/standards/durable-work-v2-test-plan.md) keeps Java,
+authenticated transport, storage, execution and process-level evidence open.
 
 Draft -04 now defines supported/required extension negotiation, implemented
 independently in Rust, Java, and C++. Unknown requirements fail CONNECT;

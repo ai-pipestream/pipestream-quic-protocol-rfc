@@ -279,3 +279,47 @@ Validation and regression fixes:
 Next is task 2, not a claim that these models replace either language's codec,
 authenticated server, durable executor, result delivery, failure driver or
 resource measurements. The entire three-task goal remains active.
+
+### Task 2 implementation progress: Rust V2 wire foundation, 2026-09-06
+
+Implemented `pipestream_core::v2`, without enabling V2 on an endpoint or changing
+V1 storage/ALPN. This is partial task-2 delivery, not completion of task 2 or
+the overall goal. The [acceptance ledger](durable-work-v2-test-plan.md) records
+the precise library coverage and outstanding independent implementation gates.
+
+- Typed Rust decoding/encoding for every Section 12/Appendix F message, receipt,
+  view, manifest, summary and object header. All 70 frozen examples have exact
+  round trips or their named refusal, including semantic/canonical negatives.
+- All 12 frozen commitments match typed operations, manifests, scope seals and
+  status roots. Full-scope hashing is incremental rather than capped to a wire
+  batch, and the status tree uses bounded logarithmic memory.
+- Negotiation and sender/profile checks, bounded request/input/result correlation,
+  actual input-stream tags, known reply-field comparisons and duplicate refusal.
+  A response stream remains pending through verified FIN. Connection-bound
+  completion evidence cannot be applied to a different connection or aborted ID.
+- Incremental borrowed-chunk payload validation with exact length, SHA-256, FIN,
+  idle and lifetime checks; no object-sized validation buffer or callback on
+  the control book. This is not measured QUIC flow-control independence.
+- Clarified two normative boundaries exposed by implementation: unmet result
+  dependencies retain EXTENSION_UNSUPPORTED in both negotiation directions;
+  reaching an idle/lifetime deadline is too late for progress or FIN renewal.
+  No frozen byte, commitment or refusal expectation changed.
+
+Verification: 17 new library tests; 359 Rust workspace tests; strict workspace
+clippy and formatting; `./conformance/run_all.sh` exit 0 with 193 Java tests
+(20 Surefire reports, zero failures/errors/skips), C++/native tests, all nine
+black-box pairs, 32 raw capability probes, models, recursive/recovery scenarios
+and three external examples. The final Rust library edits were rechecked with
+focused tests and strict workspace clippy. `./build.sh core 05` returned 0;
+rendered text includes both corrections. Idnits reports zero errors/flaws/warnings
+and the existing FIPS reference comment. Local logs:
+
+- `/tmp/pipestream-v2-rust-wire-suite-20260906.log`
+- `/tmp/pipestream-v2-rust-wire-final-rust.log`
+- `/tmp/pipestream-v2-rust-wire-draft-20260906.log`
+
+Still missing: independent Java V2 codec, Quinn/Netty V2 authentication and
+transport, persistent client/authority state and resource transactions, durable
+executors, real crash/cleanup tests, cross-language V2 driver scenarios, and
+task 3's equivalent streaming-gRPC workload measurements. No V2 conformance,
+IETF acceptance, submission, merge, deployment or performance win is claimed.

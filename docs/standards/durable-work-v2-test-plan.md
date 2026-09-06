@@ -5,7 +5,9 @@ organizes the mandatory selected-profile requirements into test families. It
 does not replace the normative text, waive any clause, or assert conformance.
 The full goal remains in [the execution record](durable-work-results-goal.md).
 
-Status: all implementation families below are open. The existing version-1
+Status: every implementation family below remains open as a cross-language
+acceptance gate. Rust now has the library coverage recorded below; no V2
+endpoint advertises a partially implemented profile. The existing version-1
 tests and the three abstract models are regression/design evidence only.
 Rust and Java must independently implement the same durable-work plus
 result-delivery combination. Neither may advertise a partially implemented
@@ -16,6 +18,47 @@ Rust process-driver scenario where applicable. A happy path alone is not
 sufficient. Storage families require actual restart/crash evidence and measured
 resource gates, not only mocks or an in-memory state model. Keep test names and
 logs traceable to these stable family IDs as implementation proceeds.
+
+## Rust library evidence, 2026-09-06
+
+Source: `implementations/rust-quinn/src/v2/`; tests in its `tests.rs`.
+Run `cargo test --locked -p pipestream-core v2::` from that Rust workspace.
+These are 17 library tests, not process-driver or Java evidence:
+
+- V2-WIRE: `every_frozen_wire_case_has_exact_typed_roundtrip_or_named_refusal`
+  executes all 70 frozen rows. Accepted typed records encode back to identical
+  bytes; all 24 refusals retain their named code. The truncation test rejects
+  every prefix and trailing byte for every accepted example. Separate tests
+  cover forbidden CBOR types, hostile lengths and unknown frame classes.
+- V2-NEG: `negotiation_checks_authentication_required_sets_dependencies_and_every_limit`
+  checks the selection algorithm with a supplied authentication decision; it
+  does not authenticate a certificate. Correlation tests cover increasing IDs,
+  out-of-order replies, wrong kinds, duplicates, bounded pending/stream counts,
+  abort, input stream identity and cross-connection result-proof rejection.
+- V2-OP/SET/CLOSE: `all_frozen_commitments_are_computed_from_typed_fields`
+  matches all 12 commitments. Incremental seal tests include 1,000 declarations
+  and missing/extra/unsorted members. Incremental status roots match a separate
+  level-by-level fold for sizes 0 through 1,000, including odd duplication.
+- V2-VIEW/RESULT: tests reject contradictory terminal fields, profile-dependent
+  success shapes, wrong receipt variants, invalid retry increments, inconsistent
+  fence dispositions, count partitions and locator/manifest identities.
+- V2-RESULT: payload/correlation tests require exact SHA-256/length/FIN and
+  bounded monotonic idle/lifetime progress. A result header is not completion;
+  a second response is refused, and a blocked library transfer does not borrow
+  the control book. This is not a QUIC flow-control or process-memory gate.
+
+The implementation pass exposed an error-code ambiguity: Section 12.1's generic
+invalid-selection rule could be read as FRAME_ERROR for a missing result-profile
+dependency, while the frozen response example specifies EXTENSION_UNSUPPORTED.
+The text now explicitly preserves the dependency-specific refusal in either
+direction. No frozen bytes or refusal expectations were changed.
+The stream deadline text also now specifies the equality boundary explicitly:
+progress or FIN at the idle/lifetime deadline is too late, not a renewal.
+
+Still required: independent Java codecs; authenticated V2 Quinn/Netty endpoints;
+session and operation journals; real durable authority/storage/execution;
+restart/cleanup/resource measurements; neutral Rust cross-language scenarios.
+The library helpers do not satisfy these outstanding acceptance gates.
 
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 

@@ -68,7 +68,9 @@ EXTENSION_UNSUPPORTED, without acknowledging capabilities or work.
 The four size/count limits and two stream deadlines are selected by taking
 the minimum of each offer. Stream idle time MUST NOT exceed stream lifetime.
 The client checks list membership, required-set echo, dependencies and every
-limit. An unsolicited selection, increased limit or invalid response is a
+limit. An unmet profile dependency uses EXTENSION_UNSUPPORTED in either
+direction, including a selection of result delivery without durable work.
+An unsolicited selection, increased limit or other invalid response is a
 FRAME_ERROR. Both peers MUST require every profile needed by resumed work.
 There is one exchange per connection; another CAPABILITIES is a FRAME_ERROR.
 
@@ -83,8 +85,9 @@ capacity. QUIC stream priority alone does not supply connection credit.
 Flow-control and dependency considerations in {{RFC9308}} apply.
 
 Stream idle time runs between payload-progress observations. Stream lifetime
-runs from accepting its header, without extension by progress. Exceeding
-either bound aborts that stream with LIMIT_EXCEEDED as defined in Section 12.2.
+runs from accepting its header, without extension by progress. Reaching or
+exceeding either bound aborts that stream with LIMIT_EXCEEDED as defined in
+Section 12.2; progress or FIN at that deadline does not renew the stream.
 Implementations MUST
 also bound the time and bytes spent receiving headers, pending result-stream
 creation, per-principal connections, staging files, metadata, queued work,
