@@ -151,6 +151,14 @@ not exercise QUIC or establish native-memory, RSS, physical filesystem, or
 concurrent-workload bounds. No new network interoperability is inferred from
 these storage tests.
 
+Java's managed execution path now binds its database and payload root using
+persistent store identities. Admission revalidates retained input and keeps the
+store open through the transaction. Closed or foreign-store input handles are
+refused. A complete file-side ownership claim can survive a failed database claim
+and be retried by the same pair; a corrupt marker is refused. This is local
+storage ownership, not producer authentication, a wire extension or orphan cleanup.
+Earlier Java storage layouts are refused without conversion.
+
 Java's durable execution tests cover atomic admission and dispatch, bounded
 queued jobs and retained descriptors, recursive rehydration, stale executor
 refusal after restart, and independent progress during a stalled callback.

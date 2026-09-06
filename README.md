@@ -77,7 +77,11 @@ large sessions require proportionally more completion credit. Older storage
 layouts are refused without conversion. Java now preallocates job/entity/closure
 images and possible rehydration rows, and independently funds remaining stages
 under SQLite 3.53.4 WAL/shared-memory limits. Pinned-reader tests cover completion,
-recursive conversion and rollback followed by retry. Explicit orphan reconciliation,
+recursive conversion and rollback followed by retry. Java now durably pairs each
+managed database with one payload-store identity and revalidates/pins retained
+input through admission; closed or foreign-store handles cannot admit cached
+metadata. Earlier Java database/payload policies are refused without conversion.
+Explicit orphan reconciliation,
 persistent producer observations and the broader resource matrix remain unfinished.
 Connection metadata and lineage operations now run in a bounded storage pool.
 An independent control reader enforces checkpoint deadlines during those

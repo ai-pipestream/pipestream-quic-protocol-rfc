@@ -80,7 +80,7 @@ public final class SealedSessionStore {
     /** At least one child failed; the parent durably entered FAILED. */
     FAILED
   }
-  private static final int VERSION = 5;
+  private static final int VERSION = 6;
   private static final long MAX_SESSIONS = 512;
   private static final long MAX_DECLARATIONS = 65_536;
   private static final long MAX_SESSION_DECLARATIONS = 16_384;
@@ -145,8 +145,13 @@ public final class SealedSessionStore {
           while (rows.next()) present.add(rows.getString(1));
         }
         if (present.isEmpty()) {
-          statement.execute("CREATE TABLE ps_java_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL, sessions INTEGER NOT NULL, declarations INTEGER NOT NULL, per_session INTEGER NOT NULL) STRICT");
-          statement.execute("INSERT INTO ps_java_meta VALUES (1," + VERSION + "," + MAX_SESSIONS + "," + MAX_DECLARATIONS + "," + MAX_SESSION_DECLARATIONS + ")");
+          statement.execute("CREATE TABLE ps_java_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL, sessions INTEGER NOT NULL, declarations INTEGER NOT NULL, per_session INTEGER NOT NULL, binding BLOB NOT NULL CHECK(length(binding)=72)) STRICT");
+          try (var insert = connection.prepareStatement("INSERT INTO ps_java_meta VALUES (1,?,?,?,?,?)")) {
+            insert.setInt(1, VERSION); insert.setLong(2, MAX_SESSIONS); insert.setLong(3, MAX_DECLARATIONS);
+            insert.setLong(4, MAX_SESSION_DECLARATIONS);
+            insert.setBytes(5, new SealedStoreBinding(UUID.randomUUID(), SealedStoreBinding.UNBOUND).encode());
+            insert.executeUpdate();
+          }
           statement.execute("CREATE TABLE ps_java_sessions (id TEXT PRIMARY KEY, producer BLOB NOT NULL CHECK(length(producer)=16), depth INTEGER NOT NULL CHECK(depth BETWEEN 0 AND 7), scope_limit INTEGER NOT NULL CHECK(scope_limit BETWEEN 1 AND 4294967292)) STRICT");
           statement.execute("""
               CREATE TABLE ps_java_scopes (
@@ -842,6 +847,37 @@ public final class SealedSessionStore {
       }
     }
     SealedJobs.checkPolicy(connection);
+    try {
+      var binding = binding(connection);
+      if (binding.payloads().equals(SealedStoreBinding.UNBOUND)) {
+        try (var query = connection.createStatement(); var rows = query.executeQuery("SELECT 1 FROM ps_java_jobs LIMIT 1")) {
+          if (rows.next()) throw new SQLException("managed jobs have no payload-store binding");
+        }
+      }
+    } catch (ProtocolException failure) { throw new SQLException("corrupt Java store binding", failure); }
+  }
+
+  SealedStoreBinding binding() throws SQLException, ProtocolException { return readTransaction(SealedSessionStore::binding); }
+
+  private static SealedStoreBinding binding(Connection connection) throws SQLException, ProtocolException {
+    try (var query = connection.createStatement(); var rows = query.executeQuery(
+        "SELECT CASE WHEN length(binding)=72 THEN binding END FROM ps_java_meta WHERE singleton=1")) {
+      if (!rows.next()) throw Wire.integrity("missing Java store binding");
+      return SealedStoreBinding.decode(rows.getBytes(1));
+    }
+  }
+
+  void bindPayloads(SealedStoreBinding expected) throws SQLException, ProtocolException {
+    if (expected.payloads().equals(SealedStoreBinding.UNBOUND)) throw Wire.integrity("payload identity is unbound");
+    transaction(connection -> {
+      var current = binding(connection);
+      if (!current.database().equals(expected.database())
+          || (!current.payloads().equals(SealedStoreBinding.UNBOUND) && !current.equals(expected))) {
+        throw Wire.integrity("Java database belongs to a different payload store");
+      }
+      if (!current.equals(expected)) SealedSqliteImages.replace(connection, "ps_java_meta", "binding", 1, expected.encode());
+      return null;
+    });
   }
 
   <T> T transaction(Operation<T> operation) throws SQLException, ProtocolException {

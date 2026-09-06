@@ -1,6 +1,6 @@
 # Draft-04 readiness and implementation evidence
 
-Updated 2026-09-05. This landing starts from `00531de` and addresses the
+Updated 2026-09-06. The original draft-04 landing starts from `00531de` and addresses the
 [protocol review](../ai-slop/ietf-protocol-review-2026-09.md).
 The specification remains an individual Internet-Draft, not an approved
 standard. No implementation in this repository demonstrates full conformance.
@@ -10,6 +10,40 @@ uses the physical completion-reservation layout described below, not the older
 policies recorded in the incremental-index prerequisite.
 
 ## Changes and regression coverage
+
+### Java payload-store pairing (2026-09-06)
+
+The Java managed executor now requires a persistent database/payload-store pair.
+Schema 6 stores checksummed database and payload identities; payload policy 2
+stores its own identity and a synced database claim. Earlier layouts are refused
+without conversion. A complete file-side claim can replay after its database
+transaction fails, while different database/root pairs and corrupt or missing
+bound claims are refused. Managed admission revalidates the retained object and
+pins its owning store through the transaction. Closed handles and foreign live
+handles cannot admit cached metadata.
+
+Fourteen focused tests cover both mismatch directions, reopen, an abrupt process
+exit between claims, a real SQLite binding-write refusal, competing roots, pinned
+admission while a writer is held, stale/foreign handles, missing/corrupt input,
+corrupt binding images and prior-format refusal. Full-suite validation exposed
+an intermittent C++ capability-refusal failure with no stderr diagnostic. A traced
+rerun passed; the original exit cause was not retained. Inspection found a caller
+reusing a connection handle after callback close and completion state destroyed
+before callback teardown. C++ now shuts down through its owned registration and
+keeps completion state alive through teardown. The capability oracle requires an
+ordinary nonzero exit, refuses signal termination even after a named error, and
+reports the case, status and both output streams.
+
+All 32 probes passed three consecutive focused runs. Final repository conformance
+passed with 146 Java tests without failures/errors/skips, 259 Rust workspace tests,
+native SQLite/C++ checks, nine transfer pairings, 32 capability probes,
+recursive/recovery CLI checks and all three external examples. Draft -04 passed
+idnits with zero errors/flaws/warnings and one FIPS reference comment. Structural
+Javadoc passed; strict Javadoc still reports missing comments in four unchanged
+Layer 0 types. These are local results. This increment is a storage prerequisite
+for orphan reclamation, not a new wire profile or a complete resource guarantee.
+
+### Original review findings
 
 | Review item | Implemented change | Evidence |
 |---|---|---|

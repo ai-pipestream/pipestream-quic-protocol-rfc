@@ -14,6 +14,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -37,10 +38,11 @@ public final class SealedPayloadStore implements AutoCloseable {
   private static final int MAX_ACTIVE = 128;
   private static final int MAX_METADATA = Wire.MAX_ENTITY_HEADER + 2048;
   private static final byte[] MAGIC = new byte[] {'P', 'S', 'J', 'P', 'A', 'Y', '0', '1'};
-  private static final Set<String> ROOT_NAMES = Set.of("writer.lock", "policy.cbor", "spool", "objects");
+  private static final Set<String> ROOT_NAMES = Set.of("writer.lock", "policy.cbor", "session-store.bin", "spool", "objects");
   private static final Set<Path> OPEN_ROOTS = new HashSet<>();
   private final Path root;
   private final Limits limits;
+  private final UUID storeId;
   private final FileChannel lockChannel;
   private final FileLock lock;
   private final Object publication = new Object();
@@ -93,8 +95,8 @@ public final class SealedPayloadStore implements AutoCloseable {
    */
   public record Usage(long temporaryBytes, int temporaryFiles, long retainedBytes, int retainedFiles, int activeHandles) {}
 
-  private SealedPayloadStore(Path root, Limits limits, FileChannel channel, FileLock lock) {
-    this.root = root; this.limits = limits; this.lockChannel = channel; this.lock = lock;
+  private SealedPayloadStore(Path root, Limits limits, UUID storeId, FileChannel channel, FileLock lock) {
+    this.root = root; this.limits = limits; this.storeId = storeId; this.lockChannel = channel; this.lock = lock;
   }
 
   /**
@@ -126,21 +128,30 @@ public final class SealedPayloadStore implements AutoCloseable {
       catch (OverlappingFileLockException failure) { throw new IOException("payload store already has a writer", failure); }
       if (lock == null) throw new IOException("payload store already has a writer");
       inspectRoot(root);
-      byte[] policy = policy(limits);
+      UUID storeId;
       Path policyPath = root.resolve("policy.cbor");
       if (!Files.exists(policyPath, LinkOption.NOFOLLOW_LINKS)) {
         try (var entries = Files.newDirectoryStream(root)) {
           for (Path entry : entries) if (!entry.getFileName().toString().equals("writer.lock")) throw Wire.integrity("incomplete or foreign payload layout; no conversion performed");
         }
+        storeId = UUID.randomUUID();
         try (FileChannel output = FileChannel.open(policyPath, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
-          write(output, ByteBuffer.wrap(policy)); output.force(true);
+          write(output, ByteBuffer.wrap(policy(limits, storeId))); output.force(true);
         }
         Files.createDirectory(root.resolve("spool")); Files.createDirectory(root.resolve("objects"));
         syncDirectory(root); syncDirectory(root.getParent());
       } else {
-        if (!Arrays.equals(policy, readBounded(policyPath, 4096))) throw Wire.integrity("payload policy or format differs; no conversion performed");
+        byte[] encoded = readBounded(policyPath, 4096);
+        var fields = SealedCbor.decode(encoded, 4096);
+        if (!"pipestream-java-payload-v2".equals(fields.get("format"))) throw Wire.integrity("payload policy or format differs; no conversion performed");
+        ByteBuffer identity = ByteBuffer.wrap(SealedWork.bytes(fields, "store-id", 16));
+        storeId = new UUID(identity.getLong(), identity.getLong());
+        if (storeId.equals(SealedStoreBinding.UNBOUND) || !Arrays.equals(policy(limits, storeId), encoded)) {
+          throw Wire.integrity("payload policy or identity differs; no conversion performed");
+        }
       }
-      SealedPayloadStore store = new SealedPayloadStore(root, limits, channel, lock);
+      SealedPayloadStore store = new SealedPayloadStore(root, limits, storeId, channel, lock);
+      store.retainedBinding();
       store.scan("spool", false); store.scan("objects", true);
       return store;
     } catch (IOException | ProtocolException | RuntimeException failure) {
@@ -155,6 +166,49 @@ public final class SealedPayloadStore implements AutoCloseable {
    * @return immutable usage snapshot
    */
   public synchronized Usage usage() { return new Usage(temporaryBytes, temporaryFiles, retainedBytes, retainedFiles, active); }
+
+  /** Binds before any managed admission; interruption may leave only the file half. */
+  void bind(SealedSessionStore sessions) throws IOException, SQLException, ProtocolException {
+    pin();
+    try {
+      synchronized (publication) {
+        var current = sessions.binding();
+        var expected = new SealedStoreBinding(current.database(), storeId);
+        if (!current.payloads().equals(SealedStoreBinding.UNBOUND) && !current.equals(expected)) {
+          throw Wire.integrity("Java database belongs to a different payload store");
+        }
+        var retained = retainedBinding();
+        if (retained != null && !retained.equals(expected)) throw Wire.integrity("payload store belongs to a different Java database");
+        if (current.equals(expected)) {
+          if (retained == null) throw Wire.integrity("bound payload store is missing its database claim");
+          return;
+        }
+        if (retained == null) {
+          // The durable file claim precedes the atomic database claim. Neither
+          // half admits work; an identical retry can finish an interrupted bind.
+          try (var output = FileChannel.open(root.resolve("session-store.bin"), StandardOpenOption.CREATE_NEW,
+              StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
+            write(output, ByteBuffer.wrap(expected.encode())); output.force(true);
+          }
+        } else {
+          // A prior attempt may have written every byte but failed its force.
+          // Re-reading the image alone is not durable installation evidence.
+          try (var output = FileChannel.open(root.resolve("session-store.bin"), StandardOpenOption.WRITE,
+              LinkOption.NOFOLLOW_LINKS)) { output.force(true); }
+        }
+        syncDirectory(root);
+        sessions.bindPayloads(expected);
+      }
+    } finally { unpin(); }
+  }
+
+  private SealedStoreBinding retainedBinding() throws IOException, ProtocolException {
+    Path path = root.resolve("session-store.bin");
+    if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return null;
+    var binding = SealedStoreBinding.decode(readBounded(path, SealedStoreBinding.BYTES));
+    if (!binding.payloads().equals(storeId)) throw Wire.integrity("payload binding differs from store identity");
+    return binding;
+  }
 
   /**
    * Starts one bounded receive stream after header validation, without admission.
@@ -408,6 +462,17 @@ public final class SealedPayloadStore implements AutoCloseable {
     private final Path path;
     private final Metadata metadata;
     private Stored(Path path, Metadata metadata) { this.path = path; this.metadata = metadata; }
+    boolean belongsTo(SealedPayloadStore store) { return SealedPayloadStore.this == store; }
+
+    <T> T withAdmission(SealedSessionStore sessions, SealedSessionStore.FundedOperation<T> operation)
+        throws IOException, SQLException, ProtocolException {
+      pin();
+      try {
+        verify(path, metadata);
+        bind(sessions);
+        return sessions.fundedTransaction(operation);
+      } finally { unpin(); }
+    }
     /** Returns the durable scoped identity.
      * @return immutable identity
      */
@@ -638,8 +703,8 @@ public final class SealedPayloadStore implements AutoCloseable {
         || identity.entity.scopeId() < 0 || identity.entity.scopeId() > 0xffff_ffffL
         || identity.entity.entityId() < 1 || identity.entity.entityId() > Wire.MAX_ENTITY_ID) throw Wire.entity("invalid durable payload identity");
   }
-  private static byte[] policy(Limits limits) throws ProtocolException {
-    return SealedCbor.encode(Map.of("format", "pipestream-java-payload-v1", "temporary-bytes", limits.temporaryBytes,
+  private static byte[] policy(Limits limits, UUID identity) throws ProtocolException {
+    return SealedCbor.encode(Map.of("format", "pipestream-java-payload-v2", "store-id", SealedWork.producerBytes(identity), "temporary-bytes", limits.temporaryBytes,
         "temporary-files", limits.temporaryFiles, "retained-bytes", limits.retainedBytes, "retained-files", limits.retainedFiles,
         "entity-bytes", limits.entityBytes, "chunks", limits.chunks), 4096);
   }

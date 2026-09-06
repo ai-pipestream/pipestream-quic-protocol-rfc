@@ -152,7 +152,8 @@ public final class SealedExecutor implements AutoCloseable {
 
   /**
    * Starts bounded periodic dispatch, including retained queued or expired attempts.
-   * Startup audits durable jobs before executing any application code.
+   * Startup checks the persistent database/payload pairing and audits durable jobs
+   * before executing any application code.
    * @param sessions Java session database with durable completion reservations
    * @param payloads open retained-payload store, owned and closed by the caller
    * @param processor application callback
@@ -174,11 +175,12 @@ public final class SealedExecutor implements AutoCloseable {
     synchronized (OPEN) { if (!OPEN.add(database)) throw new IOException("Java sealed executor already owns this database"); }
     SealedExecutor executor = null;
     try {
+      payloads.bind(sessions);
       new SealedJobs(sessions).audit();
       executor = new SealedExecutor(database, sessions, payloads, processor, limits, clock);
       executor.dispatcher.scheduleWithFixedDelay(executor::dispatch, 0, 10, TimeUnit.MILLISECONDS);
       return executor;
-    } catch (SQLException | ProtocolException | RuntimeException error) {
+    } catch (IOException | SQLException | ProtocolException | RuntimeException error) {
       if (executor != null) executor.close();
       else synchronized (OPEN) { OPEN.remove(database); }
       throw error;
@@ -186,16 +188,19 @@ public final class SealedExecutor implements AutoCloseable {
   }
 
   /**
-   * Atomically admits an already installed input and queues its processing job.
+   * Revalidates an installed input, then atomically admits it and queues its processing job.
    * This blocking call belongs on a storage worker, not a Netty event loop.
    * @param input verified, immutable payload installed before admission
-   * @throws IOException when dispatch has closed
+   * @throws IOException when dispatch or the payload store has closed, or input I/O fails
    * @throws SQLException for persistence failure
    * @throws ProtocolException for identity, capacity, or integrity refusal
    */
   public void admit(SealedPayloadStore.Stored input) throws IOException, SQLException, ProtocolException {
     beginStorage();
-    try { jobs.admit(input); }
+    try {
+      if (!input.belongsTo(payloads)) throw Wire.entity("input belongs to a different payload-store handle");
+      jobs.admit(input);
+    }
     finally { endStorage(); }
   }
 
