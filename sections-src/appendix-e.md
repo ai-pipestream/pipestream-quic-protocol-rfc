@@ -63,3 +63,59 @@ lost acknowledgments, slow consumers, authorization failures, and crashes
 at each persistence boundary. A successful one-entity transfer matrix is
 not evidence for those behaviors. Document-format validation does not
 validate distributed semantics.
+
+## Result Delivery and Profile Composition
+
+Core lifecycle reports and status Merkle roots do not specify where an
+application retrieves transformed output or how that output is bound to
+the input, processor, and attempt. Sealed work currently permits only
+client-originated entities; returning a digest from a local callback does
+not define a server-to-client result channel. Before claiming interoperable
+video processing, map/reduce, or general work orchestration, choose an
+explicit result contract: application-managed output with authenticated
+references, or a negotiated result-stream profile. Define output identity,
+integrity, authorization, retention, backpressure, and failure semantics.
+
+Authenticated recovery currently excludes sealed work. Combining them
+requires a negotiated lifecycle defining whether a retry replaces an
+attempt or creates new work, how refusal or authorized cancellation resolves
+a declared obligation, and how reconnect retrieves retained outcomes.
+Removing the exclusion without those rules would change completion meaning.
+The existing authentication requirement applies to durable sealed work;
+the base sealed extension alone does not negotiate an authentication method.
+Decide whether a successor profile requires a named binding on the wire
+rather than relying on an explicit application profile.
+
+## Retention and Long-Running Work
+
+The recovery profile fixes receipt retention at 24 hours from admission,
+not from completion. A job can still be running when replay becomes expired.
+The specification must distinguish accepted-job lifetime, input and output
+retention, receipt replay, authorization expiry, and anti-reuse history.
+A successor profile could negotiate bounded retention or promise an interval
+after completion, but would need admission quotas and crash-safe cleanup.
+The current profile's fixed interval must not be silently extended by retry
+or interpreted as cancellation of accepted work.
+
+## Minimal Core and Completion Summary Semantics
+
+Resolve the mandatory Core lifecycle before extending every reference
+implementation. Evaluate whether recursive work management, storage-provider
+metadata, and the four-value data-layer vocabulary belong in the mandatory
+base or separately negotiated profiles. Any reduction of existing mandatory
+behavior needs an explicit version and compatibility decision.
+
+SCOPE_DIGEST also needs an unambiguous count partition: SKIPPED is terminal
+but is neither COMPLETE nor a failure in the current Rust counters, and a
+fully resolved scope cannot contain a still-DEFERRED entity. Specify whether
+the counters represent final states or historical events and how skipped
+work is counted before treating their sum as a completeness proof. The
+current digest's status root is not a payload or output commitment.
+
+Review should include a small executable state model and fault traces for
+commit-before-ACK loss, reset during admission, descendant closure, and
+stale publication. Utility evidence should compare equivalent processing
+and durability semantics over PipeStream and an RPC-based coordinator,
+measuring coordination code, latency, bytes, and resources rather than
+assuming a transport win. Independent implementer review matters more
+than adding another language that repeats the same unexamined assumptions.

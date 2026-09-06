@@ -5,7 +5,7 @@ docname: draft-krickert-pipestream-04
 category: std
 submissiontype: IETF
 number:
-date: 2026-09-05
+date: 2026-09-06
 v: 3
 area: "Applications and Real-Time"
 workgroup: "Individual Submission"
@@ -49,6 +49,8 @@ normative:
       FIPS: PUB 180-4
 
 informative:
+  RFC4101:
+  RFC5116:
   RFC7942:
   PIPESTREAM-DOCPROC:
     title: "PipeStream Document Processing Profile"

@@ -80,3 +80,9 @@ encryption-metadata = {
   ? context: { * tstr => tstr }, ; Encryption context
 }
 ~~~~
+
+The algorithm and provider strings above are illustrative, not a negotiated
+cryptographic suite. In particular, a CBC label alone does not supply message
+authentication. A profile using encrypted references must specify the complete
+authenticated construction and encodings under Section 10.7; Core provides
+no default cipher, tag placement, or key-wrapping format.

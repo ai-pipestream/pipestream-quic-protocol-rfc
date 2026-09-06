@@ -4,7 +4,7 @@ This section defines the protocol-level operations that PipeStream endpoints per
 
 ## Overview
 
-A PipeStream session proceeds through four sequential actions:
+The following application-role model illustrates connection setup, decomposition, processing, and consumption. CONNECT completes before Entity Streams begin. PARSE, PROCESS, and SINK are roles, not additional wire commands or a mandatory whole-session schedule: different entities can occupy these roles concurrently, and profiles can omit decomposition or stream reversible processing before admission checks finish.
 
 ~~~~
                 +---------------------------------------------+

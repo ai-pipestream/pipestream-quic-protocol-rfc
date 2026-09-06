@@ -97,7 +97,7 @@ Reserved (32 bits):
 |-------|-------------|-------|----------------------------------------|
 | 0x0   | UNSPECIFIED | -     | Default / heartbeat signal      |
 | 0x1   | PENDING     | 0     | Entity announced, not yet transmitting |
-| 0x2   | PROCESSING  | 0     | Entity transmission in progress        |
+| 0x2   | PROCESSING  | 0     | Validated entity admitted for processing |
 | 0x3   | COMPLETE    | 0     | Entity successfully processed          |
 | 0x4   | FAILED      | 0     | Entity processing failed               |
 | 0x5   | CHECKPOINT  | 0     | Synchronization barrier                |
@@ -110,6 +110,8 @@ Reserved (32 bits):
 | 0xC   | ABANDONED   | 2     | Timed out                              |
 
 The base STATUS payload is 16 octets (21 octets on the wire including the UCF header). When C=1, a 4-octet cursor value follows (20-octet payload, 25 octets on the wire). When E=1, an Extension Header follows all other STATUS fields.
+
+PROCESSING reports admission of the validated entity, not merely an opened stream or arrival of payload octets. The receiver MUST complete the applicable header, payload, and chunk checks before reporting admission. Whether admission is durable depends on the negotiated lifecycle. Neither PROCESSING nor a declaration acknowledgment proves successful computation. Reversible speculative processing during reception is permitted under Section 10.2, but MUST NOT be reported as validated admission before those checks succeed.
 
 ### Entity Status State Machine
 
@@ -162,10 +164,10 @@ STATUS frames flow in both directions on Stream 0. For each entity, responsibili
 
 1. The originating endpoint MAY announce an entity with a PENDING status frame before opening its Entity Stream.
 2. Once the Entity Stream has been opened, the processing endpoint is authoritative for the entity's lifecycle and emits the STATUS frames for subsequent transitions (PROCESSING, DEHYDRATING, REHYDRATING, COMPLETE, FAILED, and the Layer 2 statuses).
-3. The originating endpoint applies terminal statuses (typically FAILED or ABANDONED) on its own authority only as part of transport error handling (Section 5.5) or local failure policy, for example when the Entity Stream is reset or the connection is lost before a terminal report arrives.
+3. The originating endpoint MUST NOT assign a terminal lifecycle status on the processing endpoint's behalf because of a reset, timeout, or lost connection. It records an unknown outcome locally and uses the negotiated lifecycle's recovery procedures, if any (Section 5.5).
 4. The originating endpoint advances its cursor based on observed terminal statuses and announces cursor advancement using the C flag (Section 6.2.4).
 
-If an endpoint receives a STATUS frame for an entity from a peer that is not authoritative for that transition under these rules, the frame MUST be validated against the state machine of Section 6.2.3; conflicting reports are resolved in favor of the processing endpoint.
+An endpoint receiving a lifecycle transition from a peer that is not authoritative under these rules MUST reject it with PIPESTREAM_ENTITY_INVALID (0x05). State-machine validity alone does not grant authority. Such a report MUST NOT change retained entity state or discharge a declared obligation.
 
 ## Scope Digest Frame (0x54)
 

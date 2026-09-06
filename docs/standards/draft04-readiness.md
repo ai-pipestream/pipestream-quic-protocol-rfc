@@ -15,6 +15,18 @@ policies recorded in the incremental-index prerequisite.
 
 ## Changes and regression coverage
 
+### Protocol-model and safety corrections (2026-09-06)
+
+The [protocol review corrections](protocol-review-corrections-2026-09.md) separate
+transport observations from authoritative outcomes, remove the blanket
+whole-entity QUIC credit prerequisite, and align admission and checksum rules.
+They clarify durable sealed authentication, privacy and encrypted-reference
+boundaries, and correct stale implementation/outreach claims. No executable,
+wire/CDDL, or storage-format change is included. Appendix E records the remaining
+identity, result-delivery, retention, summary-count, and profile-composition
+decisions without silently defining new wire behavior. The linked record holds
+the current validation results and their limits.
+
 ### Rust scope-completion correlation (2026-09-06)
 
 The Rust public client now requires the expected parent identity and depth for

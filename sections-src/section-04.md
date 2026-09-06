@@ -9,7 +9,7 @@ these goals appear in Sections 5 through 9.
 
 ### True Streaming Processing
 
-PipeStream enables entities to be transmitted and processed incrementally as they become available. The framing and status mechanisms operate on individual entities rather than complete inputs, so a sender never needs to buffer a complete input before initiating transmission.
+PipeStream framing permits incremental entity transmission and reversible processing. It does not inherently require a complete workload in memory. A checksum in the initial header, or an application profile's validation rules, can require a prior read or bounded spooling of an entity; Section 10.2 distinguishes these requirements from transport streaming.
 
 ### Recursive Decomposition
 
@@ -59,7 +59,7 @@ PipeStream uses a dual-plane architecture within a single QUIC connection. The e
 A PipeStream connection follows this lifecycle:
 
 1. **Establishment:** Client initiates QUIC connection with ALPN identifier "pipestream/1"
-2. **Capability Exchange:** Client and server exchange supported protocol layers and limits
-3. **Control Stream Initialization:** Client opens Stream 0 as bidirectional Control Stream
+2. **Control Stream Initialization:** Client opens Stream 0 as bidirectional Control Stream
+3. **Capability Exchange:** Client and server exchange supported protocol layers and limits on Stream 0
 4. **Entity Streaming:** Entities are transmitted per Sections 5 and 6
 5. **Termination:** Connection closes via GOAWAY-initiated graceful shutdown (Section 6.5) or QUIC CONNECTION_CLOSE

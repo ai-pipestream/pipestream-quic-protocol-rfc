@@ -226,8 +226,13 @@ a scope nor scope IDs within a session may be recycled, including after
 completion or reconnection. IDs remain in 1..4294967292; exhaustion requires
 a new session identity. Session IDs MUST NOT be reused for unrelated work.
 The producer label distinguishes ownership but is not an authentication
-credential or proof of authority. Section 10's authorization requirements
-remain necessary before exposing durable sessions to untrusted callers.
+credential or proof of authority. Section 10.6.1 requires principal
+authentication and authorization before admitting durable work, including
+WORK_SET declarations. Successful sealed-work negotiation is not evidence
+of caller authentication. A deployment using this profile MUST also supply
+the authenticated-session profile of Section 10.6.4 or an explicit
+authenticated application profile meeting Section 10.6.1. A trusted network
+or a client-chosen session label does not replace that binding.
 
 Each child scope has exactly one parent in an existing scope. Its parent
 MUST already be admitted and DEHYDRATING. The declared parent, producer,
@@ -332,7 +337,9 @@ parent. A mismatched parent is PIPESTREAM_ENTITY_INVALID (0x05).
 In this profile, CHECKPOINT always covers the entire sealed scope.
 `checkpoint-entity-id` is the inclusive largest declared ID, not a circular
 exclusive bound. A request may arrive before the seal or final payload;
-it remains pending under Section 9.3's connection-local deadline. Once the
+the originator's admission-before-request rule in Section 9.3 does not
+apply to this profile. The request remains pending under that section's
+connection-local deadline. Once the
 scope is ready, a wrong bound is PIPESTREAM_ENTITY_INVALID. ACK additionally
 requires the existing manifest and nested-checkpoint conditions. Each ACK
 is therefore a scope-qualified completion cursor over a fixed set. STATUS

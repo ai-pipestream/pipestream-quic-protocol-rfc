@@ -1,14 +1,14 @@
 # DISPATCH Kit for draft-krickert-pipestream
 
-*Target: DISPATCH session at IETF 127 (San Francisco, November 14–20, 2026).
-Fallback: a side meeting at IETF 127. See PRIOR-ART-SURVEY.md for the
-evidence behind the strategy.*
+*Working outreach material, updated 2026-09-06. Confirm the current routing
+venue, chairs, meeting dates, and deadlines before sending anything.
+No agenda slot, chair contact, or submission is implied by this document.*
 
 ## Logistics (do these in order)
 
-1. **Watch the IETF 127 important dates page** for the I-D submission cutoff
-   (typically ~2 weeks before the meeting; late October 2026). Submit -03
-   before it.
+1. **Check the current IETF meeting and submission dates.** Published -03
+   is separate from local -04; use SUBMISSION-CHECKLIST-04.md to prepare
+   an author-approved revision before any announcement.
 2. **Email the DISPATCH chairs** (addresses on
    <https://datatracker.ietf.org/group/dispatch/about/>) requesting agenda
    time, ideally 4–6 weeks before the meeting. Attach the one-page problem
@@ -29,27 +29,28 @@ evidence behind the strategy.*
 
 ---
 
-**Coordinating hierarchical scatter-gather processing lacks a wire protocol**
+**A shared lifecycle contract for hierarchical scatter-gather processing**
 
 Distributed processing pipelines — document ingestion and enrichment,
 media asset decomposition, ML feature extraction, genomic assembly —
 share one structural pattern: a large input is decomposed into parts,
 the parts are processed in parallel across nodes operated by different
 teams or vendors, and the results are reassembled with a correctness
-requirement that *every* part completed. Today no standardized protocol
-expresses this pattern. Deployments assemble it from streaming RPCs plus
+requirement that *every* part completed. Deployments can assemble this from streaming RPCs plus
 external coordination state (databases, queues, workflow engines), which
-couples multi-organization pipelines through vendor SDKs, externalizes
-completion tracking, and prevents incremental end-to-end streaming of
-large inputs.
+requires agreement on application-specific completion and recovery
+contracts. Such systems can already stream large inputs incrementally;
+the proposal concerns shared coordination semantics, not exclusive access
+to streaming or backpressure.
 
 PipeStream (draft-krickert-pipestream) is a QUIC-native application
 protocol that makes the scatter-gather state machine a protocol
 mechanism: a bidirectional control stream tracks the lifecycle of every
 entity, unidirectional entity streams carry payloads with per-entity flow
 control, hierarchical scopes support recursive decomposition, and
-Merkle-tree scope digests make completion of an entire decomposition
-cryptographically verifiable before reassembly. The design follows the
+scope digests summarize reported terminal statuses. The private-use sealed
+profile fixes declared membership; neither a seal nor a digest proves correct
+computation. The design draws on the
 RFC 9308 application-mapping guidance and the architectural precedent of
 DNS-over-QUIC (RFC 9250) and Media over QUIC Transport: a dedicated ALPN,
 a control stream, and data objects on unidirectional streams. Unlike
@@ -57,9 +58,12 @@ MOQT's publish/subscribe delivery, PipeStream tracks a determinate entity
 set to terminal status — a completion-oriented, not delivery-oriented,
 protocol.
 
-The draft (-03) specifies the full protocol: three negotiable capability
-layers, CBOR/CDDL message schemas, IANA registries, and detailed
-security considerations. We are seeking dispatch guidance: is there
+Published -03 and locally prepared -04 describe negotiable capability
+layers, CBOR/CDDL schemas, proposed IANA registries, and security requirements.
+The current reference suite tests three independent-code Layer 0 subsets,
+Java/Rust sealed-work interoperability, and Rust authenticated recovery.
+Open identity, result-delivery, retention, and profile-composition questions
+remain in Appendix E. We are seeking routing guidance: is there
 interest in a BoF toward chartered work on pipeline coordination
 protocols, and which venue (WIT-area or ART-area) is the right home?
 
@@ -73,21 +77,20 @@ protocols, and which venue (WIT-area or ART-area) is the right home?
 2. **What's missing** — the coordination gap: RPC streams move bytes;
    completion tracking lives in ad-hoc external state. Multi-vendor
    pipelines interoperate through SDKs, not a protocol.
-3. **Why the transport matters** — large entities need incremental
-   streaming end-to-end; broker hops force persist-and-forward; HTTP
-   request/response binds streams to the wrong lifecycle. (One slide, no
-   protocol bashing — frame as "requirements existing tools don't target.")
+3. **Why this mapping** — independent entity streams plus coordinated work
+   state. Compare equivalent streaming RPC designs; explain the proposed
+   interoperability benefit without presuming a performance advantage.
 4. **PipeStream in one slide** — dual plane: Control Stream 0 (STATUS,
    digests, barriers) + unidirectional Entity Streams (one entity each,
    FIN-delimited). Three capability layers: Core / Recursive / Resilience.
 5. **The consistency mechanism** — scope digests (Merkle, RFC 6962-style
-   domain separation) + barriers: reassembly is gated on verifiable
-   completion of a determinate child set.
+   domain separation) + barriers: closure over the declared set is distinct
+   from verification of payload, output, and computation.
 6. **Precedent and fit** — RFC 9308 guidance followed; DoQ/MOQT
    architecture pattern; ALPN `pipestream/1`; CBOR/CDDL, IANA registries,
-   full security considerations. Draft is complete, not a sketch.
-7. **Status and ask** — draft-krickert-pipestream-03; implementation in
-   progress (update when true); seeking: list discussion, co-authors from
+   security requirements and unresolved design decisions.
+7. **Status and ask** — published -03, local -04; documented subset
+   interoperability, not full conformance; seeking list discussion, co-authors from
    other organizations, and dispatch guidance (BoF? venue?).
 8. **Backup slide** — "why not X" table: gRPC / HTTP/3 / WebTransport /
    MOQT / brokers, one row each (from Appendix B).
@@ -103,9 +106,10 @@ deliberately per RFC 9308 — the semantics are disjoint. (Appendix B now
 has this argument in full.)
 
 **"Why not gRPC / why does this need to be a protocol?"**
-Interoperability across organizations. Within one company, an SDK
-suffices; across companies, only a wire protocol does. The pattern is as
-common as media delivery was before MoQ — everyone builds it privately.
+An RPC service can express the same behavior. The research question is
+whether a common lifecycle contract reduces integration work across
+independent implementations. The draft and evaluation must demonstrate
+that value; choosing a dedicated ALPN does not establish it.
 
 **"Isn't this a workflow engine? That's application logic."**
 No — PipeStream deliberately excludes scheduling, retries policy
@@ -126,7 +130,8 @@ Experimental with a registry would serve early deployments."
 
 ## Pre-Meeting Checklist
 
-- [ ] -03 submitted before the cutoff (build with ./build.sh, idnits clean)
+- [ ] Author-approved revision submitted and verified on Datatracker
+      (build with ./build.sh core 04, idnits clean)
 - [ ] Agenda request emailed to DISPATCH chairs (September 2026)
 - [ ] Intro thread posted to dispatch@ietf.org
 - [ ] At least one non-author voice prepared to speak in support (recruit

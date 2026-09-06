@@ -78,3 +78,26 @@ formats, state machines, error handling, and the interaction between
 data and control streams. The document defines the transport-level layer
 field and recursive processing semantics but leaves concrete payload
 meaning to application profile specifications.
+
+## Protocol Model and Trust Boundaries
+
+Following the reviewer-oriented model in {{RFC4101}}, the protocol separates
+four observations: declaration of intended work, admission of validated
+input, authoritative processing outcome, and closure of a covered work set.
+A declaration ACK is not payload admission; admission is not successful
+execution; a scope digest is not proof that the computation was correct.
+
+The originator assigns identity and sends payloads. The receiver is the
+processing authority for their lifecycle. Both rely on authenticated
+transport, but durable work additionally requires authorization of the
+requesting principal. Application code defines what processing means,
+how output is delivered, and how external effects are fenced or made
+idempotent. A transport disconnect leaves unobserved outcomes unknown.
+
+Core supplies the stream and status vocabulary. The sealed-work profile
+fixes the membership that must close; the authenticated-session profile
+binds durable access to a principal; the authenticated-recovery profile
+correlates retained admission and terminal outcomes after reconnect.
+Only negotiated combinations are valid. In particular, authenticated
+recovery does not currently combine with sealed work. These profiles do
+not together imply an unspecified general-purpose workflow engine.

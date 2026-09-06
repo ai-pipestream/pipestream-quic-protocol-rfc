@@ -30,16 +30,16 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 ## Consistency Mechanisms
 
 **Checkpoint**
-:   A synchronization point in the processing pipeline where all in-flight Entities MUST reach a consistent state before processing may continue. A checkpoint is considered "satisfied" when all Assembly Manifest entries created before the checkpoint have been resolved.
+:   A scope-qualified synchronization request whose covered work must resolve before acknowledgment. Section 9.3 defines the unsealed cut; Section 9.8 replaces it with a fixed sealed work set. A checkpoint does not stop unrelated scopes or itself prove correct computation.
 
 **Barrier**
-:   A synchronization point scoped to a specific subtree. Unlike checkpoints which are global, barriers block only entities dependent on a specific parent's descendants. (Protocol Layer 1)
+:   A synchronization point scoped to a specific subtree, blocking entities dependent on a specific parent's descendants. Checkpoints also identify a scope, but use a different request and completion rule. (Protocol Layer 1)
 
 **Control Stream**
 :   The control stream that tracks Entity completion status throughout the processing pipeline. The Control Stream is transmitted on a dedicated QUIC stream parallel to the data streams.
 
 **Assembly Manifest**
-:   A data structure within the Control Stream that tracks the relationship between a composite Entity and its constituent sub-entities produced by dehydration.
+:   An endpoint-local data structure tracking a composite Entity and its constituent sub-entities. It is not a transmitted Control Stream frame; endpoints maintain it from the applicable lifecycle messages (Section 9.2).
 
 **Cursor**
 :   A pointer to the lowest unresolved Entity ID within a scope. Entity IDs behind the cursor are considered resolved and MAY be recycled. The cursor enables efficient ID space management without global coordination.
