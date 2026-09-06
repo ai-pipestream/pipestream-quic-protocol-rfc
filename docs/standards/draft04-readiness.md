@@ -4,6 +4,9 @@ Updated 2026-09-06. The original draft-04 landing starts from `00531de` and addr
 [protocol review](../ai-slop/ietf-protocol-review-2026-09.md).
 The specification remains an individual Internet-Draft, not an approved
 standard. No implementation in this repository demonstrates full conformance.
+The [recovery, execution and Java acceptance audit](recovery-execution-java-acceptance.md)
+records completion evidence for those three implementation deliverables on
+`5df4ec3`, separately from full protocol conformance and future extensions.
 The increment sections retain their original validation counts and limitations;
 dated follow-ups identify the guarantees that supersede them. Current Java storage
 uses database schema 6 and payload policy 3. Current Rust storage

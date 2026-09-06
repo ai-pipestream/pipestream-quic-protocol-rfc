@@ -11,7 +11,10 @@ decomposition, entity streaming, completion barriers, and durable continuation
 references. The draft and implementations are under development. They are not
 an approved IETF standard or a fully conformant production implementation.
 See [draft-04 readiness](docs/standards/draft04-readiness.md) for tested changes
-and the remaining interoperability and security work.
+and the remaining interoperability and security work. The
+[recovery, bounded execution and Java acceptance record](docs/standards/recovery-execution-java-acceptance.md)
+maps those three delivered features to implementation and tests, with explicit
+limits on the claims.
 
 Draft -04 now defines supported/required extension negotiation, implemented
 independently in Rust, Java, and C++. Unknown requirements fail CONNECT;
@@ -36,8 +39,9 @@ The existing Java standalone commands remain Layer 0. The opt-in Java durable
 client now journals request intents and verified responses, restores recursive
 observations across restart, and exposes uncertain inputs without blindly
 resending them. Both Java client modes check the server's DNS/IP certificate SAN
-before sending application frames. Broader crash/resource/conformance evidence
-and retained-outcome lookup for uncertain sealed inputs remain unfinished.
+before sending application frames. Retained-outcome lookup for uncertain sealed
+inputs and a complete production conformance matrix remain future work; the
+acceptance record maps the implemented crash/resource guarantees and their tests.
 See the
 [Java implementation boundary](implementations/java-netty/README.md#sealed-work-library-foundation).
 
@@ -97,13 +101,15 @@ lock. It audits admitted input before reclaiming abandoned files, preserves
 immutable orphan commitments, and allows matching retransmission without
 inventing completion. The Java producer now persists its own observations,
 separately from server state; this does not discover unobserved server outcomes.
-The broader resource and cross-language recovery matrix remains unfinished.
+Independent cross-language authenticated recovery remains future work; Java's
+independent implementation covers the sealed-work profile, not Layer 2 recovery.
 Connection metadata and lineage operations now run in a bounded storage pool.
 An independent control reader enforces checkpoint deadlines during those
 operations; held-storage tests also exercise protocol refusals and progress
 on another connection. This is not a disk-latency or throughput guarantee.
-The full remaining
-goal is tracked in [the implementation plan](docs/standards/recovery-execution-java-plan.md).
+The [implementation plan](docs/standards/recovery-execution-java-plan.md) preserves
+the requirements and incremental history; the acceptance record gives current
+verification evidence for the delivered goal.
 
 ## Authoring Workflow
 

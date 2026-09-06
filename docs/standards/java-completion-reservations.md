@@ -115,5 +115,7 @@ preallocation, protection against arbitrary raw database writers, a disk-latency
 bound, or a power-loss proof. Unknown future children, new payloads and new
 checkpoint records still need separate admission capacity. Full retained-record
 audits remain on the storage path; this is not a constant-time admission or
-large-session throughput claim. Orphan reconciliation, persistent producer
-observations and the broader goal's resource/conformance matrix remain due.
+large-session throughput claim. Orphan reconciliation and persistent producer
+observations have since landed. The [acceptance audit](recovery-execution-java-acceptance.md)
+maps their implementation and the goal's resource/interoperability evidence;
+it does not claim full protocol or production conformance.
