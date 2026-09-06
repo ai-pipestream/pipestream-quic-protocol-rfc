@@ -51,6 +51,34 @@ approval as part of a repository landing.
 
 ## Evidence and progress
 
+### Validated increment: Rust client status-history bounds
+
+Branch `fix/rust-client-status-bounds` starts at PR #35's merge `f908b7a`.
+The public client's entity methods previously accumulated an unbounded status
+history even though each control frame was bounded. A real-QUIC regression
+returned an oversized history as success before the fix. Both `send_entity` and
+`send_chunked_entity` now enforce 128 frames and 4 MiB of aggregate encoded STATUS
+bytes, including the final frame, extensions and five-byte UCF headers. Capacity
+exhaustion closes with `PIPESTREAM_LIMIT_EXCEEDED` (0x06), never a clipped history
+or partial success. The count limit refuses even if a nonterminal peer stops
+sending at exactly 128 frames.
+
+Four focused wire tests cover 19 exchanges: sealed and ordinary clients, whole
+and chunked payloads, exact count/byte boundaries, one-byte overflow, stalled
+nonterminal histories and intact maximum-sized yield tokens followed by claim
+checks. The peer is a fault injector, not a reference service or an admission
+oracle. This bounds retained encoded history, not total Rust heap, native/QUIC
+allocations, callback memory or the lifetime of a connection receiving heartbeats.
+It does not cancel server work. No wire/CDDL or storage format changed.
+
+The complete `./conformance/run_all.sh` passed locally with 304 Rust workspace
+tests, 192 Java tests with zero failures/errors/skips counted from JUnit XML,
+native SQLite/C++ checks, all nine implementation pairings, 32 capability probes,
+recursive/recovery CLI checks and all three external examples. Strict clippy,
+formatting and Rustdoc passed. Draft -04 passed idnits with zero errors, flaws
+or warnings and the existing FIPS reference comment. These are local validation
+results, not hosted CI or proof that every full-goal requirement is complete.
+
 ### Validated increment: Rust recovery exchange ownership and cancellation
 
 Branch `fix/recovery-client-exchanges` starts at PR #34's merge `55100c6`.
@@ -87,11 +115,9 @@ the full goal. Wire/CDDL and storage formats are unchanged. Appendix E is correc
 to acknowledge the existing retained recovery
 profile while preserving the separate sealed-work outcome-lookup limitation.
 
-A follow-up resource audit identified a concrete remaining client bound:
-`RecursiveClient::read_entity_statuses` appends every received status to a vector
-until a terminal state, without a count limit. The frame-size cap does not bound
-that accumulated history. Add a named refusal and adversarial real-QUIC test for
-this path before treating the client side of the resource requirement as verified.
+The subsequent status-history increment above addresses the accumulated-history
+bound found during this recovery audit. It does not establish the complete
+client/server resource and resilience matrix by itself.
 
 ### Validated increment: Java durable producer observations
 

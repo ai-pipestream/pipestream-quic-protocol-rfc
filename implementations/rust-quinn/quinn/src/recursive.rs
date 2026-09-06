@@ -63,6 +63,10 @@ pub const SESSION_METADATA_KEY: &str = "pipestream.session-id";
 pub const ACTION_METADATA_KEY: &str = "pipestream.action";
 pub const MAX_CHUNKS_PER_ENTITY: u64 = 65_536;
 pub const MAX_JOB_OBSERVERS: usize = 1_024;
+/// Maximum returned STATUS frames for one client entity operation, including its terminal frame.
+pub const MAX_CLIENT_ENTITY_STATUS_FRAMES: usize = 128;
+/// Maximum aggregate encoded STATUS bytes retained by one client entity operation, including UCF headers.
+pub const MAX_CLIENT_ENTITY_STATUS_BYTES: usize = 4 << 20;
 
 /// Server settings for the durable Rust recursive profile.
 #[derive(Debug, Clone)]
@@ -2223,6 +2227,11 @@ impl RecursiveClient {
         Ok(())
     }
 
+    /// Send an entity and return its status history through completion, failure,
+    /// dehydration, or deferral.
+    /// The history is bounded by [`MAX_CLIENT_ENTITY_STATUS_FRAMES`] and
+    /// [`MAX_CLIENT_ENTITY_STATUS_BYTES`]. Exhaustion closes the connection with
+    /// `PIPESTREAM_LIMIT_EXCEEDED`, never returning a truncated history.
     pub async fn send_entity(
         &mut self,
         header: &EntityHeader,
@@ -2241,6 +2250,7 @@ impl RecursiveClient {
     }
 
     /// Send one lifecycle entity as independently framed chunks in caller-supplied order.
+    /// Status-history limits and exhaustion behavior are the same as [`Self::send_entity`].
     pub async fn send_chunked_entity(
         &mut self,
         chunks: &[EntityChunk],
@@ -2308,16 +2318,31 @@ impl RecursiveClient {
             entity_id: header.entity_id,
         };
         let mut statuses = Vec::new();
+        let mut encoded_bytes = 0;
         loop {
+            if statuses.len() == MAX_CLIENT_ENTITY_STATUS_FRAMES {
+                let error = limit_error("client entity-status history exceeds frame-count bound");
+                self.connection
+                    .close(error.code.into(), error.to_string().as_bytes());
+                return Err(error.into());
+            }
             let (frame_type, response) = self.read_response().await?;
             if frame_type != FRAME_STATUS {
                 bail!("PIPESTREAM_FRAME_ERROR: expected STATUS after entity");
+            }
+            let frame_bytes = response.len() + 5;
+            if frame_bytes > MAX_CLIENT_ENTITY_STATUS_BYTES - encoded_bytes {
+                let error = limit_error("client entity-status history exceeds byte bound");
+                self.connection
+                    .close(error.code.into(), error.to_string().as_bytes());
+                return Err(error.into());
             }
             let status = decode_status_frame(&response, self.layers)?;
             if status.status.entity_id != key.entity_id || status.status.scope_id != key.scope_id {
                 bail!("PIPESTREAM_ENTITY_INVALID: response status identity differs");
             }
             let state = status.status.state;
+            encoded_bytes += frame_bytes;
             statuses.push(status);
             if matches!(
                 state,

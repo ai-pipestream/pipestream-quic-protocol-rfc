@@ -12,6 +12,20 @@ policies recorded in the incremental-index prerequisite.
 
 ## Changes and regression coverage
 
+### Rust client status-history limits (2026-09-06)
+
+The public recursive client's whole/chunked entity methods now retain at most
+128 STATUS frames and 4 MiB of encoded STATUS data per operation, including
+extensions and UCF headers. Exact boundaries return the unchanged history;
+exhaustion closes with `PIPESTREAM_LIMIT_EXCEEDED`, not partial success. A peer
+that stops after filling the count budget without a terminal status also refuses.
+Four real-QUIC tests cover 19 exchanges across ordinary/sealed and whole/chunked
+paths, byte/count boundaries and exact preservation of a large yield token and
+claim check. The incoming frame and transient decoding allocations are separate
+from the retained-history bound, so this is not a whole-process memory gate.
+Wire/CDDL, storage formats and server execution semantics are unchanged.
+See the [goal evidence](recovery-execution-java-plan.md) for validation status.
+
 ### Rust explicit orphan reconciliation (2026-09-06)
 
 The Rust file backend now reconciles a closed, previously paired root against a
