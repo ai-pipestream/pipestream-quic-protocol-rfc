@@ -7,7 +7,7 @@ pub mod executor;
 mod ingress;
 mod retained;
 pub mod spool;
-pub use retained::{RetainedLimits, RetainedUsage};
+pub use retained::{Reconciliation, RetainedLimits, RetainedUsage};
 mod storage;
 use spool::{PAYLOAD_IO_CHUNK, Payload, SpoolLimits, SpoolStore};
 
@@ -353,6 +353,21 @@ pub struct FileEntityStore {
 }
 
 impl FileEntityStore {
+    /// Reconcile a closed, previously paired root against its session database.
+    /// Audits all managed admitted inputs before any deletion, retains immutable
+    /// orphan commitments, and never changes protocol state. Live handles,
+    /// readers and spool loans refuse. Retry this offline operation after an I/O
+    /// failure: SQLite rollback cannot undo file removal. `spool` supplies the
+    /// receive-file bounds previously used with this root. Only private roots
+    /// with cooperating writers are supported; preserve database/root backup pairs.
+    pub fn reconcile(
+        root: impl Into<PathBuf>,
+        spool: SpoolLimits,
+        sessions: &SqliteSessionStore,
+    ) -> std::result::Result<Reconciliation, StoreError> {
+        retained::RetainedRoot::reconcile(root.into(), spool, sessions)
+    }
+
     pub fn open(root: impl Into<PathBuf>) -> std::io::Result<Self> {
         Self::open_configured(root.into(), SpoolLimits::default(), None)
     }

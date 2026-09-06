@@ -9,6 +9,9 @@ use std::{collections::BTreeMap, fs, sync::Arc, time::Duration};
 #[path = "draft04/sealed_work.rs"]
 mod sealed_work;
 
+#[path = "draft04/orphan_reconciliation.rs"]
+mod orphan_reconciliation;
+
 #[path = "draft04/authenticated_sessions.rs"]
 mod authenticated_sessions;
 

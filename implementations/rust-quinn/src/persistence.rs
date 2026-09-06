@@ -12,6 +12,8 @@ use std::{
 };
 
 mod binding;
+mod maintenance;
+pub use maintenance::PayloadMaintenance;
 mod image;
 pub use binding::{PAYLOAD_BINDING_BYTES, PayloadBinding, StoreIdentity};
 #[cfg(test)]

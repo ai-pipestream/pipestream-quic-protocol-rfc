@@ -4,7 +4,7 @@
 use super::{PrincipalBinding, ProtocolError, limit_error, storage_error};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs::File,
     io::{self, Read, Write},
     path::{Path, PathBuf},
@@ -12,6 +12,15 @@ use std::{
 };
 
 pub const PAYLOAD_IO_CHUNK: usize = 8192;
+mod maintenance;
+pub(super) use maintenance::SpoolMaintenance;
+
+#[derive(Default)]
+struct Registry {
+    stores: BTreeMap<PathBuf, Weak<SpoolStore>>,
+    maintenance: BTreeSet<PathBuf>,
+}
+static STORES: OnceLock<Mutex<Registry>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpoolLimits {
@@ -147,7 +156,6 @@ impl SpoolStore {
         {
             return Err(limit_error("spool limits must be nonzero"));
         }
-        static STORES: OnceLock<Mutex<BTreeMap<PathBuf, Weak<SpoolStore>>>> = OnceLock::new();
         let parent = directory
             .parent()
             .ok_or_else(|| storage_error("spool directory has no parent"))?;
@@ -168,16 +176,37 @@ impl SpoolStore {
             }
             _ => {}
         }
-        let mut stores = STORES
-            .get_or_init(|| Mutex::new(BTreeMap::new()))
+        // A standalone spool handle inside an initialized retained root must
+        // participate in that root's process lock too. In-memory registry
+        // exclusion alone cannot protect offline cleanup in another process.
+        let parent = directory.parent().expect("canonical parent checked above");
+        let retained_owner = match std::fs::symlink_metadata(parent.join(".retained-policy")) {
+            Ok(_) => Some(
+                super::retained::RetainedRoot::open(parent.to_owned(), None)
+                    .map_err(storage_error)?,
+            ),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(storage_error(error)),
+        };
+        let mut registry = STORES
+            .get_or_init(Mutex::default)
             .lock()
             .map_err(storage_error)?;
+        if registry.maintenance.contains(&directory) {
+            return Err(limit_error(
+                "spool directory has an offline maintenance owner",
+            ));
+        }
+        let stores = &mut registry.stores;
         stores.retain(|_, store| store.strong_count() != 0);
         if let Some(store) = stores.get(&directory).and_then(Weak::upgrade) {
             if store.limits != limits {
                 return Err(limit_error(
                     "spool directory already has different active limits",
                 ));
+            }
+            if let Some(root) = retained_owner {
+                store.retain_root(root)?;
             }
             return Ok(store);
         }
@@ -200,7 +229,7 @@ impl SpoolStore {
             limits,
             global,
             principals: Mutex::new(BTreeMap::new()),
-            retained_owner: Mutex::new(None),
+            retained_owner: Mutex::new(retained_owner),
         });
         stores.insert(directory, Arc::downgrade(&store));
         Ok(store)
