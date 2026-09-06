@@ -69,6 +69,11 @@ admission, including its metadata, receipt and staging allowance across restart.
 This protects configured file-length headroom, not allocated filesystem blocks.
 Physical DB/WAL completion-space reservations and explicit orphan reconciliation
 remain unfinished.
+Rust queue and storage-accounting indexes now update only changed rows instead
+of deleting and rebuilding each session's entries. This removes unrelated index
+writes from lease and publication transactions; the session blob and full
+pre-write integrity audit remain. It is a prerequisite, not a physical
+completion-space reservation or a whole-service throughput result.
 Connection metadata and lineage operations now run in a bounded storage pool.
 An independent control reader enforces checkpoint deadlines during those
 operations; held-storage tests also exercise protocol refusals and progress

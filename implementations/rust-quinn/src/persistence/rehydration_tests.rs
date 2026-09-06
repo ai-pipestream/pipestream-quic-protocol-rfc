@@ -219,7 +219,7 @@ fn closure_failure_rolls_back_reservation_conversion_and_retry_can_finish() {
     let usage = store.job_queue_usage().unwrap();
     let bytes = store.storage_usage().unwrap();
     let connection = Connection::open(store.path()).unwrap();
-    connection.execute_batch("CREATE TRIGGER fail_rehydration BEFORE INSERT ON pipestream_jobs
+    connection.execute_batch("CREATE TRIGGER fail_rehydration BEFORE UPDATE ON pipestream_jobs
         WHEN NEW.rehydration = 1 AND NEW.reserved = 0 BEGIN SELECT RAISE(ABORT, 'injected closure failure'); END;").unwrap();
     assert!(store.transact("parent", |s| close(s, 1, key)).is_err());
     assert_eq!(store.load("parent").unwrap().unwrap(), before);

@@ -203,10 +203,27 @@ pub(super) fn usage(
     connection: &Connection,
     principal: Option<Option<&PrincipalBinding>>,
 ) -> Result<StorageUsage, StoreError> {
+    usage_excluding(connection, principal, None)
+}
+
+fn usage_excluding(
+    connection: &Connection,
+    principal: Option<Option<&PrincipalBinding>>,
+    session: Option<&str>,
+) -> Result<StorageUsage, StoreError> {
     let key = principal.map(principal_key).transpose()?;
     let (bytes, reserved, sessions) = connection.query_row(
-        "SELECT coalesce(sum(state_bytes), 0), coalesce(sum(completion_bytes), 0), count(*) FROM pipestream_storage_sessions WHERE ?1 IS NULL OR principal = ?1",
-        [key], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, u32>(2)?)),
+        "SELECT coalesce(sum(state_bytes), 0), coalesce(sum(completion_bytes), 0), count(*)
+         FROM pipestream_storage_sessions WHERE (?1 IS NULL OR principal = ?1)
+         AND (?2 IS NULL OR session_id != ?2)",
+        params![key, session],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, u32>(2)?,
+            ))
+        },
     )?;
     Ok(StorageUsage {
         state_bytes: nonnegative(bytes)?,
@@ -226,13 +243,9 @@ pub(super) fn replace_index(
     let charge = state_bytes
         .checked_add(reserved)
         .ok_or_else(|| limit("completion charge overflow"))?;
-    connection.execute(
-        "DELETE FROM pipestream_storage_sessions WHERE session_id = ?1",
-        [&session.session_id],
-    )?;
     let principal = session.owner.as_ref().map(|owner| &owner.binding);
-    let global = usage(connection, None)?;
-    let owner = usage(connection, Some(principal))?;
+    let global = usage_excluding(connection, None, Some(&session.session_id))?;
+    let owner = usage_excluding(connection, Some(principal), Some(&session.session_id))?;
     if charge > limits.record_bytes
         || global
             .charged_bytes()
@@ -255,16 +268,48 @@ pub(super) fn replace_index(
         reserved,
         state_checksum,
     );
-    connection.execute(
-        "INSERT INTO pipestream_storage_sessions VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![
-            session.session_id,
-            principal,
-            state_bytes as i64,
-            reserved as i64,
-            checksum.as_slice()
-        ],
-    )?;
+    let previous = connection.query_row(
+        "SELECT principal, state_bytes, completion_bytes, checksum FROM pipestream_storage_sessions WHERE session_id = ?1",
+        [&session.session_id],
+        |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, Vec<u8>>(3)?)),
+    ).optional()?;
+    if previous.as_ref().is_some_and(|old| {
+        old.0 == principal
+            && old.1 == state_bytes as i64
+            && old.2 == reserved as i64
+            && old.3.as_slice() == checksum
+    }) {
+        return Ok(());
+    }
+    if let Some(previous) = previous {
+        connection.execute(
+            "UPDATE pipestream_storage_sessions SET state_bytes = ?2,
+            completion_bytes = ?3, checksum = ?4 WHERE session_id = ?1",
+            params![
+                session.session_id,
+                state_bytes as i64,
+                reserved as i64,
+                checksum.as_slice()
+            ],
+        )?;
+        if previous.0 != principal {
+            connection.execute(
+                "UPDATE pipestream_storage_sessions SET principal = ?2 WHERE session_id = ?1",
+                params![session.session_id, principal],
+            )?;
+        }
+    } else {
+        connection.execute(
+            "INSERT INTO pipestream_storage_sessions VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                session.session_id,
+                principal,
+                state_bytes as i64,
+                reserved as i64,
+                checksum.as_slice()
+            ],
+        )?;
+    }
     Ok(())
 }
 

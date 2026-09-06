@@ -196,7 +196,7 @@ fn accounting_failure_rolls_back_session_and_job_index_together() {
     let before = store.create(&session).unwrap();
     let usage = store.storage_usage().unwrap();
     let conn = Connection::open(path).unwrap();
-    conn.execute_batch("CREATE TRIGGER reject_accounting BEFORE INSERT ON pipestream_storage_sessions BEGIN SELECT RAISE(ABORT, 'injected accounting failure'); END;").unwrap();
+    conn.execute_batch("CREATE TRIGGER reject_accounting BEFORE UPDATE ON pipestream_storage_sessions BEGIN SELECT RAISE(ABORT, 'injected accounting failure'); END;").unwrap();
     session.enqueue_job(key, input, 20).unwrap();
     assert!(store.save(before.revision, &session).is_err());
     assert_eq!(store.load("queued").unwrap().unwrap(), before);
