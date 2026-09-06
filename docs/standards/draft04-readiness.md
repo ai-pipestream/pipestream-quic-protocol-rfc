@@ -571,7 +571,7 @@ rollback, corrupted reservations, policy compatibility and abrupt process exit
 before and after conversion. A real sealed-work QUIC test keeps ordinary
 processing full with a held callback while a parent rehydrates, then verifies
 the complete root checkpoint and GOAWAY. Physical DB/WAL publication space,
-final-lineage headroom, orphan reclamation, persistent producer observations,
+orphan reclamation, persistent producer observations,
 and the remaining crash/resource/conformance matrix are still open.
 
 The final `./conformance/run_all.sh` passed with 219 Rust workspace tests
@@ -582,6 +582,53 @@ and every external example. Workspace formatting/clippy and strict Rustdoc
 passed. Draft -04 passed idnits with zero errors/flaws/warnings and one FIPS
 reference comment. These are local results, not hosted CI or proof of full
 goal completion.
+
+## Rust final-lineage file reservations
+
+`FileEntityStore` now durably protects 1,120 bytes and one retained object per
+session before payload installation can succeed. The charge covers a 512-byte
+session/authority/principal marker plus final metadata, digest, receipt and
+publication staging. A marker reserves capacity only: it contains no guessed
+digest and is not protocol admission or completion evidence. Final publication
+uses this allowance instead of ordinary staging credit, but still needs one
+bounded active storage operation. Its complete charge survives publication.
+
+Partial markers stay globally charged until matching replay binds a durable
+owner. A refused owner-quota promotion restores the original unattributed
+charge. Partial final metadata and receipts use the same prepaid allowance.
+Full markers are checked on payload load and lineage publication; missing or
+changed markers cannot free capacity. The `PSRET002` policy refuses prior
+policies and unreserved retained payloads without migration. Session payload
+format 7, SQLite storage/queue policies and normative wire/CDDL are unchanged.
+
+Tests cover exact retained/staging limits, concurrent owner admission, immutable
+replay, metadata/receipt prefixes, failed marker creation, abrupt process exit,
+invalid descriptors and policy refusal. Authenticated QUIC checks saturate the
+retained budget while two callbacks are held, then compare published lineage
+bytes with actual session digests and complete checkpoint/GOAWAY. A separate
+missing declared payload remains unadmitted and times out without a successful
+checkpoint or final lineage.
+
+The first full-suite run exposed a Java reset-test race: Netty's stream `close()`
+sends FIN, so shutdown could race valid payload installation/admission. The
+test now explicitly sends RESET_STREAM through the error-code shutdown overload,
+waits for the receiver's refusal, and checks zero admission before restart.
+A separate FIN test verifies legal completion; no server refusal is weakened.
+
+This closes configured final-lineage file-quota headroom, not physical allocation
+or DB/WAL completion-space reservation. Failed admissions can leave conservative
+reservations requiring explicit orphan reconciliation. Persistent producer
+observations, broader tenant/resource stress and the full independent Java
+conformance matrix remain required.
+
+The final `./conformance/run_all.sh` passed with 231 Rust workspace tests
+(111 core, 62 Quinn unit, 54 wire, one allocation gate, three runner tests),
+105 Java tests without errors/failures/skips, native SQLite and C++ tests,
+all nine Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks
+and all external examples. The corrected Java FIN/reset cases also passed five
+consecutive focused runs. Workspace formatting/clippy and strict Rustdoc passed.
+Draft -04 passed idnits with zero errors/flaws/warnings and one FIPS reference
+comment. These are local results, not independent review or full-goal completion.
 
 ### Independent Java sealed-work foundation
 

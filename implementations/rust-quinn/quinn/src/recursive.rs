@@ -372,6 +372,7 @@ impl FileEntityStore {
         requested: Option<RetainedLimits>,
     ) -> std::io::Result<Self> {
         let retained = retained::RetainedRoot::open(root, requested)?;
+        retained.require_lineage_reservations()?;
         let spool =
             SpoolStore::new(retained.path.join(".spool"), limits).map_err(std::io::Error::other)?;
         spool
@@ -397,14 +398,24 @@ impl FileEntityStore {
     ) -> std::io::Result<RetainedUsage> {
         self.retained.usage(Some(principal))
     }
+
+    /// Durably protect final-lineage file capacity before admitting work. This
+    /// reserves quota, not a digest value or allocated filesystem blocks.
+    pub fn reserve_lineage(
+        &self,
+        principal: Option<&PrincipalBinding>,
+        session_id: &str,
+    ) -> std::io::Result<()> {
+        self.retained.reserve_lineage(principal, session_id)
+    }
 }
 
 impl EntityStore for FileEntityStore {
     fn put(&self, session_id: &str, key: EntityKey, payload: &[u8]) -> std::io::Result<()> {
-        self.retained.install(
+        self.retained.install_payload(
             None,
             session_id,
-            Some(key),
+            key,
             payload.len() as u64,
             Sha256::digest(payload).into(),
             std::io::Cursor::new(payload),
@@ -418,10 +429,10 @@ impl EntityStore for FileEntityStore {
         key: EntityKey,
         payload: &Payload,
     ) -> std::io::Result<()> {
-        self.retained.install(
+        self.retained.install_payload(
             principal,
             session_id,
-            Some(key),
+            key,
             payload.len(),
             payload.digest(),
             payload.reader(),
@@ -440,6 +451,7 @@ impl EntityStore for FileEntityStore {
         length: u64,
         digest: [u8; 32],
     ) -> std::io::Result<Payload> {
+        self.retained.verify_lineage(principal, session_id)?;
         self.retained
             .load(principal, session_id, key, length, digest)
     }
@@ -450,6 +462,7 @@ impl EntityStore for FileEntityStore {
         session_id: &str,
         digest: [u8; 32],
     ) -> std::io::Result<()> {
+        self.retained.verify_lineage(principal, session_id)?;
         self.retained.install(
             principal,
             session_id,
@@ -3438,6 +3451,10 @@ mod tests {
                 10_000,
                 1_000,
             )
+            .unwrap();
+        // This fixture creates continuation state without the payload-ingest path.
+        entities
+            .reserve_lineage(None, "interrupted-resume-1")
             .unwrap();
         store.create(&session).unwrap();
 

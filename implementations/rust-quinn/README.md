@@ -321,9 +321,10 @@ its parent or erase its unresolved obligations.
 
 These are logical serialized-state reservations, not reserved DB/WAL pages,
 filesystem blocks, payload storage or total process memory. Physical
-publication headroom, final-lineage headroom, and orphan reconciliation remain
-unfinished. Physical exhaustion may still refuse publication, leaving work
-unfinished and charged rather than inventing successful completion.
+DB/WAL publication headroom and orphan reconciliation remain unfinished.
+Final-lineage file quota is protected separately below. Physical exhaustion may
+still refuse publication, leaving work unfinished and charged rather than
+inventing successful completion.
 
 ### Retained payload and lineage reservations
 
@@ -335,13 +336,25 @@ authority/principal, and 1,024 retained principal buckets. Anonymous work shares
 one bucket. Staging is separately capped at 128 MiB and 32 objects; at most 32
 object operations may run concurrently under the default policy.
 
-Every object reserves its entire length plus 512 bytes of checksummed identity
-metadata and a 32-byte publication receipt before any file is created. The
-reservation includes final lineage files. Pending copies additionally reserve
-their full payload length and one staging object until staging cleanup finishes.
+Every payload reserves its entire length plus 512 bytes of checksummed identity
+metadata and a 32-byte publication receipt before its files are created.
+Pending payload copies additionally reserve their full payload length and one
+staging object until staging cleanup finishes.
 These conservative sums bound file lengths, not filesystem allocation or RSS;
 hardlinked staging/publication names can refer to the same bytes. Temporary
 receive spools and SQLite files retain their independent budgets.
+
+Before payload installation can succeed, the session also durably reserves
+1,120 bytes and one retained object for final lineage: a 512-byte ownership
+marker, 512-byte final metadata, 32-byte digest, 32-byte receipt and 32-byte
+publication stage. `FileEntityStore::reserve_lineage` exposes this step for
+callers constructing retained work without the payload-ingest path. The marker
+commits to session and authority/principal, not a fabricated completion digest.
+Final publication uses this prepaid allowance rather than ordinary staging
+byte/object credit; it still needs one bounded active storage operation.
+The full allowance remains charged after publication. Repeated payloads and
+lineage replay do not reserve it again. Admission of additional work cannot
+spend it, but it does not preallocate filesystem blocks or prevent `ENOSPC`.
 
 `retained_usage` and `principal_retained_usage` report retained and staging
 reservations, including incomplete writes. Matching replay does not charge an
@@ -351,26 +364,38 @@ Previously declared work remains outstanding; no rejected payload becomes an
 admitted job or a successful scope. Authority/principal labels come from the
 authenticated service or durable job, never untrusted entity metadata.
 
-The 96-byte `.retained-policy` uses `PSRET001`, seven big-endian limits and a
+The 96-byte `.retained-policy` uses `PSRET002`, seven big-endian limits and a
 SHA-256 checksum. Each `.meta` uses `PSOBJ001` and commits to session, owner,
 entity/scope or lineage identity, length and digest. The `.done` file contains
 the metadata checksum. Raw entity and lineage bodies keep their original paths
 and bytes. Metadata fsync precedes copying through 8 KiB buffers; verified data
 is fsynced before no-replace hardlink publication, and the receipt and directory
 are synced before installation succeeds. Session format 7 and the wire/CDDL
-are unchanged. Existing nonempty payload roots without policy are refused,
-not converted. Preserve them with their matching binary.
+are unchanged. The `lineage.reserve` marker uses the separate `PSLIN001`
+encoding and is synced before payload installation. Old `PSRET001` policies,
+nonempty roots without a policy, and payloads missing a matching reservation
+are refused, not converted. Preserve them with their matching binary.
 
 Reopen performs a bounded inventory. An interrupted copy resumes only from a
 matching stored prefix; an incomplete receipt is not loadable until verified
-publication finishes. Metadata prefixes shorter than 512 bytes, with no payload
-files yet, reserve 512 global bytes and one global object until matching replay
+publication finishes. Payload metadata prefixes shorter than 512 bytes, with no
+payload files yet, reserve 512 global bytes and one global object until matching replay
 establishes their owner and full charge. `incomplete_metadata` reports this
 unattributed count. Empty canonical directories left before metadata creation
 stay present and consume `directories` credit, bounded by twice the object cap.
 Directory counts are global only. The root, spool directory, policy and empty
 lock file are separate fixed overhead. Neither reopen nor refusal deletes
 admitted objects or silently discards surviving artifacts.
+
+Partial lineage markers retain their entire 1,120-byte global charge and object
+slot until matching replay establishes a durable owner. `lineage_reservations`
+includes these allowances; `incomplete_lineage_reservations` identifies the
+unattributed subset. Failed owner-quota checks preserve that credit. Partial final
+lineage metadata and publication receipts use the original allowance, including
+when every byte/object slot is occupied. A missing or corrupt previously durable
+marker fails loading or publication; it cannot become fresh admission capacity.
+Reservations left by failed payload installation stay charged pending explicit
+orphan reconciliation. Reservation alone does not admit a protocol job.
 
 The root has an exclusive Unix advisory lock using the existing pinned
 [rustix file-lock API](https://docs.rs/rustix/latest/rustix/fs/fn.flock.html).
@@ -383,11 +408,17 @@ repaired. The only permitted two-name alias is the matching payload/stage pair.
 Process-exit and prefix-image tests are not proof against every torn-sector or
 power-loss failure. Unsupported platforms have no unbounded fallback.
 
-Eighteen focused tests cover quotas, lineage accounting, replay, owner checks, interrupted copies,
-metadata/receipt prefixes, empty directories, alias refusal, blocked readers
+Retained-store tests cover quotas, lineage accounting, replay, owner checks,
+interrupted copies, metadata/receipt prefixes, empty directories, alias refusal, blocked readers
 and cross-process lock retention. A real-QUIC test exhausts one principal's
 payload allowance, verifies unchanged declared membership, and lets a different
-principal complete independent work. Future completion-space reservations,
+principal complete independent work. Further tests exercise partial reservation,
+metadata and receipt writes, abrupt process exit after payload installation,
+exact-quota publication and concurrent owner limits. Authenticated QUIC tests
+hold admitted callbacks while two principals fill the complete retained budget,
+then verify real lineage bytes, checkpoint ACKs and GOAWAY. A missing declared
+payload instead times out without a final lineage or successful checkpoint.
+Physical DB/WAL completion-space reservations,
 explicit orphan reconciliation and broader tenant stress remain unfinished.
 
 ### SQLite file-length caps

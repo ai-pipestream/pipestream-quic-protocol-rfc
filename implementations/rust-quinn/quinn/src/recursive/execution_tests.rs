@@ -193,9 +193,13 @@ fn interrupted_durable_resume_attempt_is_reacquired_after_reopen() {
     session
         .enqueue_job(key, JobInput::Resume { claim_id: 99 }, now)
         .unwrap();
+    let entities = Arc::new(FileEntityStore::open(dir.path().join("entities")).unwrap());
+    // This fixture constructs retained continuation work without payload ingest.
+    entities
+        .reserve_lineage(None, "interrupted-resume")
+        .unwrap();
     store.create(&session).unwrap();
     let processor = Arc::new(Interrupted(AtomicU64::new(0)));
-    let entities = Arc::new(FileEntityStore::open(dir.path().join("entities")).unwrap());
     let service = RecursiveService::new(store.clone(), entities.clone(), processor.clone(), 7, 100)
         .unwrap()
         .with_execution_lease(Duration::from_millis(50))

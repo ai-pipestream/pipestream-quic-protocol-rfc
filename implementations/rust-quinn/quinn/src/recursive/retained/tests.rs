@@ -35,7 +35,7 @@ fn install(
         Cursor::new(body),
     )
 }
-fn assert_limit(error: io::Error) {
+pub(super) fn assert_limit(error: io::Error) {
     assert_eq!(
         error
             .get_ref()
@@ -635,10 +635,11 @@ fn lineage_uses_the_same_retained_owner_and_byte_accounting() {
     let lineage = [7; 32];
     let digest = Sha256::digest(lineage).into();
     install(&root, Some(&alice), "work", 1, b"data").unwrap();
+    root.reserve_lineage(Some(&alice), "work").unwrap();
     root.install(Some(&alice), "work", None, 32, digest, Cursor::new(lineage))
         .unwrap();
     let before = root.usage(None).unwrap();
-    assert_eq!(before.bytes, 548 + 576);
+    assert_eq!(before.bytes, 548 + lineage::CHARGE);
     assert_eq!(before.objects, 2);
     assert_eq!(root.usage(Some(Some(&alice))).unwrap().bytes, before.bytes);
     root.install(Some(&alice), "work", None, 32, digest, Cursor::new(lineage))

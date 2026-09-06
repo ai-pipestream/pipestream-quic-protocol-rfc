@@ -119,7 +119,7 @@ callbacks consume file-backed readers in bounded asynchronous workers.
 
 The durable Rust prototype now has optional mutual-TLS principal/session
 binding, retained authenticated recovery and retained-storage quotas, but lacks
-completion-space reservations and explicit orphan reconciliation,
+physical DB/WAL completion-space reservations and explicit orphan reconciliation,
 automatic retry scheduling, bidirectional work-set origination, scoped
 cursor recycling, and full resilience semantics. Its
 Layer 2 advertisement does not identify the narrower implemented subset.
@@ -286,10 +286,11 @@ Store writes audit the bounded queue against retained session state before using
 capacity. Tests exercise byte/slot exhaustion, interrupted conversion, corruption
 and a sealed QUIC parent completing while ordinary processing remains full.
 These reservations do not fund new child membership or payload admission,
-checkpoint requests, a final lineage file or physical DB/WAL growth.
+checkpoint requests or physical DB/WAL growth. Final-lineage file quota is
+reserved separately below.
 
 The Rust retained-payload store separately reserves global and authority/principal
-bytes and object counts, including lineage, before disk creation. An immutable
+bytes and object counts before disk creation. An immutable
 checksummed policy survives reopen. Interrupted copies retain staging credit;
 incomplete metadata and empty canonical directories remain globally charged.
 Matching prefix replay can finish publication without overwriting admitted
@@ -299,7 +300,20 @@ exclusive writer lock retained by readers and outstanding I/O. A real-QUIC test
 checks named exhaustion, unchanged declared membership and independent principal
 progress. These are bounded file-length reservations for a private single-writer
 root, not filesystem-allocation, full power-loss or concurrent-tenant performance
-proof. No orphan is silently deleted and completion reservations remain due.
+proof. No orphan is silently deleted.
+
+Rust payload installation now protects a separate 1,120-byte final-lineage
+allowance and object slot per session before work admission. A checksummed
+ownership marker covers the future digest, final metadata, receipt and stage
+without inventing an output value. Partial markers stay globally charged;
+matching replay establishes their owner without double charging. Final
+publication uses prepaid staging credit even at the full ordinary quota,
+and the complete allowance remains charged after publication. Tests exercise
+partial metadata/receipts, process exit, owner limits, exact-quota publication,
+and authenticated QUIC callbacks held while independent principals fill storage.
+Missing declared payloads still prevent a successful checkpoint. The version-2
+retained policy refuses old stores without conversion. Physical DB/WAL growth,
+filesystem allocation and orphan reconciliation remain separate open work.
 
 Spool tests cover quota exhaustion, file-backed chunk assembly, corruption
 before assembly, cancellation-safe disk credit, and abandoned-file accounting.
