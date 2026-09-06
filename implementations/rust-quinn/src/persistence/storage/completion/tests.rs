@@ -156,7 +156,14 @@ fn every_processing_outcome_fits_its_admission_charge_at_capacity() {
                     .unwrap();
             }
             let after = store.storage_usage().unwrap();
-            assert_eq!(after.completion_reserved_bytes, 0);
+            if outcome == 1 {
+                assert!(
+                    after.completion_reserved_bytes > 0,
+                    "waiting parents retain future credit"
+                );
+            } else {
+                assert_eq!(after.completion_reserved_bytes, 0);
+            }
             assert!(after.state_bytes > before.state_bytes);
             assert!(after.charged_bytes() <= before.charged_bytes());
             assert_eq!(store.unfinished_job_count().unwrap(), 0);

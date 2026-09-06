@@ -1,11 +1,12 @@
 //! Logical growth reserved for the result of each already-admitted job.
-//! This does not reserve future jobs, scopes, receipts, payloads, or SQLite pages.
+//! Processing also protects its possible rehydration job and scope-close digest.
+//! New descendants, receipts, payloads and SQLite pages have separate admission.
 
 use super::*;
 use crate::{
     ScopeDigest, StoppingPointValidation,
     execution::ExecutionRecord,
-    jobs::{JobFailure, JobInput, JobOutput, JobState, ProcessOutcome},
+    jobs::{JobFailure, JobInput, JobOutput, JobRecord, JobState, ProcessOutcome},
     session::{ClaimRecord, EntityKey},
 };
 
@@ -34,14 +35,7 @@ fn maximum_outcome_bytes() -> Result<usize, StoreError> {
             reason: 5,
             claim_id: u64::MAX,
         })),
-        JobState::Finished(JobOutput::Rehydrated(ScopeDigest {
-            scope_id: u32::MAX,
-            entities_processed: u64::MAX,
-            entities_succeeded: u64::MAX,
-            entities_failed: u64::MAX,
-            entities_deferred: u64::MAX,
-            merkle_root: [u8::MAX; 32],
-        })),
+        JobState::Finished(JobOutput::Rehydrated(maximum_scope_digest())),
         JobState::Finished(JobOutput::Resumed),
     ];
     outcomes
@@ -51,6 +45,17 @@ fn maximum_outcome_bytes() -> Result<usize, StoreError> {
         .into_iter()
         .max()
         .ok_or_else(|| StoreError::Corrupt("no outcome bound".into()))
+}
+
+fn maximum_scope_digest() -> ScopeDigest {
+    ScopeDigest {
+        scope_id: u32::MAX,
+        entities_processed: u64::MAX,
+        entities_succeeded: u64::MAX,
+        entities_failed: u64::MAX,
+        entities_deferred: u64::MAX,
+        merkle_root: [u8::MAX; 32],
+    }
 }
 
 // Serialize the real fixed fields, then account for the token's raw u8 elements
@@ -90,7 +95,9 @@ pub(in crate::persistence) fn reserved_bytes(
             return Err(limit("retained continuation exceeds publication policy"));
         }
     }
-    if !session.jobs.values().any(|job| job.state.is_unfinished()) {
+    if !session.jobs.values().any(|job| job.state.is_unfinished())
+        && session.future_rehydrations().next().is_none()
+    {
         return Ok(0);
     }
     let outcome = maximum_outcome_bytes()?;
@@ -98,6 +105,7 @@ pub(in crate::persistence) fn reserved_bytes(
     let mut bytes = 0usize;
     let mut new_attempts = 0usize;
     let mut new_claims = 0usize;
+    let mut new_jobs = 0usize;
     for (key, job) in &session.jobs {
         if !job.state.is_unfinished() {
             continue;
@@ -122,10 +130,40 @@ pub(in crate::persistence) fn reserved_bytes(
             .checked_add(growth)
             .ok_or_else(|| limit("completion reservation overflow"))?;
     }
+    let future = JobRecord {
+        input: JobInput::Rehydrate {
+            digest: maximum_scope_digest(),
+        },
+        state: JobState::Queued,
+        enqueued_at_micros: u64::MAX,
+    };
+    for (key, _) in session.future_rehydrations() {
+        let entity = session
+            .entities
+            .get(&key.entity)
+            .ok_or_else(|| StoreError::Corrupt("reserved parent is missing".into()))?;
+        let closed_digest = session
+            .manifests
+            .get(&key.entity)
+            .and_then(|manifest| session.scopes.get(&manifest.child_scope_id))
+            .and_then(|scope| scope.digest);
+        let growth = size(&(key, &future))? + outcome - size(&future.state)?
+            + size(&(key, &attempt))?
+            + size(&Some([u8::MAX; 32]))?
+            - size(&entity.output_digest)?
+            + size(&Some([u8::MAX; 32]))?
+            - size(&closed_digest)?;
+        bytes = bytes
+            .checked_add(growth)
+            .ok_or_else(|| limit("rehydration reservation overflow"))?;
+        new_jobs += 1;
+        new_attempts += 1;
+    }
     // A map's length is encoded once, separately from its key/value entries.
     // Reserve the exact prefix growth for all outstanding insertions together.
     bytes += size(&(session.executions.len() + new_attempts))? - size(&session.executions.len())?;
     bytes += size(&(session.claims.len() + new_claims))? - size(&session.claims.len())?;
+    bytes += size(&(session.jobs.len() + new_jobs))? - size(&session.jobs.len())?;
     Ok(bytes)
 }
 

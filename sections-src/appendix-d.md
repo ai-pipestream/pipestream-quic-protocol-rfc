@@ -265,7 +265,7 @@ admitting unknown future descendants. Older Java schemas are refused without
 conversion. Rust's admitted-job publication reservations are described below;
 physical publication headroom and the full resource matrix remain due.
 
-Rust storage policy version 2 reserves logical outcome, entity-digest and executor
+Rust storage policy version 3 reserves logical outcome, entity-digest and executor
 record growth for admitted processing, rehydration and resume jobs. Layer 2
 processing additionally reserves its configured continuation-token budget and
 bounded claim metadata. The default token budget is 64 KiB and is exposed to the
@@ -276,8 +276,17 @@ claim or successful entity transition. Checksummed actual/reserved charges commi
 with session and job state and survive reopen. Old storage policies are refused
 without conversion; session payload format 7 is unchanged. Tests pin serialized
 growth, exact-quota publication, process exit, concurrent principal admission and
-authenticated QUIC yield/recovery. These reservations do not fund a future child
-scope, new rehydration job, final lineage file or physical DB/WAL growth.
+authenticated QUIC yield/recovery. Processing also reserves a possible rehydration
+descriptor, outcome, attempt, parent output and scope-close digest. Queue policy
+version 2 separates future/active rehydration from ordinary processing/resume slots:
+65,536 global and 16,384 per authority/principal, versus 128 and 32 ordinary jobs.
+Waiting parents retain credit without blocking their children; closure converts
+the reservation atomically. Job discovery interleaves principals in bounded pages.
+Store writes audit the bounded queue against retained session state before using
+capacity. Tests exercise byte/slot exhaustion, interrupted conversion, corruption
+and a sealed QUIC parent completing while ordinary processing remains full.
+These reservations do not fund new child membership or payload admission,
+checkpoint requests, a final lineage file or physical DB/WAL growth.
 
 The Rust retained-payload store separately reserves global and authority/principal
 bytes and object counts, including lineage, before disk creation. An immutable

@@ -99,6 +99,29 @@ pub struct JobRecord {
 }
 
 impl Session {
+    /// Admitted processing whose possible rehydration has not become an actual job.
+    /// Waiting parents retain this credit independently of ordinary queue slots.
+    pub(crate) fn future_rehydrations(&self) -> impl Iterator<Item = (ExecutionKey, &JobRecord)> {
+        self.jobs.iter().filter_map(|(key, job)| {
+            let rehydrate = ExecutionKey {
+                stage: ExecutionStage::Rehydrate,
+                ..*key
+            };
+            (matches!(job.input, JobInput::Process { .. })
+                && !self.jobs.contains_key(&rehydrate)
+                && (job.state.is_unfinished()
+                    || (job.state
+                        == JobState::Finished(JobOutput::Processed(ProcessOutcome::Dehydrate))
+                        && self.entities.get(&key.entity).is_some_and(|entity| {
+                            matches!(
+                                entity.state,
+                                EntityState::Dehydrating | EntityState::Rehydrating
+                            )
+                        }))))
+            .then_some((rehydrate, job))
+        })
+    }
+
     /// Invoke in the same transaction as admission, scope closure, or claim redemption.
     pub fn enqueue_job(
         &mut self,

@@ -12,7 +12,9 @@ use std::{
 };
 
 mod queue;
-pub use queue::{JobQueueLimits, ReadyJob};
+#[cfg(test)]
+mod rehydration_tests;
+pub use queue::{JobQueueLimits, JobQueueUsage, ReadyJob};
 mod storage;
 pub use storage::{StorageLimits, StorageUsage};
 mod physical;
@@ -323,6 +325,7 @@ impl SessionStore for SqliteSessionStore {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         storage::verify_index(&transaction)?;
         let (state, checksum) = encode_state(session, storage::read_limits(&transaction)?)?;
+        queue::verify_index(&transaction)?;
         let inserted = transaction.execute(
             "INSERT OR IGNORE INTO pipestream_sessions
              (session_id, format_version, revision, state, checksum, updated_at_micros)
@@ -444,6 +447,7 @@ fn persist_update(
     session: &Session,
 ) -> Result<(), StoreError> {
     storage::verify_index(connection)?;
+    queue::verify_index(connection)?;
     if let Some(previous) = load_from(connection, &session.session_id)? {
         session
             .validate_retained_jobs(&previous.session)

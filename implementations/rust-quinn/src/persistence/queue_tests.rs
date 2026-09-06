@@ -17,6 +17,7 @@ fn global_and_principal_queue_limits_are_atomic_and_survive_reopen() {
     let limits = JobQueueLimits {
         total: 3,
         per_principal: 2,
+        ..JobQueueLimits::default()
     };
     let store = SqliteSessionStore::open_with_job_limits(&path, limits).unwrap();
     let alice = PrincipalBinding::new("issuer", "alice").unwrap();
@@ -55,6 +56,7 @@ fn admission_rolls_back_when_queue_is_full_for_create_save_and_transact() {
         JobQueueLimits {
             total: 1,
             per_principal: 1,
+            ..JobQueueLimits::default()
         },
     )
     .unwrap();
@@ -130,6 +132,7 @@ fn concurrent_handles_cannot_overbook_the_persistent_queue() {
         JobQueueLimits {
             total: 3,
             per_principal: 2,
+            ..JobQueueLimits::default()
         },
     )
     .unwrap();
@@ -257,10 +260,10 @@ fn abrupt_process_exit_preserves_the_committed_job_and_fence() {
 fn integrity_audit_detects_missing_extra_and_changed_queue_rows() {
     for mutation in [
         "DELETE FROM pipestream_jobs",
-        "UPDATE pipestream_jobs SET ready_at_micros = 101",
+        "UPDATE pipestream_jobs SET ready_at_micros = 101 WHERE reserved = 0",
         "UPDATE pipestream_jobs SET ready_at_micros = NULL",
         "UPDATE pipestream_jobs SET principal = x'00ff'",
-        "INSERT INTO pipestream_jobs SELECT session_id, x'ff', principal, ready_at_micros, enqueued_at_micros FROM pipestream_jobs",
+        "INSERT INTO pipestream_jobs SELECT session_id, CAST(execution_key || x'ff' AS BLOB), principal, ready_at_micros, enqueued_at_micros, rehydration, reserved FROM pipestream_jobs",
     ] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("queue.sqlite3");
