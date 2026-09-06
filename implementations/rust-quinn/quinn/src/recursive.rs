@@ -1950,6 +1950,42 @@ pub struct RecursiveClient {
     layers: LayerSupport,
     sealed: bool,
     authenticated_recovery: bool,
+    recovery_receipt: Option<RecoveryReceipt>,
+}
+
+// Reading or writing a control frame is not cancellation-safe: a dropped future
+// may have consumed only part of its framing. Keep that connection unusable until
+// the caller reconnects; this does not cancel or resolve any admitted server job.
+struct RecoveryExchange {
+    connection: quinn::Connection,
+    completed: bool,
+}
+
+impl RecoveryExchange {
+    fn new(connection: &quinn::Connection) -> Result<Self> {
+        if let Some(reason) = connection.close_reason() {
+            bail!("recovery connection is closed; reconnect: {reason}");
+        }
+        Ok(Self {
+            connection: connection.clone(),
+            completed: false,
+        })
+    }
+
+    fn complete(mut self) {
+        self.completed = true;
+    }
+}
+
+impl Drop for RecoveryExchange {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.connection.close(
+                ERROR_NO_ERROR.into(),
+                b"interrupted recovery exchange; reconnect",
+            );
+        }
+    }
 }
 
 impl RecursiveClient {
@@ -2071,20 +2107,23 @@ impl RecursiveClient {
             layers: layers(&negotiated),
             sealed,
             authenticated_recovery,
+            recovery_receipt: None,
         })
     }
 
     /// Accept or replay one recovery request. The receipt is not application completion.
     /// Consume its outcome or reconnect before issuing another request on this client.
+    /// The caller must persist the complete request before first transmission and
+    /// reuse it after ambiguity. Cancellation or I/O failure closes this connection,
+    /// not the server job; a reconnect is required before retrying the exchange.
     pub async fn accept_recovery(&mut self, request: &RecoveryRequest) -> Result<RecoveryReceipt> {
         if !self.authenticated_recovery {
             bail!("PIPESTREAM_EXTENSION_UNSUPPORTED: recovery was not negotiated");
         }
-        write_control(
-            &mut self.control_send,
-            &recovery::encode(&RecoveryFrame::Request(request.clone()))?,
-        )
-        .await?;
+        self.ensure_recovery_idle()?;
+        let frame = recovery::encode(&RecoveryFrame::Request(request.clone()))?;
+        let exchange = RecoveryExchange::new(&self.connection)?;
+        write_control(&mut self.control_send, &frame).await?;
         let (kind, bytes) = self.read_response().await?;
         let receipt = if kind == FRAME_RECOVERY {
             recovery::decode(&bytes)
@@ -2092,7 +2131,11 @@ impl RecursiveClient {
             Err(frame_error("expected recovery receipt"))
         };
         match receipt {
-            Ok(RecoveryFrame::Receipt(receipt)) if &receipt.request == request => Ok(receipt),
+            Ok(RecoveryFrame::Receipt(receipt)) if &receipt.request == request => {
+                self.recovery_receipt = Some(receipt.clone());
+                exchange.complete();
+                Ok(receipt)
+            }
             Err(error) => {
                 self.connection
                     .close(error.code.into(), error.to_string().as_bytes());
@@ -2106,11 +2149,19 @@ impl RecursiveClient {
         }
     }
 
+    /// Consume the terminal outcome for this connection's accepted receipt.
+    /// A different caller-supplied receipt is refused without reading the stream.
+    /// Cancellation closes the connection even if only part of a frame was read;
+    /// it never implies cancellation or successful completion of remote work.
     pub async fn wait_recovery(&mut self, receipt: &RecoveryReceipt) -> Result<RecoveryOutcome> {
         receipt.validate()?;
         if !self.authenticated_recovery {
             bail!("PIPESTREAM_EXTENSION_UNSUPPORTED: recovery was not negotiated");
         }
+        if self.recovery_receipt.as_ref() != Some(receipt) {
+            bail!("PIPESTREAM_ENTITY_INVALID: receipt differs from the pending recovery receipt");
+        }
+        let exchange = RecoveryExchange::new(&self.connection)?;
         let (kind, bytes) = self.read_response().await?;
         let frame = if kind == FRAME_RECOVERY {
             recovery::decode(&bytes)
@@ -2121,7 +2172,11 @@ impl RecursiveClient {
             Ok(RecoveryFrame::Outcome {
                 receipt: observed,
                 outcome,
-            }) if &observed == receipt => Ok(outcome),
+            }) if &observed == receipt => {
+                self.recovery_receipt = None;
+                exchange.complete();
+                Ok(outcome)
+            }
             Err(error) => {
                 self.connection
                     .close(error.code.into(), error.to_string().as_bytes());
@@ -2136,6 +2191,7 @@ impl RecursiveClient {
     }
 
     pub async fn declare_work(&mut self, request: &WorkSetFrame) -> Result<()> {
+        self.ensure_recovery_idle()?;
         if !self.sealed || request.flags & work_set::ACK != 0 {
             bail!("PIPESTREAM_EXTENSION_UNSUPPORTED: client is not a sealed-work producer");
         }
@@ -2173,6 +2229,7 @@ impl RecursiveClient {
         payload: &[u8],
         depth: u8,
     ) -> Result<Vec<StatusFrame>> {
+        self.ensure_recovery_idle()?;
         if header.chunk_info.is_some() {
             bail!(
                 "PIPESTREAM_ENTITY_INVALID: use send_chunked_entity for an entity with chunk-info"
@@ -2189,6 +2246,7 @@ impl RecursiveClient {
         chunks: &[EntityChunk],
         depth: u8,
     ) -> Result<Vec<StatusFrame>> {
+        self.ensure_recovery_idle()?;
         let first = chunks
             .first()
             .context("PIPESTREAM_ENTITY_INVALID: chunk list is empty")?;
@@ -2278,6 +2336,7 @@ impl RecursiveClient {
         &mut self,
         digest: &ScopeDigest,
     ) -> Result<(ScopeDigest, Vec<StatusFrame>)> {
+        self.ensure_recovery_idle()?;
         write_control(&mut self.control_send, &encode_scope_digest(digest)?).await?;
         let (frame_type, response) = self.read_response().await?;
         if frame_type != FRAME_SCOPE_DIGEST {
@@ -2308,6 +2367,7 @@ impl RecursiveClient {
     }
 
     pub async fn barrier(&mut self, scope_id: u32, parent_entity_id: u32) -> Result<Barrier> {
+        self.ensure_recovery_idle()?;
         write_control(
             &mut self.control_send,
             &encode_barrier(Barrier {
@@ -2331,6 +2391,7 @@ impl RecursiveClient {
     }
 
     pub async fn checkpoint(&mut self, checkpoint: &Checkpoint) -> Result<Checkpoint> {
+        self.ensure_recovery_idle()?;
         write_control(
             &mut self.control_send,
             &encode_checkpoint_for(checkpoint, self.layers)?,
@@ -2355,6 +2416,12 @@ impl RecursiveClient {
         &mut self,
         redemption: &ClaimRedemption,
     ) -> Result<(ClaimRedemption, Vec<StatusFrame>)> {
+        self.ensure_recovery_idle()?;
+        if self.authenticated_recovery {
+            bail!(
+                "PIPESTREAM_EXTENSION_UNSUPPORTED: legacy redemption is not permitted on the recovery profile"
+            );
+        }
         write_control(
             &mut self.control_send,
             &encode_claim_redemption(redemption)?,
@@ -2391,6 +2458,7 @@ impl RecursiveClient {
     }
 
     pub async fn goaway(mut self, last_entity_id: u32) -> Result<()> {
+        self.ensure_recovery_idle()?;
         write_control(&mut self.control_send, &encode_goaway(last_entity_id)?).await?;
         let (frame_type, response) = self.read_response().await?;
         if frame_type != FRAME_GOAWAY || decode_goaway(&response)? != last_entity_id {
@@ -2419,6 +2487,15 @@ impl RecursiveClient {
     pub async fn disconnect_gracefully(self) {
         self.connection.close(ERROR_NO_ERROR.into(), b"disconnect");
         self.endpoint.wait_idle().await;
+    }
+
+    fn ensure_recovery_idle(&self) -> Result<()> {
+        if self.recovery_receipt.is_some() {
+            bail!(
+                "PIPESTREAM_ENTITY_INVALID: unconsumed recovery outcome; wait for it or reconnect"
+            );
+        }
+        Ok(())
     }
 
     async fn read_response(&mut self) -> Result<(u8, Vec<u8>)> {

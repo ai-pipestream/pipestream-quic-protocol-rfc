@@ -51,6 +51,48 @@ approval as part of a repository landing.
 
 ## Evidence and progress
 
+### Validated increment: Rust recovery exchange ownership and cancellation
+
+Branch `fix/recovery-client-exchanges` starts at PR #34's merge `55100c6`.
+An actual-QUIC regression demonstrated that the Rust public client could accept
+another recovery receipt while the previous outcome remained unconsumed. The
+client now retains the exact pending receipt and refuses unrelated operations
+before any network write. A wrong caller-supplied receipt cannot consume the
+pending response. A verified terminal frame releases the obligation; ordinary
+disconnect never does so on behalf of server work.
+
+A recovery exchange guard closes the connection when its future is cancelled or
+fails partway through I/O. Partial receipt/outcome framing cannot carry into another
+operation. Cancellation requests normal transport disconnection, not a successful
+GOAWAY or a fabricated protocol violation. Actual peer framing/correlation failures
+retain their named refusal codes. This is scoped to the two recovery methods, not
+a claim that every recursive-client method is cancellation-safe or that the Rust
+client persists requests for its caller.
+
+Focused tests cover six interrupted response boundaries, pending-operation refusals,
+caller-receipt mismatch, repeated successful recovery and the existing authorization,
+revocation, malformed-response and retained-refusal scenarios. An authenticated
+real-service test persists the request before transmission, holds the resume
+callback, cancels the client's outcome wait and verifies unfinished work remains.
+After publication and server restart, a rotated credential for the same principal
+retrieves the identical receipt and completion without a second callback or attempt.
+All eight focused retained-recovery tests passed. The full
+`./conformance/run_all.sh` passed with 300 Rust workspace tests and 192 Java tests,
+zero Java failures/errors/skips counted from JUnit XML, native SQLite/C++ checks,
+all nine implementation pairings, 32 capability probes, recursive/recovery CLI
+checks and all three external examples. Strict workspace Rustdoc passed with
+warnings denied. Draft -04 passed idnits with zero errors, flaws or warnings and
+one FIPS reference comment. These are local gates, not hosted CI or completion of
+the full goal. Wire/CDDL and storage formats are unchanged. Appendix E is corrected
+to acknowledge the existing retained recovery
+profile while preserving the separate sealed-work outcome-lookup limitation.
+
+A follow-up resource audit identified a concrete remaining client bound:
+`RecursiveClient::read_entity_statuses` appends every received status to a vector
+until a terminal state, without a count limit. The frame-size cap does not bound
+that accumulated history. Add a named refusal and adversarial real-QUIC test for
+this path before treating the client side of the resource requirement as verified.
+
 ### Validated increment: Java durable producer observations
 
 Branch `feat/java-producer-observations` starts at PR #33's merge `80f38d6`.
