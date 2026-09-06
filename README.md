@@ -16,6 +16,12 @@ and the remaining interoperability and security work. The
 maps those three delivered features to implementation and tests, with explicit
 limits on the claims.
 
+The [2026-09-06 protocol corrections](docs/standards/protocol-review-corrections-2026-09.md)
+clarify transport-loss outcomes, streaming flow control, validated admission,
+payload integrity, and durable caller authentication. Appendix E retains the
+unresolved identity, result-delivery, retention, and profile-composition choices;
+this is a reviewed draft, not a claim those features are already implemented.
+
 Draft -04 now defines supported/required extension negotiation, implemented
 independently in Rust, Java, and C++. Unknown requirements fail CONNECT;
 optional unknown identifiers are not activated. Sealed work sets and
@@ -42,6 +48,9 @@ resending them. Both Java client modes check the server's DNS/IP certificate SAN
 before sending application frames. Retained-outcome lookup for uncertain sealed
 inputs and a complete production conformance matrix remain future work; the
 acceptance record maps the implemented crash/resource guarantees and their tests.
+The Java sealed server does not yet authenticate client principals. Its
+server-authenticated TLS fixtures are not evidence of compliance with the
+draft's requirement to authorize a principal before durable work admission.
 See the
 [Java implementation boundary](implementations/java-netty/README.md#sealed-work-library-foundation).
 

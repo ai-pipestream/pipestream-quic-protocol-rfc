@@ -22,19 +22,19 @@ PipeStream frames MUST NOT be sent or processed in 0-RTT early data (Section 5.3
 
 ## Entity Payload Integrity
 
-Each Entity SHOULD include a SHA-256 {{FIPS-180-4}} checksum in its EntityHeader (the `checksum` field defined in Section 6.8.2). The checksum is OPTIONAL in the wire format to accommodate zero-length entities, streamed entities whose final length is unknown at header-emission time, and scenarios where application-layer integrity mechanisms provide equivalent guarantees. When a checksum is present, it MUST be exactly 32 octets containing the SHA-256 digest computed over the raw payload bytes (the octet sequence following the EntityHeader on the Entity Stream). The checksum does not cover the EntityHeader itself.
+Each Entity SHOULD include a SHA-256 {{FIPS-180-4}} checksum in its EntityHeader (the `checksum` field defined in Section 6.8.2). The checksum is OPTIONAL in the wire format because a streaming sender may not know the digest when emitting the header, or an application profile may provide another integrity mechanism. Empty payloads have a well-defined SHA-256 digest and are not an exception to checksum validation. When present, the checksum MUST be exactly 32 octets containing the SHA-256 digest over the raw payload octets following that header. It does not cover the EntityHeader itself.
 
-For chunked entities (where `chunk-info` is present in the EntityHeader), each chunk MAY carry its own per-chunk checksum. The checksum in the first chunk's EntityHeader, if present, MUST cover only that chunk's payload bytes. An implementation that requires whole-entity integrity verification MUST either compute a rolling digest across all chunks or require the sender to transmit a final summary entity containing the whole-payload checksum.
+For chunked entities, each chunk MAY carry its own checksum. Every supplied checksum, including the first chunk's, covers only that chunk's payload. Receivers MUST validate supplied checksums, declared lengths, stream completion, and chunk geometry before admitting the assembled entity. Computing a local rolling digest does not verify a sender's expected whole-entity digest. A profile requiring that additional commitment MUST define its expected digest, authenticated association with the entity and chunk order, and verification point. A profile can define a final summary entity for this purpose, but Core defines no implicit checksum trailer or summary association.
 
-To support true streaming of large entities, implementations MAY begin processing an entity payload before the complete payload has been received and verified. However, the final rehydration or terminal SINK operation MUST NOT be committed until the complete payload checksum has been verified.
+Implementations MAY process arriving payload octets speculatively if all effects can be discarded. Irreversible effects, including final rehydration or terminal SINK publication, MUST wait until input validation, authorization, and applicable completion-policy checks succeed. Input validation includes every supplied checksum and every integrity check required by the application profile. When no expected checksum is supplied or required, an implementation MUST NOT claim that a whole-payload checksum was verified; QUIC transport integrity and application-level content commitments are different guarantees.
 
 If a checksum verification fails, the implementation MUST:
 
 1. Reject the entity with PIPESTREAM_INTEGRITY_ERROR (0x04).
-2. Discard any partial results or temporary state associated with the entity.
-3. Propagate the failure according to the Completion Policy (Section 8.3).
+2. Discard speculative results and incomplete payload buffers, without deleting retained declarations or admitted durable obligations.
+3. Apply the negotiated lifecycle's refusal and Completion Policy rules (Section 8.3); rejecting a declared payload does not itself resolve that declaration.
 
-Implementations that require immediate consistency SHOULD buffer the entire entity and verify the checksum before initiating processing.
+An application unable to roll back speculative processing MUST wait for validation before invoking that processing. It can spool to bounded storage or use independently verifiable profile-defined units; this requirement does not mandate buffering an entire entity in memory.
 
 ### Algorithm Agility
 
@@ -94,7 +94,8 @@ drop a child or convert an incomplete checkpoint into success.
 Identity, parent linkage, negotiated depth and count limits, payload
 integrity, and authorization MUST be checked before invoking application
 callbacks with irreversible effects. Speculative incremental processing
-MAY operate on admitted data only if effects can be discarded on failure.
+of not-yet-admitted input is permitted only if its effects can be discarded
+on failure, as specified in Section 10.2.
 Control readers MUST remain able to make progress when a data stream
 stalls. Implementations SHOULD separate control parsing, payload reception,
 worker completion, and deadline handling as described in {{RFC9308}}.
@@ -120,11 +121,11 @@ A single dehydration operation can produce an arbitrary number of child entities
 
 PipeStream entity headers and control stream frames carry metadata that may reveal information about the entities being processed, even when payloads are encrypted at the application layer:
 
-1. **Entity structure leakage**: The number of child entities produced by dehydration, the scope depth, and the Entity ID assignment pattern may reveal the structure of the input being processed (e.g., an entity that dehydrates into 50 children is likely a multi-part input). Implementations that require structural privacy SHOULD pad dehydration counts or use fixed decomposition granularity. Deployments that do not handle privacy-sensitive data MAY omit this padding.
+1. **Entity structure leakage**: Processing endpoints can observe child counts, scope depth, and identifier patterns. Deployments needing structural privacy can use fixed decomposition granularity or profile-defined cover work. Implementations MUST NOT falsify membership, counts, or completion statuses as padding. Any cover entities must satisfy the same declared-work accounting and lifecycle as other entities.
 
-2. **Metadata in headers**: The `content_type`, `metadata` map, and `payload_length` fields in EntityHeader (Section 6.8.2) are transmitted in cleartext within the QUIC-encrypted stream. Implementations that require metadata confidentiality beyond transport encryption SHOULD encrypt EntityHeader fields at the application layer and use an opaque content_type such as `application/octet-stream`. This overhead is unnecessary when the deployment operates within a trusted network.
+2. **Metadata in headers**: QUIC encrypts EntityHeaders and control frames against passive network observers, but endpoints terminating QUIC can read them. An application needing confidentiality from an intermediate endpoint can place sensitive application metadata in an opaque encrypted payload envelope. It MUST preserve the types and meanings of required Core routing, identity, length, and chunk fields; encrypting those fields in place would prevent Core validation. The profile must specify which metadata remains visible and which endpoints hold decryption authority.
 
-3. **Traffic analysis**: The timing and size of status frames on the Control Stream may correlate with processing patterns. Implementations operating in privacy-sensitive environments SHOULD send status frames at fixed intervals with padding to obscure processing timing. Deployments in trusted environments MAY omit traffic padding to reduce bandwidth overhead.
+3. **Traffic analysis**: Network observers can correlate packet timing and size even without decrypting stream contents. Transport padding or bounded batching can reduce some leakage, with bandwidth and latency costs; neither hides all work structure. Implementations MUST NOT append unspecified padding inside fixed-length control frames, delay control delivery beyond negotiated deadlines, or fabricate status transitions for this purpose.
 
 4. **Identifiers**: Application-level input identifiers and filenames carried inside profile-defined payload envelopes are not interpreted by PipeStream Core but may still be logged by intermediate processing nodes. Implementations SHOULD provide mechanisms to redact or pseudonymize such identifiers at pipeline boundaries. This recommendation may be relaxed when all nodes in the pipeline are operated by the same administrative entity.
 
@@ -180,7 +181,7 @@ Yield tokens (Section 6.6.2) contain opaque continuation state that enables resu
 
 2. Implementations MUST invalidate a yield token after it has been consumed for resumption. A second resumption attempt with the same token MUST be rejected.
 
-3. The StoppingPointValidation (Section 9.7) provides integrity checking at resume time. Implementations MUST verify the `state_checksum` field before accepting a resumed entity. If the checksum does not match the current state, the resumption MUST be rejected and the entity MUST be reprocessed from the beginning.
+3. The StoppingPointValidation (Section 9.7) provides integrity checking at resume time. Implementations MUST verify the `state_checksum` field before accepting a resumed entity. A mismatch MUST reject resumption with PIPESTREAM_INTEGRITY_ERROR. Rejection MUST NOT automatically re-execute the input: a new attempt requires explicit application authorization and the idempotency or external-effect fencing required by Section 10.6.1.
 
 ### Claim Check Replay
 
@@ -348,10 +349,10 @@ completion, automatic retry of refused work, or exactly-once external effects.
 
 ## Encryption Key Management
 
-When using FileStorageReference with encryption:
+FileStorageReference encryption fields are descriptive metadata, not a complete interoperable encryption protocol or a grant of access. An application profile using them MUST specify the authenticated encryption construction, nonce and tag encoding, associated-data binding, wrapping mechanism, and authorized key-resolution policy. Algorithm names or provider labels alone are insufficient. {{RFC5116}} describes the authenticated-encryption interface and nonce requirements relevant to such a profile.
 
-1. Key IDs MUST reference keys in approved providers.
-2. Wrapped keys MUST use approved envelope encryption.
-3. Key rotation MUST be supported via key_id versioning.
+1. Key resolution MUST be restricted to providers and key identities authorized by deployment policy; a peer-supplied locator MUST NOT select arbitrary credentials or a more privileged provider.
+2. Wrapped-key interpretation MUST bind the intended object, algorithm, and key version under the application's encryption profile. Core defines no default wrapping algorithm.
+3. The profile MUST define rotation and version selection so that retained objects remain decryptable for their promised lifetime or fail explicitly when access is revoked.
 4. Implementations MUST NOT log key material.
 5. Implementations MUST NOT include unwrapped data encryption keys in EntityHeader metadata or Control Stream frames.

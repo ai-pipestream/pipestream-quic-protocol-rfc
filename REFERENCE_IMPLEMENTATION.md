@@ -17,8 +17,14 @@ Java has independent sealed codecs, durable recursive state, bounded payload
 storage and fenced workers, and separate public Netty producer/server APIs.
 Real QUIC tests run sealed work in both Java/Rust directions. JDBC file-length
 bounds use a small native SQLite extension, not shared protocol code. The original
-Java listener/CLI and C++ endpoints remain Layer 0. Persistent producer
-observations and the full profile conformance matrix remain unfinished.
+Java listener/CLI and C++ endpoints remain Layer 0. Persistent Java producer
+observations and explicit Rust orphan reconciliation are now implemented;
+their acceptance evidence is recorded in
+[the implementation audit](docs/standards/recovery-execution-java-acceptance.md).
+The full profile conformance matrix remains incomplete. In particular, the
+Java sealed API does not yet authenticate a client principal: its lifecycle
+fixtures do not satisfy the durable-work authentication requirement in
+Section 10.6.1. Session and producer labels are not credentials.
 See [draft-04 readiness](docs/standards/draft04-readiness.md)
 for the evidence and open work. The algorithms below are informative and
 are not implied by a successful interoperability run.

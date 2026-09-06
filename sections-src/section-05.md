@@ -53,10 +53,14 @@ The `session-id` segment of the pipestream URI scheme (Section 11.6) identifies 
 
 PipeStream relies on the flow control and congestion control mechanisms provided by QUIC {{RFC9000}} and does not define its own transport-layer congestion control. QUIC provides flow control at both the stream level (MAX_STREAM_DATA) and the connection level (MAX_DATA). PipeStream's cursor-based backpressure (Section 9.1) operates at the application layer and is complementary to QUIC flow control:
 
-- QUIC flow control limits the number of bytes in flight on any given stream or connection.
+- QUIC flow control limits cumulative stream offsets and aggregate stream data on a connection. Receivers extend these limits as data is consumed; congestion control separately limits bytes in flight.
 - PipeStream backpressure limits the number of entities in flight (i.e., the number of Entity IDs between cursor and last_assigned).
 
-When the QUIC connection-level flow control window is exhausted, new Entity Streams cannot transmit data regardless of whether PipeStream's entity window has capacity. Conversely, when PipeStream's entity window is full, no new Entity Streams are opened even if QUIC flow control credits are available. Implementations MUST respect both limits. An implementation SHOULD monitor QUIC-level flow control credit availability and avoid opening new Entity Streams when connection-level credits are below the expected entity size, to prevent head-of-line blocking across streams sharing the connection budget.
+When connection-level flow control credit is exhausted, Entity Streams cannot transmit additional flow-controlled data even if the entity window has capacity. Conversely, an entity window that is full prevents new announcements or Entity Streams under the negotiated lifecycle even when QUIC credit is available. Implementations MUST respect both limits.
+
+A streaming receiver SHOULD consume payloads incrementally and extend QUIC credit while enforcing separate limits on admitted entities, buffered bytes, and spooled storage. A sender need not wait for credit covering an entire entity before opening its stream. Requiring that credit while the receiver waits for payload consumption before extending it can deadlock an entity larger than the initial window. A whole-message admission strategy is also possible, but it needs explicit bounded message sizes and sufficient credit, or a refusal before transfer; it is not a prerequisite for streaming. These alternatives and cross-stream dependencies are discussed in Section 4.4 of {{RFC9308}}.
+
+Implementations MUST keep control consumption able to progress independently of blocked payload processing. Receive-credit policy and send scheduling SHOULD preserve capacity for control traffic, including when entity streams share the connection budget. Stream priority alone does not create flow-control credit or guarantee progress.
 
 ## Entity Streams
 
@@ -100,9 +104,9 @@ Implementations SHOULD assign the Control Stream (Stream 0) a higher priority th
 
 ## Transport Error Mapping
 
-PipeStream error signaling on Stream 0 and QUIC transport signals are complementary. Endpoints SHOULD bridge them so peers receive both transport-level and protocol-level context. An implementation MAY omit bridging when operating as a simple pass-through proxy that does not inspect entity status.
+Transport observations and authoritative work outcomes are distinct. A reset or lost connection can occur after work committed but before its report arrived. Endpoints MUST NOT infer a terminal work outcome, advance a completion cursor, or authorize re-execution solely from such an observation.
 
-1. If an Entity Stream is aborted with `RESET_STREAM` or `STOP_SENDING`, the endpoint SHOULD emit a corresponding status (`FAILED` when terminal, `ABANDONED`, or policy-driven equivalent) for that entity on Stream 0. The endpoint MAY omit the status frame only if the connection itself is being closed immediately.
-2. If PipeStream determines a terminal entity error first (for example, checksum failure or invalid frame), the endpoint SHOULD abort the affected Entity Stream with an appropriate QUIC error and emit the corresponding PipeStream status/error context on Stream 0. Aborting the stream MAY be deferred if the entity payload is still needed for diagnostic purposes.
-3. If Stream 0 is reset or becomes unusable, endpoints SHOULD treat this as a control-plane failure and close the connection with `PIPESTREAM_CONTROL_RESET (0x03)`. An endpoint that can recover control-plane state through an application-layer mechanism MAY attempt reconnection before closing.
-4. On QUIC connection termination (`CONNECTION_CLOSE`), entities without a previously observed terminal status MUST be handled by local failure policy, typically by marking them `FAILED` or `ABANDONED`.
+1. On `RESET_STREAM` or `STOP_SENDING`, discard incomplete receive buffers as appropriate, but retain declared obligations and already admitted durable state. Only the processing authority may report a lifecycle transition, and only when permitted by the negotiated state machine and completion policy. A transport abort is not an application cancellation command.
+2. If the processing authority determines an entity error (for example, checksum failure), it SHOULD abort the affected Entity Stream and report the applicable PipeStream error or authorized lifecycle transition on Stream 0 when usable. An invalid or unadmitted declared payload remains outstanding under Section 9.8; a stream error cannot manufacture its resolution.
+3. If Stream 0 is reset or becomes unusable, endpoints MUST close the connection with `PIPESTREAM_CONTROL_RESET (0x03)`. Any supported reconnect establishes a separate connection and revalidates authentication and negotiated lifecycle; it does not repair the unusable Control Stream.
+4. On connection termination, preserve previously validated terminal observations. Other outcomes remain locally unknown unless the negotiated lifecycle provides authoritative evidence. "Unknown" is a local observation, not a new wire status. Recovery follows that lifecycle's retained-state rules, not an implicit `FAILED` or `ABANDONED` transition.

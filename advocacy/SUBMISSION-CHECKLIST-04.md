@@ -1,6 +1,6 @@
 # Submission checklist: draft-krickert-pipestream-04
 
-Prepared 2026-09-05. This is a revision for technical review, not a claim that
+Updated 2026-09-06. This is a revision for technical review, not a claim that
 the design is complete or that the IETF has adopted it.
 
 ## Completed locally
@@ -15,14 +15,20 @@ the design is complete or that the IETF has adopted it.
 - [x] Compare shared CDDL definitions to Appendix C, not only to fixtures.
 - [x] Define supported/required extension negotiation and its proposed registry,
       with shared independent-codec cases and actual QUIC refusal tests.
-- [x] Specify a private-use, client-owned sealed-work profile and implement
-      declaration/seal ACKs, durable replay, and fixed completion cuts in Rust.
-      This is not independent interoperability or an authenticated profile.
+- [x] Specify a private-use, client-owned sealed-work profile and exercise
+      declaration/seal ACKs, durable replay, and fixed completion cuts with
+      independent Java/Rust protocol implementations in both directions.
+      This is subset evidence, not full conformance or Java caller authentication.
+- [x] Implement optional authenticated-session and retained recovery profiles
+      in Rust; they do not imply authenticated Java support or sealed recovery.
+- [x] Correct transport-outcome authority, incremental flow-control guidance,
+      checksum prerequisites, and durable-work authentication wording.
 
 ## Author confirmation and submission
 
 - [ ] Review the generated `draft-krickert-pipestream-04.html`, particularly
-      the new security requirements, URI syntax, and Appendix E open issues.
+      the protocol model, security requirements, URI syntax, and Appendix E
+      identity, output, retention, and profile-composition decisions.
 - [ ] Confirm the author contact details and submission date.
 - [ ] Review the Datatracker comparison against the published -03; the local
       -04 source previously existed without having been submitted.

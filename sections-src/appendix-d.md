@@ -108,7 +108,7 @@ Contact:
 
 ## Interoperability Evidence
 
-As of 2026-09-05, none of these prototypes demonstrates complete Layer 0
+As of 2026-09-06, none of these prototypes demonstrates complete Layer 0
 conformance. The common command exercises one-entity transfers, not the
 entire mandatory manifest and recycling lifecycle. Rust's recursive path
 adds independent control/data reception, identity-based stream dispatch,
@@ -119,15 +119,16 @@ callbacks consume file-backed readers in bounded asynchronous workers.
 
 The durable Rust prototype now has optional mutual-TLS principal/session
 binding, retained authenticated recovery, retained-storage quotas and admitted-job
-SQLite completion reservations, but lacks explicit orphan reconciliation,
-automatic retry scheduling, bidirectional work-set origination, scoped
+SQLite completion reservations and explicit offline orphan reconciliation,
+but lacks automatic retry scheduling, bidirectional work-set origination, scoped
 cursor recycling, and full resilience semantics. Its
 Layer 2 advertisement does not identify the narrower implemented subset.
 It is unsuitable for untrusted multi-tenant deployment without additional
 implementation work. Java's independent sealed producer exercises recursive
 work against Rust, and a Rust public-client scenario exercises the Java sealed
-server. Persistent producer observations and broader crash/resource evidence
-remain unfinished. C++ does not yet provide recursive or resilience evidence.
+server. Persistent Java producer observations are implemented and tested
+across restart. Broader crash/resource and profile-conformance evidence remains
+incomplete. C++ does not yet provide recursive or resilience evidence.
 These limitations remain open;
 passing vectors or document checks does not resolve them.
 
@@ -141,15 +142,20 @@ of changed ACKs, downgrade, oversized replies, and Layer 2 frames. Reverse
 Rust-to-Java tests cover recursive/chunked completion, reconnect replay, and
 changed-owner/checkpoint refusals. These scenarios do not prove the entire
 profile. The original Java listener/CLI and C++ endpoints remain Layer 0;
-Java's separate SealedServer requires the sealed profile.
+Java's separate SealedServer requires the sealed profile. It does not yet
+authenticate a client principal or implement the authenticated-session and
+authenticated-recovery profiles. Its server-authenticated TLS lifecycle
+fixtures are not evidence of compliance with Section 10.6.1's requirement
+to authenticate and authorize callers before durable work admission.
 
 Java payload-library tests additionally cover chunk geometry, immutable replay,
 file-length and file-count quotas, cancellation-safe accounting, writer
 exclusion, corruption, and abrupt exit between installation and admission.
-A 32 MiB receive/install/read test runs with a 24 MiB Java heap limit. It does
-not exercise QUIC or establish native-memory, RSS, physical filesystem, or
-concurrent-workload bounds. No new network interoperability is inferred from
-these storage tests.
+A 32 MiB receive/install/read test runs with a 24 MiB Java heap limit.
+Separate executor and actual-QUIC 32 MiB tests now run under the same Java
+heap limit. Neither set establishes native-memory, RSS, physical filesystem,
+or concurrent-workload bounds; library storage tests alone are not network
+interoperability evidence.
 
 Java's managed execution path now binds its database and payload root using
 persistent store identities. Admission revalidates retained input and keeps the
@@ -181,7 +187,7 @@ quota, concurrent and chunked restoration, process exit at filesystem boundaries
 and a real-QUIC timeout/refusal followed by matching restoration and completion.
 Payload policy 3 refuses earlier policies without conversion; schema 6 and the
 wire profile are unchanged. This is not retention expiry or whole-process resource
-evidence, and Rust orphan reconciliation remains unfinished.
+evidence. Rust now has its own explicit reconciliation path described below.
 
 Java's durable execution tests cover atomic admission and dispatch, bounded
 queued jobs and retained descriptors, recursive rehydration, stale executor
@@ -262,7 +268,7 @@ disabled. Tests exhaust each file budget, hold WAL readers, interrupt a process,
 and verify transaction rollback and a named capacity refusal over real QUIC.
 This is a file-length boundary for cooperating writers in a private directory,
 not a filesystem-allocation quota. Admitted-job completion reservations are
-described below; orphan reconciliation remains unfinished.
+described below; the file-length guard alone is not orphan reconciliation.
 
 Java separately enforces main database, WAL, rollback-journal and shared-memory
 file lengths through a non-default VFS over Xerial's bundled Unix SQLite engine.
@@ -392,3 +398,13 @@ The repository's protocol-neutral Rust driver starts each executable as a separa
 
 The authors welcome reports of additional implementations for inclusion
 in future revisions of this appendix.
+
+Rust's explicit offline reconciliation now audits the paired, writer-locked
+database and payload root before reclaiming unadmitted bodies. It retains
+immutable commitments, rejects changed retransmission and preserves admitted
+input, declarations, and completion reservations. Tests cover concurrent
+ownership refusals, interruption boundaries, quota restoration, and an actual
+QUIC sealed session that remains pending until missing input is restored.
+An isolated 32 MiB install/reclaim/restore test measures Rust heap allocations;
+it does not establish total RSS or safe automatic cleanup under arbitrary
+external writers. Reconciliation remains an explicit local operation.
