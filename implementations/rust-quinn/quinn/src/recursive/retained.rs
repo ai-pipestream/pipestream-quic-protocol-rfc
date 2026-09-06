@@ -18,6 +18,7 @@ const RECORD_BYTES: usize = 512;
 const RECEIPT_BYTES: u64 = 32;
 const POLICY_BYTES: usize = 96;
 const MAX_ROOTS: usize = 64;
+mod lineage;
 type Owner = Option<(String, String)>;
 type Key = (String, Option<EntityKey>);
 
@@ -79,7 +80,7 @@ impl RetainedLimits {
 
     fn encode(self) -> [u8; POLICY_BYTES] {
         let mut bytes = [0; POLICY_BYTES];
-        bytes[..8].copy_from_slice(b"PSRET001");
+        bytes[..8].copy_from_slice(b"PSRET002");
         for (slot, value) in bytes[8..64].chunks_exact_mut(8).zip(self.values()) {
             slot.copy_from_slice(&value.to_be_bytes());
         }
@@ -90,7 +91,7 @@ impl RetainedLimits {
 
     fn read(path: &Path) -> io::Result<Self> {
         let bytes = read_fixed::<POLICY_BYTES>(path)?;
-        if &bytes[..8] != b"PSRET001" || Sha256::digest(&bytes[..64])[..] != bytes[64..] {
+        if &bytes[..8] != b"PSRET002" || Sha256::digest(&bytes[..64])[..] != bytes[64..] {
             return Err(corrupt("retained policy checksum or version mismatch"));
         }
         let mut values = [0; 7];
@@ -122,11 +123,15 @@ pub struct RetainedUsage {
     pub objects: u64,
     pub staging_bytes: u64,
     pub staging_objects: u64,
-    /// Unacknowledged metadata prefixes whose owner is not yet durably known.
+    /// Unacknowledged payload metadata prefixes with no durable owner yet.
     /// Each reserves one object and 512 bytes in the global totals above.
     pub incomplete_metadata: u64,
     /// Global-only directory reservation, bounded by twice the object limit.
     pub directories: u64,
+    /// Fixed final-lineage file allowances, also included in bytes and objects.
+    pub lineage_reservations: u64,
+    /// Interrupted reservation markers with no durably identified principal yet.
+    pub incomplete_lineage_reservations: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -281,11 +286,27 @@ struct State {
     active: BTreeSet<Key>,
     incomplete: BTreeMap<Key, Vec<u8>>,
     directories: BTreeSet<PathBuf>,
+    lineages: BTreeMap<String, lineage::Reservation>,
+    durable_lineages: BTreeSet<String>,
+    incomplete_lineages: BTreeMap<String, Vec<u8>>,
 }
 
 impl State {
     fn insert(&mut self, entry: Entry, limits: RetainedLimits) -> io::Result<()> {
         let record = &entry.record;
+        if record.key.1.is_none() {
+            let reservation = self
+                .lineages
+                .get(&record.key.0)
+                .ok_or_else(|| corrupt("final lineage lacks its admission reservation"))?;
+            if reservation.owner != record.owner {
+                return Err(io::Error::other(unauthorized()));
+            }
+            // The permanent reservation already covers this object, its stage,
+            // metadata and receipt. It never borrows ordinary staging credit.
+            self.entries.insert(record.key.clone(), entry);
+            return Ok(());
+        }
         if self
             .owners
             .get(&record.key.0)
@@ -484,7 +505,8 @@ impl RetainedRoot {
             }
             Some(existing) => !existing.committed,
             None => {
-                let incomplete = state.incomplete.contains_key(&record.key);
+                let incomplete =
+                    record.key.1.is_some() && state.incomplete.contains_key(&record.key);
                 if incomplete {
                     state.usage.bytes -= RECORD_BYTES as u64;
                     state.usage.objects -= 1;
@@ -527,10 +549,34 @@ impl RetainedRoot {
         key: Option<EntityKey>,
         length: u64,
         digest: [u8; 32],
-        mut reader: impl Read,
+        reader: impl Read,
     ) -> io::Result<()> {
-        let operation = self.start(Record::new(principal, session, key, length, digest)?)?;
+        self.install_record(
+            Record::new(principal, session, key, length, digest)?,
+            reader,
+        )
+    }
+
+    pub(crate) fn install_payload(
+        self: &Arc<Self>,
+        principal: Option<&PrincipalBinding>,
+        session: &str,
+        key: EntityKey,
+        length: u64,
+        digest: [u8; 32],
+        reader: impl Read,
+    ) -> io::Result<()> {
+        // Reject invalid descriptors before retaining a session reservation.
+        let record = Record::new(principal, session, Some(key), length, digest)?;
+        self.reserve_lineage(principal, session)?;
+        self.install_record(record, reader)
+    }
+
+    fn install_record(self: &Arc<Self>, record: Record, mut reader: impl Read) -> io::Result<()> {
+        let operation = self.start(record)?;
         let record = &operation.record;
+        let length = record.length;
+        let digest = record.digest;
         let path = record.path(&self.path);
         let parent = path
             .parent()
@@ -628,7 +674,7 @@ impl RetainedRoot {
         entry.committed = true;
         let release = entry.staging;
         entry.staging = false;
-        if release {
+        if release && record.key.1.is_some() {
             state.usage.staging_bytes -= length;
             state.usage.staging_objects -= 1;
             let owner = state
@@ -735,6 +781,7 @@ fn scan(root: &Path, limits: RetainedLimits) -> io::Result<State> {
     }
     let mut state = State::default();
     let mut accounted = BTreeSet::new();
+    lineage::scan(root, limits, &files, &mut state, &mut accounted)?;
     for path in files
         .iter()
         .filter(|path| path.extension().is_some_and(|e| e == "meta"))
@@ -749,17 +796,24 @@ fn scan(root: &Path, limits: RetainedLimits) -> io::Result<State> {
                     return Err(corrupt("incomplete metadata has associated payload files"));
                 }
             }
-            if state.usage.bytes + RECORD_BYTES as u64 > limits.bytes
-                || state.usage.objects >= limits.objects
+            let prepaid = key.1.is_none();
+            if prepaid && !state.lineages.contains_key(&key.0) {
+                return Err(corrupt("incomplete lineage metadata lacks its reservation"));
+            }
+            if !prepaid
+                && (state.usage.bytes + RECORD_BYTES as u64 > limits.bytes
+                    || state.usage.objects >= limits.objects)
             {
                 return Err(limit("incomplete metadata exceeds retained global budget"));
             }
             let mut prefix = vec![0; metadata_length as usize];
             File::open(path)?.read_exact(&mut prefix)?;
             state.incomplete.insert(key, prefix);
-            state.usage.bytes += RECORD_BYTES as u64;
-            state.usage.objects += 1;
-            state.usage.incomplete_metadata += 1;
+            if !prepaid {
+                state.usage.bytes += RECORD_BYTES as u64;
+                state.usage.objects += 1;
+                state.usage.incomplete_metadata += 1;
+            }
             accounted.insert(path.clone());
             continue;
         }

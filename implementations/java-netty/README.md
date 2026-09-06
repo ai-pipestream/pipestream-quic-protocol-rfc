@@ -309,6 +309,9 @@ connection credit is retained until cleanup returns.
 independent completion during a stalled callback, held-SQLite deadlines and
 protocol refusals, duplicate clocks, storage backlog overflow, STRICT failure,
 forged digest rollback, reset streams, and unobserved ACK replay after restart.
+The reset test uses the error-code `shutdownOutput` overload and waits for the
+receiver's refusal before asserting zero admission. A separate test pins normal
+FIN completion: Netty's `stream.close()` sends FIN and is not a reset injector.
 The `sealed-interop` profile also runs the Rust public producer against this
 Java server. A separate 32 MiB QUIC transfer/install/execute test runs with
 a 24 MiB Java heap limit; it does not measure native memory or RSS.

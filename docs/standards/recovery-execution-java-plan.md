@@ -439,8 +439,35 @@ approval as part of a repository landing.
   and all external examples. Workspace formatting/clippy and strict Rustdoc
   passed. Draft -04 passed idnits with zero errors/flaws/warnings and one FIPS
   reference comment. These are local results, not hosted CI or full-goal completion.
-- Not yet implemented: physical completion-space reservations,
-  final-lineage headroom, orphan reclamation,
+- Rust final-lineage file quota: payload installation now durably reserves
+  1,120 bytes and one object per session for its ownership marker, future final
+  metadata, digest, receipt and publication stage. Publication never creates a
+  placeholder digest or borrows ordinary staging byte/object credit; the whole
+  allowance stays charged afterward. Partial markers remain globally charged,
+  partial final metadata/receipts use prepaid credit, and matching replay cannot
+  double-charge. Failed owner-quota promotion preserves unattributed credit.
+  The new `PSRET002` policy refuses old/unreserved roots without conversion;
+  session payload 7 and wire/CDDL are unchanged. Focused tests exercise exact
+  quota, prefix images, process exit, concurrent ownership and immutable replay.
+  Authenticated QUIC tests hold callbacks while independent principals fill
+  storage, then pin actual lineage bytes, checkpoint ACKs and GOAWAY. A missing
+  declared payload instead times out without successful completion. These are
+  configured file-length reservations, not filesystem-block preallocation or
+  physical DB/WAL publication capacity.
+  Full-suite validation exposed a Java reset-test race caused by using Netty's
+  FIN-sending `close()` as a reset injector. The test now sends explicit
+  RESET_STREAM and waits for refusal before asserting zero admission; a separate
+  normal-FIN test verifies completion. Java server behavior is unchanged.
+  The corrected FIN/reset cases passed five consecutive focused runs, then the
+  final `./conformance/run_all.sh` passed with 231 Rust workspace tests
+  (111 core, 62 Quinn unit, 54 wire, one allocation gate, three runner tests),
+  105 Java tests without errors/failures/skips, native SQLite/C++ tests, all nine
+  Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks and every
+  external example. Workspace formatting/clippy and strict Rustdoc passed;
+  draft -04 had zero idnits errors/flaws/warnings and one FIPS reference comment.
+  These are local results, not hosted CI or proof of full-goal completion.
+- Not yet implemented: physical DB/WAL completion-space reservations,
+  orphan reclamation,
   persistent producer observations, and the remaining independent Java
   profile requirement matrix. Physical execution limits and temporary spools are coordinated only
   within one writer process; broader tenant/resource stress evidence remains due.
@@ -457,7 +484,7 @@ expiry is not callback cancellation. Periodic dispatch can reacquire unfinished
 expired attempts, but does not retry application-refused jobs automatically.
 Temporary spool accounting is process-local and excludes permanent entity files.
 Rust and Java SQLite file-length caps are now independent of that accounting.
-Add physical publication headroom, final-lineage reservations, and
+Add physical DB/WAL publication headroom and
 explicit orphan reconciliation without
 deleting a live generation or treating missing input as completed work.
 Do not treat recovery receipts or publication fencing as completion of bounded

@@ -363,11 +363,13 @@ async fn retained_payload_quota_preserves_declared_work_and_allows_another_princ
         &fixture.options.entity_directory,
         spool::SpoolLimits::default(),
         RetainedLimits {
-            bytes: 4096,
-            principal_bytes: 2048,
-            objects: 2,
-            principal_objects: 1,
-            staging_bytes: 1024,
+            // One payload (512 metadata + 32 receipt + 1 body) and one
+            // final-lineage allowance (1120), for each of two principals.
+            bytes: 3330,
+            principal_bytes: 1665,
+            objects: 4,
+            principal_objects: 2,
+            staging_bytes: 1,
             staging_objects: 2,
             principals: 4,
         },
@@ -444,13 +446,175 @@ async fn retained_payload_quota_preserves_declared_work_and_allows_another_princ
             .state,
         STATUS_COMPLETE
     );
-    assert_eq!(files.retained_usage()?.objects, 2);
+    let full = files.retained_usage()?;
+    assert_eq!(full.objects, 4);
+    assert_eq!(full.bytes, 3330);
+    assert_eq!(full.lineage_reservations, 2);
     assert_eq!(files.retained_usage()?.staging_objects, 0);
+    assert!(
+        !fixture
+            .options
+            .entity_directory
+            .join("payload-alice/lineage.sha256")
+            .exists()
+    );
+    let mut cp = checkpoint(2000);
+    cp.checkpoint_entity_id = 1;
+    assert_eq!(client.checkpoint(&cp).await?.flags, CHECKPOINT_ACK);
+    client.goaway(1).await?;
+    let bob_state = fixture.store.load("payload-bob")?.unwrap().session;
+    assert!(bob_state.checkpoints[&(0, 1)].acknowledged);
+    assert_eq!(
+        fs::read(
+            fixture
+                .options
+                .entity_directory
+                .join("payload-bob/lineage.sha256")
+        )?,
+        bob_state.final_lineage_digest()?
+    );
+    assert_eq!(files.retained_usage()?, full);
     let mut replay = RecursiveClient::connect_sealed(&alice).await?;
     replay.declare_work(&request).await?;
-    assert_eq!(files.retained_usage()?.objects, 2);
+    assert_eq!(files.retained_usage()?, full);
+    let error = replay.checkpoint(&checkpoint(50)).await.unwrap_err();
+    assert!(
+        format!("{error:#}").contains("PIPESTREAM_CHECKPOINT_TIMEOUT"),
+        "{error:#}"
+    );
+    let alice_state = fixture.store.load("payload-alice")?.unwrap().session;
+    assert!(
+        alice_state
+            .checkpoints
+            .values()
+            .all(|checkpoint| !checkpoint.acknowledged)
+    );
+    assert!(
+        !fixture
+            .options
+            .entity_directory
+            .join("payload-alice/lineage.sha256")
+            .exists()
+    );
     fixture.store.integrity_check()?;
-    client.disconnect();
     replay.disconnect();
+    Ok(())
+}
+
+#[tokio::test]
+async fn admitted_callbacks_keep_lineage_credit_while_other_principals_fill_retained_storage()
+-> Result<()> {
+    let mut fixture = AuthFixture::new()?;
+    let files = FileEntityStore::open_with_limits(
+        &fixture.options.entity_directory,
+        spool::SpoolLimits::default(),
+        RetainedLimits {
+            bytes: 3330,
+            principal_bytes: 1665,
+            objects: 4,
+            principal_objects: 2,
+            staging_bytes: 2,
+            staging_objects: 2,
+            principals: 2,
+        },
+    )?;
+    let gate = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let release = ReleasePublication(gate.clone());
+    fixture.processor = Arc::new(Processor {
+        process_gate: Some(gate),
+        ..Processor::default()
+    });
+    let alice = fixture.listen(Some("issuer-a"), Some(0))?;
+    let bob = fixture.listen(Some("issuer-a"), Some(2))?;
+    let mut callbacks = Vec::new();
+    for (options, session) in [(alice.clone(), "held-alice"), (bob, "held-bob")] {
+        callbacks.push(tokio::spawn(async move {
+            let mut client = RecursiveClient::connect_sealed(&options).await?;
+            client
+                .declare_work(&work(session, 0, vec![1], Some(&[1])))
+                .await?;
+            let header = EntityHeader {
+                entity_id: 1,
+                parent_id: None,
+                scope_id: None,
+                parent_scope_id: None,
+                layer: 0,
+                content_type: None,
+                payload_length: Some(1),
+                checksum: None,
+                metadata: BTreeMap::from([
+                    (SESSION_METADATA_KEY.to_owned(), session.to_owned()),
+                    (ACTION_METADATA_KEY.to_owned(), "complete".to_owned()),
+                ]),
+                chunk_info: None,
+                completion_policy: None,
+            };
+            assert_eq!(
+                client
+                    .send_entity(&header, b"x", 0)
+                    .await?
+                    .last()
+                    .unwrap()
+                    .status
+                    .state,
+                STATUS_COMPLETE
+            );
+            let mut cp = checkpoint(2000);
+            cp.checkpoint_entity_id = 1;
+            assert_eq!(client.checkpoint(&cp).await?.flags, CHECKPOINT_ACK);
+            client.goaway(1).await?;
+            Result::<()>::Ok(())
+        }));
+    }
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while fixture.processor.processed.load(Ordering::SeqCst) != 2 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await?;
+    let full = files.retained_usage()?;
+    assert_eq!(full.bytes, 3330);
+    assert_eq!(full.objects, 4);
+    assert_eq!(full.lineage_reservations, 2);
+    for session in ["held-alice", "held-bob"] {
+        let retained = fixture.store.load(session)?.unwrap().session;
+        assert_eq!(retained.entities.len(), 1);
+        assert!(!retained.work_scope_ready(0));
+        assert!(
+            !fixture
+                .options
+                .entity_directory
+                .join(session)
+                .join("lineage.sha256")
+                .exists()
+        );
+    }
+    // No new session can borrow the admitted work's unused completion credit.
+    let owner = PrincipalBinding::new("issuer-a", "alice")?;
+    let refused = files
+        .reserve_lineage(Some(&owner), "cannot-borrow")
+        .unwrap_err();
+    assert!(format!("{refused:#}").contains("PIPESTREAM_LIMIT_EXCEEDED"));
+    assert_eq!(files.retained_usage()?, full);
+    drop(release);
+    for callback in callbacks {
+        tokio::time::timeout(Duration::from_secs(5), callback).await???;
+    }
+    for session in ["held-alice", "held-bob"] {
+        let retained = fixture.store.load(session)?.unwrap().session;
+        assert!(retained.checkpoints[&(0, 1)].acknowledged);
+        assert_eq!(
+            fs::read(
+                fixture
+                    .options
+                    .entity_directory
+                    .join(session)
+                    .join("lineage.sha256")
+            )?,
+            retained.final_lineage_digest()?
+        );
+    }
+    assert_eq!(files.retained_usage()?, full);
+    fixture.store.integrity_check()?;
     Ok(())
 }

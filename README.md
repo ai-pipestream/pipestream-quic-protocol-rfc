@@ -64,8 +64,11 @@ logical result and attempt growth for admitted processing, rehydration and resum
 jobs, with an explicit callback continuation-token budget. Processing also protects
 its possible rehydration descriptor, publication bytes and a separate completion
 slot, so waiting parents do not fill the processing queue needed by their children.
-Physical completion-space reservations, final-lineage headroom, and explicit orphan
-reconciliation remain unfinished.
+Rust payload installation now also reserves final-lineage file quota before
+admission, including its metadata, receipt and staging allowance across restart.
+This protects configured file-length headroom, not allocated filesystem blocks.
+Physical DB/WAL completion-space reservations and explicit orphan reconciliation
+remain unfinished.
 Connection metadata and lineage operations now run in a bounded storage pool.
 An independent control reader enforces checkpoint deadlines during those
 operations; held-storage tests also exercise protocol refusals and progress

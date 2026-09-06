@@ -246,7 +246,10 @@ final class SealedServerTest {
     try (var fixture = new Fixture(certs, processor); var raw = new SealedTestPeer.RawClient(fixture.server.address(), certs)) {
       declare(raw, root);
       var stream = payload(raw, ROOT, null, "unfinished", false);
-      stream.close().sync();
+      // close() sends FIN in Netty; the error-code overload sends RESET_STREAM.
+      stream.shutdownOutput((int) Wire.ERROR_ENTITY_INVALID).sync();
+      assertEquals(Wire.ERROR_FRAME, raw.closeCode.get(5, TimeUnit.SECONDS));
+      assertEquals(0, fixture.sessions.describe(SESSION, PRODUCER, ROOT).state());
       assertFalse(fixture.sessions.checkpointReady(SESSION, PRODUCER, 0, 1));
     }
     assertEquals(0, calls.get());
@@ -262,6 +265,21 @@ final class SealedServerTest {
       assertEquals(Wire.ERROR_ENTITY_INVALID, raw.closeCode.get(5, TimeUnit.SECONDS));
     }
     assertEquals(1, calls.get());
+  }
+
+  @Test void gracefulStreamCloseDeliversFinAndCompletesTheFullPayload() throws Exception {
+    Path certs = certificates(); var calls = new AtomicInteger();
+    try (var fixture = new Fixture(certs, (context, input) -> { calls.incrementAndGet(); return complete(input); });
+        var raw = new SealedTestPeer.RawClient(fixture.server.address(), certs)) {
+      declare(raw, declaration(0, null, 0, List.of(1L), List.of(1L)));
+      payload(raw, ROOT, null, "finished", false).close().sync();
+      assertEquals(2, SealedTransport.status(raw.response().payload()).state());
+      assertEquals(3, SealedTransport.status(raw.response().payload()).state());
+      var cut = checkpoint("fin", BigInteger.ONE, 1, 0L, 5000);
+      raw.send(SealedTransport.checkpoint(cut));
+      assertEquals(cut.acknowledgement(), SealedTransport.checkpoint(raw.response().payload()));
+      assertEquals(1, calls.get());
+    }
   }
 
   @Test void forgedScopeSummaryRollsBackClosureAndCorrectReplayPropagatesStrictFailure() throws Exception {
