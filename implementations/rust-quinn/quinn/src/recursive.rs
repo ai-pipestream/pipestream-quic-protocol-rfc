@@ -1960,15 +1960,15 @@ pub struct RecursiveClient {
 // Reading or writing a control frame is not cancellation-safe: a dropped future
 // may have consumed only part of its framing. Keep that connection unusable until
 // the caller reconnects; this does not cancel or resolve any admitted server job.
-struct RecoveryExchange {
+struct ControlExchange {
     connection: quinn::Connection,
     completed: bool,
 }
 
-impl RecoveryExchange {
+impl ControlExchange {
     fn new(connection: &quinn::Connection) -> Result<Self> {
         if let Some(reason) = connection.close_reason() {
-            bail!("recovery connection is closed; reconnect: {reason}");
+            bail!("client connection is closed; reconnect: {reason}");
         }
         Ok(Self {
             connection: connection.clone(),
@@ -1981,12 +1981,12 @@ impl RecoveryExchange {
     }
 }
 
-impl Drop for RecoveryExchange {
+impl Drop for ControlExchange {
     fn drop(&mut self) {
         if !self.completed {
             self.connection.close(
                 ERROR_NO_ERROR.into(),
-                b"interrupted recovery exchange; reconnect",
+                b"interrupted control exchange; reconnect",
             );
         }
     }
@@ -2126,7 +2126,7 @@ impl RecursiveClient {
         }
         self.ensure_recovery_idle()?;
         let frame = recovery::encode(&RecoveryFrame::Request(request.clone()))?;
-        let exchange = RecoveryExchange::new(&self.connection)?;
+        let exchange = ControlExchange::new(&self.connection)?;
         write_control(&mut self.control_send, &frame).await?;
         let (kind, bytes) = self.read_response().await?;
         let receipt = if kind == FRAME_RECOVERY {
@@ -2165,7 +2165,7 @@ impl RecursiveClient {
         if self.recovery_receipt.as_ref() != Some(receipt) {
             bail!("PIPESTREAM_ENTITY_INVALID: receipt differs from the pending recovery receipt");
         }
-        let exchange = RecoveryExchange::new(&self.connection)?;
+        let exchange = ControlExchange::new(&self.connection)?;
         let (kind, bytes) = self.read_response().await?;
         let frame = if kind == FRAME_RECOVERY {
             recovery::decode(&bytes)
@@ -2357,38 +2357,83 @@ impl RecursiveClient {
         Ok(statuses)
     }
 
+    /// Close a child scope and observe its parent's resolution.
+    /// The caller supplies the parent identity and depth from its assembly manifest;
+    /// neither can be inferred from a scope digest. Every returned status must match
+    /// that parent. A reported failure is returned as FAILED, not successful work.
+    /// Cancellation or an incomplete exchange closes the connection without cancelling
+    /// server work. Invalid local arguments are refused before transmitting the digest.
     pub async fn close_scope(
         &mut self,
         digest: &ScopeDigest,
+        parent: EntityKey,
+        parent_depth: u8,
     ) -> Result<(ScopeDigest, Vec<StatusFrame>)> {
         self.ensure_recovery_idle()?;
-        write_control(&mut self.control_send, &encode_scope_digest(digest)?).await?;
-        let (frame_type, response) = self.read_response().await?;
-        if frame_type != FRAME_SCOPE_DIGEST {
-            bail!("PIPESTREAM_FRAME_ERROR: expected SCOPE_DIGEST confirmation");
+        if !self.layers.layer1_recursive {
+            return Err(layer_error("SCOPE_DIGEST requires Layer 1").into());
         }
-        let observed = decode_scope_digest(&response)?;
-        if &observed != digest {
-            self.connection
-                .close(ERROR_ENTITY_INVALID.into(), b"scope digest ACK mismatch");
-            bail!("PIPESTREAM_ENTITY_INVALID: scope digest acknowledgement differs");
+        if digest.scope_id == 0
+            || digest.scope_id == parent.scope_id
+            || !(1..=pipestream_core::MAX_ENTITY_ID).contains(&parent.entity_id)
+            || parent_depth >= 7
+            || (parent.scope_id == 0) != (parent_depth == 0)
+        {
+            return Err(entity_error("invalid child-scope parent context").into());
         }
-        let mut statuses = Vec::with_capacity(2);
-        for expected in [
-            pipestream_core::STATUS_REHYDRATING,
-            pipestream_core::STATUS_COMPLETE,
-        ] {
+        let encoded = encode_scope_digest(digest)?;
+        let exchange = ControlExchange::new(&self.connection)?;
+        let result: Result<(ScopeDigest, Vec<StatusFrame>)> = async {
+            write_control(&mut self.control_send, &encoded).await?;
             let (frame_type, response) = self.read_response().await?;
-            if frame_type != FRAME_STATUS {
-                bail!("PIPESTREAM_FRAME_ERROR: expected rehydration STATUS");
+            if frame_type != FRAME_SCOPE_DIGEST {
+                return Err(frame_error("expected SCOPE_DIGEST confirmation").into());
             }
-            let status = decode_status_frame(&response, self.layers)?;
-            if status.status.state != expected {
-                bail!("PIPESTREAM_ENTITY_INVALID: unexpected rehydration status");
+            let observed = decode_scope_digest(&response)?;
+            if &observed != digest {
+                return Err(entity_error("scope digest acknowledgement differs").into());
             }
-            statuses.push(status);
+            let mut statuses = Vec::with_capacity(2);
+            for expected in [
+                pipestream_core::STATUS_REHYDRATING,
+                pipestream_core::STATUS_COMPLETE,
+            ] {
+                let (frame_type, response) = self.read_response().await?;
+                if frame_type != FRAME_STATUS {
+                    return Err(frame_error("expected rehydration STATUS").into());
+                }
+                let status = decode_status_frame(&response, self.layers)?;
+                if status.status.entity_id != parent.entity_id
+                    || status.status.scope_id != parent.scope_id
+                    || status.status.depth != parent_depth
+                {
+                    return Err(entity_error("scope response parent identity differs").into());
+                }
+                let failed = status.status.state == pipestream_core::STATUS_FAILED;
+                if status.status.state != expected && !failed {
+                    return Err(entity_error("unexpected rehydration status").into());
+                }
+                statuses.push(status);
+                if failed {
+                    break;
+                }
+            }
+            Ok((observed, statuses))
         }
-        Ok((observed, statuses))
+        .await;
+        match result {
+            Ok(result) => {
+                exchange.complete();
+                Ok(result)
+            }
+            Err(error) => {
+                if let Some(protocol) = error.downcast_ref::<ProtocolError>() {
+                    self.connection
+                        .close(protocol.code.into(), protocol.to_string().as_bytes());
+                }
+                Err(error)
+            }
+        }
     }
 
     pub async fn barrier(&mut self, scope_id: u32, parent_entity_id: u32) -> Result<Barrier> {
@@ -2621,7 +2666,16 @@ pub async fn run_recursive_scenario(
         });
     }
     let nested_digest = complete_digest(2, &[1, 2])?;
-    let (observed_nested, statuses) = client.close_scope(&nested_digest).await?;
+    let (observed_nested, statuses) = client
+        .close_scope(
+            &nested_digest,
+            EntityKey {
+                scope_id: 1,
+                entity_id: 2,
+            },
+            1,
+        )
+        .await?;
     if observed_nested != nested_digest {
         bail!("PIPESTREAM_INTEGRITY_ERROR: nested scope confirmation differs");
     }
@@ -2648,7 +2702,16 @@ pub async fn run_recursive_scenario(
         .await?;
 
     let child_digest = complete_digest(1, &[1, 2, 3])?;
-    let (observed_child, statuses) = client.close_scope(&child_digest).await?;
+    let (observed_child, statuses) = client
+        .close_scope(
+            &child_digest,
+            EntityKey {
+                scope_id: 0,
+                entity_id: 1,
+            },
+            0,
+        )
+        .await?;
     if observed_child != child_digest {
         bail!("PIPESTREAM_INTEGRITY_ERROR: child scope confirmation differs");
     }
@@ -2791,8 +2854,19 @@ pub async fn run_sealed_scenario(options: &RecursiveClientOptions, session_id: &
         &client.send_chunked_entity(&chunks, 2).await?,
         &[EntityState::Processing, EntityState::Complete],
     )?;
-    for (scope, ids, parent) in [(2, vec![1, 2], 2), (1, vec![1, 2, 3], 1)] {
-        let (_, statuses) = client.close_scope(&complete_digest(scope, &ids)?).await?;
+    for (scope, ids, parent, parent_scope, parent_depth) in
+        [(2, vec![1, 2], 2, 1, 1), (1, vec![1, 2, 3], 1, 0, 0)]
+    {
+        let (_, statuses) = client
+            .close_scope(
+                &complete_digest(scope, &ids)?,
+                EntityKey {
+                    scope_id: parent_scope,
+                    entity_id: parent,
+                },
+                parent_depth,
+            )
+            .await?;
         expect_states(
             &statuses,
             &[EntityState::Rehydrating, EntityState::Complete],
