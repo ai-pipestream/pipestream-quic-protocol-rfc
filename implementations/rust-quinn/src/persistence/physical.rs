@@ -276,5 +276,44 @@ fn checked_length(path: &Path) -> Result<Option<u64>, StoreError> {
 
 pub(crate) const VFS_NAME: &str = "pipestream-bounded-unix-v1";
 
+/// Common geometry for fixed-record completion funding. This does not compute
+/// an application's write set: each storage layout must fund its own records.
+pub(crate) fn completion_geometry(connection: &rusqlite::Connection) -> Result<u64, StoreError> {
+    // SAFETY: both calls synchronously borrow the live SQLite connection.
+    let state = unsafe { rusqlite::ffi::sqlite3_txn_state(connection.handle(), c"main".as_ptr()) };
+    if state != rusqlite::ffi::SQLITE_TXN_WRITE || rusqlite::version_number() != 3_053_002 {
+        return Err(corrupt(
+            "completion funding requires a writer and pinned SQLite 3.53.2",
+        ));
+    }
+    let page = u64::from(connection.query_row("PRAGMA page_size", [], |r| r.get::<_, u32>(0))?);
+    let mut reserved: i32 = -1;
+    // SAFETY: -1 queries the documented reserve-byte setting without changing it.
+    let code = unsafe {
+        rusqlite::ffi::sqlite3_file_control(
+            connection.handle(),
+            c"main".as_ptr(),
+            rusqlite::ffi::SQLITE_FCNTL_RESERVE_BYTES,
+            std::ptr::addr_of_mut!(reserved).cast(),
+        )
+    };
+    if code != rusqlite::ffi::SQLITE_OK
+        || reserved != 0
+        || !(512..=65536).contains(&page)
+        || !page.is_power_of_two()
+    {
+        return Err(corrupt("unsupported completion page geometry"));
+    }
+    Ok(page)
+}
+
+pub(crate) fn reserve_completion(
+    connection: &rusqlite::Connection,
+    page: u64,
+    bytes: u64,
+) -> Result<(), StoreError> {
+    vfs::reserve(connection, page, bytes)
+}
+
 #[cfg(test)]
 mod tests;

@@ -1,0 +1,392 @@
+//! Fixed-capacity authority records and persistent credits for their rewrites.
+//!
+//! A credit funds one overwrite of this record, not arbitrary SQL, payloads,
+//! jobs or a complete protocol transition. Callers must separately fund every
+//! other member of a transition's write set before acknowledging that promise.
+
+use super::*;
+use sha2::{Digest as _, Sha256};
+
+const MAGIC: &[u8; 8] = b"PSREC003";
+pub(super) const HEADER_BYTES: usize = 104;
+pub(super) const WORK_CAPACITY: usize = 2048;
+pub(super) const SUMMARY_CAPACITY: usize = 512;
+pub(super) const WORK_CREDITS: u64 = 2;
+const MAX_SECTOR: u64 = 65536;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Table {
+    Work,
+    Scope,
+}
+impl Table {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Work => "work",
+            Self::Scope => "scopes",
+        }
+    }
+    fn column(self) -> &'static str {
+        match self {
+            Self::Work => "view",
+            Self::Scope => "summary",
+        }
+    }
+    fn inventory(self) -> &'static str {
+        match self {
+            Self::Work => "SELECT rowid,length(view),substr(view,1,104) FROM work ORDER BY rowid",
+            Self::Scope => {
+                "SELECT rowid,length(summary),substr(summary,1,104) FROM scopes ORDER BY rowid"
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Target {
+    pub table: Table,
+    pub row: i64,
+}
+
+#[derive(Debug)]
+pub(super) struct Header {
+    pub revision: Id,
+    pub credits: u64,
+    pub capacity: usize,
+    used: usize,
+    digest: [u8; 32],
+}
+
+fn checksum(target: Target, prefix: &[u8]) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"pipestream-authority-record-v3");
+    hash.update([match target.table {
+        Table::Work => 0,
+        Table::Scope => 1,
+    }]);
+    hash.update(target.row.to_be_bytes());
+    hash.update(prefix);
+    hash.finalize().into()
+}
+
+fn parse(target: Target, length: u64, bytes: &[u8]) -> Result<Header> {
+    if bytes.len() != HEADER_BYTES || &bytes[..8] != MAGIC || target.row <= 0 {
+        return Err(StoreError::Corrupt("invalid authority record header"));
+    }
+    let integer =
+        |offset| u64::from_be_bytes(bytes[offset..offset + 8].try_into().expect("eight bytes"));
+    let revision = integer(8);
+    let credits = integer(16);
+    let used = integer(24);
+    let capacity = integer(32);
+    if revision == 0
+        || revision > MAX_NUMBER
+        || credits > MAX_NUMBER
+        || revision > MAX_NUMBER - credits
+        || used == 0
+        || used > capacity
+        || capacity > MAX_CONTROL_LIMIT as u64
+        || length != capacity + HEADER_BYTES as u64
+        || checksum(target, &bytes[..72]).as_slice() != &bytes[72..]
+    {
+        return Err(StoreError::Corrupt(
+            "authority record geometry or checksum changed",
+        ));
+    }
+    Ok(Header {
+        revision: Id(revision),
+        credits,
+        capacity: capacity as usize,
+        used: used as usize,
+        digest: bytes[40..72].try_into().expect("32 bytes"),
+    })
+}
+
+pub(super) fn header(tx: &Transaction<'_>, target: Target) -> Result<Header> {
+    let blob = tx.blob_open(
+        "main",
+        target.table.name(),
+        target.table.column(),
+        target.row,
+        true,
+    )?;
+    let mut bytes = [0; HEADER_BYTES];
+    if blob.len() < HEADER_BYTES {
+        return Err(StoreError::Corrupt("truncated authority record"));
+    }
+    blob.read_at_exact(&mut bytes, 0)?;
+    parse(target, blob.len() as u64, &bytes)
+}
+
+pub(super) fn read<T: Wire>(tx: &Transaction<'_>, target: Target) -> Result<(Header, T)> {
+    let retained = header(tx, target)?;
+    let blob = tx.blob_open(
+        "main",
+        target.table.name(),
+        target.table.column(),
+        target.row,
+        true,
+    )?;
+    let mut bytes = vec![0; retained.used];
+    blob.read_at_exact(&mut bytes, HEADER_BYTES)?;
+    let mut offset = retained.used;
+    let mut buffer = [0; 8192];
+    while offset < retained.capacity {
+        let count = buffer.len().min(retained.capacity - offset);
+        blob.read_at_exact(&mut buffer[..count], HEADER_BYTES + offset)?;
+        if buffer[..count].iter().any(|b| *b != 0) {
+            return Err(StoreError::Corrupt("authority record padding changed"));
+        }
+        offset += count;
+    }
+    if Sha256::digest(&bytes).as_slice() != retained.digest {
+        return Err(StoreError::Corrupt(
+            "authority record body checksum changed",
+        ));
+    }
+    Ok((retained, unpack(&bytes)?))
+}
+
+fn exhausted() -> StoreError {
+    protocol(
+        ErrorCode::LimitExceeded,
+        "authority record completion capacity exhausted",
+    )
+}
+
+/// One leaf and a conservative overflow-page bound. Incremental BLOB writes
+/// neither change keys nor allocate B-tree pages. Pinned SQLite may duplicate
+/// its final commit frame and pad to the supported maximum sector boundary.
+fn rewrite_bytes(capacity: usize, page: u64) -> Result<u64> {
+    if capacity == 0 || capacity > MAX_CONTROL_LIMIT {
+        return Err(exhausted());
+    }
+    let frame = page + 24;
+    let pages = (capacity as u64 + HEADER_BYTES as u64).div_ceil(page - 4) + 1;
+    (pages + 1 + MAX_SECTOR.div_ceil(frame))
+        .checked_mul(frame)
+        .and_then(|n| n.checked_add(32))
+        .ok_or_else(exhausted)
+}
+
+fn physical_error(error: crate::persistence::StoreError) -> StoreError {
+    match error {
+        crate::persistence::StoreError::Protocol(error)
+            if error.code == crate::ERROR_LIMIT_EXCEEDED =>
+        {
+            exhausted()
+        }
+        other => StoreError::Physical(other),
+    }
+}
+
+fn audit(tx: &Transaction<'_>, page: u64, replacement: Option<(Target, u64)>) -> Result<u64> {
+    let mut reserved = 0u64;
+    let mut replaced = replacement.is_none();
+    for table in [Table::Work, Table::Scope] {
+        let mut statement = tx.prepare(table.inventory())?;
+        let mut rows = statement.query([])?;
+        while let Some(row) = rows.next()? {
+            let target = Target {
+                table,
+                row: row.get(0)?,
+            };
+            let retained = parse(target, number(row, 1)?, &row.get::<_, Vec<u8>>(2)?)?;
+            let credits = if let Some((_, credits)) = replacement.filter(|(t, _)| *t == target) {
+                replaced = true;
+                credits
+            } else {
+                retained.credits
+            };
+            reserved = reserved
+                .checked_add(
+                    credits
+                        .checked_mul(rewrite_bytes(retained.capacity, page)?)
+                        .ok_or_else(exhausted)?,
+                )
+                .ok_or_else(exhausted)?;
+        }
+    }
+    if !replaced {
+        return Err(StoreError::Corrupt("completion replacement record missing"));
+    }
+    Ok(reserved)
+}
+
+/// Install the guarded WAL ceiling before unrelated writes, reserving retained
+/// credits plus a bounded batch of new slots. The writer lock prevents races.
+pub(super) fn protect(tx: &Transaction<'_>, capacity: usize, credits: u64) -> Result<()> {
+    let page = crate::persistence::completion_geometry(tx).map_err(physical_error)?;
+    let additional = if credits == 0 {
+        0
+    } else {
+        credits
+            .checked_mul(rewrite_bytes(capacity, page)?)
+            .ok_or_else(exhausted)?
+    };
+    let reserved = audit(tx, page, None)?
+        .checked_add(additional)
+        .ok_or_else(exhausted)?;
+    crate::persistence::reserve_completion(tx, page, reserved).map_err(physical_error)
+}
+
+/// Restart verifies complete record bodies and their relational identities,
+/// rather than trusting a well-formed charge header on corrupt contents. This
+/// audit is streaming across records; payload/job reconciliation is separate.
+pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
+    let mut statement =
+        tx.prepare("SELECT rowid,scope,producer,entity FROM work ORDER BY rowid")?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let (_, view): (_, WorkView) = read(
+            tx,
+            Target {
+                table: Table::Work,
+                row: row.get(0)?,
+            },
+        )?;
+        let key = WorkKey {
+            scope: Number(number(row, 1)?),
+            producer: Producer(number(row, 2)?),
+            entity: Id(number(row, 3)?),
+        };
+        if view.work != key {
+            return Err(StoreError::Corrupt(
+                "work record identity differs from its index",
+            ));
+        }
+    }
+    let mut statement =
+        tx.prepare("SELECT rowid,scope,producer,parent,declared,seal FROM scopes ORDER BY rowid")?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let (_, summary): (_, Option<ScopeSummary>) = read(
+            tx,
+            Target {
+                table: Table::Scope,
+                row: row.get(0)?,
+            },
+        )?;
+        if let Some(summary) = summary {
+            let parent: Option<WorkKey> = row
+                .get::<_, Option<Vec<u8>>>(3)?
+                .map(|b| unpack(&b))
+                .transpose()?;
+            let seal: Option<Vec<u8>> = row.get(5)?;
+            if summary.scope.0 != number(row, 1)?
+                || summary.producer.0 != number(row, 2)?
+                || summary.parent != parent
+                || summary.declared.0 != number(row, 4)?
+                || seal.as_deref() != Some(summary.seal.0.as_slice())
+            {
+                return Err(StoreError::Corrupt("scope summary differs from its index"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn write<T: Wire>(
+    tx: &Transaction<'_>,
+    target: Target,
+    value: &T,
+    revision: Id,
+    capacity: usize,
+    credits: u64,
+) -> Result<()> {
+    revision.check()?;
+    if credits > MAX_NUMBER
+        || revision.0 > MAX_NUMBER - credits
+        || capacity == 0
+        || capacity > MAX_CONTROL_LIMIT
+    {
+        return Err(exhausted());
+    }
+    let encoded = pack(value)?;
+    if encoded.len() > capacity {
+        return Err(exhausted());
+    }
+    let mut bytes = [0; HEADER_BYTES];
+    bytes[..8].copy_from_slice(MAGIC);
+    bytes[8..16].copy_from_slice(&revision.0.to_be_bytes());
+    bytes[16..24].copy_from_slice(&credits.to_be_bytes());
+    bytes[24..32].copy_from_slice(&(encoded.len() as u64).to_be_bytes());
+    bytes[32..40].copy_from_slice(&(capacity as u64).to_be_bytes());
+    bytes[40..72].copy_from_slice(&Sha256::digest(&encoded));
+    let digest = checksum(target, &bytes[..72]);
+    bytes[72..].copy_from_slice(&digest);
+    let mut blob = tx.blob_open(
+        "main",
+        target.table.name(),
+        target.table.column(),
+        target.row,
+        false,
+    )?;
+    if blob.len() != HEADER_BYTES + capacity {
+        return Err(StoreError::Corrupt("authority slot capacity changed"));
+    }
+    blob.write_at(&bytes, 0)?;
+    blob.write_at(&encoded, HEADER_BYTES)?;
+    let zeros = [0; 8192];
+    let mut offset = encoded.len();
+    while offset < capacity {
+        let count = zeros.len().min(capacity - offset);
+        blob.write_at(&zeros[..count], HEADER_BYTES + offset)?;
+        offset += count;
+    }
+    blob.close()?;
+    Ok(())
+}
+
+/// Caller first protects the entire insertion batch, then inserts zeroblobs of
+/// this exact capacity. No scan may observe a partially initialized slot.
+pub(super) fn initialize<T: Wire>(
+    tx: &Transaction<'_>,
+    target: Target,
+    value: &T,
+    capacity: usize,
+    credits: u64,
+) -> Result<()> {
+    write(tx, target, value, Id(1), capacity, credits)
+}
+
+/// A protected ordinary rewrite retains its credits. A promised rewrite spends
+/// exactly one, never enlarges the slot, and does not release another record's
+/// credit. Revision, content and remaining funding commit as one BLOB update.
+pub(super) fn replace<T: Wire>(
+    tx: &Transaction<'_>,
+    target: Target,
+    expected: Id,
+    value: &T,
+    spend: bool,
+) -> Result<Id> {
+    let retained = header(tx, target)?;
+    if retained.revision != expected {
+        return Err(protocol(
+            ErrorCode::Conflict,
+            "authority record revision changed",
+        ));
+    }
+    let revision = Id(increment(expected.0)?);
+    // Refuse invalid/oversize content before lowering this connection's WAL
+    // ceiling. A rejected replacement must not make an unspent credit usable.
+    if pack(value)?.len() > retained.capacity {
+        return Err(exhausted());
+    }
+    let credits = if spend {
+        retained.credits.checked_sub(1).ok_or_else(exhausted)?
+    } else {
+        retained.credits
+    };
+    if revision.0 > MAX_NUMBER - credits {
+        return Err(exhausted());
+    }
+    let page = crate::persistence::completion_geometry(tx).map_err(physical_error)?;
+    let reserved = audit(tx, page, Some((target, credits)))?;
+    crate::persistence::reserve_completion(tx, page, reserved).map_err(physical_error)?;
+    write(tx, target, value, revision, retained.capacity, credits)?;
+    Ok(revision)
+}
+
+#[cfg(test)]
+mod tests;

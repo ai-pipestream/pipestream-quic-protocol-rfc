@@ -38,7 +38,7 @@ CREATE TABLE scopes (
   declared INTEGER NOT NULL DEFAULT 0 CHECK(declared >= 0),
   seal BLOB CHECK(seal IS NULL OR length(seal) = 32),
   cancelled INTEGER NOT NULL DEFAULT 0 CHECK(cancelled IN (0,1)),
-  summary BLOB,
+  summary BLOB NOT NULL CHECK(length(summary)>104),
   PRIMARY KEY(generation, scope)
 ) STRICT;
 CREATE TABLE work (
@@ -47,8 +47,7 @@ CREATE TABLE work (
   scope INTEGER NOT NULL,
   producer INTEGER NOT NULL CHECK(producer IN (0,1)),
   entity INTEGER NOT NULL CHECK(entity > 0),
-  revision INTEGER NOT NULL CHECK(revision > 0),
-  view BLOB NOT NULL,
+  view BLOB NOT NULL CHECK(length(view)>104),
   UNIQUE(generation, scope, entity),
   FOREIGN KEY(generation, scope) REFERENCES scopes(generation, scope)
 ) STRICT;
@@ -69,4 +68,4 @@ CREATE TABLE payload_refs (
   FOREIGN KEY(generation,scope,entity) REFERENCES work(generation,scope,entity)
 ) STRICT;
 PRAGMA application_id = 1347637825;
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;

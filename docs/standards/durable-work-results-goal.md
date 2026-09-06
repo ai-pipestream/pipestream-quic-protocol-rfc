@@ -465,3 +465,78 @@ including strict Rust formatting/clippy, 393 Rust workspace tests, 193 Java test
 vectors and models, all nine black-box language pairs, all 32 raw capability
 probes, and the three external examples. The existing network tests exercise
 their historical profiles; they do not establish V2 network interoperability.
+
+### Task 2 implementation progress: preallocated records and rewrite funding
+
+Work views and scope summaries now use individually checksummed fixed-capacity
+records inside their normalized SQLite tables. Declaration reserves a 2048-byte
+view and two rewrite credits per member; scope creation reserves a 512-byte
+summary and one credit. Empty sealed closure writes that preallocated summary.
+This is storage-format 3, explicitly refusing older prototype formats without
+conversion or deletion. Wire/CDDL/frozen examples do not change.
+
+The guarded VFS protects the retained sum of credits against unrelated creation,
+declaration and payload-root binding writes. Credit accounting is reconstructed
+from bounded headers under the SQLite writer lock, without a whole-session image
+or an in-memory inventory of every record. Each credit funds one incremental
+BLOB overwrite of that fixed record under pinned SQLite 3.53.2 geometry; its
+revision, content and remaining credit commit atomically. Ordinary rewrites
+preserve credits. Oversize or stale updates refuse before spending a credit.
+Reopen and integrity checks validate complete record bodies, zero padding and
+their relational identities, not only the accounting header.
+
+A negative-first regression exposed another exhaustion boundary: an ordinary
+revision increment could consume the last integer needed for a promised update.
+The record now reserves revision increments with its credits. The two promised
+updates still succeed at the exact top of the signed-63-bit domain; the preceding
+ordinary update is refused. No floating point, saturation or wraparound is used.
+
+Current focused evidence: 44 authority tests, including 11 new record tests,
+pass; strict workspace clippy passes. Two subprocess exits bracket credit
+spending before/after commit. The existing creation/declaration subprocess cases
+also exercise initialized fixed records. These are process-death tests, not
+physical power-loss tests or transport-level acknowledgment loss.
+
+Measured record gates:
+
+- With a reader pinning the WAL, 53 ordinary commits filled its protected
+  ceiling at 655136 bytes. Four reserved rewrites across two work records still
+  committed, ending at 671592 bytes under the 1048576-byte cap. Database growth
+  was disabled. This is record escrow, not full job-completion evidence.
+- All 18 page/capacity combinations passed: 512/4096/65536-byte SQLite pages,
+  capacities 512/2048/4096/8192/65536/1048576 bytes, cache spilling enabled,
+  SQL row replacement prohibited, and database page count fixed. For the 1 MiB
+  record, measured WAL lengths were 1106872, 1058872 and 1114552 bytes respectively,
+  within their bounds of 1173872, 1133032 and 1311232 bytes. These are file-length
+  bounds, not allocated-block, RAM or throughput measurements.
+
+The 600-member seal test explicitly funds its credits with a 128 MiB WAL policy.
+The physical-exhaustion test keeps its 128 KiB database/journal and 64 KiB SHM
+ceilings but uses a 4 MiB WAL allowance so it still checks refusal after an
+accepted whole declaration batch. Logical ceilings are not unconditional grants
+against smaller physical capacity.
+
+Still required before job admission: funding and atomically committing the job,
+input binding, admission receipt, attempt/deadline, child scope, global/per-owner
+output capacity, and every other mutable record in its completion write set.
+The present credits fund only their fixed-record writes; they cannot justify an
+unfunded job, arbitrary SQL, output promises or complete subtree settlement.
+The header audit currently scans retained records per protected transaction;
+populated-store scaling is not claimed. No V2 profile is activated. Independent
+Java, authenticated endpoints, workers/results/retention, the neutral failure
+driver and the equivalent streaming-gRPC workload all remain in the active goal.
+
+Local evidence logs:
+
+- `/tmp/pipestream-v2-records-authority.log`
+- `/tmp/pipestream-v2-records-costs.log`
+- `/tmp/pipestream-v2-records-clippy.log`
+- `/tmp/pipestream-v2-records-revision-red.log` (deliberate pre-fix failure)
+- `/tmp/pipestream-v2-records-suite.log`
+
+Final validation: `./conformance/run_all.sh` exited 0, including 404 Rust
+workspace tests, strict formatting/clippy, 193 Java tests (20 Surefire reports,
+zero failures/errors/skips), native/C++ checks, frozen vectors and models, all
+nine black-box pairs, all 32 raw capability probes and the external examples.
+Those network interoperability tests remain historical-profile evidence, not
+V2 endpoint conformance. No draft submission, main merge or deployment occurred.

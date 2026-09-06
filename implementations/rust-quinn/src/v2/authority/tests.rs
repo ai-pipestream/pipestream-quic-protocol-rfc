@@ -35,7 +35,7 @@ impl Authorization for TestAuthorization {
         self.allowed.load(Ordering::SeqCst) && matches!(owner.0.as_str(), "alice" | "bob")
     }
 }
-fn policy() -> StorePolicy {
+pub(super) fn policy() -> StorePolicy {
     StorePolicy {
         owners: Id(2),
         sessions: Id(10),
@@ -100,6 +100,9 @@ pub(super) struct Fixture {
 }
 impl Fixture {
     fn with_policy(policy: StorePolicy) -> Self {
+        Self::with_physical(policy, PhysicalLimits::default())
+    }
+    pub(super) fn with_physical(policy: StorePolicy, physical: PhysicalLimits) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let clock = Arc::new(TestClock::new());
         let authorization = Arc::new(TestAuthorization {
@@ -109,7 +112,7 @@ impl Fixture {
             &directory.path().join("authority.sqlite"),
             owner("test-authority"),
             policy,
-            PhysicalLimits::default(),
+            physical,
             clock.clone(),
             authorization.clone(),
         )
@@ -134,7 +137,7 @@ impl Fixture {
             &self.directory.path().join("authority.sqlite"),
             owner("test-authority"),
             self.store.policy.clone(),
-            PhysicalLimits::default(),
+            self.store.physical.limits,
             self.clock.clone(),
             self.authorization.clone(),
         )
@@ -449,7 +452,15 @@ fn declaration_replay_pages_and_missing_input_checkpoint_are_durable() {
 
 #[test]
 fn batching_does_not_change_seal_and_empty_seal_closes_immutably() {
-    let fixture = Fixture::new();
+    // This test exercises >2 full declaration batches, not quota refusal.
+    // Fund their two record-rewrite credits before comparing the seal.
+    let fixture = Fixture::with_physical(
+        policy(),
+        PhysicalLimits {
+            wal_bytes: 128 << 20,
+            ..PhysicalLimits::default()
+        },
+    );
     let binding = fixture.create();
     let ids: Vec<Id> = (1..=600).map(Id).collect();
     for (i, batch) in ids.chunks(256).enumerate() {
@@ -876,7 +887,9 @@ fn physical_exhaustion_rolls_back_whole_batch_and_preserves_replay() {
     let directory = tempfile::tempdir().unwrap();
     let physical = PhysicalLimits {
         database_bytes: 128 << 10,
-        wal_bytes: 128 << 10,
+        // The database remains small; fund the records' separate WAL credits
+        // so this still exercises exhaustion after a committed whole batch.
+        wal_bytes: 4 << 20,
         journal_bytes: 128 << 10,
         shared_memory_bytes: 64 << 10,
     };

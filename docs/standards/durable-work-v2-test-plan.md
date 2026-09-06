@@ -87,9 +87,10 @@ pass together with the 17 wire-library tests.
   pre-commit absence and post-commit replay. This covers metadata commits, not
   payload installation, worker execution, transport ACK loss or cleanup.
 - V2-STORE: `physical_exhaustion_rolls_back_whole_batch_and_preserves_replay`
-  exercises 128 KiB DB/WAL/journal caps and a 64 KiB SHM cap; committed evidence
+  exercises 128 KiB DB/journal, 4 MiB WAL and 64 KiB SHM caps; committed evidence
   remains readable/replayable after refusal and reopen. This measures file
-  lengths, not allocated blocks or future completion/WAL reservations.
+  lengths, not allocated blocks. The WAL cap now funds record rewrite credits;
+  the database cap still refuses a later declaration after a committed batch.
 - Reopen/initialization tests prevent accidental empty-store creation during
   recovery. Exact large-integer tests include values above 2^53 and the maximum
   signed-63-bit entity ID. No JSON or floating-point persistence is used.
@@ -127,9 +128,37 @@ entry point; `ingress.rs` adds three header/reception tests. Their scope is:
   RSS/HWM. This is neither an end-to-end benchmark nor proof of all process-memory
   bounds or populated-inventory scaling.
 
-Funded admission, durable jobs, output/metadata/WAL reservations and retirement
+Funded admission, durable jobs, complete transition/output reservations and retirement
 remain unimplemented. Temporary reception quotas and object-reference cleanup do
 not substitute for those gates or for either cross-language direction.
+
+### Rust fixed-record funding evidence
+
+`src/v2/authority/records/tests.rs` has 11 tests, including its subprocess entry.
+This is persistent storage implementation used by declarations and empty scope
+closure, not evidence that the entire admission/job transaction is funded.
+
+- V2-STORE: checksummed preallocated work/summary records, exact revisions,
+  ordinary writes preserving credits, transactional spending/rollback and named
+  refusal for stale revisions, oversize records and exhausted credits.
+- V2-VIEW/V2-STORE: a negative-first counter test prevents ordinary updates from
+  using the last revision increments reserved for promised record rewrites.
+- V2-STORE: a retained SQLite reader prevents WAL reclamation. Ordinary writes
+  fill the protected ceiling; four reserved overwrites across two work records
+  still commit under a 1 MiB WAL cap with database growth disabled. This measures
+  record updates only, not an entire job settlement or cancellation RPC.
+- V2-STORE: 18 page/capacity combinations cover 512/4096/65536-byte pages and
+  512-byte through 1 MiB records with cache spilling, row replacement prohibited,
+  and database page growth disabled. Every measured WAL length fits the
+  pinned-layout record bound. File lengths are not filesystem allocated blocks.
+- V2-STORE: two child-process exits bracket a credit-spending commit. Restart
+  preserves either its entire prior revision/credit or its entire committed
+  successor. Header, body, padding and cross-row corruption fail closed; startup
+  rejects corrupt bodies even when their charge headers remain intact.
+
+Global/per-owner output and job budgets, every other mutable record in a complete
+transition, dependency/read pins, metadata retirement and cross-language V2
+failure tests remain required. These record-level credits do not close those gates.
 
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 

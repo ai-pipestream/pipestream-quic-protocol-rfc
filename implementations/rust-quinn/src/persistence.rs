@@ -28,6 +28,7 @@ pub use storage::{StorageLimits, StorageUsage};
 mod physical;
 pub(crate) use physical::{Guard as PhysicalGuard, VFS_NAME as GUARDED_VFS};
 pub use physical::{PhysicalLimits, PhysicalUsage};
+pub(crate) use physical::{completion_geometry, reserve_completion};
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS pipestream_sessions (

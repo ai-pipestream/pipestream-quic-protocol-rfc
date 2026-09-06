@@ -582,6 +582,7 @@ impl AuthorityStore {
         if retained.as_deref().is_some_and(|p| p != path) {
             return Err(StoreError::Corrupt("authority payload root path changed"));
         }
+        records::protect(&tx, 0, 0)?;
         tx.execute(
             "UPDATE authority SET payload_path=?1 WHERE singleton=1",
             [path],

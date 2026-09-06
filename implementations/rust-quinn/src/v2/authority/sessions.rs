@@ -158,9 +158,23 @@ impl AuthorityStore {
         tx.execute("INSERT INTO sessions(generation,owner,creation_sequence,policy,limits,results,control_limit,object_limit) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
             params![sql(generation.0)?, owner.0, sql(sequence.0)?, pack(policy)?, pack(&self.policy.session_limits)?,
                 caps.has(RESULT_DELIVERY), sql(caps.control_limit.0)?, sql(caps.object_limit.0)?])?;
+        records::protect(&tx, records::SUMMARY_CAPACITY, 1)?;
         tx.execute(
-            "INSERT INTO scopes(generation,scope,producer) VALUES(?1,0,0)",
-            [sql(generation.0)?],
+            "INSERT INTO scopes(generation,scope,producer,summary) VALUES(?1,0,0,zeroblob(?2))",
+            params![
+                sql(generation.0)?,
+                (records::HEADER_BYTES + records::SUMMARY_CAPACITY) as i64
+            ],
+        )?;
+        records::initialize(
+            &tx,
+            records::Target {
+                table: records::Table::Scope,
+                row: tx.last_insert_rowid(),
+            },
+            &None::<ScopeSummary>,
+            records::SUMMARY_CAPACITY,
+            1,
         )?;
         let binding = Binding {
             identity: SessionIdentity {

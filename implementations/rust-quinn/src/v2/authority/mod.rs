@@ -19,13 +19,14 @@ use std::{path::Path, sync::Arc, time::Duration as Elapsed};
 pub mod ingress;
 #[cfg(unix)]
 pub mod payload;
+mod records;
 mod scopes;
 mod sessions;
 #[cfg(test)]
 mod tests;
 
 const APPLICATION_ID: i64 = 1_347_637_825;
-const FORMAT: i64 = 2;
+const FORMAT: i64 = 3;
 const SCHEMA: &str = include_str!("schema.sql");
 
 #[derive(Debug)]
@@ -316,6 +317,8 @@ impl AuthorityStore {
                 "authority identity or retained policy changed",
             ));
         }
+        records::protect(&tx, 0, 0)?;
+        records::verify(&tx)?;
         tx.commit()?;
         drop(connection);
         crate::persistence::sync_directory(
@@ -362,6 +365,7 @@ impl AuthorityStore {
                 "authority UTC is untrusted or regressed",
             ));
         }
+        records::protect(tx, 0, 0)?;
         tx.execute(
             "UPDATE authority SET greatest_utc=?1 WHERE singleton=1",
             [sql(reading.utc_ms.0)?],
@@ -396,7 +400,8 @@ impl AuthorityStore {
     }
 
     pub fn integrity_check(&self) -> Result<()> {
-        let connection = self.connect()?;
+        let mut connection = self.connect()?;
+        let connection = connection.transaction()?;
         let result: String = connection.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
         if result != "ok" {
             return Err(StoreError::Corrupt("SQLite integrity check failed"));
@@ -407,6 +412,7 @@ impl AuthorityStore {
         if foreign.is_some() {
             return Err(StoreError::Corrupt("foreign key check failed"));
         }
+        records::verify(&connection)?;
         Ok(())
     }
 }

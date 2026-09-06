@@ -63,8 +63,21 @@ reclaims abandoned stages only under exclusive ownership; installed orphans
 remain charged until the authority's reference-safe collector removes them.
 Live installed/read handles remain pinned against collection. The database
 retains a local random store identity and a once-bound canonical payload path.
-Internal authority storage is now format 2; prior prototype stores are refused,
+Internal authority storage is now format 3; prior prototype stores are refused,
 not silently converted or replaced. This changes no wire schema or frozen vector.
+
+Work views and scope summaries use fixed-capacity checksummed records, not
+whole-session images. Declaration preallocates 2048 bytes per work view and two
+record-rewrite credits; scope creation preallocates 512 bytes and one summary
+credit. Credits also preserve the revision increments needed to spend them.
+Ordinary metadata writers protect those credits through the guarded SQLite VFS.
+An incremental BLOB rewrite spends one credit without allocating database pages;
+empty scope closure already uses its reserved summary. Reopen verifies record
+bodies, padding and relational identities and reconstructs journal funding.
+The cost bound is specific to bundled SQLite 3.53.2 and its checked page/sector
+geometry. These credits fund fixed-record rewrites, not arbitrary additional SQL
+or the entire admission/execution/closure transaction. The corresponding job,
+receipt, clock, output and other transition reservations are still required.
 
 `AuthorityStore::receive_input` validates ownership, membership, application/mode,
 profile, immutable operation, duration and response/byte limits before staging.
@@ -76,8 +89,9 @@ and reserve every execution/publication/retention resource before admission.
 
 Funded admission/jobs, workers, cancellation settlement, nonempty closure,
 results/read leases, retention expiry and session retirement remain unfinished.
-Physical file caps and staging reservations do not reserve future completion
-space. Client journals, V2 mTLS/QUIC
+Physical file caps and staging reservations alone do not reserve future
+completion space; fixed-record credits cover only their stated write set.
+Client journals, V2 mTLS/QUIC
 integration and independent Java V2 implementation also remain outstanding.
 The current contract has no backward-compatibility requirement; historical V1
 tests are regression evidence only. See the

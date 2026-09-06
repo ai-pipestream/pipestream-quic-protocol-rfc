@@ -1,6 +1,8 @@
 use super::*;
 
 struct RetainedScope {
+    summary_record: records::Target,
+    summary_revision: Id,
     producer: Producer,
     parent: Option<WorkKey>,
     last_entity: u64,
@@ -11,7 +13,7 @@ struct RetainedScope {
 }
 
 fn load(tx: &Transaction<'_>, generation: Id, scope: Number) -> Result<RetainedScope> {
-    let mut statement = tx.prepare("SELECT producer,parent,last_entity,declared,seal,cancelled,summary FROM scopes WHERE generation=?1 AND scope=?2")?;
+    let mut statement = tx.prepare("SELECT producer,parent,last_entity,declared,seal,cancelled,rowid FROM scopes WHERE generation=?1 AND scope=?2")?;
     let mut rows = statement.query(params![sql(generation.0)?, sql(scope.0)?])?;
     let Some(row) = rows.next()? else {
         return Err(protocol(ErrorCode::NotFound, "scope not declared"));
@@ -28,11 +30,14 @@ fn load(tx: &Transaction<'_>, generation: Id, scope: Number) -> Result<RetainedS
                 .map_err(|_| StoreError::Corrupt("invalid retained seal"))
         })
         .transpose()?;
-    let summary = row
-        .get::<_, Option<Vec<u8>>>(6)?
-        .map(|b| unpack(&b))
-        .transpose()?;
+    let summary_record = records::Target {
+        table: records::Table::Scope,
+        row: row.get(6)?,
+    };
+    let (header, summary) = records::read(tx, summary_record)?;
     Ok(RetainedScope {
+        summary_record,
+        summary_revision: header.revision,
         producer: Producer(number(row, 0)?),
         parent,
         last_entity: number(row, 2)?,
@@ -94,20 +99,30 @@ pub(super) fn operation(
 }
 
 pub(super) fn work(tx: &Transaction<'_>, generation: Id, key: &WorkKey) -> Result<(Id, WorkView)> {
-    let retained: Option<(u64, u64, Vec<u8>)> = tx.query_row(
-        "SELECT revision,producer,view FROM work WHERE generation=?1 AND scope=?2 AND entity=?3",
-        params![sql(generation.0)?, sql(key.scope.0)?, sql(key.entity.0)?], |r| Ok((number(r, 0)?, number(r, 1)?, r.get(2)?))).optional()?;
-    let Some((revision, producer, bytes)) = retained else {
+    let retained: Option<(i64, u64)> = tx
+        .query_row(
+            "SELECT rowid,producer FROM work WHERE generation=?1 AND scope=?2 AND entity=?3",
+            params![sql(generation.0)?, sql(key.scope.0)?, sql(key.entity.0)?],
+            |r| Ok((r.get(0)?, number(r, 1)?)),
+        )
+        .optional()?;
+    let Some((row, producer)) = retained else {
         return Err(protocol(ErrorCode::NotFound, "work not declared"));
     };
     if producer != key.producer.0 {
         return Err(protocol(ErrorCode::Conflict, "work producer mismatch"));
     }
-    let view: WorkView = unpack(&bytes)?;
+    let (header, view): (_, WorkView) = records::read(
+        tx,
+        records::Target {
+            table: records::Table::Work,
+            row,
+        },
+    )?;
     if view.work != *key {
         return Err(StoreError::Corrupt("work index and view disagree"));
     }
-    Ok((Id(revision), view))
+    Ok((header.revision, view))
 }
 
 fn seal(
@@ -201,6 +216,11 @@ impl AuthorityStore {
             ));
         }
         let now = self.trusted_now(&tx)?;
+        records::protect(
+            &tx,
+            records::WORK_CAPACITY,
+            entity_ids.len() as u64 * records::WORK_CREDITS,
+        )?;
         for entity in entity_ids {
             let view = WorkView {
                 work: WorkKey {
@@ -220,8 +240,19 @@ impl AuthorityStore {
                 manifest: None,
                 diagnostic: None,
             };
-            tx.execute("INSERT INTO work(generation,scope,producer,entity,revision,view) VALUES(?1,?2,?3,?4,1,?5)",
-                params![sql(identity.generation.0)?, sql(scope.0)?, sql(retained.producer.0)?, sql(entity.0)?, pack(&view)?])?;
+            tx.execute("INSERT INTO work(generation,scope,producer,entity,view) VALUES(?1,?2,?3,?4,zeroblob(?5))",
+                params![sql(identity.generation.0)?, sql(scope.0)?, sql(retained.producer.0)?, sql(entity.0)?,
+                    (records::HEADER_BYTES + records::WORK_CAPACITY) as i64])?;
+            records::initialize(
+                &tx,
+                records::Target {
+                    table: records::Table::Work,
+                    row: tx.last_insert_rowid(),
+                },
+                &view,
+                records::WORK_CAPACITY,
+                records::WORK_CREDITS,
+            )?;
         }
         retained.declared = Number(
             retained
@@ -259,6 +290,13 @@ impl AuthorityStore {
                 status_root: empty_status_root(),
                 closed_at: now,
             });
+            records::replace(
+                &tx,
+                retained.summary_record,
+                retained.summary_revision,
+                &retained.summary,
+                true,
+            )?;
         }
         let receipt = OperationReceipt {
             operation: id,
@@ -276,9 +314,16 @@ impl AuthorityStore {
             receipt: receipt.clone(),
         })
         .encode(binding.control_limit.0 as usize)?;
-        tx.execute("UPDATE scopes SET last_entity=?3,declared=?4,seal=?5,summary=?6 WHERE generation=?1 AND scope=?2",
-            params![sql(identity.generation.0)?, sql(scope.0)?, sql(retained.last_entity)?, sql(retained.declared.0)?,
-                retained.seal.map(|d| d.0.to_vec()), retained.summary.as_ref().map(pack).transpose()?])?;
+        tx.execute(
+            "UPDATE scopes SET last_entity=?3,declared=?4,seal=?5 WHERE generation=?1 AND scope=?2",
+            params![
+                sql(identity.generation.0)?,
+                sql(scope.0)?,
+                sql(retained.last_entity)?,
+                sql(retained.declared.0)?,
+                retained.seal.map(|d| d.0.to_vec())
+            ],
+        )?;
         tx.execute(
             "UPDATE sessions SET entities=?2,operations=operations+1 WHERE generation=?1",
             params![sql(identity.generation.0)?, sql(total)?],
@@ -350,7 +395,7 @@ impl AuthorityStore {
         let tx = connection.transaction()?;
         self.authorize_session(&tx, identity, Permission::Inspect)?;
         let retained = load(&tx, identity.generation, scope)?;
-        let mut statement = tx.prepare("SELECT entity,view FROM work WHERE generation=?1 AND scope=?2 AND entity>?3 ORDER BY entity LIMIT ?4")?;
+        let mut statement = tx.prepare("SELECT entity,rowid FROM work WHERE generation=?1 AND scope=?2 AND entity>?3 ORDER BY entity LIMIT ?4")?;
         let mut rows = statement.query(params![
             sql(identity.generation.0)?,
             sql(scope.0)?,
@@ -365,7 +410,13 @@ impl AuthorityStore {
                 break;
             }
             let entity = Id(number(row, 0)?);
-            let view: WorkView = unpack(&row.get::<_, Vec<u8>>(1)?)?;
+            let (_, view): (_, WorkView) = records::read(
+                &tx,
+                records::Target {
+                    table: records::Table::Work,
+                    row: row.get(1)?,
+                },
+            )?;
             if view.work
                 != (WorkKey {
                     scope,
