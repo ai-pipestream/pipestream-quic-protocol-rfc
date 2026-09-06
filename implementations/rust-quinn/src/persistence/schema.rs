@@ -13,17 +13,22 @@ pub(super) fn session_id(row: &rusqlite::Row<'_>, column: usize) -> Result<Strin
     Ok(id)
 }
 
-pub(super) fn initialize_root(connection: &Connection, ddl: &str) -> Result<(), StoreError> {
-    let owned: u32 = connection.query_row(
+pub(super) fn initialize_root(connection: &mut Connection, ddl: &str) -> Result<(), StoreError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let owned: u32 = transaction.query_row(
         "SELECT count(*) FROM sqlite_schema WHERE name GLOB 'pipestream_*'",
         [],
         |r| r.get(0),
     )?;
     if owned == 0 {
-        connection.execute_batch(ddl)?;
-        return Ok(());
+        transaction.execute_batch(ddl)?;
+        binding::initialize(&transaction)?;
+    } else {
+        verify(&transaction, ddl)?;
+        binding::read(&transaction)?;
     }
-    verify(connection, ddl)
+    transaction.commit()?;
+    Ok(())
 }
 
 /// Only built-in DDL is split here. Whitespace and SQLite's removal of

@@ -163,6 +163,8 @@ async fn raw(
 async fn unobserved_recovery_receipt_replays_after_restart_without_a_second_resume() -> Result<()> {
     let mut fixture = AuthFixture::new()?;
     let options = fixture.listen(Some("issuer-a"), Some(0))?;
+    let storage_pair = fixture.store.payload_binding()?;
+    assert!(storage_pair.payloads().is_some());
     let claim = begin_durable_yield(&options, "lost-recovery-ack").await?;
     let request = request(&claim);
     let (endpoint, connection, mut send, _unread) = raw(&options, true).await?;
@@ -193,7 +195,9 @@ async fn unobserved_recovery_receipt_replays_after_restart_without_a_second_resu
         let _ = server.await;
     }
     fixture.store = Arc::new(SqliteSessionStore::open(&fixture.options.state_database)?);
+    assert_eq!(fixture.store.payload_binding()?, storage_pair);
     let rotated = fixture.listen(Some("issuer-a"), Some(1))?;
+    assert_eq!(fixture.store.payload_binding()?, storage_pair);
     let mut client = RecursiveClient::connect_recovery(&rotated).await?;
     let replayed = client.accept_recovery(&request).await?;
     assert_eq!(replayed, receipt);

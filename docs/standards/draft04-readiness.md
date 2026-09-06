@@ -12,6 +12,42 @@ policies recorded in the incremental-index prerequisite.
 
 ## Changes and regression coverage
 
+### Rust payload-store pairing (2026-09-06)
+
+Rust service construction now requires its `EntityStore` to durably bind the
+session database before admission or dispatch. The file backend pairs a random
+retained-root identity with the database's separately generated identity. Its
+immutable file claim is synced before the SQLite claim; an interrupted complete
+claim can replay, while foreign pairs, corrupt/partial images and missing claims
+for bound stores refuse without repair. Binding does not admit payloads or prove
+that all retained inputs exist.
+
+The database stores a checked 72-byte `PSRBND01` image in a strict singleton table.
+The file root has a 56-byte `PSRID001` identity and optional 72-byte pairing claim.
+Every database connection validates its root schema and cached database identity.
+Binding writes preserve unchanged admitted-job completion reservations; they are
+ordinary metadata writes, not permission to consume protected WAL capacity.
+`PSDBL003`/`PSRET003` refuse previous policies without conversion. Session format 7
+and normative wire/CDDL are unchanged. Custom entity backends must implement the
+new binding method, with no silent default.
+
+Seventeen focused tests pass, covering quotas, rollback, corruption, concurrent
+claims, held writers and abrupt process exit. The authenticated recovery QUIC
+restart test pins the storage pair during retained receipt replay. Rust orphan
+reclamation, persistent producer observations and
+the broader resource/interoperability goal remain unfinished.
+
+The final repository conformance command passed locally with 276 Rust workspace
+tests, 158 Java tests without failures/errors/skips, native SQLite/C++ checks,
+nine executable pairings, 32 capability probes, recursive/recovery CLI checks and
+three external examples. Formatting, strict clippy and strict Rustdoc passed.
+The 20 authenticated-session/recovery QUIC tests also passed as a focused gate.
+Draft -04 has zero idnits errors/flaws/warnings and one FIPS reference comment.
+Earlier full runs exposed test fixtures that assumed the old schema-validation
+timing and two-file root inventory; those expectations now reflect the new
+ownership checks without weakening no-admission or no-repair assertions.
+These are local results, not hosted CI, an operational migration or a release.
+
 ### Java explicit orphan reconciliation (2026-09-06)
 
 Java now offers a blocking offline maintenance API for a closed, paired managed

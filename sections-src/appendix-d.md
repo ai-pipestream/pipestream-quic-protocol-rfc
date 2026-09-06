@@ -159,6 +159,17 @@ and be retried by the same pair; a corrupt marker is refused. This is local
 storage ownership, not producer authentication, a wire extension or orphan cleanup.
 Earlier Java storage layouts are refused without conversion.
 
+Rust now also pairs its retained root and SQLite database before service admission
+or dispatch. Independently generated store identities and a synced file-first
+claim prevent another database/root pair from being adopted implicitly. Complete
+claims replay after a failed database transaction or process exit; partial,
+corrupt or missing bound claims refuse without repair. The database metadata write
+preserves admitted completion reservations. Tests cover competing roots, corruption,
+interruption and WAL saturation; authenticated recovery over QUIC retains the pair
+across restart and receipt replay. Older Rust storage policies are refused without
+conversion. This local ownership prerequisite is not an orphan-cleanup API or a
+replacement for principal authentication.
+
 Java also provides explicit offline orphan reconciliation under exclusive payload
 ownership and a database writer transaction. It audits managed input and retained
 objects before deleting abandoned staging names. Unadmitted payload bodies become

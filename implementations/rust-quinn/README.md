@@ -268,7 +268,7 @@ throughput claim is made.
 The session payload remains version 7 inside a new `PSIMG001` fixed-capacity
 image. Storage policy 4 charges allocated capacity; queue policy 3 uses fixed
 dispatch images, including preallocated future rehydration rows. The physical
-policy is `PSDBL002`. Older images, policies and unaccounted stores are refused
+policy is `PSDBL003`. Older images, policies and unaccounted stores are refused
 without conversion. Missing or changed owned tables/indexes refuse on reopen
 instead of being rebuilt over retained work. No operational database is migrated or
 silently assigned new quotas. Preserve old stores with their matching binary.
@@ -368,7 +368,7 @@ Previously declared work remains outstanding; no rejected payload becomes an
 admitted job or a successful scope. Authority/principal labels come from the
 authenticated service or durable job, never untrusted entity metadata.
 
-The 96-byte `.retained-policy` uses `PSRET002`, seven big-endian limits and a
+The 96-byte `.retained-policy` uses `PSRET003`, seven big-endian limits and a
 SHA-256 checksum. Each `.meta` uses `PSOBJ001` and commits to session, owner,
 entity/scope or lineage identity, length and digest. The `.done` file contains
 the metadata checksum. Raw entity and lineage bodies keep their original paths
@@ -376,7 +376,7 @@ and bytes. Metadata fsync precedes copying through 8 KiB buffers; verified data
 is fsynced before no-replace hardlink publication, and the receipt and directory
 are synced before installation succeeds. Session format 7 and the wire/CDDL
 are unchanged. The `lineage.reserve` marker uses the separate `PSLIN001`
-encoding and is synced before payload installation. Old `PSRET001` policies,
+encoding and is synced before payload installation. Old `PSRET001`/`PSRET002` policies,
 nonempty roots without a policy, and payloads missing a matching reservation
 are refused, not converted. Preserve them with their matching binary.
 
@@ -387,8 +387,8 @@ payload files yet, reserve 512 global bytes and one global object until matching
 establishes their owner and full charge. `incomplete_metadata` reports this
 unattributed count. Empty canonical directories left before metadata creation
 stay present and consume `directories` credit, bounded by twice the object cap.
-Directory counts are global only. The root, spool directory, policy and empty
-lock file are separate fixed overhead. Neither reopen nor refusal deletes
+Directory counts are global only. The root, spool directory, policy, identity,
+database claim and empty lock file are separate fixed overhead. Neither reopen nor refusal deletes
 admitted objects or silently discards surviving artifacts.
 
 Partial lineage markers retain their entire 1,120-byte global charge and object
@@ -423,6 +423,53 @@ hold admitted callbacks while two principals fill the complete retained budget,
 then verify real lineage bytes, checkpoint ACKs and GOAWAY. A missing declared
 payload instead times out without a final lineage or successful checkpoint.
 Explicit orphan reconciliation and broader tenant stress remain unfinished.
+
+### Database and retained-root pairing
+
+`RecursiveService::with_limits` and `new` now invoke the required
+`EntityStore::bind_session_store` method before returning a service. A custom
+backend must implement durable ownership itself; there is no default no-op or
+fallback based on a directory path or protocol session label. The file backend
+permits one persistent database/root pair, including across restart. Multiple
+service handles can share the same pair; a different database or retained root
+is refused before admission or dispatch.
+
+The database creates its identity atomically with its root schema. A strict
+singleton table retains a fixed 72-byte `PSRBND01` image: database identity,
+initially absent payload identity, and SHA-256. `SqliteSessionStore::payload_binding`
+reads it; `bind_payload_store` performs the once-only database half under the
+writer lock. Every connection checks the root schema and original database
+identity before exposing the handle. Malformed, missing or oversized binding
+images cannot become an unbound store or be regenerated on reopen.
+
+The retained root has a separate 56-byte `.retained-identity` (`PSRID001`) and
+an optional 72-byte `.session-store` claim containing the same complete pair.
+The file backend syncs its immutable claim and directory before the database
+claim. A complete file claim can replay after a failed transaction or process
+exit, without assigning a new identity or admitting work. Partial/corrupt claims
+refuse without repair. A bound database with a missing file claim cannot recreate
+that claim. Same-process root handles serialize binding and the existing advisory
+lock excludes a second cooperating writer process.
+
+Binding is an ordinary metadata write. It derives unchanged completion
+reservations under SQLite's writer lock and cannot spend admitted jobs' protected
+WAL/shared-memory credit. Exact binding replay does not rewrite the row. These
+local ownership records are not authentication, payload-admission evidence,
+complete input-integrity audits or an orphan-cleanup API.
+
+`PSDBL003` and `PSRET003` refuse earlier policies without conversion, so an older
+binary cannot silently ignore pairing. Session payload format 7, queue/storage
+policy, wire/CDDL and the physical completion-cost derivation are unchanged.
+Back up and restore the database, payload root and their policy/identity/claim
+files as one matched set. Cloned identities do not authorize independent writers
+to the same live root. No operational migration or automatic cleanup is supplied.
+
+Tests cover both mismatch directions, concurrent roots and connections, a held
+SQLite writer, failed binding BLOB writes, process exit after the file claim,
+old policies, corrupt/missing identities and claims, and completion after WAL
+saturation. The authenticated recovery QUIC test pins the same pair while replaying
+an unobserved receipt after restart. This prerequisite does not complete Rust
+orphan reclamation or the broader resource/interoperability goal.
 
 ### SQLite file-length caps
 
