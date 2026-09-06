@@ -7,8 +7,9 @@ the inventory when its decisions are incorporated into the specification.
 The version-1 limitations below remain relevant to the shipped implementations.
 Section 12 defines a distinct version-2 contract for identity, result delivery,
 retention and profile composition; it does not change version-1 wire meanings.
-Remaining successor acceptance work includes composed failure-model checks,
-independent implementations, authenticated failure interoperability and the
+Bounded composed failure-model checks now exercise a branch and leaf; remaining
+successor acceptance work includes independent implementations, authenticated
+failure interoperability and the
 equivalent-workload comparison. Normative text alone does not establish those
 properties in a running implementation.
 

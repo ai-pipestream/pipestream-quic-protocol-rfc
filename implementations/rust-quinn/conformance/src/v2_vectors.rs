@@ -158,8 +158,14 @@ end
             ruby.into(),
             path(&schema_file),
         ];
-        command.extend(instances.iter().map(|p| path(p)));
-        run_checked_owned(repository, &command, Duration::from_secs(30))?;
+        // Bound each independent case, not a whole schema group whose runtime
+        // grows with the corpus. Process isolation also prevents validator
+        // diagnostic state from accumulating across negative cases.
+        for instance in instances {
+            command.push(path(&instance));
+            run_checked_owned(repository, &command, Duration::from_secs(30))?;
+            command.pop();
+        }
     }
     let commitments = fs::read_to_string(repository.join("test-vectors/v2/commitments.tsv"))?;
     let commitment_count = verify_commitments(&commitments)?;

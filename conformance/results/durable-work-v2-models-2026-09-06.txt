@@ -1,0 +1,36 @@
+Local validation: 2026-09-06
+Command: pipestream-conformance modelcheck --depth 32 --max-states 1000000
+These are bounded symbolic-model results, not wire/storage/liveness conformance.
+
+durable-work model bounds: one declared work item, two attempts, two caller classes, time 0..=6, at most 32 transitions
+assumptions: atomic metadata commit, immutable symbolic input, separately installed output; no wire, database, cryptographic, scope-composition or liveness proof
+bounded safety passed: 311539 states, 8723092 checked edges, deepest 19, 0 states at depth boundary
+negative control DisconnectFinalizes: transport or lookup invented an authoritative work transition; shortest trace: [Begin(Admit { owner: true, valid: true }), Commit, Disconnect]
+negative control StalePublishes: a stale attempt published a result; shortest trace: [Begin(Admit { owner: true, valid: true }), Commit, Begin(Retry { owner: true, expected: 1 }), Commit, InstallOutput(1), Begin(Publish { attempt: 1 }), Commit]
+negative control ExpiresActive: active work was evicted before authoritative settlement; shortest trace: [Tick, Tick, Begin(Admit { owner: true, valid: true }), Commit, Expire]
+negative control ReusesExpired: terminal identity/outcome changed, or expired work was readmitted; shortest trace: [Begin(Cancel { owner: true }), Commit, Tick, Tick, Expire, Begin(Admit { owner: true, valid: false }), Commit]
+negative control LeaksUnauthorized: unauthorized lookup disclosed retained work; shortest trace: [Read { owner: false }]
+negative control DeletesPublished: published output was not retained for its promised interval; shortest trace: [Begin(Admit { owner: true, valid: true }), Commit, InstallOutput(1), Begin(Publish { attempt: 1 }), Commit, Crash, Reconcile]
+negative control RetryAfterDeadline: retry authorized a new attempt after the execution deadline; shortest trace: [Begin(Admit { owner: true, valid: true }), Commit, Tick, Tick, Tick, Begin(Retry { owner: true, expected: 1 }), Commit]
+negative control RetryExtendsDeadline: retry or replay extended the accepted execution deadline; shortest trace: [Begin(Admit { owner: true, valid: true }), Commit, Tick, Begin(Retry { owner: true, expected: 1 }), Commit]
+scope model bounds: two root entities, one child scope with two entities, at most 32 transitions; symbolic membership, four final-count buckets
+scope safety passed: 5776 states, 173280 checked edges, deepest 17, 0 states at depth boundary
+scope negative control IgnoresSeal: a scope closed without an immutable seal; shortest trace: [Close(0)]
+scope negative control IgnoresMissing: a declared member was omitted from closure; shortest trace: [Declare(0), Seal(0), Close(0)]
+scope negative control IgnoresDescendants: a root closed before its descendant scope; shortest trace: [Declare(0), Admit(0), Fail(0), Seal(0), Close(0)]
+scope negative control OmitsSkipped: completion counters omitted a final state; shortest trace: [Declare(0), Skip(0), Seal(0), Close(0)]
+scope negative control WrongShutdownScope: connection shutdown used a non-root scope cut; shortest trace: [Declare(0), Admit(0), Cancel(0), Close(1), Goaway(1)]
+scope negative control ReopensSeal: a sealed scope's membership changed; shortest trace: [Seal(0), Declare(0)]
+composed model bounds: one branch, zero/one descendant, two attempts each, two worker epochs (one restart), symbolic output expiry/read pins; depth 32
+composed safety passed: 620796 states, 29177412 checked edges, deepest 27, 0 states at depth boundary
+composed negative control IgnoresAncestorFence: publication crossed an accepted ancestor or owner fence; shortest trace: [Admit(0), DeclareChild, Admit(1), Install(1, 1), CancelRoot, BeginPublish(1, 1, 1), Commit]
+composed negative control PublishesBeforeChildren: parent published without successful sealed child closure; shortest trace: [Admit(0), Install(0, 1), BeginPublish(0, 1, 1), Commit]
+composed negative control DropsDependencyPin: promised output lost despite retention, read or dependency pin; shortest trace: [Admit(0), DeclareChild, Admit(1), Install(1, 1), BeginPublish(1, 1, 1), Commit, ExpireOutput(1), Reclaim(1)]
+composed negative control DropsReadPin: promised output lost despite retention, read or dependency pin; shortest trace: [Admit(0), Install(0, 1), BeginPublish(0, 1, 1), Seal(1), Close(1), Commit, BeginRead(0, true), ExpireOutput(0), Reclaim(0)]
+composed negative control RetryReplacesSubtree: declared descendant disappeared; shortest trace: [Admit(0), DeclareChild, Retry(0)]
+composed negative control StalePublication: promised output lost despite retention, read or dependency pin; shortest trace: [Admit(0), DeclareChild, Admit(1), Install(1, 1), Retry(1), BeginPublish(1, 1, 1), Commit]
+composed negative control StaleWorkerLease: stale attempt or worker lease published output; shortest trace: [Admit(0), DeclareChild, Admit(1), Crash, Restart, Install(1, 1), BeginPublish(1, 1, 1), Commit]
+composed negative control CrashLosesFence: accepted cancellation/skip fence disappeared or changed; shortest trace: [CancelRoot, Crash]
+composed negative control SettlesParentTooEarly: parent cancellation settled before descendant closure; shortest trace: [Admit(0), CancelRoot, Settle(0)]
+composed negative control ClosesBeforeDescendants: root closed before its descendant scope; shortest trace: [Admit(0), Seal(0), Fail(0), Close(0)]
+composed negative control RevocationLeavesDeclarations: revocation left unresolved declarations unfenced; shortest trace: [Revoke]

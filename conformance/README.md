@@ -82,7 +82,7 @@ production credentials.
 
 ## Successor lifecycle models
 
-`pipestream-conformance modelcheck --depth 32 --max-states 1000000` runs two
+`pipestream-conformance modelcheck --depth 32 --max-states 1000000` runs three
 independent abstract models, not the production protocol libraries. The full
 suite runs this command. The work model explores one declared logical item,
 two attempts, owner/foreign callers, transaction staging/commit, lost replies,
@@ -90,13 +90,27 @@ crash/reconnect, staged output, cancellation, revocation, deadline and retention
 The scope model explores two root members and two possible descendants, sealed
 membership, four final-state count buckets and scope-qualified shutdown.
 
+The composed model checks one branch and zero or one leaf, two attempts per
+item, two durable worker epochs (one restart), staged publication, ancestor
+cancel/skip/revocation fences, bounded descendant settlement and immutable
+scope identity through parent retry. Symbolic output expiry can interleave
+with a live read and a dependent parent's execution. Cleanup must preserve
+either pin. Its 11 deliberately broken variants each yield a counterexample.
+Named traces also check successful rehydration, cancellation, missing input,
+revocation before admission and old-worker refusal after restart without
+changing the logical attempt number.
+
 The runner reports reached states, checked edges, shortest counterexamples for
 deliberately broken rules, and the depth frontier. A state-budget overrun or an
 undetected negative control fails as inconclusive. Zero frontier means the
 finite abstract graph was exhausted, not an unbounded protocol proof. Metadata
 transactions are assumed atomic; file installation is a separate persistent
 step. Cryptography, wire codecs, arbitrary depth/cardinality, real storage crash
-consistency, liveness, and the composition of the two models are not proved.
+consistency, liveness, and arbitrary multi-work/profile composition are not
+proved. In the composed model a stop fence plus a nonterminal phase represents
+effective CANCELLING while descendant rows are settled; it is not the wire
+encoding of a work view. Worker epochs are symbolic fencing identities, not
+measured lease timers or a production execution scheduler.
 
 These are design checks for [the successor contract](../docs/standards/durable-work-v2-decisions.md).
 They do not enable a new wire profile or replace the cross-language failure
@@ -109,6 +123,9 @@ It enforces exact frame-to-schema roots and Appendix F synchronization, and
 passes CBOR directly to the pinned CDDL library without JSON fallback. Schema
 refusals are checked now; semantic/canonical refusal expectations are frozen
 inputs to future independent codec tests, not current implementation evidence.
+Each frozen case has its own validator process and 30-second deadline, so
+adding cases cannot exhaust a shared per-schema time budget and negative-case
+diagnostic state cannot accumulate between cases.
 
 Child-process stdout and stderr are drained concurrently, each with a 1 MiB
 retained-output limit. A regression test floods both pipes and verifies bounded

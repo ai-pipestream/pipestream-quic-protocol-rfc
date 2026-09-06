@@ -1,5 +1,6 @@
 //! Protocol-neutral process orchestration and immutable-corpus verification.
 
+mod composed_model;
 mod extensions;
 mod receipts;
 mod schema;
@@ -78,7 +79,8 @@ fn run(cli: Cli) -> Result<()> {
         Task::Extensions => extensions::run(),
         Task::Modelcheck { depth, max_states } => {
             work_model::run(depth, max_states)?;
-            scope_model::run(depth, max_states)
+            scope_model::run(depth, max_states)?;
+            composed_model::run(depth, max_states)
         }
     }
 }

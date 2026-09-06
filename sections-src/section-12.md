@@ -84,7 +84,8 @@ Flow-control and dependency considerations in {{RFC9308}} apply.
 
 Stream idle time runs between payload-progress observations. Stream lifetime
 runs from accepting its header, without extension by progress. Exceeding
-either bound resets that stream with LIMIT_EXCEEDED. Implementations MUST
+either bound aborts that stream with LIMIT_EXCEEDED as defined in Section 12.2.
+Implementations MUST
 also bound the time and bytes spent receiving headers, pending result-stream
 creation, per-principal connections, staging files, metadata, queued work,
 retained bytes and storage journals. Global and per-principal exhaustion
@@ -130,11 +131,17 @@ numeric value `0x200 + code`; graceful transport close uses 0.
 Malformed control, wrong message direction, negotiation failure, lost control
 framing, and an unusable Control Stream terminate the connection. Use
 CONTROL_RESET when Stream 0 is reset. A valid but refused request returns
-REFUSAL without closing unrelated work. Invalid input or result streams are
-reset with the corresponding error; if their request can be correlated,
-send REFUSAL unless a response was already sent. After a result header has
-started its response, subsequent delivery errors use stream reset, not a
-second control response. Neither stream reset, connection loss nor timeout
+REFUSAL without closing unrelated work. Stream abort uses RESET_STREAM for
+the sender and STOP_SENDING for the receiver, following {{RFC9000}}, Sections
+3.3 and 3.5; a receiver does not send RESET_STREAM for a receive-only stream.
+The server also sends a correlated REFUSAL for an invalid input unless it
+already sent that input's admission response. A client rejecting a result
+aborts reception and reports local delivery failure; it does not send a
+server-to-client REFUSAL in the wrong direction. After a result header has
+started its response, subsequent sender errors abort the stream rather than
+send a second control response. If FIN already ended the stream, a receiver
+still discards unverified output and records local failure even when a transport
+abort no longer has an effect. Neither stream abort, connection loss nor timeout
 modifies a declared obligation, commits failure, or authorizes a new attempt.
 An unrecognized QUIC error still ends that transport, without implying success.
 
@@ -507,6 +514,14 @@ authority, or dereference a caller-supplied URL without separate application
 authorization. Cross-authority delegation and other storage schemes require
 a separately specified profile; they are not implicit reference conformance.
 
+An application retaining or sharing an output reference MUST retain the
+authenticated manifest and selected output index, not only its locator string.
+The manifest supplies the expected authority, owner, generation, producing
+attempt and object commitment for attachment and reading. The consumer obtains
+owner credentials and trusted authority-to-endpoint configuration separately;
+it MUST NOT infer either from an untrusted URI. A bare locator is not sufficient
+recovery evidence and this profile defines no anonymous identity-discovery call.
+
 ## Sealed Closure, Counts and Shutdown
 
 SCOPE operation 2 pages through a scope's declarations; operation 3 returns
@@ -521,7 +536,9 @@ descendant scope has closed. A success rehydration under this profile's STRICT
 policy additionally requires all children to succeed. Partial completion
 policies are not inherited from version 1. A child scope with failure,
 cancellation or skip prevents successful parent rehydration; the authority
-settles the parent FAILED unless it already has another terminal outcome.
+settles the parent FAILED unless it already has a terminal outcome or an
+accepted cancellation/skip fence. An accepted fence keeps precedence: complete
+its specified settlement, rather than replacing it with a child-failure outcome.
 Retrying terminal failed logical work requires a new work identity and scope
 membership, not rewriting the failed outcome.
 

@@ -18,8 +18,10 @@ Readers are advised to note that other implementations may exist.
 The implementations below implement documented version-1 subsets. They do not
 yet implement or advertise the version-2 profiles in Section 12. Independent
 Rust abstract models explore durable attempts/results/retention and sealed
-scope closure; they are design evidence, not wire interoperability, real
-storage crash-consistency evidence, or proof of the models' composition.
+scope closure. A third bounded model composes a branch and leaf with attempts,
+worker epochs, ancestor cancellation, output read/dependency pins and closure.
+These are design evidence, not wire interoperability, real storage
+crash-consistency evidence or an unbounded composition proof.
 
 ## Java/Netty Reference Implementation
 

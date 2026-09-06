@@ -3,6 +3,8 @@
 Status: active, not accepted. Baseline: `68b02ea55169187da123b7efa0f6045718fbb645`.
 The user approved all three tasks in the goal objective attached on 2026-09-06.
 This record preserves the complete scope; an intermediate commit is not completion.
+Task 1's contract/design acceptance is recorded below. Tasks 2 and 3 are open;
+no version-2 endpoint, interoperability claim or workload comparison exists yet.
 
 ## Required order and acceptance evidence
 
@@ -100,12 +102,12 @@ post-terminal replay retention, result publication fencing, immutable scope
 membership, four final count buckets, empty scopes and root-qualified shutdown.
 
 These are inputs to the normative wire contract, not a replacement for it.
-The second increment below now defines that contract and freezes its schemas
-and examples. Next: check the composition of cancellation, attempts, descendant
-closure, output/dependency retention and recovery, then audit the contract
-against those findings. No new profile is advertised yet.
-All three acceptance sections above remain open until their complete evidence
-is recorded and audited against the actual repository.
+The second increment defines that contract and freezes its schemas and examples.
+The third checks bounded composition and records task-1 design acceptance.
+Next: implement the complete version-2 combination independently in Rust and
+Java, following [the mandatory test ledger](durable-work-v2-test-plan.md).
+No new profile is advertised yet. Tasks 2 and 3 remain open until their complete
+evidence is recorded and audited against the actual repository.
 
 ### Initial model increment validation (2026-09-06)
 
@@ -183,3 +185,97 @@ Validation:
 This is local validation, not hosted CI, version-2 interoperability, a submitted
 Internet-Draft, or task-1 acceptance. The composed model/contract audit remains;
 tasks 2 and 3 still require their full implementation and workload evidence.
+
+### Composed failure model and contract acceptance (2026-09-06)
+
+The composed model explores one branch with zero or one leaf, two attempts per
+item, two durable worker epochs across one restart, staged publication,
+ancestor cancellation/skip/revocation, immutable child identity, output-read and
+parent-dependency pins, symbolic expiry, batched settlement and root closure.
+It reaches 620,796 states and checks 29,177,412 edges; the longest shortest path
+is 27 transitions and depth 32 leaves no frontier. All 11 negative controls
+produce counterexamples. Eight unit tests cover successful and refusing traces,
+negative controls and insufficient exploration budgets. The two earlier models
+also retain their verified bounds and 14 negative controls.
+
+Raw output is checked in at
+[`conformance/results/durable-work-v2-models-2026-09-06.txt`](../../conformance/results/durable-work-v2-models-2026-09-06.txt).
+This is finite symbolic safety evidence. It does not establish liveness, arbitrary
+depth/cardinality, a wire implementation, physical storage crash consistency,
+clock correctness or measured resource bounds. Those remain task-2 obligations.
+
+The review clarified that a saved output reference includes its authenticated
+manifest and selected index, not a bare URI with guessed identity/credentials.
+It also made sender RESET_STREAM versus receiver STOP_SENDING explicit under
+RFC 9000, disallowed wrong-direction client REFUSAL responses, and preserved
+an accepted parent cancel/skip fence over subsequent STRICT child-failure
+settlement. No frozen version-1 or version-2 bytes were changed.
+
+Task-1 acceptance audit against the original seven contract deliverables:
+
+- Core and negotiated profiles: Section 12.1, Appendix F capabilities and
+  Section 11's distinct major-version registrations. Legacy semantics are
+  preserved, required dependencies are explicit, and downgrade is refused.
+- Stable identity and distinct attempts: Sections 12.3, 12.4 and 12.6 define
+  authenticated authority/owner/generation/producer/scope/entity binding,
+  high-water anti-reuse, immutable operation replay and separate worker leases.
+- First-class results and references: Section 12.7 and the frozen manifests,
+  headers and hash commitments bind installed output to admitted input, work,
+  attempt and authority, with authenticated full-object retrieval.
+- Composed sealed recovery: Sections 12.4 through 12.8 define admission versus
+  declaration, authoritative typed receipts/views, explicit retry, ancestor
+  cancellation and terminal publication. The work and composed models exercise
+  lost-ACK/restart and stale-attempt/worker/cancellation sequences.
+- Independent lifetimes: Section 12.9 defines execution settlement, post-terminal
+  output/receipt promises, credential/grant separation, active/dependency/read
+  pins, trusted clocks, retirement and permanent non-reuse history. The models
+  detect active eviction, deadline extension and premature output deletion.
+- Exact completion and shutdown: Section 12.8 plus scope/composed models cover
+  seals, missing descendants, four final count buckets, STRICT rehydration,
+  immutable root summaries and completed-session versus connection-only drain.
+- Normative text, compatibility, examples and executable models: draft -05
+  builds and renders; synchronized CDDL and all 70 frozen examples/12 commitments
+  validate; three bounded graphs exhaust their stated domains with all 25
+  negative controls detected. Semantic/canonical codec expectations are frozen,
+  not falsely counted as implemented transport refusals.
+
+Within the selected profiles, the identified admission, outcome-authority,
+publication and closure decisions now have explicit normative rules and bounded
+design checks. This closes task 1 as a contract/design milestone, not as an
+IETF approval or implementation milestone. Implementation findings can and must
+reopen a rule if actual interoperability or failure testing contradicts it.
+
+Validation and regression fixes:
+
+- `./conformance/run_all.sh`: exit 0 after the fixes below. Formatting, strict
+  workspace clippy, 342 Rust workspace tests, 193 Java tests (20 Surefire XML
+  reports, zero failures/errors/skips), C++/native checks, nine black-box pairs,
+  32 raw QUIC capability probes, recursive/recovery tests and all three external
+  examples passed. External Rust examples also pass their four and two tests.
+- `./build.sh core 05`: exit 0, zero errors/flaws/warnings and the existing FIPS
+  reference comment; inspected rendered Section 12 and the unchanged schemas.
+- The first rerun exposed a shared 30-second schema-group deadline. Each frozen
+  case now runs in an isolated validator process with its own 30-second bound.
+  This preserves strict CBOR/CDDL checks and prevents cross-case diagnostic
+  accumulation; no JSON fallback or regenerated corpus was introduced.
+- The next rerun exposed a retained-root lock lifetime defect. A duplicated
+  descriptor deterministically reproduced the same EWOULDBLOCK after the last
+  logical owner dropped. Commit `fb9c012` adds a PID-qualified RAII lock guard
+  that explicitly unlocks for its owning process, including failed-open paths.
+  A copied nonowner guard cannot unlock the parent's store. See the open-file
+  description semantics in the [Linux flock manual](https://man7.org/linux/man-pages/man2/flock.2.html).
+- Both new lock tests, all 56 retained-storage tests and five additional complete
+  runs of the 88-test Rust transport library passed. Genuine live-handle and
+  cross-process maintenance exclusions remain covered. No storage format,
+  dependency or public wire API changed for this fix.
+- `git diff --check`: passed. Local logs:
+  `/tmp/pipestream-composed-contract-complete-suite.log`,
+  `/tmp/pipestream-composed-contract-draft-final.log`,
+  `/tmp/pipestream-composed-vectors-isolated.log`,
+  `/tmp/pipestream-retained-lock-tests.log`,
+  `/tmp/pipestream-retained-lock-parallel-regressions.log`, and the deliberately
+  failing pre-fix `/tmp/pipestream-retained-lock-negative.log`.
+
+Next is task 2, not a claim that these models replace either language's codec,
+authenticated server, durable executor, result delivery, failure driver or
+resource measurements. The entire three-task goal remains active.

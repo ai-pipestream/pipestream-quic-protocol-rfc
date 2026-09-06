@@ -126,7 +126,11 @@ negative-control counterexamples and omitted behaviors must be reported.
 Exceeding a state budget is inconclusive and fails the command, not a passing
 proof. A separate two-scope model checks declared-but-missing children,
 descendant closure, subtree cancellation, skipped counts and shutdown cuts.
-Composition of those scope rules with the attempt/result model is still open.
-Wire identity allocation, long-running clocks,
-admission byte reservations and full result-transfer behavior still need their
-own models/tests before task 1 can be accepted.
+The composed branch/leaf model additionally checks ancestor fences, two wire
+attempts per work item, two worker epochs across one restart, immutable child
+identity through retry, result-read and parent-dependency pins, batched
+cancellation settlement and root closure. Symbolic expiry does not measure
+elapsed time or actual storage use. Wire identity allocation, trusted-clock
+handling, admission byte reservations and complete result transfer still require
+the independent implementation and failure tests in task 2; the bounded models
+do not prove those implementation properties.
