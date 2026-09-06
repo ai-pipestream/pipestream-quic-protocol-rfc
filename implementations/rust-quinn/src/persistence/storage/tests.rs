@@ -31,6 +31,38 @@ fn is_limit(error: StoreError) {
 }
 
 #[test]
+fn oversized_accounting_images_and_principals_refuse_reads_and_writes() {
+    for alteration in [
+        "UPDATE pipestream_storage_sessions SET image = zeroblob(1048576)",
+        "UPDATE pipestream_storage_sessions SET principal = zeroblob(1048576)",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteSessionStore::open(dir.path().join("state.sqlite3")).unwrap();
+        store.create(&session("retained", Some("alice"))).unwrap();
+        let connection = store.connect().unwrap();
+        connection
+            .execute_batch("PRAGMA ignore_check_constraints=ON;")
+            .unwrap();
+        connection.execute_batch(alteration).unwrap();
+        assert!(
+            matches!(store.load("retained"), Err(StoreError::Corrupt(_))),
+            "{alteration}"
+        );
+        assert!(
+            matches!(store.integrity_check(), Err(StoreError::Corrupt(_))),
+            "{alteration}"
+        );
+        assert!(
+            matches!(
+                store.create(&session("new", None)),
+                Err(StoreError::Corrupt(_))
+            ),
+            "{alteration}"
+        );
+    }
+}
+
+#[test]
 fn global_and_principal_bytes_survive_reopen_without_policy_reset() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("state.sqlite3");
@@ -56,6 +88,7 @@ fn global_and_principal_bytes_survive_reopen_without_policy_reset() {
         store.storage_usage().unwrap(),
         StorageUsage {
             state_bytes: (bytes * 3) as u64,
+            allocated_state_bytes: (bytes * 3) as u64,
             completion_reserved_bytes: 0,
             sessions: 3
         }
@@ -66,6 +99,7 @@ fn global_and_principal_bytes_survive_reopen_without_policy_reset() {
             .unwrap(),
         StorageUsage {
             state_bytes: (bytes * 2) as u64,
+            allocated_state_bytes: (bytes * 2) as u64,
             completion_reserved_bytes: 0,
             sessions: 2
         }
@@ -196,9 +230,18 @@ fn accounting_failure_rolls_back_session_and_job_index_together() {
     let before = store.create(&session).unwrap();
     let usage = store.storage_usage().unwrap();
     let conn = Connection::open(path).unwrap();
-    conn.execute_batch("CREATE TRIGGER reject_accounting BEFORE UPDATE ON pipestream_storage_sessions BEGIN SELECT RAISE(ABORT, 'injected accounting failure'); END;").unwrap();
+    conn.execute_batch(
+        "CREATE INDEX reject_accounting ON pipestream_storage_sessions(length(image))",
+    )
+    .unwrap();
     session.enqueue_job(key, input, 20).unwrap();
-    assert!(store.save(before.revision, &session).is_err());
+    assert!(
+        store
+            .save(before.revision, &session)
+            .unwrap_err()
+            .to_string()
+            .contains("cannot open indexed column for writing")
+    );
     assert_eq!(store.load("queued").unwrap().unwrap(), before);
     assert_eq!(store.storage_usage().unwrap(), usage);
     assert_eq!(store.unfinished_job_count().unwrap(), 0);
@@ -209,7 +252,7 @@ fn accounting_failure_rolls_back_session_and_job_index_together() {
 fn missing_or_changed_accounting_is_corruption_not_free_capacity() {
     for alteration in [
         "DELETE FROM pipestream_storage_sessions",
-        "UPDATE pipestream_storage_sessions SET state_bytes = state_bytes + 1",
+        "UPDATE pipestream_storage_sessions SET image = CAST(x'0000000000000001' || substr(image,9) AS BLOB)",
         "UPDATE pipestream_storage_sessions SET principal = x'00ff'",
     ] {
         let dir = tempfile::tempdir().unwrap();
@@ -241,12 +284,12 @@ fn missing_policy_or_old_unaccounted_store_is_not_reinitialized() {
         drop(store);
         let conn = Connection::open(&path).unwrap();
         let before: Vec<u8> = conn
-            .query_row("SELECT state FROM pipestream_sessions", [], |r| r.get(0))
+            .query_row("SELECT image FROM pipestream_sessions", [], |r| r.get(0))
             .unwrap();
         conn.execute_batch(alteration).unwrap();
         assert!(SqliteSessionStore::open(&path).is_err());
         let after: Vec<u8> = conn
-            .query_row("SELECT state FROM pipestream_sessions", [], |r| r.get(0))
+            .query_row("SELECT image FROM pipestream_sessions", [], |r| r.get(0))
             .unwrap();
         assert_eq!(before, after);
         let available: u32 = conn.query_row("SELECT count(*) FROM sqlite_schema WHERE type='table' AND name LIKE 'pipestream_storage_%'", [], |r| r.get(0)).unwrap();
@@ -292,12 +335,12 @@ fn oversized_stored_blob_is_refused_before_deserialization() {
     Connection::open(path)
         .unwrap()
         .execute(
-            "UPDATE pipestream_sessions SET state = zeroblob(1048576)",
+            "UPDATE pipestream_sessions SET image = zeroblob(1048576)",
             [],
         )
         .unwrap();
     assert!(
-        matches!(store.load("one"), Err(StoreError::Corrupt(detail)) if detail == "stored session exceeds record budget")
+        matches!(store.load("one"), Err(StoreError::Corrupt(detail)) if detail == "stored session image exceeds record budget")
     );
 }
 
@@ -391,6 +434,7 @@ fn finished_and_revoked_work_remains_charged() {
     let (mut session, key, input) = crate::jobs::tests::fixture("finished", Some(owner.clone()));
     session.enqueue_job(key, input, 10).unwrap();
     store.create(&session).unwrap();
+    let allocated = store.storage_usage().unwrap().allocated_state_bytes;
     let lease = store
         .transact("finished", |s| s.acquire_job(Some(&owner), key, 11, 100))
         .unwrap()
@@ -414,6 +458,7 @@ fn finished_and_revoked_work_remains_charged() {
         StorageUsage {
             sessions: 1,
             completion_reserved_bytes: 0,
+            allocated_state_bytes: allocated,
             state_bytes: size(&retained) as u64
         }
     );

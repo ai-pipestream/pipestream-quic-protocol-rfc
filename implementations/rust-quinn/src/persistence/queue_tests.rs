@@ -11,6 +11,90 @@ fn queued(id: &str, principal: Option<PrincipalBinding>, now: u64) -> Session {
 }
 
 #[test]
+fn malformed_fixed_dispatch_images_cannot_hide_unfinished_work() {
+    // Each case changes one discriminant, timestamp or reserved byte. Include
+    // future/retired combinations that would otherwise disappear from discovery.
+    for (offset, value) in [
+        (0, 2),
+        (1, 3),
+        (2, 2),
+        (1, 1),
+        (1, 2),
+        (2, 0),
+        (3, 128),
+        (11, 128),
+        (19, 1),
+        (31, 1),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteSessionStore::open(dir.path().join("queue.sqlite3")).unwrap();
+        store.create(&queued("work", None, 100)).unwrap();
+        let connection = store.connect().unwrap();
+        let (rowid, mut image): (i64, Vec<u8>) = connection
+            .query_row(
+                "SELECT rowid, image FROM pipestream_jobs WHERE substr(image,1,1) = x'00'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        image[offset] = value;
+        connection
+            .execute(
+                "UPDATE pipestream_jobs SET image = ?1 WHERE rowid = ?2",
+                params![image, rowid],
+            )
+            .unwrap();
+        assert!(
+            matches!(store.ready_jobs(1000, 1), Err(StoreError::Corrupt(_))),
+            "offset {offset}"
+        );
+        assert!(
+            matches!(store.unfinished_job_count(), Err(StoreError::Corrupt(_))),
+            "offset {offset}"
+        );
+        assert!(matches!(
+            store.job_queue_usage(),
+            Err(StoreError::Corrupt(_))
+        ));
+        assert!(matches!(
+            store.create(&queued("unrelated", None, 100)),
+            Err(StoreError::Corrupt(_))
+        ));
+    }
+}
+
+#[test]
+fn discovery_refuses_oversized_metadata_before_decoding_it() {
+    for alteration in [
+        "UPDATE pipestream_jobs SET image = zeroblob(1048576)",
+        "UPDATE pipestream_jobs SET principal = zeroblob(1048576)",
+        "UPDATE pipestream_jobs SET execution_key = zeroblob(1048576) WHERE substr(image,1,1) = x'00'",
+        "UPDATE pipestream_jobs SET session_id = hex(zeroblob(524288))",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteSessionStore::open(dir.path().join("queue.sqlite3")).unwrap();
+        store.create(&queued("work", None, 100)).unwrap();
+        let connection = store.connect().unwrap();
+        connection
+            .execute_batch("PRAGMA foreign_keys=OFF; PRAGMA ignore_check_constraints=ON;")
+            .unwrap();
+        connection.execute_batch(alteration).unwrap();
+        assert!(
+            matches!(store.ready_jobs(1000, 1), Err(StoreError::Corrupt(_))),
+            "{alteration}"
+        );
+        assert!(
+            matches!(store.unfinished_job_count(), Err(StoreError::Corrupt(_))),
+            "{alteration}"
+        );
+        assert!(
+            matches!(store.integrity_check(), Err(StoreError::Corrupt(_))),
+            "{alteration}"
+        );
+    }
+}
+
+#[test]
 fn global_and_principal_queue_limits_are_atomic_and_survive_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("queue.sqlite3");
@@ -175,11 +259,17 @@ fn queue_write_failure_rolls_back_session_and_index_together() {
     let before = store.create(&session).unwrap();
     let ready = store.ready_jobs(100, 1).unwrap();
     let connection = Connection::open(&path).unwrap();
-    connection.execute_batch("CREATE TRIGGER fail_queue BEFORE UPDATE ON pipestream_jobs BEGIN SELECT RAISE(ABORT, 'injected queue failure'); END;").unwrap();
+    // SQLite refuses incremental writes to a table with an expression index.
+    // Inject at blob_open, after the session image has already changed.
+    connection
+        .execute_batch("CREATE INDEX fail_queue ON pipestream_jobs(length(image))")
+        .unwrap();
     assert!(
         store
             .transact("work", |s| s.acquire_job(None, key, 100, 50))
-            .is_err()
+            .unwrap_err()
+            .to_string()
+            .contains("cannot open indexed column for writing")
     );
     assert_eq!(store.load("work").unwrap().unwrap(), before);
     assert_eq!(store.ready_jobs(100, 1).unwrap(), ready);
@@ -260,10 +350,10 @@ fn abrupt_process_exit_preserves_the_committed_job_and_fence() {
 fn integrity_audit_detects_missing_extra_and_changed_queue_rows() {
     for mutation in [
         "DELETE FROM pipestream_jobs",
-        "UPDATE pipestream_jobs SET ready_at_micros = 101 WHERE reserved = 0",
-        "UPDATE pipestream_jobs SET ready_at_micros = NULL",
+        "UPDATE pipestream_jobs SET image = CAST(substr(image,1,3) || x'0000000000000065' || substr(image,12) AS BLOB) WHERE substr(image,2,1) = x'00'",
+        "UPDATE pipestream_jobs SET image = CAST(substr(image,1,2) || x'00' || substr(image,4) AS BLOB)",
         "UPDATE pipestream_jobs SET principal = x'00ff'",
-        "INSERT INTO pipestream_jobs SELECT session_id, CAST(execution_key || x'ff' AS BLOB), principal, ready_at_micros, enqueued_at_micros, rehydration, reserved FROM pipestream_jobs",
+        "INSERT INTO pipestream_jobs SELECT session_id, CAST(execution_key || x'ff' AS BLOB), principal, image FROM pipestream_jobs",
     ] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("queue.sqlite3");

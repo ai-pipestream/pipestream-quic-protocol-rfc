@@ -118,8 +118,8 @@ spools payloads to temporary files with byte and file quotas. Application
 callbacks consume file-backed readers in bounded asynchronous workers.
 
 The durable Rust prototype now has optional mutual-TLS principal/session
-binding, retained authenticated recovery and retained-storage quotas, but lacks
-physical DB/WAL completion-space reservations and explicit orphan reconciliation,
+binding, retained authenticated recovery, retained-storage quotas and admitted-job
+SQLite completion reservations, but lacks explicit orphan reconciliation,
 automatic retry scheduling, bidirectional work-set origination, scoped
 cursor recycling, and full resilience semantics. Its
 Layer 2 advertisement does not identify the narrower implemented subset.
@@ -229,8 +229,8 @@ truncates, and shared-memory mappings, with preallocation and database mmap
 disabled. Tests exhaust each file budget, hold WAL readers, interrupt a process,
 and verify transaction rollback and a named capacity refusal over real QUIC.
 This is a file-length boundary for cooperating writers in a private directory,
-not a filesystem-allocation quota. Completion reservations and orphan
-reconciliation remain unfinished.
+not a filesystem-allocation quota. Admitted-job completion reservations are
+described below; orphan reconciliation remains unfinished.
 
 Java separately enforces main database, WAL, rollback-journal and shared-memory
 file lengths through a non-default VFS over Xerial's bundled Unix SQLite engine.
@@ -263,9 +263,9 @@ abrupt exit and real-QUIC completion. Discovery interleaves sessions in bounded
 pages. These are not physical DB/WAL publication reservations or guarantees of
 admitting unknown future descendants. Older Java schemas are refused without
 conversion. Rust's admitted-job publication reservations are described below;
-physical publication headroom and the full resource matrix remain due.
+Java physical publication headroom and the full resource matrix remain due.
 
-Rust storage policy version 3 reserves logical outcome, entity-digest and executor
+Rust storage policy version 4 reserves logical outcome, entity-digest and executor
 record growth for admitted processing, rehydration and resume jobs. Layer 2
 processing additionally reserves its configured continuation-token budget and
 bounded claim metadata. The default token budget is 64 KiB and is exposed to the
@@ -278,7 +278,7 @@ without conversion; session payload format 7 is unchanged. Tests pin serialized
 growth, exact-quota publication, process exit, concurrent principal admission and
 authenticated QUIC yield/recovery. Processing also reserves a possible rehydration
 descriptor, outcome, attempt, parent output and scope-close digest. Queue policy
-version 2 separates future/active rehydration from ordinary processing/resume slots:
+version 3 separates future/active rehydration from ordinary processing/resume slots:
 65,536 global and 16,384 per authority/principal, versus 128 and 32 ordinary jobs.
 Waiting parents retain credit without blocking their children; closure converts
 the reservation atomically. Job discovery interleaves principals in bounded pages.
@@ -286,18 +286,39 @@ Store writes audit the bounded queue against retained session state before using
 capacity. Tests exercise byte/slot exhaustion, interrupted conversion, corruption
 and a sealed QUIC parent completing while ordinary processing remains full.
 These reservations do not fund new child membership or payload admission,
-checkpoint requests or physical DB/WAL growth. Final-lineage file quota is
-reserved separately below.
+checkpoint requests or filesystem blocks. They fund the fixed-capacity state
+images and WAL stages described next; final-lineage file quota is separate.
 
-Rust queue and storage-accounting indexes are reconciled incrementally within
-the session transaction. Unchanged rows are retained; obsolete rows are removed
-before replacement admission. Tests pin row preservation, exact-quota replacement
-and rollback after selective deletion, insertion or accounting failure. Unchanged
-index-only reconciliation emits no new WAL frames in the tested 1-, 128- and
-512-job cases, unlike rebuilding all entries. The authoritative session is still
-serialized as a whole and the full pre-write integrity audit remains. These
-checks do not establish physical completion-space reservations or a throughput
-bound. No wire or stored-format changes are involved.
+Rust now preallocates a fixed-capacity session image containing a checksummed
+header, serialized state and zero padding for protected growth. Mutable dispatch
+and accounting use fixed images with immutable SQL keys. Future rehydration rows
+are allocated with processing admission and become active or retired in place.
+Within capacity, incremental BLOB writes preserve rows and allocated database
+pages; unused logical credit does not shrink the retained allocation. The new
+image and physical policies refuse older layouts without conversion; the session
+payload remains version 7 and normative wire/CDDL are unchanged.
+
+Before writing, a SQLite writer transaction funds every remaining acquisition,
+publication and future rehydration-conversion stage. A per-connection VFS ceiling
+protects that reserve against unrelated writes, including across rollback and
+reopen. The ceiling also accounts for WAL-index shared-memory capacity. Expired
+lease renewal retains publication credit rather than spending another job's
+allowance. The stage bound covers the whole image, changed dispatch/accounting
+pages, frame overhead, commit repetition and sector padding under pinned bundled
+SQLite 3.53.2. Unsupported page geometry refuses explicitly.
+
+Tests saturate ordinary WAL capacity with a pinned reader, then finish admitted
+processing, rehydration and authenticated resume, including full-budget tokens,
+two principals, concurrent admission, lease renewal and abrupt process exit.
+A real authenticated QUIC test verifies token publication while the reader
+remains pinned. A two-page-cache matrix measures complete acquisition/publication
+transactions across three page sizes and token boundaries through 8 MiB, under
+a fixed database page cap. Corrupt images and changed owned schemas are refused
+without silent repair. These are cooperating-writer file-length reservations,
+not allocated filesystem blocks or guarantees against I/O failure. Whole-session
+serialization, integrity audits and scans including retired dispatch rows remain;
+large sessions require proportionally more reserved WAL. No throughput or full
+multi-tenant resource guarantee is inferred.
 
 The Rust retained-payload store separately reserves global and authority/principal
 bytes and object counts before disk creation. An immutable
@@ -322,8 +343,9 @@ and the complete allowance remains charged after publication. Tests exercise
 partial metadata/receipts, process exit, owner limits, exact-quota publication,
 and authenticated QUIC callbacks held while independent principals fill storage.
 Missing declared payloads still prevent a successful checkpoint. The version-2
-retained policy refuses old stores without conversion. Physical DB/WAL growth,
-filesystem allocation and orphan reconciliation remain separate open work.
+retained policy refuses old stores without conversion. SQLite completion capacity
+is protected separately above; filesystem allocation and orphan reconciliation
+are not established by these tests.
 
 Spool tests cover quota exhaustion, file-backed chunk assembly, corruption
 before assembly, cancellation-safe disk credit, and abandoned-file accounting.

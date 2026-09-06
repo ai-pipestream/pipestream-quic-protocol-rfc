@@ -4,6 +4,10 @@ Updated 2026-09-05. This landing starts from `00531de` and addresses the
 [protocol review](../ai-slop/ietf-protocol-review-2026-09.md).
 The specification remains an individual Internet-Draft, not an approved
 standard. No implementation in this repository demonstrates full conformance.
+The increment sections retain their original validation counts and limitations;
+later sections identify the guarantees that supersede them. Current Rust storage
+uses the physical completion-reservation layout described below, not the older
+policies recorded in the incremental-index prerequisite.
 
 ## Changes and regression coverage
 
@@ -632,6 +636,9 @@ comment. These are local results, not independent review or full-goal completion
 
 ## Rust incremental queue and accounting indexes
 
+This records the prerequisite landing at PR #27. The subsequent fixed-image
+layout below replaces selective deletion with in-place retirement.
+
 Session mutations no longer delete and rebuild every queue row and the accounting
 row. Reconciliation leaves unchanged values untouched, preserves row IDs on
 updates, and deletes obsolete entries before admitting replacements. Global and
@@ -665,6 +672,77 @@ all nine Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks
 and every external example. Workspace formatting/clippy and strict Rustdoc
 passed. Draft -04 passed idnits with zero errors/flaws/warnings and one FIPS
 reference comment. These are local results, not hosted CI or full-goal completion.
+
+## Rust physical completion reservations
+
+The Rust store now allocates actual state plus protected logical growth in a
+`PSIMG001` session image with a 104-byte checksummed header and verified zero
+padding. Mutable dispatch and accounting occupy fixed 32- and 56-byte images
+with immutable SQL keys. Admission preallocates future rehydration rows; conversion
+and retirement update them in place. Allocated capacity remains charged even when
+unused logical credit is released. Queue policy 3, storage policy 4 and physical
+policy `PSDBL002` refuse old layouts without conversion. Session payload 7 and
+normative wire/CDDL are unchanged; no operational database was migrated.
+
+Each queued job funds acquisition and publication, each running job retains
+publication, and a possible rehydration funds conversion/acquisition/publication.
+Under SQLite's actual writer transaction, every public mutation derives all
+remaining credit before writing. Its main and WAL handles share a per-connection
+VFS ceiling through commit or rollback. Unrelated writes cannot consume that
+credit, expired lease renewal does not release it, and enlarging a session must
+fund its existing jobs' higher future cost. The usable WAL limit also accounts
+for the configured WAL-index shared-memory capacity.
+
+The production bound is tied to bundled SQLite 3.53.2: zero reserved bytes per
+page, supported power-of-two page sizes, at most 64 KiB sectors, whole-image and
+changed-index pages, frame headers, commit-frame repetition and sector padding.
+It is not derived just from serialized byte growth. See the implementation in
+`persistence/physical/reservation.rs` and SQLite's
+[incremental BLOB contract](https://www.sqlite.org/c3ref/blob_open.html) and
+[WAL checkpoint behavior](https://www.sqlite.org/wal.html).
+
+The original 256 KiB WAL fixture now explicitly refuses admission because it
+cannot fund five future maximum-image stages. The 1 MiB acceptance case instead
+admits work, pins a reader, exhausts unrelated writes, and requires publication
+without releasing that reader. Other tests cover queued work for two principals,
+full 64 KiB token publication at 512-/4,096-/65,536-byte pages, concurrent admission,
+expired reacquisition, future rehydration, authenticated resume/receipt replay,
+and abrupt exit after admission. The real-QUIC test
+`storage_quotas::authenticated_callback_publishes_while_unrelated_writes_saturate_reserved_wal`
+checks the held callback's full-budget publication at saturation.
+
+`complete_stage_bound_covers_spilling_acquisition_refusal_and_token_publication`
+measures 144 whole transactions across 72 cases: a two-page cache with spilling,
+three page sizes, eight token budgets from 127 bytes through 8 MiB, and complete,
+full-diagnostic refused and maximum-field deferred outcomes. It pins readers,
+sets the main-page cap to the existing page count, forbids SQL row replacement,
+and requires unchanged row identity/capacity plus exact persisted state. Every
+acquisition/publication must fit the actual production stage bound.
+
+Five additional regression tests refuse malformed dispatch flags/padding/timestamps,
+oversized metadata and invalid session IDs before unbounded materialization.
+Missing or changed owned tables/indexes refuse on reopen; schema, database and
+WAL bytes remain unchanged in those tests. Corrupt rows cannot look like available
+job or storage credit. Existing rollback tests inject SQLite's real refusal of
+writable indexed BLOBs; UPDATE/DELETE triggers alone cannot test that path.
+
+These reservations protect configured file-length headroom for cooperating
+writers, not filesystem-block allocation, arbitrary external writers, callback
+effects or unknown future descendants. Whole-session serialization and integrity
+audits remain. Discovery includes retained retired rows; the scan grows with
+history and is not constant-time. Large sessions with many pending stages can
+reach the WAL reservation limit before logical queue limits. Java physical
+completion reservations, orphan reconciliation, persistent producer observations
+and the remaining full-goal evidence are still due.
+
+The final `./conformance/run_all.sh` passed with 258 Rust workspace tests
+(137 core, 62 Quinn unit, 55 wire, one allocation gate and three runner tests),
+105 Java tests without errors/failures/skips, native SQLite/C++ checks, all nine
+Layer 0 pairings, 32 capability probes, recursive/recovery CLI checks and all
+external examples. Workspace formatting/clippy and strict Rustdoc passed.
+Draft -04 passed idnits with zero errors/flaws/warnings and one informational
+FIPS reference comment. These are local results, not hosted CI or full-goal
+completion.
 
 ### Independent Java sealed-work foundation
 

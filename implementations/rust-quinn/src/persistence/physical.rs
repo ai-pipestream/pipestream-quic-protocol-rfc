@@ -14,9 +14,13 @@ use std::{
     sync::{Arc, Mutex, OnceLock, Weak},
 };
 
+mod reservation;
+#[cfg(test)]
+mod reservation_tests;
+pub(super) use reservation::protect;
 mod vfs;
 
-const MAGIC: &[u8; 8] = b"PSDBL001";
+const MAGIC: &[u8; 8] = b"PSDBL002";
 const POLICY_BYTES: u64 = 72;
 const MAX_OPEN_STORES: usize = 64;
 const SUFFIXES: [&str; 4] = ["", "-wal", "-journal", "-shm"];

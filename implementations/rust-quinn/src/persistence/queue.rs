@@ -2,14 +2,14 @@ use super::*;
 use crate::{
     authorization::PrincipalBinding,
     execution::{ExecutionKey, ExecutionStage},
-    jobs::JobState,
+    jobs::{JobInput, JobState},
 };
 use std::collections::BTreeMap;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS pipestream_job_limits (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    version INTEGER NOT NULL CHECK (version = 2),
+    version INTEGER NOT NULL CHECK (version = 3),
     total INTEGER NOT NULL CHECK (total BETWEEN 1 AND 65536),
     per_principal INTEGER NOT NULL CHECK (per_principal BETWEEN 1 AND total),
     rehydration_total INTEGER NOT NULL CHECK (rehydration_total BETWEEN 1 AND 65536),
@@ -19,14 +19,9 @@ CREATE TABLE IF NOT EXISTS pipestream_jobs (
     session_id TEXT NOT NULL REFERENCES pipestream_sessions(session_id),
     execution_key BLOB NOT NULL,
     principal BLOB NOT NULL,
-    ready_at_micros INTEGER,
-    enqueued_at_micros INTEGER NOT NULL,
-    rehydration INTEGER NOT NULL CHECK (rehydration IN (0, 1)),
-    reserved INTEGER NOT NULL CHECK (reserved IN (0, 1) AND (reserved = 0 OR (rehydration = 1 AND ready_at_micros IS NULL))),
+    image BLOB NOT NULL CHECK (length(image) = 32),
     PRIMARY KEY (session_id, execution_key)
 ) STRICT;
-CREATE INDEX IF NOT EXISTS pipestream_jobs_ready ON pipestream_jobs
-    (ready_at_micros, enqueued_at_micros, session_id, execution_key);
 CREATE INDEX IF NOT EXISTS pipestream_jobs_principal ON pipestream_jobs (principal);
 ";
 
@@ -114,12 +109,21 @@ pub(super) fn initialize(
                 "durable job queue policy is missing".into(),
             ));
         }
-        read_limits(&transaction)?;
+        let stored = read_limits(&transaction)?;
+        if requested.is_some_and(|value| value != stored) {
+            return Err(StoreError::Protocol(ProtocolError::limit(
+                "durable job queue limits differ from stored policy",
+            )));
+        }
+        // Reopening retained work cannot allocate unreserved schema/index pages.
+        schema::verify(&transaction, SCHEMA)?;
+        transaction.commit()?;
+        return Ok(stored);
     }
     transaction.execute_batch(SCHEMA)?;
     let initial = requested.unwrap_or_default();
     transaction.execute(
-        "INSERT OR IGNORE INTO pipestream_job_limits VALUES (1, 2, ?1, ?2, ?3, ?4)",
+        "INSERT OR IGNORE INTO pipestream_job_limits VALUES (1, 3, ?1, ?2, ?3, ?4)",
         params![
             initial.total,
             initial.per_principal,
@@ -143,7 +147,7 @@ fn read_limits(connection: &Connection) -> Result<JobQueueLimits, StoreError> {
         [],
         |row| row.get(0),
     )?;
-    if version != 2 {
+    if version != 3 {
         return Err(StoreError::Corrupt(
             "unsupported job reservation policy version".into(),
         ));
@@ -172,19 +176,61 @@ struct IndexEntry {
     enqueued: i64,
     rehydration: bool,
     reserved: bool,
+    retired: bool,
+}
+
+impl IndexEntry {
+    // Fixed binary fields, not text: kind, disposition, ready-present,
+    // ready timestamp, enqueue timestamp, then zero reserved bytes. Eight-byte
+    // big-endian nonnegative timestamps have the same byte and numeric order.
+    fn image(&self) -> [u8; 32] {
+        let mut image = [0; 32];
+        image[0] = u8::from(self.rehydration);
+        image[1] = if self.retired {
+            2
+        } else {
+            u8::from(self.reserved)
+        };
+        image[2] = u8::from(self.ready.is_some());
+        image[3..11].copy_from_slice(&self.ready.unwrap_or(0).to_be_bytes());
+        image[11..19].copy_from_slice(&self.enqueued.to_be_bytes());
+        image
+    }
 }
 
 fn entries(session: &Session) -> Result<BTreeMap<ExecutionKey, IndexEntry>, StoreError> {
     let mut entries = BTreeMap::new();
     for (key, job) in &session.jobs {
-        if job.state.is_unfinished() {
+        let retired = !job.state.is_unfinished();
+        entries.insert(
+            *key,
+            IndexEntry {
+                ready: if retired {
+                    None
+                } else {
+                    ready_at(session, key)?
+                },
+                enqueued: timestamp(job.enqueued_at_micros)?,
+                rehydration: key.stage == ExecutionStage::Rehydrate,
+                reserved: false,
+                retired,
+            },
+        );
+        // The possible rehydration record is allocated with PROCESS and kept
+        // after retirement. Completion never needs to delete a B-tree entry.
+        let future = ExecutionKey {
+            stage: ExecutionStage::Rehydrate,
+            ..*key
+        };
+        if matches!(job.input, JobInput::Process { .. }) && !session.jobs.contains_key(&future) {
             entries.insert(
-                *key,
+                future,
                 IndexEntry {
-                    ready: ready_at(session, key)?,
+                    ready: None,
                     enqueued: timestamp(job.enqueued_at_micros)?,
-                    rehydration: key.stage == ExecutionStage::Rehydrate,
+                    rehydration: true,
                     reserved: false,
+                    retired: true,
                 },
             );
         }
@@ -197,6 +243,7 @@ fn entries(session: &Session) -> Result<BTreeMap<ExecutionKey, IndexEntry>, Stor
                 enqueued: timestamp(process.enqueued_at_micros)?,
                 rehydration: true,
                 reserved: true,
+                retired: false,
             },
         );
     }
@@ -221,8 +268,9 @@ fn usage_excluding(
     session: Option<&str>,
 ) -> Result<JobQueueUsage, StoreError> {
     Ok(connection.query_row(
-        "SELECT coalesce(sum(rehydration = 0), 0), coalesce(sum(reserved = 1), 0),
-         coalesce(sum(rehydration = 1 AND reserved = 0), 0)
+        "SELECT coalesce(sum(substr(image,1,1) = x'00' AND substr(image,2,1) = x'00'), 0),
+         coalesce(sum(substr(image,2,1) = x'01'), 0),
+         coalesce(sum(substr(image,1,1) = x'01' AND substr(image,2,1) = x'00'), 0)
          FROM pipestream_jobs WHERE (?1 IS NULL OR principal = ?1)
          AND (?2 IS NULL OR session_id != ?2)",
         params![principal, session],
@@ -276,29 +324,23 @@ fn ready_at(session: &Session, key: &ExecutionKey) -> Result<Option<i64>, StoreE
 
 /// Scan one session at a time in a stable read transaction, including missing index rows.
 pub(super) fn verify_index(connection: &Connection) -> Result<(), StoreError> {
-    let mut query =
-        connection.prepare("SELECT session_id FROM pipestream_sessions ORDER BY session_id")?;
+    let mut query = connection.prepare(schema::SESSION_IDS)?;
     let mut rows = query.query([])?;
     let mut expected = 0u64;
     while let Some(row) = rows.next()? {
-        let id: String = row.get(0)?;
+        let id = schema::session_id(row, 0)?;
         let session = load_from(connection, &id)?
             .ok_or_else(|| StoreError::Corrupt("session disappeared during audit".into()))?
             .session;
         let principal = encode(&session.owner.as_ref().map(|owner| &owner.binding))?;
         for (key, entry) in entries(&session)? {
-            // Compare raw integer flags: bool decoding would coerce corrupt 2 to
-            // true while SQL capacity sums using '= 1' would omit that row.
-            let actual = connection.query_row("SELECT principal, ready_at_micros, enqueued_at_micros, rehydration, reserved FROM pipestream_jobs WHERE session_id = ?1 AND execution_key = ?2", params![id, encode(&key)?], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?))).optional()?;
-            if actual
-                != Some((
-                    principal.clone(),
-                    entry.ready,
-                    entry.enqueued,
-                    i64::from(entry.rehydration),
-                    i64::from(entry.reserved),
-                ))
-            {
+            // Compare every byte, including discriminants and unused bytes.
+            // Malformed flags must not disappear from capacity accounting.
+            let matches: Option<bool> = connection.query_row(
+                "SELECT coalesce(principal = ?3 AND image = ?4, 0) FROM pipestream_jobs WHERE session_id = ?1 AND execution_key = ?2",
+                params![id, encode(&key)?, principal, entry.image().as_slice()], |row| row.get(0),
+            ).optional()?;
+            if matches != Some(true) {
                 return Err(StoreError::Corrupt(
                     "job index differs from retained session state".into(),
                 ));
@@ -310,7 +352,13 @@ pub(super) fn verify_index(connection: &Connection) -> Result<(), StoreError> {
         connection.query_row("SELECT count(*) FROM pipestream_jobs", [], |row| row.get(0))?;
     let limits = read_limits(connection)?;
     let global = usage(connection, None)?;
-    let oversized: u32 = connection.query_row("SELECT count(*) FROM (SELECT principal FROM pipestream_jobs GROUP BY principal HAVING sum(rehydration = 0) > ?1 OR sum(rehydration = 1) > ?2)", params![limits.per_principal, limits.rehydration_per_principal], |row| row.get(0))?;
+    let oversized: u32 = connection.query_row(
+        "SELECT count(*) FROM (SELECT principal FROM pipestream_jobs GROUP BY principal
+        HAVING sum(substr(image,1,1) = x'00' AND substr(image,2,1) = x'00') > ?1
+        OR sum(substr(image,1,1) = x'01' AND substr(image,2,1) != x'02') > ?2)",
+        params![limits.per_principal, limits.rehydration_per_principal],
+        |row| row.get(0),
+    )?;
     if expected != u64::from(actual)
         || global.ordinary > limits.total
         || global.rehydration_reserved + global.rehydration_active > limits.rehydration_total
@@ -329,8 +377,14 @@ pub(super) fn replace_index(connection: &Connection, session: &Session) -> Resul
     let limits = read_limits(connection)?;
     let total = usage_excluding(connection, None, Some(&session.session_id))?;
     let owned = usage_excluding(connection, Some(&principal), Some(&session.session_id))?;
-    let ordinary = entries.values().filter(|entry| !entry.rehydration).count() as u64;
-    let rehydration = entries.len() as u64 - ordinary;
+    let ordinary = entries
+        .values()
+        .filter(|entry| !entry.rehydration && !entry.retired)
+        .count() as u64;
+    let rehydration = entries
+        .values()
+        .filter(|entry| entry.rehydration && !entry.retired)
+        .count() as u64;
     if u64::from(total.ordinary) + ordinary > u64::from(limits.total)
         || u64::from(owned.ordinary) + ordinary > u64::from(limits.per_principal)
         || u64::from(total.rehydration_reserved + total.rehydration_active) + rehydration
@@ -342,11 +396,11 @@ pub(super) fn replace_index(connection: &Connection, session: &Session) -> Resul
             "durable job queue is full",
         )));
     }
-    // Callers audit the old index before changing authoritative session state.
-    // Keep unchanged rows and their rowids; only actual state changes touch the
-    // queue B-trees. In particular, one lease does not rewrite every sibling.
+    // The caller audits the old ledger before changing authoritative state.
+    // Mutable metadata is unindexed and fixed-size, so publication cannot
+    // require a B-tree split or deletion/rebalancing allocation.
     let mut query = connection.prepare(
-        "SELECT execution_key, principal, ready_at_micros, enqueued_at_micros, rehydration, reserved
+        "SELECT execution_key, rowid, principal, image
          FROM pipestream_jobs WHERE session_id = ?1",
     )?;
     let existing = query
@@ -354,11 +408,9 @@ pub(super) fn replace_index(connection: &Connection, session: &Session) -> Resul
             Ok((
                 row.get::<_, Vec<u8>>(0)?,
                 (
-                    row.get::<_, Vec<u8>>(1)?,
-                    row.get::<_, Option<i64>>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, i64>(4)?,
-                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
                 ),
             ))
         })?
@@ -367,53 +419,37 @@ pub(super) fn replace_index(connection: &Connection, session: &Session) -> Resul
         .into_iter()
         .map(|(key, entry)| Ok((encode(&key)?, entry)))
         .collect::<Result<BTreeMap<_, _>, StoreError>>()?;
-    let mut delete = connection
-        .prepare("DELETE FROM pipestream_jobs WHERE session_id = ?1 AND execution_key = ?2")?;
-    let mut update = connection.prepare(
-        "UPDATE pipestream_jobs SET ready_at_micros = ?3, enqueued_at_micros = ?4,
-         rehydration = ?5, reserved = ?6 WHERE session_id = ?1 AND execution_key = ?2",
-    )?;
-    let mut update_principal = connection.prepare(
-        "UPDATE pipestream_jobs SET principal = ?3 WHERE session_id = ?1 AND execution_key = ?2",
-    )?;
-    let mut insert =
-        connection.prepare("INSERT INTO pipestream_jobs VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)")?;
-    // Release obsolete rows first so replacement work can reuse their pages.
-    for key in existing.keys().filter(|key| !desired.contains_key(*key)) {
-        delete.execute(params![session.session_id, key])?;
+    let mut insert = connection.prepare("INSERT INTO pipestream_jobs VALUES (?1, ?2, ?3, ?4)")?;
+    if existing.keys().any(|key| !desired.contains_key(key)) {
+        return Err(StoreError::Corrupt(
+            "retained dispatch identity disappeared".into(),
+        ));
     }
     for (key, entry) in desired {
         let old = existing.get(&key);
-        if old.is_some_and(|old| {
-            old.0 == principal
-                && old.1 == entry.ready
-                && old.2 == entry.enqueued
-                && old.3 == i64::from(entry.rehydration)
-                && old.4 == i64::from(entry.reserved)
-        }) {
+        let image = entry.image();
+        if old.is_some_and(|old| old.1 == principal && old.2 == image) {
             continue;
         }
         if let Some(old) = old {
-            update.execute(params![
-                session.session_id,
-                key,
-                entry.ready,
-                entry.enqueued,
-                entry.rehydration,
-                entry.reserved
-            ])?;
-            if old.0 != principal {
-                update_principal.execute(params![session.session_id, key, principal])?;
+            if old.1 != principal {
+                return Err(StoreError::Protocol(ProtocolError::entity(
+                    "retained dispatch principal changed",
+                )));
             }
+            let mut blob =
+                connection.blob_open("main", "pipestream_jobs", "image", old.0, false)?;
+            if blob.len() != image.len() {
+                return Err(StoreError::Corrupt("invalid dispatch image length".into()));
+            }
+            blob.write_at(&image, 0)?;
+            blob.close()?;
         } else {
             insert.execute(params![
                 session.session_id,
                 key,
                 principal,
-                entry.ready,
-                entry.enqueued,
-                entry.rehydration,
-                entry.reserved
+                image.as_slice(),
             ])?;
         }
     }
@@ -421,49 +457,80 @@ pub(super) fn replace_index(connection: &Connection, session: &Session) -> Resul
 }
 
 impl SqliteSessionStore {
-    /// Bounded, indexed discovery. Running jobs become eligible only at lease expiry.
+    /// Bounded discovery. Running jobs become eligible only at lease expiry.
     pub fn ready_jobs(&self, now_micros: u64, limit: u32) -> Result<Vec<ReadyJob>, StoreError> {
         if limit == 0 || limit > self.job_limits.total {
             return Err(StoreError::Protocol(ProtocolError::limit(
                 "invalid job discovery limit",
             )));
         }
-        let connection = self.connect()?;
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction()?;
+        verify_shapes(&transaction)?;
         // A larger completion queue must not hide every other principal behind
         // one principal's physical worker limit. Each page interleaves owners.
-        let mut query = connection.prepare("SELECT session_id, execution_key, principal FROM (
-            SELECT session_id, execution_key, principal, ready_at_micros, enqueued_at_micros,
-                   row_number() OVER (PARTITION BY principal ORDER BY rehydration DESC,
-                       ready_at_micros, enqueued_at_micros, session_id, execution_key) AS ordinal
-            FROM pipestream_jobs WHERE reserved = 0 AND ready_at_micros <= ?1
+        let mut query = transaction.prepare("SELECT session_id, execution_key, principal FROM (
+            SELECT session_id, execution_key, principal, substr(image,4,8) AS ready_at_micros,
+                   substr(image,12,8) AS enqueued_at_micros,
+                   row_number() OVER (PARTITION BY principal ORDER BY substr(image,1,1) DESC,
+                       substr(image,4,8), substr(image,12,8), session_id, execution_key) AS ordinal
+            FROM pipestream_jobs WHERE substr(image,2,1) = x'00'
+                AND substr(image,3,1) = x'01' AND substr(image,4,8) <= ?1
         ) ORDER BY ordinal, ready_at_micros, enqueued_at_micros, session_id, execution_key LIMIT ?2")?;
-        let rows = query.query_map(params![timestamp(now_micros)?, limit], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, Vec<u8>>(1)?,
-                row.get::<_, Vec<u8>>(2)?,
-            ))
-        })?;
-        rows.map(|row| {
-            let (session_id, key, principal) = row?;
-            Ok(ReadyJob {
-                session_id,
-                key: postcard::from_bytes(&key)
-                    .map_err(|error| StoreError::Corrupt(format!("job index key: {error}")))?,
-                principal: postcard::from_bytes(&principal).map_err(|error| {
-                    StoreError::Corrupt(format!("job index principal: {error}"))
-                })?,
+        let rows = query.query_map(
+            params![timestamp(now_micros)?.to_be_bytes().as_slice(), limit],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            },
+        )?;
+        let ready = rows
+            .map(|row| {
+                let (session_id, key, principal) = row?;
+                crate::session::validate_session_id(&session_id).map_err(|_| {
+                    StoreError::Corrupt("invalid discovered session identity".into())
+                })?;
+                let key: ExecutionKey = postcard::from_bytes(&key)
+                    .map_err(|error| StoreError::Corrupt(format!("job index key: {error}")))?;
+                if key.entity.entity_id == 0 || key.entity.entity_id > crate::MAX_ENTITY_ID {
+                    return Err(StoreError::Corrupt(
+                        "invalid discovered entity identity".into(),
+                    ));
+                }
+                let principal: Option<PrincipalBinding> = postcard::from_bytes(&principal)
+                    .map_err(|error| {
+                        StoreError::Corrupt(format!("job index principal: {error}"))
+                    })?;
+                if let Some(owner) = &principal {
+                    PrincipalBinding::new(&owner.authority, &owner.principal)
+                        .map_err(|_| StoreError::Corrupt("invalid discovered principal".into()))?;
+                }
+                Ok(ReadyJob {
+                    session_id,
+                    key,
+                    principal,
+                })
             })
-        })
-        .collect()
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        drop(query);
+        transaction.commit()?;
+        Ok(ready)
     }
 
     pub fn unfinished_job_count(&self) -> Result<u32, StoreError> {
-        Ok(self.connect()?.query_row(
-            "SELECT count(*) FROM pipestream_jobs WHERE reserved = 0",
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction()?;
+        verify_shapes(&transaction)?;
+        let count = transaction.query_row(
+            "SELECT count(*) FROM pipestream_jobs WHERE substr(image,2,1) = x'00'",
             [],
             |row| row.get(0),
-        )?)
+        )?;
+        transaction.commit()?;
+        Ok(count)
     }
 
     /// Audit authoritative state and report actual/future slots in one snapshot.
@@ -475,4 +542,34 @@ impl SqliteSessionStore {
         transaction.commit()?;
         Ok(result)
     }
+}
+
+fn verify_shapes(connection: &Connection) -> Result<(), StoreError> {
+    // Bound materialization before discovery reads identities. Postcard's
+    // largest key is two u32 varints, a stage tag and a u64 claim id (21 bytes).
+    // An optional principal is one tag and two length-prefixed 128-byte labels
+    // (261 bytes). Image comparisons stay inside SQLite, including corrupt rows.
+    let malformed: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pipestream_jobs WHERE coalesce(
+            typeof(session_id) != 'text' OR length(CAST(session_id AS BLOB)) NOT BETWEEN 1 AND 128
+            OR typeof(execution_key) != 'blob' OR length(execution_key) NOT BETWEEN 1 AND 21
+            OR typeof(principal) != 'blob' OR length(principal) NOT BETWEEN 1 AND 261
+            OR typeof(image) != 'blob' OR length(image) != 32
+            OR substr(image,1,1) NOT IN (x'00', x'01')
+            OR substr(image,2,1) NOT IN (x'00', x'01', x'02')
+            OR substr(image,3,1) NOT IN (x'00', x'01')
+            OR (substr(image,2,1) = x'01' AND substr(image,1,1) != x'01')
+            OR (substr(image,2,1) != x'00' AND substr(image,3,1) != x'00')
+            OR (substr(image,3,1) = x'00' AND substr(image,4,8) != zeroblob(8))
+            OR substr(image,4,1) > x'7f' OR substr(image,12,1) > x'7f'
+            OR substr(image,20,13) != zeroblob(13), 1))",
+        [],
+        |r| r.get(0),
+    )?;
+    if malformed {
+        return Err(StoreError::Corrupt(
+            "malformed fixed dispatch record".into(),
+        ));
+    }
+    Ok(())
 }

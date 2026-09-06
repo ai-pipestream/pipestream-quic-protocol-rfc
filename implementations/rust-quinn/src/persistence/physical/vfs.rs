@@ -11,6 +11,7 @@ use rusqlite::ffi::*;
 use std::{
     ffi::{CStr, c_char, c_int, c_void},
     ptr,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 static REGISTERED: OnceLock<Result<(), c_int>> = OnceLock::new();
@@ -27,6 +28,44 @@ struct BoundedFile {
     real: *mut sqlite3_file,
     guard: *const Guard,
     limit: i64,
+    wal: bool,
+    wal_ceiling: Arc<AtomicU64>,
+}
+
+const FCNTL_COMPLETION_BUDGET: c_int = 0x5053_0001;
+struct CompletionBudget {
+    page_size: u64,
+    reserved: u64,
+}
+
+pub(super) fn reserve(
+    connection: &rusqlite::Connection,
+    page_size: u64,
+    reserved: u64,
+) -> Result<(), StoreError> {
+    let mut budget = CompletionBudget {
+        page_size,
+        reserved,
+    };
+    // SAFETY: this private opcode is handled only by our main-file wrapper;
+    // it reads the matching stack argument synchronously and retains no pointer.
+    let result = unsafe {
+        sqlite3_file_control(
+            connection.handle(),
+            c"main".as_ptr(),
+            FCNTL_COMPLETION_BUDGET,
+            ptr::addr_of_mut!(budget).cast(),
+        )
+    };
+    if result == SQLITE_OK {
+        Ok(())
+    } else if result == SQLITE_FULL {
+        Err(StoreError::Protocol(ProtocolError::limit(
+            "SQLite completion reserve exceeds WAL or WAL-index policy",
+        )))
+    } else {
+        Err(rusqlite::Error::SqliteFailure(Error::new(result), None).into())
+    }
 }
 
 pub(super) fn register() -> Result<(), StoreError> {
@@ -156,6 +195,20 @@ unsafe extern "C" fn open(
         let Some((guard, limit)) = lookup(Path::new(path)) else {
             return SQLITE_CANTOPEN;
         };
+        let wal = flags & SQLITE_OPEN_WAL != 0;
+        let wal_ceiling = if wal || flags & SQLITE_OPEN_MAIN_JOURNAL != 0 {
+            // Only SQLite's original WAL/journal xOpen filename is valid for
+            // this API. It identifies this connection's main-file wrapper.
+            let main = sqlite3_database_file_object(name);
+            if main.is_null() || !ptr::eq((*main).pMethods, &METHODS) {
+                return SQLITE_CANTOPEN;
+            }
+            (*main.cast::<BoundedFile>()).wal_ceiling.clone()
+        } else if flags & SQLITE_OPEN_MAIN_DB != 0 {
+            Arc::new(AtomicU64::new(guard.limits.wal_bytes))
+        } else {
+            return SQLITE_CANTOPEN;
+        };
         match checked_length(Path::new(path)) {
             Ok(None) => {}
             Ok(Some(size)) if size <= limit => {}
@@ -184,6 +237,14 @@ unsafe extern "C" fn open(
                 result
             };
         }
+        let sector = (*(*real).pMethods).xSectorSize.map_or(0, |call| call(real));
+        if sector <= 0 || sector as u64 > super::reservation::MAX_SECTOR_BYTES {
+            if let Some(close) = (*(*real).pMethods).xClose {
+                close(real);
+            }
+            sqlite3_free(real.cast());
+            return SQLITE_CANTOPEN;
+        }
         ptr::write(
             file.cast::<BoundedFile>(),
             BoundedFile {
@@ -191,6 +252,8 @@ unsafe extern "C" fn open(
                 real,
                 guard: Arc::into_raw(guard),
                 limit: limit as i64,
+                wal,
+                wal_ceiling,
             },
         );
         // Disable underlying preallocation rounding and database mappings before
@@ -218,6 +281,7 @@ unsafe extern "C" fn close(file: *mut sqlite3_file) -> c_int {
         };
         sqlite3_free(wrapper.real.cast());
         drop(Arc::from_raw(wrapper.guard));
+        ptr::drop_in_place(ptr::addr_of_mut!(wrapper.wal_ceiling));
         wrapper.api.pMethods = ptr::null();
         result
     }
@@ -255,11 +319,18 @@ unsafe extern "C" fn write(
     // SAFETY: only validated growth is forwarded; SQLite owns the buffer.
     unsafe {
         let wrapper = &*file.cast::<BoundedFile>();
+        let limit = if wrapper.wal {
+            wrapper
+                .limit
+                .min(wrapper.wal_ceiling.load(Ordering::Relaxed) as i64)
+        } else {
+            wrapper.limit
+        };
         if count < 0
             || offset < 0
             || offset
                 .checked_add(i64::from(count))
-                .is_none_or(|end| end > wrapper.limit)
+                .is_none_or(|end| end > limit)
         {
             return SQLITE_FULL;
         }
@@ -275,7 +346,14 @@ unsafe extern "C" fn truncate(file: *mut sqlite3_file, size: i64) -> c_int {
     // upward rounding after this check, including truncate-as-enlarge calls.
     unsafe {
         let wrapper = &*file.cast::<BoundedFile>();
-        if size < 0 || size > wrapper.limit {
+        let limit = if wrapper.wal {
+            wrapper
+                .limit
+                .min(wrapper.wal_ceiling.load(Ordering::Relaxed) as i64)
+        } else {
+            wrapper.limit
+        };
+        if size < 0 || size > limit {
             return SQLITE_FULL;
         }
         match (*(*wrapper.real).pMethods).xTruncate {
@@ -290,6 +368,17 @@ unsafe extern "C" fn control(file: *mut sqlite3_file, op: c_int, arg: *mut c_voi
     // Internal growth hints never bypass the pre-write guard.
     unsafe {
         let wrapper = &*file.cast::<BoundedFile>();
+        if op == FCNTL_COMPLETION_BUDGET {
+            let budget = &*arg.cast::<CompletionBudget>();
+            let guard = &*wrapper.guard;
+            let Some(ceiling) =
+                super::reservation::wal_ceiling(guard.limits, budget.page_size, budget.reserved)
+            else {
+                return SQLITE_FULL;
+            };
+            wrapper.wal_ceiling.store(ceiling, Ordering::Relaxed);
+            return SQLITE_OK;
+        }
         let Some(call) = (*(*wrapper.real).pMethods).xFileControl else {
             return SQLITE_NOTFOUND;
         };

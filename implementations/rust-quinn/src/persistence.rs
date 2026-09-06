@@ -11,11 +11,13 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+mod image;
 #[cfg(test)]
 mod index_delta_tests;
 mod queue;
 #[cfg(test)]
 mod rehydration_tests;
+mod schema;
 pub use queue::{JobQueueLimits, JobQueueUsage, ReadyJob};
 mod storage;
 pub use storage::{StorageLimits, StorageUsage};
@@ -25,11 +27,7 @@ pub use physical::{PhysicalLimits, PhysicalUsage};
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS pipestream_sessions (
     session_id TEXT PRIMARY KEY NOT NULL,
-    format_version INTEGER NOT NULL,
-    revision INTEGER NOT NULL CHECK (revision > 0),
-    state BLOB NOT NULL,
-    checksum BLOB NOT NULL CHECK (length(checksum) = 32),
-    updated_at_micros INTEGER NOT NULL
+    image BLOB NOT NULL CHECK (length(image) > 104)
 ) STRICT;
 ";
 
@@ -171,7 +169,7 @@ impl SqliteSessionStore {
             physical,
         };
         let mut connection = store.connect()?;
-        connection.execute_batch(SCHEMA)?;
+        schema::initialize_root(&connection, SCHEMA)?;
         store.job_limits = queue::initialize(&mut connection, requested)?;
         store.storage_limits = storage::initialize(&mut connection, storage_limits)?;
         drop(connection);
@@ -274,11 +272,13 @@ impl SqliteSessionStore {
 
     pub fn list_session_ids(&self) -> Result<Vec<String>, StoreError> {
         let connection = self.connect()?;
-        let mut statement =
-            connection.prepare("SELECT session_id FROM pipestream_sessions ORDER BY session_id")?;
-        let rows = statement.query_map([], |row| row.get(0))?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(StoreError::from)
+        let mut statement = connection.prepare(schema::SESSION_IDS)?;
+        let mut rows = statement.query([])?;
+        let mut ids = Vec::new();
+        while let Some(row) = rows.next()? {
+            ids.push(schema::session_id(row, 0)?);
+        }
+        Ok(ids)
     }
 
     fn connect(&self) -> Result<Connection, StoreError> {
@@ -328,26 +328,23 @@ impl SessionStore for SqliteSessionStore {
         storage::verify_index(&transaction)?;
         let (state, checksum) = encode_state(session, storage::read_limits(&transaction)?)?;
         queue::verify_index(&transaction)?;
-        let inserted = transaction.execute(
-            "INSERT OR IGNORE INTO pipestream_sessions
-             (session_id, format_version, revision, state, checksum, updated_at_micros)
-             VALUES (?1, ?2, 1, ?3, ?4, ?5)",
-            params![
-                session.session_id,
-                i64::from(SESSION_FORMAT_VERSION),
-                state,
-                checksum.as_slice(),
-                now_micros()?
-            ],
-        )?;
-        if inserted != 1 {
-            let actual =
-                load_from(&transaction, &session.session_id)?.map_or(0, |value| value.revision);
+        if let Some(previous) = load_from(&transaction, &session.session_id)? {
             return Err(StoreError::Conflict {
                 expected: 0,
-                actual,
+                actual: previous.revision,
             });
         }
+        let capacity = state.len() + storage::completion_reservation(session, self.storage_limits)?;
+        physical::protect(&transaction, session, capacity)?;
+        image::write(
+            &transaction,
+            &session.session_id,
+            0,
+            1,
+            &state,
+            &checksum,
+            capacity,
+        )?;
         queue::replace_index(&transaction, session)?;
         storage::replace_index(&transaction, session, state.len(), &checksum)?;
         transaction.commit()?;
@@ -389,42 +386,12 @@ fn load_from(
     session_id: &str,
 ) -> Result<Option<VersionedSession>, StoreError> {
     let limit = storage::read_limits(connection)?.record_bytes;
-    let row = connection
-        .query_row(
-            "SELECT format_version, revision, CASE WHEN length(state) <= ?2 THEN state ELSE NULL END, checksum
-             FROM pipestream_sessions WHERE session_id = ?1",
-            params![session_id, limit as i64],
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, Option<Vec<u8>>>(2)?,
-                    row.get::<_, Vec<u8>>(3)?,
-                ))
-            },
-        )
-        .optional()?;
-    let Some((format_version, revision, state, checksum)) = row else {
+    let Some(header) = image::header(connection, session_id, limit)? else {
         return Ok(None);
     };
-    if format_version != i64::from(SESSION_FORMAT_VERSION) {
-        return Err(StoreError::Corrupt(format!(
-            "unsupported stored session version {format_version}"
-        )));
-    }
-    let state =
-        state.ok_or_else(|| StoreError::Corrupt("stored session exceeds record budget".into()))?;
-    let revision = u64::try_from(revision)
-        .map_err(|_| StoreError::Corrupt("negative session revision".to_owned()))?;
-    let expected: [u8; 32] = checksum
-        .try_into()
-        .map_err(|_| StoreError::Corrupt("invalid state checksum length".to_owned()))?;
-    let actual: [u8; 32] = Sha256::digest(&state).into();
-    if expected != actual {
-        return Err(StoreError::Corrupt(
-            "stored session checksum mismatch".to_owned(),
-        ));
-    }
+    let state = image::read(connection, &header)?;
+    let expected = header.checksum;
+    let revision = header.revision;
     let session: Session =
         postcard::from_bytes(&state).map_err(|error| StoreError::Codec(error.to_string()))?;
     if session.format_version != SESSION_FORMAT_VERSION || session.session_id != session_id {
@@ -439,6 +406,13 @@ fn load_from(
         .validate_recovery()
         .map_err(|error| StoreError::Corrupt(error.to_string()))?;
     storage::validate_entry(connection, &session, state.len(), &expected)?;
+    if state.len() + storage::completion_reservation(&session, storage::read_limits(connection)?)?
+        > header.capacity
+    {
+        return Err(StoreError::Corrupt(
+            "session image has unfunded completion growth".into(),
+        ));
+    }
     Ok(Some(VersionedSession { revision, session }))
 }
 
@@ -458,42 +432,19 @@ fn persist_update(
             .validate_retained_recovery(&previous.session)
             .map_err(StoreError::Protocol)?;
     }
-    let expected = i64::try_from(expected_revision)
-        .map_err(|_| StoreError::Corrupt("session revision exceeds SQLite integer".to_owned()))?;
-    let next = i64::try_from(next_revision)
-        .map_err(|_| StoreError::Corrupt("session revision exceeds SQLite integer".to_owned()))?;
-    let (state, checksum) = encode_state(session, storage::read_limits(connection)?)?;
-    let changed = connection.execute(
-        "UPDATE pipestream_sessions
-         SET format_version = ?1, revision = ?2, state = ?3, checksum = ?4,
-             updated_at_micros = ?5
-         WHERE session_id = ?6 AND revision = ?7",
-        params![
-            i64::from(SESSION_FORMAT_VERSION),
-            next,
-            state,
-            checksum.as_slice(),
-            now_micros()?,
-            session.session_id,
-            expected
-        ],
+    let limits = storage::read_limits(connection)?;
+    let (state, checksum) = encode_state(session, limits)?;
+    let capacity = state.len() + storage::completion_reservation(session, limits)?;
+    physical::protect(connection, session, capacity)?;
+    image::write(
+        connection,
+        &session.session_id,
+        expected_revision,
+        next_revision,
+        &state,
+        &checksum,
+        capacity,
     )?;
-    if changed != 1 {
-        let actual: Option<i64> = connection
-            .query_row(
-                "SELECT revision FROM pipestream_sessions WHERE session_id = ?1",
-                [&session.session_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        return match actual {
-            Some(actual) => Err(StoreError::Conflict {
-                expected: expected_revision,
-                actual: u64::try_from(actual).unwrap_or(0),
-            }),
-            None => Err(StoreError::NotFound(session.session_id.clone())),
-        };
-    }
     queue::replace_index(connection, session)?;
     storage::replace_index(connection, session, state.len(), &checksum)
 }
@@ -502,6 +453,7 @@ fn encode_state(
     session: &Session,
     limits: StorageLimits,
 ) -> Result<(Vec<u8>, [u8; 32]), StoreError> {
+    crate::session::validate_session_id(&session.session_id).map_err(StoreError::Protocol)?;
     if session.format_version != SESSION_FORMAT_VERSION {
         return Err(StoreError::Corrupt(format!(
             "unsupported in-memory session version {}",
