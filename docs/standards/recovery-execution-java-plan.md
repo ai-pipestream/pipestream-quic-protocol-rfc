@@ -51,6 +51,35 @@ approval as part of a repository landing.
 
 ## Evidence and progress
 
+### Validated increment: failed descendant resolution
+
+Branch `fix/sealed-parent-failure-propagation` starts at PR #37's merge
+`eaa6627`. A real Java-to-Rust recursive test exposed an interoperability gap:
+the Rust receiver refused closure of a terminal child scope rejected by STRICT
+policy, leaving its parent DEHYDRATING. Java already propagated that failure.
+Rust now commits the verified scope digest and failed parent together and
+reports the parent failure without scheduling rehydration. Section 8 makes
+this failure path explicit; the wire fields, CDDL and stored format do not change.
+
+Regression coverage includes two-level Java-to-Rust failure propagation across
+server and durable producer restarts, raw QUIC forged-digest refusal and lost
+resolution replay with zero rehydration callbacks, core completion-policy
+alternatives and retry eligibility, logical quota/queue capacity, and a pinned
+WAL reader that exhausts ordinary writes. Failed closures retain child records,
+processing outcomes and attempts. Rehydration credit retires, while allocated
+state capacity stays charged.
+
+Validation on 2026-09-06: `conformance/run_all.sh` passed with 314 Rust tests,
+193 Java tests (zero failures, errors or skips), native SQLite and C++ checks,
+all nine black-box language pairs, 32 raw capability probes, the recursive and
+recovery CLI scenarios, and all three runnable examples. The final Rust tree
+also passed strict clippy, the full workspace suite and strict rustdoc.
+`build.sh core 04` passed with zero idnits errors, flaws or warnings and the
+existing FIPS normative-reference comment. The draft has not been submitted.
+
+This fixes a concrete gap found during the goal's completion audit. It does
+not establish that every acceptance requirement above is already verified.
+
 ### Validated increment: Rust scope-completion correlation
 
 Branch `fix/rust-scope-completion-correlation` starts at PR #36's merge `ce14f85`.

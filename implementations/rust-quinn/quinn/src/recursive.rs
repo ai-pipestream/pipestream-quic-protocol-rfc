@@ -1119,10 +1119,30 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                     }
                     let session_id = session_id.to_owned();
                     let digest = decode_scope_digest(&payload)?;
-                    let key = self
-                        .storage(move |service| service.enqueue_rehydration(&session_id, digest))
+                    let resolution = self
+                        .storage(move |service| service.resolve_scope(&session_id, digest))
                         .await?;
-                    replies.insert(key, JobReply::Rehydrate);
+                    match resolution {
+                        ScopeReply::Rehydrate(key) => {
+                            replies.insert(key, JobReply::Rehydrate);
+                        }
+                        ScopeReply::Failed {
+                            parent,
+                            depth,
+                            digest,
+                        } => {
+                            write_control(&mut control_send, &encode_scope_digest(&digest)?)
+                                .await?;
+                            write_status(
+                                &mut control_send,
+                                EntityState::Failed,
+                                parent,
+                                depth,
+                                None,
+                            )
+                            .await?;
+                        }
+                    }
                 }
                 FRAME_BARRIER => {
                     if !layers.layer1_recursive {
@@ -1534,13 +1554,20 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         Ok((session_id, key))
     }
 
-    fn enqueue_rehydration(
+    fn resolve_scope(
         &self,
         session_id: &str,
         expected: ScopeDigest,
-    ) -> Result<ExecutionKey, ProtocolError> {
+    ) -> Result<ScopeReply, ProtocolError> {
         self.transact(session_id, |session| {
             let actual = session.close_scope_with_expected(&expected)?;
+            if let Some(parent) = session.propagate_scope_failure(actual.scope_id)? {
+                return Ok(ScopeReply::Failed {
+                    parent,
+                    depth: session.entities[&parent].depth,
+                    digest: actual,
+                });
+            }
             let parent = session.scopes[&actual.scope_id]
                 .parent
                 .ok_or_else(|| entity_error("scope parent is absent"))?;
@@ -1556,7 +1583,7 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
                 JobInput::Rehydrate { digest: actual },
                 now_micros().map_err(storage_error)?,
             )?;
-            Ok(key)
+            Ok(ScopeReply::Rehydrate(key))
         })
         .map_err(store_error)
         .map(|result| result.0)
@@ -1721,6 +1748,16 @@ impl<P: EntityProcessor, E: EntityStore> RecursiveService<P, E> {
         }
         Ok(())
     }
+}
+
+#[derive(Debug)]
+enum ScopeReply {
+    Rehydrate(ExecutionKey),
+    Failed {
+        parent: EntityKey,
+        depth: u8,
+        digest: ScopeDigest,
+    },
 }
 
 #[derive(Debug)]

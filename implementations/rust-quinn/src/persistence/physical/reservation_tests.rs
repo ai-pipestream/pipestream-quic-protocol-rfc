@@ -311,6 +311,67 @@ fn concurrent_handles_cannot_overbook_physical_completion_promises() {
 }
 
 #[test]
+fn failed_scope_uses_prepaid_completion_credit_at_the_wal_ceiling() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("failed.sqlite3");
+    let store = configured(&path, 1 << 20);
+    let (session, key) = crate::persistence::rehydration_tests::failed_children("parent", 1);
+    let digest = session.scope_digest(1).unwrap();
+    store.create(&session).unwrap();
+    store
+        .create(&Session::new("other", 7, 32).unwrap())
+        .unwrap();
+    store.checkpoint().unwrap();
+    let reader = store.connect().unwrap();
+    reader
+        .execute_batch("BEGIN; SELECT count(*) FROM pipestream_sessions")
+        .unwrap();
+    saturate(&store);
+    let before = store.load("parent").unwrap().unwrap();
+    let mut forged = digest.clone();
+    forged.merkle_root[0] ^= 1;
+    let error = store
+        .transact("parent", |s| {
+            s.close_scope_with_expected(&forged)?;
+            s.propagate_scope_failure(1)
+        })
+        .unwrap_err();
+    assert!(matches!(error, StoreError::Protocol(e) if e.code == crate::ERROR_INTEGRITY));
+    assert_eq!(store.load("parent").unwrap().unwrap(), before);
+    store
+        .transact("parent", |s| {
+            s.close_scope_with_expected(&digest)?;
+            assert_eq!(s.propagate_scope_failure(1)?, Some(key.entity));
+            Ok(())
+        })
+        .unwrap();
+    let failed = store.load("parent").unwrap().unwrap().session;
+    assert_eq!(
+        failed.entities[&key.entity].state,
+        crate::session::EntityState::Failed
+    );
+    assert_eq!(failed.scopes[&1].digest, Some(digest.merkle_root));
+    assert_eq!(failed.jobs, session.jobs);
+    assert_eq!(failed.executions, session.executions);
+    assert_eq!(store.job_queue_usage().unwrap(), Default::default());
+    assert!(store.physical_usage().unwrap().wal_bytes <= 1 << 20);
+    store.integrity_check().unwrap();
+    drop(reader);
+    drop(store);
+    let reopened = SqliteSessionStore::open(&path).unwrap();
+    assert_eq!(reopened.load("parent").unwrap().unwrap().session, failed);
+    reopened
+        .transact("parent", |s| {
+            s.close_scope_with_expected(&digest)?;
+            assert_eq!(s.propagate_scope_failure(1)?, Some(key.entity));
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(reopened.load("parent").unwrap().unwrap().session, failed);
+    reopened.integrity_check().unwrap();
+}
+
+#[test]
 fn future_rehydration_converts_acquires_and_publishes_at_the_wal_ceiling() {
     use crate::{
         execution::{ExecutionKey, ExecutionStage},

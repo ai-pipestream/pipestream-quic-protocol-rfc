@@ -223,9 +223,12 @@ async fn rehydration_and_redemption_are_recovered_without_an_attached_connection
     session.complete_entity(child, [3; 32]).unwrap();
     let digest = session.scope_digest(1).unwrap();
     first.store.create(&session).unwrap();
-    let rehydrate = first
-        .enqueue_rehydration("rehydrate-input", digest.clone())
-        .unwrap();
+    let crate::recursive::ScopeReply::Rehydrate(rehydrate) = first
+        .resolve_scope("rehydrate-input", digest.clone())
+        .unwrap()
+    else {
+        panic!("successful child scope must enqueue rehydration");
+    };
     drop(first);
     let reopened = service(dir.path(), processor.clone());
     let executor = reopened.start_executor().unwrap();

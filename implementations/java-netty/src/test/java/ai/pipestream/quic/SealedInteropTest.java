@@ -24,6 +24,39 @@ final class SealedInteropTest {
   private static final String SESSION = "java-sealed";
   @TempDir Path directory;
 
+  @Test void javaProducerPropagatesFailedDescendantsAcrossRustRestart() throws Exception {
+    Path certs = certificates(), state = directory.resolve("strict-failure");
+    var durable = SealedClient.Durability.at(directory.resolve("failure-producer.sqlite3"));
+    var root = new SealedWork.EntityKey(0, 1);
+    var branch = new SealedWork.EntityKey(7, 10);
+    try (RustServer server = new RustServer(state, certs);
+        var client = SealedClient.connectDurable(server.address, certs.resolve("ca.crt"), "localhost",
+            SealedTransport.Limits.defaults(), Duration.ofSeconds(5), durable)) {
+      client.declare(declaration(0, null, 0, List.of(1L), List.of(1L)));
+      send(client, root, null, "dehydrate", "root");
+      client.declare(declaration(7, root, 0, List.of(10L), List.of(10L)));
+      send(client, branch, root, "dehydrate", "branch");
+      client.declare(declaration(9, branch, 0, List.of(100L, 200L), List.of(100L, 200L)));
+      byte[] failed = "failed-leaf".getBytes(StandardCharsets.UTF_8);
+      Path input = directory.resolve("failed-leaf.bin"); Files.write(input, failed);
+      var observed = client.send(header(new SealedWork.EntityKey(9, 100), branch, "fail", failed), input);
+      assertEquals(4, observed.getLast().state());
+      send(client, new SealedWork.EntityKey(9, 200), branch, "complete", "completed-leaf");
+      assertEquals(BigInteger.ONE, client.closeScope(9).failed());
+      assertEquals(4, client.observedStatus(branch).orElseThrow().state());
+      assertFalse(client.barrier(7).released());
+    }
+    try (RustServer server = new RustServer(state, certs);
+        var client = SealedClient.connectDurable(server.address, certs.resolve("ca.crt"), "localhost",
+            SealedTransport.Limits.defaults(), Duration.ofSeconds(5), durable)) {
+      assertEquals(4, client.observedStatus(branch).orElseThrow().state());
+      assertEquals(BigInteger.ONE, client.closeScope(7).failed());
+      assertEquals(4, client.observedStatus(root).orElseThrow().state());
+      client.checkpoint(new SealedTransport.Checkpoint("failed-root", BigInteger.ONE, 1, 0L, 0, BigInteger.valueOf(2000)));
+      client.goaway(1);
+    }
+  }
+
   @Test void javaProducerCompletesNestedChunkedWorkAgainstRust() throws Exception {
     Path certs = certificates();
     try (RustServer server = new RustServer(directory.resolve("rust"), certs);

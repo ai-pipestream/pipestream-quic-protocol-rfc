@@ -58,6 +58,24 @@ fn close(session: &mut Session, scope: u32, key: ExecutionKey) -> Result<(), Pro
     session.enqueue_job(key, JobInput::Rehydrate { digest }, 128)
 }
 
+pub(super) fn failed_children(id: &str, scope: u32) -> (Session, ExecutionKey) {
+    let (mut session, key) = waiting(id, None, scope);
+    let child = session
+        .add_child(
+            scope,
+            NewEntity {
+                entity_id: 1,
+                layer: 0,
+                payload_digest: [3; 32],
+                policy: None,
+            },
+        )
+        .unwrap();
+    session.transition(child, EntityState::Processing).unwrap();
+    session.transition(child, EntityState::Failed).unwrap();
+    (session, key)
+}
+
 fn charge(session: &Session) -> usize {
     postcard::to_stdvec(session).unwrap().len()
         + storage::completion_reservation(session, StorageLimits::default()).unwrap()
@@ -67,6 +85,93 @@ fn assert_limit(error: StoreError) {
     assert!(
         matches!(error, StoreError::Protocol(error) if error.code == crate::ERROR_LIMIT_EXCEEDED)
     );
+}
+
+#[test]
+fn failed_scope_retires_completion_reservation_at_capacity_and_replays_after_reopen() {
+    let (session, key) = failed_children("parent", 1);
+    let (occupant, _) = queued("occupant", None);
+    let total = charge(&session) + charge(&occupant);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("failed.sqlite3");
+    let store = SqliteSessionStore::open_with_limits(
+        &path,
+        JobQueueLimits {
+            total: 1,
+            per_principal: 1,
+            rehydration_total: 2,
+            rehydration_per_principal: 2,
+        },
+        StorageLimits {
+            total_bytes: total as u64,
+            principal_bytes: total as u64,
+            record_bytes: charge(&session).max(charge(&occupant)),
+            ..StorageLimits::default()
+        },
+    )
+    .unwrap();
+    store.create(&session).unwrap();
+    store.create(&occupant).unwrap();
+    let before = store.load("parent").unwrap().unwrap();
+    assert_eq!(store.storage_usage().unwrap().charged_bytes(), total as u64);
+    assert_limit(store.create(&queued("overflow", None).0).unwrap_err());
+    let digest = session.scope_digest(1).unwrap();
+    let mut forged = digest.clone();
+    forged.entities_failed = 0;
+    let error = store
+        .transact("parent", |s| {
+            s.close_scope_with_expected(&forged)?;
+            s.propagate_scope_failure(1)
+        })
+        .unwrap_err();
+    assert!(matches!(error, StoreError::Protocol(e) if e.code == crate::ERROR_INTEGRITY));
+    assert_eq!(store.load("parent").unwrap().unwrap(), before);
+    assert_eq!(store.storage_usage().unwrap().charged_bytes(), total as u64);
+    assert_eq!(store.job_queue_usage().unwrap().rehydration_reserved, 2);
+    store
+        .transact("parent", |s| {
+            s.close_scope_with_expected(&digest)?;
+            assert_eq!(s.propagate_scope_failure(1)?, Some(key.entity));
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        store.job_queue_usage().unwrap(),
+        JobQueueUsage {
+            ordinary: 1,
+            rehydration_reserved: 1,
+            rehydration_active: 0,
+        }
+    );
+    // Retired logical credit does not reclaim the preallocated state image.
+    let usage = store.storage_usage().unwrap();
+    assert_eq!(usage.charged_bytes(), total as u64);
+    assert_eq!(
+        usage.completion_reserved_bytes,
+        storage::completion_reservation(&occupant, store.storage_limits()).unwrap() as u64
+    );
+    let failed = store.load("parent").unwrap().unwrap().session;
+    assert_eq!(failed.entities[&key.entity].state, EntityState::Failed);
+    assert_eq!(failed.entities[&key.entity].output_digest, None);
+    assert_eq!(
+        failed.manifests[&key.entity].state,
+        crate::session::ResolutionState::Failed
+    );
+    assert_eq!(failed.scopes[&1].digest, Some(digest.merkle_root));
+    assert_eq!(failed.jobs, session.jobs);
+    assert_eq!(failed.executions, session.executions);
+    drop(store);
+    let reopened = SqliteSessionStore::open(&path).unwrap();
+    reopened
+        .transact("parent", |s| {
+            s.close_scope_with_expected(&digest)?;
+            assert_eq!(s.propagate_scope_failure(1)?, Some(key.entity));
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(reopened.load("parent").unwrap().unwrap().session, failed);
+    assert_eq!(reopened.unfinished_job_count().unwrap(), 1);
+    reopened.integrity_check().unwrap();
 }
 
 #[test]

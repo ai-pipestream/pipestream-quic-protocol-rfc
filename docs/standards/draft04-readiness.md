@@ -272,6 +272,19 @@ polyglot negotiation probes do not establish their interoperability.
 
 ## Sealed-work requirement coverage
 
+The failed-descendant resolution increment adds Rust parity with Java's STRICT
+failure behavior. The receiver commits verified child closure and failed parent
+resolution atomically, echoes the digest and FAILED parent status, and does not
+invoke rehydration. Tests cover a two-level Java producer across Rust and producer
+restart, forged digests, lost response replay, zero rehydration callbacks,
+completion-policy alternatives, and logical/physical completion capacity.
+The 2026-09-06 full suite passed: 314 Rust and 193 Java tests, native SQLite/C++
+checks, nine language pairs, 32 raw capability probes, recursive/recovery CLI
+scenarios and three runnable examples. Strict clippy/rustdoc and the draft-04
+build passed; idnits reports zero errors, flaws or warnings and the existing
+FIPS reference comment. No wire field, CDDL or storage-format change is
+introduced; Section 8 clarifies the existing failure semantics.
+
 Section 9.8 uses private-use identifier 65281, `sealed-work-sets-v1`.
 Rust and the separate Java sealed APIs implement tested parts of it. The Rust
 public `connect_sealed` and `declare_work`

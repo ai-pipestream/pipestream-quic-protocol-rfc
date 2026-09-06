@@ -489,6 +489,51 @@ impl Session {
         Ok(digest)
     }
 
+    /// Propagate a closed scope's rejected completion policy to its parent.
+    /// Call in the same transaction as validated scope closure. A failed parent
+    /// retains its children and has no fabricated output or rehydration attempt.
+    /// Replaying the same failed closure is idempotent.
+    pub fn propagate_scope_failure(
+        &mut self,
+        scope_id: u32,
+    ) -> Result<Option<EntityKey>, ProtocolError> {
+        let scope = self
+            .scopes
+            .get(&scope_id)
+            .ok_or_else(|| scope_error("scope is absent"))?;
+        if scope.digest.is_none() {
+            return Err(scope_error("child scope has not emitted its digest"));
+        }
+        let parent = scope
+            .parent
+            .ok_or_else(|| scope_error("root scope has no parent"))?;
+        let manifest = self
+            .manifests
+            .get(&parent)
+            .ok_or_else(|| entity_error("assembly manifest is absent"))?;
+        match self.resolution_state(manifest)? {
+            ResolutionState::Active => return Err(scope_error("children are unresolved")),
+            ResolutionState::Resolved | ResolutionState::Partial => return Ok(None),
+            ResolutionState::Failed => {}
+        }
+        let record = self
+            .entities
+            .get(&parent)
+            .ok_or_else(|| entity_error("scope parent is absent"))?;
+        if record.state == EntityState::Failed && manifest.state == ResolutionState::Failed {
+            return Ok(Some(parent));
+        }
+        if record.state != EntityState::Dehydrating || manifest.state != ResolutionState::Active {
+            return Err(entity_error("parent cannot accept failed scope resolution"));
+        }
+        self.transition(parent, EntityState::Failed)?;
+        self.manifests
+            .get_mut(&parent)
+            .expect("manifest was checked")
+            .state = ResolutionState::Failed;
+        Ok(Some(parent))
+    }
+
     pub fn begin_rehydration(&mut self, parent: EntityKey) -> Result<(), ProtocolError> {
         let manifest = self
             .manifests
@@ -1267,6 +1312,63 @@ mod tests {
     }
 
     #[test]
+    fn rejected_scope_policy_propagates_failure_without_rehydrating_or_losing_children() {
+        for (mode, ratio, states) in [
+            (
+                CompletionMode::Strict,
+                None,
+                vec![EntityState::Complete, EntityState::Failed],
+            ),
+            (CompletionMode::Lenient, None, vec![EntityState::Failed]),
+            (
+                CompletionMode::Quorum,
+                Some(0.75),
+                vec![EntityState::Complete, EntityState::Failed],
+            ),
+        ] {
+            let (mut session, root) = resolution_session(mode, ratio, &states);
+            let scope = session.scopes[&1].clone();
+            let children = session.manifests[&root].children.clone();
+            assert_eq!(session.propagate_scope_failure(1).unwrap(), Some(root));
+            assert_eq!(session.entities[&root].state, EntityState::Failed);
+            assert_eq!(session.entities[&root].output_digest, None);
+            assert_eq!(session.manifests[&root].state, ResolutionState::Failed);
+            assert_eq!(session.manifests[&root].children, children);
+            assert_eq!(session.scopes[&1], scope);
+            assert!(session.jobs.is_empty());
+            assert!(session.executions.is_empty());
+            let resolved = session.clone();
+            assert_eq!(session.propagate_scope_failure(1).unwrap(), Some(root));
+            assert_eq!(session, resolved);
+        }
+    }
+
+    #[test]
+    fn accepted_scope_policy_still_requires_rehydration() {
+        for (mode, ratio, states) in [
+            (CompletionMode::Strict, None, vec![EntityState::Complete]),
+            (
+                CompletionMode::Lenient,
+                None,
+                vec![EntityState::Complete, EntityState::Failed],
+            ),
+            (CompletionMode::BestEffort, None, vec![EntityState::Failed]),
+            (
+                CompletionMode::Quorum,
+                Some(0.5),
+                vec![EntityState::Complete, EntityState::Failed],
+            ),
+        ] {
+            let (mut session, root) = resolution_session(mode, ratio, &states);
+            let before = session.clone();
+            assert_eq!(session.propagate_scope_failure(1).unwrap(), None);
+            assert_eq!(session, before);
+            session.begin_rehydration(root).unwrap();
+            assert_eq!(session.entities[&root].state, EntityState::Rehydrating);
+        }
+    }
+
+    #[test]
     fn failed_entity_is_unresolved_until_retry_budget_is_exhausted() {
         let mut session = Session::new("retry-policy-1", 7, 128).unwrap();
         let root = session.add_root(entity(1, b"root")).unwrap();
@@ -1294,6 +1396,12 @@ mod tests {
             ERROR_SCOPE_INVALID,
             session.close_scope(1).unwrap_err().code
         );
+        let before = session.clone();
+        assert_eq!(
+            ERROR_SCOPE_INVALID,
+            session.propagate_scope_failure(1).unwrap_err().code
+        );
+        assert_eq!(session, before);
 
         for attempt in 1..=2 {
             session.transition(child, EntityState::Retrying).unwrap();
@@ -1302,6 +1410,8 @@ mod tests {
             session.transition(child, EntityState::Failed).unwrap();
         }
         session.close_scope(1).unwrap();
+        assert_eq!(session.propagate_scope_failure(1).unwrap(), Some(root));
+        assert_eq!(session.entities[&root].state, EntityState::Failed);
         assert_eq!(
             ERROR_ENTITY_INVALID,
             session
