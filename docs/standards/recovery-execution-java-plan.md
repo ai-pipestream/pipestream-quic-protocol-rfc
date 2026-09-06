@@ -51,7 +51,7 @@ approval as part of a repository landing.
 
 ## Evidence and progress
 
-### In progress: Java durable producer observations
+### Validated increment: Java durable producer observations
 
 Branch `feat/java-producer-observations` starts at PR #33's merge `80f38d6`.
 The package-private `SealedProducerJournal` now stores immutable request intents
@@ -85,16 +85,53 @@ errors or skips counted from JUnit XML, native SQLite/C++ checks, all nine
 implementation pairings, 32 capability probes, recursive/recovery CLI checks and
 all three external examples. Strict package-level Javadoc for the new type passed
 with `-Xdoclint:all -Werror`. Draft -04 passed idnits with zero errors, flaws or
-warnings and one FIPS reference comment. The wire tests cover existing transport
-behavior, not durable-client integration that has yet to be written.
+warnings and one FIPS reference comment. Those foundation wire tests covered
+existing transport behavior, before the durable-client integration below.
 
-This is unfinished implementation, not a landed public-client feature. The journal
-is not yet called by `SealedClient`. Remaining work on this branch must add typed
-producer records, bind the actual TLS peer context, persist intents before network
-effects and verified responses before returning them, restore recursive observations
-and checkpoint identities, and expose unresolved attempts without blindly retrying
-admitted payloads. Complete real Java/Rust reconnect, lost-response and crash tests
-and the full suite before publishing the integrated client. Wire/CDDL are unchanged.
+The public `SealedClient.connectDurable` now uses the journal. Typed declaration,
+file commitment, scope, checkpoint and shutdown records precede their network
+effects. Validated observations are persisted before returning them. Restore checks
+request/response identity, membership, recursive outcomes and checkpoint cuts. A
+checkpoint ACK retained in an earlier row is checked after rebuilding membership,
+because its request can precede a later seal. Scope ACK replay cannot erase an
+earlier REHYDRATING observation. Inventory APIs expose uncertain inputs, original
+unacknowledged declarations/checkpoints and unfinished closures, including after
+disconnect. They do not infer remote outcomes or permit blind payload resends.
+
+Durable inputs gain mandatory measured length/SHA-256 commitments before their
+descriptor is journaled; caller headers and source files are not modified. Fixed
+buffers hash and stream the files in separate passes. The journal stores neither
+payload bytes nor paths. Reopen audits descriptors without reading source bodies.
+Its peer-context binding covers the exact CA PEM bytes, configured service name,
+ALPN and sealed profile. Address/port changes are allowed, trust/name changes are
+refused. This is not a producer credential or a retained server-store identity.
+
+The actual-QUIC negative test discovered that the existing Java clients trusted a
+CA without checking the certificate's target name. Both Layer 0 and sealed clients
+now wait for successful chain validation and verify DNS/IP SAN identity before
+creating their application stream. Common Names are never a fallback. ASCII-only
+DNS validation precedes case folding, so Unicode fold characters cannot manufacture
+a match. Section 10 now explicitly requires RFC 9525 service identity validation;
+wire frames, CDDL and frozen wire bytes are unchanged. Java tests cover valid DNS,
+single-label wildcards, IPv4 and IPv6, wrong names/IPs, a misleading DNS SAN for an
+IP target, and a CA-valid Common-Name-only certificate. These are Java transport
+checks, not proof of a complete three-language certificate matrix.
+
+Integration evidence: 35 focused tests passed, including the 12 journal tests,
+four input-descriptor tests, three DNS-matching tests, Java public-client/server
+scenarios and two Java-to-Rust/fault-injection scenarios. They cover three abrupt
+producer exits, recursive observations across server restarts, lost/changed ACKs,
+an interrupted rehydration wait, checkpoint timeout before a later seal, pre-send
+quota refusal and uncertain input without retry. A 32 MiB transfer plus producer
+journaling and reconnect runs under a 24 MiB Java heap without a second execution;
+this does not establish RSS/native-memory or concurrent-load bounds. Strict package
+Javadoc passed for all five production Java types in this increment. The final integrated
+`./conformance/run_all.sh` passed with 297 Rust workspace tests and 192 Java tests,
+zero Java failures/errors/skips counted from JUnit XML, native SQLite/C++ checks,
+all nine implementation pairings, 32 capability probes, recursive/recovery CLI
+checks and all three external examples. Draft -04 passed idnits with zero errors,
+flaws or warnings and one FIPS reference comment. These are local validation
+results, not hosted CI or proof that the complete goal has been achieved.
 
 Two current transport constraints must survive integration: Java's sealed server
 refuses PENDING/payload replay for previously admitted IDs, and declaration replay
@@ -934,9 +971,9 @@ expiry is not callback cancellation. Periodic dispatch can reacquire unfinished
 expired attempts, but does not retry application-refused jobs automatically.
 Temporary spool accounting is process-local and excludes permanent entity files.
 Rust and Java SQLite file-length caps are now independent of that accounting.
-With independent Java physical completion headroom and Rust explicit orphan
-reconciliation implemented, complete Java producer-side persistence and the
-remaining crash/resource matrix without treating missing input as completed work.
+With independent Java physical completion headroom, Rust explicit orphan
+reconciliation and Java producer observations implemented, complete validation and
+the remaining crash/resource matrix without treating missing input as completed work.
 Do not treat recovery receipts or publication fencing as completion of bounded
 asynchronous execution. Java now has a separate sealed listener and public
 producer; its original listener and CLI remain Layer 0. Extend the existing

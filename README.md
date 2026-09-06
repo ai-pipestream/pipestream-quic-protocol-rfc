@@ -32,8 +32,12 @@ Real Java-to-Rust tests exercise nested work,
 out-of-order chunks, scoped checkpoints, declaration replay after restart,
 and malformed responses. A Rust public-client scenario now exercises the Java
 server's nested/chunked completion, reconnect replay, and named refusals.
-The existing Java standalone commands remain Layer 0. Persistent producer-side
-observations and broader crash/resource/conformance evidence remain unfinished.
+The existing Java standalone commands remain Layer 0. The opt-in Java durable
+client now journals request intents and verified responses, restores recursive
+observations across restart, and exposes uncertain inputs without blindly
+resending them. Both Java client modes check the server's DNS/IP certificate SAN
+before sending application frames. Broader crash/resource/conformance evidence
+and retained-outcome lookup for uncertain sealed inputs remain unfinished.
 See the
 [Java implementation boundary](implementations/java-netty/README.md#sealed-work-library-foundation).
 
@@ -91,8 +95,9 @@ refused without conversion. Rust now also supplies explicit offline orphan
 reconciliation under exclusive root ownership and the paired database's writer
 lock. It audits admitted input before reclaiming abandoned files, preserves
 immutable orphan commitments, and allows matching retransmission without
-inventing completion. Persistent producer observations and the broader resource
-matrix remain unfinished.
+inventing completion. The Java producer now persists its own observations,
+separately from server state; this does not discover unobserved server outcomes.
+The broader resource and cross-language recovery matrix remains unfinished.
 Connection metadata and lineage operations now run in a bounded storage pool.
 An independent control reader enforces checkpoint deadlines during those
 operations; held-storage tests also exercise protocol refusals and progress

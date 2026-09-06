@@ -86,6 +86,290 @@ final class SealedServerTest {
     }
   }
 
+  @Test void durableProducerRestoresNestedOutcomesAndRequiresAFreshRootCheckpointAfterRestart() throws Exception {
+    Path certs = certificates(); var calls = new AtomicInteger();
+    var durable = SealedClient.Durability.at(directory.resolve("producer.db"));
+    SealedExecutor.Processor processor = (context, input) -> {
+      calls.incrementAndGet();
+      if (context.operation() == SealedExecutor.Operation.PROCESS && "dehydrate".equals(context.header().metadata().get("action"))) {
+        input.transferTo(java.io.OutputStream.nullOutputStream()); return new SealedExecutor.Decision(6, null);
+      }
+      return complete(input);
+    };
+    var cut = checkpoint("durable-root", SealedCbor.MAX_UINT, 2, null, 5000);
+    try (var fixture = new Fixture(certs, processor); var client = durable(fixture.server, certs, durable)) {
+      client.declare(declaration(0, null, 0, List.of(1L, 2L), null));
+      send(client, ROOT, null, "dehydrate", "root");
+      send(client, new SealedWork.EntityKey(0, 2), null, "complete", "second-root");
+      client.declare(declaration(7, ROOT, 0, List.of(1L, 2L), List.of(1L, 2L)));
+      send(client, new SealedWork.EntityKey(7, 1), ROOT, "complete", "child");
+      var chunked = new SealedWork.EntityKey(7, 2);
+      client.sendChunks(List.of(chunk(chunked, ROOT, 1, 3, "def"), chunk(chunked, ROOT, 0, 0, "abc")));
+      client.closeScope(7);
+      client.declare(declaration(0, null, 1, List.of(), List.of(1L, 2L)));
+      assertEquals(cut.acknowledgement(), client.checkpoint(cut));
+      assertTrue(client.unresolvedInputs().isEmpty()); assertTrue(client.scopesAwaitingClosure().isEmpty());
+    }
+    assertEquals(5, calls.get());
+    try (var fixture = new Fixture(certs, processor)) {
+      try (var client = durable(fixture.server, certs, durable)) {
+        assertEquals(3, client.observedStatus(ROOT).orElseThrow().state());
+        assertEquals(3, client.observedStatus(new SealedWork.EntityKey(7, 2)).orElseThrow().state());
+        assertTrue(client.declarationsAwaitingAcknowledgement().isEmpty());
+        assertTrue(client.checkpointsAwaitingAcknowledgement().isEmpty());
+        assertEquals(5, assertThrows(ProtocolException.class, () -> client.goaway(2)).errorCode());
+      }
+      try (var client = durable(fixture.server, certs, durable)) {
+        assertEquals(cut.acknowledgement(), client.checkpoint(cut)); client.goaway(2);
+      }
+      assertTrue(assertThrows(java.io.IOException.class, () -> durable(fixture.server, certs, durable)).getMessage().contains("acknowledged shutdown"));
+    }
+    assertEquals(5, calls.get(), "reconnection must not execute the old payloads again");
+  }
+
+  @Test void durableCheckpointIntentSurvivesTimeoutAndALaterSeal() throws Exception {
+    Path certs = certificates(); var calls = new AtomicInteger();
+    var durable = SealedClient.Durability.at(directory.resolve("producer.db"));
+    var cut = checkpoint("before-seal", BigInteger.ONE.shiftLeft(63), 1, null, 100);
+    try (var fixture = new Fixture(certs, (context, input) -> { calls.incrementAndGet(); return complete(input); })) {
+      try (var client = durable(fixture.server, certs, durable)) {
+        client.declare(declaration(0, null, 0, List.of(1L), null)); send(client, ROOT, null, "complete", "input");
+        assertEquals(14, assertThrows(ProtocolException.class, () -> client.checkpoint(cut)).errorCode());
+        assertEquals(List.of(cut), client.checkpointsAwaitingAcknowledgement());
+      }
+      try (var client = durable(fixture.server, certs, durable)) {
+        var changed = checkpoint("before-seal", cut.sequence(), 1, 0L, 100);
+        assertEquals(List.of(cut), client.checkpointsAwaitingAcknowledgement());
+        assertEquals(5, assertThrows(ProtocolException.class, () -> client.checkpoint(changed)).errorCode());
+      }
+      try (var client = durable(fixture.server, certs, durable)) {
+        client.declare(declaration(0, null, 1, List.of(), List.of(1L)));
+        assertEquals(cut.acknowledgement(), client.checkpoint(cut));
+        assertTrue(client.checkpointsAwaitingAcknowledgement().isEmpty());
+      }
+      // The ACK is stored in the earlier intent row, before the later seal row.
+      try (var client = durable(fixture.server, certs, durable)) {
+        assertEquals(cut.acknowledgement(), client.checkpoint(cut)); client.goaway(1);
+      }
+    }
+    assertEquals(1, calls.get());
+  }
+
+  @Test void durableUncertainInputIsVisibleAndNeverBlindlyResent() throws Exception {
+    Path certs = certificates(), file = directory.resolve("body.bin"); Files.writeString(file, "input");
+    var durable = SealedClient.Durability.at(directory.resolve("producer.db"));
+    var calls = new AtomicInteger(); var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
+    var header = new SealedTransport.Header(ROOT, null, 0, "text/plain", null, null, Map.of(), null);
+    try (var fixture = new Fixture(certs, (context, input) -> {
+      calls.incrementAndGet();
+      if (context.identity().entity().equals(ROOT)) {
+        assertEquals(BigInteger.valueOf(5), context.header().payloadLength()); assertNotNull(context.header().checksum());
+        entered.countDown(); if (!release.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("test callback not released");
+      }
+      return complete(input);
+    })) {
+      try {
+        try (var client = SealedClient.connectDurable(fixture.server.address(), certs.resolve("ca.crt"), "localhost",
+            SealedTransport.Limits.defaults(), Duration.ofMillis(1500), durable)) {
+          client.declare(declaration(0, null, 0, List.of(1L, 2L), List.of(1L, 2L)));
+          assertThrows(java.util.concurrent.TimeoutException.class, () -> client.send(header, file));
+          assertEquals(0, entered.getCount()); assertEquals(List.of(ROOT), client.unresolvedInputs());
+          assertEquals(2, client.observedStatus(ROOT).orElseThrow().state());
+        }
+        release.countDown();
+        try (var client = durable(fixture.server, certs, durable)) {
+          assertEquals(List.of(ROOT), client.unresolvedInputs());
+          send(client, new SealedWork.EntityKey(0, 2), null, "complete", "independent");
+          assertEquals(5, assertThrows(ProtocolException.class, () -> client.send(header, file)).errorCode());
+        }
+        try (var client = durable(fixture.server, certs, durable)) {
+          assertEquals(List.of(ROOT), client.unresolvedInputs());
+          assertEquals(2, client.observedStatus(ROOT).orElseThrow().state());
+          assertEquals(3, client.observedStatus(new SealedWork.EntityKey(0, 2)).orElseThrow().state());
+        }
+      } finally { release.countDown(); }
+    }
+    assertEquals(2, calls.get());
+  }
+
+  @Test void durableCapacityRefusalPrecedesPayloadAdmissionAndPeerBindingCannotChange() throws Exception {
+    Path certs = certificates(); var calls = new AtomicInteger();
+    var durable = new SealedClient.Durability(directory.resolve("producer.db"), 1, 8192, SealedSessionStore.FileLimits.defaults());
+    try (var fixture = new Fixture(certs, (context, input) -> { calls.incrementAndGet(); return complete(input); })) {
+      try (var client = durable(fixture.server, certs, durable)) {
+        client.declare(declaration(0, null, 0, List.of(1L), List.of(1L)));
+        assertEquals(6, assertThrows(ProtocolException.class, () -> send(client, ROOT, null, "complete", "input")).errorCode());
+        assertTrue(client.unresolvedInputs().isEmpty()); assertTrue(client.observedStatus(ROOT).isEmpty());
+      }
+      Path changed = directory.resolve("same-ca-different-bytes.pem"); Files.writeString(changed, Files.readString(certs.resolve("ca.crt")) + "\n");
+      assertThrows(java.sql.SQLException.class, () -> SealedClient.connectDurable(fixture.server.address(), changed, "localhost",
+          SealedTransport.Limits.defaults(), Duration.ofSeconds(5), durable));
+      try (var client = durable(fixture.server, certs, durable)) { assertTrue(client.declarationsAwaitingAcknowledgement().isEmpty()); }
+    }
+    assertEquals(0, calls.get());
+  }
+
+  @Test void sealedClientsRejectWrongCertificateNamesBeforeAttaching() throws Exception {
+    Path certs = certificates();
+    try (var fixture = new Fixture(certs, (context, input) -> complete(input))) {
+      for (boolean durable : List.of(false, true)) {
+        var failure = assertThrows(java.util.concurrent.ExecutionException.class, () -> {
+          try (var client = durable
+              ? SealedClient.connectDurable(fixture.server.address(), certs.resolve("ca.crt"), "not-localhost.example",
+                  SealedTransport.Limits.defaults(), Duration.ofSeconds(3), SealedClient.Durability.at(directory.resolve("wrong-peer.db")))
+              : SealedClient.connect(fixture.server.address(), certs.resolve("ca.crt"), "not-localhost.example",
+                  SealedTransport.Limits.defaults(), Duration.ofSeconds(3))) {
+            assertNotNull(client.limits());
+          }
+        }, "a CA-valid certificate for another DNS name must be rejected");
+        assertInstanceOf(javax.net.ssl.SSLPeerUnverifiedException.class, failure.getCause());
+      }
+    }
+  }
+
+  @Test void layerZeroRejectsWrongPeerBeforeSendingCapabilities() throws Exception {
+    Path certs = certificates(), body = directory.resolve("body.bin"); Files.writeString(body, "input");
+    var frames = new AtomicInteger();
+    try (var server = new SealedTestPeer.ScriptServer(certs, frame -> {
+      frames.incrementAndGet(); return List.of(Wire.encodeCapabilities(Wire.Capabilities.defaults()));
+    })) {
+      var failure = assertThrows(java.util.concurrent.ExecutionException.class, () ->
+          PipeStreamClient.send(server.address(), certs.resolve("ca.crt"), "wrong.example", 1, body, "text/plain"));
+      assertInstanceOf(javax.net.ssl.SSLPeerUnverifiedException.class, failure.getCause());
+      assertEquals(0, frames.get());
+    }
+  }
+
+  @Test void sealedClientDoesNotFallBackToCertificateCommonName() throws Exception {
+    Path certs = certificates();
+    Files.writeString(certs.resolve("extensions"), "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\n");
+    command(certs, "openssl", "x509", "-req", "-in", "server.csr", "-CA", "ca.crt", "-CAkey", "ca.key", "-CAcreateserial",
+        "-out", "server.crt", "-days", "2", "-extfile", "extensions");
+    try (var fixture = new Fixture(certs, (context, input) -> complete(input))) {
+      var failure = assertThrows(java.util.concurrent.ExecutionException.class, () -> connect(fixture.server, certs));
+      assertInstanceOf(javax.net.ssl.SSLPeerUnverifiedException.class, failure.getCause());
+    }
+  }
+
+  @Test void sealedClientChecksDnsWildcardsAndIpSubjectAlternativeNamesOverQuic() throws Exception {
+    Path certs = certificates();
+    Files.writeString(certs.resolve("extensions"), "subjectAltName=DNS:*.example.com,IP:127.0.0.1,IP:::1,DNS:127.0.0.2\n"
+        + "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\n");
+    command(certs, "openssl", "x509", "-req", "-in", "server.csr", "-CA", "ca.crt", "-CAkey", "ca.key", "-CAcreateserial",
+        "-out", "server.crt", "-days", "2", "-extfile", "extensions");
+    try (var fixture = new Fixture(certs, (context, input) -> complete(input))) {
+      for (String name : List.of("node.example.com", "127.0.0.1", "::1")) {
+        try (var client = SealedClient.connect(fixture.server.address(), certs.resolve("ca.crt"), name,
+            SealedTransport.Limits.defaults(), Duration.ofSeconds(3))) { assertNotNull(client.limits()); }
+      }
+      for (String name : List.of("example.com", "two.node.example.com", "127.0.0.2", "::2", "localhost")) {
+        var failure = assertThrows(java.util.concurrent.ExecutionException.class, () -> {
+          try (var client = SealedClient.connect(fixture.server.address(), certs.resolve("ca.crt"), name,
+              SealedTransport.Limits.defaults(), Duration.ofSeconds(3))) { assertNotNull(client.limits()); }
+        }, name);
+        assertInstanceOf(javax.net.ssl.SSLPeerUnverifiedException.class, failure.getCause(), name);
+      }
+    }
+  }
+
+  @Test void durableScopeWaitRestoresRehydratingStateAndReplaysClosure() throws Exception {
+    Path certs = certificates(); var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
+    var durable = SealedClient.Durability.at(directory.resolve("producer.db")); var calls = new AtomicInteger();
+    try (var fixture = new Fixture(certs, (context, input) -> {
+      calls.incrementAndGet();
+      if (context.operation() == SealedExecutor.Operation.PROCESS && context.identity().entity().equals(ROOT)) {
+        input.transferTo(java.io.OutputStream.nullOutputStream()); return new SealedExecutor.Decision(6, null);
+      }
+      if (context.operation() == SealedExecutor.Operation.REHYDRATE) {
+        entered.countDown(); if (!release.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("test rehydration not released");
+      }
+      return complete(input);
+    })) {
+      try {
+        try (var client = SealedClient.connectDurable(fixture.server.address(), certs.resolve("ca.crt"), "localhost",
+            SealedTransport.Limits.defaults(), Duration.ofSeconds(1), durable)) {
+          client.declare(declaration(0, null, 0, List.of(1L), List.of(1L)));
+          send(client, ROOT, null, "dehydrate", "root");
+          client.declare(declaration(7, ROOT, 0, List.of(1L), List.of(1L)));
+          send(client, new SealedWork.EntityKey(7, 1), ROOT, "complete", "child");
+          assertThrows(java.util.concurrent.TimeoutException.class, () -> client.closeScope(7));
+          assertEquals(0, entered.getCount()); assertEquals(7, client.observedStatus(ROOT).orElseThrow().state());
+        }
+        try (var client = SealedClient.connectDurable(fixture.server.address(), certs.resolve("ca.crt"), "localhost",
+            SealedTransport.Limits.defaults(), Duration.ofSeconds(1), durable)) {
+          assertEquals(List.of(7L), client.scopesAwaitingClosure());
+          assertEquals(7, client.observedStatus(ROOT).orElseThrow().state());
+          assertThrows(java.util.concurrent.TimeoutException.class, () -> client.closeScope(7));
+        }
+        release.countDown();
+        try (var client = durable(fixture.server, certs, durable)) {
+          assertEquals(7, client.observedStatus(ROOT).orElseThrow().state());
+          assertEquals(BigInteger.ONE, client.closeScope(7).succeeded());
+          assertTrue(client.scopesAwaitingClosure().isEmpty());
+          client.checkpoint(checkpoint("rehydrated", BigInteger.ONE, 1, null, 5000)); client.goaway(1);
+        }
+      } finally { release.countDown(); }
+    }
+    assertEquals(3, calls.get());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"declared", "processed", "closed"})
+  void durableProducerRecoversAfterAbruptProcessExit(String phase) throws Exception {
+    Path certs = certificates(), body = directory.resolve("body.bin"); Files.writeString(body, "input");
+    var durable = SealedClient.Durability.at(directory.resolve("producer.db")); var calls = new AtomicInteger();
+    try (var fixture = new Fixture(certs, (context, input) -> {
+      calls.incrementAndGet();
+      if (context.operation() == SealedExecutor.Operation.PROCESS && "dehydrate".equals(context.header().metadata().get("action"))) {
+        input.transferTo(java.io.OutputStream.nullOutputStream()); return new SealedExecutor.Decision(6, null);
+      }
+      return complete(input);
+    })) {
+      Path log = directory.resolve("producer-process.log");
+      Process process = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+          "--enable-native-access=ALL-UNNAMED", "-cp", System.getProperty("java.class.path"), DurableProbe.class.getName(),
+          Integer.toString(fixture.server.address().getPort()), certs.resolve("ca.crt").toString(), durable.database().toString(), body.toString(), phase)
+          .redirectErrorStream(true).redirectOutput(log.toFile()).start();
+      try {
+        assertTrue(process.waitFor(30, TimeUnit.SECONDS), () -> "producer process timed out: " + log);
+        assertEquals(73, process.exitValue(), () -> { try { return Files.readString(log); } catch (Exception failure) { return failure.toString(); } });
+      } finally { if (process.isAlive()) process.destroyForcibly().waitFor(5, TimeUnit.SECONDS); }
+      try (var client = durable(fixture.server, certs, durable)) {
+        assertTrue(client.declarationsAwaitingAcknowledgement().isEmpty());
+        if (phase.equals("declared")) DurableProbe.process(client, body);
+        if (!phase.equals("closed")) client.closeScope(7);
+        assertEquals(3, client.observedStatus(ROOT).orElseThrow().state());
+        var cut = checkpoint("process-exit", SealedCbor.MAX_UINT, 2, null, 5000);
+        assertEquals(cut.acknowledgement(), client.checkpoint(cut)); client.goaway(2);
+      }
+    }
+    assertEquals(5, calls.get(), "reconnect must not re-execute previously observed work");
+  }
+
+  public static final class DurableProbe {
+    private DurableProbe() {}
+    public static void main(String[] args) throws Exception {
+      var durable = SealedClient.Durability.at(Path.of(args[2]));
+      try (var client = SealedClient.connectDurable(new InetSocketAddress("127.0.0.1", Integer.parseInt(args[0])), Path.of(args[1]), "localhost",
+          SealedTransport.Limits.defaults(), Duration.ofSeconds(10), durable)) {
+        client.declare(declaration(0, null, 0, List.of(1L, 2L), List.of(1L, 2L)));
+        if (!args[4].equals("declared")) process(client, Path.of(args[3]));
+        if (args[4].equals("closed")) {
+          client.closeScope(7); client.checkpoint(checkpoint("process-exit", SealedCbor.MAX_UINT, 2, null, 5000));
+        }
+        Runtime.getRuntime().halt(73);
+      }
+    }
+    private static void process(SealedClient client, Path body) throws Exception {
+      for (long id : List.of(1L, 2L)) {
+        client.send(new SealedTransport.Header(new SealedWork.EntityKey(0, id), null, 0, "text/plain", null, null,
+            Map.of("action", id == 1 ? "dehydrate" : "complete"), null), body);
+      }
+      client.declare(declaration(7, ROOT, 0, List.of(1L, 2L), List.of(1L, 2L)));
+      for (long id : List.of(1L, 2L)) client.send(new SealedTransport.Header(new SealedWork.EntityKey(7, id), ROOT, 0, "text/plain", null, null, Map.of(), null), body);
+    }
+  }
+
   @Test void pendingCheckpointDoesNotBlockPayloadsOrIndependentCompletionAndCannotOvertakeStatuses() throws Exception {
     Path certs = certificates(); var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
     try (var fixture = new Fixture(certs, (context, input) -> {
@@ -409,11 +693,13 @@ final class SealedServerTest {
     }
   }
 
-  @Test void realQuicTransfersAndProcesses32MiBUnderA24MiBJavaHeap() throws Exception {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void realQuicTransfersAndProcesses32MiBUnderA24MiBJavaHeap(boolean durable) throws Exception {
     Path certs = certificates(), log = directory.resolve("heap-gate.log");
     Process process = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin/java").toString(), "-Xmx24m",
         "--enable-native-access=ALL-UNNAMED", "-cp", System.getProperty("java.class.path"), SealedServerTest.class.getName(),
-        directory.toString(), certs.toString()).redirectErrorStream(true).redirectOutput(log.toFile()).start();
+        directory.toString(), certs.toString(), Boolean.toString(durable)).redirectErrorStream(true).redirectOutput(log.toFile()).start();
     try {
       assertTrue(process.waitFor(45, TimeUnit.SECONDS));
       assertEquals(0, process.exitValue(), () -> { try { return Files.readString(log); } catch (Exception failure) { return failure.toString(); } });
@@ -427,16 +713,29 @@ final class SealedServerTest {
       byte[] buffer = new byte[8192];
       for (long offset = 0; offset < length; offset += buffer.length) { buffer[0] = (byte) (offset / buffer.length); output.write(buffer); hash.update(buffer); }
     }
-    byte[] digest = hash.digest();
-    try (var fixture = test.new Fixture(certs, (context, source) -> complete(source));
-        var client = SealedClient.connect(fixture.server.address(), certs.resolve("ca.crt"), "localhost", SealedTransport.Limits.defaults(), Duration.ofSeconds(30))) {
-      client.declare(declaration(0, null, 0, List.of(1L), List.of(1L)));
-      var header = new SealedTransport.Header(ROOT, null, 0, null, BigInteger.valueOf(length), digest, Map.of(), null);
-      assertEquals(3, client.send(header, input).getLast().state());
-      client.checkpoint(checkpoint("heap", BigInteger.ONE, 1, null, 5000)); client.goaway(1);
+    byte[] digest = hash.digest(); boolean durable = Boolean.parseBoolean(args[2]); var calls = new AtomicInteger();
+    var journal = SealedClient.Durability.at(test.directory.resolve("producer.db"));
+    try (var fixture = test.new Fixture(certs, (context, source) -> { calls.incrementAndGet(); return complete(source); })) {
+      try (var client = durable
+          ? SealedClient.connectDurable(fixture.server.address(), certs.resolve("ca.crt"), "localhost", SealedTransport.Limits.defaults(), Duration.ofSeconds(30), journal)
+          : SealedClient.connect(fixture.server.address(), certs.resolve("ca.crt"), "localhost", SealedTransport.Limits.defaults(), Duration.ofSeconds(30))) {
+        client.declare(declaration(0, null, 0, List.of(1L), List.of(1L)));
+        var header = new SealedTransport.Header(ROOT, null, 0, null, durable ? null : BigInteger.valueOf(length), durable ? null : digest, Map.of(), null);
+        assertEquals(3, client.send(header, input).getLast().state());
+        client.checkpoint(checkpoint("heap", BigInteger.ONE, 1, null, 5000));
+        if (!durable) client.goaway(1);
+      }
+      if (durable) {
+        try (var client = durable(fixture.server, certs, journal)) {
+          assertEquals(3, client.observedStatus(ROOT).orElseThrow().state());
+          assertTrue(client.unresolvedInputs().isEmpty());
+          client.checkpoint(checkpoint("heap", BigInteger.ONE, 1, null, 5000)); client.goaway(1);
+        }
+      }
       var stored = fixture.payloads.find(new SealedPayloadStore.Identity(SESSION, PRODUCER, ROOT)).orElseThrow();
       assertEquals(length, stored.length()); assertArrayEquals(digest, stored.digest());
       assertEquals(0, fixture.payloads.usage().temporaryBytes()); assertEquals(0, fixture.payloads.usage().activeHandles());
+      assertEquals(1, calls.get());
     }
   }
 
@@ -470,6 +769,9 @@ final class SealedServerTest {
   }
   private static SealedClient connect(SealedServer server, Path certs) throws Exception {
     return SealedClient.connect(server.address(), certs.resolve("ca.crt"), "localhost", SealedTransport.Limits.defaults(), Duration.ofSeconds(10));
+  }
+  private static SealedClient durable(SealedServer server, Path certs, SealedClient.Durability durability) throws Exception {
+    return SealedClient.connectDurable(server.address(), certs.resolve("ca.crt"), "localhost", SealedTransport.Limits.defaults(), Duration.ofSeconds(10), durability);
   }
   private static SealedWork.Declaration declaration(long scope, SealedWork.EntityKey parent, long sequence, List<Long> ids, List<Long> whole) throws Exception {
     return new SealedWork.Declaration(SESSION, PRODUCER, scope, parent, BigInteger.valueOf(sequence), ids,

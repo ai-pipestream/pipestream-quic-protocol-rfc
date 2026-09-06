@@ -17,7 +17,11 @@ supported backend, and sanitizer command. No Rust protocol or storage code is
 linked into the Java library.
 The client
 requires a CA certificate and the server requires an end-entity certificate and
-private key. QUIC 0-RTT is never enabled.
+private key. Both public clients verify the certificate chain and the configured
+DNS/IP service identity before opening their application control stream. DNS
+names use SAN entries, with a whole left-most wildcard matching one label only;
+IP literals require an IP SAN. Common Names are not a fallback. Supply IDNA names
+as ASCII A-labels. QUIC 0-RTT is never enabled.
 
 The public `PipeStreamClient` and `PipeStreamServer` classes implement the same
 transfer used by the CLI: deterministic CBOR capability negotiation, one
@@ -450,8 +454,8 @@ FIN completion: Netty's `stream.close()` sends FIN and is not a reset injector.
 The `sealed-interop` profile also runs the Rust public producer against this
 Java server. A separate 32 MiB QUIC transfer/install/execute test runs with
 a 24 MiB Java heap limit; it does not measure native memory or RSS.
-Persistent producer-side observations, broader crash-boundary and
-resource stress coverage remain unfinished;
+The opt-in durable producer below now persists verified observations. Broader
+crash-boundary, retained-outcome lookup and resource stress coverage remain unfinished;
 this is not a full conformance claim.
 
 ## Sealed-work network producer
@@ -485,15 +489,15 @@ frames, with a 1 MiB individual control limit. Local bookkeeping allows 65,536
 entities, 65,536 chunks per send, and 1,024 checkpoint identities. These limits
 and fixed-size file reads are not a measured whole-process memory bound.
 
-This client does not persist its producer ledger or observed statuses, export
-resume tokens, retry payloads, or provide authenticated-session/recovery APIs.
+The default `connect` client does not persist its producer ledger or observed
+statuses, export resume tokens, retry payloads, or provide authenticated-session/recovery APIs.
 A new client can replay declaration history and send work not previously
 admitted. Replaying declarations alone does not reconstruct prior admission or
 completion observations for checkpointing already-processed work. A pending
 checkpoint blocks this client's next operation; concurrent submission needs
 additional client API work. Closing never claims successful completion.
 
-The `sealed-interop` Maven profile runs five actual-QUIC tests, including
+The `sealed-interop` Maven profile runs actual-QUIC tests, including
 Java-to-Rust nested/chunked completion, declaration replay and checkpoint ACK
 replay after Rust restarts, a deliberately discarded declaration ACK, and named
 refusals for changed ownership labels, lower retained limits, missing seals,
@@ -501,6 +505,67 @@ wrong checkpoint bounds, changed ACKs, downgrade, oversized frames, and Layer 2
 responses. Scripted test peers inject faults; they are not reference servers.
 The separate `SealedServerTest` now supplies Java-server and reverse-direction
 evidence; the scripted peers are still only fault injectors.
+
+### Durable producer observations
+
+`SealedClient.connectDurable(remote, caCertificate, serverName, limits, timeout,
+SealedClient.Durability.at(database))` uses a producer-owned SQLite journal,
+separate from the server database and payload root. It persists each declaration,
+input commitment, scope closure, checkpoint or shutdown intent before sending it.
+Validated responses are committed before the API reports the observation. An
+unobserved response is never inferred from a successful write or a disconnect.
+
+The journal is immutably bound to the exact configured service name, CA PEM bytes,
+ALPN and sealed extension. Trust files are limited to one MiB and the same bytes
+configure TLS and the binding. Address/port changes are allowed; trust/name changes
+are refused, including harmless PEM formatting changes. This is a local trust-context
+binding, not a server database identity or authenticated producer credential.
+TLS independently verifies the actual certificate name on every connection.
+
+Defaults retain at most 131,072 operations, 256 MiB of logical requests and reserved
+observations, a 512 MiB main database, 64 MiB each for rollback journal/WAL, and
+512 KiB of shared memory. The producer uses DELETE rollback journals and one
+exclusive SQLite connection, not the server's WAL. Each intent reserves a fixed
+observation image; request descriptors are at most 16 MiB and observations at most
+4 KiB. Physical write failure remains an error, not a synthesized observation.
+The guarded VFS, private-directory and cooperating-writer requirements above apply.
+Concurrent journal opens, foreign schemas, changed policies and corrupt records
+are refused without conversion. Completed records remain charged and IDs are never
+recycled. Back up the closed journal and its policy files together.
+
+Payload files remain caller-owned. The durable mode hashes them incrementally,
+checks supplied commitments, and fills omitted length/SHA-256 header fields before
+persisting their descriptor. It streams the file again with those commitments;
+mutation refuses instead of changing the retained intent. Neither payload bytes
+nor local paths are copied into the journal. Restoring observations does not reopen
+the source files. Per-operation file I/O remains blocking and outside the network
+timeout guarantee.
+
+Reconnect restores the verified local history and automatically replays the exact
+original root declaration. Child declaration ACKs, COMPLETE/FAILED/DEHYDRATING
+input observations, recursive closure and checkpoint identities survive restart.
+An old root-checkpoint ACK does not authorize GOAWAY on the new connection: replay
+the checkpoint and verify its fresh response. An acknowledged shutdown prevents
+opening that journal for further work.
+
+`declarationsAwaitingAcknowledgement()` and `checkpointsAwaitingAcknowledgement()`
+return original requests for explicit replay. `scopesAwaitingClosure()` identifies
+interrupted closures that can be replayed, preserving any observed REHYDRATING
+status. `unresolvedInputs()` lists uncertain input attempts, and `observedStatus(key)`
+returns the latest verified local status. Inventories remain readable after close.
+An unresolved input may already have completed at the server; it is not permission
+to resend it. This profile currently has no retained input-outcome query, and Java
+servers refuse repeated admission of an admitted ID. The client therefore refuses
+blind payload retry while still allowing other declared inputs to proceed. This
+is durable observation recovery, not automatic execution retry or Layer 2 recovery.
+
+Tests cover recursive client/server restarts, three abrupt producer-process exits,
+interrupted parent rehydration, lost/altered declaration ACKs, checkpoint timeout
+followed by a later seal, immutable trust binding and capacity refusal before
+payload admission. Real Java-to-Rust tests restore a recursive job through three
+server lifetimes. A 32 MiB actual-QUIC transfer, journal and observation restore runs
+under a 24 MiB Java heap without executing the payload twice. This is not an RSS,
+native-memory, multi-tenant load or full-profile conformance measurement.
 
 ```bash
 cargo build --release --locked --manifest-path ../rust-quinn/Cargo.toml
