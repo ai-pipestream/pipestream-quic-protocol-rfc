@@ -101,6 +101,36 @@ The full cross-language gates below remain open. Funded payload admission,
 workers/leases/cancellation, nonempty closure, results/read pins, retirement and
 cleanup are the next authority implementation work, not implied by these tests.
 
+### Rust payload/ingress evidence
+
+`src/v2/authority/payload/tests.rs` adds 12 storage tests, including a subprocess
+entry point; `ingress.rs` adds three header/reception tests. Their scope is:
+
+- V2-ADMIT: reject invalid owner, producer, generation, undeclared work,
+  application/mode, duration and response/byte budgets before payload allocation.
+  Hash/FIN failure preserves declaration and leaves no operation receipt.
+  Verified installation is expressly not admission or execution.
+- V2-STORE: six process exits bracket staging-file creation/header, object fsync,
+  rename, directory fsync and orphan unlink. Restart distinguishes abandoned
+  staging from installed unreferenced objects. Physical power loss is not tested.
+- V2-STORE: durable root/database pairing, exclusive ownership, live object pins,
+  changed configuration/identity refusal and unknown/aliased entry refusal.
+  Collection uses bounded cursor batches under the authority's writer transaction
+  and preserves committed references. The reference test does not admit a job.
+- V2-RESULT (storage only): exact retained descriptors, full length/hash checking
+  at EOF, permanently failed corrupt reads and global/per-owner handle bounds.
+  This does not implement authenticated RESULT RPCs, manifests or read leases.
+- `cargo test --locked -p pipestream-core --test v2_payload_resources -- --nocapture`
+  streams and verifies 32 MiB using 16 KiB buffers in its own allocator-instrumented
+  executable. It gates added Rust heap below 256 KiB and individual allocations
+  below 64 KiB, and separately reports file lengths, allocated blocks and process
+  RSS/HWM. This is neither an end-to-end benchmark nor proof of all process-memory
+  bounds or populated-inventory scaling.
+
+Funded admission, durable jobs, output/metadata/WAL reservations and retirement
+remain unimplemented. Temporary reception quotas and object-reference cleanup do
+not substitute for those gates or for either cross-language direction.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

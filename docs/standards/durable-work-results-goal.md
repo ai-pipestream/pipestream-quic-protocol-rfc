@@ -393,3 +393,75 @@ CDDL or normative Section 12 text changed in this increment. Local logs:
 - `/tmp/pipestream-v2-authority-final-clippy.log`
 - `/tmp/pipestream-v2-authority-final-workspace.log`
 - `/tmp/pipestream-v2-authority-retention-red.log` (deliberate pre-fix failure)
+
+### Task 2 implementation progress: immutable payload storage and ingress
+
+The Rust authority now has a Unix file-backed payload store and header/reception
+API. This is partial task-2 implementation; it does not admit jobs or activate an
+incomplete profile. The complete goal, independent Java implementation and all
+original failure/workload deliverables remain active.
+
+- Private, exclusively locked payload roots are durably paired with the SQLite
+  authority's local store identity and canonical path. A live stage, installed
+  token or reader retains root ownership; inherited-process handles cannot use
+  the parent's ownership. Unknown entries, aliases, changed policy and mismatched
+  roots fail closed without adopting or clearing unrelated files.
+- Reception reserves full declared length plus bounded metadata overhead before
+  the first payload byte, with global/per-owner byte, object and handle ceilings.
+  I/O uses bounded borrowed buffers. Length, SHA-256, FIN and monotonic deadlines
+  are checked before fsynced installation and directory synchronization.
+- Opaque installed tokens pin exact objects through a future metadata commit.
+  Read handles verify retained length/hash at EOF; earlier bytes are provisional.
+  A corrupt read fails permanently, never turning missing/corrupt storage into a
+  successful empty result or rerunning an application.
+- Startup under exclusive root ownership safely reclaims abandoned stages,
+  including torn headers that could never have been admitted. Installed objects
+  remain charged. Orphan collection holds the SQLite writer transaction, checks
+  retained references, skips live pins and uses bounded cursor batches. Interrupted
+  unlink is replayable. This is not retention expiry or session retirement.
+- Header preflight checks current owner authorization, profile, generation,
+  producer, declared membership, cancellation fences, configured application/mode,
+  duration, input/output byte ceilings and a conservative response-encoding bound
+  before creating a stage. Unknown applications have no fallback. Installed input
+  remains DECLARED with no receipt/job; reception cannot fabricate admission.
+
+Storage format 2 adds local root pairing and payload references. Format-1
+prototype authority files are refused rather than converted; no user database
+was migrated or deleted. No draft wire/CDDL/vector change is involved. The Unix
+lock dependency reuses the already pinned `rustix` 1.1.4; the three Rust lockfiles
+only add that existing dependency edge to `pipestream-core`.
+
+Evidence: 12 payload tests (including a subprocess entry point), three ingress
+tests and the existing 18 authority tests pass together. Six real child-process
+exits cover file creation, complete staging header, object fsync, rename,
+directory fsync and cleanup unlink. These are process-death tests, not a physical
+power-loss experiment. The authority-reference test commits a storage reference,
+not a fabricated work admission or a transport ACK.
+
+The separate `v2_payload_resources` test streams, installs and verifies 32 MiB
+through 16 KiB buffers. A measured run used 1,864 bytes of additional Rust heap,
+with a largest allocation of 1,512 bytes; its gates are 256 KiB and 64 KiB
+respectively. File lengths were 33,554,602 bytes, allocated blocks 33,562,624 bytes,
+and observed process RSS/HWM 3,564 KiB. This isolates buffering for one object;
+it is not a QUIC flow-control, metadata admission, populated-index scaling,
+end-to-end workload, or streaming-gRPC comparison result.
+
+Next: the atomic funded admission/job/receipt transaction, persistent output and
+metadata reservations, completion WAL headroom, worker leases and result
+publication. Neither the physical file caps nor temporary staging reservations
+prove those accepted-work promises. Java V2, transport, the neutral failure
+driver, independent retention/cleanup and task 3 remain outstanding.
+
+Local evidence logs:
+
+- `/tmp/pipestream-v2-payload-authority.log`
+- `/tmp/pipestream-v2-payload-workspace.log`
+- `/tmp/pipestream-v2-payload-resources.log`
+- `/tmp/pipestream-v2-payload-suite.log`
+
+Final verification: `./conformance/run_all.sh` exited 0 against this increment,
+including strict Rust formatting/clippy, 393 Rust workspace tests, 193 Java tests
+(20 Surefire reports, zero failures/errors/skips), native/C++ checks, frozen
+vectors and models, all nine black-box language pairs, all 32 raw capability
+probes, and the three external examples. The existing network tests exercise
+their historical profiles; they do not establish V2 network interoperability.

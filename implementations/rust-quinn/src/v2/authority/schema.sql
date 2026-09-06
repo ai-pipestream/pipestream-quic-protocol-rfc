@@ -3,7 +3,9 @@ CREATE TABLE authority (
   name TEXT NOT NULL,
   last_generation INTEGER NOT NULL CHECK(last_generation >= 0),
   greatest_utc INTEGER NOT NULL CHECK(greatest_utc >= 0),
-  policy BLOB NOT NULL
+  policy BLOB NOT NULL,
+  store_id BLOB NOT NULL CHECK(length(store_id)=16),
+  payload_path TEXT
 ) STRICT;
 CREATE TABLE owners (
   owner TEXT PRIMARY KEY NOT NULL,
@@ -58,5 +60,13 @@ CREATE TABLE operations (
   receipt BLOB NOT NULL,
   PRIMARY KEY(generation, originator, operation)
 ) STRICT;
+CREATE TABLE payload_refs (
+  object_key TEXT PRIMARY KEY NOT NULL CHECK(length(object_key)=32),
+  generation INTEGER NOT NULL,
+  scope INTEGER NOT NULL,
+  entity INTEGER NOT NULL,
+  purpose INTEGER NOT NULL CHECK(purpose IN (0,1)),
+  FOREIGN KEY(generation,scope,entity) REFERENCES work(generation,scope,entity)
+) STRICT;
 PRAGMA application_id = 1347637825;
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;

@@ -92,9 +92,9 @@ fn refuse<T: std::fmt::Debug>(result: Result<T>, code: ErrorCode) {
         other => panic!("expected {code:?}, got {other:?}"),
     }
 }
-struct Fixture {
-    directory: tempfile::TempDir,
-    store: AuthorityStore,
+pub(super) struct Fixture {
+    pub(super) directory: tempfile::TempDir,
+    pub(super) store: AuthorityStore,
     clock: Arc<TestClock>,
     authorization: Arc<TestAuthorization>,
 }
@@ -121,10 +121,10 @@ impl Fixture {
             authorization,
         }
     }
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self::with_policy(policy())
     }
-    fn create(&self) -> Binding {
+    pub(super) fn create(&self) -> Binding {
         self.store
             .create_session(&owner("alice"), Id(1), &retention(), &caps())
             .unwrap()

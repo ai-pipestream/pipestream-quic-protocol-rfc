@@ -15,13 +15,17 @@ use rusqlite::{
 };
 use std::{path::Path, sync::Arc, time::Duration as Elapsed};
 
+#[cfg(unix)]
+pub mod ingress;
+#[cfg(unix)]
+pub mod payload;
 mod scopes;
 mod sessions;
 #[cfg(test)]
 mod tests;
 
 const APPLICATION_ID: i64 = 1_347_637_825;
-const FORMAT: i64 = 1;
+const FORMAT: i64 = 2;
 const SCHEMA: &str = include_str!("schema.sql");
 
 #[derive(Debug)]
@@ -86,6 +90,7 @@ pub enum Permission {
     Inspect,
     Create,
     Declare,
+    Admit,
 }
 
 pub trait Authorization: Send + Sync {
@@ -288,11 +293,12 @@ impl AuthorityStore {
             }
             tx.execute_batch(SCHEMA)?;
             tx.execute(
-                "INSERT INTO authority VALUES(1, ?1, 0, ?2, ?3)",
+                "INSERT INTO authority(singleton,name,last_generation,greatest_utc,policy,store_id) VALUES(1, ?1, 0, ?2, ?3, ?4)",
                 params![
                     store.authority.0,
                     sql(reading.utc_ms.0)?,
-                    pack(&store.policy)?
+                    pack(&store.policy)?,
+                    crate::persistence::StoreIdentity::generate()?.as_bytes().as_slice()
                 ],
             )?;
         } else if app_id != APPLICATION_ID || version != FORMAT {

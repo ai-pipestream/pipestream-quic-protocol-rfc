@@ -45,7 +45,7 @@ fn load(tx: &Transaction<'_>, generation: Id, scope: Number) -> Result<RetainedS
 
 /// Inspect one scope at a time. Child scope numbers strictly exceed parents;
 /// corrupt ancestry cannot cycle or create an unbounded recursive stack.
-fn unfenced(tx: &Transaction<'_>, generation: Id, mut scope: Number) -> Result<()> {
+pub(super) fn unfenced(tx: &Transaction<'_>, generation: Id, mut scope: Number) -> Result<()> {
     loop {
         let retained = load(tx, generation, scope)?;
         if retained.cancelled {
@@ -74,7 +74,7 @@ fn unfenced(tx: &Transaction<'_>, generation: Id, mut scope: Number) -> Result<(
     }
 }
 
-fn operation(
+pub(super) fn operation(
     tx: &Transaction<'_>,
     generation: Id,
     originator: Producer,
@@ -93,7 +93,7 @@ fn operation(
     Ok(Some(receipt))
 }
 
-fn work(tx: &Transaction<'_>, generation: Id, key: &WorkKey) -> Result<(Id, WorkView)> {
+pub(super) fn work(tx: &Transaction<'_>, generation: Id, key: &WorkKey) -> Result<(Id, WorkView)> {
     let retained: Option<(u64, u64, Vec<u8>)> = tx.query_row(
         "SELECT revision,producer,view FROM work WHERE generation=?1 AND scope=?2 AND entity=?3",
         params![sql(generation.0)?, sql(key.scope.0)?, sql(key.entity.0)?], |r| Ok((number(r, 0)?, number(r, 1)?, r.get(2)?))).optional()?;

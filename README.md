@@ -33,8 +33,10 @@ version-2 message and record, frozen commitments, negotiation checks, bounded
 client correlation and incremental object validation. This is a library
 foundation, not a durable version-2 endpoint. Its `v2::authority` module now
 adds transactional session identity, declaration/operation replay and bounded
-retained-state reads, with subprocess commit-crash tests. Payload admission,
-execution, results and cleanup remain to be implemented for that authority. The
+retained-state reads, with subprocess commit-crash tests. Bounded payload staging,
+immutable installation, header preflight and reference-safe orphan collection are
+now present as well. Funded admission, execution, results and retention cleanup
+remain to be implemented for that authority. The
 [V2 acceptance ledger](docs/standards/durable-work-v2-test-plan.md) keeps Java,
 authenticated transport, storage, execution and process-level evidence open.
 

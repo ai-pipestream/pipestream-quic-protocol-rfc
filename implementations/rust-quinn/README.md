@@ -54,9 +54,30 @@ trusted clock. An accepted forward jump is treated as real UTC; the store refuse
 later regression. Operators must reject unjustified jumps in the clock provider
 and must not restore stale issuing history without external anti-reuse proof.
 
-This authority does not yet implement payload staging, funded admission/jobs,
-workers, cancellation settlement, nonempty closure, results or cleanup. Physical
-file caps do not reserve future completion space. Client journals, V2 mTLS/QUIC
+On Unix, `authority::payload` now provides bounded streamed staging, durable
+immutable installation, verified file-backed reading and exclusive root ownership.
+Limits separately bound global/per-owner bytes, objects and live handles, plus
+the size of each borrowed I/O buffer. Incomplete reception reserves its full
+declared length and a header allowance. Reopen rebuilds file accounting and
+reclaims abandoned stages only under exclusive ownership; installed orphans
+remain charged until the authority's reference-safe collector removes them.
+Live installed/read handles remain pinned against collection. The database
+retains a local random store identity and a once-bound canonical payload path.
+Internal authority storage is now format 2; prior prototype stores are refused,
+not silently converted or replaced. This changes no wire schema or frozen vector.
+
+`AuthorityStore::receive_input` validates ownership, membership, application/mode,
+profile, immutable operation, duration and response/byte limits before staging.
+Applications must register immutable versioned labels and explicit safe-restart
+semantics; an unknown contract has no fallback. `ValidatedInput` is installed
+storage evidence only: it does not change DECLARED work, schedule a job or permit
+an admission acknowledgment. The committing transaction must revalidate authority
+and reserve every execution/publication/retention resource before admission.
+
+Funded admission/jobs, workers, cancellation settlement, nonempty closure,
+results/read leases, retention expiry and session retirement remain unfinished.
+Physical file caps and staging reservations do not reserve future completion
+space. Client journals, V2 mTLS/QUIC
 integration and independent Java V2 implementation also remain outstanding.
 The current contract has no backward-compatibility requirement; historical V1
 tests are regression evidence only. See the

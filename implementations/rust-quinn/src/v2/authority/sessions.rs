@@ -28,7 +28,11 @@ pub(super) fn load(
     )))
 }
 
-fn check_connection(tx: &Transaction<'_>, binding: &Binding, caps: &Capabilities) -> Result<()> {
+pub(super) fn check_connection(
+    tx: &Transaction<'_>,
+    binding: &Binding,
+    caps: &Capabilities,
+) -> Result<()> {
     if caps.has(RESULT_DELIVERY) != binding.results {
         return Err(protocol(
             ErrorCode::ExtensionUnsupported,

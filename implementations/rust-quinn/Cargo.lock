@@ -732,6 +732,7 @@ dependencies = [
  "postcard",
  "rand",
  "rusqlite",
+ "rustix",
  "serde",
  "sha2",
  "tempfile",
