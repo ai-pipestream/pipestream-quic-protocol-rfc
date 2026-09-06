@@ -366,8 +366,7 @@ public final class SealedServer implements AutoCloseable {
           Throwable error = null;
           try {
             if (!dead) {
-              for (var key : watching.keySet()) {
-                var job = jobs.find(key).orElseThrow(() -> Wire.integrity("observed durable job is absent"));
+              for (var job : jobs.findAll(List.copyOf(watching.keySet()))) {
                 if (job.state() == SealedJobs.FINISHED || job.state() == SealedJobs.REFUSED) outcomes.add(job);
               }
               for (var cut : cuts) if (!dead && sessions.acknowledgeCheckpoint(session, producer, cut.getValue().request)) ready.add(cut);

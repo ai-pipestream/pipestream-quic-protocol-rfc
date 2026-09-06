@@ -74,8 +74,11 @@ credit, including with a pinned WAL reader. The bound is tied to bundled SQLite
 3.53.2 and the cooperating-writer file-length policy, not filesystem-block
 preallocation. Whole-session serialization and retained-row scans remain;
 large sessions require proportionally more completion credit. Older storage
-layouts are refused without conversion. Java physical completion reservations,
-explicit orphan reconciliation and the broader resource matrix remain unfinished.
+layouts are refused without conversion. Java now preallocates job/entity/closure
+images and possible rehydration rows, and independently funds remaining stages
+under SQLite 3.53.4 WAL/shared-memory limits. Pinned-reader tests cover completion,
+recursive conversion and rollback followed by retry. Explicit orphan reconciliation,
+persistent producer observations and the broader resource matrix remain unfinished.
 Connection metadata and lineage operations now run in a bounded storage pool.
 An independent control reader enforces checkpoint deadlines during those
 operations; held-storage tests also exercise protocol refusals and progress

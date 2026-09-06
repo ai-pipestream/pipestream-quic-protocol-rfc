@@ -17,8 +17,8 @@ import org.sqlite.SQLiteConnection;
 
 /** Local immutable file policy and bootstrap for JDBC's bounded Unix VFS. */
 final class SealedSqliteFiles {
-  private static final String VFS = "pipestream-java-bounded-unix-v1";
-  private static final byte[] MAGIC = {'P', 'S', 'J', 'D', 'B', '0', '0', '1'};
+  private static final String VFS = "pipestream-java-bounded-unix-v2";
+  private static final byte[] MAGIC = {'P', 'S', 'J', 'D', 'B', '0', '0', '2'};
   private static final Object BOOT_LOCK = new Object();
   private static SQLiteConnection bootstrap;
   private final Path database;

@@ -36,8 +36,8 @@ final class SealedSessionStoreTest {
     assertEquals(Wire.ERROR_ENTITY_INVALID, assertThrows(ProtocolException.class,
         () -> reopened.declare(SealedWorkTest.declaration(0, null, 1, List.of(3L), null), 7, 100)).errorCode());
     assertEquals(1, scalar("SELECT count(*) FROM ps_java_batches"));
-    assertEquals(1, scalar("SELECT count(*) FROM ps_java_entities WHERE state IS NULL"));
-    assertEquals(1, scalar("SELECT count(*) FROM ps_java_entities WHERE state=3"));
+    assertEquals(1, scalar("SELECT count(*) FROM ps_java_entities WHERE substr(image,9,4)=zeroblob(4)"));
+    assertEquals(1, scalar("SELECT count(*) FROM ps_java_entities WHERE substr(image,9,4)=x'00000003'"));
   }
 
   @Test void childDeclarationsRequireAdmittedDehydratingParentAndImmutableBinding() throws Exception {
@@ -189,7 +189,7 @@ final class SealedSessionStoreTest {
     assertEquals(SealedSessionStore.ChildResolution.FAILED, store.resolveChildren("sealed-1", PRODUCER, ROOT));
     assertThrows(ProtocolException.class, () -> store.rehydrated("sealed-1", PRODUCER, ROOT, true, new byte[32]));
     assertTrue(store.checkpointReady("sealed-1", PRODUCER, 0, 1), "resolved does not mean every entity succeeded");
-    assertEquals(2, scalar("SELECT count(*) FROM ps_java_entities WHERE state=4"));
+    assertEquals(2, scalar("SELECT count(*) FROM ps_java_entities WHERE substr(image,9,4)=x'00000004'"));
   }
 
   @Test void declarationAndClosureWriteFailuresRollBackWithoutAcknowledgements() throws Exception {
@@ -203,13 +203,13 @@ final class SealedSessionStoreTest {
     finish(store, ROOT, null, 6);
     store.declare(SealedWorkTest.declaration(7, ROOT, 0, List.of(10L), List.of(10L)), 7, 100);
     finish(store, new SealedWork.EntityKey(7, 10), ROOT, 3);
-    sql("CREATE TRIGGER fail_closure BEFORE UPDATE OF closure ON ps_java_scopes BEGIN SELECT RAISE(ABORT,'injected closure failure'); END");
+    sql("CREATE INDEX fail_closure ON ps_java_scopes(closure_image)");
     assertThrows(java.sql.SQLException.class, () -> store.closeScope("sealed-1", PRODUCER, 7));
-    assertEquals(0, scalar("SELECT count(*) FROM ps_java_scopes WHERE closure IS NOT NULL"));
+    assertEquals(0, scalar("SELECT count(*) FROM ps_java_scopes WHERE substr(closure_image,9,1)=x'01'"));
     assertEquals(SealedSessionStore.ChildResolution.PENDING, store.resolveChildren("sealed-1", PRODUCER, ROOT));
-    sql("DROP TRIGGER fail_closure");
+    sql("DROP INDEX fail_closure");
     assertTrue(store.closeScope("sealed-1", PRODUCER, 7).isPresent());
-    sql("UPDATE ps_java_scopes SET closure=zeroblob(77) WHERE id=7");
+    sql("UPDATE ps_java_scopes SET closure_image=zeroblob(128) WHERE id=7");
     assertEquals(Wire.ERROR_INTEGRITY, assertThrows(ProtocolException.class,
         () -> store.resolveChildren("sealed-1", PRODUCER, ROOT)).errorCode());
   }
@@ -222,19 +222,25 @@ final class SealedSessionStoreTest {
     assertEquals(Wire.ERROR_INTEGRITY, assertThrows(ProtocolException.class, () -> store.declare(root(), 7, 100)).errorCode());
     assertEquals(Wire.ERROR_INTEGRITY, assertThrows(ProtocolException.class,
         () -> store.checkpointReady("sealed-1", PRODUCER, 0, 1)).errorCode());
-    sql("INSERT INTO ps_java_entities(session,scope,id) VALUES ('sealed-1',0,2)");
+    byte[] missing = SealedStateImages.entity("sealed-1", SealedWork.producerBytes(PRODUCER), new SealedWork.EntityKey(0, 2),
+        new SealedStateImages.Entity(null, false, null, null));
+    try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database());
+        var insert = connection.prepareStatement("INSERT INTO ps_java_entities(session,scope,id,image) VALUES ('sealed-1',0,2,?)")) {
+      insert.setBytes(1, missing); assertEquals(1, insert.executeUpdate());
+    }
     assertEquals(root().acknowledgement(), store.declare(root(), 7, 100));
     sql("UPDATE ps_java_scopes SET sealed=0,digest=NULL");
     assertEquals(Wire.ERROR_INTEGRITY, assertThrows(ProtocolException.class,
         () -> store.declared("sealed-1", PRODUCER, 0)).errorCode());
   }
 
-  @Test void schemaRefusesNullPayloadAndResultCommitmentsAndForeignFormats() throws Exception {
+  @Test void schemaRefusesInvalidImageGeometryAndForeignFormats() throws Exception {
     var store = SealedSessionStore.open(database());
     store.declare(root(), 7, 100);
-    for (String statement : List.of("UPDATE ps_java_entities SET state=2",
-        "UPDATE ps_java_entities SET state=3,payload_digest=zeroblob(32)",
-        "UPDATE ps_java_entities SET payload_digest=zeroblob(32)",
+    for (String statement : List.of("UPDATE ps_java_entities SET image=NULL",
+        "UPDATE ps_java_entities SET image=zeroblob(111)", "UPDATE ps_java_entities SET image=zeroblob(113)",
+        "UPDATE ps_java_entities SET image=printf('%0112d',0)",
+        "UPDATE ps_java_scopes SET closure_image=NULL", "UPDATE ps_java_scopes SET closure_image=zeroblob(127)",
         "UPDATE ps_java_scopes SET digest=NULL", "UPDATE ps_java_scopes SET next_sequence='12345678'")) {
       assertThrows(java.sql.SQLException.class, () -> sql(statement), statement);
     }

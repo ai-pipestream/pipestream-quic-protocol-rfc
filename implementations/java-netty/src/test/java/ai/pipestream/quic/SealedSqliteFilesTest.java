@@ -59,7 +59,7 @@ final class SealedSqliteFilesTest {
     // The named VFS refuses an unregistered path instead of using unbounded I/O.
     Path unregistered = directory.resolve("unregistered.db");
     assertThrows(SQLException.class, () -> java.sql.DriverManager.getConnection(
-        "jdbc:sqlite:" + unregistered.toUri() + "?vfs=pipestream-java-bounded-unix-v1"));
+        "jdbc:sqlite:" + unregistered.toUri() + "?vfs=pipestream-java-bounded-unix-v2"));
     assertFalse(Files.exists(unregistered));
     try (var plain = java.sql.DriverManager.getConnection("jdbc:sqlite:" + directory.resolve("ordinary.db"))) {
       execute(plain, "CREATE TABLE ordinary(value)");

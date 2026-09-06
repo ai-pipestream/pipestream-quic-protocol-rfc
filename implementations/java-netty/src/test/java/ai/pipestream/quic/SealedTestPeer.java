@@ -34,6 +34,7 @@ final class SealedTestPeer {
     Channel datagram; QuicChannel connection; QuicStreamChannel control;
     final ArrayBlockingQueue<byte[]> replies = new ArrayBlockingQueue<>(16);
     final CompletableFuture<Long> closeCode = new CompletableFuture<>();
+    volatile Throwable receiveFailure;
 
     RawClient(InetSocketAddress remote, Path certs) throws Exception {
       try {
@@ -57,7 +58,10 @@ final class SealedTestPeer {
               .addLast(new SimpleChannelInboundHandler<ByteBuf>() {
                 @Override protected void channelRead0(ChannelHandlerContext context, ByteBuf bytes) {
                   byte[] frame = new byte[bytes.readableBytes()]; bytes.readBytes(frame);
-                  if (!replies.offer(frame)) context.channel().parent().close();
+                  if (!replies.offer(frame)) {
+                    receiveFailure = new AssertionError("fault peer's local reply backlog overflowed");
+                    context.channel().parent().close();
+                  }
                 }
               });
         }
@@ -76,7 +80,8 @@ final class SealedTestPeer {
         long remaining = deadline - System.nanoTime();
         if (remaining <= 0) throw new AssertionError("fault-injection peer response timed out");
         byte[] encoded = replies.poll(remaining, TimeUnit.NANOSECONDS);
-        if (encoded == null) throw new AssertionError("fault-injection peer did not receive a response");
+        if (encoded == null) throw new AssertionError("fault-injection peer did not receive a response; active="
+            + connection.isActive() + ", close=" + closeCode.getNow(null), receiveFailure);
         var frame = Wire.decodeControl(encoded);
         if (frame.type() == Wire.FRAME_STATUS && SealedTransport.status(frame.payload()).state() == 0) continue;
         return frame;

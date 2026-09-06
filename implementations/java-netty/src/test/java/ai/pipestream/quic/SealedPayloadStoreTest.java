@@ -41,8 +41,8 @@ final class SealedPayloadStoreTest {
         assertEquals(BigInteger.valueOf(6), stored.header().payloadLength());
         assertFalse(sessions.checkpointReady(IDENTITY.session(), PRODUCER, 0, 1));
         try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
-            var query = connection.createStatement(); var rows = query.executeQuery("SELECT state FROM ps_java_entities")) {
-          assertTrue(rows.next()); assertNull(rows.getObject(1));
+            var query = connection.createStatement(); var rows = query.executeQuery("SELECT substr(image,9,4) FROM ps_java_entities")) {
+          assertTrue(rows.next()); assertArrayEquals(new byte[4], rows.getBytes(1));
         }
         sessions.admit(IDENTITY.session(), PRODUCER, ENTITY, null, stored.digest());
         assertFalse(sessions.checkpointReady(IDENTITY.session(), PRODUCER, 0, 1));
@@ -307,8 +307,8 @@ final class SealedPayloadStoreTest {
     var sessions = SealedSessionStore.open(root.resolveSibling("crash.sqlite3"));
     assertFalse(sessions.checkpointReady(IDENTITY.session(), PRODUCER, 0, 1));
     try (var connection = DriverManager.getConnection("jdbc:sqlite:" + root.resolveSibling("crash.sqlite3"));
-        var query = connection.createStatement(); var rows = query.executeQuery("SELECT state FROM ps_java_entities")) {
-      assertTrue(rows.next()); assertNull(rows.getObject(1));
+        var query = connection.createStatement(); var rows = query.executeQuery("SELECT substr(image,9,4) FROM ps_java_entities")) {
+      assertTrue(rows.next()); assertArrayEquals(new byte[4], rows.getBytes(1));
     }
   }
 

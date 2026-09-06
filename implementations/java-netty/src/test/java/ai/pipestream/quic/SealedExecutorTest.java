@@ -154,7 +154,7 @@ final class SealedExecutorTest {
       var input = input(payloads, "broken", ROOT); jobs.admit(input);
       jobs.publish(jobs.acquire(key("broken", ROOT), UUID.randomUUID(), 1, 10), 2, SealedJobs.Outcome.complete(input.digest()));
       try (var connection = DriverManager.getConnection("jdbc:sqlite:" + directory.resolve("sessions.sqlite3")); var statement = connection.createStatement()) {
-        statement.executeUpdate("UPDATE ps_java_jobs SET checksum=zeroblob(32)");
+        statement.executeUpdate("UPDATE ps_java_jobs SET image=CAST(substr(image,1,224)||zeroblob(32) AS BLOB)");
       }
       for (int attempt = 0; attempt < 2; attempt++) {
         assertEquals(Wire.ERROR_INTEGRITY, assertThrows(ProtocolException.class, () -> SealedExecutor.start(sessions, payloads, (context, stream) -> complete(stream), SealedExecutor.Limits.defaults())).errorCode());
