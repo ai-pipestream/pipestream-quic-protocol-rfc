@@ -100,10 +100,10 @@ post-terminal replay retention, result publication fencing, immutable scope
 membership, four final count buckets, empty scopes and root-qualified shutdown.
 
 These are inputs to the normative wire contract, not a replacement for it.
-Next: finalize the version-2 normative mapping, profile negotiation, session
-creation and anti-reuse, correlated operations, result manifests/streams and
-reference retrieval, lifetime/clock rules and refusal codes; then freeze CDDL
-and wire examples and check composition. No new profile is advertised yet.
+The second increment below now defines that contract and freezes its schemas
+and examples. Next: check the composition of cancellation, attempts, descendant
+closure, output/dependency retention and recovery, then audit the contract
+against those findings. No new profile is advertised yet.
 All three acceptance sections above remain open until their complete evidence
 is recorded and audited against the actual repository.
 
@@ -127,3 +127,59 @@ is recorded and audited against the actual repository.
 This increment does not complete task 1, task 2 or task 3. The next increment
 must implement the normative contract rather than treating model success as
 wire interoperability or replacing the remaining implementation/benchmark work.
+
+### Normative version-2 increment (2026-09-06)
+
+Local draft -05 now contains the self-contained normative Section 12 and
+Appendix F. The version-1 mapping, schemas and frozen bytes retain their
+meanings. Version 2 selects `pipestream/2` and the explicit private-use
+`durable-work-v2` / `result-delivery-v2` combination. No endpoint advertises it.
+
+The contract defines bounded array-only deterministic CBOR; separate connection
+requests and immutable producer-qualified operations; verified mTLS identity;
+authority-issued, non-reusable session generations; declarations, sealed
+membership and branch admission; explicit attempt and worker-lease fences;
+retained typed outcomes; cancellation/skip/revocation with descendant settlement;
+atomic output manifests, actual result streams and authenticated locators;
+four disjoint terminal counters; root-qualified completion and separate detach;
+independent execution/output/receipt lifetimes, dependency/read pins, clock
+assumptions and crash-safe accounting. Reconnection cannot change a session's
+selected profile combination. TLS handshake failures retain the RFC 9001
+CRYPTO_ERROR mapping instead of pretending application negotiation succeeded.
+
+`test-vectors/v2` adds 70 frozen framing/schema examples and 12 independent
+domain-separated commitments. The verifier checks hashes, exact frame/schema
+roots and Appendix F synchronization. It uses the pinned CDDL library with
+CBOR-only input, not its CLI's JSON fallback. Ten schema refusals are checked;
+14 additional semantic/canonical refusal expectations are frozen but still
+require independent codecs and state/transport tests. The examples are not
+one sequential session transcript.
+
+The validator exposed a pre-existing process-driver deadlock: it waited for
+child exit before draining pipe output. A 2 MiB-per-pipe regression failed
+with the old code's timeout and passes with concurrent, bounded capture.
+Each pipe retains at most 1 MiB while draining excess output; exit status and
+deadlines still determine command success. This changes the process driver,
+not a production protocol codec, server, storage format or dependency.
+
+Validation:
+
+- `./build.sh core 05`: exit 0; generated XML, text and HTML; document validation
+  reports zero errors, flaws or warnings and the existing FIPS reference comment.
+  Inspected the rendered version-2 text, URI rules and Appendix F schema layout.
+- `./conformance/run_all.sh`: exit 0. Formatting, strict clippy, 332 Rust workspace
+  tests, 193 Java reference tests (20 Surefire XML reports; zero failures, errors
+  or skips), C++/native checks, all nine black-box pairings, 32 raw QUIC capability
+  probes, recursive/recovery scenarios and the three external examples pass.
+  The external Rust examples also pass their four and two unit tests.
+- Both existing bounded models still exhaust their finite graphs and catch
+  all 14 negative controls. They are not yet a composed lifecycle model.
+- `git diff --check`: passed. Logs on the validation host:
+  `/tmp/pipestream-v2-contract-conformance.log`,
+  `/tmp/pipestream-v2-vector-check.log`,
+  `/tmp/pipestream-v2-draft-final.log`, and the deliberately failing old-driver
+  regression `/tmp/pipestream-output-capture-negative.log`.
+
+This is local validation, not hosted CI, version-2 interoperability, a submitted
+Internet-Draft, or task-1 acceptance. The composed model/contract audit remains;
+tasks 2 and 3 still require their full implementation and workload evidence.

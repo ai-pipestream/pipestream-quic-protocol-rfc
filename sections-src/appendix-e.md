@@ -4,6 +4,14 @@
 The issues require resolution before standards-track advancement; remove
 the inventory when its decisions are incorporated into the specification.
 
+The version-1 limitations below remain relevant to the shipped implementations.
+Section 12 defines a distinct version-2 contract for identity, result delivery,
+retention and profile composition; it does not change version-1 wire meanings.
+Remaining successor acceptance work includes composed failure-model checks,
+independent implementations, authenticated failure interoperability and the
+equivalent-workload comparison. Normative text alone does not establish those
+properties in a running implementation.
+
 ## Work-Set Closure
 
 Section 9.8 defines an opt-in, private-use lifecycle for client-produced
@@ -20,8 +28,9 @@ bidirectional protocol and explicit cancellation outcomes remain design work.
 ## Identity and Recycling
 
 Outside Section 9.8, both endpoints can originate work, but the scope-local integer
-namespaces lack an allocation partition or an owner field. The next
-revision must choose one rule that prevents collisions. Cursor recycling
+namespaces lack an allocation partition or an owner field. Section 12 uses
+authority-issued generations and disjoint producer namespaces in version 2.
+Version-1 cursor recycling
 also needs an epoch or a prohibition on reuse while durable references
 remain valid. Scope-local cursors and the unscoped Last Entity ID in
 GOAWAY must be reconciled with the same identity model.

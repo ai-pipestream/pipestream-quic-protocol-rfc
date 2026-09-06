@@ -15,6 +15,12 @@ IETF contributors. This is not intended as, and must not be construed
 to be, a catalog of available implementations or their features.
 Readers are advised to note that other implementations may exist.
 
+The implementations below implement documented version-1 subsets. They do not
+yet implement or advertise the version-2 profiles in Section 12. Independent
+Rust abstract models explore durable attempts/results/retention and sealed
+scope closure; they are design evidence, not wire interoperability, real
+storage crash-consistency evidence, or proof of the models' composition.
+
 ## Java/Netty Reference Implementation
 
 Organization:

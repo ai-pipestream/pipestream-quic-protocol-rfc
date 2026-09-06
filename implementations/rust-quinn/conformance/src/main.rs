@@ -4,6 +4,7 @@ mod extensions;
 mod receipts;
 mod schema;
 mod scope_model;
+mod v2_vectors;
 mod work_model;
 
 use anyhow::{Context, Result, bail, ensure};
@@ -17,8 +18,10 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::OsStr,
     fs,
+    io::{self, Read},
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
+    sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
@@ -93,6 +96,7 @@ fn verify() -> Result<()> {
     verify_vector_index(&root)?;
     verify_recursive_index(&root)?;
     validate_cddl(&root)?;
+    v2_vectors::verify(&root)?;
     println!("immutable vector corpus and normative CDDL passed");
     Ok(())
 }
@@ -998,21 +1002,76 @@ fn run_output_owned(root: &Path, command: &[String], timeout: Duration) -> Resul
 
 fn wait_output(mut child: Child, timeout: Duration) -> Result<Output> {
     let deadline = Instant::now() + timeout;
-    loop {
-        if child.try_wait()?.is_some() {
-            return Ok(child.wait_with_output()?);
+    let stdout = capture_pipe(child.stdout.take());
+    let stderr = capture_pipe(child.stderr.take());
+    let (status, timed_out) = loop {
+        if let Some(status) = child.try_wait()? {
+            break (status, false);
         }
         if Instant::now() >= deadline {
             child.kill()?;
-            let output = child.wait_with_output()?;
-            bail!(
-                "process timed out\nstdout:\n{}\nstderr:\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
+            break (child.wait()?, true);
         }
         thread::sleep(Duration::from_millis(25));
+    };
+    // A descendant retaining inherited pipe handles must not turn a bounded
+    // process wait into an unbounded join. The CLI reports the missing EOF.
+    let output_deadline = deadline.max(Instant::now() + Duration::from_millis(250));
+    let receive = |reader: mpsc::Receiver<io::Result<Vec<u8>>>| -> Result<Vec<u8>> {
+        Ok(reader
+            .recv_timeout(output_deadline.saturating_duration_since(Instant::now()))
+            .context("child output did not close within its process deadline")??)
+    };
+    let output = Output {
+        status,
+        stdout: receive(stdout)?,
+        stderr: receive(stderr)?,
+    };
+    ensure!(
+        !timed_out,
+        "process timed out\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(output)
+}
+
+fn capture_pipe<R: Read + Send + 'static>(
+    reader: Option<R>,
+) -> mpsc::Receiver<io::Result<Vec<u8>>> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    if let Some(mut reader) = reader {
+        thread::spawn(move || {
+            let capture = (|| {
+                const LIMIT: usize = 1024 * 1024;
+                const MARKER: &[u8] = b"\n[output truncated after 1048576 bytes]\n";
+                let mut bytes = Vec::new();
+                let mut buffer = [0u8; 8192];
+                let mut truncated = false;
+                loop {
+                    let length = match reader.read(&mut buffer) {
+                        Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                        result => result?,
+                    };
+                    if length == 0 {
+                        break;
+                    }
+                    let retained = length.min(LIMIT - bytes.len());
+                    bytes.extend_from_slice(&buffer[..retained]);
+                    truncated |= retained < length;
+                }
+                if truncated {
+                    bytes.truncate(LIMIT - MARKER.len());
+                    bytes.extend_from_slice(MARKER);
+                }
+                Ok(bytes)
+            })();
+            let _ = sender.send(capture);
+        });
+    } else {
+        let _ = sender.send(Ok(Vec::new()));
     }
+    receiver
 }
 
 fn ensure_success(output: &Output, description: &str) -> Result<()> {
@@ -1044,4 +1103,41 @@ fn hex(bytes: &[u8]) -> String {
         output.push(char::from(DIGITS[(byte & 0x0f) as usize]));
     }
     output
+}
+
+#[cfg(test)]
+mod capture_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn output_capture_child() {
+        if std::env::var_os("PIPESTREAM_CAPTURE_CHILD").is_some() {
+            let bytes = vec![b'x'; 2 * 1024 * 1024];
+            std::io::stdout().write_all(&bytes).unwrap();
+            std::io::stderr().write_all(&bytes).unwrap();
+            std::process::exit(0);
+        }
+    }
+
+    #[test]
+    fn noisy_child_is_drained_before_waiting_for_exit() {
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "capture_tests::output_capture_child",
+                "--nocapture",
+            ])
+            .env("PIPESTREAM_CAPTURE_CHILD", "1")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let output = wait_output(child, Duration::from_secs(3)).unwrap();
+        assert!(output.status.success());
+        assert!(output.stdout.len() <= 1024 * 1024);
+        assert!(output.stderr.len() <= 1024 * 1024);
+        assert!(String::from_utf8_lossy(&output.stdout).contains("output truncated"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("output truncated"));
+    }
 }

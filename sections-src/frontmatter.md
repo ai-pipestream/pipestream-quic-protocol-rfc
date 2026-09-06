@@ -1,7 +1,7 @@
 ---
 title: "PipeStream: A Recursive Entity Streaming Protocol for Distributed Processing over QUIC"
 abbrev: "PipeStream"
-docname: draft-krickert-pipestream-04
+docname: draft-krickert-pipestream-05
 category: std
 submissiontype: IETF
 number:

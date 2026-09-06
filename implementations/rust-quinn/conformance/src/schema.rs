@@ -50,7 +50,7 @@ pub fn synchronized(machine: &str, appendix: &str) -> Result<()> {
         }
         ensure!(
             normative.get(&name) == Some(&value),
-            "CDDL definition {name} differs from Appendix C"
+            "CDDL definition {name} differs from its normative appendix"
         );
     }
     Ok(())

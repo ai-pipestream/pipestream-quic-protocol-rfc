@@ -1,7 +1,7 @@
 # Schema Reference (CDDL)
 
 This appendix consolidates the normative CDDL {{RFC8610}} schema
-definitions for PipeStream Core messages that use negotiated
+definitions for version-1 PipeStream Core messages that use negotiated
 serialization. These definitions are authoritative for the wire format
 when CBOR {{RFC8949}} is the negotiated serialization format (the
 default). Fixed control frames on Stream 0, such as STATUS and

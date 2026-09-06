@@ -61,7 +61,7 @@ claiming a complete interoperable implementation.
 
 ## Protocol Layering
 
-PipeStream is organized into three protocol layers to accommodate varying deployment requirements:
+Version 1 is organized into three protocol layers to accommodate varying deployment requirements:
 
 | Protocol Layer | Name | Description |
 |----------------|------|-------------|
@@ -69,7 +69,7 @@ PipeStream is organized into three protocol layers to accommodate varying deploy
 | Layer 1 | Recursive | Hierarchical scopes, digest propagation, barriers |
 | Layer 2 | Resilience | Yield/resume, claim checks, completion policies |
 
-Implementations MUST support Layer 0. Support for Layers 1 and 2 is OPTIONAL and negotiated during connection establishment.
+Version-1 implementations MUST support Layer 0. Support for Layers 1 and 2 is OPTIONAL and negotiated during connection establishment. Version 2 uses the distinct Core/profile mapping in Section 12; it does not inherit these layer promises.
 
 ## Scope
 
@@ -98,6 +98,11 @@ Core supplies the stream and status vocabulary. The sealed-work profile
 fixes the membership that must close; the authenticated-session profile
 binds durable access to a principal; the authenticated-recovery profile
 correlates retained admission and terminal outcomes after reconnect.
-Only negotiated combinations are valid. In particular, authenticated
-recovery does not currently combine with sealed work. These profiles do
+Only negotiated combinations are valid. In version 1, authenticated
+recovery does not combine with sealed work. These profiles do
 not together imply an unspecified general-purpose workflow engine.
+
+Section 12 defines the successor version-2 contract, in which authenticated
+durable work includes sealed membership and retained replay, and an additional
+profile defines result delivery. This is a normative design, not a claim that
+the existing version-1 prototypes implement it; Appendix D records that boundary.

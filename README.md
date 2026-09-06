@@ -18,14 +18,16 @@ limits on the claims.
 
 The [2026-09-06 protocol corrections](docs/standards/protocol-review-corrections-2026-09.md)
 clarify transport-loss outcomes, streaming flow control, validated admission,
-payload integrity, and durable caller authentication. Appendix E retains the
-unresolved identity, result-delivery, retention, and profile-composition choices;
+payload integrity, and durable caller authentication. Appendix E records the
+version-1 limitations and remaining evidence needed for the successor contract;
 this is a reviewed draft, not a claim those features are already implemented.
 
 The [durable-work/results goal](docs/standards/durable-work-results-goal.md)
-tracks the next contract, independent Rust/Java implementation, and equivalent
-streaming-gRPC workload evidence. Its initial executable lifecycle models are
-design checks; no version-2 endpoint or wire profile is available yet.
+tracks the successor contract, independent Rust/Java implementation, and equivalent
+streaming-gRPC workload evidence. Local draft -05 defines the version-2 contract
+in Section 12 and Appendix F, with frozen wire examples. Its executable lifecycle
+models are bounded design checks. No version-2 endpoint is implemented or
+advertised yet; the existing interoperability evidence is for version 1.
 
 Draft -04 now defines supported/required extension negotiation, implemented
 independently in Rust, Java, and C++. Unknown requirements fail CONNECT;
@@ -133,7 +135,7 @@ This repository uses a modular authoring workflow for IETF drafts. The monolithi
 
 - **`sections-src/`**: **The Source of Truth.** Individual Markdown files for each RFC section. Edit these files directly.
 - **`draft-template.md`**: The master kramdown-rfc template that includes all sections in the correct order.
-- **`cddl/`**: Machine-readable serialized-message CDDL, checked against Appendix C.
+- **`cddl/`**: Machine-readable serialized-message CDDL, checked against Appendices C and F.
 - **`test-vectors/`**: Checked-in golden valid and invalid wire inputs with named expected refusals.
 - **`conformance/`**: Vector checks and the black-box client/server interoperability runner.
 - **`implementations/`**: Independent Java/Netty, Rust/Quinn, and C++/MsQuic libraries and executables.
@@ -221,7 +223,7 @@ the draft. It is not part of the protocol or its conformance evidence.
 To build all formats (XML, TXT, HTML) in one pass:
 
 ```bash
-./build.sh core 04
+./build.sh core 05
 ```
 
 The script runs the pinned `kramdown-rfc` and `xml2rfc` toolchain, emits XML,
@@ -233,7 +235,7 @@ ignored build artifacts.
 Always run `idnits` on the generated `.txt` file before submitting to ensure there are no formatting errors or non-ASCII characters:
 
 ```bash
-idnits --verbose draft-krickert-pipestream-04.txt
+idnits --verbose draft-krickert-pipestream-05.txt
 ```
 
 ## Submission

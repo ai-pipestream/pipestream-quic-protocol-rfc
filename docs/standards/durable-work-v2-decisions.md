@@ -1,7 +1,8 @@
 # Durable work version 2: lifecycle decisions
 
-This is the design input to the successor specification, not a wire profile
-that any endpoint may advertise yet. The existing version-1 specification and
+This is an explanatory design record. The normative successor specification in
+Section 12 and Appendix F takes precedence. No endpoint implements or advertises
+the version-2 profiles yet. The existing version-1 specification and
 frozen vectors retain their meanings. The complete acceptance scope is in
 [the execution record](durable-work-results-goal.md).
 

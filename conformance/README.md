@@ -103,6 +103,18 @@ They do not enable a new wire profile or replace the cross-language failure
 driver and implementation evidence required by
 [the complete goal](../docs/standards/durable-work-results-goal.md).
 
+The `verify` command also checks 70 frozen version-2 examples and 12
+domain-separated commitments under [`test-vectors/v2`](../test-vectors/v2/README.md).
+It enforces exact frame-to-schema roots and Appendix F synchronization, and
+passes CBOR directly to the pinned CDDL library without JSON fallback. Schema
+refusals are checked now; semantic/canonical refusal expectations are frozen
+inputs to future independent codec tests, not current implementation evidence.
+
+Child-process stdout and stderr are drained concurrently, each with a 1 MiB
+retained-output limit. A regression test floods both pipes and verifies bounded
+capture without deadlocking the child. Exceeding a command deadline still fails
+the command; truncation does not turn a nonzero exit into success.
+
 ## Draft-04 regression evidence
 
 `quinn/tests/draft04_wire.rs` uses raw QUIC peers for reordered and stalled

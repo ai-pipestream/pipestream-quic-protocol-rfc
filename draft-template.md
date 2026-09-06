@@ -26,6 +26,8 @@
 
 {::include sections-src/section-11.md}
 
+{::include sections-src/section-12.md}
+
 --- back
 
 {::include sections-src/appendix-a.md}
@@ -37,3 +39,5 @@
 {::include sections-src/appendix-d.md}
 
 {::include sections-src/appendix-e.md}
+
+{::include sections-src/appendix-f.md}

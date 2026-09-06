@@ -1,6 +1,6 @@
 # IANA Considerations
 
-This document requests the creation of several new registries and one ALPN identifier registration. All registries defined in this section use the "Specification Required" policy {{RFC8126}} for new assignments unless otherwise stated; guidance for the designated experts appears in Section 11.7.
+This document requests the creation of several new registries and two ALPN identifier registrations. All registries defined in this section use the "Specification Required" policy {{RFC8126}} for new assignments unless otherwise stated; guidance for the designated experts appears in Section 11.7. Sections 11.2 through 11.5 and 11.8 describe version-1 wire values. Section 11.10 defines the distinct version-2 mapping. This section requests registrations; it does not claim they have occurred.
 
 ## ALPN Identifier Registration
 
@@ -14,6 +14,17 @@ Identification Sequence:
 
 Specification:
 :   This document
+
+The second ALPN registration is:
+
+Protocol:
+:   PipeStream Version 2
+
+Identification Sequence:
+:   0x70 0x69 0x70 0x65 0x73 0x74 0x72 0x65 0x61 0x6D 0x2F 0x32 ("pipestream/2")
+
+Specification:
+:   Section 12 of this document
 
 ## PipeStream Frame Type Registry
 
@@ -139,11 +150,12 @@ Encoding considerations:
 Interoperability considerations:
 :   An explicit UDP port is required; this draft assigns no default port
     or discovery service. Resolution uses the authority's DNS name or IP
-    address and QUIC with ALPN pipestream/1. The endpoint identity MUST be
+    address and QUIC with ALPN pipestream/1 for the version-1 path, or
+    pipestream/2 for the version-2 path below. The endpoint identity MUST be
     verified for that authority. Locators do not imply an HTTP GET operation.
 
 Security considerations:
-:   See Section 10. Locators MUST NOT contain bearer secrets or replace
+:   See Sections 10 and 12. Locators MUST NOT contain bearer secrets or replace
     authentication and authorization. Session and claim identifiers can
     still expose sensitive correlation information and SHOULD be redacted
     from public logs. An endpoint MUST NOT follow an untrusted locator to
@@ -165,8 +177,12 @@ The URI syntax uses ABNF {{RFC5234}} and the IP address productions from
 
 ~~~~
 
-pipestream-URI = "pipestream://" ps-authority "/sessions/" session-id
-                 [ entity-path / claim-path ]
+pipestream-URI = "pipestream://" ps-authority
+                 ( v1-path / v2-result-path )
+v1-path      = "/sessions/" session-id [ entity-path / claim-path ]
+v2-result-path = "/v2/sessions/" decimal "/scopes/" decimal
+                 "/producers/" decimal "/entities/" decimal
+                 "/attempts/" decimal "/outputs/" decimal
 ps-authority  = ( dns-name / IPv4address / "[" IPv6address "]" )
                 ":" decimal
 session-id    = 1*128( ALPHA / DIGIT / "-" / "_" )
@@ -180,8 +196,8 @@ alphanum      = ALPHA / DIGIT
 ~~~~
 {: type="ascii-art"}
 
-The port MUST be in 1..65535; scope IDs in 0..4294967295; entity IDs in
-1..4294967292; and claim IDs in 1..18446744073709551615. Decimal components
+The port MUST be in 1..65535. In version-1 paths, scope IDs are in 0..4294967295;
+entity IDs in 1..4294967292; and claim IDs in 1..18446744073709551615. Decimal components
 MUST NOT contain leading zeros except for the single value `0`. DNS names
 are limited to 253 characters. Scheme and DNS name comparison is
 case-insensitive; session identifiers and path tags are case-sensitive.
@@ -189,11 +205,21 @@ An entity locator is valid only for the lifetime of its session identity;
 the recycling issue in Appendix E prohibits treating a recycled slot as
 a durable application identifier. URI length is limited to 1024 octets.
 
+For the version-2 path, session generation, entity and attempt are in
+1..9223372036854775807, scope is in 0..9223372036854775807, producer is 0 or 1,
+and output index is in 0..255. Its explicit version selects ALPN pipestream/2;
+resolving it through version 1 is forbidden. The locator names an immutable
+output object, not an execution request. Section 12 defines authenticated
+manifest lookup and object reading. These locators do not embed owner
+credentials or a bearer capability. All other syntax, authority, encoding
+and length restrictions above still apply.
+
 Examples:
 
 - `pipestream://processor.example:9443/sessions/job-1`
 - `pipestream://processor.example:9443/sessions/job-1/scopes/7/entities/42`
 - `pipestream://[2001:db8::1]:9443/sessions/job-1/claims/99`
+- `pipestream://p.example:443/v2/sessions/8/scopes/0/producers/0/entities/1/attempts/1/outputs/0`
 
 ## Guidance for Designated Experts
 
@@ -254,3 +280,33 @@ those require their own registry entries. Designated experts apply
 Section 11.7 and check that activation is unambiguous and dependencies
 can be evaluated during CONNECT. Private-use values MUST NOT be used
 without prior agreement on the same contract and are not IANA assignments.
+
+## Version 2 Registries
+
+IANA is requested to create "PipeStream Version 2 Control Types", an 8-bit
+registry independent of version 1. Values 0x00..0x7F use Specification Required;
+0x80..0xBF use Specification Required with the ignorable framing class;
+0xC0..0xFF are Private Use. Each registration supplies the value, name,
+required profiles, exact CBOR body, direction, resource/error rules and a
+permanent specification. Section 11.7's expert guidance applies.
+
+The initial assignments are CAPABILITIES (0x01), SESSION (0x02), SCOPE (0x03),
+WORK (0x04), RESULT (0x05), DRAIN (0x06), and REFUSAL (0x07), all specified in
+Section 12 and Appendix F. Value 0x00 is reserved. Remaining values are
+unassigned. SESSION/SCOPE/WORK require durable work; RESULT requires both
+profiles. The profile-dependent DRAIN variants are specified in Section 12.
+
+IANA is also requested to create "PipeStream Version 2 Refusal Codes", values
+1..31, with Specification Required. Initial assignments 1..18 are the named
+codes in Section 12.2; 19..31 are reserved for future specification. A QUIC
+application error for this mapping is 0x200 plus its refusal code; 0 means
+graceful transport close. Registrations identify scope, retry consequences,
+security considerations and permanent specification. Unknown errors never
+authorize execution or imply successful work.
+
+Private-use profile identifiers 65284 and 65285 are experimental agreements,
+not requested public assignments. They use the existing extension-identifier
+space in Section 11.9 with explicit major-version applicability. Request and
+response discriminants in Appendix F are part of their immutable contracts;
+adding or changing one requires a new defining profile and negotiated framing,
+not permissive decoding of extra array positions.

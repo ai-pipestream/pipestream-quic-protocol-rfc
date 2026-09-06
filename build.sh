@@ -5,7 +5,7 @@ TARGET="${1:-core}"
 
 case "${TARGET}" in
   core)
-    DRAFT_VERSION="${2:-04}"
+    DRAFT_VERSION="${2:-05}"
     TEMPLATE_MD="draft-template.md"
     OUTPUT_DIR="."
     DRAFT_NAME="draft-krickert-pipestream-${DRAFT_VERSION}"
