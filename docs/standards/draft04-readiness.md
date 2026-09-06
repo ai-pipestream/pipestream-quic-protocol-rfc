@@ -12,6 +12,19 @@ policies recorded in the incremental-index prerequisite.
 
 ## Changes and regression coverage
 
+### Rust scope-completion correlation (2026-09-06)
+
+The Rust public client now requires the expected parent identity and depth for
+scope closure. It correlates each returned parent status, preserves FAILED as
+failure and closes on incorrect identity or lifecycle. The single-argument
+`close_scope` API is replaced; repository callers supply their actual manifest
+context. Five real-QUIC tests cover 35 exchanges, including both client profiles,
+field/lifecycle mismatches, intact success/failure and partial-frame cancellation.
+Local invalid contexts refuse before sending; cancellation requires reconnect
+and does not cancel server work. Section 9.8 now states the parent-correlation
+requirement explicitly. No wire/CDDL or storage format changed. See the
+[goal evidence](recovery-execution-java-plan.md) for validation status and limits.
+
 ### Rust client status-history limits (2026-09-06)
 
 The public recursive client's whole/chunked entity methods now retain at most

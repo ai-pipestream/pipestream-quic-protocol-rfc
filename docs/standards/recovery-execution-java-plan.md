@@ -51,6 +51,43 @@ approval as part of a repository landing.
 
 ## Evidence and progress
 
+### Validated increment: Rust scope-completion correlation
+
+Branch `fix/rust-scope-completion-correlation` starts at PR #36's merge `ce14f85`.
+A real-QUIC regression showed that `RecursiveClient::close_scope` accepted a
+REHYDRATING status for a different parent before reporting the scope exchange
+as successful. The API now requires the expected parent EntityKey and depth
+from its caller's assembly manifest. It checks every response's scope, ID,
+depth and lifecycle, returning a named refusal and closing on mismatch.
+The scoped digest remains exactly correlated. FAILED is returned as a failed
+parent outcome, never rewritten as successful work. Both recursive scenarios
+now supply their actual parent context, including the public Rust-to-Java path.
+
+The existing recovery guard now also covers scope closure. Cancellation after
+any partial digest confirmation or parent status closes the connection without
+claiming remote cancellation, completion or a successful GOAWAY. Known protocol
+failures retain their named close code. Five focused wire tests cover 35 exchanges:
+both client profiles, each parent field at each response, valid completion/failure,
+cursor/lifecycle refusals, and nine partial-frame cancellation boundaries. Each
+exchange also checks that invalid local parent contexts refuse before sending.
+The fault peer proves response validation, not server admission or execution.
+
+Section 9.8 explicitly requires the parent correlation already implied by the
+assembly manifest. Wire bytes, CDDL, frozen vectors and storage formats are
+unchanged; the Rust method signature is deliberately source-incompatible.
+This does not add a client manifest journal, automatic retries or cancellation
+safety to every recursive-client operation. Full-goal completion is not inferred
+from this fix.
+
+The final `./conformance/run_all.sh` passed locally: 309 Rust workspace tests,
+192 Java tests with zero failures/errors/skips counted from JUnit XML, native
+SQLite/C++ checks, all nine implementation pairings, 32 capability probes,
+recursive/recovery CLI checks and all three external examples. The Java suite
+includes the updated public Rust producer's nested/chunked scenario against
+the independent Java server. Formatting, strict clippy and strict Rustdoc passed.
+Draft -04 built with zero idnits errors/flaws/warnings and the existing FIPS
+reference comment. These are local gates, not hosted CI, a release or submission.
+
 ### Validated increment: Rust client status-history bounds
 
 Branch `fix/rust-client-status-bounds` starts at PR #35's merge `f908b7a`.

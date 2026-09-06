@@ -69,6 +69,19 @@ entities. Checkpoints name the inclusive largest declared ID in their scope;
 GOAWAY names the largest root ID after an acknowledged root checkpoint.
 Payloads can arrive out of ID order after their declaration ACK.
 
+`close_scope(&digest, parent, parent_depth)` requires the parent's `EntityKey`
+and depth from the caller's assembly manifest. This replaces the earlier
+single-argument API: a digest identifies the child scope, not its parent.
+Every returned parent status is checked against that context; wrong scope,
+entity, depth or lifecycle closes with `PIPESTREAM_ENTITY_INVALID`. A reported
+FAILED parent is returned intact, either directly or after REHYDRATING, not
+converted into successful processing. Invalid local context refuses before
+transmission. A cancelled or incomplete closure exchange closes the connection;
+it never cancels declared work or supplies a completion barrier. As with recovery,
+reconnect after an interrupted exchange. Other client methods do not yet share
+this cancellation guard. The caller still owns manifest persistence and the
+construction of the digest from actual descendant observations.
+
 After a connection loss, connect with the same profile and replay the original
 root sequence-0 request to attach to the retained session. Identical batches
 replay the same ACK; changed identities, sequences, or seals are refused.

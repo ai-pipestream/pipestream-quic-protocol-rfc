@@ -154,7 +154,17 @@ async fn public_recovery_client_preserves_its_pending_outcome_before_other_opera
         client.send_chunked_entity(&[], 0).await.unwrap_err(),
         client.send_entity(&header, b"x", 0).await.unwrap_err(),
         client.checkpoint(&checkpoint(100)).await.unwrap_err(),
-        client.close_scope(&digest).await.unwrap_err(),
+        client
+            .close_scope(
+                &digest,
+                pipestream_core::session::EntityKey {
+                    scope_id: 0,
+                    entity_id: 1,
+                },
+                0,
+            )
+            .await
+            .unwrap_err(),
     ] {
         assert!(
             error.to_string().contains("unconsumed recovery outcome"),

@@ -323,6 +323,12 @@ declared entity has been admitted and resolved, and all child scopes have
 closed under Section 9.5. Observing only the children received so far is
 insufficient. The existing status Merkle construction remains unchanged.
 
+The child scope's digest does not identify its parent. When consuming parent
+rehydration or resolution STATUS frames after scope closure, the client MUST
+check the Entity ID, Scope ID, and depth against the declared parent in its
+Assembly Manifest. A matching status code alone MUST NOT resolve a different
+parent. A mismatched parent is PIPESTREAM_ENTITY_INVALID (0x05).
+
 In this profile, CHECKPOINT always covers the entire sealed scope.
 `checkpoint-entity-id` is the inclusive largest declared ID, not a circular
 exclusive bound. A request may arrive before the seal or final payload;

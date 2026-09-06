@@ -27,6 +27,9 @@ mod storage_stalls;
 #[path = "draft04/client_status_resources.rs"]
 mod client_status_resources;
 
+#[path = "draft04/client_scope_completion.rs"]
+mod client_scope_completion;
+
 // Raw QUIC peers exercise ordering and refusal behavior independently of RecursiveClient.
 struct Fixture {
     dir: tempfile::TempDir,
