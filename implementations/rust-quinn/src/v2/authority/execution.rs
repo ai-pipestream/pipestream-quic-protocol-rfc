@@ -237,6 +237,7 @@ impl Executor {
                 lease: job.lease,
                 input_descriptor: job.parameters.input,
                 mode: job.parameters.mode,
+                execution_ms: job.parameters.execution_ms,
                 input,
                 reservation: outputs,
                 caps,
@@ -294,6 +295,7 @@ pub struct WorkContext {
     lease: Number,
     input_descriptor: Input,
     mode: Mode,
+    execution_ms: Duration,
     input: ObjectReader,
     reservation: OutputReservation,
     caps: Capabilities,
@@ -321,6 +323,11 @@ impl WorkContext {
     }
     pub fn mode(&self) -> Mode {
         self.mode
+    }
+    /// Original admitted duration, unchanged by retry. This is not remaining
+    /// time or permission to extend this work's already fixed deadline.
+    pub fn execution_duration(&self) -> Duration {
+        self.execution_ms
     }
     pub fn buffer_limit(&self) -> usize {
         self.executor.payloads.chunk_limit()

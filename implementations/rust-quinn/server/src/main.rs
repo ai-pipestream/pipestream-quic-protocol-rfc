@@ -12,6 +12,9 @@ use pipestream_quic::{
 };
 use std::{net::SocketAddr, path::PathBuf};
 
+#[cfg(unix)]
+mod v2;
+
 #[derive(Debug, Parser)]
 #[command(name = "pipestream-quinn")]
 struct Cli {
@@ -21,6 +24,12 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Version-2 authenticated durable work, never a fallback to version 1.
+    #[cfg(unix)]
+    V2 {
+        #[command(subcommand)]
+        command: v2::Command,
+    },
     Serve {
         #[arg(long, default_value = "127.0.0.1:0")]
         bind: SocketAddr,
@@ -154,6 +163,8 @@ async fn main() {
 
 async fn run(cli: Cli) -> Result<()> {
     match cli.command {
+        #[cfg(unix)]
+        Command::V2 { command } => v2::run(command).await,
         Command::Serve {
             bind,
             cert,

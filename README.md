@@ -30,7 +30,8 @@ models are bounded design checks. Rust's embeddable
 `v2_authority::server::Server` now integrates authenticated QUIC, durable dispatch,
 bounded input/result file workers and the execution/maintenance runtime. Actual
 wire tests exercise admission, output retrieval, reconnect, quotas and shutdown.
-The Core-only listener remains separate. A complete V2 client/CLI pair, independent
+The Core-only listener remains separate. The Rust V2 client and runnable commands
+now compose durable recovery and file delivery. Independent
 Java V2 and neutral cross-language failure evidence remain unfinished; existing
 full interoperability evidence is for version 1.
 The Rust client journal now retains creation, immutable mutation intent/receipts,
@@ -47,11 +48,14 @@ and incremental input/result streams. The durable session client now composes
 them: it persists intent before transmission and records receipts/observations
 before returning success, including after waiter cancellation. File adapters now
 prehash/stream inputs and install only verified results without overwriting local
-files. Standalone V2 CLI and independent Java V2 remain unfinished.
+files. The [V2 CLI guide](implementations/rust-quinn/docs/v2-cli.md) covers explicit
+initialization, authenticated serving, original-operation recovery, both branch
+modes, cancellation, retry and verified downloads. Crash-left client staging and
+shared client disk quotas still need integration; independent Java V2 remains open.
 The Rust `pipestream_core::v2` library now implements typed codecs for every
 version-2 message and record, frozen commitments, negotiation checks, bounded
 client correlation and incremental object validation. This is a library
-foundation, not a durable version-2 endpoint. Its `v2::authority` module now
+foundation used by the durable version-2 endpoint. Its `v2::authority` module now
 adds transactional session identity, declaration/operation replay and bounded
 retained-state reads, with subprocess commit-crash tests. Bounded payload staging,
 immutable installation, header preflight and reference-safe orphan collection are
@@ -87,10 +91,10 @@ these library APIs. Dependency-aware retention now commits deletion eligibility,
 collects unpinned files, then releases logical capacity. Restart/admission audits
 distinguish interrupted cleanup from missing live storage. Session retirement now
 commits eligibility before bounded metadata deletion and preserves generation and
-owner creation history. The listener integrates these authority libraries;
-the standalone commands remain version 1. The
+owner creation history. The listener and explicit `v2` command group integrate
+these authority libraries; original version-1 commands remain separate. The
 [V2 acceptance ledger](docs/standards/durable-work-v2-test-plan.md) distinguishes
-the Rust evidence from unfinished client integration, Java parity, neutral process
+the Rust evidence from unfinished client staging recovery, Java parity, neutral process
 failures and workload/resource comparison gates.
 
 Draft -04 now defines supported/required extension negotiation, implemented

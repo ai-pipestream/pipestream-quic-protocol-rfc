@@ -1,0 +1,104 @@
+Rust V2 runnable authority and durable client commands, 2026-09-07
+Repository: pipestream-quic-protocol-rfc
+Branch: feat/durable-work-results-v2
+Parent: e6fa9b51f743d574c871e3aa6498193cd2723ae4
+
+The Unix executable now exposes explicit authority/client initialization and
+reopen, authenticated serving, next-sequence lookup, original-operation replay,
+observations, retry/cancellation/skip, verified result files and exact completion.
+Pure application contracts cover consume, copy, caller reassembly, authority
+chunking and an explicitly retryable exercise. These are not wire profiles.
+No wire, CDDL, database-format change, main merge, deployment or draft submission.
+
+Final source SHA-256:
+be141a29ee857e771a4797022c8d14b856702402390cc65add0ccda0cb12abf7  implementations/rust-quinn/server/src/v2.rs
+b6b08ef7218e60fe1049f494387d83c0dff2a5334b574a775ecb1ea8778fc005  implementations/rust-quinn/server/src/v2/applications.rs
+143d4be94b4f261cfcc2c419d8a60e9c024b9ea7779bc47c051511f4424c4ac0  implementations/rust-quinn/server/src/v2/client.rs
+feb117bf1c7edeb1e2520bfa5723d996a059db8b0c8a849def69c22464fb2df4  implementations/rust-quinn/server/src/v2/configuration.rs
+36c465797f6df986340cc4a06565fc2b34334a89b7572cb082168ea7d171f610  implementations/rust-quinn/server/src/v2/server.rs
+003881f01799c5f58104dfec21fc8a52a16c8301b157c6def259a0035ab465f2  implementations/rust-quinn/server/tests/v2_cli.rs
+
+Final Rust verification, direct process handle 73856, exit 0:
+  cargo fmt --all -- --check
+  cargo clippy --locked --workspace --all-targets -- -D warnings
+  cargo test --locked --workspace
+Working directory: implementations/rust-quinn
+Workspace: 768 passed, 0 failed = 420 core + 233 Quinn + 69 wire + 30 driver
+  + 7 isolated resource tests + 3 server unit + 6 CLI subprocess tests.
+Zero doc tests.
+Logs:
+  /tmp/pipestream-v2-cli-final3-clippy.log
+  /tmp/pipestream-v2-cli-final3-workspace.log
+Earlier handle 95484 exited 0 with 767 tests before the final chunk-boundary case.
+The prior-turn handle 80322 was absent at recovery; its log was not treated as
+a newly observed successful process exit. Fresh verification above supersedes it.
+
+Focused final application-boundary check, handle 28896, exit 0:
+  cargo test --locked -p pipestream-server cli_chunk_application_handles -- --nocapture
+  1 passed, 0 failed, runtime 7.65 seconds (not a benchmark).
+Log: /tmp/pipestream-v2-cli-chunk-boundaries.log
+Inputs 0, 65536, 65537 and 2097153 bytes; 0, 1, 2 and 33 sealed producer-1
+children respectively. Output bytes, attempt 1 and verified membership match.
+The final case exceeds the 16-active-job session ceiling; this proves eventual
+correctness under those limits, not an instrumented exact yield count.
+
+Other subprocess coverage:
+- Actual mTLS, separate on-disk authority/client histories and real QUIC streams.
+- Authority process death after a committed admission receipt, exclusive reopen,
+  same-operation identical receipt and original 262144-byte result. This is not
+  a precisely instrumented worker/publication-boundary crash.
+- Same-owner rotated certificate works; changed-owner certificate is UNAUTHORIZED.
+- Lost local input refuses replay with NOT_FOUND; lookup recovers the original
+  admission receipt without the source or any replacement work.
+- Both durable-only and durable/results combinations; unknown application gets
+  APPLICATION_UNSUPPORTED with no silent fallback.
+- Caller and authority branch execution/reassembly; descendant-first checkpoint,
+  exact root completion and ALREADY_TERMINAL retry of completed work.
+- Explicit retry from AWAITING_RETRY, exact replay and successful attempt 2;
+  skip requires enabled policy, cancellation preserves a terminal skip.
+- Scope cancellation and offline generation revocation followed by live rejection;
+  another retained generation stays usable.
+- Missing/existing history does not initialize implicitly or replace state;
+  SIGTERM requires an actual local drained report and zero exit.
+Startup units cover bounded regular-file reads, symlink/directory/oversize
+rejection, malformed/duplicate principal mappings and explicit skip permission.
+
+Dependency change: enabling Tokio's signal feature adds signal-hook-registry
+1.4.8 to Cargo.lock (registry checksum
+c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b).
+Other direct/dev dependencies reuse versions already in the workspace lockfile.
+No unrelated dependency versions were updated.
+
+Draft verification, direct process handle 41346, exit 0:
+  ./build.sh core 05
+Log: /tmp/pipestream-v2-cli-final-draft.log
+Final rendered Appendix D TXT and HTML inspected, including all six process
+tests and their limits. idnits: 0 errors, 0 flaws, 0 warnings, 1 existing FIPS
+reference comment. Earlier draft handle 14325 also exited 0 before count update.
+
+Full conformance, direct process handle 30945, exit 0:
+  ./conformance/run_all.sh
+Log: /tmp/pipestream-v2-cli-conformance.log
+The suite's Rust phase passed 767 tests before the last application-boundary
+test was added. Final Rust verification above covers all 768 with strict clippy;
+no non-Rust implementation source changed during these runs.
+  33 immutable language-neutral vectors
+  18 immutable recursive/recovery vectors
+  70 frozen V2 framing/CDDL vectors and 12 domain-separated commitments
+  bounded lifecycle/scope/composed models and expected negative controls
+  193 Java tests; 20 fresh Surefire XML reports; 0 failures/errors/skips
+  XML mtimes 2026-09-07 13:45:04.245098452 .. 13:48:28.601670456 -0400
+  Java native and C++ native checks
+  6 external Rust example tests
+  all 9 V1 black-box language pairs
+  all 32 raw QUIC capability probes
+  recursive/recovery and all external examples
+These pairings are V1 evidence, not independent Java V2 interoperability.
+
+Remaining original deliverables: exclusive client staging ownership, shared disk
+budgeting and bounded crash reconciliation; complete independent Java V2; neutral
+cross-language failure/resource driver; external chunk/distribute/transform/
+reassemble workload and equivalent authenticated, durable streaming-gRPC baseline
+with pinned raw measurements. The CLI requires trusted, stable local directories.
+Process death can leave identifiable temporary files; no blind deletion policy
+or total process-memory bound is claimed. This checkpoint does not complete the goal.

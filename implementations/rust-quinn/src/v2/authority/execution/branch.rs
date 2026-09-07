@@ -170,6 +170,10 @@ impl ExpansionContext<'_> {
     pub fn buffer_limit(&self) -> usize {
         self.context.buffer_limit()
     }
+    /// Original parent admission duration, not a renewed parent deadline.
+    pub fn execution_duration(&self) -> Duration {
+        self.context.execution_duration()
+    }
     pub fn read_input(&mut self, bytes: &mut [u8]) -> Result<usize> {
         self.context.read_input(bytes)
     }

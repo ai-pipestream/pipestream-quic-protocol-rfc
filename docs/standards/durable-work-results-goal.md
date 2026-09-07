@@ -1985,3 +1985,58 @@ directory cleanup. Complete independent Java V2, neutral cross-language crash/
 failure/resource testing and the original external workload/equivalent
 authenticated, durable streaming-gRPC comparison with pinned raw measurements
 remain required. No main merge, deployment or draft submission occurred.
+
+### Runnable V2 authority and durable client commands, 2026-09-07
+
+The preceding implementation turn made progress with the uncommitted V2 command
+surface. This checkpoint verifies and documents it and adds application-boundary
+coverage. It does not shrink or complete the original goal.
+
+The Unix Rust executable now supports explicit authority initialization and reopen,
+mutual-TLS serving, owner creation-sequence lookup, separate client initialization,
+original-operation replay/lookup, observations, manifest selection and verified file
+retrieval. Retry, cancellation, skip, scope cancellation, exact root completion,
+detach and offline operator revocation use the existing durable APIs. Startup
+requires bounded regular credential/configuration files, mapped principals and an
+explicit system-UTC trust choice. No missing history is silently initialized.
+SIGTERM/SIGINT require an actual drained shutdown report; they do not claim durable
+work completion.
+
+The registry provides explicit pure consume/copy, caller-produced reassembly,
+authority-produced chunking and a retryable exercise application. Unknown contracts
+or modes do not fall back. Reassembly verifies actual retained child outputs
+against the parent input. Chunking uses fixed 64 KiB chunks, at most 256, and
+replays original child identities after capacity yields. The admitted execution
+duration is exposed to expansion without changing the parent's fixed deadline.
+These are reference applications, not the original external comparative workload.
+
+Three configuration unit tests and six actual subprocess tests cover both profile
+combinations, original replay after an admission-committed server crash, rotated/
+changed principals, missing input with successful receipt lookup, both branch
+modes, authorized retry/skip, cancellation, revocation and exact completion.
+The additional boundary case verifies empty, exact/partial 64 KiB and 33-child
+inputs with byte-exact reassembly under the 16-active-job session ceiling. The
+crash is not a precisely instrumented publication-boundary fault; these tests
+share the Rust implementation rather than an independent acceptance oracle.
+
+Final Rust verification handle 73856 exited 0 with strict clippy and 768 tests.
+Full conformance handle 30945 exited 0: its earlier Rust phase had 767 tests,
+superseded by that final run. All 193 Java tests in 20 fresh XML reports, native
+checks, vectors/models, six external Rust tests, nine V1 pairings, 32 capability
+probes and examples passed. Draft handle 41346 exited 0; final Appendix D TXT/HTML
+inspected, idnits zero errors/flaws/warnings and the existing FIPS comment.
+Evidence: `conformance/results/durable-work-v2-cli-2026-09-07.txt`.
+Usage and limits: `implementations/rust-quinn/docs/v2-cli.md`.
+
+Tokio's signal feature adds signal-hook-registry 1.4.8 to the lockfile; other
+dependencies reuse already-pinned versions. No wire/CDDL/database-format change.
+Forgejo was pulled ff-only before publication, with no incoming branch changes.
+
+The full goal remains active. Next is exclusive client result-root ownership,
+shared disk budgeting and bounded restart reconciliation, followed by complete
+independent Java V2 and the neutral cross-language failure/resource driver. The
+external chunk/distribute/transform/reassemble workload and equivalent authenticated,
+durable streaming-gRPC baseline with pinned raw measurements remain mandatory.
+The current file adapter requires trusted, stable local directories; process death
+can leave staging, and a prefix is not permission to delete another transfer's
+files. No main merge, deployment or draft submission occurred.

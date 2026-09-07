@@ -1509,6 +1509,48 @@ Standalone V2 CLI, complete independent Java V2, neutral cross-language failures
 and the original workload/equivalent streaming-gRPC measurement remain required.
 Evidence: `conformance/results/durable-work-v2-client-files-2026-09-07.txt`.
 
+### Rust runnable V2 endpoints and commands, 2026-09-07
+
+`server/tests/v2_cli.rs` now runs six actual executable tests with mutual TLS,
+independent client/authority histories and real input/result streams. Commands
+have owned subprocess handles and bounded observation deadlines; timeout cleanup
+targets only the test's own process. The tests do not call a local authority
+dispatcher in place of a wire request.
+
+- V2-SESSION/STORE: explicit initialization versus reopening, missing/existing
+  history checks, original creation replay/attach and next-sequence lookup.
+  A forced server process exit after the admission receipt is followed by reopen
+  and byte-identical original-operation replay. This is not an instrumented
+  crash on both sides of every commit or publication boundary.
+- V2-AUTH/NEG: both durable-only and durable/results combinations; same-owner
+  certificate rotation, changed-principal UNAUTHORIZED, skip permission disabled
+  by default, and offline generation revocation followed by live rejection.
+- V2-OP/RESULT: lookup still returns the original receipt after local input loss;
+  replay without that file fails NOT_FOUND without replacement work. Original
+  retry/cancellation replay, saved manifest selection and verified file bytes.
+- V2-SET/ADMIT/CLOSE: caller-generated and authority-generated children, actual
+  reassembly, bottom-up checkpoint and exact root completion. Unknown applications
+  return APPLICATION_UNSUPPORTED without fallback. Authority chunking covers empty,
+  exact/partial 64 KiB inputs and a 2,097,153-byte input producing 33 children under
+  the default 16-active-job session ceiling; output bytes and membership agree.
+- V2-ATTEMPT/CANCEL: explicit retry from AWAITING_RETRY advances to attempt 2,
+  exact retry replay, successful terminal retry ALREADY_TERMINAL, authorized skip,
+  cancellation preserving a terminal skip and scope cancellation settlement.
+- V2-STORE/TIME: three startup unit tests check bounded regular-file reads,
+  symlink/directory/oversize rejection, malformed/ambiguous principal maps and
+  explicit skip authorization. CLI startup requires explicit system-UTC trust;
+  it does not derive cross-restart UTC from a monotonic timer. Signal shutdown
+  asserts local drain, not durable-work completion.
+
+The [CLI guide](../../implementations/rust-quinn/docs/v2-cli.md) documents immutable
+configuration, application contracts and remaining limits. Production input is
+incremental; the test oracle holds fixture bytes for exact comparison. The CLI
+applications are not the external comparative workload and these tests share the
+Rust implementation, not an independent protocol oracle. Client staging-root
+ownership, shared disk budgeting and bounded crash reconciliation remain open,
+as do independent Java V2, neutral cross-language failures, whole-process resource
+gates and the original equivalent authenticated/durable streaming-gRPC workload.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

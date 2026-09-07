@@ -29,8 +29,9 @@ cargo build --release --locked
 an actual QUIC-v1, `pipestream/2` Core listener. `server.run(shutdown_future)`
 serves bounded concurrent connections until that future completes. The
 embedding application supplies `v2_tls::ServerSecurity` and can obtain the
-bound address with `local_addr()`. Standalone CLI commands still use version 1;
-this is the server library integration point, not a complete V2 CLI/client pair.
+bound address with `local_addr()`. This is the Core library integration point.
+The separate [V2 command group](docs/v2-cli.md) uses the durable listener below;
+original version-1 commands remain available.
 
 Core advertises no durable profiles; supplying such an enabled inventory is
 refused at configuration time. It implements capability minima/required-profile
@@ -62,7 +63,7 @@ No detach, transport close or operator shutdown asserts durable completion.
 Fifteen Core tests cover configuration and real QUIC paths, including non-reading peers,
 oversized/truncated frames, resets, quota boundaries and shutdown. Twenty TLS
 tests cover the underlying security boundary. The separate durable listener
-below integrates storage/execution; complete client recovery integration, Java V2 and whole-process
+below integrates storage/execution; client staging recovery, Java V2 and whole-process
 resource measurements remain unfinished.
 
 ## Version-2 durable server
@@ -113,9 +114,22 @@ full-duration waits, detach/refusal ordering, invalid input/control, credential
 rotation and owner quotas, a non-reading control peer, exclusive storage reopen
 and shutdown with a commit still in flight.
 Two unit tests cover configuration bounds and child-future destruction accounting.
-The neutral process-kill driver, independent Java V2, production V2 client/CLI
-journal integration and equivalent external streaming-gRPC workload/resource comparison
+The neutral V2 process-kill driver, independent Java V2, client staging recovery
+and equivalent external streaming-gRPC workload/resource comparison
 remain required. This is Rust endpoint evidence, not completion of those gates.
+
+## Version-2 runnable commands
+
+The Unix `pipestream-quinn v2` commands explicitly initialize or reopen authority
+and client history, require configured mutual TLS, and expose durable mutations,
+observations, file retrieval and exact root completion. The reference server
+registers explicit consume/copy, caller-reassembly and authority-chunking applications.
+See the [CLI guide](docs/v2-cli.md) for commands, immutable configuration, application
+limits, original-operation replay and remaining staging-recovery requirements.
+Six real subprocess tests cover restart, rotated/changed principals, missing
+input, both branch modes, retry, skip, cancellation, revocation and verified bytes;
+the chunk cases include empty, exact/partial 64 KiB and 33-child inputs. Three
+startup unit tests cover configuration bounds and permission handling.
 
 ## Version-2 TLS boundary
 
@@ -214,7 +228,7 @@ waiters do not release the slots of still-running blocking jobs.
 The durable server supplies bounded control readers/writers, input/result
 integration, shared control capacity, runtime supervision and connection-level
 shutdown. The execution/maintenance runtime below supplies independent workers.
-The blocking client journal is described below; the asynchronous client remains unfinished.
+The blocking journal, asynchronous owner and durable client are described below.
 Twelve adapter tests use actual TLS peers
 and on-disk stores but call the dispatcher locally. They are not V2 wire,
 cross-language or whole-process resource evidence. See the acceptance ledger.
@@ -512,7 +526,7 @@ exercise actual exhaustion/refusal and verify earlier evidence survives reopen.
 
 The V2 transport below supplies the network event loop, and the durable session
 client composes these journal/coverage APIs automatically. Owned file adapters
-are available below; standalone V2 CLI integration remains open.
+are available below and exposed by the V2 command group.
 The async journal owner supplies bounded off-runtime storage ownership.
 Independent Java V2, neutral cross-language failures and the original
 external workload/equivalent streaming-gRPC resource comparison remain open.
@@ -562,7 +576,7 @@ Applications must await journal intent persistence and a covering declaration
 receipt before transmitting input, then validate/persist authenticated observations
 before using their commitments. A real-server test composes the public journal
 and transport across a 256 KiB transfer, replay, certificate rotation/reopen and
-exact root completion. Standalone V2 CLI integration, complete independent
+exact root completion. Client staging recovery, complete independent
 Java V2 and neutral cross-language/workload evidence remain unfinished.
 
 ### Version-2 durable session client
@@ -626,7 +640,7 @@ reopen/certificate rotation, cancelled creation/mutation/upload waiters, identit
 mismatch, missing covering receipts, changed intent, refused-operation recovery,
 exclusive ownership and failed/successful barriers. The journal is configured
 with a single operation slot in these tests to exercise serialized storage.
-Standalone V2 CLI integration, independent Java V2, the neutral failure/resource
+Client staging recovery, independent Java V2, the neutral failure/resource
 driver and original external workload/streaming-gRPC comparison remain required.
 
 ### Version-2 owned file transfers
@@ -664,7 +678,7 @@ shared retained-directory disk quota.
 Ordinary failed downloads remove only their own temporary file. Abrupt process
 death may leave `.pipestream-result-*` staging files. This adapter deliberately
 does not scan or delete other transfers' files; exclusive staging ownership,
-bounded restart reconciliation and a CLI recovery policy still need integration.
+bounded restart reconciliation and shared client disk budgeting still need integration.
 It never turns client file loss into new remote operation identity or work.
 
 Tests cover empty/256 KiB real-server round trips, replay, changed source bytes,

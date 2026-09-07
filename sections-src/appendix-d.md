@@ -117,7 +117,7 @@ Half-close testing exposed lost control replies in both Rust V2 listeners:
 immediate QUIC close could discard queued responses. Both now finish control
 and await its transport acknowledgment before graceful close. Section 12.8
 clarifies that this does not prove peer application validation or persistence.
-Independent Java V2, complete client/CLI recovery integration, neutral cross-language
+Independent Java V2, client file-staging recovery, neutral cross-language
 process failures, whole-process resource gates and the original external
 workload/equivalent streaming-gRPC comparison remain unfinished.
 
@@ -156,9 +156,9 @@ Client local storage format 3 refuses older history without automatic conversion
 or deletion; authority storage is unchanged. The pinned empty database measures
 73,728 bytes; physical-exhaustion tests now use 128 KiB database/WAL/journal caps
 and a 64 KiB shared-memory cap, not a process-memory claim.
-These are not independent cross-language failure evidence or a completed V2
-client: automatic durable-facade integration and whole-process resource measurements
-remain required. Section 12 now explicitly requires parent/child consistency
+These are not independent cross-language failure evidence or measured
+whole-process resource bounds. The durable facade described below now integrates
+these APIs. Section 12 explicitly requires parent/child consistency
 checks regardless of observation order; no wire-format change was needed.
 
 The Rust async journal owner now runs initialization, audits, journal operations
@@ -182,7 +182,7 @@ exercise reordered/cancelled waits, abandoned inputs, malformed control/selectio
 wrong commitments, corrupt/truncated/extra bytes, slow consumers and pending
 deadlines. An isolated gate opens 64 actual Core connections, refuses a 65th and
 admits a replacement after draining. These are count/behavior checks, not measured
-whole-process memory or independent V2 interoperability. Standalone CLI integration,
+whole-process memory or independent V2 interoperability. Client staging recovery,
 Java V2 and workload comparison remain incomplete. Section
 12 clarifies that an identifiable result's wrong commitment fails that delivery;
 invalid correlation remains fatal. The wire encoding is unchanged.
@@ -205,9 +205,25 @@ verified length, digest and FIN, then synchronize and install without overwritin
 an existing destination. Owned transfers survive waiter cancellation. Tests cover
 empty/256 KiB transfers, replay, changed source bytes, malformed results, withheld
 FIN, byte ceilings and descriptor capacity. These adapters require trusted local
-directories; process-death staging reconciliation and CLI recovery integration
+directories; process-death staging reconciliation and shared client disk budgeting
 remain open. Fixed buffers and owner counts do not establish measured total
 process memory or the original comparative workload costs.
+
+The Unix Rust executable now exposes explicit V2 authority initialization,
+authenticated serving, durable client initialization/reopen, mutation replay,
+observations, result selection/download and exact root completion. Its registered
+pure applications exercise leaf consume/copy, caller-produced reassembly and
+authority-produced chunking; they are application contracts, not new wire profiles.
+Six real subprocess tests exercise both negotiated combinations, committed
+admission followed by process death, same-owner certificate rotation, changed-owner
+rejection, lost local input, both branch modes, explicit retry/skip, scope
+cancellation and offline revocation. Chunk cases include empty input, exact and
+partial 64 KiB boundaries, and 33 children under the 16-active-job session ceiling.
+Three unit tests cover bounded startup reads,
+principal-map validation and permission policy. These tests use the Rust
+implementation, not the required independent V2 failure oracle; the crash is not
+an instrumented publication-boundary fault. This does not establish Java V2 parity
+or the original external workload and equivalent streaming-gRPC comparison.
 
 ## Java/Netty Reference Implementation
 
