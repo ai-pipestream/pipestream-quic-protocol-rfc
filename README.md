@@ -35,8 +35,11 @@ Java V2 and neutral cross-language failure evidence remain unfinished; existing
 full interoperability evidence is for version 1.
 The Rust client journal now retains creation, immutable mutation intent/receipts,
 revisioned work observations and full manifests with explicit output selections.
-Reopen preserves those commitments; reply reordering, contradictory retry/fence
-receipts, local write failures and physical exhaustion have regression tests.
+It also verifies complete sealed membership and bottom-up status coverage before
+constructing an exact root-completion request. Parent/child commitments are checked
+in both observation orders, including when a later sealing receipt verifies a
+parent's cached membership. Reopen preserves those commitments; reply reordering,
+contradictions, local write failures and physical exhaustion have regression tests.
 These are blocking library APIs, not the completed asynchronous V2 client.
 The Rust `pipestream_core::v2` library now implements typed codecs for every
 version-2 message and record, frozen commitments, negotiation checks, bounded

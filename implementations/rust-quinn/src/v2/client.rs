@@ -15,7 +15,7 @@ use std::{path::Path, sync::Arc, time::Duration as Elapsed};
 
 mod observations;
 mod storage;
-pub use observations::{ObservedWork, RetainedReference};
+pub use observations::{ObservedWork, RetainedReference, ScopeMember, ScopeObservation};
 #[cfg(test)]
 mod tests;
 
@@ -64,7 +64,8 @@ impl Creation {
 }
 
 // The observation ceiling applies independently to work views, full manifests
-// and selected output references. No inventory is implicitly evicted.
+// and selected output references, scope identities, scope members and coverage.
+// No inventory is implicitly evicted.
 codec::record!(
     JournalLimits {
         operations: Id,
@@ -293,6 +294,7 @@ impl Journal {
                 storage::write(&tx, "operations", "receipt", row, &image)?;
             }
         }
+        self.receipt_committed(&tx, &intent)?;
         tx.commit()?;
         Ok(())
     }

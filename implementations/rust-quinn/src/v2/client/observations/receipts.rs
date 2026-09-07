@@ -41,6 +41,33 @@ fn fence(receipt: &Outcome) -> Option<(State, Number, Disposition)> {
     ))
 }
 
+pub(super) fn terminal_hint(receipt: &Outcome, state: State) -> Result<()> {
+    if let Some((expected, _, _)) = fence(receipt) {
+        check(
+            state == expected,
+            "terminal membership hint contradicts work fence",
+        )?;
+    }
+    Ok(())
+}
+pub(super) fn event_time(receipt: &Outcome) -> Option<Number> {
+    match receipt {
+        Outcome::Admitted { admitted_at, .. } => Some(*admitted_at),
+        Outcome::Retried { accepted_at, .. } => Some(*accepted_at),
+        Outcome::Cancelled {
+            accepted_at,
+            disposition: Disposition(0),
+            ..
+        }
+        | Outcome::Skipped {
+            accepted_at,
+            disposition: Disposition(0),
+            ..
+        } => Some(*accepted_at),
+        _ => None,
+    }
+}
+
 fn terminal(receipt: &Outcome, state: State, attempt: Number, committed: Number) -> Result<()> {
     if let Some((expected, accepted, disposition)) = fence(receipt) {
         check(

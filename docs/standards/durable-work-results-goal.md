@@ -1741,3 +1741,54 @@ and bounded asynchronous client transport/journal ownership, followed by the
 independent Java implementation and neutral failure/resource driver. The external
 workload and equivalent streaming-gRPC comparison remain mandatory, not deferred
 out of the goal. This checkpoint does not establish complete V2 conformance.
+
+### Client sealed membership, parent consistency and coverage, 2026-09-07
+
+The Rust journal now merges bounded scope pages, verifies the full membership
+seal and commits bottom-up closure only after terminal work, child coverage,
+counts, status roots and closure times agree. It preserves the exact root
+summary across restart and constructs DRAIN from that saved cut, while leaving
+connection draining and authenticated response validation to the transport.
+
+The new tests exposed parent/child contradictions accepted in two paths: a later
+parent page and a later sealing receipt verifying cached membership. Both now
+revalidate previously retained child relationships before committing new evidence.
+The normative Section 12 clarification explicitly allows child-first observations,
+requires both-direction consistency checks and rejects contradictions with
+INTEGRITY_ERROR. Missing parent evidence stays pending; no parent admission or
+membership is fabricated. This changes neither the wire layout nor response
+delivery ordering.
+
+Eighteen new substantive core scenarios cover empty/300-member scopes, overlapping
+pages across reopen, valid child-first metadata, wrong parent/child allocations,
+late sealing receipts, missing descendants, STRICT failure, count/hash/time
+contradictions, quotas, atomic rollback, corruption and forced process termination
+after coverage commit. The actual-QUIC recovery test now saves SCOPE page/checkpoint
+evidence, exclusively reopens, reconnects with rotated configured credentials and
+completes DRAIN with the original root summary. It still shares the Rust codec.
+
+Client local format 3 explicitly refuses older history without conversion or
+deletion. The extra tables raise the measured empty database floor on the pinned
+build to 73,728 bytes (WAL 0). The actual physical-exhaustion fixtures now use
+128 KiB database/WAL/journal and 64 KiB SHM limits and still prove refusal and
+preservation. The full-local-evidence coverage policy adds reads and storage;
+it is not a universal wire requirement to fetch all WORK views. Blocking scans
+and file/count caps do not establish measured heap/RSS/latency guarantees.
+Evidence: `conformance/results/durable-work-v2-client-scopes-2026-09-07.txt`.
+
+The full objective remains unchanged. Next is bounded asynchronous client
+transport/journal ownership and complete client/CLI integration, followed by
+independent Java V2 and the neutral cross-language failure/resource driver.
+The original external chunk/distribute/transform/reassemble workload and equivalent
+streaming-gRPC comparison, including pinned raw cost/failure evidence, remain
+mandatory. This is an implementation checkpoint, not goal completion.
+
+Verification: final Rust handle 34274 exited zero with 713 workspace tests,
+47 focused client-journal entries, strict clippy and formatting. Full repository
+suite handle 45780 exited zero with 712 Rust tests before the last test-only
+addition, 193 Java tests in 20 fresh XML reports, six external Rust example tests,
+frozen vectors/CDDL, bounded models and negative controls, native checks, nine V1
+interop pairs, 32 capability probes and all examples. No non-Rust implementation
+changed afterward. Draft build handle 64110 exited zero; rendered normative text
+and Appendix D were inspected. idnits has zero errors/flaws/warnings and its
+existing FIPS comment. No submission, merge to main or deployment occurred.

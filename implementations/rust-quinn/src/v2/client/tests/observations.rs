@@ -1,5 +1,13 @@
 use super::*;
 mod boundaries;
+mod scopes;
+
+pub(super) fn persist_scope_for_crash(journal: &Journal) {
+    scopes::persist_for_crash(journal);
+}
+pub(super) fn verify_scope_crash_recovery(journal: &Journal) {
+    scopes::verify_crash_recovery(journal);
+}
 
 pub(super) fn persist_for_crash(journal: &Journal) {
     journal.observe_work(Id(3), &success()).unwrap();

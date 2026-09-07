@@ -595,6 +595,22 @@ declared IDs exist beyond the returned page in that snapshot. An unsealed
 scope may grow between requests. An empty page is not completeness evidence;
 only its immutable seal establishes final membership.
 
+Observation order is not creation order: a client MAY learn a child's metadata
+before receiving its parent's scope metadata or admission record. A child's
+parent work key MUST agree with any already known parent-scope producer and,
+when that scope's full sealed membership has been verified, MUST name one of
+its declared members. The child's scope ID and producer MUST agree with any
+known immutable child allocation in its parent's admission record or work view.
+The client MUST check these relationships in both directions: when child
+metadata arrives and when later parent evidence makes a retained relationship
+checkable. Missing parent observations do not prove parent membership or
+admission; the client MUST NOT synthesize those commitments from child metadata.
+It MAY retain bounded pending relationship information without claiming that
+the missing commitments have been verified. A contradictory combination is
+INTEGRITY_ERROR; the client MUST NOT replace prior validated commitments with
+the contradictory observation or use it to acknowledge coverage. These checks
+do not require parent-first response delivery.
+
 A scope closes only when sealed, every declared member is terminal, and every
 descendant scope has closed. A success rehydration under this profile's STRICT
 policy additionally requires all children to succeed. Partial completion

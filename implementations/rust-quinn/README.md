@@ -114,7 +114,7 @@ rotation and owner quotas, a non-reading control peer, exclusive storage reopen
 and shutdown with a commit still in flight.
 Two unit tests cover configuration bounds and child-future destruction accounting.
 The neutral process-kill driver, independent Java V2, production V2 client/CLI
-journals and equivalent external streaming-gRPC workload/resource comparison
+journal integration and equivalent external streaming-gRPC workload/resource comparison
 remain required. This is Rust endpoint evidence, not completion of those gates.
 
 ## Version-2 TLS boundary
@@ -214,7 +214,7 @@ waiters do not release the slots of still-running blocking jobs.
 The durable server supplies bounded control readers/writers, input/result
 integration, shared control capacity, runtime supervision and connection-level
 shutdown. The execution/maintenance runtime below supplies independent workers.
-The V2 client/journals remain unfinished.
+The blocking client journal is described below; the asynchronous client remains unfinished.
 Twelve adapter tests use actual TLS peers
 and on-disk stores but call the dispatcher locally. They are not V2 wire,
 cross-language or whole-process resource evidence. See the acceptance ledger.
@@ -411,8 +411,8 @@ under an existing ID are refused; matching preparation is idempotent.
 
 `record_receipt` verifies the operation digest under the stored session, typed
 outcome and all known request constraints, then persists the exact receipt.
-This library does not authenticate a directly supplied record. Full scope seals
-and status coverage require further client validation; a stored
+This library does not authenticate a directly supplied record. The scope APIs
+below validate complete membership and status coverage; a stored
 declaration receipt alone is not proof of complete scope coverage. An input
 producer must still receive the covering declaration receipt before transmission.
 
@@ -440,15 +440,41 @@ from the locator. The caller supplies trusted endpoint mapping and authenticatio
 and must still validate the actual result bytes, length and FIN. A manifest alone
 does not choose an output, and a failed download does not authorize a new attempt.
 
+`observe_scope_page(request, response)` validates the actual correlated page pair,
+merges bounded out-of-order or overlapping membership snapshots, and records
+`membership_verified` only after the full count and recomputed seal agree. Empty
+pages and terminal state hints do not supply missing membership or full WORK views.
+`scope_observation` and bounded `scope_members` restore this evidence on reopen.
+Known declarations, immutable parent allocations, terminal outcomes and ancestor
+fences constrain new evidence in either arrival order. Valid child-first metadata
+may remain pending without inventing parent admission; learning a parent through
+a page or sealing receipt rechecks previously retained child relationships.
+Contradictions refuse atomically, preserving the earlier evidence and uncertainty.
+
+`record_checkpoint(summary)` uses a conservative full-local-evidence policy:
+require verified complete membership, every terminal WORK view and already
+verified child coverage, then recompute the exact count partition and status root.
+It checks closure times and STRICT successful-parent semantics before committing.
+This is stronger than merely comparing a summary with the client's currently
+known commitments; it adds member reads and local storage that must be measured
+in the workload comparison, not a new universal wire requirement. `covered_scope`
+restores the committed proof. `root_completion(request)` constructs DRAIN with
+the exact saved root summary; the transport must separately drain requests and
+transfers and validate the authenticated echo. It is not a shutdown acknowledgment.
+
 Default inventory is 4096 operations and independently 4096 entries in each of
-the work-view, manifest and output-selection inventories. Each configured ceiling
+the work-view, manifest, output-selection, scope, scope-member and coverage
+inventories. Each configured ceiling
 is from 1 through 1,000,000. Existing entries remain usable at capacity;
 individual images are bounded before reads/allocations. The existing guarded
 SQLite backend separately caps database, WAL, rollback-journal and shared-memory
 file lengths. FULL synchronous commits and checksummed, identity-bound records
 survive restart under that backend's durability assumptions. These are file-length
 and record-count bounds, not measured heap/RSS/native-memory guarantees. Opening
-audits retained operations one at a time; preparation checks the retained inventory.
+audits retained records and validates child coverage before parent coverage without
+a recursive whole-tree buffer. Membership and status hashing are incremental.
+Relationship scans and receipt comparisons remain blocking and their latency is
+not bounded by these tests; preparation also checks the retained inventory.
 All journal calls are blocking and belong off the control reader/async executor.
 The directory must remain private to cooperating journal users; checksums do not
 authenticate hostile edits or repair rollback/loss of local history.
@@ -456,26 +482,36 @@ authenticate hostile edits or repair rollback/loss of local history.
 The original thirteen substantive journal tests plus one subprocess entry point cover exclusive
 reopen, profile/identity conflicts, all six mutation kinds, concurrent preparation,
 pagination/cursor exhaustion, corrupt images, failed receipt commits, actual
-64 KiB physical exhaustion and forced process termination after intent commit.
+physical exhaustion and forced process termination after intent commit.
 Removing that commit deliberately makes the crash-recovery test fail. A regression
 also verifies that incompatible reopen refuses before changing SQLite journal mode.
 Additional tests cover contradictory receipts in both arrival orders, observation
 monotonicity, terminal immutability, empty output manifests, inputless cancellation,
 explicit reference selection, independent quotas, corrupt normalized keys/images,
-atomic rollback and a large manifest refused by a real 64 KiB disk cap. A second
+atomic rollback and a large manifest refused by a real disk cap. A second
 forced-exit scenario reopens the committed terminal view, manifest and selected
 index. Two real-QUIC tests reopen the journal after unrecorded creation/declaration/
 admission replies, replay original identities and read the original attempt's
 output. The result case reopens its saved reference, authenticates with a rotated
 owner certificate and checks that retrieval leaves the terminal revision unchanged.
+It now also records actual SCOPE pages/checkpoint, exclusively reopens, reconnects
+and completes DRAIN with the original saved root summary. Additional scope tests
+cover empty and 300-member paginated scopes, valid child-first metadata, both-order
+contradictions, late sealing receipts, missing descendants, STRICT failure,
+counts/hash/time corruption, quotas and atomic rollback. A third forced-exit
+scenario preserves verified membership and root coverage across process death.
 Those tests use the existing Rust codec, not an independent oracle.
 
-The local client format is now 2, distinct from authority storage and wire version.
-Format-1 client journals refuse before WAL configuration; there is no automatic
+The local client format is now 3, distinct from authority storage and wire version.
+Older client journals refuse before WAL configuration; there is no automatic
 migration, deletion or replacement of unresolved history. No wire format changed.
+The additional tables raise the measured empty database floor on the pinned build
+to 73,728 bytes (WAL 0). The physical-exhaustion fixtures now use 128 KiB limits
+for the database, WAL and rollback journal and 64 KiB for shared memory; they still
+exercise actual exhaustion/refusal and verify earlier evidence survives reopen.
 
 The production V2 client event loop, CLI, bounded asynchronous journal ownership
-and durable full-scope coverage still require implementation/integration.
+and transport integration of these coverage APIs still require implementation.
 Independent Java V2, neutral cross-language failures and the original
 external workload/equivalent streaming-gRPC resource comparison remain open.
 

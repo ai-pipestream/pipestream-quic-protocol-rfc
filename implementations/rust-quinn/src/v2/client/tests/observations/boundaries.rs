@@ -43,9 +43,9 @@ fn oversized_manifest_hits_physical_cap_without_partial_evidence_or_eviction() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("client.sqlite");
     let physical = PhysicalLimits {
-        database_bytes: 65536,
-        wal_bytes: 65536,
-        journal_bytes: 65536,
+        database_bytes: 131072,
+        wal_bytes: 131072,
+        journal_bytes: 131072,
         shared_memory_bytes: 65536,
     };
     let journal =
@@ -56,15 +56,22 @@ fn oversized_manifest_hits_physical_cap_without_partial_evidence_or_eviction() {
         .remember_reference(&manifest(), OutputIndex(0))
         .unwrap();
     let mut large = manifest();
-    large.work.entity = Id(2);
+    large.work.entity = Id(MAX_NUMBER);
+    let host = [
+        "h".repeat(63),
+        "h".repeat(63),
+        "h".repeat(63),
+        "h".repeat(61),
+    ]
+    .join(".");
     large.outputs = (0..256).map(|n| {
         let mut output = large.outputs[0].clone();
         output.index = OutputIndex(n);
         output.content_type = ApplicationLabel("x".repeat(128));
-        output.locator.0 = format!("pipestream://untrusted-hint.invalid:7443/v2/sessions/7/scopes/0/producers/0/entities/2/attempts/1/outputs/{n}");
+        output.locator.0 = format!("pipestream://{host}:7443/v2/sessions/7/scopes/0/producers/0/entities/{MAX_NUMBER}/attempts/1/outputs/{n}");
         output
     }).collect();
-    assert!(large.encode().unwrap().len() > 65536);
+    assert!(large.encode().unwrap().len() > 131072);
     refusal(
         journal.remember_reference(&large, OutputIndex(255)),
         ErrorCode::LimitExceeded,

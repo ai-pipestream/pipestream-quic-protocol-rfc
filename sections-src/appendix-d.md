@@ -137,12 +137,29 @@ validates revisioned work observations and immutable manifests against retained
 admission, retry, fence and policy commitments in either reply order. Additional
 tests exercise conflicting records, atomic rollback, corruption, independent
 inventory limits, large-manifest physical exhaustion and forced termination after
-committing the observation/reference. Client local storage format 2 refuses older
-history without automatic conversion or deletion; authority storage is unchanged.
+committing the observation/reference.
+
+The journal also retains bounded scope pages, verifies complete membership seals
+and recomputes status roots from terminal work and previously verified child
+coverage. Valid child-first metadata is allowed; parent membership and immutable
+child allocations are checked in either observation order. Regression tests
+reproduced contradictions accepted through both a later parent page and a later
+sealing receipt; both now refuse before committing contradictory evidence.
+Additional tests cover pagination, missing descendants, STRICT failure, changed
+counts/hash/times, quotas, corruption, rollback and forced process death after
+coverage commit. The actual-QUIC recovery test now reopens saved root coverage
+and completes DRAIN with its exact summary. This client policy requires complete
+local terminal evidence, with additional storage/read cost not yet measured in
+the workload comparison; it is not an extra universal wire requirement.
+
+Client local storage format 3 refuses older history without automatic conversion
+or deletion; authority storage is unchanged. The pinned empty database measures
+73,728 bytes; physical-exhaustion tests now use 128 KiB database/WAL/journal caps
+and a 64 KiB shared-memory cap, not a process-memory claim.
 These are not independent cross-language failure evidence or a completed V2
-client: asynchronous transport integration, durable full-scope coverage and
-whole-process resource measurements remain required. No normative wire change
-was needed.
+client: asynchronous transport integration and whole-process resource measurements
+remain required. Section 12 now explicitly requires parent/child consistency
+checks regardless of observation order; no wire-format change was needed.
 
 ## Java/Netty Reference Implementation
 

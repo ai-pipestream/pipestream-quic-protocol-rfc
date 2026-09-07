@@ -232,6 +232,66 @@ async fn journal_recovers_unrecorded_input_admission_and_reads_the_original_atte
             .unwrap()
             .is_empty()
     );
+    let page = |request| {
+        Control::Scope(Scope::Page {
+            request,
+            scope: Number(0),
+            after_entity: Number(0),
+            limit: PageLimit(256),
+        })
+    };
+    let request = client.request(|id| page(Id(id))).await;
+    let observed = journal
+        .observe_scope_page(&page(request), &client.receive().await)
+        .unwrap();
+    assert!(observed.membership_verified);
+    assert!(journal.covered_scope(Number(0)).unwrap().is_none());
+    let response = client
+        .call(|id| {
+            Control::Scope(Scope::Checkpoint {
+                request: Id(id),
+                scope: Number(0),
+                seal: observed.seal.unwrap(),
+                wait_ms: WaitMs(30000),
+            })
+        })
+        .await;
+    let Control::Scope(Scope::CheckpointResponse { summary, .. }) = response else {
+        panic!("expected durable root checkpoint: {response:?}")
+    };
+    journal.record_checkpoint(&summary).unwrap();
+    drop(journal);
+    drop(client);
+    let journal = open(&path);
+    assert_eq!(
+        journal.covered_scope(Number(0)).unwrap(),
+        Some(summary.clone())
+    );
+    let mut client = running.client(Some(1)).await;
+    let selected = client.negotiate(offered()).await;
+    journal
+        .record_binding(&client.call(|id| attach(id, "alice", 1)).await, &selected)
+        .unwrap();
+    assert_eq!(
+        journal
+            .scope_members(Number(0), Number(0), PageLimit(1))
+            .unwrap()[0]
+            .work,
+        key()
+    );
+    let response = client
+        .call(|id| journal.root_completion(Id(id)).unwrap())
+        .await;
+    let Control::Drain(Drain::Completed {
+        generation,
+        root_summary,
+        ..
+    }) = response
+    else {
+        panic!("expected exact completed-session cut: {response:?}")
+    };
+    assert_eq!(generation, Id(1));
+    assert_eq!(root_summary, summary);
     drop(client);
     running.finish().await;
 }

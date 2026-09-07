@@ -3,7 +3,9 @@
 use super::*;
 mod receipts;
 mod references;
+mod scopes;
 pub use references::RetainedReference;
+pub use scopes::{ScopeMember, ScopeObservation};
 
 codec::record!(
     ObservedWork {
@@ -223,6 +225,7 @@ impl Journal {
         if let Some(observed) = self.read_observed(connection, &manifest.work)? {
             manifest_matches_view(manifest, &observed.view)?;
         }
+        self.scope_manifest(connection, manifest)?;
         Ok(())
     }
     fn validate_view(&self, connection: &Connection, observed: &ObservedWork) -> Result<()> {
@@ -263,6 +266,7 @@ impl Journal {
         if let Some(manifest) = self.read_manifest(connection, &view.work)? {
             manifest_matches_view(&manifest, view)?;
         }
+        self.scope_view(connection, view)?;
         Ok(())
     }
     fn with_work_receipts(
@@ -320,7 +324,11 @@ impl Journal {
                 receipts::manifest(intent, &receipt.body, &manifest)?;
             }
         }
+        self.scope_receipt(connection, intent, receipt)?;
         Ok(())
+    }
+    pub(super) fn receipt_committed(&self, connection: &Connection, intent: &Intent) -> Result<()> {
+        self.scope_receipt_committed(connection, intent)
     }
     pub(super) fn audit_observations(&self, connection: &Connection) -> Result<()> {
         for table in ["observations", "manifests"] {
@@ -364,6 +372,7 @@ impl Journal {
             }
         }
         self.audit_references(connection)?;
+        self.audit_scopes(connection)?;
         Ok(())
     }
 }

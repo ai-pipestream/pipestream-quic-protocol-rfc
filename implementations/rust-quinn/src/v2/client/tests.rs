@@ -561,6 +561,9 @@ fn client_journal_kill_child() {
     if std::env::var_os("PIPESTREAM_V2_JOURNAL_KILL_OBSERVATIONS").is_some() {
         observations::persist_for_crash(&journal);
     }
+    if std::env::var_os("PIPESTREAM_V2_JOURNAL_KILL_SCOPES").is_some() {
+        observations::persist_scope_for_crash(&journal);
+    }
     use std::io::Write;
     println!("journal-committed");
     std::io::stdout().flush().unwrap();
@@ -615,12 +618,17 @@ fn physical_exhaustion_refuses_new_intent_without_losing_old_unknown_work() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("journal.sqlite");
     let limits = PhysicalLimits {
-        database_bytes: 65536,
-        wal_bytes: 65536,
-        journal_bytes: 65536,
+        database_bytes: 131072,
+        wal_bytes: 131072,
+        journal_bytes: 131072,
         shared_memory_bytes: 65536,
     };
     let journal = Journal::initialize(&path, creation(), JournalLimits::default(), limits).unwrap();
+    let initial = journal.physical_usage().unwrap();
+    eprintln!(
+        "client format-3 initialized: database={} WAL={} bytes",
+        initial.database_bytes, initial.wal_bytes
+    );
     journal.record_binding(&binding(), &selection()).unwrap();
     journal.prepare(&declare()).unwrap();
     let mut refused = false;
@@ -645,7 +653,7 @@ fn physical_exhaustion_refuses_new_intent_without_losing_old_unknown_work() {
             result => panic!("unexpected result {result:?}"),
         }
     }
-    assert!(refused, "64 KiB database must not accept this inventory");
+    assert!(refused, "128 KiB database must not accept this inventory");
     assert_eq!(journal.intent(declare().operation).unwrap(), declare());
     assert!(journal.receipt(declare().operation).unwrap().is_none());
     let usage = journal.physical_usage().unwrap();
@@ -675,7 +683,7 @@ fn exhausted_cursor_refuses_instead_of_sqlite_random_rowid_fallback() {
 
 #[test]
 fn forced_process_exit_after_commit_preserves_the_original_unknown_operation() {
-    let (_directory, journal) = kill_and_reopen(false);
+    let (_directory, journal) = kill_and_reopen(0);
     assert_eq!(journal.intent(declare().operation).unwrap(), declare());
     assert!(journal.receipt(declare().operation).unwrap().is_none());
     journal.prepare(&declare()).unwrap();
@@ -687,11 +695,17 @@ fn forced_process_exit_after_commit_preserves_the_original_unknown_operation() {
 
 #[test]
 fn forced_process_exit_preserves_terminal_observation_manifest_and_selected_index() {
-    let (_directory, journal) = kill_and_reopen(true);
+    let (_directory, journal) = kill_and_reopen(1);
     observations::verify_crash_recovery(&journal);
 }
 
-fn kill_and_reopen(observations: bool) -> (tempfile::TempDir, Journal) {
+#[test]
+fn forced_process_exit_preserves_verified_membership_and_root_coverage() {
+    let (_directory, journal) = kill_and_reopen(2);
+    observations::verify_scope_crash_recovery(&journal);
+}
+
+fn kill_and_reopen(mode: u8) -> (tempfile::TempDir, Journal) {
     use std::io::{BufRead, BufReader};
     struct Child(std::process::Child);
     impl Drop for Child {
@@ -712,10 +726,12 @@ fn kill_and_reopen(observations: bool) -> (tempfile::TempDir, Journal) {
         .env("PIPESTREAM_V2_JOURNAL_KILL_PATH", &path)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit());
-    if observations {
+    command.env_remove("PIPESTREAM_V2_JOURNAL_KILL_OBSERVATIONS");
+    command.env_remove("PIPESTREAM_V2_JOURNAL_KILL_SCOPES");
+    if mode == 1 {
         command.env("PIPESTREAM_V2_JOURNAL_KILL_OBSERVATIONS", "1");
-    } else {
-        command.env_remove("PIPESTREAM_V2_JOURNAL_KILL_OBSERVATIONS");
+    } else if mode == 2 {
+        command.env("PIPESTREAM_V2_JOURNAL_KILL_SCOPES", "1");
     }
     let mut child = Child(command.spawn().unwrap());
     let stdout = child.0.stdout.take().unwrap();

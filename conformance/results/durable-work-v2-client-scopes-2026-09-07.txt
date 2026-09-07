@@ -1,0 +1,158 @@
+Rust V2 client scope membership and bottom-up coverage, 2026-09-07 UTC
+Base: 7f5cb42a5994c4e0e076d3e31a672e06e8d0aef0
+Implementation and tests: the commit containing this result file.
+
+Scope
+  The blocking client Journal now retains bounded scope identity/member records
+  and verified coverage summaries. observe_scope_page takes the actual request
+  and authenticated/correlated response, accepts out-of-order/overlapping pages
+  and compatible older unsealed snapshots, and checks interval omissions and
+  count constraints. Only full membership matching the recomputed immutable seal
+  sets membership_verified. Empty pages and state hints cannot fabricate missing
+  identities, full WORK views, attempts, manifests or status coverage.
+
+  Known declaration receipts, parent-scope producer/membership, immutable branch
+  allocation, work/manifest terminal evidence and ancestor cancellation fences
+  constrain new evidence in either arrival order. Valid child-first metadata can
+  survive reopen as a pending relationship without inventing parent admission.
+  Later parent pages AND sealing receipts revalidate earlier child relationships
+  in the same transaction. Contradictions refuse and preserve prior evidence.
+
+  record_checkpoint uses a conservative complete-local-evidence policy: verified
+  full membership, every terminal WORK view and already saved verified child
+  coverage. It incrementally recomputes counters and the exact status root and
+  validates closure times and STRICT parent success. A failed parent may terminate
+  before child closure, but enclosing scope coverage still waits for that child.
+  root_completion constructs the exact retained root DRAIN request; it does not
+  assert the transport has drained or the authority has acknowledged shutdown.
+
+  This full-evidence policy costs extra member reads and local storage; it is
+  not a new universal wire requirement to fetch every WORK view. Scans and receipt
+  comparisons remain blocking. Scope seals/status roots are incremental and reopen
+  checks children before parents without recursion or a whole-tree buffer. These
+  structural properties do not establish measured latency, heap, native-memory,
+  RSS or workload throughput bounds.
+
+  The observation ceiling now applies independently to work views, manifests,
+  selections, scope identities, member rows and coverage. Defaults remain 4096
+  entries per inventory and 4096 operations, configurable from 1 to 1,000,000.
+  There is no implicit eviction. Existing guarded SQLite limits separately cap
+  DB/WAL/rollback-journal/shared-memory file lengths. The local client format is
+  3; older formats refuse before WAL configuration without conversion, deletion
+  or replacing unresolved history. Authority storage and dependencies are unchanged.
+
+  Section 12 explicitly states the both-arrival-orders consistency requirement,
+  bounded pending relationship evidence and INTEGRITY_ERROR for contradictions.
+  Parent-first delivery is not required. Wire/CDDL/frozen byte layouts did not change.
+
+Eighteen new substantive core scenarios
+  empty_page_is_not_coverage_but_verified_empty_seal_can_close_and_reopen
+  out_of_order_overlapping_pages_merge_without_claiming_missing_members_or_views
+  root_coverage_waits_for_verified_descendant_and_original_parent_allocation
+  strict_parent_success_refuses_failed_child_but_failed_parent_still_waits_for_children
+  declaration_receipts_and_page_inventory_cross_validate_in_both_arrival_orders
+  sealing_receipt_verifies_cached_unsealed_membership_or_rolls_back_atomically
+  parent_scope_metadata_rejects_impossible_child_identity_in_both_arrival_orders
+  immutable_parent_allocation_rejects_changed_child_metadata_in_both_arrival_orders
+  sealing_receipt_rechecks_pending_child_membership_in_both_arrival_orders
+  count_matching_inventory_must_still_hash_to_the_expected_seal
+  pages_refuse_wrong_correlation_omissions_and_changed_full_seal_atomically
+  checkpoint_refuses_changed_counts_roots_times_and_terminal_evidence
+  work_outside_verified_membership_is_refused_in_both_arrival_orders
+  accepted_scope_fence_excludes_later_publication_regardless_of_reply_order
+  scope_and_checkpoint_write_failures_preserve_uncertainty_and_rollback_members
+  bounded_member_inventory_rolls_back_a_page_without_evicting_prior_scopes
+  corrupted_scope_indexes_images_or_missing_descendant_proof_refuse_reopen
+  forced_process_exit_preserves_verified_membership_and_root_coverage
+
+  The positive nested case includes child-first metadata, exclusive reopen before
+  observing the parent and eventual full root coverage without fabricated parent
+  fields. Negative tests independently change parent producer, sealed membership,
+  child scope, child producer and parent work identity in both arrival orders.
+  Another test merges 300 members from tail-first, overlapping and stale pages
+  across reopen without replacing terminal hints or pretending they are WORK views.
+  Injected SQLite write faults prove atomic rollback. A forced process exit waits
+  for a flushed post-commit marker, kills the child, observes unsuccessful exit
+  and reopens exact membership/root coverage while retaining the unresolved intent.
+
+Actual QUIC integration
+  journal_recovers_unrecorded_input_admission_and_reads_the_original_attempt_output
+  now also receives actual SCOPE pages/checkpoint and saves verified root coverage.
+  It drops the client/journal, exclusively reopens, reconnects with another
+  configured certificate for the same owner, attaches and sends the exact saved
+  root summary in DRAIN. The authenticated response must echo the original summary
+  and generation. The other journal wire replay test remains unchanged.
+  These tests share the Rust codec. They are not independent cross-language
+  failure evidence and do not kill the authority process.
+
+Regression trail and physical cost
+  Handle 84902 exited 101: the new parent-page arrival-order regression accepted
+  impossible child metadata (Ok(())) despite the parent's verified membership.
+    /tmp/pipestream-v2-client-scopes-parent-red.log
+  Checking the parent's known membership and revalidating existing children when
+  new parent pages arrive closes that path. While clarifying the normative text,
+  the new sealing-receipt regression also reproduced Ok(()) for a contradiction.
+  Handle 35167 and its corrected empty-seal fixture run both exited 101.
+    /tmp/pipestream-v2-client-scopes-sealing-parent-red.log
+    /tmp/pipestream-v2-client-scopes-sealing-parent-red-final.log
+  The receipt transaction now revalidates scope relationships after refreshing
+  membership, before receipt/verification evidence can commit.
+
+  Format-3 initialization measured database=73728 and WAL=0 bytes on this build.
+  The original 64 KiB physical fixtures consequently could not initialize
+  (handle 18319). They now use 128 KiB DB/WAL/journal and 64 KiB SHM caps while
+  still exercising actual fill/refusal and preservation of older evidence.
+  The large-manifest fixture uses 256 outputs, bounded maximum-length locator
+  identities/host names and content types so its encoded image exceeds 128 KiB.
+  An initial revised fixture was just below the new cap (handle 62759); correcting
+  its payload, not weakening the refusal assertion, restored the intended test.
+    /tmp/pipestream-v2-client-scopes-existing.log
+    /tmp/pipestream-v2-client-scopes-focused.log
+    /tmp/pipestream-v2-client-scopes-final-focused-all.log
+
+Final verification
+  The initial full repository suite (handle 5522) exited 0 with 711 Rust workspace
+  tests before the later sealing-receipt regression and allocation test.
+    /tmp/pipestream-v2-client-scopes-full-suite.log
+  After fixing the sealing-receipt path, original set-e handle 45780 exited 0:
+    cargo test --locked -p pipestream-core v2::client -- --nocapture
+    ./conformance/run_all.sh
+    /tmp/pipestream-v2-client-scopes-final-focused-all.log
+    /tmp/pipestream-v2-client-scopes-final-full-suite.log
+  That repository suite passed 712 Rust workspace tests, strict clippy/formatting,
+  release builds, frozen vectors/CDDL/commitments, all three bounded models and
+  their negative controls, native/C++ checks, six external Rust example tests,
+  nine V1 black-box pairs, 32 raw QUIC capability probes and all examples.
+  Java: 193 tests, zero failures/errors/skips in 20 fresh XML reports, modified
+  2026-09-07 10:31:24 through 10:33:54 America/New_York within that run.
+
+  One final allocation-regression test and uncertainty-preservation assertions
+  were added without changing production code. Final set-e handle 34274 exited 0:
+    cargo fmt --all
+    cargo test --locked -p pipestream-core v2::client -- --nocapture
+    cargo clippy --locked --workspace --all-targets -- -D warnings
+    cargo test --locked --workspace
+    /tmp/pipestream-v2-client-scopes-final-focused-complete.log
+    /tmp/pipestream-v2-client-scopes-final-clippy-complete.log
+    /tmp/pipestream-v2-client-scopes-final-rust-workspace.log
+  Final focused client journal: 47 entries passed (46 substantive tests and one
+  subprocess entry point). Final Rust workspace: 713 passed (420 core, 190 Quinn,
+  69 wire, 30 driver and four resource tests), zero failed or ignored. This reruns
+  both actual-QUIC journal cases and the forced-exit coverage case on final tests.
+  No non-Rust implementation changed after the completed full repository suite.
+
+  Draft build handle 64110 exited 0:
+    ./build.sh core 05
+    /tmp/pipestream-v2-client-scopes-draft.log
+  The rebuilt text's Section 12 consistency paragraph and Appendix D were inspected.
+  idnits reports zero errors/flaws/warnings and the existing FIPS-180-4 downref
+  comment. Generated XML/TXT/HTML remain local build outputs. No draft submission,
+  main-branch merge or deployment occurred.
+
+Remaining goal obligations
+  Production V2 asynchronous client/CLI and bounded journal ownership/integration;
+  independently implemented authenticated Java V2; neutral Rust cross-language
+  process failures; measured whole-process resource gates; external real chunk/
+  distribute/transform/reassemble workload; equivalent streaming-gRPC baseline
+  with pinned raw costs and failure evidence. This checkpoint does not complete
+  V2 conformance or claim IETF acceptance. No ProtoMolt Search or fleet work changed.

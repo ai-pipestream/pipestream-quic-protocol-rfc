@@ -1,11 +1,11 @@
 use super::*;
 
 const APPLICATION: i64 = 0x5053434a;
-const FORMAT: i64 = 2;
+const FORMAT: i64 = 3;
 const BLOB_LIMIT: usize = IMAGE_LIMIT + 33;
 const SCHEMA: &str = "
 PRAGMA application_id=0x5053434a;
-PRAGMA user_version=2;
+PRAGMA user_version=3;
 CREATE TABLE journal(singleton INTEGER PRIMARY KEY CHECK(singleton=1), configuration BLOB NOT NULL, binding BLOB) STRICT;
 CREATE TABLE operations(row_id INTEGER PRIMARY KEY, operation BLOB NOT NULL UNIQUE CHECK(length(operation)=16), intent BLOB NOT NULL, receipt BLOB,
 kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 5), scope INTEGER NOT NULL, producer INTEGER NOT NULL, entity INTEGER) STRICT;
@@ -17,6 +17,12 @@ UNIQUE(scope,producer,entity)) STRICT;
 CREATE TABLE result_references(row_id INTEGER PRIMARY KEY, scope INTEGER NOT NULL, producer INTEGER NOT NULL, entity INTEGER NOT NULL,
 output_index INTEGER NOT NULL CHECK(output_index BETWEEN 0 AND 255), image BLOB NOT NULL,
 UNIQUE(scope,producer,entity,output_index)) STRICT;
+CREATE TABLE scopes(row_id INTEGER PRIMARY KEY, scope INTEGER NOT NULL UNIQUE, producer INTEGER NOT NULL,
+parent_scope INTEGER, parent_producer INTEGER, parent_entity INTEGER, image BLOB NOT NULL,
+UNIQUE(parent_scope,parent_producer,parent_entity)) STRICT;
+CREATE TABLE scope_members(row_id INTEGER PRIMARY KEY, scope INTEGER NOT NULL, entity INTEGER NOT NULL, image BLOB NOT NULL,
+UNIQUE(scope,entity)) STRICT;
+CREATE TABLE scope_coverage(row_id INTEGER PRIMARY KEY, scope INTEGER NOT NULL UNIQUE, image BLOB NOT NULL) STRICT;
 ";
 
 #[derive(Debug)]

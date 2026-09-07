@@ -1323,6 +1323,54 @@ complete scope membership/status coverage validation, independent Java V2, neutr
 cross-language process failures and measured whole-process/workload comparison.
 These tests do not claim that broader conformance or measured RSS/heap bounds.
 
+### Rust client scope membership and closure, 2026-09-07
+
+`v2::client::Journal` now stores bounded scope identities/member snapshots and
+verified bottom-up coverage. All APIs still require authenticated, correlated
+transport evidence and blocking storage ownership outside the control reader.
+
+- V2-VIEW/CLOSE: merge out-of-order/overlapping pages, including 300 members and
+  a reopen between pages. Empty pages and state hints are not completeness or
+  full WORK evidence. Only complete sorted membership matching the recomputed
+  immutable seal sets `membership_verified`.
+- V2-OP/CLOSE: known declaration receipts, parent scope producer/membership,
+  immutable child allocations, work/manifest evidence and ancestor fences must
+  agree in either arrival order. Valid child-first metadata survives reopen and
+  does not invent parent admission. Parent pages and later sealing receipts
+  recheck retained child relationships, refusing contradictions atomically.
+- V2-CLOSE: checkpoint requires the full seal, terminal WORK evidence and saved
+  child coverage. Incrementally recompute counters/status root, enforce time
+  ordering and STRICT successful-parent closure. Failed parents still wait for
+  child closure. Missing evidence is NOT_READY, not an inferred success.
+- V2-STORE: quota/write-failure refusal preserves prior evidence and unresolved
+  operations. Corrupt normalized keys/images, missing backing membership/work/
+  descendant coverage and older client formats refuse reopen. Actual forced
+  process exit preserves committed membership and root coverage.
+- V2-WIRE/CLOSE: the actual-QUIC journal recovery test now receives SCOPE pages
+  and checkpoint, saves coverage, exclusively reopens, reconnects with rotated
+  configured owner credentials and completes DRAIN with the exact saved root cut.
+  The test still shares the Rust codec, not the independent failure driver.
+
+The new parent-page and sealing-receipt regressions each first accepted a
+contradiction with `Ok(())`. Both paths now revalidate relationships in the same
+transaction as the new evidence. Section 12 explicitly states the both-arrival-
+orders requirement without imposing parent-first response delivery.
+
+This journal's complete-local-evidence coverage policy has extra member reads
+and storage cost; it is not a new universal requirement to fetch every WORK view
+before using any summary. Inventory scans and receipt comparisons are blocking.
+File/count limits do not establish measured latency, heap, native-memory or RSS
+bounds. Client format 3 refuses older history without conversion or deletion.
+Its measured empty database is 73,728 bytes, WAL 0 on the pinned build. The two
+physical-exhaustion fixtures now use 128 KiB DB/WAL/journal and 64 KiB SHM caps;
+they still prove real refusal, rollback and preservation on reopen. Earlier
+dated format-1/2 evidence above retains its original measured 64 KiB fixtures.
+
+Evidence: [`durable-work-v2-client-scopes-2026-09-07.txt`](../../conformance/results/durable-work-v2-client-scopes-2026-09-07.txt).
+Production asynchronous client/CLI integration, independent Java V2, neutral
+cross-language process failures, measured whole-process resource gates and the
+original external workload/equivalent streaming-gRPC comparison remain open.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently
