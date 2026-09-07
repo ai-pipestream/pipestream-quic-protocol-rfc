@@ -510,11 +510,59 @@ to 73,728 bytes (WAL 0). The physical-exhaustion fixtures now use 128 KiB limits
 for the database, WAL and rollback journal and 64 KiB for shared memory; they still
 exercise actual exhaustion/refusal and verify earlier evidence survives reopen.
 
-The production V2 client event loop, CLI and full transport integration of these
-coverage APIs still require implementation. The async journal owner below now
-supplies bounded off-runtime storage ownership.
+The V2 transport below now supplies the network event loop. The durable client
+facade, CLI and full automatic integration of these coverage APIs remain open.
+The async journal owner supplies bounded off-runtime storage ownership.
 Independent Java V2, neutral cross-language failures and the original
 external workload/equivalent streaming-gRPC resource comparison remain open.
+
+### Version-2 client wire transport
+
+`v2_client::transport::Transport` owns one authenticated QUIC connection. Its
+`Security` constructor uses configured trust roots and an optional client
+certificate, never an insecure verifier or credentials inferred from a locator.
+The capability offer defaults to Core only. A durable application must explicitly
+require the profiles its journal/work needs and implement their full obligations.
+
+`exchange` replaces a caller's placeholder request ID with a connection-local
+monotonic ID. It leaves operation identities and commitments unchanged. Controls
+are independently read and written through the reserved-credit flow owner;
+the bounded correlation book accepts reordered replies. A cancelled waiter
+retains correlation until a response or the configured response deadline closes
+the connection. It does not cancel work or authorize a new mutation identity.
+Result reads require a previously authenticated, identity-checked manifest.
+
+`input` registers actual stream IDs in allocation order. `Input::write` copies
+at most one 8 KiB chunk per command, sends incrementally and aborts if an accepted
+write future is cancelled. `finish` validates length/digest and schedules FIN,
+not admission. `response` returns the authority's correlated receipt/refusal,
+including header-only replay. A locally abandoned input keeps its correlation
+until that response or bounded connection failure. Admission limits are checked
+before another stream is allocated.
+
+`Output::read_unverified` returns bounded chunks for reversible staging. Only
+validated full length, digest and FIN make `verification()` available. Independent
+tasks enforce idle/lifetime deadlines even if the consumer stops polling; an
+object queue has one 8 KiB chunk plus one in-flight chunk. A corrupt/truncated
+payload or recognizable wrong commitment fails only its delivery. Unsolicited,
+duplicate and wrong-direction correlation remains connection-fatal.
+
+There are 64 process-wide connection owners, including cancelled handshakes and
+Quinn draining. Each connection has at most 128 pending calls, negotiated stream
+ceilings, bounded headers, and conservative 2 MiB raw-control and 2 MiB transport
+configuration gates. Pending tickets include completed internal replies until
+consumption/discard; caller-owned returned values are not internal history.
+Object tasks are owned and joined, and completed task records are reaped before
+replacement admission. `close` closes transport only; `closed` confirms network
+task/endpoint drainage. These structural/count gates are not measured heap/RSS.
+
+This is the low-level network half, not an automatic durable-session facade.
+Applications must await journal intent persistence and a covering declaration
+receipt before transmitting input, then validate/persist authenticated observations
+before using their commitments. A real-server test composes the public journal
+and transport across a 256 KiB transfer, replay, certificate rotation/reopen and
+exact root completion. Standalone V2 CLI/file adapters, complete independent
+Java V2 and neutral cross-language/workload evidence remain unfinished.
 
 ### Version-2 asynchronous journal owner
 

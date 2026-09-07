@@ -1,0 +1,82 @@
+Rust V2 client wire transport checkpoint, 2026-09-07
+Repository: pipestream-quic-protocol-rfc
+Branch: feat/durable-work-results-v2
+Parent: 2250892f1427f9a17f469fcb35517fd9cb04a5e1
+rustc 1.97.1 (8bab26f4f 2026-07-14)
+cargo 1.97.1 (c980f4866 2026-06-30)
+
+This is not completed Java V2 interoperability, a finished durable client facade,
+or the original comparative workload/resource deliverable. No deployment,
+submission or merge to main was performed. Dependencies and storage/wire formats
+are unchanged. Section 12 clarifies result-commitment error scope.
+
+Final production-source SHA-256:
+2ce7501f2016bc8481cb5488f00fec221d91e2b2ac6f8fc5a4a7d1cb7f53cfcd  implementations/rust-quinn/quinn/src/v2_client/transport.rs
+c67d45961530b95c9b63dd6f32fe6b2ecc059dc6265ee3ffe5418831ede8b0d8  implementations/rust-quinn/quinn/src/v2_client/transport/objects.rs
+e69d92eecebf68b6d6dfbd7bc5e0b5375375d0bc587e7407db07661febd102ef  implementations/rust-quinn/quinn/src/v2_client/transport/requests.rs
+2353531ca4f4e218d3c608d366e4b2ce52ceb7bf1bc04dd97cc120af0983ec2e  implementations/rust-quinn/src/v2/correlation.rs
+966035016301de48027b353a26d3f2bedcc6a52f161e1e6c542b7096719c7c88  sections-src/section-12.md
+
+Final Rust verification, direct process handle 16346, exit 0:
+  cargo fmt --all -- --check
+  cargo clippy --locked --workspace --all-targets -- -D warnings
+  cargo test --locked -p pipestream-quinn v2_tls::tests::authority::server::transport -- --nocapture
+  cargo test --locked --workspace
+Working directory: implementations/rust-quinn
+Focused result: 12 passed, 0 failed.
+Workspace: 737 passed, 0 failed = 420 core + 212 Quinn + 69 wire + 30 driver
+  + 6 isolated resource tests. Zero doc tests.
+Logs:
+  /tmp/pipestream-v2-client-transport-final-clippy.log
+  /tmp/pipestream-v2-client-transport-final-focused.log
+  /tmp/pipestream-v2-client-transport-final-workspace.log
+
+Separate explicit resource gate, handle 99809, exit 0:
+  cargo test --locked -p pipestream-quinn --test v2_client_resources -- --nocapture
+Raw observation:
+  V2 client resource gate: real-connections=64 refused-before-connect=1 drained-handles-retained=64 replacement=1
+The same gate passed again in the final workspace run. These are real connection
+counts/lifetimes, not measured heap, RSS, disk/network syscall bytes or a latency
+benchmark. Internal object chunks are bounded to 8192 bytes; the real-server test
+compares all 262144 payload bytes after incremental length/digest/FIN validation.
+
+Full conformance, direct process handle 53177, exit 0:
+  ./conformance/run_all.sh
+Log: /tmp/pipestream-v2-client-transport-full-suite.log
+This run's initial Rust tests preceded the final initial-object-credit adjustment;
+the final Rust run above tested that adjustment. No Java/native source changed.
+  737 Rust workspace tests; strict clippy and formatting
+  33 immutable language-neutral vectors
+  18 immutable recursive/recovery vectors
+  70 frozen V2 framing/CDDL vectors and 12 domain-separated commitments
+  bounded lifecycle/scope/composed models and expected negative controls
+  193 Java tests; 20 fresh Surefire XML reports; 0 failures/errors/skips
+  XML mtimes 2026-09-07 12:03:55.454007228 .. 12:06:30.255471283 -0400
+  Java native and C++ native checks passed
+  6 external Rust example tests
+  all 9 V1 black-box language pairs
+  all 32 raw QUIC capability probes
+  recursive/recovery and all external examples
+These existing language pairs are V1 evidence, not independent V2 evidence.
+
+Draft verification, direct process handle 62349, exit 0:
+  ./build.sh core 05
+Log: /tmp/pipestream-v2-client-transport-draft.log
+Rendered draft TXT and HTML inspected for Section 12.2 and Appendix D.
+idnits: 0 errors, 0 flaws, 0 warnings, 1 existing FIPS reference comment.
+
+Negative-test findings addressed:
+- A recognizable wrong result commitment initially failed with FRAME_ERROR and
+  terminated the connection. It now yields delivery-local INTEGRITY_ERROR; the
+  same connection completes another control request afterward.
+- Negotiation cancellation/invalid selection now preserve the intended close
+  error while the connection is owned, before releasing/draining the endpoint.
+- The initial slow-consumer harness incorrectly offered 200 ms, below the wire's
+  legal 1000 ms idle minimum. The client refused before connecting, while the
+  fake peer waited. The harness now validates its offer and bounds its handshake;
+  the legal idle-deadline test passes without polling the consumer.
+
+Pending original deliverables: automatic journal/session facade and CLI/file
+adapters; full independent Java V2; neutral cross-language crash/failure/resource
+driver; external chunk/distribute/transform/reassemble workload and equivalent
+authenticated/durable streaming-gRPC baseline with pinned raw measurements.

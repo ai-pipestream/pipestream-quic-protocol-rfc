@@ -7,6 +7,7 @@ use crate::{
 };
 use tokio::{sync::oneshot, task::JoinHandle};
 mod journal;
+mod transport;
 
 struct Running {
     db: Database,

@@ -259,9 +259,15 @@ impl Correlation {
             .get(&header.request.0)
             .ok_or_else(|| Error::frame("unsolicited result stream"))?;
         require(
-            !pending.receiving_result && pending.result.as_ref() == Some(header),
-            "duplicate or mismatched result header",
+            !pending.receiving_result && pending.result.is_some(),
+            "duplicate result or response to a non-object request",
         )?;
+        if pending.result.as_ref() != Some(header) {
+            return Err(Error::new(
+                ErrorCode::IntegrityError,
+                "result header disagrees with committed object",
+            ));
+        }
         if self
             .controls
             .values()

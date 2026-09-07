@@ -41,8 +41,10 @@ in both observation orders, including when a later sealing receipt verifies a
 parent's cached membership. Reopen preserves those commitments; reply reordering,
 contradictions, local write failures and physical exhaustion have regression tests.
 The blocking core APIs now have a bounded asynchronous journal owner, including
-cancel-safe capacity and cross-process ownership/recovery tests. This is not yet
-the completed V2 network client/CLI.
+cancel-safe capacity and cross-process ownership/recovery tests. A bounded V2
+client wire transport now supplies authenticated connections, multiplexed control
+and incremental input/result streams. Its real-server journal round trip and
+adversarial-peer tests do not complete the durable client facade or CLI.
 The Rust `pipestream_core::v2` library now implements typed codecs for every
 version-2 message and record, frozen commitments, negotiation checks, bounded
 client correlation and incremental object validation. This is a library

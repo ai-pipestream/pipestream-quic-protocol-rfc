@@ -2,3 +2,4 @@
 //! of control I/O; it is not itself a network connection or an authenticator.
 
 pub mod journal;
+pub mod transport;

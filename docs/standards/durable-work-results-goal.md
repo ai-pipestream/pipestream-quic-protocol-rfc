@@ -1837,3 +1837,58 @@ independent complete Java V2; the neutral cross-language failure/resource driver
 and the original external workload/equivalent streaming-gRPC comparison with
 pinned raw cost/failure evidence. The tests still manually drive the network;
 the async journal is not a substitute for those remaining deliverables.
+
+### Bounded V2 client wire transport, 2026-09-07
+
+`v2_client::transport::Transport` now owns authenticated QUIC negotiation,
+monotonic request allocation, independent control reading/writing, incremental
+input sending and incremental result receiving. Accepted/cancelled request
+waiters retain correlation until their actual reply or bounded connection failure.
+Input stream allocation is serialized without blocking ordinary controls; local
+admission limits are checked before allocating an uncorrelated stream. A dropped
+input does not make a later legitimate receipt unsolicited. Output chunks stay
+explicitly unverified until full length, SHA-256 and FIN are validated. Independent
+stream tasks enforce deadlines even when an application stops polling.
+
+Connection/task/queue ownership is bounded. A process has at most 64 client
+connection owners, including cancelled negotiations and QUIC draining. Request
+tickets include queued/unresolved and unconsumed internal replies; object queues
+have one 8 KiB chunk and one in-flight chunk. Finished task records are reaped
+before replacement admission. No object streams receive credit before selection,
+and Core-only selection does not grant result-stream credit. These structural
+gates do not establish measured whole-process heap/RSS or workload performance.
+
+Twelve wire tests exercise the public client against the real durable listener
+or a deliberately adversarial authenticated peer. The real-server case persists
+intent and receipts, transfers 256 KiB, replays an admission header without the
+body, reopens the journal with rotated credentials, retrieves retained output,
+verifies sealed coverage and obtains an exact root-completion response. Negative
+cases cover reordering/cancellation, pending/admission ceilings, wrong-direction
+control, invalid selection, wrong commitments, corrupt/truncated/extra bytes and
+unpolled consumers. A separate process opens 64 real Core connections, refuses
+the 65th and admits a replacement after actual draining with old handles held.
+
+The result-header negative test found an error-scope gap. Section 12 now explicitly
+distinguishes a recognizable wrong object commitment (delivery-local
+INTEGRITY_ERROR) from invalid correlation (fatal FRAME_ERROR). Core correlation
+and the new client enforce that distinction; no wire/CDDL/storage version changes.
+
+Verification: final Rust handle 16346 exited zero with 737 workspace tests,
+12 focused wire tests, strict clippy and formatting. Full suite handle 53177
+exited zero with 737 Rust tests before the final initial-object-credit adjustment,
+193 Java tests in 20 fresh XML reports, six external Rust tests, vectors/models,
+native tests, nine V1 pairs, 32 capability probes and examples. Final Rust tests
+cover the adjustment; non-Rust implementation sources did not change. Draft
+handle 62349 exited zero; rendered Section 12.2/Appendix D inspected; idnits has
+zero errors/flaws/warnings and the existing FIPS comment. Evidence:
+`conformance/results/durable-work-v2-client-transport-2026-09-07.txt`.
+
+The full original objective remains active. Next is the durable session facade
+that automatically composes the journal and transport, including persistence of
+receipts after caller cancellation and independently owned input-response waits,
+then CLI/file adapters. The current transport is intentionally the low-level
+network half, not a facade that automatically persists/authenticates every caller
+observation. Full independent Java V2, the neutral cross-language failure/resource
+driver, and the original external workload/equivalent streaming-gRPC comparison
+with pinned raw cost/failure evidence remain required. No submission, deployment
+or merge to main occurred.

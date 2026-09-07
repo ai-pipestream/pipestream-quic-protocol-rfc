@@ -157,7 +157,7 @@ or deletion; authority storage is unchanged. The pinned empty database measures
 73,728 bytes; physical-exhaustion tests now use 128 KiB database/WAL/journal caps
 and a 64 KiB shared-memory cap, not a process-memory claim.
 These are not independent cross-language failure evidence or a completed V2
-client: production transport integration and whole-process resource measurements
+client: automatic durable-facade integration and whole-process resource measurements
 remain required. Section 12 now explicitly requires parent/child consistency
 checks regardless of observation order; no wire-format change was needed.
 
@@ -173,6 +173,19 @@ test opens 64 real journal owners, refuses another and restores capacity after
 shutdown; their empty database files total 4,718,592 bytes on the pinned build.
 The two QUIC recovery tests now use the async journal API. They do not establish a complete production
 client, independent V2 interoperability or measured whole-process resource bounds.
+
+The Rust public V2 client wire transport now owns authenticated connections,
+correlated control I/O and incremental input/result streams. A real-server test
+composes it with the async journal for a 256 KiB object, admission replay, rotated
+credentials, retained output and exact root completion. Additional wire tests
+exercise reordered/cancelled waits, abandoned inputs, malformed control/selection,
+wrong commitments, corrupt/truncated/extra bytes, slow consumers and pending
+deadlines. An isolated gate opens 64 actual Core connections, refuses a 65th and
+admits a replacement after draining. These are count/behavior checks, not measured
+whole-process memory or independent V2 interoperability. The durable client facade,
+CLI/file integration, Java V2 and workload comparison remain incomplete. Section
+12 clarifies that an identifiable result's wrong commitment fails that delivery;
+invalid correlation remains fatal. The wire encoding is unchanged.
 
 ## Java/Netty Reference Implementation
 

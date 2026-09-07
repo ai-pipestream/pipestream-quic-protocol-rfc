@@ -125,7 +125,12 @@ Client control requests use strictly increasing positive `request` integers,
 starting at 1 per connection, shared across message types. A repeated or
 decreasing identifier is FRAME_ERROR; reconnect before exhaustion. Responses
 may arrive out of order but MUST identify an outstanding request of the
-correct kind. A mismatched, duplicate or unsolicited response is FRAME_ERROR.
+correct kind. A mismatched, duplicate or unsolicited control response is FRAME_ERROR.
+A result header naming an unknown request, a non-result request, or an already
+started result response is FRAME_ERROR. A structurally valid header naming an
+outstanding result read but contradicting its retained object commitment is
+INTEGRITY_ERROR for that delivery: stop that stream without closing unrelated
+requests. This distinction does not allow duplicate or unsolicited responses.
 The request is complete when its specified response or REFUSAL arrives,
 except a result read, which completes at validated result-stream FIN or
 refusal/reset. No response may be interpreted as an unspecified later step.

@@ -1410,6 +1410,36 @@ multiplexer/CLI and complete transport/file integration remain open, together
 with independent Java V2, the neutral driver and original workload/gRPC comparison.
 No wire, CDDL, client database format, authority format or dependency changed.
 
+### Rust client wire transport, 2026-09-07
+
+`v2_client::transport` supplies bounded QUIC connection ownership and all typed
+control/input/result wire paths. It is not the automatic durable journal facade
+or independent acceptance oracle. The tests use the existing Rust codec.
+
+- Actual durable server: persisted intent/receipt; 256 KiB incremental input;
+  header-only original admission replay; certificate rotation and journal reopen;
+  retained-manifest result stream; independent control while output is unread;
+  exact bytes and verified FIN; sealed membership/checkpoint and root DRAIN.
+- Correlation: reordered replies, cancelled checkpoint waiter with retained late
+  response, reverse-order replies at the pending ceiling, no ID spent on local
+  refusal, abandoned input with later correlated refusal, and unresolved input
+  capacity checked before stream allocation.
+- Adversarial authenticated wire peer: invalid increased capability selection,
+  cancelled negotiation, wrong-direction/unsolicited control, recognizable wrong
+  result commitment, bad digest/truncation/extra bytes, response deadline, and a
+  consumer not polled until its negotiated idle deadline sends STOP_SENDING.
+  The last test uses the legal 1,000 ms minimum, not an invalid shorter offer.
+- Isolated resource process: 64 actual Core connections; the 65th refused locally;
+  all owners drained with handles still held; replacement succeeds. This proves
+  count/lifetime enforcement, not heap/RSS or comparative workload performance.
+
+Section 12 distinguishes wrong result commitments (delivery-local INTEGRITY_ERROR)
+from wrong/duplicate/unsolicited correlation (fatal FRAME_ERROR). No wire/CDDL,
+database format, authority storage or dependency versions changed. The automatic
+durable facade/CLI/file integration, independent Java V2, neutral cross-language
+failure driver and original workload/equivalent streaming-gRPC comparison remain
+required. Evidence: `conformance/results/durable-work-v2-client-transport-2026-09-07.txt`.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

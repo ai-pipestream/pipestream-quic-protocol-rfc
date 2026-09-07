@@ -704,7 +704,10 @@ fn result_correlation_stays_pending_until_verified_fin_and_rejects_second_respon
     book.register(&request, Some(&manifest)).unwrap();
     let mut changed = header.clone();
     changed.length.0 += 1;
-    assert!(book.start_result(&changed, now).is_err());
+    assert_eq!(
+        book.start_result(&changed, now).err().unwrap().code,
+        ErrorCode::IntegrityError
+    );
     let mut stream = book.start_result(&header, now).unwrap();
     assert!(book.start_result(&header, now).is_err());
     stream.receive(b"ABC", now).unwrap();

@@ -280,7 +280,7 @@ impl Writer {
     }
     pub fn stopped(
         &self,
-    ) -> impl Future<Output = Result<Option<quinn::VarInt>, quinn::StoppedError>> + Send + 'static
+    ) -> impl Future<Output = Result<Option<quinn::VarInt>, quinn::StoppedError>> + Send + 'static + use<>
     {
         self.stream.stopped()
     }
