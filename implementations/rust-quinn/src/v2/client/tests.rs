@@ -1,5 +1,6 @@
 use super::*;
 use std::thread;
+mod observations;
 
 fn creation() -> Creation {
     Creation {
@@ -97,6 +98,7 @@ fn new(path: &Path, operations: u64) -> Journal {
         creation(),
         JournalLimits {
             operations: Id(operations),
+            ..Default::default()
         },
         PhysicalLimits::default(),
     )
@@ -129,7 +131,10 @@ fn creation_and_uncertain_intent_survive_exclusive_reopen_with_fresh_request_num
     let journal = Journal::open(
         &path,
         creation(),
-        JournalLimits { operations: Id(2) },
+        JournalLimits {
+            operations: Id(2),
+            ..Default::default()
+        },
         PhysicalLimits::default(),
     )
     .unwrap();
@@ -141,7 +146,10 @@ fn creation_and_uncertain_intent_survive_exclusive_reopen_with_fresh_request_num
     let journal = Journal::open(
         &path,
         creation(),
-        JournalLimits { operations: Id(2) },
+        JournalLimits {
+            operations: Id(2),
+            ..Default::default()
+        },
         PhysicalLimits::default(),
     )
     .unwrap();
@@ -260,8 +268,9 @@ fn every_mutation_round_trips_and_checks_its_typed_receipt() {
             Outcome::Skipped {
                 work: work(),
                 accepted_at: Number(123),
-                disposition: Disposition(0),
-                state_at_commit: State::SKIPPED,
+                // Cancellation won. Skip can only report that existing terminal state.
+                disposition: Disposition(1),
+                state_at_commit: State::CANCELLED,
             },
         ),
         (
@@ -296,7 +305,10 @@ fn every_mutation_round_trips_and_checks_its_typed_receipt() {
     let journal = Journal::open(
         &path,
         creation(),
-        JournalLimits { operations: Id(16) },
+        JournalLimits {
+            operations: Id(16),
+            ..Default::default()
+        },
         PhysicalLimits::default(),
     )
     .unwrap();
@@ -381,7 +393,10 @@ fn reopen_refuses_missing_empty_changed_configuration_and_corrupt_records() {
         Journal::initialize(
             &path,
             creation(),
-            JournalLimits { operations: Id(2) },
+            JournalLimits {
+                operations: Id(2),
+                ..Default::default()
+            },
             PhysicalLimits::default()
         )
         .is_err()
@@ -392,7 +407,10 @@ fn reopen_refuses_missing_empty_changed_configuration_and_corrupt_records() {
         Journal::open(
             &path,
             changed,
-            JournalLimits { operations: Id(2) },
+            JournalLimits {
+                operations: Id(2),
+                ..Default::default()
+            },
             PhysicalLimits::default()
         )
         .is_err()
@@ -401,7 +419,10 @@ fn reopen_refuses_missing_empty_changed_configuration_and_corrupt_records() {
         Journal::open(
             &path,
             creation(),
-            JournalLimits { operations: Id(3) },
+            JournalLimits {
+                operations: Id(3),
+                ..Default::default()
+            },
             PhysicalLimits::default()
         )
         .is_err()
@@ -409,7 +430,10 @@ fn reopen_refuses_missing_empty_changed_configuration_and_corrupt_records() {
     let journal = Journal::open(
         &path,
         creation(),
-        JournalLimits { operations: Id(2) },
+        JournalLimits {
+            operations: Id(2),
+            ..Default::default()
+        },
         PhysicalLimits::default(),
     )
     .unwrap();
@@ -423,7 +447,10 @@ fn reopen_refuses_missing_empty_changed_configuration_and_corrupt_records() {
         Journal::open(
             &path,
             creation(),
-            JournalLimits { operations: Id(2) },
+            JournalLimits {
+                operations: Id(2),
+                ..Default::default()
+            },
             PhysicalLimits::default()
         ),
         Err(JournalError::Corrupt(_))
@@ -477,7 +504,10 @@ fn incompatible_reopen_does_not_change_the_existing_sqlite_journal_mode() {
         Journal::open(
             &path,
             creation(),
-            JournalLimits { operations: Id(4) },
+            JournalLimits {
+                operations: Id(4),
+                ..Default::default()
+            },
             PhysicalLimits::default()
         )
         .is_err()
@@ -528,6 +558,9 @@ fn client_journal_kill_child() {
     };
     let journal = bound(Path::new(&path), 4);
     journal.prepare(&declare()).unwrap();
+    if std::env::var_os("PIPESTREAM_V2_JOURNAL_KILL_OBSERVATIONS").is_some() {
+        observations::persist_for_crash(&journal);
+    }
     use std::io::Write;
     println!("journal-committed");
     std::io::stdout().flush().unwrap();
@@ -562,7 +595,10 @@ fn failed_local_receipt_commit_preserves_uncertainty_and_exact_replay() {
     let journal = Journal::open(
         &path,
         creation(),
-        JournalLimits { operations: Id(4) },
+        JournalLimits {
+            operations: Id(4),
+            ..Default::default()
+        },
         PhysicalLimits::default(),
     )
     .unwrap();
@@ -639,6 +675,23 @@ fn exhausted_cursor_refuses_instead_of_sqlite_random_rowid_fallback() {
 
 #[test]
 fn forced_process_exit_after_commit_preserves_the_original_unknown_operation() {
+    let (_directory, journal) = kill_and_reopen(false);
+    assert_eq!(journal.intent(declare().operation).unwrap(), declare());
+    assert!(journal.receipt(declare().operation).unwrap().is_none());
+    journal.prepare(&declare()).unwrap();
+    assert_eq!(
+        journal.unresolved(Number(0), PageLimit(256)).unwrap().len(),
+        1
+    );
+}
+
+#[test]
+fn forced_process_exit_preserves_terminal_observation_manifest_and_selected_index() {
+    let (_directory, journal) = kill_and_reopen(true);
+    observations::verify_crash_recovery(&journal);
+}
+
+fn kill_and_reopen(observations: bool) -> (tempfile::TempDir, Journal) {
     use std::io::{BufRead, BufReader};
     struct Child(std::process::Child);
     impl Drop for Child {
@@ -649,19 +702,22 @@ fn forced_process_exit_after_commit_preserves_the_original_unknown_operation() {
     }
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("journal.sqlite");
-    let mut child = Child(
-        std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "v2::client::tests::client_journal_kill_child",
-                "--nocapture",
-            ])
-            .env("PIPESTREAM_V2_JOURNAL_KILL_PATH", &path)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
-            .spawn()
-            .unwrap(),
-    );
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "v2::client::tests::client_journal_kill_child",
+            "--nocapture",
+        ])
+        .env("PIPESTREAM_V2_JOURNAL_KILL_PATH", &path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit());
+    if observations {
+        command.env("PIPESTREAM_V2_JOURNAL_KILL_OBSERVATIONS", "1");
+    } else {
+        command.env_remove("PIPESTREAM_V2_JOURNAL_KILL_OBSERVATIONS");
+    }
+    let mut child = Child(command.spawn().unwrap());
     let stdout = child.0.stdout.take().unwrap();
     let (sent, receive) = std::sync::mpsc::channel();
     let reader = thread::spawn(move || {
@@ -678,15 +734,12 @@ fn forced_process_exit_after_commit_preserves_the_original_unknown_operation() {
     let journal = Journal::open(
         &path,
         creation(),
-        JournalLimits { operations: Id(4) },
+        JournalLimits {
+            operations: Id(4),
+            ..Default::default()
+        },
         PhysicalLimits::default(),
     )
     .unwrap();
-    assert_eq!(journal.intent(declare().operation).unwrap(), declare());
-    assert!(journal.receipt(declare().operation).unwrap().is_none());
-    journal.prepare(&declare()).unwrap();
-    assert_eq!(
-        journal.unresolved(Number(0), PageLimit(256)).unwrap().len(),
-        1
-    );
+    (directory, journal)
 }

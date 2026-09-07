@@ -1705,3 +1705,39 @@ C++ checks, nine V1 pairs, 32 capability probes and all examples. No non-Rust
 source changed afterward. The draft rebuild and rendered status inspection pass;
 idnits reports zero errors/flaws/warnings and its existing FIPS comment. Evidence:
 `conformance/results/durable-work-v2-client-journal-2026-09-07.txt`.
+
+### Client work observations and retained result selections, 2026-09-07
+
+The Rust journal now persists revisioned work observations, full immutable
+manifests and explicit output-index selections. Known admission, retry and
+cancel/skip receipts constrain those records in either arrival order. An older
+compatible reply cannot replace a newer view; a terminal/fence contradiction
+refuses instead of inventing an execution transition. Manifest retention does
+not grant fresh output availability or rerun processing.
+
+Fifteen added storage scenarios include a reproduced contradictory-receipt bug,
+forced process termination after observation/reference commit, empty-output and
+inputless-cancellation cases, corrupt indexes/images, independent quotas, atomic
+rollback and actual large-manifest physical exhaustion. The existing actual-QUIC
+recovery test now reopens the saved manifest/selection, authenticates with rotated
+owner credentials and reads original attempt-1 bytes with unchanged terminal
+revision. These tests still share the Rust codec, not an independent oracle.
+
+Client local format 2 explicitly refuses older history without conversion or
+deletion. Authority storage, normative wire/CDDL and dependencies are unchanged.
+The draft implementation-status section and overview now distinguish the public
+Rust listener from the unfinished client/CLI integration and Java V2 work.
+Evidence: `conformance/results/durable-work-v2-client-observations-2026-09-07.txt`.
+
+Final full-suite handle 63558 exited zero: 695 Rust workspace tests, strict
+clippy/formatting, 193 Java tests in 20 fresh reports, six external Rust example
+tests, frozen vectors/CDDL, bounded models, native checks, nine V1 interop pairs,
+32 capability probes and all examples. Draft build handle 36750 exited zero;
+the rendered Appendix D was inspected. idnits reports zero errors/flaws/warnings
+and the existing FIPS comment. No submission or deployment occurred.
+
+The full objective is unchanged. Next: durable scope membership/status coverage
+and bounded asynchronous client transport/journal ownership, followed by the
+independent Java implementation and neutral failure/resource driver. The external
+workload and equivalent streaming-gRPC comparison remain mandatory, not deferred
+out of the goal. This checkpoint does not establish complete V2 conformance.

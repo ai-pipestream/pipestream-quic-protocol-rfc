@@ -62,7 +62,7 @@ No detach, transport close or operator shutdown asserts durable completion.
 Fifteen Core tests cover configuration and real QUIC paths, including non-reading peers,
 oversized/truncated frames, resets, quota boundaries and shutdown. Twenty TLS
 tests cover the underlying security boundary. The separate durable listener
-below integrates storage/execution; client journals, Java V2 and whole-process
+below integrates storage/execution; complete client recovery integration, Java V2 and whole-process
 resource measurements remain unfinished.
 
 ## Version-2 durable server
@@ -392,7 +392,7 @@ chunks but neither stores them nor runs callbacks. An endpoint must drive
 its deadline checks even when no bytes arrive, and invoke `finish` only for
 an actual successful FIN, never a stream reset.
 
-### Version-2 client intent journal
+### Version-2 client recovery journal
 
 `pipestream_core::v2::client::Journal` stores one immutable creation/session in
 a separate SQLite database. `initialize` is explicit new history; `open` refuses
@@ -411,8 +411,8 @@ under an existing ID are refused; matching preparation is idempotent.
 
 `record_receipt` verifies the operation digest under the stored session, typed
 outcome and all known request constraints, then persists the exact receipt.
-This library does not authenticate a directly supplied record. Full scope seals,
-status coverage and manifests require their further client validators; a stored
+This library does not authenticate a directly supplied record. Full scope seals
+and status coverage require further client validation; a stored
 declaration receipt alone is not proof of complete scope coverage. An input
 producer must still receive the covering declaration receipt before transmission.
 
@@ -424,7 +424,25 @@ that uncertainty. No automatic eviction, expiration or identity regeneration is
 provided. A local disk-full error leaves earlier intent available for recovery;
 callers must not report the unsaved observation as durably recorded.
 
-Default inventory is 4096 operations, configurable from 1 through 1,000,000;
+`observe_work(revision, view)` checks known admission, attempt/fence, policy and
+manifest commitments, then commits the view and its manifest atomically. An
+out-of-order reply cannot overwrite a newer view. Accepted retry/cancel/skip
+receipts and terminal observations are checked in either arrival order.
+`observed_work` returns the newest durable observation, not an inferred current
+authority state. `remember_manifest` retains immutable evidence independently of
+output availability; its presence never renews a read lease or schedules work.
+
+`remember_reference(manifest, index)` atomically retains the full manifest and
+the application's explicit output selection. `retained_reference(work, attempt,
+index)` restores it and constructs attachment/read requests with the retained
+issuer, owner, session, attempt and digest. No endpoint or credentials are derived
+from the locator. The caller supplies trusted endpoint mapping and authentication,
+and must still validate the actual result bytes, length and FIN. A manifest alone
+does not choose an output, and a failed download does not authorize a new attempt.
+
+Default inventory is 4096 operations and independently 4096 entries in each of
+the work-view, manifest and output-selection inventories. Each configured ceiling
+is from 1 through 1,000,000. Existing entries remain usable at capacity;
 individual images are bounded before reads/allocations. The existing guarded
 SQLite backend separately caps database, WAL, rollback-journal and shared-memory
 file lengths. FULL synchronous commits and checksummed, identity-bound records
@@ -435,20 +453,30 @@ All journal calls are blocking and belong off the control reader/async executor.
 The directory must remain private to cooperating journal users; checksums do not
 authenticate hostile edits or repair rollback/loss of local history.
 
-Thirteen substantive journal tests plus one subprocess entry point cover exclusive
+The original thirteen substantive journal tests plus one subprocess entry point cover exclusive
 reopen, profile/identity conflicts, all six mutation kinds, concurrent preparation,
 pagination/cursor exhaustion, corrupt images, failed receipt commits, actual
 64 KiB physical exhaustion and forced process termination after intent commit.
 Removing that commit deliberately makes the crash-recovery test fail. A regression
 also verifies that incompatible reopen refuses before changing SQLite journal mode.
-Two further
-real-QUIC tests reopen the journal after unrecorded creation/declaration/admission
-replies, replay the original identities and read the original attempt's output.
+Additional tests cover contradictory receipts in both arrival orders, observation
+monotonicity, terminal immutability, empty output manifests, inputless cancellation,
+explicit reference selection, independent quotas, corrupt normalized keys/images,
+atomic rollback and a large manifest refused by a real 64 KiB disk cap. A second
+forced-exit scenario reopens the committed terminal view, manifest and selected
+index. Two real-QUIC tests reopen the journal after unrecorded creation/declaration/
+admission replies, replay original identities and read the original attempt's
+output. The result case reopens its saved reference, authenticates with a rotated
+owner certificate and checks that retrieval leaves the terminal revision unchanged.
 Those tests use the existing Rust codec, not an independent oracle.
 
-The production V2 client event loop, CLI, bounded asynchronous journal ownership,
-durable work/coverage observations and retained output references still require
-integration. Independent Java V2, neutral cross-language failures and the original
+The local client format is now 2, distinct from authority storage and wire version.
+Format-1 client journals refuse before WAL configuration; there is no automatic
+migration, deletion or replacement of unresolved history. No wire format changed.
+
+The production V2 client event loop, CLI, bounded asynchronous journal ownership
+and durable full-scope coverage still require implementation/integration.
+Independent Java V2, neutral cross-language failures and the original
 external workload/equivalent streaming-gRPC resource comparison remain open.
 
 `v2::authority::AuthorityStore` adds normalized SQLite session/creation history,

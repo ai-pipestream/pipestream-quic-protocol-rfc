@@ -1,0 +1,112 @@
+Rust V2 client work observations and retained result selections, 2026-09-07 UTC
+Base: fe637c42669bdd902c981443c9b099f31f38f3cf
+Implementation and tests: the commit containing this result file.
+
+Scope
+  The blocking client Journal now commits revisioned work views and full result
+  manifests; remember_reference additionally commits the selected output index.
+  Reopened references construct attachment and read requests from retained
+  issuer/owner/generation/attempt/digest. Trusted endpoints and owner credentials
+  remain separate configuration. Locator text is not an authentication source.
+  Output availability remains the authority's fresh read decision; a manifest
+  may remain useful evidence after bytes expire. Nothing here retries execution.
+
+  Known admission, retry and cancellation/skip receipts constrain views/manifests
+  regardless of reply arrival order. Changed terminal outcomes, fenced attempts,
+  input/deadline/child commitments, output budgets and retained policy intervals
+  are refused. Compatible stale replies return the newest stored view. Typed
+  receipts are also compared with each other; receipt commit order is not assumed
+  to be authority commit order. Scope-wide membership/ancestry coverage remains
+  a separate, unfinished client component.
+
+  Normalized operation target indexes select typed checksummed CBOR records.
+  Default count ceilings are 4096 operations and independently 4096 work views,
+  manifests and selected references. Each ceiling supports 1 through 1,000,000;
+  inventory is never automatically evicted. Individual images are bounded before
+  storage reads/decoding. Existing guarded SQLite file-length caps still apply.
+  Inventory scans and receipt comparisons are blocking; record limits do not
+  imply a measured latency, heap, native-memory or RSS bound.
+
+  Local client format is 2. Format-1 journals refuse without conversion, deletion
+  or replacing unresolved history. Authority format, wire/CDDL, dependencies and
+  processing contracts did not change. Caller-supplied records still need actual
+  transport authentication/correlation and output streams need byte/FIN validation.
+  Checksums detect corruption; they do not authenticate hostile local edits.
+
+Fifteen new substantive storage scenarios
+  observations_preserve_revision_order_and_immutable_terminal_evidence_on_reopen
+  views_and_manifests_enforce_known_admission_and_exact_retention_policy
+  full_manifest_and_explicit_output_selection_survive_reopen_without_uri_credentials
+  accepted_fence_or_replacement_refuses_conflicting_success_in_both_arrival_orders
+  observation_and_reference_failure_roll_back_the_contained_manifest
+  valid_replacement_and_terminal_fence_receipts_remain_valid_on_reopen
+  cancellation_and_retry_waits_cannot_turn_into_success_for_the_fenced_attempt
+  receipt_pairs_refuse_conflicting_fences_and_retry_times_without_an_observation
+  impossible_admission_receipts_cannot_be_saved_without_a_view
+  oversized_manifest_hits_physical_cap_without_partial_evidence_or_eviction
+  independent_observation_and_selection_quotas_never_evict_evidence
+  missing_or_corrupt_evidence_and_changed_normalized_keys_refuse_reopen
+  zero_outputs_and_inputless_cancellation_remain_valid_but_never_invent_references
+  profile_policy_and_root_identity_are_checked_without_a_known_admission
+  forced_process_exit_preserves_terminal_observation_manifest_and_selected_index
+
+  SQLite failing-insert triggers prove rollback of view/manifest/selection. The
+  forced-exit scenario waits for a child process's post-commit marker, kills it,
+  observes unsuccessful exit and exclusively reopens its view/manifest/selection.
+  A greater-than-64-KiB manifest hits real 64-KiB database/WAL caps without partial
+  installation or loss of earlier evidence; physical lengths and reopen are checked.
+  These are actual storage tests, not whole-process workload resource measurements.
+
+Actual QUIC integration
+  journal_recovers_unrecorded_input_admission_and_reads_the_original_attempt_output
+  now commits the authenticated successful view and selected reference, drops the
+  journal/client, reopens, connects with another configured certificate for the
+  same owner, attaches using retained identity and reads using the retained
+  digest. The test checks header identity, length, SHA-256, bytes/FIN and unchanged
+  terminal revision/attempt. The other journal wire replay test remains green.
+  These tests share the Rust codec. They are not the neutral cross-language driver
+  and do not kill the authority process.
+
+Regression trail
+  Initial focused handle 42811 exited 101: the new both-arrival-orders test saw
+  Ok(()) for a contradictory cancellation receipt after a retained success.
+    /tmp/pipestream-v2-observations-red.log
+  Reciprocal receipt/view/manifest checks fix that defect. The broader checks
+  also exposed an impossible old fixture accepting both cancel and skip for one
+  work. It now uses skip disposition 1 reporting pre-existing CANCELLED.
+  A later test initially expected to persist an unauthorized producer-1 input
+  intent; the existing codec correctly refused it earlier with FRAME_ERROR.
+  The test now asserts that earlier refusal, without weakening production code.
+    /tmp/pipestream-v2-observations-full-suite.log (failed handle 20933)
+
+Final verification
+  Original set-e full-suite handle 63558 exited 0 after the last source/test fix:
+    ./conformance/run_all.sh
+    /tmp/pipestream-v2-observations-full-suite-final.log
+  Passed formatting and strict workspace clippy; 695 Rust workspace tests
+  (402 core, 190 Quinn, 69 wire, 30 driver, four resource tests), zero failed or
+  ignored; release builds; frozen vectors/CDDL/commitments; all three bounded
+  lifecycle models and their negative controls; native/C++ tests; six external
+  Rust example tests; nine V1 black-box pairs; 32 raw QUIC capability probes;
+  recursive/recovery commands and all external language examples.
+
+  Java results were parsed from 20 fresh XML reports: 193 tests, zero failures,
+  errors or skips. Report modification times span 2026-09-07 09:33:49 through
+  09:36:51 America/New_York, inside this suite run. Earlier stale reports were
+  not treated as final evidence while the Java process was still running.
+
+  Draft build original handle 36750 exited 0:
+    ./build.sh core 05
+    /tmp/pipestream-v2-observations-draft.log
+  The rebuilt text's Appendix D was inspected: journal/reference status and
+  unfinished client/coverage/cross-language gates are present. idnits reports
+  zero errors, flaws or warnings and its existing FIPS-180-4 downref comment.
+  Generated XML/TXT/HTML remain local build outputs; no draft was submitted.
+
+Remaining goal obligations
+  Production V2 client event loop/CLI, bounded asynchronous journal ownership,
+  durable full-scope membership/status coverage, independent authenticated Java
+  V2, neutral Rust cross-language process failures, measured whole-process resource
+  gates, external real chunk/distribute/transform/reassemble workload and equivalent
+  streaming-gRPC baseline remain unfinished. This is not full V2 conformance or
+  an IETF acceptance/submission claim. No ProtoMolt Search or fleet work changed.

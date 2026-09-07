@@ -13,7 +13,9 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, pa
 use sha2::{Digest as _, Sha256};
 use std::{path::Path, sync::Arc, time::Duration as Elapsed};
 
+mod observations;
 mod storage;
+pub use observations::{ObservedWork, RetainedReference};
 #[cfg(test)]
 mod tests;
 
@@ -61,18 +63,25 @@ impl Creation {
     }
 }
 
+// The observation ceiling applies independently to work views, full manifests
+// and selected output references. No inventory is implicitly evicted.
 codec::record!(
-    JournalLimits { operations: Id } | s | {
-        require(
-            s.operations.0 <= 1_000_000,
-            "client operation ceiling exceeds one million",
-        )
-    }
+    JournalLimits {
+        operations: Id,
+        observations: Id
+    } | s
+        | {
+            require(
+                s.operations.0 <= 1_000_000 && s.observations.0 <= 1_000_000,
+                "client inventory ceiling exceeds one million",
+            )
+        }
 );
 impl Default for JournalLimits {
     fn default() -> Self {
         Self {
             operations: Id(4096),
+            observations: Id(4096),
         }
     }
 }
@@ -246,9 +255,10 @@ impl Journal {
                     "client journal operation count or cursor ceiling",
                 )));
             }
+            let (kind, scope, producer, entity) = observations::index(intent);
             tx.execute(
-                "INSERT INTO operations(row_id,operation,intent,receipt) VALUES(?1,?2,?3,NULL)",
-                params![last + 1, intent.operation.0.as_slice(), image],
+                "INSERT INTO operations(row_id,operation,intent,receipt,kind,scope,producer,entity) VALUES(?1,?2,?3,NULL,?4,?5,?6,?7)",
+                params![last + 1, intent.operation.0.as_slice(), image, kind, scope, producer, entity],
             )?;
         }
         tx.commit()?;
@@ -267,6 +277,7 @@ impl Journal {
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let intent = self.read_intent(&tx, receipt.operation)?;
         storage::validate_receipt(&intent, &self.read_identity(&tx)?, receipt)?;
+        self.validate_known_receipt(&tx, &intent, receipt)?;
         let row = storage::operation_row(&tx, receipt.operation)?
             .ok_or(JournalError::Corrupt("intent disappeared"))?;
         let image = storage::seal(&receipt.operation.0, &codec::encode(receipt, MAX_HEADER)?);
@@ -386,6 +397,17 @@ impl Journal {
         ))?;
         let image = storage::read(connection, "operations", "intent", row)?
             .ok_or(JournalError::Corrupt("missing intent"))?;
-        storage::decode_intent(&image, operation, &self.read_identity(connection)?)
+        let intent = storage::decode_intent(&image, operation, &self.read_identity(connection)?)?;
+        let retained = connection.query_row(
+            "SELECT kind,scope,producer,entity FROM operations WHERE rowid=?1",
+            [row],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
+        if observations::index(&intent) != retained {
+            return Err(JournalError::Corrupt(
+                "operation index disagrees with retained intent",
+            ));
+        }
+        Ok(intent)
     }
 }

@@ -26,20 +26,18 @@ The [durable-work/results goal](docs/standards/durable-work-results-goal.md)
 tracks the successor contract, independent Rust/Java implementation, and equivalent
 streaming-gRPC workload evidence. Local draft -05 defines the version-2 contract
 in Section 12 and Appendix F, with frozen wire examples. Its executable lifecycle
-models are bounded design checks. No complete version-2 application endpoint is
-implemented or advertised yet; existing full interoperability evidence is for
-version 1. Rust now also has a Core-only V2 QUIC server library with real
-negotiation, bounded framing, credential, quota and detach tests. It does not
-activate either durable profile or provide the complete V2 application endpoint.
-A separate authenticated Rust control adapter now dispatches session, scope,
-work, result and drain requests to the on-disk authority, with bounded metadata
-jobs and pending-transfer accounting. Its tests are local dispatch with real TLS
-peers, not durable wire interoperability. A separate input adapter now receives
-real QUIC objects through bounded file workers into validated durable admission,
-including replay, deadlines and cancellation-safe cleanup. Its control calls
-are still local. A result adapter now streams the actual retained outputs with
-bounded file workers, current authorization, deadlines and read-only replay.
-Public durable-listener integration and full V2 interoperability remain unfinished.
+models are bounded design checks. Rust's embeddable
+`v2_authority::server::Server` now integrates authenticated QUIC, durable dispatch,
+bounded input/result file workers and the execution/maintenance runtime. Actual
+wire tests exercise admission, output retrieval, reconnect, quotas and shutdown.
+The Core-only listener remains separate. A complete V2 client/CLI pair, independent
+Java V2 and neutral cross-language failure evidence remain unfinished; existing
+full interoperability evidence is for version 1.
+The Rust client journal now retains creation, immutable mutation intent/receipts,
+revisioned work observations and full manifests with explicit output selections.
+Reopen preserves those commitments; reply reordering, contradictory retry/fence
+receipts, local write failures and physical exhaustion have regression tests.
+These are blocking library APIs, not the completed asynchronous V2 client.
 The Rust `pipestream_core::v2` library now implements typed codecs for every
 version-2 message and record, frozen commitments, negotiation checks, bounded
 client correlation and incremental object validation. This is a library
@@ -79,11 +77,11 @@ these library APIs. Dependency-aware retention now commits deletion eligibility,
 collects unpinned files, then releases logical capacity. Restart/admission audits
 distinguish interrupted cleanup from missing live storage. Session retirement now
 commits eligibility before bounded metadata deletion and preserves generation and
-owner creation history. Authenticated application dispatch and independent Java
-V2 remain unfinished. No complete V2 application endpoint
-or profile is activated by these library APIs. The
-[V2 acceptance ledger](docs/standards/durable-work-v2-test-plan.md) keeps Java,
-authenticated transport, storage, execution and process-level evidence open.
+owner creation history. The listener integrates these authority libraries;
+the standalone commands remain version 1. The
+[V2 acceptance ledger](docs/standards/durable-work-v2-test-plan.md) distinguishes
+the Rust evidence from unfinished client integration, Java parity, neutral process
+failures and workload/resource comparison gates.
 
 Draft -04 now defines supported/required extension negotiation, implemented
 independently in Rust, Java, and C++. Unknown requirements fail CONNECT;

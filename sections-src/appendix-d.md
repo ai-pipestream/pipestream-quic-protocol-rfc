@@ -130,9 +130,19 @@ removing the intent commit fails recovery. Incompatible reopen now refuses
 before changing SQLite journal mode, with a reproduced regression. Two real-QUIC
 tests replay replies
 not recorded by the client, retaining original session/work/attempt identities.
+The result test now also reopens a durably retained full manifest and explicit
+output index, authenticates with rotated owner credentials and retrieves the
+original attempt's bytes without changing its terminal revision. The journal
+validates revisioned work observations and immutable manifests against retained
+admission, retry, fence and policy commitments in either reply order. Additional
+tests exercise conflicting records, atomic rollback, corruption, independent
+inventory limits, large-manifest physical exhaustion and forced termination after
+committing the observation/reference. Client local storage format 2 refuses older
+history without automatic conversion or deletion; authority storage is unchanged.
 These are not independent cross-language failure evidence or a completed V2
-client: asynchronous transport integration, durable coverage observations and
-retained result references remain required. No normative wire change was needed.
+client: asynchronous transport integration, durable full-scope coverage and
+whole-process resource measurements remain required. No normative wire change
+was needed.
 
 ## Java/Netty Reference Implementation
 

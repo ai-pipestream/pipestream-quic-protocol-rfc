@@ -195,9 +195,37 @@ async fn journal_recovers_unrecorded_input_admission_and_reads_the_original_atte
     };
     assert_eq!(receipt, original);
     journal.record_receipt(&receipt).unwrap();
-    let (_, view) = client.success().await;
+    let (revision, view) = client.success().await;
     assert_eq!(view.attempt, Number(1));
-    assert_eq!(client.result(view.manifest.as_ref().unwrap()).await, bytes);
+    journal.observe_work(revision, &view).unwrap();
+    journal
+        .remember_reference(view.manifest.as_ref().unwrap(), OutputIndex(0))
+        .unwrap();
+    drop(journal);
+    drop(client);
+    let journal = open(&path);
+    assert_eq!(journal.observed_work(&key()).unwrap().unwrap().view, view);
+    let reference = journal
+        .retained_reference(&key(), Id(1), OutputIndex(0))
+        .unwrap();
+    // The trusted fixture endpoint and separately configured rotated certificate
+    // come from Running, never from the retained locator hint.
+    let mut client = running.client(Some(0)).await;
+    let selected = client.negotiate(offered()).await;
+    journal
+        .record_binding(
+            &client.call(|id| reference.attach(Id(id)).unwrap()).await,
+            &selected,
+        )
+        .unwrap();
+    let request = client.request(|id| reference.read(Id(id)).unwrap()).await;
+    assert_eq!(
+        client
+            .receive_result(request, reference.manifest(), reference.index())
+            .await,
+        bytes
+    );
+    assert_eq!(client.success().await, (revision, view));
     assert!(
         journal
             .unresolved(Number(0), PageLimit(256))

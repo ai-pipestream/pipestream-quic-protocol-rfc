@@ -1281,6 +1281,48 @@ capability probes and all examples. No non-Rust source changed afterward. Draft
 rebuild and rendered inspection pass with zero idnits errors/flaws/warnings and
 the existing FIPS comment.
 
+### Rust client work observations and result references, 2026-09-07
+
+`v2::client::Journal` now persists authenticated work observations and full
+manifests with explicit selected output indices. Transport authentication and
+correlation still precede these blocking APIs. Normalized SQLite target indexes
+select matching immutable typed receipts; they are checked against checksummed
+CBOR records, not an opaque server-state snapshot.
+
+- V2-OP/ATTEMPT/VIEW: compare admission fields, retry replacement/commit time and
+  cancellation/skip disposition with known evidence, independently of reply
+  arrival order. Refuse conflicting terminal states, attempts and immutable
+  manifests without inventing revisions. Stale compatible views return the newest
+  durable observation. Awaiting-retry/cancellation cannot resume the fenced attempt.
+- V2-VIEW/TIME/RESULT: validate issuing identity, root producer, exact retained
+  policy intervals, original execution deadline and known output budget. Empty
+  successful manifests and unadmitted cancellation remain valid. A retained
+  manifest does not grant fresh availability or prove object-byte validation.
+- V2-RESULT/STORE: atomically retain full manifest plus selected index; restored
+  requests use retained issuer/owner/generation/attempt/digest, never credentials
+  or endpoint configuration inferred from URI text. Manifest-only storage does
+  not implicitly choose an output. The real-QUIC recovery test reopens this
+  reference, reconnects with rotated credentials and verifies original bytes and
+  unchanged terminal revision.
+- V2-STORE: failing SQLite inserts roll back view/manifest/selection together.
+  Independent count ceilings refuse without eviction. Changed indexes, corrupt
+  images and missing backing manifests refuse reopen. A forced-kill child proves
+  post-commit observation/selection recovery. A large manifest hits an actual
+  64 KiB physical cap while preserving the earlier view/reference and file bounds.
+
+The new fence/manifest arrival-order regression first failed because a contradictory
+receipt was accepted. It now passes in both directions. An older typed-receipt
+fixture also attempted both accepted cancel and accepted skip for one work item;
+it now represents the valid skip disposition reporting pre-existing CANCELLED.
+Local client format 2 refuses format 1, without conversion or loss of old history.
+No normative wire, authority format or dependency changes were required.
+Evidence: [`durable-work-v2-client-observations-2026-09-07.txt`](../../conformance/results/durable-work-v2-client-observations-2026-09-07.txt).
+
+Still open: production client transport/CLI and asynchronous journal ownership,
+complete scope membership/status coverage validation, independent Java V2, neutral
+cross-language process failures and measured whole-process/workload comparison.
+These tests do not claim that broader conformance or measured RSS/heap bounds.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

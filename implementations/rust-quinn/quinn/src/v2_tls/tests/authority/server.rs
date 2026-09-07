@@ -241,6 +241,14 @@ impl Client {
                 })
             })
             .await;
+        self.receive_result(request, manifest, OutputIndex(0)).await
+    }
+    async fn receive_result(
+        &mut self,
+        request: Id,
+        manifest: &Manifest,
+        index: OutputIndex,
+    ) -> Vec<u8> {
         let mut recv = tokio::time::timeout(HANDSHAKE, self.connection.accept_uni())
             .await
             .unwrap()
@@ -262,8 +270,9 @@ impl Client {
         assert_eq!(header.generation, manifest.generation);
         assert_eq!(header.work, manifest.work);
         assert_eq!(header.attempt, manifest.attempt);
-        assert_eq!(header.index, OutputIndex(0));
-        assert_eq!(header.sha256, manifest.outputs[0].sha256);
+        assert_eq!(header.index, index);
+        assert_eq!(header.length, manifest.outputs[index.0 as usize].length);
+        assert_eq!(header.sha256, manifest.outputs[index.0 as usize].sha256);
         let bytes = tokio::time::timeout(HANDSHAKE, recv.read_to_end(1 << 20))
             .await
             .unwrap()

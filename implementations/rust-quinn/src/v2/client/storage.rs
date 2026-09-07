@@ -1,13 +1,22 @@
 use super::*;
 
 const APPLICATION: i64 = 0x5053434a;
-const FORMAT: i64 = 1;
+const FORMAT: i64 = 2;
 const BLOB_LIMIT: usize = IMAGE_LIMIT + 33;
 const SCHEMA: &str = "
 PRAGMA application_id=0x5053434a;
-PRAGMA user_version=1;
+PRAGMA user_version=2;
 CREATE TABLE journal(singleton INTEGER PRIMARY KEY CHECK(singleton=1), configuration BLOB NOT NULL, binding BLOB) STRICT;
-CREATE TABLE operations(row_id INTEGER PRIMARY KEY, operation BLOB NOT NULL UNIQUE CHECK(length(operation)=16), intent BLOB NOT NULL, receipt BLOB) STRICT;
+CREATE TABLE operations(row_id INTEGER PRIMARY KEY, operation BLOB NOT NULL UNIQUE CHECK(length(operation)=16), intent BLOB NOT NULL, receipt BLOB,
+kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 5), scope INTEGER NOT NULL, producer INTEGER NOT NULL, entity INTEGER) STRICT;
+CREATE INDEX operation_target ON operations(kind,scope,producer,entity);
+CREATE TABLE observations(row_id INTEGER PRIMARY KEY, scope INTEGER NOT NULL, producer INTEGER NOT NULL, entity INTEGER NOT NULL, image BLOB NOT NULL,
+UNIQUE(scope,producer,entity)) STRICT;
+CREATE TABLE manifests(row_id INTEGER PRIMARY KEY, scope INTEGER NOT NULL, producer INTEGER NOT NULL, entity INTEGER NOT NULL, image BLOB NOT NULL,
+UNIQUE(scope,producer,entity)) STRICT;
+CREATE TABLE result_references(row_id INTEGER PRIMARY KEY, scope INTEGER NOT NULL, producer INTEGER NOT NULL, entity INTEGER NOT NULL,
+output_index INTEGER NOT NULL CHECK(output_index BETWEEN 0 AND 255), image BLOB NOT NULL,
+UNIQUE(scope,producer,entity,output_index)) STRICT;
 ";
 
 #[derive(Debug)]
@@ -129,10 +138,12 @@ impl Journal {
                 let receipt: OperationReceipt =
                     codec::decode(unseal(&operation.0, &image)?, MAX_HEADER)?;
                 validate_receipt(&intent, &journal.read_identity(&tx)?, &receipt)?;
+                journal.validate_known_receipt(&tx, &intent, &receipt)?;
             }
         }
         drop(rows);
         drop(statement);
+        journal.audit_observations(&tx)?;
         tx.commit()?;
         drop(connection);
         crate::persistence::sync_directory(
@@ -246,7 +257,8 @@ pub(super) fn read(
     let Some(length) = length else {
         return Ok(None);
     };
-    if !(33..=BLOB_LIMIT as i64).contains(&length) {
+    let limit = blob_limit(table);
+    if !(33..=limit as i64).contains(&length) {
         return Err(JournalError::Corrupt("journal image length invalid"));
     }
     let blob = connection.blob_open("main", table, column, row, true)?;
@@ -264,7 +276,7 @@ pub(super) fn write(
     row: i64,
     bytes: &[u8],
 ) -> Result<()> {
-    if !(33..=BLOB_LIMIT).contains(&bytes.len()) {
+    if !(33..=blob_limit(table)).contains(&bytes.len()) {
         return Err(JournalError::Corrupt("journal image exceeds record bound"));
     }
     if connection.execute(
@@ -275,6 +287,13 @@ pub(super) fn write(
         return Err(JournalError::Corrupt("journal record missing"));
     }
     Ok(())
+}
+fn blob_limit(table: &str) -> usize {
+    if matches!(table, "observations" | "manifests") {
+        MAX_CONTROL_LIMIT + 5 + 32
+    } else {
+        BLOB_LIMIT
+    }
 }
 pub(super) fn seal(namespace: &[u8], bytes: &[u8]) -> Vec<u8> {
     let mut h = Sha256::new();
