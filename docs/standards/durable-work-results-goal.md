@@ -2040,3 +2040,65 @@ durable streaming-gRPC baseline with pinned raw measurements remain mandatory.
 The current file adapter requires trusted, stable local directories; process death
 can leave staging, and a prefix is not permission to delete another transfer's
 files. No main merge, deployment or draft submission occurred.
+
+### Managed local result storage and recovery, 2026-09-07
+
+The preceding turn was progress: `5b4bd36` was verified and published to Forgejo
+and GitHub. This checkpoint adds a real managed local-copy library; it does not
+complete the original goal or change its independent Java/failure/workload gates.
+
+Core `v2::client::results::ResultStore` reuses the immutable payload store's
+exclusive process lock, complete bounded inventory audit, reservation-before-write,
+verified installation and crash-left staging cleanup. A purpose-qualified trusted
+authority/owner binding permits multiple sessions of that owner, without serving as
+a credential. Full selected content commitments come from the durable journal;
+local copies cannot replace work/attempt evidence or renew remote retention.
+Shared object/byte/handle quotas cover all downloads in the root. Explicit local
+removal refuses live pins and releases capacity only after directory sync.
+
+Async `session::files::managed::ManagedResults` runs opens, I/O, deletion and
+destruction on the existing four-worker/64-owner file pool. Its download owns the
+durable client's exact saved selection and negotiated limits through verified FIN
+and installation. Explicit local reads verify bytes again at EOF; a stopped server
+does not turn those already possessed bytes into a fresh authorization grant.
+Repeated downloads are separately charged copies, with no automatic eviction.
+No dependency, wire encoding or journal/database-format change was needed.
+
+Six substantive core tests and a subprocess entry point cover empty/nonempty
+reopen, byte/object/handle ceilings, pinning, identity/policy mismatch, corruption,
+unknown-file preservation and process death before finish, after durable finish
+and after unlink. Two async tests cover clone/root ownership and a real authenticated
+256 KiB download, quota rejection, unchanged terminal revision, local retrieval
+after server shutdown, exact bytes and removal. These are implementation tests,
+not independent cross-language acceptance or actual machine power-loss evidence.
+
+Final review added a negative-first injected directory-sync regression. Before the
+fix, a failed installation could still be looked up through the live root without
+auditing its uncertain durability. The shared object store now quarantines reads
+and capacity decisions after any directory-sync failure, retaining the bytes until
+exclusive reopen audits and synchronizes the namespace. No wire change was needed.
+
+Section 12.7 now explicitly requires clients to distinguish local copies from
+newly authorized transfers; expiry/revocation cannot recall delivered bytes.
+The acceptance ledger tracks this rule. Appendix D and both READMEs distinguish
+the managed library from unfinished CLI/export integration and the full goal.
+
+Verification: focused core handle 82989 and async/clippy handle 3060 exited zero.
+Full suite handle 39379 exited zero with 776 Rust workspace tests, 193 Java tests
+in 20 fresh XML reports, native checks, vectors/models, six external Rust tests,
+nine V1 pairings, 32 capability probes and examples. It preceded the final sync
+correction: final Rust handle 69846 exited zero with its formerly failing regression,
+strict clippy and all 777 workspace tests. Non-Rust/V1 source was unchanged.
+Final draft handle 29897 exited zero; Section 12.7/Appendix D TXT and Appendix D HTML inspected; idnits zero
+errors/flaws/warnings with the existing FIPS comment. Evidence:
+`conformance/results/durable-work-v2-managed-results-2026-09-07.txt`.
+
+Next is wiring managed copies into CLI recovery/export with explicit initialization,
+without adopting or deleting old arbitrary-path staging. Full independent Java V2,
+the neutral cross-language failure/resource driver and the original external
+chunk/distribute/transform/reassemble workload plus equivalent authenticated,
+durable streaming-gRPC baseline with pinned raw measurements remain mandatory.
+Arbitrary-path file exports still require trusted stable directories and can leave
+temporary files after process death. This is not a measured total heap/RSS claim.
+Forgejo was pulled ff-only with no incoming changes; no main merge, deployment or
+draft submission occurred. The goal remains active.

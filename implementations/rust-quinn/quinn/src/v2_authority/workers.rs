@@ -86,6 +86,11 @@ impl<T: Send + 'static, P: Send + 'static> Value<T, P> {
     pub(crate) fn take(mut self) -> (T, P) {
         self.value.take().expect("owned file value")
     }
+    /// Borrow only inside an I/O job. Sharing this owner does not move its
+    /// filesystem destructor onto an async runtime thread.
+    pub(crate) fn get(&self) -> &T {
+        &self.value.as_ref().expect("owned file value").0
+    }
 }
 impl<T: Send + 'static, P: Send + 'static> Drop for Value<T, P> {
     fn drop(&mut self) {

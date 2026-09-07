@@ -225,6 +225,26 @@ implementation, not the required independent V2 failure oracle; the crash is not
 an instrumented publication-boundary fault. This does not establish Java V2 parity
 or the original external workload and equivalent streaming-gRPC comparison.
 
+The Rust client now also has a managed local-copy library using the existing
+immutable object store. A private root binds trusted authority/owner and immutable
+object/byte/handle quotas. Downloads reserve their full length, install after
+verified FIN and file/directory synchronization, and survive cancelled waiters.
+Reopen reclaims unreferenceable interrupted staging under exclusive ownership;
+unknown files or changed configuration are not adopted or deleted. Local lookup
+requires the journal's exact manifest selection and verifies bytes again at EOF.
+It does not assert current server authorization or renew remote retention.
+Explicit removal cannot delete pinned copies or alter remote work outcomes.
+Six substantive storage tests and a subprocess entry point cover quota/ownership,
+corruption and crashes before/after installation and unlink. Two async tests
+include a real authenticated 256 KiB download, quota rejection, unchanged terminal
+revision and local retrieval after the server stops. The managed path is a library;
+CLI integration, arbitrary-path export recovery, independent V2 failure testing,
+Java V2 and the original workload/resource comparison remain unfinished.
+An injected directory-synchronization failure reproduced a live copy being
+accessible despite uncertain installation durability. The shared Rust object
+store now quarantines that root until exclusive audited reopen; prior bytes
+are retained rather than deleted or treated as durably committed by the failed call.
+
 ## Java/Netty Reference Implementation
 
 Organization:

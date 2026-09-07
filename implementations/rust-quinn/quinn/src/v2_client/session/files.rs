@@ -15,6 +15,7 @@ use std::{
 const CHUNK: usize = 8192;
 static WORKERS: OnceLock<std::result::Result<Workers, Error>> = OnceLock::new();
 type FileValue<T> = Value<T, Ticket>;
+pub mod managed;
 
 fn workers() -> Result<Workers> {
     Ok(WORKERS.get_or_init(|| Workers::new(4, 64)).clone()?)

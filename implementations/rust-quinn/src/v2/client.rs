@@ -14,6 +14,7 @@ use sha2::{Digest as _, Sha256};
 use std::{path::Path, sync::Arc, time::Duration as Elapsed};
 
 mod observations;
+pub mod results;
 mod storage;
 pub use observations::{ObservedWork, RetainedReference, ScopeMember, ScopeObservation};
 #[cfg(test)]

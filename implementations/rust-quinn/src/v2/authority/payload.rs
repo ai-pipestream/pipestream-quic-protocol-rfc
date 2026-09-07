@@ -27,6 +27,7 @@ const CONFIG: &str = "binding";
 const LOCK: &str = "root.lock";
 
 mod audit;
+mod local;
 mod read_credit;
 mod reservations;
 pub(super) use read_credit::ReadCredit;
@@ -271,9 +272,23 @@ fn install_file(root: &Root, source: &Path, destination: &Path) -> Result<()> {
     })
 }
 fn sync(root: &Root) -> Result<()> {
-    crate::persistence::sync_directory(&root.path).map_err(|error| match error {
-        crate::persistence::StoreError::Io(error) => io(error),
-        other => StoreError::Physical(other),
+    fn attempt(root: &Root) -> Result<()> {
+        #[cfg(test)]
+        if crate::v2::client::results::tests::fail_sync() {
+            return Err(StoreError::Io(std::io::Error::other(
+                "injected directory sync failure",
+            )));
+        }
+        crate::persistence::sync_directory(&root.path).map_err(|error| match error {
+            crate::persistence::StoreError::Io(error) => io(error),
+            other => StoreError::Physical(other),
+        })
+    }
+    attempt(root).inspect_err(|_| {
+        // A completed rename/unlink is not a durable namespace commitment if
+        // directory synchronization failed. Reads and capacity decisions must
+        // wait for exclusive reopen to audit and synchronize that namespace.
+        root.uncertain.store(true, Ordering::Release);
     })
 }
 

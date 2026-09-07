@@ -1,0 +1,119 @@
+Rust V2 managed local result copies, 2026-09-07
+Repository: pipestream-quic-protocol-rfc
+Branch: feat/durable-work-results-v2
+Parent: 5b4bd360edc8b9c28e43fcf454b9904fc6f448c2
+
+ResultStore reuses bounded immutable payload storage with a purpose-qualified,
+trusted authority/owner binding and immutable quotas. ManagedResults integrates
+the durable client's saved selection and authenticated stream with owned file
+workers. Full-length reservation precedes reception; installation follows verified
+FIN, hash/length checks and file/directory synchronization. Local reads require
+the exact saved selection and verify bytes again at EOF. No automatic eviction,
+replacement work, cross-owner lookup, new dependency or wire/journal-format change.
+
+Section 12.7 now requires clients to distinguish local copies from newly authorized
+transfers: local possession does not grant remote access, renew availability, or
+mean expiry/revocation can recall bytes already delivered. No remote-erasure claim.
+
+Source SHA-256:
+be7e015008aa9430a5f9c9efec7ccd2a0138e169ee2f41bf53986e4832c9f891  implementations/rust-quinn/src/v2/client/results.rs
+5fd66e762ba1936b82e54bf07e94ccc85d97e45392cbcea4d1fd930a7612564e  implementations/rust-quinn/src/v2/client/results/tests.rs
+7a0851db5b89a656e08e4155cbb4bf0279aa0aa9abd84d086868d7d062a316ba  implementations/rust-quinn/src/v2/authority/payload.rs
+34def253cb4570038d24b42f7682b6d12497b5edc86ab56cf011424045fe444b  implementations/rust-quinn/src/v2/authority/payload/local.rs
+b26d126a1b0498e912cea55877b54ee50f982e04f94d7634cba3a971fdab9e66  implementations/rust-quinn/quinn/src/v2_client/session/files/managed.rs
+e091dfa16026f08c892b5a815dc8947171009f7e8ed60a3ed6abfbc24a990f8e  implementations/rust-quinn/quinn/src/v2_tls/tests/authority/server/session/files/managed.rs
+
+Focused core storage verification, direct process handle 82989, exit 0:
+  cargo test --locked -p pipestream-core v2::client::results::tests -- --nocapture
+Log: /tmp/pipestream-v2-local-results-core.log
+6 passed = 5 substantive tests + subprocess entry point.
+- Empty and 1537-byte installed copies reopen and require verified EOF.
+- A 1537-byte stage reserves 2061 bytes including header, before receiving data;
+  a second stage exceeds the configured 4096-byte root and is refused.
+- Object-count and handle gates, pinned-copy removal rejection, idempotent
+  explicit removal and capacity release after directory synchronization.
+- Changed producing attempt, corrupt bytes and changed stored body cannot
+  become verified output. Wrong owner, changed quota and second root owner fail.
+- Unknown files are retained rather than adopted or deleted.
+- Separate subprocesses exit 77 before finish, after durable finish, and after
+  unlink. Exclusive reopen reclaims the incomplete stage, preserves committed
+  bytes, and accepts completed unlink without inventing remote state.
+These are process-death checks, not actual machine power-loss tests.
+
+Focused async verification, direct process handle 3060, exit 0:
+  cargo test --locked -p pipestream-quinn managed_ -- --nocapture
+  cargo clippy --locked --workspace --all-targets -- -D warnings
+Logs:
+  /tmp/pipestream-v2-local-results-managed.log
+  /tmp/pipestream-v2-local-results-clippy.log
+Filter selected 3 tests: 2 new managed-result tests and 1 existing reconciliation
+test. All passed. New coverage includes an actual authenticated 262144-byte
+download, 262668 charged bytes, rejection of another copy at quota, unchanged
+terminal observation, journal/root reopen after server shutdown, exact local bytes
+and explicit deletion. Root-clone shutdown and owner mismatch checks also passed.
+
+Final draft verification, direct process handle 29897, exit 0:
+  ./build.sh core 05
+Log: /tmp/pipestream-v2-managed-results-sync-draft.log
+Final Section 12.7 and Appendix D TXT inspected; Appendix D HTML inspected.
+idnits: 0 errors, 0 flaws, 0 warnings, 1 existing FIPS reference comment.
+Earlier draft handles 31163 and 9407 also exited 0 before the final sync correction.
+
+Negative-first directory-sync regression, direct handle 71090, exit 101:
+  cargo test --locked -p pipestream-core failed_directory_sync_quarantines -- --nocapture
+Log: /tmp/pipestream-v2-managed-results-sync-red.log
+An injected sync error after installation caused finish to fail, but a subsequent
+lookup could still access the ambiguous namespace through the same live root.
+Assertion: "ambiguous namespace was usable without an audited reopen".
+The shared object store now quarantines any failed directory synchronization,
+just as it already quarantined uncertain namespace creation/rename. No reads or
+new capacity decisions proceed before exclusive reopen audits/synchronizes it.
+The regression preserves and verifies the installed copy after reopen.
+
+Final Rust verification, direct handle 69846, exit 0:
+  cargo fmt --all
+  cargo test --locked -p pipestream-core failed_directory_sync_quarantines -- --nocapture
+  cargo clippy --locked --workspace --all-targets -- -D warnings
+  cargo test --locked --workspace
+Logs:
+  /tmp/pipestream-v2-managed-results-sync-green.log
+  /tmp/pipestream-v2-managed-results-final-clippy.log
+  /tmp/pipestream-v2-managed-results-final-workspace.log
+Focused regression: 1 passed. Workspace: 777 passed, 0 failed = 427 core + 235
+Quinn + 69 wire + 30 driver + 7 isolated resource + 3 server unit + 6 CLI tests.
+This includes 6 substantive local-copy core tests plus their process entry point,
+and the 2 new async managed-copy tests.
+
+Full conformance, direct process handle 39379, exit 0:
+  ./conformance/run_all.sh
+Log: /tmp/pipestream-v2-managed-results-suite.log
+This run preceded the final shared V2 directory-sync correction and its regression.
+Final Rust verification above covers that correction. Non-Rust implementation and
+V1 source were unchanged. The suite includes formatting, strict clippy, tests and
+release builds.
+  776 Rust workspace tests, 0 failed: 426 core + 235 Quinn + 69 wire + 30 driver
+    + 7 isolated resource + 3 server unit + 6 CLI subprocess tests
+  33 immutable language-neutral vectors
+  18 immutable recursive/recovery vectors
+  70 frozen V2 framing/CDDL vectors and 12 domain-separated commitments
+  bounded lifecycle/scope/composed models and expected negative controls
+  193 Java tests; 20 fresh Surefire XML reports; 0 failures/errors/skips
+  XML mtimes 2026-09-07 14:08:59.987449306 .. 14:12:07.941790054 -0400
+  Java native and C++ native checks
+  6 external Rust example tests
+  all 9 V1 black-box language pairs and 32 raw QUIC capability probes
+  recursive/recovery and all external examples
+The language pairs remain V1 evidence, not independent Java V2 interoperability.
+
+The managed path is a library, not yet the default CLI output path. Existing
+arbitrary-path downloads/exports still require trusted stable directories and
+can leave temporary files after process death. The managed store never scans
+or deletes those unrelated files. Repeated managed downloads are separate
+charged copies. Owner counts, file lengths and chunk ceilings are structural
+bounds, not measured total heap/RSS or filesystem-block reservations.
+
+The original full goal remains active: managed-store CLI/export integration,
+complete independent Java V2, neutral cross-language failure/resource driver,
+and external chunk/distribute/transform/reassemble workload plus equivalent
+authenticated, durable streaming-gRPC baseline with pinned raw measurements.
+No main merge, deployment or Internet-Draft submission.

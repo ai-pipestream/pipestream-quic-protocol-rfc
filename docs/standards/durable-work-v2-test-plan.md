@@ -1551,6 +1551,44 @@ ownership, shared disk budgeting and bounded crash reconciliation remain open,
 as do independent Java V2, neutral cross-language failures, whole-process resource
 gates and the original equivalent authenticated/durable streaming-gRPC workload.
 
+### Rust managed local result copies, 2026-09-07
+
+`v2::client::results::ResultStore` reuses bounded immutable payload storage with
+a purpose-qualified trusted authority/owner binding, independent of authority
+history. `session::files::managed::ManagedResults` uses the fixed file-worker pool
+and existing shared file-owner slots. The durable client's output now retains its
+exact journal selection and negotiated limits for this adapter. No wire or journal
+format changes, new dependencies or automatic adoption of arbitrary directories.
+
+- V2-RESULT/STORE: full-length/header reservation before reception, empty and
+  nonempty install only after verified transport FIN, exact selection matching,
+  corrupt-body rejection at local EOF, shared byte/object/handle ceilings and no
+  silent eviction. Repeated downloads are separate charged local copies.
+- V2-AUTH: owner/purpose/policy mismatch and unknown paths fail rather than adopt
+  or delete local data. Explicit local-only lookup requires a saved manifest
+  selection; it neither creates work nor grants/renews remote authorization.
+- V2-STORE: six substantive core tests plus a subprocess entry point cover
+  exclusive ownership, pinned-copy removal rejection, quotas, unknown-file
+  preservation and process death before installation, after durable installation
+  and after unlink. Incomplete stages are reclaimed on audited exclusive reopen;
+  completed copies survive and are verified again on read.
+- V2-STORE: an injected directory-sync failure after installation failed the
+  negative-first quarantine test: a later lookup could use the uncertain copy.
+  The shared object store now quarantines all operations until exclusive reopen
+  audits/synchronizes the namespace. The regression preserves the installed bytes
+  and verifies them after reopen rather than silently deleting or replacing them.
+- V2-RESULT/VIEW: two async tests include an actual authenticated 262144-byte
+  download, quota refusal for another copy, unchanged authoritative terminal
+  observation, local read after the server stops, exact bytes and explicit removal.
+  A separate owner test checks clone release, root exclusion and changed binding.
+
+Section 12 now explicitly distinguishes already delivered local bytes from current
+authority access. These tests are not proof of remote erasure, a new authorization
+lease, measured total heap/RSS, power-loss behavior, or independent cross-language
+V2 conformance. Managed-store CLI/export integration remains open. The neutral
+failure driver, Java V2 and original external/equivalent streaming-gRPC workload
+with pinned raw measurements remain required.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently
@@ -1678,6 +1716,10 @@ gates and the original equivalent authenticated/durable streaming-gRPC workload.
   receipt expiry. No guessed state from transport loss or missing payload bytes.
 
 ## V2-RESULT: actual outputs, manifests and references (12.7)
+
+- Distinguish explicitly local retained copies from freshly authorized result
+  transfers. A local hit cannot renew remote output availability, grant access,
+  or claim that revocation/expiry erases previously delivered bytes.
 
 - Bounded validated immutable output bytes installed before atomic manifest plus
   success; orphan is not visible; over-budget output cannot become truncated

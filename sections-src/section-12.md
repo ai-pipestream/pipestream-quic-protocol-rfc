@@ -591,6 +591,14 @@ owner credentials and trusted authority-to-endpoint configuration separately;
 it MUST NOT infer either from an untrusted URI. A bare locator is not sufficient
 recovery evidence and this profile defines no anonymous identity-discovery call.
 
+Output expiry and session revocation govern access at the authority; they cannot
+recall bytes already delivered to a recipient. A locally retained copy does not
+grant a new remote read, renew output availability, or prove current authorization.
+Clients MUST distinguish use of such a local copy from a newly authorized result
+transfer. Applications that require deletion or time-limited use of local copies
+need a separate local policy; this profile does not provide remote erasure or
+enforcement of usage restrictions after delivery.
+
 ## Sealed Closure, Counts and Shutdown
 
 SCOPE operation 2 pages through a scope's declarations; operation 3 returns

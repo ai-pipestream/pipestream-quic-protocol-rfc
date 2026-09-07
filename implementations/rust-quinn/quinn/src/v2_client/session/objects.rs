@@ -37,10 +37,17 @@ impl Admission {
 pub struct Output {
     inner: transport::Output,
     _ticket: Ticket,
+    reference: RetainedReference,
+    selected: Capabilities,
 }
 impl Output {
     pub(super) fn into_parts(self) -> (transport::Output, Ticket) {
         (self.inner, self._ticket)
+    }
+    pub(super) fn into_result_parts(
+        self,
+    ) -> (transport::Output, Ticket, RetainedReference, Capabilities) {
+        (self.inner, self._ticket, self.reference, self.selected)
     }
     pub fn header(&self) -> &ResultHeader {
         self.inner.header()
@@ -112,6 +119,8 @@ impl Client {
                     transport::Reply::Object(inner) => Ok(Output {
                         inner,
                         _ticket: ticket,
+                        reference,
+                        selected: context.transport.selected().clone(),
                     }),
                     transport::Reply::Control(Control::Refusal(r)) => Err(Failure::Refused(r)),
                     _ => Err(error(ErrorCode::FrameError, "expected result stream")),

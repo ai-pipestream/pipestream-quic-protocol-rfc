@@ -1,5 +1,6 @@
 use super::*;
 use durable::files::FileInput;
+mod managed;
 
 #[tokio::test]
 async fn early_authority_refusal_is_not_hidden_by_stopped_file_upload() {

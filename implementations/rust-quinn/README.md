@@ -678,7 +678,8 @@ shared retained-directory disk quota.
 Ordinary failed downloads remove only their own temporary file. Abrupt process
 death may leave `.pipestream-result-*` staging files. This adapter deliberately
 does not scan or delete other transfers' files; exclusive staging ownership,
-bounded restart reconciliation and shared client disk budgeting still need integration.
+bounded restart reconciliation and shared disk budgeting are provided by the
+separate managed store below, not by this arbitrary-path export adapter.
 It never turns client file loss into new remote operation identity or work.
 
 Tests cover empty/256 KiB real-server round trips, replay, changed source bytes,
@@ -686,6 +687,64 @@ pre-submission commitment mismatch, cancellation, byte limits and no-overwrite;
 adversarial authenticated peers send corrupt/truncated/extra bytes and withhold
 FIN. A separate process opens 64 input descriptors, refuses the next and admits a
 replacement only after explicit cleanup.
+
+### Version-2 managed local result copies
+
+`v2_client::session::files::managed::ManagedResults` wraps the existing bounded
+immutable object store. `initialize(path, authority, owner, policy)` accepts only
+a new private directory; `open` requires the same trusted authority/owner and
+immutable `ResultPolicy`. The purpose-qualified local binding is separate from
+the authority's random storage identity. It permits copies from multiple sessions
+of the same owner, not cross-authority or cross-owner reuse. It is not a credential.
+
+`save(output)` takes a durable client's authenticated result stream, its retained
+manifest selection and negotiated limits. It reserves the complete length plus
+524 bytes of header allowance before writing, stages incrementally, and installs
+only after verified SHA-256/length/FIN and file/directory synchronization. Accepted
+tasks survive waiter cancellation. Repeated downloads are separate charged copies;
+there is no silent eviction. `usage()` reports shared object/byte occupancy.
+
+`find(retained_reference)` is explicitly local-only: the full journal selection
+supplies the content commitment. It returns a `LocalCopy`, with provisional chunks
+from `read_unverified()` until `None` and `verified()==true`. A cache hit does not
+prove current server authorization or renew remote output retention. The journal
+still owns work/attempt identity; cached bytes are not a replacement outcome.
+`remove(key)` discards only that local copy. Live downloads/readers refuse removal;
+quota is returned after directory sync, including retry after interrupted unlink.
+
+The process lock and complete bounded root audit precede reuse. Unknown paths,
+symlinks, changed ownership/policy or corrupt object metadata fail reopen.
+Unreferenceable interrupted staging is reclaimed under exclusive ownership;
+committed objects survive and are hash-checked again when read. `recovered_stages()`
+reports that cleanup. Initialization never adopts the old arbitrary-path temporary
+files. An operator must not treat a filename prefix as ownership proof.
+
+All opens, reads, writes, deletion and last-owner cleanup use the existing four
+file workers and shared 64-owner limit. `close()` drains this wrapper's root owner,
+refusing remaining clones; outstanding `LocalCopy`/download handles can retain
+the root lock until their own cleanup. LocalCopy has an explicit `close()`.
+`ResultPolicy` supplies object, charged-byte, chunk and handle ceilings; these
+are not whole-process heap/RSS or filesystem-block reservations. No new dependency,
+wire encoding or journal/database format is introduced.
+
+Six substantive core tests plus a subprocess entry point cover exact/empty
+reopen, shared quotas, pins, changed commitments, corrupt body, owner/policy checks,
+unknown-file preservation and process death before/after installation and unlink.
+An injected directory-sync failure reproduced an installed copy becoming readable
+despite uncertain namespace durability. The shared object store now quarantines
+all reads/capacity decisions on that failure until exclusive audited reopen.
+Two async tests cover root ownership and a real authenticated 256 KiB transfer,
+quota rejection, unchanged terminal revision, offline reopen/verification and
+explicit removal. These are implementation tests, not the neutral cross-language
+failure oracle or measured workload/resource comparison.
+
+The low-level blocking API is `pipestream_core::v2::client::results::ResultStore`.
+Its `PendingResult::finish` requires already authenticated, correlated transport
+FIN evidence; the async wrapper obtains that evidence from the opaque transport
+verification result. The core API itself does not authenticate arbitrary records.
+Managed-store CLI integration and crash-safe arbitrary-path exports remain open,
+alongside complete Java V2, the neutral failure driver and the original external
+workload/equivalent authenticated, durable streaming-gRPC comparison.
 
 ### Version-2 asynchronous journal owner
 

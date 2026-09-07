@@ -216,8 +216,10 @@ whole-process heap/RSS or allocated filesystem blocks.
 
 Client downloads currently require a trusted, stable destination directory.
 Ordinary failure cleans its own staging, but process death can leave
-`.pipestream-result-*` files. Exclusive result-root ownership, a shared disk quota
-and bounded restart reconciliation are still required. Do not delete files by
+`.pipestream-result-*` files. The separate library
+[`ManagedResults`](../README.md#version-2-managed-local-result-copies) now supplies
+exclusive result-root ownership, shared disk quotas and restart cleanup, but
+these CLI commands do not yet use it. Do not delete files by
 prefix while another transfer may own them. A download's ambiguous local outcome
 does not authorize another remote execution.
 

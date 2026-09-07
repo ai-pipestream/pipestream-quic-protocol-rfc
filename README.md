@@ -50,8 +50,10 @@ before returning success, including after waiter cancellation. File adapters now
 prehash/stream inputs and install only verified results without overwriting local
 files. The [V2 CLI guide](implementations/rust-quinn/docs/v2-cli.md) covers explicit
 initialization, authenticated serving, original-operation recovery, both branch
-modes, cancellation, retry and verified downloads. Crash-left client staging and
-shared client disk quotas still need integration; independent Java V2 remains open.
+modes, cancellation, retry and verified downloads. A separate managed-result library
+now provides exclusive local storage, shared disk quotas, restart cleanup and
+verified local reads. The CLI still uses the direct-file adapter; wiring managed
+storage/export into those commands and independent Java V2 remain open.
 The Rust `pipestream_core::v2` library now implements typed codecs for every
 version-2 message and record, frozen commitments, negotiation checks, bounded
 client correlation and incremental object validation. This is a library
