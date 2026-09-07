@@ -427,6 +427,28 @@ impl ResultRead {
             .payloads
             .chunk_limit())
     }
+    /// Earliest exclusive local deadline, including pending stream creation.
+    /// This does not authorize I/O or renew progress. Call `check_deadline`
+    /// before scheduling writes, and check again after waiting for capacity.
+    pub fn next_deadline(&self) -> Result<Instant> {
+        let lease = lock(&self.lease)?;
+        if let Some(code) = lease.closed {
+            return Err(protocol(code, "result transfer is closed"));
+        }
+        let lifetime = lease.created.checked_add(lease.lifetime).ok_or_else(|| {
+            protocol(
+                ErrorCode::LimitExceeded,
+                "result lifetime cannot be represented",
+            )
+        })?;
+        let idle = lease.progress.checked_add(lease.idle).ok_or_else(|| {
+            protocol(
+                ErrorCode::LimitExceeded,
+                "result idle deadline cannot be represented",
+            )
+        })?;
+        Ok(lifetime.min(idle))
+    }
     /// Check immediately before scheduling a transport write or FIN, including
     /// after waiting for flow-control capacity with a previously read chunk.
     /// This grants no idle-time renewal. All `now` values come from the local

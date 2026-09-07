@@ -269,9 +269,9 @@ async fn receive(
     let first_pins = pins.clone();
     let service = shared.clone();
     let reception =
-        shared
-            .workers
-            .run(move || {
+        tokio::time::timeout_at(
+            lifetime.min(progress + idle),
+            shared.workers.run(move || {
                 first_pins.authorize()?;
                 if std::time::Instant::now() >= lifetime.into_std() {
                     return Err(error(ErrorCode::LimitExceeded, "input preflight deadline"));
@@ -294,8 +294,10 @@ async fn receive(
                         workers::Value::new(receiving, first_pins, service.workers.clone()),
                     ),
                 })
-            })
-            .await?;
+            }),
+        )
+        .await
+        .map_err(|_| error(ErrorCode::LimitExceeded, "input preflight deadline"))??;
     let mut receiving = match reception {
         Beginning::Replay(receipt) => return Ok((receipt, true)),
         Beginning::Receiving(receiving) => receiving,
@@ -314,9 +316,9 @@ async fn receive(
         let job_pins = pins.clone();
         let workers = shared.workers.clone();
         let deadline = lifetime.min(progress + idle).into_std();
-        (receiving, buffer) = shared
-            .workers
-            .run(move || {
+        (receiving, buffer) = tokio::time::timeout_at(
+            Instant::from_std(deadline),
+            shared.workers.run(move || {
                 job_pins.authorize()?;
                 if std::time::Instant::now() >= deadline {
                     return Err(error(ErrorCode::LimitExceeded, "input storage deadline"));
@@ -328,8 +330,10 @@ async fn receive(
                     .check_deadline(std::time::Instant::now())
                     .map_err(storage)?;
                 Ok((workers::Value::new(value, value_pins, workers), buffer))
-            })
-            .await?;
+            }),
+        )
+        .await
+        .map_err(|_| error(ErrorCode::LimitExceeded, "input storage deadline"))??;
     }
     let now = std::time::Instant::now();
     let job_pins = pins.clone();

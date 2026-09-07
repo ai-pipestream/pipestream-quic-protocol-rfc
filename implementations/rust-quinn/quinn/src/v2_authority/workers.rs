@@ -19,7 +19,7 @@ impl Workers {
             ));
         }
         // At most one ordinary job and one returned-value destructor per live
-        // input. Both retain the input lease, which reserves these queue slots.
+        // transfer. Both retain its lease, which reserves these queue slots.
         let (sender, receiver) = mpsc::sync_channel::<Job>(queued * 2);
         let receiver = Arc::new(Mutex::new(receiver));
         for index in 0..threads {

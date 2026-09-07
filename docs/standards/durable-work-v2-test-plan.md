@@ -1026,6 +1026,70 @@ remain V1 evidence. `./build.sh core 05` exited 0, and the rendered Appendix D
 status was inspected, with zero idnits errors/flaws/warnings and the existing
 FIPS downref comment.
 
+### Rust authenticated result streams and blocked-input deadlines, 2026-09-07
+
+`v2_authority::output` sends actual retained objects on the authenticated peer's
+server-initiated QUIC streams. Ten output tests use real TLS/QUIC, on-disk
+admission and the actual copy executor. Control requests are still local adapter
+calls; neither adapter activates a profile on the public Core listener.
+
+- V2-RESULT/WIRE: empty and 64 KiB outputs carry the exact request/session/work/
+  attempt/index/length/digest header and FIN across 4 KiB stream/16 KiB connection
+  receive windows and an 8 KiB server send window. Repeated reads return the same
+  bytes without changing the committed work view, revision or attempt.
+- V2-RESULT/TIME: a stopped reader aborts delivery and can request the same object
+  again. A non-reading peer is reset LIMIT_EXCEEDED after its header, without a
+  second control response. Zero available stream slots produce a bounded control
+  refusal before any header. Exact library deadlines include pending time, ignore
+  empty progress and stop at the original lifetime. The new `next_deadline`
+  accessor exposes that exclusive bound without granting I/O or renewing it.
+- V2-AUTH: a blocked sender rechecks current TLS credentials before scheduling
+  more bytes, including after Quinn wakes it. Removing its central live check
+  makes the expiry test fail with the later LIMIT_EXCEEDED instead of UNAUTHORIZED;
+  the guard was restored. Wrong result commitments refuse before stream creation.
+- V2-RESULT/STORE: a real retained output's final byte is changed after publication.
+  The sender emits the committed header and provisional bytes, then resets
+  OUTPUT_UNAVAILABLE instead of successful FIN. Work view/manifest/attempt remain
+  unchanged. Reading never invokes execution as a repair for missing or bad data.
+- V2-NEG/STORE/CLOSE: configured global output capacity spans distinct authenticated
+  owners; certificate rotation cannot evade owner capacity. Connection result
+  stream limits count pending creation and an unsent refusal. Cancelled file
+  preflight retains owner capacity and prevents detach until the job and cleanup
+  finish. Capacity reuse is checked after cleanup, not assumed synchronous with
+  dropping the async response. Invalid configuration/authority pairing refuses
+  before any file acquisition.
+
+The input review found that awaiting a blocked preflight could postpone its idle
+timeout. A new test failed on that exact held-worker case. Preflight and chunk
+waits now time out independently while their underlying jobs retain quota and
+pending tickets; cleanup must still finish before detach. The possible admission
+commit is not given a false pre-commit timeout response. There are now nine input
+tests plus the worker destructor test.
+
+An earlier dispatcher test also assumed its first watch snapshot had released
+the metadata slot after a fixed sleep. Under contention the new cancellation
+could correctly refuse LIMIT_EXCEEDED, so the test never reached its intended
+held-transaction condition. The test now retries only that pre-start refusal
+with a fresh request ID and the same immutable operation, and observes the actual
+transaction entry before checking that the existing watch remains pending. No
+production metadata-admission or watch rule was relaxed.
+
+Focused validation passes 66 V2 transport/security tests and the exact local
+result-deadline test; strict clippy passes. File pools, queues, application buffers
+and request counts are bounded by construction, not claimed as measured whole-
+process memory or network/disk I/O. The complete endpoint must still reserve
+control credit, wire lifecycle/read maintenance and provide shutdown, client
+uncertainty journals, independent Java, neutral failures and the original external
+workload/equivalent streaming-gRPC measurements. Full validation evidence is in
+[`durable-work-v2-output-2026-09-07.txt`](../../conformance/results/durable-work-v2-output-2026-09-07.txt).
+
+Final `./conformance/run_all.sh` exited 0: 628 Rust workspace tests, six Rust
+example tests, 193 Java tests in 20 fresh XML reports (zero failures/errors/skips),
+frozen vectors/CDDL, all three bounded models, native checks, nine existing
+interop pairs, 32 raw capability probes and all examples. The full language pairs
+remain V1 evidence. `./build.sh core 05` exited 0; rendered Appendix D was inspected,
+with zero idnits errors/flaws/warnings and the existing FIPS downref comment.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

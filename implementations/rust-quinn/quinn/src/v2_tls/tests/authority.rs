@@ -30,6 +30,7 @@ struct Access {
     pause: AtomicBool,
     pause_cancel: AtomicBool,
     pause_admit: AtomicBool,
+    pause_read: AtomicBool,
     entered: Notify,
     release: (Mutex<bool>, Condvar),
 }
@@ -40,6 +41,7 @@ impl Default for Access {
             pause: AtomicBool::new(false),
             pause_cancel: AtomicBool::new(false),
             pause_admit: AtomicBool::new(false),
+            pause_read: AtomicBool::new(false),
             entered: Notify::new(),
             release: (Mutex::new(false), Condvar::new()),
         }
@@ -62,6 +64,8 @@ impl Authorization for Access {
         if (permission == Permission::Create && self.pause.swap(false, Ordering::SeqCst))
             || (permission == Permission::Cancel && self.pause_cancel.swap(false, Ordering::SeqCst))
             || (permission == Permission::Admit && self.pause_admit.swap(false, Ordering::SeqCst))
+            || (permission == Permission::ReadResult
+                && self.pause_read.swap(false, Ordering::SeqCst))
         {
             self.entered.notify_one();
             let (released, _) = self
@@ -430,7 +434,8 @@ async fn dispatcher_watch_and_checkpoint_waits_release_metadata_capacity() {
         )
         .run(),
     );
-    // Let the first snapshot finish; this poll observes the same running handle.
+    // Observe that the watch remains pending; this is not evidence that its
+    // snapshot worker has released the metadata slot at any later instant.
     assert!(
         tokio::time::timeout(Duration::from_millis(50), &mut watch)
             .await
@@ -438,20 +443,28 @@ async fn dispatcher_watch_and_checkpoint_waits_release_metadata_capacity() {
     );
     db.access.pause_cancel.store(true, Ordering::SeqCst);
     let _release_on_failure = ReleaseOnDrop(db.access.clone());
-    let cancelling = tokio::spawn(
-        pending(
-            &connection,
-            Control::Work(Work::Cancel {
-                request: Id(4),
-                operation: OperationId([4; 16]),
-                work: key(),
-            }),
-        )
-        .run(),
-    );
-    tokio::time::timeout(HANDSHAKE, db.access.entered.notified())
-        .await
-        .unwrap();
+    // A snapshot can own the sole metadata slot at this exact instant. New
+    // cancellation requests may then legitimately refuse before starting.
+    // Retry only that refusal with a new request ID and the same operation;
+    // observe the actual held transaction instead of assuming a sleep aligned it.
+    let (cancelling, next_request) = tokio::time::timeout(HANDSHAKE, async {
+        let mut request = 4;
+        loop {
+            let mut task = tokio::spawn(pending(&connection, Control::Work(Work::Cancel {
+                request: Id(request), operation: OperationId([4; 16]), work: key(),
+            })).run());
+            tokio::select! {
+                _ = db.access.entered.notified() => break (task, request + 1),
+                response = &mut task => {
+                    let mut response = response.unwrap().unwrap();
+                    let ResponseBody::Control(control) = response.body() else { panic!("control response expected"); };
+                    refused(control, request, ErrorCode::LimitExceeded);
+                }
+            }
+            request += 1;
+            tokio::task::yield_now().await;
+        }
+    }).await.unwrap();
     let early = tokio::time::timeout(Duration::from_millis(75), &mut watch).await;
     if let Ok(result) = early {
         let mut response = result.unwrap().unwrap();
@@ -486,26 +499,26 @@ async fn dispatcher_watch_and_checkpoint_waits_release_metadata_capacity() {
         &control(
             &connection,
             Control::Scope(Scope::Checkpoint {
-                request: Id(5),
+                request: Id(next_request),
                 scope: Number(0),
                 seal: digest,
                 wait_ms: WaitMs(0),
             }),
         )
         .await,
-        5,
+        next_request,
         ErrorCode::WaitTimeout,
     );
     let mut cursor = store::ReconcileCursor::default();
     for _ in 0..4 {
         db.store.reconcile(&mut cursor, 8).unwrap();
     }
-    let summary = root(&connection, 6, digest).await;
+    let summary = root(&connection, next_request + 1, digest).await;
     assert_eq!(summary.counts.cancelled, Number(1));
     let snapshot = control(
         &connection,
         Control::Work(Work::Watch {
-            request: Id(7),
+            request: Id(next_request + 2),
             work: key(),
             after_revision: Number(0),
             wait_ms: WaitMs(30000),
@@ -516,21 +529,21 @@ async fn dispatcher_watch_and_checkpoint_waits_release_metadata_capacity() {
         panic!("view expected")
     };
     assert!(
-        matches!(control(&connection, Control::Work(Work::Watch { request: Id(8), work: key(), after_revision: Number(revision.0), wait_ms: WaitMs(30) })).await,
+        matches!(control(&connection, Control::Work(Work::Watch { request: Id(next_request + 3), work: key(), after_revision: Number(revision.0), wait_ms: WaitMs(30) })).await,
         Control::Work(Work::View { revision: actual, .. }) if actual == revision)
     );
     refused(
         &control(
             &connection,
             Control::Work(Work::Watch {
-                request: Id(9),
+                request: Id(next_request + 4),
                 work: key(),
                 after_revision: Number(revision.0 + 1),
                 wait_ms: WaitMs(0),
             }),
         )
         .await,
-        9,
+        next_request + 4,
         ErrorCode::Conflict,
     );
 }
@@ -735,6 +748,7 @@ async fn dispatcher_rechecks_credentials_and_retained_authorization_before_looku
 }
 
 mod inputs;
+mod outputs;
 mod results;
 
 #[tokio::test]

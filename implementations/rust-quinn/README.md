@@ -158,7 +158,7 @@ yet written and result reads waiting for a stream. Cancelled async database
 waiters do not release the slots of still-running blocking jobs.
 
 The future endpoint still must provide bounded control readers/writers,
-input-adapter integration, result QUIC I/O, reserved control capacity separate from
+input/result-adapter integration, reserved control capacity separate from
 payload/execution workers, result-read maintenance, lifecycle workers, live
 shutdown and the V2 client/journals. Twelve adapter tests use actual TLS peers
 and on-disk stores but call the dispatcher locally. They are not V2 wire,
@@ -193,15 +193,60 @@ stage cleanup remains. Abandoned staging files are removed and directory-synced
 on those file workers, not a Tokio executor thread. A possible admission commit
 is not wrapped in an async timeout that could falsely report pre-commit refusal.
 
-Eight input tests use actual QUIC streams and guarded storage, including a
+Nine input tests use actual QUIC streams and guarded storage, including a
 64 KiB input across 4 KiB stream/16 KiB connection windows, malformed/truncated
 headers, identity and application checks, integrity failures, unbound/empty
 input, owner quota across rotated certificates, stalled headers and payloads,
-continuous-progress lifetime expiry, and cancelled file work. A ninth worker
+continuous-progress lifetime expiry, cancelled file work and idle expiry while
+file preflight is deliberately blocked. Preflight/chunk timeouts abort reception
+without refunding still-running file jobs; the possible admission commit keeps
+its separate uncertainty rules. A worker
 test checks off-executor cleanup before pin release and fails when that cleanup
 is deliberately made synchronous. Control operations in these tests remain local
 adapter calls, not durable control traffic over QUIC. No Java interoperability,
 whole-process memory bound, public durable endpoint or workload result is implied.
+
+### Version-2 retained-result transport adapter
+
+`v2_authority::output::Outputs` sends actual retained objects over the requesting
+TLS peer's server-initiated unidirectional streams. For an ordered, validated
+`RESULT Read`, pass its `Pending` submission to `Outputs::request` instead of
+calling `Pending::run`. Construct one shared output service with the same
+`Authority` instance. It checks global/owner transfer ceilings before acquiring
+a result lease or file handle. Connection pending/result-stream counters include
+stream creation, blocked writes, unsent refusals and outstanding file cleanup.
+
+Options bound active transfers (1..128), per-owner transfers (1..active), file
+workers (1..32 and at most active transfers) and pending stream-creation time
+(positive, at most 30 seconds). Defaults are 8, 4, 4 and 5 seconds. The selected
+idle/lifetime bounds still apply, including time before a stream can open. File
+workers have the same two-slot-per-live-transfer queue reservation as inputs.
+Result chunks reuse a buffer no larger than 16 KiB or the payload-store ceiling;
+object headers remain bounded to 4096 bytes plus their four-byte length prefix.
+
+File reads and current retained-session checks run outside the async executor.
+Before each nonblocking Quinn write poll, the adapter checks authorization and
+the earliest exclusive deadline. A blocked write registers a separate notifier;
+its next poll follows fresh checks, not a previously authorized write future.
+While blocked, a 20 ms local check interval also detects revoked/expired owners.
+Only bytes accepted by the transport renew idle time. Read-ahead, headers, empty
+progress and file-worker delays do not. A verified EOF precedes FIN; successful
+local scheduling is not proof of client receipt.
+
+Retain `Delivery` through its control refusal write or sent/aborted handling.
+`Status::Refused` supplies the one control response when no header byte started.
+After the header starts, errors produce only a reset and `Status::Aborted`, not
+a second control response. Cancelling the async task resets its stream; queued
+file work retains its read and quota until cleanup. A new identical read serves
+the same output without retrying execution or changing its manifest/attempt.
+
+Ten result transport tests cover empty/64 KiB output, small receive/send windows,
+repeated reads, stopped/slow readers, pending stream creation, current credential
+expiry, wrong commitments, actual retained-byte corruption, rotated and distinct
+owners, configuration and connection/global quotas, and cancelled file preflight.
+These tests still call control adapters locally. The Core listener is unchanged;
+public durable-runtime integration, independent Java V2, neutral cross-language
+failure tests, full resource measurements and the equivalent workload remain open.
 
 `pipestream_core::v2` implements Section 12/Appendix F typed wire records,
 control and object-header framing, canonical and cross-field validation,

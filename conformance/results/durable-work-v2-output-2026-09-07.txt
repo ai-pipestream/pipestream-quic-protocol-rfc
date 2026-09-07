@@ -1,0 +1,87 @@
+Rust V2 authenticated retained-result transport, 2026-09-07 UTC
+Base: b01db25c383c60e1ca7d30b83d80db88e431c8b4
+Implementation and tests: the commit containing this result file.
+Dependencies, CDDL, normative wire text and storage formats are unchanged.
+
+Focused checks from implementations/rust-quinn:
+cargo test --locked -p pipestream-core result_deadlines_include_pending_time_empty_progress_and_fin_at_equality -- --nocapture
+Exit 0. One test passed, 369 core-library tests filtered out.
+Log: /tmp/pipestream-v2-output-next-deadline.log
+cargo test --locked -p pipestream-quinn --lib v2_ -- --nocapture
+Exit 0. 66 passed, 0 failed, 0 ignored, 89 filtered out, 1.25 seconds.
+Log: /tmp/pipestream-v2-output-final-focused.log
+cargo clippy --locked -p pipestream-quinn --all-targets -- -D warnings
+Exit 0. Log: /tmp/pipestream-v2-output-final-clippy.log
+The set-e command chain completed on original handle 2294 with exit 0.
+
+Ten output tests use actual authenticated QUIC streams, durable input admission,
+the real copy executor and retained files. Empty and 65536-byte results cross
+4096-byte stream/16384-byte connection receive windows and an 8192-byte server
+send window. Headers and actual bytes/FIN are validated. Repeated reads and
+stopped-reader recovery preserve the same work view, revision, attempt and bytes.
+Other cases cover no stream slots, slow readers, wrong commitments, corrupt
+retained bytes, live certificate expiry, cancelled file preflight, rotated and
+distinct owners, configuration/pairing and connection/global capacity.
+
+Control calls in these tests remain local adapter calls, not durable control
+frames on QUIC. The public Core listener advertises no durable profile. There
+is no independent Java V2, complete endpoint, whole-process memory bound or
+equivalent-workload claim in this checkpoint.
+
+Negative control: disable the result transport Pins::authorize guard.
+Command filter:
+  expired_credential_stops_a_blocked_result_before_more_transport_scheduling
+Exit 101, observed from original handle 58883. Actual Aborted(LimitExceeded)
+instead of the required Aborted(Unauthorized) after certificate expiry.
+Log: /tmp/pipestream-v2-output-credential-red.log
+The live guard was restored before final focused/full validation.
+
+Input regression: await file preflight without an independent receive deadline.
+Command filter:
+  input_idle_deadline_aborts_transport_while_file_preflight_remains_held
+Exit 101, observed from original handle 40667. The test's two-second observation
+expired while the negotiated one-second idle deadline had not aborted reception.
+Log: /tmp/pipestream-v2-input-blocked-preflight-red.log
+Fix: bound preflight/chunk waits without cancelling their underlying worker pins;
+cleanup still precedes quota release and detach. Possible admission commitment
+keeps its existing uncertainty rule, without a false pre-commit timeout refusal.
+This ninth input test passes in the final focused run.
+
+The initial authority-focused output recorded 28 passed and 1 failed:
+  dispatcher_watch_and_checkpoint_waits_release_metadata_capacity
+Log: /tmp/pipestream-v2-output-authority.log
+Its new cancellation could legitimately refuse when a watch snapshot occupied
+the only metadata slot. The test wrongly waited for a transaction that had not
+started. It now retries only that pre-start LIMIT_EXCEEDED with a new request
+ID/same operation, then observes actual transaction entry. The intended held-
+transaction watch assertion remains; no production watch/admission rule changed.
+
+Final repository regression:
+./conformance/run_all.sh
+Exit 0, observed from original process handle 5506 after completion.
+Started: 2026-09-07 10:05:27 UTC.
+Log: /tmp/pipestream-v2-output-final-full-suite.log
+Rust workspace: 628 passed, 0 failed. Rust external examples: 6 passed.
+Java: 20 fresh Surefire XML reports, 193 tests, 0 failures/errors/skips.
+Oldest report: 2026-09-07 10:07:53 UTC. Newest: 10:10:21 UTC.
+Report counts/timestamps were read with Ruby REXML after Java completed.
+Frozen vectors/CDDL and all three bounded models passed:
+  lifecycle: 311539 states, 8723092 edges, deepest 19;
+  scopes: 5776 states, 173280 edges, deepest 17;
+  composition: 620796 states, 29177412 edges, deepest 27.
+Each model had 0 states at the depth boundary.
+Native Java SQLite checks, C++ build/CTest, 9 existing black-box pairs,
+32 raw capability probes, recursive scenarios and all external examples passed.
+Existing complete end-to-end pairs remain V1 regression evidence, not V2 proof.
+
+./build.sh core 05
+Exit 0, observed from original process handle 66019 after completion.
+Log: /tmp/pipestream-v2-output-draft.log
+Rendered Appendix D input/result paragraphs inspected at text lines 6445-6466.
+Idnits: 0 errors, 0 flaws, 0 warnings, 1 existing FIPS downref comment.
+
+Still required: public durable V2 listener/control integration with reserved
+control credit, runtime maintenance/shutdown, client/CLI and uncertainty
+journals, independent Java, neutral failure driver, complete resource gates
+and the external equivalent streaming-gRPC workload. No main merge, deployment
+or IETF submission is part of this checkpoint.

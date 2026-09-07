@@ -4,7 +4,7 @@ use super::*;
 use crate::v2_authority::input::{Inputs, Options, Reply};
 use std::sync::atomic::AtomicUsize;
 
-fn applications() -> Arc<Applications> {
+pub(super) fn applications() -> Arc<Applications> {
     let mut apps = Applications::default();
     apps.register(
         ApplicationLabel("copy/v1".into()),
@@ -15,7 +15,7 @@ fn applications() -> Arc<Applications> {
     .unwrap();
     Arc::new(apps)
 }
-fn header(bytes: &[u8]) -> InputHeader {
+pub(super) fn header(bytes: &[u8]) -> InputHeader {
     InputHeader {
         kind: Literal,
         generation: Id(1),
@@ -52,7 +52,7 @@ fn refused_input(reply: &Reply, stream: u64, code: ErrorCode) {
         reply.control()
     );
 }
-async fn transfer(
+pub(super) async fn transfer(
     inputs: &Inputs,
     connection: &Connection,
     client: &quinn::Connection,
@@ -579,6 +579,66 @@ async fn continuous_payload_progress_cannot_extend_the_input_lifetime() {
         )
         .await,
         Control::Drain(Drain::Detached { .. })
+    ));
+    assert_eq!(db.payloads.usage(None).unwrap().incomplete_objects, 0);
+    assert_eq!(
+        db.store
+            .work_view(&identity, &key(), Number(0))
+            .unwrap()
+            .1
+            .state,
+        State::DECLARED
+    );
+}
+
+#[tokio::test]
+async fn input_idle_deadline_aborts_transport_while_file_preflight_remains_held() {
+    let db = Database::new();
+    let tls = Fixture::new();
+    let (connection, wire) = db.connect(&tls, caps(), Some(0)).await;
+    control(&connection, create(1)).await;
+    control(&connection, declare(2, vec![Id(1)], true)).await;
+    let identity = connection.input().unwrap().binding().identity.clone();
+    let inputs = Inputs::new(db.authority.clone(), applications(), options()).unwrap();
+    db.access.pause_admit.store(true, Ordering::SeqCst);
+    let _release_on_failure = ReleaseOnDrop(db.access.clone());
+    let mut sending = wire.client.as_ref().unwrap().open_uni().await.unwrap();
+    let stream = u64::from(sending.id());
+    sending
+        .write_all(&header(b"body").encode_framed().unwrap())
+        .await
+        .unwrap();
+    let running = tokio::spawn(inputs.accept(&connection).await.unwrap().run());
+    tokio::time::timeout(HANDSHAKE, db.access.entered.notified())
+        .await
+        .unwrap();
+    let reply = tokio::time::timeout(Duration::from_millis(2000), running)
+        .await
+        .expect("stream idle deadline must not await blocked filesystem work")
+        .unwrap();
+    refused_input(&reply, stream, ErrorCode::LimitExceeded);
+    drop(reply);
+    let mut draining = tokio::spawn(
+        pending(
+            &connection,
+            Control::Drain(Drain::Detach { request: Id(3) }),
+        )
+        .run(),
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(40), &mut draining)
+            .await
+            .is_err()
+    );
+    db.access.release();
+    assert!(matches!(
+        tokio::time::timeout(HANDSHAKE, draining)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap()
+            .body(),
+        ResponseBody::Control(Control::Drain(Drain::Detached { .. }))
     ));
     assert_eq!(db.payloads.usage(None).unwrap().incomplete_objects, 0);
     assert_eq!(

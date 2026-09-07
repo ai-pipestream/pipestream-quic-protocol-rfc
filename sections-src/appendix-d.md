@@ -65,14 +65,24 @@ cancelled. This adapter is not yet connected to the Core listener, and neither
 durable profile is advertised.
 
 The Rust input adapter now receives actual QUIC object streams through bounded
-file workers into the durable authority. Eight input tests cover incremental
+file workers into the durable authority. Nine input tests cover incremental
 reception across smaller flow-control windows, replay, empty and malformed
-inputs, owner/connection checks, idle/lifetime expiry and cancelled file work.
+inputs, owner/connection checks, idle/lifetime expiry and cancelled or blocked
+file work.
 A worker test checks that asynchronous cancellation cannot release a file's
 resource pin before off-executor cleanup. The accompanying control calls remain
-local adapter calls. Result-stream transport, public durable-listener integration,
+local adapter calls. Public durable-listener integration,
 client recovery journals, independent Java V2 and full workload/resource evidence
 remain unfinished. No additional profile is advertised by this input adapter.
+
+A separate Rust result adapter now streams actual retained outputs over QUIC.
+Ten tests cover empty and larger-than-window objects, repeated reads without
+execution, stopped/slow receivers, pending stream creation, live credentials,
+corrupt bytes, global/owner/connection quotas and cancellation during file work.
+Before every nonblocking write poll it rechecks authorization and deadlines;
+post-header failures reset only that stream. The control calls in these tests
+remain local. These adapters do not activate a durable profile or establish
+complete V2 endpoints, Java interoperability or workload/resource conformance.
 
 ## Java/Netty Reference Implementation
 

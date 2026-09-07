@@ -262,6 +262,7 @@ fn result_deadlines_include_pending_time_empty_progress_and_fin_at_equality() {
             )
             .unwrap();
         if case == "pending" {
+            assert_eq!(read.next_deadline().unwrap(), now + Elapsed::from_secs(2));
             refuse(
                 read.start(now + Elapsed::from_secs(2)),
                 ErrorCode::LimitExceeded,
@@ -272,6 +273,7 @@ fn result_deadlines_include_pending_time_empty_progress_and_fin_at_equality() {
             match case {
                 "empty" => {
                     read.sent(0, now + Elapsed::from_secs(1)).unwrap();
+                    assert_eq!(read.next_deadline().unwrap(), now + Elapsed::from_secs(2));
                     refuse(
                         read.sent(1, now + Elapsed::from_secs(2)),
                         ErrorCode::LimitExceeded,
@@ -286,10 +288,12 @@ fn result_deadlines_include_pending_time_empty_progress_and_fin_at_equality() {
                 }
                 "lifetime" => {
                     read.sent(1, now + Elapsed::from_secs(1)).unwrap();
+                    assert_eq!(read.next_deadline().unwrap(), now + Elapsed::from_secs(3));
                     read.sent(1, now + Elapsed::from_secs(2)).unwrap();
                     read.read_chunk(&mut [0; 2], now + Elapsed::from_secs(2))
                         .unwrap();
                     read.sent(1, now + Elapsed::from_secs(3)).unwrap();
+                    assert_eq!(read.next_deadline().unwrap(), now + Elapsed::from_secs(5));
                     assert_eq!(
                         read.read_chunk(&mut [0; 2], now + Elapsed::from_secs(4))
                             .unwrap(),

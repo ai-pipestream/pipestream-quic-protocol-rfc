@@ -1531,3 +1531,38 @@ native checks, nine existing interop pairs, 32 raw capability probes and all
 examples. The complete language pairs remain V1 evidence. Rendered Appendix D
 was inspected; idnits reports zero errors/flaws/warnings and the existing FIPS
 comment. No main merge, deployment or IETF submission occurred.
+
+### Authenticated retained-result streams, 2026-09-07
+
+The Rust output adapter now sends actual retained objects over QUIC with fixed
+file workers, bounded global/owner/connection counts, fresh authorization before
+nonblocking writes, and exclusive idle/lifetime deadlines. Ten tests cover empty
+and larger-than-window outputs, replay without execution, stopped/slow receivers,
+pending stream creation, credential expiry, corruption, quota and cancellation.
+The output's header starts its one response; later failures reset the stream
+without a second control response. A read does not repair or rerun computation.
+
+Review also found and reproduced an input idle timeout that waited for blocked
+file preflight. Preflight/chunk waits now abort on time without releasing still-
+running I/O quota. The possible admission commit preserves its uncertainty rule.
+A watch test now accounts for legitimate pre-start metadata capacity refusal
+instead of assuming a fixed sleep proves the slot is free. The deliberately
+disabled output credential guard fails its regression and was restored.
+
+Focused checks pass 66 V2 transport/security tests and the exact library result
+deadline case, with strict clippy. Normative wire/CDDL, storage formats and
+dependencies are unchanged; Appendix D records the actual adapter coverage.
+Both adapters still use local control calls in these tests. Public durable V2
+runtime integration, reserved control credit, maintenance/shutdown, client and
+uncertainty journals, independent Java V2, neutral cross-language failures, full
+resource measurements and the original external/equivalent streaming-gRPC
+workload remain required. This checkpoint does not complete the goal. Evidence:
+`conformance/results/durable-work-v2-output-2026-09-07.txt`.
+
+Final regression and draft builds exited 0. The suite passed 628 Rust workspace
+tests, six Rust-example tests and 193 Java tests from 20 fresh XML reports
+(zero failures/errors/skips), frozen vectors/CDDL, all three bounded models,
+native checks, nine existing interop pairs, 32 raw capability probes and all
+examples. These complete language pairs remain V1 evidence. Rendered Appendix D
+was inspected; idnits reports zero errors/flaws/warnings and the existing FIPS
+comment. No main merge, deployment or IETF submission occurred.

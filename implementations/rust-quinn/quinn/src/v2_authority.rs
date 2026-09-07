@@ -27,6 +27,7 @@ use tokio::{
 };
 
 pub mod input;
+pub mod output;
 mod workers;
 
 fn error(code: ErrorCode, detail: &'static str) -> Error {
@@ -127,6 +128,7 @@ struct State {
     highest: u64,
     pending: usize,
     inputs: usize,
+    outputs: usize,
     binding: Option<Binding>,
     binding_pending: bool,
     completing: bool,
@@ -178,6 +180,7 @@ enum Kind {
     Complete,
     Detach,
     Input,
+    Output,
 }
 struct Ticket {
     shared: Arc<Shared>,
@@ -195,6 +198,7 @@ impl Drop for Ticket {
             Kind::Binding => state.binding_pending = false,
             Kind::Complete => state.completing = false,
             Kind::Input => state.inputs -= 1,
+            Kind::Output => state.outputs -= 1,
             _ => {}
         }
         drop(state);
@@ -292,6 +296,7 @@ impl Connection {
             Control::Session(Session::Create { .. } | Session::Attach { .. }) => Kind::Binding,
             Control::Drain(Drain::Complete { .. }) => Kind::Complete,
             Control::Drain(Drain::Detach { .. }) => Kind::Detach,
+            Control::Result(ResultMessage::Read { .. }) => Kind::Output,
             _ => Kind::Ordinary,
         };
         if matches!(kind, Kind::Binding) && (state.binding.is_some() || state.binding_pending) {
@@ -316,12 +321,19 @@ impl Connection {
         if state.pending >= shared.caps.pending_limit.0 as usize {
             return denied(error(ErrorCode::LimitExceeded, "connection pending limit"));
         }
+        if matches!(kind, Kind::Output) && state.outputs >= shared.caps.stream_limit.0 as usize {
+            return denied(error(
+                ErrorCode::LimitExceeded,
+                "connection result stream limit",
+            ));
+        }
         let binding = state.binding.clone();
         state.pending += 1;
         match kind {
             Kind::Binding => state.binding_pending = true,
             Kind::Complete => state.completing = true,
             Kind::Detach => state.detached = true,
+            Kind::Output => state.outputs += 1,
             _ => {}
         }
         Ok(Submission::Pending(Pending {
