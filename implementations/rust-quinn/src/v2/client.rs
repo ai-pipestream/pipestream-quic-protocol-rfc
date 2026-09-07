@@ -96,6 +96,7 @@ pub struct Intent {
 }
 impl Intent {
     pub fn control(&self, request: Id) -> std::result::Result<Control, Error> {
+        self.mutation.validate()?;
         let operation = self.operation;
         let control = match &self.mutation {
             Mutation::Declare {
@@ -141,6 +142,7 @@ impl Intent {
         Ok(control)
     }
     pub fn input(&self, generation: Id) -> std::result::Result<InputHeader, Error> {
+        self.mutation.validate()?;
         let Mutation::Admit(parameters) = &self.mutation else {
             return Err(Error::frame("control intent is not input admission"));
         };

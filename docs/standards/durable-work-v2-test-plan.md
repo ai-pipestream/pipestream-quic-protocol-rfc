@@ -1371,6 +1371,45 @@ Production asynchronous client/CLI integration, independent Java V2, neutral
 cross-language process failures, measured whole-process resource gates and the
 original external workload/equivalent streaming-gRPC comparison remain open.
 
+### Rust asynchronous client journal ownership, 2026-09-07
+
+The public `pipestream_quic::v2_client::journal::Journal` now runs the complete
+core journal API on one bounded worker. It is not a network connection and does
+not supply TLS authentication or response correlation on behalf of its caller.
+
+- V2-OP/STORE: initialization, audit, commits, reads and final file-owner destruction
+  run off the async runtime. Await intent persistence before transmission. A
+  cancelled accepted call still executes and may durably record the original
+  intent; it does not authorize a replacement identity.
+- V2-RESOURCE: count queued, running and completed-but-unconsumed replies under
+  one ceiling (default 16, range 1..=32). Refuse overload without an unbounded
+  waiter queue. Actual gated worker jobs on a single-thread Tokio runtime verify
+  that cancelling waiters does not refund queued/running capacity and that
+  unread completed replies remain charged. Typed arguments/pages remain bounded;
+  a separate process test opens 64 actual journal owners, refuses the 65th without
+  creating its database/lock files and admits a replacement after all owners
+  finish shutdown. The 64 empty databases total 4,718,592 bytes on this build;
+  this is file-length evidence, not a process-memory measurement.
+- V2-STORE: clones share shutdown; last-handle drop drains already accepted jobs.
+  `closed` confirms operation/store-owner cleanup, not network completion.
+  Worker panic after a real commit reports failure but preserves its intent on
+  reopen. Construction failure waits for owner cleanup before returning.
+- V2-STORE: a stable empty advisory-lock sidecar refuses a second owner, including
+  another process, while the first worker is live. A subprocess commits intent,
+  publishes a flushed marker, is confirmed live, excludes another opener, is
+  killed and is observed to exit unsuccessfully; reopen retains the original
+  intent and uncertainty. Symlink/nonempty lock files refuse without overwrite.
+- V2-WIRE: both actual-QUIC journal recovery tests now use the async owner for
+  creation/binding, original mutation replay, work/reference persistence and exact
+  root coverage across orderly local shutdown/reopen and credential rotation.
+
+Evidence: [`durable-work-v2-async-client-journal-2026-09-07.txt`](../../conformance/results/durable-work-v2-async-client-journal-2026-09-07.txt).
+These are worker/count/storage and Rust wire tests, not measured whole-process
+memory/latency guarantees or independent V2 conformance. The production client
+multiplexer/CLI and complete transport/file integration remain open, together
+with independent Java V2, the neutral driver and original workload/gRPC comparison.
+No wire, CDDL, client database format, authority format or dependency changed.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

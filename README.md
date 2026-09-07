@@ -40,7 +40,9 @@ constructing an exact root-completion request. Parent/child commitments are chec
 in both observation orders, including when a later sealing receipt verifies a
 parent's cached membership. Reopen preserves those commitments; reply reordering,
 contradictions, local write failures and physical exhaustion have regression tests.
-These are blocking library APIs, not the completed asynchronous V2 client.
+The blocking core APIs now have a bounded asynchronous journal owner, including
+cancel-safe capacity and cross-process ownership/recovery tests. This is not yet
+the completed V2 network client/CLI.
 The Rust `pipestream_core::v2` library now implements typed codecs for every
 version-2 message and record, frozen commitments, negotiation checks, bounded
 client correlation and incremental object validation. This is a library

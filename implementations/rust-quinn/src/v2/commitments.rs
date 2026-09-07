@@ -54,6 +54,35 @@ pub enum Mutation {
 }
 
 impl Mutation {
+    /// Check bounded typed parameters without allocating a commitment or
+    /// assuming a session identity. This is not authorization or admission.
+    pub fn validate(&self) -> Result<(), Error> {
+        match self {
+            Self::Admit(parameters) => parameters.check(),
+            Self::Declare {
+                scope,
+                entity_ids,
+                seal,
+            } => {
+                scope.check()?;
+                entity_ids.check()?;
+                require(
+                    (!entity_ids.is_empty() || *seal) && entity_ids.windows(2).all(|p| p[0] < p[1]),
+                    "invalid declaration commitment",
+                )
+            }
+            Self::Retry {
+                work,
+                expected_attempt,
+            } => {
+                work.check()?;
+                expected_attempt.check()
+            }
+            Self::Cancel { work } | Self::Skip { work } => work.check(),
+            Self::ScopeCancel { scope } => scope.check(),
+        }
+    }
+
     /// Canonical operation preimage excludes connection request numbers and raw
     /// input bytes, but includes the originator's namespace and all parameters.
     pub fn commitment_bytes(
@@ -64,6 +93,7 @@ impl Mutation {
     ) -> Result<Vec<u8>, Error> {
         originator.check()?;
         operation.check()?;
+        self.validate()?;
         let mut w = Writer::new();
         w.array(8);
         session.write(&mut w)?;
@@ -71,7 +101,6 @@ impl Mutation {
         operation.write(&mut w);
         match self {
             Self::Admit(parameters) => {
-                parameters.check()?;
                 require(
                     parameters.work.producer == originator,
                     "admission originator differs from input producer",
@@ -85,12 +114,6 @@ impl Mutation {
                 entity_ids,
                 seal,
             } => {
-                scope.check()?;
-                entity_ids.check()?;
-                require(
-                    (!entity_ids.is_empty() || *seal) && entity_ids.windows(2).all(|p| p[0] < p[1]),
-                    "invalid declaration commitment",
-                )?;
                 w.uint(3);
                 w.uint(0);
                 w.array(3);
@@ -102,8 +125,6 @@ impl Mutation {
                 work,
                 expected_attempt,
             } => {
-                work.check()?;
-                expected_attempt.check()?;
                 w.uint(4);
                 w.uint(6);
                 w.array(2);
@@ -111,7 +132,6 @@ impl Mutation {
                 expected_attempt.write(&mut w);
             }
             Self::Cancel { work } | Self::Skip { work } => {
-                work.check()?;
                 w.uint(4);
                 w.uint(if matches!(self, Self::Cancel { .. }) {
                     8
@@ -122,7 +142,6 @@ impl Mutation {
                 work.write(&mut w);
             }
             Self::ScopeCancel { scope } => {
-                scope.check()?;
                 w.uint(3);
                 w.uint(6);
                 w.array(1);

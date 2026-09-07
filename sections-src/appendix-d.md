@@ -157,9 +157,22 @@ or deletion; authority storage is unchanged. The pinned empty database measures
 73,728 bytes; physical-exhaustion tests now use 128 KiB database/WAL/journal caps
 and a 64 KiB shared-memory cap, not a process-memory claim.
 These are not independent cross-language failure evidence or a completed V2
-client: asynchronous transport integration and whole-process resource measurements
+client: production transport integration and whole-process resource measurements
 remain required. Section 12 now explicitly requires parent/child consistency
 checks regardless of observation order; no wire-format change was needed.
+
+The Rust async journal owner now runs initialization, audits, journal operations
+and store destruction on one bounded worker per journal. Its configurable call
+ceiling includes queued/running operations and replies not yet consumed. Cancelling
+a waiter does not cancel a commit or refund its capacity early. A stable empty
+advisory-lock sidecar excludes a second cooperating owner across processes; a
+forced-process-exit test verifies ownership release and retention of committed
+intent. Nine substantive worker tests also cover bounded queues/replies, shutdown,
+last-handle drop, panic, invalid history and sidecar safety. An isolated resource
+test opens 64 real journal owners, refuses another and restores capacity after
+shutdown; their empty database files total 4,718,592 bytes on the pinned build.
+The two QUIC recovery tests now use the async journal API. They do not establish a complete production
+client, independent V2 interoperability or measured whole-process resource bounds.
 
 ## Java/Netty Reference Implementation
 

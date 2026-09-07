@@ -510,10 +510,61 @@ to 73,728 bytes (WAL 0). The physical-exhaustion fixtures now use 128 KiB limits
 for the database, WAL and rollback journal and 64 KiB for shared memory; they still
 exercise actual exhaustion/refusal and verify earlier evidence survives reopen.
 
-The production V2 client event loop, CLI, bounded asynchronous journal ownership
-and transport integration of these coverage APIs still require implementation.
+The production V2 client event loop, CLI and full transport integration of these
+coverage APIs still require implementation. The async journal owner below now
+supplies bounded off-runtime storage ownership.
 Independent Java V2, neutral cross-language failures and the original
 external workload/equivalent streaming-gRPC resource comparison remain open.
+
+### Version-2 asynchronous journal owner
+
+`pipestream_quic::v2_client::journal::Journal` exposes async versions of the
+complete core journal API. One dedicated worker owns opening/auditing, all SQLite
+operations and final store/file-owner destruction. No application callbacks are
+accepted. Typed variable-size arguments are checked before queueing; mutation
+validation also precedes cloning parameters in the core request/header helpers.
+This does not authenticate caller-supplied observations or replace correlation.
+
+`Options::in_flight` defaults to 16 and accepts 1 through 32. The ceiling includes
+queued calls, executing calls and completed replies not yet consumed or discarded
+by their callers. Capacity exhaustion refuses with LIMIT_EXCEEDED instead of
+adding an unbounded waiter queue. Cancelling an accepted future does not cancel
+its queued/running journal operation or refund its slot early. The original
+intent may commit after cancellation and remains its recovery identity. Results
+returned to an application become caller-owned, not an internal retained history.
+There are at most 64 journal workers per process, including opening/closing work.
+These count and typed-record bounds are not measured heap/native-memory/RSS limits.
+
+Clones share the same worker. `close()` atomically refuses further calls on all
+clones and lets accepted operations finish. `closed()` waits for their completion
+and release of the store/ownership lease; `shutdown()` does both. A timeout around
+that wait is not completed shutdown. Dropping the last handle also drains accepted
+operations. Worker panic reports INTERNAL_ERROR and releases its owners without
+erasing committed history. Failed construction waits for owner cleanup before
+returning, so immediate retry does not race the failed worker's lease release.
+None of these local operations cancels remote work or acknowledges network DRAIN.
+
+The Unix backend takes a nonblocking advisory lock on the stable, empty
+`<journal>.client-lock` sidecar. A second cooperating async opener, even in another
+process, refuses CONFLICT while the first worker owns it. Symlink or nonempty
+sidecars refuse without overwrite. Keep the directory private, never unlink the
+lock while clients may hold it, and do not bypass ownership by opening the
+low-level core journal concurrently. The lock is not durable identity evidence
+and does not repair lost storage. Client format 3 and authority storage are unchanged.
+
+Nine substantive worker scenarios plus one subprocess entry point cover bounded
+admission, unread-reply capacity, cancellation of queued/running calls, single-
+threaded async progress, shared close, last-handle drop, panic, invalid history,
+ownership conflicts, sidecar safety and forced process exit after a real intent
+commit. The two real-QUIC recovery tests now use these async APIs for creation,
+binding, intent/receipt, work, reference and root-coverage persistence, waiting for
+actual local shutdown before reopen. They still share the Rust codec and manually
+drive the network; this is not the production connection multiplexer, independent
+Java V2, neutral process-failure driver or workload/resource comparison.
+An isolated resource test opens 64 real journal owners, refuses the 65th before
+creating its database/lock files and admits a replacement after owner shutdown.
+The 64 empty databases total 4,718,592 bytes on the pinned build. This measures
+owner admission and database lengths, not process memory or comparative throughput.
 
 `v2::authority::AuthorityStore` adds normalized SQLite session/creation history,
 declarations, immutable operation receipts, bounded pages/revision snapshots and

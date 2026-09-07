@@ -1792,3 +1792,48 @@ interop pairs, 32 capability probes and all examples. No non-Rust implementation
 changed afterward. Draft build handle 64110 exited zero; rendered normative text
 and Appendix D were inspected. idnits has zero errors/flaws/warnings and its
 existing FIPS comment. No submission, merge to main or deployment occurred.
+
+### Bounded asynchronous client journal ownership, 2026-09-07
+
+`pipestream_quic::v2_client::journal::Journal` now supplies async access to the
+complete core journal API. One worker owns opening/auditing, every storage call
+and final store destruction. Its 1..=32 operation ceiling (default 16) includes
+queued/running calls and replies not yet consumed or discarded. Cancelled waiters
+do not cancel accepted commits or release their capacity early. Clones share
+close; last-handle drop drains accepted operations. Shutdown confirms actual
+operation/store-owner cleanup, not remote work completion or network DRAIN.
+
+A stable empty `.client-lock` sidecar prevents another cooperating async owner
+from bypassing the first worker's limits, including across processes. The directory
+must remain private; do not unlink the lock or open the raw core journal alongside
+the worker. Worker failure does not erase committed intent. Construction failure
+waits for ownership cleanup before reporting its result. The core's existing
+typed mutation checks now also run before cloning request/header parameters.
+Wire/CDDL, client format 3, authority storage and dependency versions are unchanged.
+
+Nine substantive worker tests and one subprocess entry point cover cancellation,
+queue/unread-reply capacity, single-thread async progress, shared/last-handle close,
+panic, invalid history, sidecar safety and forced process death after a real
+commit. Both real-QUIC recovery tests now use the async owner for original
+identity/receipt, work/reference and root-coverage persistence across reconnect.
+An isolated process opens 64 real owners, refuses the 65th without creating its
+files, then admits a replacement after shutdown. The empty main databases total
+4,718,592 bytes. This is ownership/file-length evidence, not measured heap/RSS
+or comparative workload throughput.
+
+Final Rust handle 58271 exited zero: 724 workspace tests, focused worker/resource
+gates, strict clippy and formatting. Full suite handle 72643 exited zero with
+723 Rust tests before the final startup cleanup refinement and resource test,
+193 Java tests in 20 fresh reports, six external Rust tests, vectors/CDDL/models,
+native checks, nine V1 pairs, 32 capability probes and all examples. No non-Rust
+implementation changed afterward. Final draft build handle 90630 exited zero;
+rendered Appendix D was inspected, with zero idnits errors/flaws/warnings and the
+existing FIPS comment. Evidence:
+`conformance/results/durable-work-v2-async-client-journal-2026-09-07.txt`.
+
+The original full objective remains active. Next: the production V2 connection
+multiplexer, integrated incremental input/result file transport and client CLI;
+independent complete Java V2; the neutral cross-language failure/resource driver;
+and the original external workload/equivalent streaming-gRPC comparison with
+pinned raw cost/failure evidence. The tests still manually drive the network;
+the async journal is not a substitute for those remaining deliverables.

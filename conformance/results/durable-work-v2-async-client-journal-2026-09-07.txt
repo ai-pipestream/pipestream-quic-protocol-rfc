@@ -1,0 +1,145 @@
+Rust V2 bounded asynchronous client journal, 2026-09-07 UTC
+Base: 1ebaef6ad615872a3bc212a0b7dbd34ae0a0c1d8
+Implementation and tests: the commit containing this result file.
+
+Scope
+  pipestream_quic::v2_client::journal::Journal exposes async access to the whole
+  core journal API: creation/binding, immutable intent/receipt, unresolved pages,
+  work/manifest/reference evidence, scope membership/coverage and root-cut request.
+  One dedicated worker owns journal initialization/open/audit, every database
+  operation and final store/file-owner destruction. No user callback can be
+  submitted through its public API. It does not perform TLS or correlate network
+  replies; caller-supplied records still require authenticated transport evidence.
+
+  Mutation::validate now shares the existing typed parameter rules without
+  allocating a commitment or inventing a session identity. The core intent
+  request/header helpers validate before cloning parameters; the async owner
+  validates variable-size inputs before enqueueing them. Wire schemas, CDDL,
+  frozen bytes, local client format 3, authority format and dependencies are unchanged.
+
+  Options::in_flight is 1..=32, default 16. Queued calls, executing calls and
+  completed replies not consumed or discarded all retain the same slot. Overload
+  returns LIMIT_EXCEEDED; no unbounded waiter queue is created. Cancelling an
+  accepted future abandons its reply, not the operation; its queued/running
+  commit continues with its slot held. Returning a value transfers it to the
+  application, rather than accumulating an internal completed-result history.
+  A process-wide permit ceiling bounds 64 concurrent journal workers, including
+  workers opening/closing storage. These are count/typed-record bounds, not an
+  independently measured heap/native-memory/RSS or end-to-end latency guarantee.
+
+  Clones share a short enqueue/close gate. close refuses new calls atomically;
+  closed waits until accepted operations and final store/lease cleanup finish.
+  shutdown performs both. A timeout around that wait does not complete cleanup.
+  Last-handle drop closes acceptance and lets accepted jobs drain. A worker panic
+  reports INTERNAL_ERROR; no retry, deletion or reset is inferred. Failed open
+  waits for the worker to release its owners before reporting failure, avoiding
+  a cleanup race for immediate reopen. No local shutdown acknowledges network
+  DRAIN or cancels work at an authority.
+
+  Unix ownership is an advisory lock on a stable empty <journal>.client-lock
+  sidecar. A second cooperating async opener, including another process, refuses
+  CONFLICT while the first worker owns it. Symlink/nonempty lock files refuse
+  without overwrite. The private directory must not be modified by hostile
+  actors; do not unlink the sidecar or bypass it with concurrent raw core-store
+  access. The sidecar is not identity evidence or a way to repair missing history.
+
+Nine substantive worker tests and one subprocess entry point
+  persistent_intent_and_empty_root_coverage_round_trip_on_owned_worker
+  cancelled_waiters_keep_running_and_queued_commits_charged_until_shutdown
+  completed_but_unconsumed_replies_keep_their_capacity
+  close_is_shared_but_dropping_one_handle_does_not_stop_others
+  last_handle_drop_drains_accepted_commit_before_releasing_file_ownership
+  panic_stops_the_owner_without_erasing_a_finished_commit
+  invalid_arguments_and_options_refuse_without_queued_inventory_or_history_reset
+  ownership_sidecar_refuses_symlinks_and_foreign_data_without_overwriting
+  live_process_owns_the_journal_and_forced_exit_preserves_its_commit
+  journal_worker_kill_child (subprocess entry point, no standalone scenario)
+
+  Worker barriers are explicit fault/scheduling injection, not a simulated
+  database. The tests run a current-thread Tokio runtime while a real worker job
+  is blocked: both running and queued waiters are cancelled, their slots remain
+  charged and excess calls refuse. Releasing the worker commits both original
+  intents; shutdown/reopen verifies them and their unresolved receipt state.
+  FIFO sequencing proves an unconsumed completed reply still holds its slot.
+  No assumed sleep or scheduler timing determines whether those jobs are pending.
+
+  The process test observes a flushed post-commit marker from its child, confirms
+  that child is still live, observes a second opener's ownership conflict, kills
+  the child and observes unsuccessful exit. Reopen retains the original intent
+  without a receipt, rather than manufacturing completion or replacing identity.
+  The panic test similarly verifies a real commit survives an injected later fault.
+
+Isolated owner-capacity gate
+  quinn/tests/v2_journal_resources.rs runs in a separate test process to avoid
+  unrelated unit-test journals sharing its global ceiling. It initializes 64
+  actual async journal owners, rejects the next one with LIMIT_EXCEEDED and checks
+  that neither its database nor its lock file was created. After close/closed on
+  all 64, a new journal is admitted while the old closed handles remain held.
+  Raw focused output:
+    journal owner saturation: live=64 refused-before-io=1 replacement=1 total-database-bytes=4718592
+    test result: ok. 1 passed; 0 failed; 0 ignored
+    /tmp/pipestream-v2-async-journal-resources.log
+  The reported bytes are the sum of the 64 empty main database lengths. They are
+  not allocated filesystem blocks, journal sidecar sizes, RAM, RSS, or a workload
+  performance result. No syscall-count claim is derived from the absent files.
+
+Actual QUIC integration
+  The two existing public-listener journal replay tests now use the async owner:
+    journal_replays_unrecorded_creation_and_declaration_without_new_identities
+    journal_recovers_unrecorded_input_admission_and_reads_the_original_attempt_output
+  They persist/reopen creation, binding, original mutation intent and receipts,
+  work views, full manifest/index selection and root coverage through async calls.
+  Local shutdown is awaited before reopening. Trusted endpoint configuration and
+  rotated mapped certificates remain separate from locator hints; original object
+  bytes and exact root DRAIN echo are verified. The tests still manually drive
+  the connection using the Rust codec, not the independent failure driver.
+
+Verification
+  Focused handle 87042 exited 0 with ten worker-test entries, both real-QUIC
+  journal cases and strict workspace clippy:
+    /tmp/pipestream-v2-async-journal-focused-expanded.log
+    /tmp/pipestream-v2-async-journal-quic.log
+    /tmp/pipestream-v2-async-journal-clippy.log
+
+  Full repository suite handle 72643 exited 0:
+    ./conformance/run_all.sh
+    /tmp/pipestream-v2-async-journal-full-suite.log
+  Passed 723 Rust workspace tests, formatting/strict clippy, release builds,
+  frozen vectors/CDDL/commitments, all three bounded models and negative controls,
+  native/C++ tests, six external Rust example tests, nine V1 black-box pairs,
+  32 raw QUIC capability probes and all language examples. Java: 193 tests with
+  zero failures/errors/skips in 20 fresh XML reports, modified 2026-09-07 11:03:53
+  through 11:07:09 America/New_York within this run.
+
+  Review then tightened the construction-failure cleanup handoff, and the isolated
+  global-owner saturation test was added. Original final set-e handle 58271 exited 0:
+    cargo fmt --all
+    cargo test --locked -p pipestream-quinn v2_client::journal -- --nocapture
+    cargo test --locked -p pipestream-quinn --test v2_journal_resources -- --nocapture
+    cargo clippy --locked --workspace --all-targets -- -D warnings
+    cargo test --locked --workspace
+    /tmp/pipestream-v2-async-journal-final-focused.log
+    /tmp/pipestream-v2-async-journal-resources.log
+    /tmp/pipestream-v2-async-journal-final-clippy.log
+    /tmp/pipestream-v2-async-journal-final-workspace.log
+  Final source: 724 Rust workspace tests passed (420 core, 200 Quinn, 69 wire,
+  30 driver, five resource tests), zero failed or ignored. Both actual-QUIC
+  journal tests and the forced-process-exit case run again in this workspace gate.
+  No non-Rust implementation changed after the completed repository suite.
+
+  Final draft build handle 90630 exited 0:
+    ./build.sh core 05
+    /tmp/pipestream-v2-async-journal-draft-final.log
+  The rebuilt Appendix D was inspected for async worker status, the isolated
+  64-owner measurement and unfinished client/interoperability/resource gates.
+  idnits reports zero errors/flaws/warnings and the existing FIPS-180-4 comment.
+  Generated XML/TXT/HTML remain local build outputs; no draft was submitted.
+
+Remaining goal obligations
+  Production V2 connection multiplexer and CLI; integrated incremental input/result
+  file transport with independent control progress; complete independent Java V2;
+  neutral Rust cross-language process failures and measured resource gates; the
+  original external chunk/distribute/transform/reassemble workload and equivalent
+  streaming-gRPC baseline with pinned raw costs and failure evidence. This is not
+  complete V2 conformance, IETF acceptance, submission or deployment. No ProtoMolt
+  Search, fleet, unrelated repository, Python implementation or conformance code changed.
