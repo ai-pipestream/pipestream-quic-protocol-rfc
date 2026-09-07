@@ -17,6 +17,7 @@ use tokio::{
     task::JoinSet,
 };
 
+pub mod files;
 mod objects;
 mod operations;
 pub use objects::{Admission, Output};

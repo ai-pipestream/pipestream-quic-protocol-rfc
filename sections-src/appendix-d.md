@@ -182,7 +182,7 @@ exercise reordered/cancelled waits, abandoned inputs, malformed control/selectio
 wrong commitments, corrupt/truncated/extra bytes, slow consumers and pending
 deadlines. An isolated gate opens 64 actual Core connections, refuses a 65th and
 admits a replacement after draining. These are count/behavior checks, not measured
-whole-process memory or independent V2 interoperability. CLI/file integration,
+whole-process memory or independent V2 interoperability. Standalone CLI integration,
 Java V2 and workload comparison remain incomplete. Section
 12 clarifies that an identifiable result's wrong commitment fails that delivery;
 invalid correlation remains fatal. The wire encoding is unchanged.
@@ -198,6 +198,16 @@ receipt persistence, missing/changed commitments, binding identity mismatch,
 refused-operation recovery and exclusive journal ownership. These remain Rust
 implementation tests, not the independent V2 failure driver or workload comparison.
 No wire or database-format change was needed for this client integration.
+
+Rust's file adapters now prehash an open regular input, retain the same descriptor
+and stream it through the durable client. Result files remain temporary until
+verified length, digest and FIN, then synchronize and install without overwriting
+an existing destination. Owned transfers survive waiter cancellation. Tests cover
+empty/256 KiB transfers, replay, changed source bytes, malformed results, withheld
+FIN, byte ceilings and descriptor capacity. These adapters require trusted local
+directories; process-death staging reconciliation and CLI recovery integration
+remain open. Fixed buffers and owner counts do not establish measured total
+process memory or the original comparative workload costs.
 
 ## Java/Netty Reference Implementation
 

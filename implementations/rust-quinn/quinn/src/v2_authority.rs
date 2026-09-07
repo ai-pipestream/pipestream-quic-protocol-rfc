@@ -31,7 +31,7 @@ pub mod input;
 pub mod output;
 pub mod runtime;
 pub mod server;
-mod workers;
+pub(crate) mod workers;
 
 fn error(code: ErrorCode, detail: &'static str) -> Error {
     Error { code, detail }

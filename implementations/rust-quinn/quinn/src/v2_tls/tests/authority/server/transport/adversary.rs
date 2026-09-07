@@ -110,6 +110,107 @@ async fn still_usable(client: &Transport, peer: &mut PeerWire) {
 }
 
 #[tokio::test]
+async fn file_save_never_installs_corrupt_truncated_or_extra_result_bytes() {
+    for bytes in [b"abd".as_slice(), b"ab", b"abcd"] {
+        let tls = Fixture::new();
+        let (client, mut peer) = pair(&tls, client_options()).await;
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("result");
+        let manifest = manifest(b"abc");
+        let request = client.exchange(read(&manifest), Some(&manifest));
+        let sending = async {
+            let request = request_id(&peer.receive().await).unwrap();
+            let mut send = peer.flow.open_data().await.unwrap();
+            send.write_all(&header(&manifest, request).encode_framed().unwrap())
+                .await
+                .unwrap();
+            let _ = send.write_all(bytes).await;
+            let _ = send.finish();
+        };
+        let (response, ()) = tokio::join!(request, sending);
+        let Reply::Object(output) = response.unwrap() else {
+            panic!("expected object")
+        };
+        assert!(output.save_to(target.clone(), 1024).await.is_err());
+        assert!(!target.exists());
+        // Deferred unlink runs on the file pool, not the network reader.
+        tokio::time::timeout(HANDSHAKE, async {
+            loop {
+                if std::fs::read_dir(directory.path())
+                    .unwrap()
+                    .next()
+                    .is_none()
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        still_usable(&client, &mut peer).await;
+        client.close();
+        client.closed().await;
+    }
+}
+
+#[tokio::test]
+async fn cancelled_file_save_waiter_still_requires_verified_fin_before_installation() {
+    let tls = Fixture::new();
+    let (client, mut peer) = pair(&tls, client_options()).await;
+    let directory = tempfile::tempdir().unwrap();
+    let target = directory.path().join("result");
+    let bytes = vec![0x8f; 32768];
+    let manifest = manifest(&bytes);
+    let request = client.exchange(read(&manifest), Some(&manifest));
+    let sending = async {
+        let request = request_id(&peer.receive().await).unwrap();
+        let mut send = peer.flow.open_data().await.unwrap();
+        send.write_all(&header(&manifest, request).encode_framed().unwrap())
+            .await
+            .unwrap();
+        send.write_all(&bytes[..1]).await.unwrap();
+        send
+    };
+    let (response, mut sending) = tokio::join!(request, sending);
+    let Reply::Object(output) = response.unwrap() else {
+        panic!("expected object")
+    };
+    let saving = tokio::spawn(output.save_to(target.clone(), bytes.len() as u64));
+    tokio::time::timeout(HANDSHAKE, async {
+        loop {
+            if std::fs::read_dir(directory.path())
+                .unwrap()
+                .next()
+                .is_some()
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!target.exists());
+    saving.abort();
+    let _ = saving.await;
+    sending.write_all(&bytes[1..]).await.unwrap();
+    assert!(!target.exists());
+    sending.finish().unwrap();
+    tokio::time::timeout(HANDSHAKE, async {
+        while !target.exists() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(std::fs::read(target).unwrap(), bytes);
+    still_usable(&client, &mut peer).await;
+    client.close();
+    client.closed().await;
+}
+
+#[tokio::test]
 async fn mismatched_result_header_only_aborts_that_delivery() {
     let tls = Fixture::new();
     let (client, mut peer) = pair(&tls, client_options()).await;

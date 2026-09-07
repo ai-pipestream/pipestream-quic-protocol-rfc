@@ -1935,3 +1935,53 @@ independent Java V2, the neutral cross-language crash/failure/resource driver,
 and the original external workload/equivalent authenticated, durable streaming-
 gRPC baseline with pinned raw measurements remain required. The existing
 cross-language suite is V1 evidence, not proof of Java V2 interoperability.
+
+### Owned client file adapters and refusal preservation, 2026-09-07
+
+Rust `session::files::FileInput` now opens and prehashes a bounded regular file,
+keeps its descriptor and streams an exact matching original admission intent
+through the durable client. It refuses non-regular inputs and final-component
+symlinks; a nonblocking open prevents a FIFO from waiting for a writer. Length
+and digest are checked again before FIN. `Output::save_to` stages bounded chunks
+until verified FIN, synchronizes the file, installs without overwriting a local
+destination and synchronizes its directory. The low-level output also exposes
+this adapter without claiming automatic journal persistence.
+
+File operations use four shared workers and 64 process-wide owner slots. The
+existing deferred-destructor/file-worker implementation is reused; cancelled
+send/save waiters retain their owned transfer and cleanup. `FileInput::close`
+waits for descriptor cleanup. Caller-supplied per-file byte ceilings do not claim
+a shared retained-directory quota or measured total process memory.
+
+Thirteen new tests include empty/256 KiB real-server transfers and replay, changed
+source bytes, pre-submission intent mismatch, cancellation, no-overwrite, byte
+limits, non-regular files, independent descriptor lifetime gates and adversarial
+corrupt/truncated/overlong results. A withheld-FIN test proves cancellation of
+the file-save waiter does not publish the prefix. Ordinary abort removes only
+its own temporary file, not unrelated staging.
+
+The early-refusal regression failed first: an actual UNAUTHORIZED admission
+refusal was hidden by the secondary local "transport writer stopped" error.
+The adapter now preserves the correlated authority outcome when the writer is
+stopped. A valid original replay receipt still takes precedence over a redundant
+upload abort; locally detected commitment errors remain visible. No normative
+wire, CDDL, storage-format or dependency change was needed.
+
+Verification: final Rust handle 26733 exited zero with the refusal regression,
+strict clippy and 759 workspace tests. Full suite handle 87425 exited zero; its
+Rust phase preceded the final refusal correction (758 tests), which the final
+Rust run covers. Non-Rust source was unchanged. The suite also passed 193 Java
+tests in 20 fresh XML reports, six external Rust tests, vectors/models, native
+checks, nine V1 pairs, 32 capability probes and examples. Draft handle 3251 exited
+zero; rendered Appendix D TXT/HTML inspected; idnits has zero errors/flaws/warnings
+and the existing FIPS comment. Evidence:
+`conformance/results/durable-work-v2-client-files-2026-09-07.txt`.
+
+The full original objective remains active. Next is standalone V2 CLI integration
+with explicit file-staging ownership, shared disk budgeting and bounded restart
+reconciliation. These file adapters require trusted, stable local directories;
+process death may leave identifiable staging files and does not authorize blind
+directory cleanup. Complete independent Java V2, neutral cross-language crash/
+failure/resource testing and the original external workload/equivalent
+authenticated, durable streaming-gRPC comparison with pinned raw measurements
+remain required. No main merge, deployment or draft submission occurred.

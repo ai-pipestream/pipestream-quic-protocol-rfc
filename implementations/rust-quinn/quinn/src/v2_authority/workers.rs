@@ -7,11 +7,11 @@ use tokio::sync::oneshot;
 
 type Job = Box<dyn FnOnce() + Send>;
 #[derive(Clone)]
-pub(super) struct Workers {
+pub(crate) struct Workers {
     sender: mpsc::SyncSender<Job>,
 }
 impl Workers {
-    pub(super) fn new(threads: usize, queued: usize) -> Result<Self, Error> {
+    pub(crate) fn new(threads: usize, queued: usize) -> Result<Self, Error> {
         if !(1..=32).contains(&threads) || !(1..=256).contains(&queued) {
             return Err(error(
                 ErrorCode::LimitExceeded,
@@ -46,7 +46,7 @@ impl Workers {
         }
         Ok(Self { sender })
     }
-    pub(super) async fn run<T: Send + 'static>(
+    pub(crate) async fn run<T: Send + 'static>(
         &self,
         job: impl FnOnce() -> Result<T, Error> + Send + 'static,
     ) -> Result<T, Error> {
@@ -71,19 +71,19 @@ impl Workers {
 
 /// File-owning state must be destroyed on a worker even when the async caller
 /// is cancelled between jobs. Its pin also funds the deferred destructor.
-pub(super) struct Value<T: Send + 'static, P: Send + 'static> {
+pub(crate) struct Value<T: Send + 'static, P: Send + 'static> {
     value: Option<(T, P)>,
     workers: Workers,
 }
 impl<T: Send + 'static, P: Send + 'static> Value<T, P> {
-    pub(super) fn new(value: T, pin: P, workers: Workers) -> Self {
+    pub(crate) fn new(value: T, pin: P, workers: Workers) -> Self {
         Self {
             value: Some((value, pin)),
             workers,
         }
     }
     /// Call only inside an I/O job; no raw file-owning state leaves the workers.
-    pub(super) fn take(mut self) -> (T, P) {
+    pub(crate) fn take(mut self) -> (T, P) {
         self.value.take().expect("owned file value")
     }
 }

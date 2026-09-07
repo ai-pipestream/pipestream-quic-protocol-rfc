@@ -1,0 +1,100 @@
+Rust V2 owned client file adapters, 2026-09-07
+Repository: pipestream-quic-protocol-rfc
+Branch: feat/durable-work-results-v2
+Parent: 6cbd2513bbd25d456a328249deddace8d9570dfa
+
+FileInput prehashes a bounded regular file and streams its original commitment
+through the durable client. Output::save_to stages until verified FIN, synchronizes
+and installs without overwriting a destination. Accepted send/save tasks and file
+cleanup retain their ownership through waiter cancellation. The existing fixed
+file-worker implementation is reused without changing its scheduling behavior.
+No wire/CDDL/storage-format/dependency change, deployment or submission.
+
+Final production-source SHA-256:
+51484a7853d61b66a8de057a01d232d5ad34ed23da167bbe9b70cc1f18031aa2  implementations/rust-quinn/quinn/src/v2_client/session/files.rs
+e291a86a5ccb0d575a61218697901acb137a06959f40fe19093228fd86e1b5b2  implementations/rust-quinn/quinn/src/v2_client/session/objects.rs
+
+Final Rust verification, direct process handle 26733, exit 0:
+  cargo fmt --all
+  cargo test --locked -p pipestream-quinn early_authority_refusal_is_not_hidden -- --nocapture
+  cargo clippy --locked --workspace --all-targets -- -D warnings
+  cargo test --locked --workspace
+Working directory: implementations/rust-quinn
+Focused refusal regression: 1 passed, 0 failed.
+Workspace: 759 passed, 0 failed = 420 core + 233 Quinn + 69 wire + 30 driver
+  + 7 isolated resource tests. Zero doc tests.
+Logs:
+  /tmp/pipestream-v2-client-files-refusal-green.log
+  /tmp/pipestream-v2-client-files-final2-clippy.log
+  /tmp/pipestream-v2-client-files-final2-workspace.log
+
+Earlier focused/whole Rust verification, handle 64937, exit 0:
+  4 file-unit tests; 5 real-server file tests; isolated descriptor gate;
+  strict clippy and 758 workspace tests, before the final refusal regression.
+Logs:
+  /tmp/pipestream-v2-client-files-units.log
+  /tmp/pipestream-v2-client-files-server.log
+  /tmp/pipestream-v2-client-files-resources.log
+  /tmp/pipestream-v2-client-files-workspace.log
+The final run above includes all these cases plus the refusal correction.
+
+Negative-first finding, handle 80902, exit 101:
+  cargo test --locked -p pipestream-quinn early_authority_refusal_is_not_hidden -- --nocapture
+Log: /tmp/pipestream-v2-client-files-refusal-red.log
+Observed: Err(Protocol(Error { code: Cancelled, detail: "transport writer stopped" }))
+Expected: correlated authority Refusal with UNAUTHORIZED.
+The adapter now waits for and preserves that outcome instead of the secondary
+writer-stop signal. Original intent remains saved with no admission receipt.
+Local commitment-integrity errors are still reported; valid replay receipts remain
+authoritative even when the server stops a redundant body.
+
+Thirteen new tests: 4 file-unit, 6 real-server file, 2 adversarial-peer file,
+1 isolated file-owner gate. They include:
+- Empty and 262144-byte actual input/output; explicit saved manifest selection;
+  identical operation replay; exact destination bytes and transport verification.
+- Prehash/intent mismatch refuses before preparing admission; changing source
+  bytes after prehash cannot produce a new admission or send valid FIN.
+- Cancelled upload waiter still saves the authority receipt across journal reopen.
+- Cancelled result-save waiter remains owned; no destination before verified FIN.
+- Corrupt/truncated/overlong result bytes never install a destination; their own
+  staging is removed and the same authenticated connection remains usable.
+- Refuse oversized files/results, directories, symlinks and FIFOs without a writer.
+- Existing destination data survives CONFLICT; ordinary staging abort never
+  deletes an unrelated temporary file.
+- Raw isolated observation: V2 client file gate: open-files=64 refused=1 cleanup-before-replacement=1
+The file gate passed again in final workspace verification. Four fixed workers,
+64 owner slots, 8192-byte buffers and caller-supplied byte ceilings are structural
+bounds, not measured whole-process heap/RSS, shared disk quotas or latency claims.
+
+Full conformance, direct process handle 87425, exit 0:
+  ./conformance/run_all.sh
+Log: /tmp/pipestream-v2-client-files-full-suite.log
+Its Rust workspace phase ran before the final refusal test/fix: 758 passed. The
+final 759-test workspace/clippy run above verifies that correction. No non-Rust
+implementation source changed during either run.
+  33 immutable language-neutral vectors
+  18 immutable recursive/recovery vectors
+  70 frozen V2 framing/CDDL vectors and 12 domain-separated commitments
+  bounded lifecycle/scope/composed models and expected negative controls
+  193 Java tests; 20 fresh Surefire XML reports; 0 failures/errors/skips
+  XML mtimes 2026-09-07 13:00:58.563272404 .. 13:03:28.579191267 -0400
+  Java native and C++ native checks
+  6 external Rust example tests
+  all 9 V1 black-box language pairs
+  all 32 raw QUIC capability probes
+  recursive/recovery and all external examples
+These language pairs are V1 evidence, not independent Java V2 interoperability.
+
+Draft verification, direct process handle 3251, exit 0:
+  ./build.sh core 05
+Log: /tmp/pipestream-v2-client-files-draft.log
+Rendered Appendix D TXT and HTML inspected.
+idnits: 0 errors, 0 flaws, 0 warnings, 1 existing FIPS reference comment.
+
+Remaining original deliverables include standalone V2 CLI, exclusive client
+staging ownership/restart reconciliation and shared disk budgeting, full independent
+Java V2, neutral cross-language failure/resource driver, and the original external
+chunk/distribute/transform/reassemble workload plus equivalent authenticated,
+durable streaming-gRPC baseline with pinned raw measurements. Local containing
+directories must be trusted and stable. Process death can leave identifiable
+temporary files; no automatic scan/deletion policy is claimed by this adapter.

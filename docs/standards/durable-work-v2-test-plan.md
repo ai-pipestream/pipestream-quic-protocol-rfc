@@ -1476,6 +1476,39 @@ standalone V2 CLI/file adapter, measured whole-process resource bound, independe
 Java V2 implementation or the original workload/equivalent gRPC comparison.
 Evidence: `conformance/results/durable-work-v2-session-client-2026-09-07.txt`.
 
+### Rust owned client file transfers, 2026-09-07
+
+`session::files::FileInput` and `Output::save_to` supply file-backed adapters, not
+another protocol/codec or standalone CLI. Thirteen new test functions cover:
+
+- V2-OP/RESULT: real authenticated-server empty and 256 KiB round trips, saved
+  admission receipts, explicit manifest selection and verified result files;
+  identical header replay returns its original receipt when the body is stopped.
+- V2-OP/INTEGRITY: mismatched prehash/intent refuses before admission preparation;
+  a modified source after prehash fails verification and remains DECLARED with
+  the original local intent but no admission receipt.
+- V2-OP/STORE: cancelled file-send waiter still saves the late actual admission
+  across journal reopen. Cancelled result-save waiter retains transfer ownership
+  and does not install a destination before verified FIN.
+- V2-AUTH/OP: an early UNAUTHORIZED refusal is preserved instead of hidden by
+  the secondary local writer-stop error. This test failed before the correction;
+  the original intent remains saved without an admission receipt.
+- V2-RESULT/INTEGRITY: an authenticated adversarial peer sends corrupt, truncated
+  and overlong objects; none installs a destination, each removes its own staging
+  file, and the same connection still answers control requests.
+- V2-RESOURCE: empty/binary prehash, byte ceilings, non-regular files and symlinks,
+  FIFO refusal without a writer, and an isolated 64-descriptor ceiling/replacement
+  gate after actual cleanup. These are structural limits, not measured RSS.
+- V2-STORE: staging does not publish a prefix; a destination created before
+  installation is preserved on CONFLICT; successful installation is byte-exact;
+  ordinary abort removes its own temporary file, not an unrelated staging file.
+
+Caller-owned directories must remain trusted and stable. Process-death staging
+reconciliation and shared disk budgeting are not supplied by these adapters.
+Standalone V2 CLI, complete independent Java V2, neutral cross-language failures
+and the original workload/equivalent streaming-gRPC measurement remain required.
+Evidence: `conformance/results/durable-work-v2-client-files-2026-09-07.txt`.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

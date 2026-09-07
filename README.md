@@ -45,8 +45,9 @@ cancel-safe capacity and cross-process ownership/recovery tests. A bounded V2
 client wire transport now supplies authenticated connections, multiplexed control
 and incremental input/result streams. The durable session client now composes
 them: it persists intent before transmission and records receipts/observations
-before returning success, including after waiter cancellation. Standalone V2
-CLI/file integration and independent Java V2 remain unfinished.
+before returning success, including after waiter cancellation. File adapters now
+prehash/stream inputs and install only verified results without overwriting local
+files. Standalone V2 CLI and independent Java V2 remain unfinished.
 The Rust `pipestream_core::v2` library now implements typed codecs for every
 version-2 message and record, frozen commitments, negotiation checks, bounded
 client correlation and incremental object validation. This is a library

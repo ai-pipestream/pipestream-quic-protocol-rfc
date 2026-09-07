@@ -23,12 +23,25 @@ impl Admission {
             .map_err(|_| error(ErrorCode::InternalError, "admission collector failed"))?
             .value
     }
+    /// Stop unfinished transmission, then await the still-owned admission
+    /// collector. A header replay or racing commit can return a valid receipt.
+    pub async fn abort(self) -> Result<OperationReceipt> {
+        let Self { writer, receipt } = self;
+        drop(writer);
+        receipt
+            .await
+            .map_err(|_| error(ErrorCode::InternalError, "admission collector failed"))?
+            .value
+    }
 }
 pub struct Output {
     inner: transport::Output,
     _ticket: Ticket,
 }
 impl Output {
+    pub(super) fn into_parts(self) -> (transport::Output, Ticket) {
+        (self.inner, self._ticket)
+    }
     pub fn header(&self) -> &ResultHeader {
         self.inner.header()
     }

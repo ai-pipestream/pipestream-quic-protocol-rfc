@@ -511,8 +511,8 @@ for the database, WAL and rollback journal and 64 KiB for shared memory; they st
 exercise actual exhaustion/refusal and verify earlier evidence survives reopen.
 
 The V2 transport below supplies the network event loop, and the durable session
-client composes these journal/coverage APIs automatically. CLI/file integration
-remains open.
+client composes these journal/coverage APIs automatically. Owned file adapters
+are available below; standalone V2 CLI integration remains open.
 The async journal owner supplies bounded off-runtime storage ownership.
 Independent Java V2, neutral cross-language failures and the original
 external workload/equivalent streaming-gRPC resource comparison remain open.
@@ -562,7 +562,7 @@ Applications must await journal intent persistence and a covering declaration
 receipt before transmitting input, then validate/persist authenticated observations
 before using their commitments. A real-server test composes the public journal
 and transport across a 256 KiB transfer, replay, certificate rotation/reopen and
-exact root completion. Standalone V2 CLI/file adapters, complete independent
+exact root completion. Standalone V2 CLI integration, complete independent
 Java V2 and neutral cross-language/workload evidence remain unfinished.
 
 ### Version-2 durable session client
@@ -626,8 +626,52 @@ reopen/certificate rotation, cancelled creation/mutation/upload waiters, identit
 mismatch, missing covering receipts, changed intent, refused-operation recovery,
 exclusive ownership and failed/successful barriers. The journal is configured
 with a single operation slot in these tests to exercise serialized storage.
-Standalone V2 CLI/file adapters, independent Java V2, the neutral failure/resource
+Standalone V2 CLI integration, independent Java V2, the neutral failure/resource
 driver and original external workload/streaming-gRPC comparison remain required.
+
+### Version-2 owned file transfers
+
+`v2_client::session::files::FileInput::open(path, maximum_bytes)` opens a regular
+file without following a final-component symlink, checks its size and prehashes
+it with an 8 KiB buffer. Directories and FIFOs refuse; the nonblocking open avoids
+waiting for a FIFO writer. The same open descriptor is rewound and retained.
+`length` and `sha256` supply the admission commitment. `send(client, intent,
+declaration_operation)` requires an exact match before preparing the admission,
+then streams the file through the durable client and waits for its saved receipt.
+Length/digest are checked again before FIN, so mutation of a prehashed file does
+not create a new successful admission. A replay may legitimately return the
+original receipt after the server stops the redundant upload. `Admission::abort`
+also stops the writer while preserving its independently owned receipt collector.
+
+`Output::save_to(path, maximum_bytes)` refuses an oversized result before creating
+a file, stages bounded chunks, and installs the destination only after verified
+length/SHA-256/FIN. It synchronizes the file, installs without replacing an existing
+file or symlink, and synchronizes the containing directory. A failure after
+installation is ambiguous local durability; the installed file is not deleted
+to hide it. `SavedOutput` includes the verified transport commitment. The same
+adapter is available on the low-level transport output, but that API does not
+persist a manifest/selection in the journal.
+
+These APIs require trusted, stable application-owned containing directories.
+Inputs are not filesystem snapshots and must not be modified during transfer.
+Accepted send/save tasks survive cancelled waiters. Four shared file workers and
+64 process-wide file-owner slots bound active descriptors, queued work and deferred
+cleanup; an unconsumed internal reply retains its slot. `FileInput::close` waits
+for descriptor cleanup. Buffer sizes and owner counts are not measured total
+heap/RSS guarantees. The caller supplies the per-file byte ceiling; this is not a
+shared retained-directory disk quota.
+
+Ordinary failed downloads remove only their own temporary file. Abrupt process
+death may leave `.pipestream-result-*` staging files. This adapter deliberately
+does not scan or delete other transfers' files; exclusive staging ownership,
+bounded restart reconciliation and a CLI recovery policy still need integration.
+It never turns client file loss into new remote operation identity or work.
+
+Tests cover empty/256 KiB real-server round trips, replay, changed source bytes,
+pre-submission commitment mismatch, cancellation, byte limits and no-overwrite;
+adversarial authenticated peers send corrupt/truncated/extra bytes and withhold
+FIN. A separate process opens 64 input descriptors, refuses the next and admits a
+replacement only after explicit cleanup.
 
 ### Version-2 asynchronous journal owner
 

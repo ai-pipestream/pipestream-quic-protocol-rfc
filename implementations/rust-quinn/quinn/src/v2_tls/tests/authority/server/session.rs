@@ -5,6 +5,7 @@ use crate::v2_client::{
     session::{self as durable, Client as DurableClient, Failure},
     transport as wire,
 };
+mod files;
 
 fn creation() -> Creation {
     Creation {
