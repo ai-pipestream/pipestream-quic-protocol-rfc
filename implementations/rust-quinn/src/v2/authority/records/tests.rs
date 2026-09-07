@@ -133,9 +133,9 @@ fn scope_closure_uses_its_preallocated_summary_without_allocating_a_new_record()
     };
     let mut connection = fixture.store.connect().unwrap();
     let tx = connection.transaction().unwrap();
-    let (before, empty): (_, Option<ScopeSummary>) = read(&tx, target).unwrap();
-    assert!(empty.is_none());
-    assert_eq!(before.credits, 1);
+    let (before, empty): (_, scopes::ScopeState) = read(&tx, target).unwrap();
+    assert!(empty.summary.is_none());
+    assert_eq!(before.credits, SCOPE_CREDITS);
     drop(tx);
     fixture
         .store
@@ -148,10 +148,10 @@ fn scope_closure_uses_its_preallocated_summary_without_allocating_a_new_record()
         )
         .unwrap();
     let tx = connection.transaction().unwrap();
-    let (after, summary): (_, Option<ScopeSummary>) = read(&tx, target).unwrap();
+    let (after, state): (_, scopes::ScopeState) = read(&tx, target).unwrap();
     assert_eq!(after.capacity, before.capacity);
-    assert_eq!((after.revision, after.credits), (Id(2), 0));
-    assert_eq!(summary.unwrap().counts.total().unwrap(), 0);
+    assert_eq!((after.revision, after.credits), (Id(2), SCOPE_CREDITS - 1));
+    assert_eq!(state.summary.unwrap().counts.total().unwrap(), 0);
 }
 
 #[test]
@@ -339,6 +339,8 @@ fn pinned_wal_exhaustion_preserves_both_records_promised_rewrites() {
             let (old, view): (_, WorkView) = read(&tx, target).unwrap();
             assert_eq!(old.credits, WORK_CREDITS - step);
             replace(&tx, target, old.revision, &view, true).unwrap();
+            let (clock, previous): (_, Number) = read(&tx, CLOCK).unwrap();
+            replace(&tx, CLOCK, clock.revision, &Number(previous.0 + 1), false).unwrap();
             tx.commit().unwrap();
         }
     }
@@ -395,6 +397,9 @@ fn record_rewrite_cost_bound_covers_page_sizes_padding_and_spilling() {
             tx.execute("INSERT INTO owners VALUES('alice',1)", [])
                 .unwrap();
             let policy = super::super::tests::policy();
+            tx.execute("INSERT INTO authority(singleton,name,last_generation,clock,policy,store_id,payload_path) VALUES(1,?1,?2,zeroblob(?3),?4,?5,?6)",
+                params!["a".repeat(128), sql(MAX_NUMBER).unwrap(), (HEADER_BYTES+CLOCK_CAPACITY) as i64, pack(&policy).unwrap(), crate::persistence::StoreIdentity::generate().unwrap().as_bytes().as_slice(), "p".repeat(4096)]).unwrap();
+            initialize(&tx, CLOCK, &Number(0), CLOCK_CAPACITY, 0).unwrap();
             let retention = Policy {
                 execution_limit_ms: Duration(1000),
                 output_retention_ms: Duration(1000),
@@ -402,10 +407,10 @@ fn record_rewrite_cost_bound_covers_page_sizes_padding_and_spilling() {
             };
             tx.execute("INSERT INTO sessions(generation,owner,creation_sequence,policy,limits,results,control_limit,object_limit) VALUES(1,'alice',1,?1,?2,1,8192,1048576)",
                 params![pack(&retention).unwrap(),pack(&policy.session_limits).unwrap()]).unwrap();
-            protect(&tx, SUMMARY_CAPACITY, 1).unwrap();
+            protect(&tx, SCOPE_CAPACITY, SCOPE_CREDITS).unwrap();
             tx.execute(
-                "INSERT INTO scopes(generation,scope,producer,summary) VALUES(1,0,0,zeroblob(?1))",
-                [(HEADER_BYTES + SUMMARY_CAPACITY) as i64],
+                "INSERT INTO scopes(generation,scope,producer,state) VALUES(1,0,0,zeroblob(?1))",
+                [(HEADER_BYTES + SCOPE_CAPACITY) as i64],
             )
             .unwrap();
             initialize(
@@ -414,9 +419,9 @@ fn record_rewrite_cost_bound_covers_page_sizes_padding_and_spilling() {
                     table: Table::Scope,
                     row: tx.last_insert_rowid(),
                 },
-                &None::<ScopeSummary>,
-                SUMMARY_CAPACITY,
-                1,
+                &scopes::ScopeState::empty(),
+                SCOPE_CAPACITY,
+                SCOPE_CREDITS,
             )
             .unwrap();
             protect(&tx, capacity, 2).unwrap();
@@ -451,6 +456,7 @@ fn record_rewrite_cost_bound_covers_page_sizes_padding_and_spilling() {
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .unwrap();
             replace(&tx, target, Id(1), &Number(MAX_NUMBER), true).unwrap();
+            replace(&tx, CLOCK, Id(1), &Number(1), false).unwrap();
             tx.commit().unwrap();
             let actual = guard.usage().unwrap().wal_bytes;
             let bound = rewrite_bytes(capacity, page).unwrap();
@@ -705,6 +711,32 @@ fn record_crash_child() {
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .unwrap();
     let (header, view): (_, WorkView) = read(&tx, target).unwrap();
+    if boundary.starts_with("scope-") {
+        let scope = Target {
+            table: Table::Scope,
+            row: tx
+                .query_row(
+                    "SELECT rowid FROM scopes WHERE generation=1 AND scope=0",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap(),
+        };
+        let (retained, mut state): (_, scopes::ScopeState) = read(&tx, scope).unwrap();
+        state.cancelled = true;
+        state.revoked = true;
+        replace(&tx, scope, retained.revision, &state, true).unwrap();
+        let (clock, previous): (_, Number) = read(&tx, CLOCK).unwrap();
+        replace(&tx, CLOCK, clock.revision, &Number(previous.0 + 1), false).unwrap();
+        if boundary == "scope-before" {
+            std::process::exit(87);
+        }
+        tx.commit().unwrap();
+        if boundary == "scope-after" {
+            std::process::exit(87);
+        }
+        panic!("scope crash boundary not reached");
+    }
     if boundary.starts_with("grow-") {
         grow(&mut tx, target, header.revision, 16384, 4).unwrap();
         growth_crash_point("before-commit");
@@ -713,6 +745,8 @@ fn record_crash_child() {
         panic!("growth crash boundary not reached");
     }
     replace(&tx, target, header.revision, &view, true).unwrap();
+    let (clock, previous): (_, Number) = read(&tx, CLOCK).unwrap();
+    replace(&tx, CLOCK, clock.revision, &Number(previous.0 + 1), false).unwrap();
     if boundary == "before" {
         std::process::exit(87);
     }
@@ -743,6 +777,11 @@ fn crash_brackets_credit_spending_and_reopen_reconstructs_remaining_funding() {
             .unwrap();
         let (retained, view): (_, WorkView) = read(&tx, target).unwrap();
         let spent = u64::from(boundary == "after");
+        let (clock, time): (_, Number) = read(&tx, CLOCK).unwrap();
+        assert_eq!(
+            (clock.revision, time),
+            (Id(1 + spent), Number(1000 + spent))
+        );
         assert_eq!(
             (retained.revision, retained.credits),
             (Id(1 + spent), WORK_CREDITS - spent)
@@ -787,6 +826,320 @@ fn crash_during_growth_never_exposes_a_half_initialized_or_unfunded_record() {
                 (WORK_CAPACITY, WORK_CREDITS)
             },
             "{boundary}"
+        );
+        store.integrity_check().unwrap();
+    }
+}
+
+#[test]
+fn shared_clock_counter_preserves_every_promised_record_observation() {
+    let (fixture, _, work) = declared();
+    let mut connection = fixture.store.connect().unwrap();
+    let mut tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
+    let scope = Target {
+        table: Table::Scope,
+        row: tx
+            .query_row("SELECT rowid FROM scopes", [], |r| r.get(0))
+            .unwrap(),
+    };
+    let promised = WORK_CREDITS + SCOPE_CREDITS;
+    write(
+        &tx,
+        CLOCK,
+        &Number(1000),
+        Id(MAX_NUMBER - promised),
+        CLOCK_CAPACITY,
+        0,
+    )
+    .unwrap();
+    assert!(matches!(
+        protect(&tx, WORK_CAPACITY, 1),
+        Err(StoreError::Protocol(Error {
+            code: ErrorCode::LimitExceeded,
+            ..
+        }))
+    ));
+    assert!(matches!(
+        grow(&mut tx, work, Id(1), WORK_CAPACITY, WORK_CREDITS + 1),
+        Err(StoreError::Protocol(Error {
+            code: ErrorCode::LimitExceeded,
+            ..
+        }))
+    ));
+    assert!(matches!(
+        replace(&tx, CLOCK, Id(MAX_NUMBER - promised), &Number(1001), false),
+        Err(StoreError::Protocol(Error {
+            code: ErrorCode::LimitExceeded,
+            ..
+        }))
+    ));
+    for (index, target) in [work, work, scope, scope].into_iter().enumerate() {
+        match target.table {
+            Table::Work => {
+                let (old, view): (_, WorkView) = read(&tx, target).unwrap();
+                replace(&tx, target, old.revision, &view, true).unwrap();
+            }
+            Table::Scope => {
+                let (old, state): (_, scopes::ScopeState) = read(&tx, target).unwrap();
+                replace(&tx, target, old.revision, &state, true).unwrap();
+            }
+            Table::Clock => unreachable!(),
+        }
+        let clock = header(&tx, CLOCK).unwrap();
+        let revision = replace(
+            &tx,
+            CLOCK,
+            clock.revision,
+            &Number(1001 + index as u64),
+            false,
+        )
+        .unwrap();
+        assert_eq!(revision, Id(MAX_NUMBER - promised + index as u64 + 1));
+    }
+    assert_eq!(header(&tx, CLOCK).unwrap().revision, Id(MAX_NUMBER));
+    tx.commit().unwrap();
+    fixture.store.integrity_check().unwrap();
+}
+
+struct AtTime(u64);
+impl Clock for AtTime {
+    fn read(&self) -> ClockReading {
+        ClockReading {
+            utc_ms: Number(self.0),
+            trusted: true,
+        }
+    }
+}
+
+#[test]
+fn empty_scope_closure_spends_its_clock_reservation_at_counter_exhaustion() {
+    let mut fixture = super::super::tests::Fixture::new();
+    let binding = fixture.create();
+    let mut connection = fixture.store.connect().unwrap();
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
+    write(
+        &tx,
+        CLOCK,
+        &Number(1000),
+        Id(MAX_NUMBER - SCOPE_CREDITS),
+        CLOCK_CAPACITY,
+        0,
+    )
+    .unwrap();
+    tx.commit().unwrap();
+    fixture.store.clock = Arc::new(AtTime(1001));
+    let receipt = fixture
+        .store
+        .declare(
+            &binding.identity,
+            OperationId([1; 16]),
+            Number(0),
+            &[],
+            true,
+        )
+        .unwrap();
+    let Outcome::Declared {
+        seal: Some(seal), ..
+    } = receipt.body
+    else {
+        panic!("missing committed seal");
+    };
+    let summary = fixture
+        .store
+        .checkpoint(&binding.identity, Number(0), seal)
+        .unwrap()
+        .unwrap();
+    assert_eq!(summary.closed_at, Number(1001));
+    let (clock, time): (_, Number) = read(&connection, CLOCK).unwrap();
+    assert_eq!(
+        (clock.revision, time),
+        (Id(MAX_NUMBER - SCOPE_CREDITS + 1), Number(1001))
+    );
+    fixture.store.integrity_check().unwrap();
+}
+
+#[test]
+fn scope_fence_and_clock_updates_need_no_page_growth_or_sql_row_replacement() {
+    let (mut fixture, binding, _) = declared();
+    fixture.store.clock = Arc::new(AtTime(1001));
+    let mut connection = fixture.store.connect().unwrap();
+    let pages: u64 = connection
+        .query_row("PRAGMA page_count", [], |r| number(r, 0))
+        .unwrap();
+    connection
+        .pragma_update(None, "max_page_count", sql(pages).unwrap())
+        .unwrap();
+    connection.execute_batch("CREATE TEMP TRIGGER forbid_scope_row BEFORE UPDATE ON main.scopes BEGIN SELECT RAISE(ABORT,'scope row replacement forbidden'); END;
+        CREATE TEMP TRIGGER forbid_clock_row BEFORE UPDATE ON main.authority BEGIN SELECT RAISE(ABORT,'clock row replacement forbidden'); END;").unwrap();
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
+    let target = Target {
+        table: Table::Scope,
+        row: tx
+            .query_row("SELECT rowid FROM scopes", [], |r| r.get(0))
+            .unwrap(),
+    };
+    let (before, mut state): (_, scopes::ScopeState) = read(&tx, target).unwrap();
+    let now = fixture.store.check_clock(&tx).unwrap();
+    let mut seal =
+        ScopeSeal::new(&binding.identity, Number(0), Producer(0), None, Number(1)).unwrap();
+    seal.push(Id(1)).unwrap();
+    state.seal = Some(seal.finish().unwrap());
+    state.cancelled = true;
+    state.revoked = true;
+    // Private storage transition only, not descendant settlement or a revoke RPC.
+    replace(&tx, target, before.revision, &state, true).unwrap();
+    fixture.store.remember_clock(&tx, now).unwrap();
+    tx.commit().unwrap();
+    assert_eq!(
+        connection
+            .query_row("PRAGMA page_count", [], |r| number(r, 0))
+            .unwrap(),
+        pages
+    );
+    let (after, actual): (_, scopes::ScopeState) = read(&connection, target).unwrap();
+    assert_eq!(actual, state);
+    assert_eq!(after.credits, before.credits - 1);
+    assert!(matches!(
+        fixture
+            .store
+            .operation(&binding.identity, OperationId([1; 16])),
+        Err(StoreError::Protocol(Error {
+            code: ErrorCode::Unauthorized,
+            ..
+        }))
+    ));
+    fixture.store.integrity_check().unwrap();
+}
+
+#[test]
+fn restart_refuses_clock_corruption_or_scope_timestamps_ahead_of_its_clock() {
+    for corruption in ["header", "body", "past"] {
+        let fixture = super::super::tests::Fixture::new();
+        let binding = fixture.create();
+        fixture
+            .store
+            .declare(
+                &binding.identity,
+                OperationId([1; 16]),
+                Number(0),
+                &[],
+                true,
+            )
+            .unwrap();
+        let mut connection = fixture.store.connect().unwrap();
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        if corruption == "past" {
+            write(&tx, CLOCK, &Number(999), Id(1), CLOCK_CAPACITY, 0).unwrap();
+        } else {
+            let mut blob = tx
+                .blob_open("main", "authority", "clock", 1, false)
+                .unwrap();
+            let offset = if corruption == "header" {
+                8
+            } else {
+                HEADER_BYTES
+            };
+            let mut byte = [0];
+            blob.read_at_exact(&mut byte, offset).unwrap();
+            byte[0] ^= 1;
+            blob.write_at(&byte, offset).unwrap();
+            blob.close().unwrap();
+        }
+        tx.commit().unwrap();
+        assert!(
+            matches!(fixture.store.integrity_check(), Err(StoreError::Corrupt(_))),
+            "{corruption}"
+        );
+        assert!(
+            matches!(
+                try_reopen(&fixture.directory.path().join("authority.sqlite")),
+                Err(StoreError::Corrupt(_))
+            ),
+            "{corruption}"
+        );
+    }
+}
+
+#[test]
+fn scope_state_capacity_includes_maximum_summary_and_fence_fields() {
+    let state = scopes::ScopeState {
+        last_entity: Number(MAX_NUMBER),
+        declared: Number(MAX_NUMBER),
+        seal: Some(Digest([9; 32])),
+        cancelled: true,
+        revoked: false,
+        summary: Some(ScopeSummary {
+            scope: Number(MAX_NUMBER),
+            producer: Producer(1),
+            parent: Some(WorkKey {
+                scope: Number(MAX_NUMBER - 1),
+                producer: Producer(1),
+                entity: Id(MAX_NUMBER),
+            }),
+            seal: Digest([9; 32]),
+            declared: Number(MAX_NUMBER),
+            counts: Counts {
+                success: Number(MAX_NUMBER),
+                failure: Number(0),
+                cancelled: Number(0),
+                skipped: Number(0),
+            },
+            status_root: Digest([8; 32]),
+            closed_at: Number(MAX_NUMBER),
+        }),
+    };
+    let bytes = pack(&state).unwrap();
+    assert!(bytes.len() < SCOPE_CAPACITY);
+    assert_eq!(unpack::<scopes::ScopeState>(&bytes).unwrap(), state);
+}
+
+#[test]
+fn scope_fence_and_clock_commit_or_rollback_together_across_process_death() {
+    for boundary in ["scope-before", "scope-after"] {
+        let (fixture, _, work) = declared();
+        let path = fixture.directory.path().join("authority.sqlite");
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "v2::authority::records::tests::record_crash_child",
+                "--nocapture",
+            ])
+            .env("PIPESTREAM_RECORD_TEST_CRASH", boundary)
+            .env("PIPESTREAM_RECORD_TEST_PATH", &path)
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(87));
+        let store = reopen(&path);
+        let connection = store.connect().unwrap();
+        let target = Target {
+            table: Table::Scope,
+            row: connection
+                .query_row("SELECT rowid FROM scopes", [], |r| r.get(0))
+                .unwrap(),
+        };
+        let (header, state): (_, scopes::ScopeState) = read(&connection, target).unwrap();
+        let (clock, time): (_, Number) = read(&connection, CLOCK).unwrap();
+        let spent = u64::from(boundary == "scope-after");
+        assert_eq!((state.cancelled, state.revoked), (spent == 1, spent == 1));
+        assert_eq!(
+            (header.revision, header.credits),
+            (Id(2 + spent), SCOPE_CREDITS - spent)
+        );
+        assert_eq!(
+            (clock.revision, time),
+            (Id(1 + spent), Number(1000 + spent))
+        );
+        assert_eq!(
+            self::header(&connection, work).unwrap().credits,
+            WORK_CREDITS
         );
         store.integrity_check().unwrap();
     }

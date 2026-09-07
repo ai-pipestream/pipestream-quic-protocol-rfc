@@ -98,6 +98,67 @@ pub(super) struct Fixture {
     clock: Arc<TestClock>,
     authorization: Arc<TestAuthorization>,
 }
+
+/// Install private fence state for refusal-path tests; this is not a public
+/// cancellation/revocation implementation or evidence of descendant settlement.
+pub(super) fn set_scope_fence(store: &AuthorityStore, generation: Id, revoked: bool) {
+    let mut connection = store.connect().unwrap();
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
+    let target = records::Target {
+        table: records::Table::Scope,
+        row: tx
+            .query_row(
+                "SELECT rowid FROM scopes WHERE generation=?1 AND scope=0",
+                [sql(generation.0).unwrap()],
+                |r| r.get(0),
+            )
+            .unwrap(),
+    };
+    let (header, mut state): (_, scopes::ScopeState) = records::read(&tx, target).unwrap();
+    state.cancelled = true;
+    state.revoked = revoked;
+    records::replace(&tx, target, header.revision, &state, false).unwrap();
+    tx.commit().unwrap();
+}
+
+#[test]
+fn owner_denial_precedes_decoding_another_owners_corrupt_binding_or_scope() {
+    for corruption in ["binding", "scope"] {
+        let fixture = Fixture::new();
+        let binding = fixture.create();
+        let mut connection = fixture.store.connect().unwrap();
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        if corruption == "binding" {
+            tx.execute(
+                "UPDATE sessions SET policy=x'ff' WHERE generation=?1",
+                [sql(binding.identity.generation.0).unwrap()],
+            )
+            .unwrap();
+        } else {
+            let row: i64 = tx
+                .query_row(
+                    "SELECT rowid FROM scopes WHERE generation=?1 AND scope=0",
+                    [sql(binding.identity.generation.0).unwrap()],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let mut blob = tx.blob_open("main", "scopes", "state", row, false).unwrap();
+            blob.write_at(&[0xff], records::HEADER_BYTES).unwrap();
+            blob.close().unwrap();
+        }
+        tx.commit().unwrap();
+        let mut wrong = binding.identity;
+        wrong.owner = owner("bob");
+        refuse(
+            fixture.store.operation(&wrong, op(1)),
+            ErrorCode::Unauthorized,
+        );
+    }
+}
 impl Fixture {
     fn with_policy(policy: StorePolicy) -> Self {
         Self::with_physical(policy, PhysicalLimits::default())
@@ -247,15 +308,7 @@ fn authorization_precedes_lookup_and_revocation_denies_replay() {
         ErrorCode::Unauthorized,
     );
     fixture.authorization.allowed.store(true, Ordering::SeqCst);
-    fixture
-        .store
-        .connect()
-        .unwrap()
-        .execute(
-            "UPDATE sessions SET revoked=1 WHERE generation=?1",
-            [sql(binding.identity.generation.0).unwrap()],
-        )
-        .unwrap();
+    set_scope_fence(&fixture.store, binding.identity.generation, true);
     refuse(
         fixture
             .store

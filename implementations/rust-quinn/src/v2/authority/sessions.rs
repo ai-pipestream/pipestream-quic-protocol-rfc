@@ -5,11 +5,20 @@ pub(super) fn load(
     authority: &IdentityLabel,
     generation: Id,
 ) -> Result<Option<(Binding, bool)>> {
-    let mut statement = tx.prepare("SELECT owner,creation_sequence,policy,limits,results,control_limit,object_limit,revoked FROM sessions WHERE generation=?1")?;
+    let mut statement = tx.prepare("SELECT owner,creation_sequence,policy,limits,results,control_limit,object_limit FROM sessions WHERE generation=?1")?;
     let mut rows = statement.query([sql(generation.0)?])?;
     let Some(row) = rows.next()? else {
         return Ok(None);
     };
+    let root = records::Target {
+        table: records::Table::Scope,
+        row: tx.query_row(
+            "SELECT rowid FROM scopes WHERE generation=?1 AND scope=0",
+            [sql(generation.0)?],
+            |r| r.get(0),
+        )?,
+    };
+    let (_, scope): (_, scopes::ScopeState) = records::read(tx, root)?;
     Ok(Some((
         Binding {
             identity: SessionIdentity {
@@ -24,7 +33,7 @@ pub(super) fn load(
             control_limit: ControlLimit(number(row, 5)?),
             object_limit: Number(number(row, 6)?),
         },
-        row.get(7)?,
+        scope.revoked,
     )))
 }
 
@@ -158,12 +167,12 @@ impl AuthorityStore {
         tx.execute("INSERT INTO sessions(generation,owner,creation_sequence,policy,limits,results,control_limit,object_limit) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
             params![sql(generation.0)?, owner.0, sql(sequence.0)?, pack(policy)?, pack(&self.policy.session_limits)?,
                 caps.has(RESULT_DELIVERY), sql(caps.control_limit.0)?, sql(caps.object_limit.0)?])?;
-        records::protect(&tx, records::SUMMARY_CAPACITY, 1)?;
+        records::protect(&tx, records::SCOPE_CAPACITY, records::SCOPE_CREDITS)?;
         tx.execute(
-            "INSERT INTO scopes(generation,scope,producer,summary) VALUES(?1,0,0,zeroblob(?2))",
+            "INSERT INTO scopes(generation,scope,producer,state) VALUES(?1,0,0,zeroblob(?2))",
             params![
                 sql(generation.0)?,
-                (records::HEADER_BYTES + records::SUMMARY_CAPACITY) as i64
+                (records::HEADER_BYTES + records::SCOPE_CAPACITY) as i64
             ],
         )?;
         records::initialize(
@@ -172,9 +181,9 @@ impl AuthorityStore {
                 table: records::Table::Scope,
                 row: tx.last_insert_rowid(),
             },
-            &None::<ScopeSummary>,
-            records::SUMMARY_CAPACITY,
-            1,
+            &scopes::ScopeState::empty(),
+            records::SCOPE_CAPACITY,
+            records::SCOPE_CREDITS,
         )?;
         let binding = Binding {
             identity: SessionIdentity {

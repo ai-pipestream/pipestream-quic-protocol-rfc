@@ -684,3 +684,67 @@ errors or skips. Formatting, strict clippy, frozen vectors, bounded models, C++
 tests, nine black-box pairs, 32 raw capability probes and the external examples
 passed. The network tests remain historical-profile evidence, not V2 conformance.
 No main merge, server deployment or Internet-Draft submission occurred.
+
+### Task 2 implementation progress: funded scope state and shared clock
+
+Admission also depends on funding the state that changes after a job is accepted.
+Mutable scope membership counters, seal, cancellation/revocation flags and summary
+now occupy one preallocated 1024-byte record with two credits. Root revocation
+is read from that record. Greatest observed UTC occupies a separate fixed
+64-byte record. The authority format is now 5; payload format 4 is unchanged.
+Older authority stores are refused explicitly, without conversion or deletion.
+No normative wire, CDDL or frozen-vector changes were needed.
+
+Each non-clock record credit now covers that record and one shared-clock
+overwrite in the same transaction. The combined bound accounts for both BLOBs,
+SQLite's final frame and sector padding. Remaining state credits also reserve
+the corresponding shared-clock revision increments. Ordinary time observations,
+new slots and credit expansion cannot consume those increments. A funded
+transition checks trusted time first, spends its state credit and records that
+observation in the same commit; repeated equal UTC requires no rewrite. Actual
+empty-scope closure uses this ordering at clock-counter exhaustion.
+
+The 18 page/capacity cost cases now execute both record and clock writes, with
+maximum authority-label length and a long payload-path tail on the clock row.
+The focused 1 MiB pinned-WAL run admitted 40 ordinary writes, refused further
+growth at 494456 bytes, then committed four reserved work/clock pairs at 560352
+bytes without database growth. Separate scope-fence/clock storage tests prohibit
+SQL row replacement as well. These are measured paired-record costs, not a
+complete job transaction or a production throughput comparison.
+
+Two additional process-death points bracket a scope/clock commit; the existing
+work-credit crash test now includes its clock update too. Reopen validates the
+clock record and refuses retained scope/work timestamps ahead of greatest UTC.
+Counter tests reach the exact 63-bit revision ceiling without losing an owed
+observation. Private fence fixtures do not constitute cancellation/revocation
+RPCs or descendant settlement.
+
+A negative-first ownership test also found that binding or scope corruption
+could be decoded before rejecting a different owner. Session authorization now
+checks ownership with a scalar comparison before decoding either record. Both
+corruption cases produce UNAUTHORIZED for the other owner. The focused authority
+run passes 77 tests, and strict workspace clippy passes.
+
+The next implementation remains the complete admission/job/receipt transaction,
+not profile activation. Its mutable job state must have fixed, funded storage
+for leases, attempt progress and resource liveness, and every autonomous write
+must be covered before acknowledgment. Input/output reference liveness and
+global/per-owner/session executor budgets must commit with it. Those jobs and
+their execution/settlement APIs are not implemented by this checkpoint. The
+independent Java implementation, cross-language failures and equivalent gRPC
+workload remain required by the unchanged goal.
+
+Local evidence logs:
+
+- `/tmp/pipestream-scope-clock-owner-red.log` (deliberate pre-fix failure)
+- `/tmp/pipestream-scope-clock-authority.log`
+- `/tmp/pipestream-scope-clock-clippy.log`
+- `/tmp/pipestream-scope-clock-suite.log`
+
+Full `./conformance/run_all.sh` completed with exit 0. The Rust workspace passed
+438 tests; the two Rust examples passed another six. Java's 20 Surefire reports
+contain 193 tests with zero failures, errors or skips. Formatting, strict clippy,
+frozen vectors, bounded models, C++ tests, all nine black-box pairs, 32 raw QUIC
+capability probes and the external examples passed. Those network tests still
+exercise historical profiles, not the unfinished V2 authority. No main merge,
+server deployment or Internet-Draft submission occurred.

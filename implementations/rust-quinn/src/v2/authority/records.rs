@@ -1,7 +1,8 @@
 //! Fixed-capacity authority records and persistent credits for their rewrites.
 //!
-//! A credit funds one overwrite of this record, not arbitrary SQL, payloads,
-//! jobs or a complete protocol transition. Callers must separately fund every
+//! A credit funds one overwrite of this record and one shared-clock overwrite
+//! in the same transaction, not arbitrary SQL, payloads or an entire job.
+//! Callers must separately fund every
 //! other member of a transition's write set before acknowledging that promise.
 
 use super::*;
@@ -10,7 +11,13 @@ use sha2::{Digest as _, Sha256};
 const MAGIC: &[u8; 8] = b"PSREC003";
 pub(super) const HEADER_BYTES: usize = 104;
 pub(super) const WORK_CAPACITY: usize = 2048;
-pub(super) const SUMMARY_CAPACITY: usize = 512;
+pub(super) const SCOPE_CAPACITY: usize = 1024;
+pub(super) const SCOPE_CREDITS: u64 = 2;
+pub(super) const CLOCK_CAPACITY: usize = 64;
+pub(super) const CLOCK: Target = Target {
+    table: Table::Clock,
+    row: 1,
+};
 pub(super) const WORK_CREDITS: u64 = 2;
 const MAX_SECTOR: u64 = 65536;
 
@@ -18,25 +25,31 @@ const MAX_SECTOR: u64 = 65536;
 pub(super) enum Table {
     Work,
     Scope,
+    Clock,
 }
 impl Table {
     fn name(self) -> &'static str {
         match self {
             Self::Work => "work",
             Self::Scope => "scopes",
+            Self::Clock => "authority",
         }
     }
     fn column(self) -> &'static str {
         match self {
             Self::Work => "view",
-            Self::Scope => "summary",
+            Self::Scope => "state",
+            Self::Clock => "clock",
         }
     }
     fn inventory(self) -> &'static str {
         match self {
             Self::Work => "SELECT rowid,length(view),substr(view,1,104) FROM work ORDER BY rowid",
             Self::Scope => {
-                "SELECT rowid,length(summary),substr(summary,1,104) FROM scopes ORDER BY rowid"
+                "SELECT rowid,length(state),substr(state,1,104) FROM scopes ORDER BY rowid"
+            }
+            Self::Clock => {
+                "SELECT rowid,length(clock),substr(clock,1,104) FROM authority ORDER BY rowid"
             }
         }
     }
@@ -63,6 +76,7 @@ fn checksum(target: Target, prefix: &[u8]) -> [u8; 32] {
     hash.update([match target.table {
         Table::Work => 0,
         Table::Scope => 1,
+        Table::Clock => 2,
     }]);
     hash.update(target.row.to_be_bytes());
     hash.update(prefix);
@@ -159,16 +173,17 @@ fn exhausted() -> StoreError {
     )
 }
 
-/// One leaf and a conservative overflow-page bound. Incremental BLOB writes
-/// neither change keys nor allocate B-tree pages. Pinned SQLite may duplicate
-/// its final commit frame and pad to the supported maximum sector boundary.
+/// Record plus fixed shared-clock BLOB, in one transaction. Each allows a leaf
+/// and conservative overflow pages. Incremental writes allocate no B-tree pages.
+/// Pinned SQLite may duplicate the final commit frame and pad to a sector.
 fn rewrite_bytes(capacity: usize, page: u64) -> Result<u64> {
     if capacity == 0 || capacity > MAX_CONTROL_LIMIT {
         return Err(exhausted());
     }
     let frame = page + 24;
     let pages = (capacity as u64 + HEADER_BYTES as u64).div_ceil(page - 4) + 1;
-    (pages + 1 + MAX_SECTOR.div_ceil(frame))
+    let clock_pages = (CLOCK_CAPACITY as u64 + HEADER_BYTES as u64).div_ceil(page - 4) + 1;
+    (pages + clock_pages + 1 + MAX_SECTOR.div_ceil(frame))
         .checked_mul(frame)
         .and_then(|n| n.checked_add(32))
         .ok_or_else(exhausted)
@@ -185,9 +200,32 @@ fn physical_error(error: crate::persistence::StoreError) -> StoreError {
     }
 }
 
-fn audit(tx: &Connection, page: u64, replacement: Option<(Target, usize, u64)>) -> Result<u64> {
+struct Forecast {
+    bytes: u64,
+    clock_credits: u64,
+    clock_revision: Id,
+}
+impl Forecast {
+    fn clock_room(&self, revision: Id, additional: u64) -> Result<()> {
+        if self
+            .clock_credits
+            .checked_add(additional)
+            .is_none_or(|credits| credits > MAX_NUMBER - revision.0)
+        {
+            return Err(exhausted());
+        }
+        Ok(())
+    }
+}
+
+fn audit(
+    tx: &Connection,
+    page: u64,
+    replacement: Option<(Target, usize, u64)>,
+) -> Result<Forecast> {
     let mut reserved = 0u64;
-    let mut replaced = replacement.is_none();
+    let mut clock_credits = 0u64;
+    let mut replaced = replacement.is_none_or(|(target, _, _)| target == CLOCK);
     for table in [Table::Work, Table::Scope] {
         let mut statement = tx.prepare(table.inventory())?;
         let mut rows = statement.query([])?;
@@ -205,6 +243,7 @@ fn audit(tx: &Connection, page: u64, replacement: Option<(Target, usize, u64)>) 
             } else {
                 (retained.capacity, retained.credits)
             };
+            clock_credits = clock_credits.checked_add(credits).ok_or_else(exhausted)?;
             reserved = reserved
                 .checked_add(
                     credits
@@ -217,7 +256,15 @@ fn audit(tx: &Connection, page: u64, replacement: Option<(Target, usize, u64)>) 
     if !replaced {
         return Err(StoreError::Corrupt("completion replacement record missing"));
     }
-    Ok(reserved)
+    let clock = header(tx, CLOCK)?;
+    if clock.capacity != CLOCK_CAPACITY || clock.credits != 0 {
+        return Err(StoreError::Corrupt("invalid shared-clock record geometry"));
+    }
+    Ok(Forecast {
+        bytes: reserved,
+        clock_credits,
+        clock_revision: clock.revision,
+    })
 }
 
 /// Install the guarded WAL ceiling before unrelated writes, reserving retained
@@ -231,7 +278,10 @@ pub(super) fn protect(tx: &Transaction<'_>, capacity: usize, credits: u64) -> Re
             .checked_mul(rewrite_bytes(capacity, page)?)
             .ok_or_else(exhausted)?
     };
-    let reserved = audit(tx, page, None)?
+    let forecast = audit(tx, page, None)?;
+    forecast.clock_room(forecast.clock_revision, credits)?;
+    let reserved = forecast
+        .bytes
         .checked_add(additional)
         .ok_or_else(exhausted)?;
     crate::persistence::reserve_completion(tx, page, reserved).map_err(physical_error)
@@ -241,6 +291,7 @@ pub(super) fn protect(tx: &Transaction<'_>, capacity: usize, credits: u64) -> Re
 /// rather than trusting a well-formed charge header on corrupt contents. This
 /// audit is streaming across records; payload/job reconciliation is separate.
 pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
+    let (_, clock): (_, Number) = read(tx, CLOCK)?;
     let mut statement =
         tx.prepare("SELECT rowid,scope,producer,entity FROM work ORDER BY rowid")?;
     let mut rows = statement.query([])?;
@@ -262,29 +313,37 @@ pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
                 "work record identity differs from its index",
             ));
         }
+        if view.admitted_at.is_some_and(|time| time > clock)
+            || view.terminal_at.is_some_and(|time| time > clock)
+        {
+            return Err(StoreError::Corrupt(
+                "work timestamp exceeds retained shared clock",
+            ));
+        }
     }
     let mut statement =
-        tx.prepare("SELECT rowid,scope,producer,parent,declared,seal FROM scopes ORDER BY rowid")?;
+        tx.prepare("SELECT rowid,scope,producer,parent FROM scopes ORDER BY rowid")?;
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
-        let (_, summary): (_, Option<ScopeSummary>) = read(
+        let (_, state): (_, scopes::ScopeState) = read(
             tx,
             Target {
                 table: Table::Scope,
                 row: row.get(0)?,
             },
         )?;
-        if let Some(summary) = summary {
+        if state.revoked && number(row, 1)? != 0 {
+            return Err(StoreError::Corrupt("revocation outside root scope"));
+        }
+        if let Some(summary) = state.summary {
             let parent: Option<WorkKey> = row
                 .get::<_, Option<Vec<u8>>>(3)?
                 .map(|b| unpack(&b))
                 .transpose()?;
-            let seal: Option<Vec<u8>> = row.get(5)?;
             if summary.scope.0 != number(row, 1)?
                 || summary.producer.0 != number(row, 2)?
                 || summary.parent != parent
-                || summary.declared.0 != number(row, 4)?
-                || seal.as_deref() != Some(summary.seal.0.as_slice())
+                || summary.closed_at > clock
             {
                 return Err(StoreError::Corrupt("scope summary differs from its index"));
             }
@@ -399,8 +458,16 @@ pub(super) fn replace<T: Wire>(
         return Err(exhausted());
     }
     let page = crate::persistence::completion_geometry(tx).map_err(physical_error)?;
-    let reserved = audit(tx, page, Some((target, retained.capacity, credits)))?;
-    crate::persistence::reserve_completion(tx, page, reserved).map_err(physical_error)?;
+    let forecast = audit(tx, page, Some((target, retained.capacity, credits)))?;
+    forecast.clock_room(
+        if target == CLOCK {
+            revision
+        } else {
+            forecast.clock_revision
+        },
+        0,
+    )?;
+    crate::persistence::reserve_completion(tx, page, forecast.bytes).map_err(physical_error)?;
     write(tx, target, value, revision, retained.capacity, credits)?;
     Ok(revision)
 }
@@ -422,7 +489,13 @@ pub(super) fn grow(
             unpack::<WorkView>(&bytes)?;
         }
         Table::Scope => {
-            unpack::<Option<ScopeSummary>>(&bytes)?;
+            unpack::<scopes::ScopeState>(&bytes)?;
+        }
+        Table::Clock => {
+            unpack::<Number>(&bytes)?;
+            if capacity != CLOCK_CAPACITY || credits != 0 {
+                return Err(exhausted());
+            }
         }
     }
     if retained.revision != expected {
@@ -442,16 +515,18 @@ pub(super) fn grow(
     // Validate the writer even for a no-op; no caller may treat a stale read
     // snapshot as a reservation accepted under the authority writer lock.
     let page = crate::persistence::completion_geometry(tx).map_err(physical_error)?;
+    let forecast = audit(tx, page, Some((target, capacity, credits)))?;
+    forecast.clock_room(forecast.clock_revision, 0)?;
+    crate::persistence::reserve_completion(tx, page, forecast.bytes).map_err(physical_error)?;
     if (capacity, credits) == (retained.capacity, retained.credits) {
         return Ok(());
     }
-    let reserved = audit(tx, page, Some((target, capacity, credits)))?;
-    crate::persistence::reserve_completion(tx, page, reserved).map_err(physical_error)?;
     let savepoint = tx.savepoint()?;
     if capacity != retained.capacity {
         let statement = match target.table {
             Table::Work => "UPDATE work SET view=zeroblob(?1) WHERE rowid=?2",
-            Table::Scope => "UPDATE scopes SET summary=zeroblob(?1) WHERE rowid=?2",
+            Table::Scope => "UPDATE scopes SET state=zeroblob(?1) WHERE rowid=?2",
+            Table::Clock => "UPDATE authority SET clock=zeroblob(?1) WHERE rowid=?2",
         };
         if savepoint.execute(
             statement,

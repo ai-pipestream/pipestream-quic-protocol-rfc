@@ -1,5 +1,73 @@
 use super::*;
 
+/// All mutable scope state lives in one funded, fixed-capacity record. Session
+/// revocation is rooted here so its fence does not need an unfunded SQL update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ScopeState {
+    pub last_entity: Number,
+    pub declared: Number,
+    pub seal: Option<Digest>,
+    pub cancelled: bool,
+    pub revoked: bool,
+    pub summary: Option<ScopeSummary>,
+}
+impl ScopeState {
+    pub fn empty() -> Self {
+        Self {
+            last_entity: Number(0),
+            declared: Number(0),
+            seal: None,
+            cancelled: false,
+            revoked: false,
+            summary: None,
+        }
+    }
+}
+impl Wire for ScopeState {
+    fn read(d: &mut minicbor::Decoder<'_>) -> std::result::Result<Self, Error> {
+        codec::array(d, 6)?;
+        Ok(Self {
+            last_entity: Number::read(d)?,
+            declared: Number::read(d)?,
+            seal: Option::<Digest>::read(d)?,
+            cancelled: bool::read(d)?,
+            revoked: bool::read(d)?,
+            summary: Option::<ScopeSummary>::read(d)?,
+        })
+    }
+    fn write(&self, w: &mut codec::Writer) {
+        w.array(6);
+        self.last_entity.write(w);
+        self.declared.write(w);
+        self.seal.write(w);
+        self.cancelled.write(w);
+        self.revoked.write(w);
+        self.summary.write(w);
+    }
+    fn check(&self) -> std::result::Result<(), Error> {
+        self.last_entity.check()?;
+        self.declared.check()?;
+        self.seal.check()?;
+        self.summary.check()?;
+        require(
+            self.declared.0 <= self.last_entity.0
+                && (self.declared.0 == 0) == (self.last_entity.0 == 0),
+            "invalid retained scope membership counters",
+        )?;
+        require(
+            !self.revoked || self.cancelled,
+            "revoked scope lacks its cancellation fence",
+        )?;
+        if let Some(summary) = &self.summary {
+            require(
+                Some(summary.seal) == self.seal && summary.declared == self.declared,
+                "scope summary differs from retained membership",
+            )?;
+        }
+        Ok(())
+    }
+}
+
 struct RetainedScope {
     summary_record: records::Target,
     summary_revision: Id,
@@ -9,11 +77,13 @@ struct RetainedScope {
     declared: Number,
     seal: Option<Digest>,
     cancelled: bool,
+    revoked: bool,
     summary: Option<ScopeSummary>,
 }
 
 fn load(tx: &Transaction<'_>, generation: Id, scope: Number) -> Result<RetainedScope> {
-    let mut statement = tx.prepare("SELECT producer,parent,last_entity,declared,seal,cancelled,rowid FROM scopes WHERE generation=?1 AND scope=?2")?;
+    let mut statement =
+        tx.prepare("SELECT producer,parent,rowid FROM scopes WHERE generation=?1 AND scope=?2")?;
     let mut rows = statement.query(params![sql(generation.0)?, sql(scope.0)?])?;
     let Some(row) = rows.next()? else {
         return Err(protocol(ErrorCode::NotFound, "scope not declared"));
@@ -22,29 +92,22 @@ fn load(tx: &Transaction<'_>, generation: Id, scope: Number) -> Result<RetainedS
         .get::<_, Option<Vec<u8>>>(1)?
         .map(|b| unpack(&b))
         .transpose()?;
-    let seal = row
-        .get::<_, Option<Vec<u8>>>(4)?
-        .map(|b| {
-            b.try_into()
-                .map(Digest)
-                .map_err(|_| StoreError::Corrupt("invalid retained seal"))
-        })
-        .transpose()?;
     let summary_record = records::Target {
         table: records::Table::Scope,
-        row: row.get(6)?,
+        row: row.get(2)?,
     };
-    let (header, summary) = records::read(tx, summary_record)?;
+    let (header, state): (_, ScopeState) = records::read(tx, summary_record)?;
     Ok(RetainedScope {
         summary_record,
         summary_revision: header.revision,
         producer: Producer(number(row, 0)?),
         parent,
-        last_entity: number(row, 2)?,
-        declared: Number(number(row, 3)?),
-        seal,
-        cancelled: row.get(5)?,
-        summary,
+        last_entity: state.last_entity.0,
+        declared: state.declared,
+        seal: state.seal,
+        cancelled: state.cancelled,
+        revoked: state.revoked,
+        summary: state.summary,
     })
 }
 
@@ -215,7 +278,7 @@ impl AuthorityStore {
                 "session operation capacity exhausted",
             ));
         }
-        let now = self.trusted_now(&tx)?;
+        let now = self.check_clock(&tx)?;
         records::protect(
             &tx,
             records::WORK_CAPACITY,
@@ -290,13 +353,6 @@ impl AuthorityStore {
                 status_root: empty_status_root(),
                 closed_at: now,
             });
-            records::replace(
-                &tx,
-                retained.summary_record,
-                retained.summary_revision,
-                &retained.summary,
-                true,
-            )?;
         }
         let receipt = OperationReceipt {
             operation: id,
@@ -314,15 +370,19 @@ impl AuthorityStore {
             receipt: receipt.clone(),
         })
         .encode(binding.control_limit.0 as usize)?;
-        tx.execute(
-            "UPDATE scopes SET last_entity=?3,declared=?4,seal=?5 WHERE generation=?1 AND scope=?2",
-            params![
-                sql(identity.generation.0)?,
-                sql(scope.0)?,
-                sql(retained.last_entity)?,
-                sql(retained.declared.0)?,
-                retained.seal.map(|d| d.0.to_vec())
-            ],
+        records::replace(
+            &tx,
+            retained.summary_record,
+            retained.summary_revision,
+            &ScopeState {
+                last_entity: Number(retained.last_entity),
+                declared: retained.declared,
+                seal: retained.seal,
+                cancelled: retained.cancelled,
+                revoked: retained.revoked,
+                summary: retained.summary.clone(),
+            },
+            retained.summary.is_some(),
         )?;
         tx.execute(
             "UPDATE sessions SET entities=?2,operations=operations+1 WHERE generation=?1",
@@ -337,6 +397,7 @@ impl AuthorityStore {
                 pack(&receipt)?
             ],
         )?;
+        self.remember_clock(&tx, now)?;
         self.authorize(&identity.owner, Permission::Declare)?;
         commit(tx, "declare")?;
         Ok(receipt)

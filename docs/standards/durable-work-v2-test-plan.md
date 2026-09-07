@@ -135,7 +135,7 @@ Durable output-capacity evidence is recorded separately below.
 
 ### Rust fixed-record funding evidence
 
-`src/v2/authority/records/tests.rs` has 16 tests, including its subprocess entry.
+`src/v2/authority/records/tests.rs` has 22 tests, including its subprocess entry.
 This is persistent storage implementation used by declarations and empty scope
 closure, not evidence that the entire admission/job transaction is funded.
 
@@ -145,13 +145,15 @@ closure, not evidence that the entire admission/job transaction is funded.
 - V2-VIEW/V2-STORE: a negative-first counter test prevents ordinary updates from
   using the last revision increments reserved for promised record rewrites.
 - V2-STORE: a retained SQLite reader prevents WAL reclamation. Ordinary writes
-  fill the protected ceiling; four reserved overwrites across two work records
+  fill the protected ceiling; four reserved work/clock pairs across two work records
   still commit under a 1 MiB WAL cap with database growth disabled. This measures
-  record updates only, not an entire job settlement or cancellation RPC.
+  paired record updates only, not an entire job settlement or cancellation RPC.
 - V2-STORE: 18 page/capacity combinations cover 512/4096/65536-byte pages and
   512-byte through 1 MiB records with cache spilling, row replacement prohibited,
   and database page growth disabled. Every measured WAL length fits the
-  pinned-layout record bound. File lengths are not filesystem allocated blocks.
+  pinned-layout record-plus-clock bound, including a maximum authority label
+  and a long payload-path tail on the clock's row. File lengths are not
+  filesystem allocated blocks.
 - V2-STORE: two child-process exits bracket a credit-spending commit. Restart
   preserves either its entire prior revision/credit or its entire committed
   successor. Header, body, padding and cross-row corruption fail closed; startup
@@ -161,6 +163,30 @@ Global/per-owner job budgets, every other mutable record in a complete transitio
 dependency/read pins, metadata retirement and cross-language V2 failure tests
 remain required. These record-level credits do not close those gates. Output-file
 budgets are covered by the reservation implementation below.
+
+### Shared-clock and complete scope-record evidence
+
+Authority format 5 retains greatest UTC in a fixed clock record and moves all
+mutable scope fields, including root revocation, into the funded scope record.
+The payload-root format and normative wire representation are unchanged.
+
+- V2-CLOCK/V2-STORE: ordinary clock writes and new reservations cannot consume
+  clock revision increments owed to existing record credits. Already funded
+  work/scope updates can still persist time through exact counter exhaustion.
+  An actual empty-scope declaration/closure exercises the funded ordering.
+- V2-STORE: scope seal/fence fields and clock are updated with SQL row replacement
+  prohibited and database page growth disabled. This private storage test is
+  not a public cancellation/revocation API or descendant-settlement claim.
+- V2-STORE: paired work/clock and scope/clock process-death tests preserve either
+  the complete prior state or the complete successor. Reopen rejects clock
+  corruption and scope/work timestamps beyond retained greatest UTC.
+- V2-AUTH: a negative-first regression verifies ownership denial before decoding
+  another owner's corrupt binding or scope. Both cases now return UNAUTHORIZED,
+  not a storage-corruption diagnostic from the other owner's retained state.
+
+Complete job/receipt admission, durable lease/execution/publication transitions,
+cancellation settlement, retention and Java V2 remain open. Paired-record funding
+does not claim arbitrary SQL writes or whole-job costs are reserved.
 
 ### Rust output-reservation evidence
 

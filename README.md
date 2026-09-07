@@ -40,6 +40,8 @@ and persistent fixed-record rewrite credits. Durable output reservations and
 bounded unknown-length output materialization now preserve promised file capacity
 across restart. Input preparation now joins that output reservation with
 transaction-safe expansion of the work-view record, without accepting a job.
+Mutable scope state and the shared clock now participate in reserved record
+writes, with clock-counter and commit-crash tests.
 Funded admission, execution, results and retention cleanup
 remain to be implemented for that authority. The
 [V2 acceptance ledger](docs/standards/durable-work-v2-test-plan.md) keeps Java,

@@ -620,16 +620,11 @@ mod tests {
             ),
             ErrorCode::Unauthorized,
         );
-        fixture
-            .authority
-            .store
-            .connect()
-            .unwrap()
-            .execute(
-                "UPDATE scopes SET cancelled=1 WHERE generation=?1",
-                [sql(fixture.binding.identity.generation.0).unwrap()],
-            )
-            .unwrap();
+        super::super::tests::set_scope_fence(
+            &fixture.authority.store,
+            fixture.binding.identity.generation,
+            false,
+        );
         refuse(
             fixture.receive(&fixture.header(), now),
             ErrorCode::Cancelled,
@@ -742,16 +737,11 @@ mod tests {
                     ErrorCode::LimitExceeded
                 }
                 _ => {
-                    fixture
-                        .authority
-                        .store
-                        .connect()
-                        .unwrap()
-                        .execute(
-                            "UPDATE scopes SET cancelled=1 WHERE generation=?1",
-                            [sql(fixture.binding.identity.generation.0).unwrap()],
-                        )
-                        .unwrap();
+                    super::super::tests::set_scope_fence(
+                        &fixture.authority.store,
+                        fixture.binding.identity.generation,
+                        false,
+                    );
                     ErrorCode::Cancelled
                 }
             };

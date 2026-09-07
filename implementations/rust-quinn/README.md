@@ -63,22 +63,33 @@ reclaims abandoned stages only under exclusive ownership; installed orphans
 remain charged until the authority's reference-safe collector removes them.
 Live installed/read handles remain pinned against collection. The database
 retains a local random store identity and a once-bound canonical payload path.
-Internal authority storage and payload roots are now format 4; prior prototype
-stores are refused, not silently converted or replaced. This changes no wire
-schema or frozen vector.
+Internal authority storage is now format 5; payload roots remain format 4.
+Prior authority formats are refused, not silently converted or replaced.
+This changes no wire schema or frozen vector.
 
-Work views and scope summaries use fixed-capacity checksummed records, not
-whole-session images. Declaration preallocates 2048 bytes per work view and two
-record-rewrite credits; scope creation preallocates 512 bytes and one summary
-credit. Credits also preserve the revision increments needed to spend them.
+Work views and complete mutable scope state use fixed-capacity checksummed
+records, not whole-session images. Declaration preallocates 2048 bytes per work
+view and two record-rewrite credits; scope creation preallocates 1024 bytes and
+two credits. Membership counters, seal, cancellation/revocation flags and summary
+share that scope record. Root revocation is read from it, not a separate mutable
+session column. These storage fields do not implement revocation settlement.
+The shared greatest-UTC value has its own fixed 64-byte record.
+
+Each credit funds its record overwrite plus one shared-clock overwrite in the
+same transaction. Forecasts also preserve both records' required revision
+increments; ordinary observations cannot consume the shared clock's last
+increments reserved for existing work/scopes. A funded transition checks time,
+spends its state credit, then remembers that time before committing. Equal UTC
+observations need no clock rewrite.
 Ordinary metadata writers protect those credits through the guarded SQLite VFS.
 An incremental BLOB rewrite spends one credit without allocating database pages;
-empty scope closure already uses its reserved summary. Reopen verifies record
-bodies, padding and relational identities and reconstructs journal funding.
+empty scope closure already uses its reserved state and clock allowance. Reopen
+verifies record bodies, padding, relational identities and timestamps against the
+shared clock, and reconstructs journal funding.
 The cost bound is specific to bundled SQLite 3.53.2 and its checked page/sector
-geometry. These credits fund fixed-record rewrites, not arbitrary additional SQL
-or the entire admission/execution/closure transaction. The corresponding job,
-receipt, clock and complete metadata-transition reservations are still required.
+geometry. These credits fund their stated paired rewrites, not arbitrary
+additional SQL or the entire admission/execution/closure transaction. Jobs,
+receipts and every other lifecycle write still require complete funding.
 
 `PayloadStore::reserve_outputs` durably reserves the maximum output count/bytes
 before metadata admission. The immutable reservation file remains charged across

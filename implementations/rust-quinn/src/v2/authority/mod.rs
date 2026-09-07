@@ -26,7 +26,7 @@ mod sessions;
 mod tests;
 
 const APPLICATION_ID: i64 = 1_347_637_825;
-const FORMAT: i64 = 4;
+const FORMAT: i64 = 5;
 const SCHEMA: &str = include_str!("schema.sql");
 
 #[derive(Debug)]
@@ -294,13 +294,20 @@ impl AuthorityStore {
             }
             tx.execute_batch(SCHEMA)?;
             tx.execute(
-                "INSERT INTO authority(singleton,name,last_generation,greatest_utc,policy,store_id) VALUES(1, ?1, 0, ?2, ?3, ?4)",
+                "INSERT INTO authority(singleton,name,last_generation,clock,policy,store_id) VALUES(1, ?1, 0, zeroblob(?2), ?3, ?4)",
                 params![
                     store.authority.0,
-                    sql(reading.utc_ms.0)?,
+                    (records::HEADER_BYTES + records::CLOCK_CAPACITY) as i64,
                     pack(&store.policy)?,
                     crate::persistence::StoreIdentity::generate()?.as_bytes().as_slice()
                 ],
+            )?;
+            records::initialize(
+                &tx,
+                records::CLOCK,
+                &reading.utc_ms,
+                records::CLOCK_CAPACITY,
+                0,
             )?;
         } else if app_id != APPLICATION_ID || version != FORMAT {
             return Err(StoreError::Corrupt(
@@ -352,25 +359,41 @@ impl AuthorityStore {
     }
 
     fn trusted_now(&self, tx: &Transaction<'_>) -> Result<Number> {
+        let now = self.check_clock(tx)?;
+        self.remember_clock(tx, now)?;
+        Ok(now)
+    }
+
+    /// Read trusted time without spending metadata capacity. A funded transition
+    /// spends its record credit first, then persists this observation in the
+    /// same transaction with remember_clock. No promise may escape between them.
+    fn check_clock(&self, tx: &Transaction<'_>) -> Result<Number> {
         let reading = self.clock.read();
         reading.utc_ms.check()?;
-        let greatest: u64 = tx.query_row(
-            "SELECT greatest_utc FROM authority WHERE singleton=1",
-            [],
-            |r| number(r, 0),
-        )?;
-        if !reading.trusted || reading.utc_ms.0 < greatest {
+        let (_, greatest): (_, Number) = records::read(tx, records::CLOCK)?;
+        if !reading.trusted || reading.utc_ms < greatest {
             return Err(protocol(
                 ErrorCode::ClockUnsafe,
                 "authority UTC is untrusted or regressed",
             ));
         }
-        records::protect(tx, 0, 0)?;
-        tx.execute(
-            "UPDATE authority SET greatest_utc=?1 WHERE singleton=1",
-            [sql(reading.utc_ms.0)?],
-        )?;
         Ok(reading.utc_ms)
+    }
+
+    fn remember_clock(&self, tx: &Transaction<'_>, now: Number) -> Result<()> {
+        now.check()?;
+        let (clock, greatest): (_, Number) = records::read(tx, records::CLOCK)?;
+        if now < greatest {
+            return Err(protocol(
+                ErrorCode::ClockUnsafe,
+                "authority clock observation regressed",
+            ));
+        }
+        records::protect(tx, 0, 0)?;
+        if now != greatest {
+            records::replace(tx, records::CLOCK, clock.revision, &now, false)?;
+        }
+        Ok(())
     }
 
     fn authorize_session(
@@ -384,6 +407,22 @@ impl AuthorityStore {
         identity.generation.check()?;
         if identity.authority != self.authority {
             return Err(protocol(ErrorCode::Unauthorized, "authority access denied"));
+        }
+        // Compare ownership before decoding any retained policy or scope state.
+        // Corruption in somebody else's records must not change the denial.
+        let owned: Option<bool> = tx
+            .query_row(
+                "SELECT owner=?2 FROM sessions WHERE generation=?1",
+                params![sql(identity.generation.0)?, identity.owner.0],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match owned {
+            Some(true) => {}
+            Some(false) => {
+                return Err(protocol(ErrorCode::Unauthorized, "authority access denied"));
+            }
+            None => return Err(protocol(ErrorCode::NotFound, "session not retained")),
         }
         let retained = sessions::load(tx, &self.authority, identity.generation)?;
         let Some((binding, revoked)) = retained else {
