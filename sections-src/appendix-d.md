@@ -55,6 +55,15 @@ advertised by this Core server. The standalone commands remain version 1;
 independent Java V2, full durable endpoints, process-level resource evidence
 and the workload comparison remain open.
 
+A separate Rust durable control adapter now connects authenticated peer identity
+to the persistent authority APIs. Twelve local dispatcher tests cover single
+session binding, replay, revision/checkpoint waits, cancellation/retry, actual
+stored result reads and connection drain accounting. They use real TLS peers
+but do not send those durable controls or objects over QUIC. In-flight database
+jobs retain their connection and metadata slots after an async waiter is
+cancelled. This adapter is not yet connected to the Core listener, and neither
+durable profile is advertised.
+
 ## Java/Netty Reference Implementation
 
 Organization:

@@ -31,6 +31,10 @@ implemented or advertised yet; existing full interoperability evidence is for
 version 1. Rust now also has a Core-only V2 QUIC server library with real
 negotiation, bounded framing, credential, quota and detach tests. It does not
 activate either durable profile or provide the complete V2 application endpoint.
+A separate authenticated Rust control adapter now dispatches session, scope,
+work, result and drain requests to the on-disk authority, with bounded metadata
+jobs and pending-transfer accounting. Its tests are local dispatch with real TLS
+peers, not durable wire interoperability; input/result QUIC integration remains.
 The Rust `pipestream_core::v2` library now implements typed codecs for every
 version-2 message and record, frozen commitments, negotiation checks, bounded
 client correlation and incremental object validation. This is a library

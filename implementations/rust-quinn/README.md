@@ -122,6 +122,48 @@ endpoint is implied by those tests. See the
 
 ## Version-2 library foundation
 
+`pipestream_quic::v2_authority` is the authenticated control adapter for the
+existing transactional authority. It is not yet connected to `v2_core::Server`:
+the listener remains Core-only. No partial durable profile is advertised.
+
+Construct one `Authority` during setup with the paired authority/payload roots
+and a ceiling of 1..64 concurrent metadata jobs, then clone it across listeners
+and connections sharing that ceiling. Construct a `Connection` only from its
+actual TLS `Peer`, owned `ServerSecurity` and validated selected capabilities.
+The TLS issuing identity must match the store. `submit` runs synchronously in
+control decode order and returns either a correlated immediate refusal or a
+`Pending` request that can run concurrently. Malformed/direction/correlation
+errors remain fatal; valid refusals still consume request IDs.
+
+The adapter implements all durable control operations through the store:
+creation/attachment/sequence, declarations/pages/checkpoints, operation lookup,
+work snapshots/waits/retry/cancel/skip, manifest/read requests and both drain
+forms. At most one binding may be in flight or installed. Snapshot/checkpoint
+waits poll bounded snapshots without holding SQLite transactions, metadata
+permits or threads while sleeping. Subsequent polls join the fair metadata
+queue within the remaining wait budget; contention does not re-admit the watch.
+At wait expiry the last consistent work snapshot remains the timeout response,
+while an unresolved checkpoint returns WAIT_TIMEOUT, never a made-up summary.
+Exact completed-session drain checks the
+committed root and keeps its connection cut stable until the response is sent.
+Detach waits for existing requests/transfers and has a fatal lifetime deadline.
+
+Keep each returned `Response` until its control write or result transfer ends.
+Read a result through its borrowed `ResultRead`; after scheduling successful
+transport FIN, consume `Response::finish_result`. Dropping a result response
+aborts delivery only. Clone an `InputSlot` into every outstanding input I/O or
+commit task and retain the last copy through the admission response write.
+These slots account for unresolved requests, including completed responses not
+yet written and result reads waiting for a stream. Cancelled async database
+waiters do not release the slots of still-running blocking jobs.
+
+The future endpoint still must provide bounded readers/writers, stream-ID
+correlation, input/result QUIC I/O, reserved control capacity separate from
+payload/execution workers, result-read maintenance, lifecycle workers, live
+shutdown and the V2 client/journals. Twelve adapter tests use actual TLS peers
+and on-disk stores but call the dispatcher locally. They are not V2 wire,
+cross-language or whole-process resource evidence. See the acceptance ledger.
+
 `pipestream_core::v2` implements Section 12/Appendix F typed wire records,
 control and object-header framing, canonical and cross-field validation,
 profile negotiation, domain-separated commitments, incremental scope seals

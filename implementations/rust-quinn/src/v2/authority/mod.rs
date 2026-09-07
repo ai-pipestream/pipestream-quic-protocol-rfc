@@ -222,6 +222,11 @@ pub struct AuthorityStore {
 }
 
 impl AuthorityStore {
+    /// Configured issuing identity, never chosen by a network request.
+    pub fn authority(&self) -> &IdentityLabel {
+        &self.authority
+    }
+
     /// Explicitly create a new issuing store. The path must not already exist.
     /// Operators must not use this to replace lost history under the same
     /// authority identity, or restore stale backups without anti-reuse proof.

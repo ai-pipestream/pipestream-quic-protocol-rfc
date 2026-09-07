@@ -4,7 +4,7 @@ Status: active, not accepted. Baseline: `68b02ea55169187da123b7efa0f6045718fbb64
 The user approved all three tasks in the goal objective attached on 2026-09-06.
 This record preserves the complete scope; an intermediate commit is not completion.
 Task 1's contract/design acceptance is recorded below. Tasks 2 and 3 are open;
-no version-2 endpoint, interoperability claim or workload comparison exists yet.
+no version-2 durable endpoint, interoperability claim or workload comparison exists yet.
 
 ## Required order and acceptance evidence
 
@@ -1448,4 +1448,52 @@ recursive/external examples. The existing end-to-end pairs remain V1 evidence.
 Appendix D status were inspected, with zero idnits errors/flaws/warnings and
 the existing FIPS downref comment. Results are captured in
 `conformance/results/durable-work-v2-core-2026-09-07.txt`.
+No main merge, deployment or IETF submission occurred.
+
+### Authenticated durable control adapter, 2026-09-07
+
+`pipestream_quic::v2_authority` now joins actual TLS peer identity to the existing
+on-disk authority. It handles session creation/attachment/sequence, declaration,
+scope pages/checkpoints/cancellation, operation lookup, work views/waits/retry/
+cancel/skip, manifest/result-read requests, completed-session drain and detach.
+The Core listener is not yet connected to this adapter, so neither durable
+profile is advertised. These are local dispatcher tests, not durable QUIC RPCs.
+
+Connection-local tickets cover unresolved controls, unsent responses, result
+reads and input jobs. A blocking metadata task retains its ticket and global
+metadata permit even when its async waiter is cancelled. The lost-response test
+demonstrates a still-running real commit, exclusion of an early detach, and
+replay of the same generation after commitment. A deliberately removed ticket
+makes that test fail. Another negative control removes exact root comparison
+and demonstrates the invalid completed acknowledgment for a changed summary.
+Both deliberate faults were restored.
+
+The first full suite found a real contention error: an already accepted watch
+could return capacity refusal when cancellation held the only metadata slot.
+A held-transaction regression reproduced it. Subsequent polls now join the fair
+metadata queue within their existing wait budget, without holding SQLite or a
+thread while waiting. They preserve timeout snapshot/checkpoint semantics.
+The final focused set has 12 passing tests, including actual admission, retry,
+copy execution and 12 KiB stored-result reading without advancing committed work.
+
+Section 12.8 now explicitly includes other pending control requests in the
+completion cut and keeps that cut stable through response sending. Frozen
+wire/CDDL bytes, storage formats and dependencies are unchanged. The final
+`./conformance/run_all.sh` exited 0: 608 Rust workspace tests, six Rust-example
+tests, 193 Java tests in 20 fresh XML reports (zero failures/errors/skips), all
+models/vectors/native checks, nine existing interop pairs, 32 capability probes,
+recursive cases and all examples. Those complete interop pairs remain V1 only.
+`./build.sh core 05` exited 0, with rendered cut/status inspection and zero
+idnits errors/flaws/warnings plus the existing FIPS comment. Evidence is in
+`conformance/results/durable-work-v2-dispatch-2026-09-07.txt`.
+
+Next connect this adapter to bounded QUIC input/result I/O and the lifecycle
+runtime. Input tasks must retain/clone `InputSlot` through blocking commits;
+result tasks must retain `Response` through stream creation, chunk writes and
+FIN/abort. Metadata and data worker capacity, per-connection pending responses,
+and QUIC flow-control windows must reserve independent control progress, with
+aggregate byte/count limits. The standalone V2 client, durable uncertainty
+journals, Java parity, neutral failure driver, full resource measurements and
+the original external/equivalent-gRPC workload remain required. This checkpoint
+does not complete the goal or authorize a partial-profile advertisement.
 No main merge, deployment or IETF submission occurred.

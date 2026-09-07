@@ -884,6 +884,86 @@ paragraphs were inspected. Idnits reports zero errors/flaws/warnings and the
 existing FIPS comment. Red/green and final results are captured in
 [`durable-work-v2-core-2026-09-07.txt`](../../conformance/results/durable-work-v2-core-2026-09-07.txt).
 
+### Rust authenticated durable control adapter, 2026-09-07
+
+`quinn/src/v2_authority.rs` and `v2_authority/requests.rs` implement durable
+control dispatch to the existing real authority, not another database or a
+simulated execution path. The public Core listener still does not use this
+adapter or advertise either durable profile. Run:
+
+```sh
+cd implementations/rust-quinn
+cargo test --locked -p pipestream-quinn v2_tls::tests::authority -- --nocapture
+```
+
+Twelve tests in `v2_tls/tests/authority.rs` and `authority/results.rs` use real
+authenticated TLS peers and guarded SQLite/payload roots. The durable control
+calls and result reads are local API calls, not wire or independent-driver tests.
+
+- V2-SESSION/AUTH/OP: `dispatcher_creation_replay_attachment_and_single_binding`
+  covers lost response recovery with a rotated certificate, one in-flight or
+  installed binding per connection, ownership denial and retry after failed
+  attachment. Configuration requires mapped identity and a matching issuing
+  authority. Separate tests preserve the profile combination on attach, refuse
+  unselected result access, and recheck credential/policy/revocation before reads.
+- V2-NEG: fatal wrong direction, duplicate/decreasing/incorrect-first request
+  IDs and repeated capabilities; valid refusals consume IDs. Pending accounting
+  includes unsent responses, active result reads, and cloned input-job handles.
+- V2-VIEW/CLOSE: revision waiting releases metadata capacity, permits cancellation
+  to proceed, returns an unchanged view at timeout, and rejects an ahead-of-state
+  revision. Missing obligations yield checkpoint WAIT_TIMEOUT; reconciliation
+  produces the actual cancelled scope summary. A 30000-ms snapshot with revision
+  zero returns immediately. Complete drain compares the whole committed root,
+  refuses a child cut, excludes pending input/result transfers, and holds its
+  connection cut until the response is released after sending.
+- V2-ATTEMPT/RESULT: the result test stages and admits 12 KiB, retries through the
+  dispatcher and checks identical replay, then runs the real streaming copy
+  callback. Manifest lookup and bounded actual result reading match the admitted
+  bytes and attempt 2. Wrong digest/attempt have specific refusals; reading or
+  abandoning another read does not change the committed work view. Cancellation
+  after publication preserves the terminal result. Separate scope cancel/skip
+  requests settle to one CANCELLED and one SKIPPED member, with replay receipts.
+- V2-NEG/CLOSE: detach waits for existing work, refuses later controls, and closes
+  with a fatal error when its lifetime expires. A deliberately paused real
+  storage operation keeps both metadata capacity and the connection pending slot
+  after its async waiter is cancelled. Another connection observes capacity
+  refusal; detach cannot finish early. Once the operation commits, replay recovers
+  the same generation. Removing its captured ticket makes this test fail because
+  detach responds while the commit is still running.
+
+Removing the exact-root comparison also makes its test fail: an altered closure
+timestamp receives a completed response instead of CONFLICT. Both deliberate
+faults were restored. Section 12.8 now explicitly includes other control requests
+in the completion cut and requires that cut to remain stable through sending the
+response; intervening requests may receive NOT_READY. No frozen wire bytes,
+CDDL, storage format or dependency changed.
+
+The first full-suite run exposed a real dispatcher contention error: a later
+watch poll used new-request admission and returned LIMIT_EXCEEDED while a
+cancellation occupied the only metadata slot. The regression now deliberately
+holds that transaction; it fails with the previous poll logic. Accepted waiters
+now fairly reacquire metadata slots within their wait budget, keeping their
+existing pending-request charge. Expiry returns the last consistent work view
+or checkpoint WAIT_TIMEOUT, not a new summary or a capacity refusal from a poll.
+The cancellation/watcher case passes after this change. Initial admission of a
+new request can still receive LIMIT_EXCEEDED when the metadata ceiling is full.
+
+Still required: connect the adapter, input and result I/O to the public V2
+listener with independently bounded control/data progress; maintain result-read
+deadlines and lifecycle workers; implement the V2 client and uncertainty journal;
+implement independent Java and both-language failure testing; finish the original
+external workload and equivalent streaming-gRPC comparison. Metadata slot counts
+are not measured heap/RSS, disk-I/O or complete endpoint resource evidence.
+
+Final validation: `./conformance/run_all.sh` exited 0 after the contention fix:
+608 Rust workspace tests, six Rust-example tests, 193 Java tests in 20 fresh
+XML reports (no failures/errors/skips), frozen vectors/CDDL, three bounded
+models, native checks, nine existing interop pairs, 32 capability probes and
+all examples. `./build.sh core 05` exited 0; the rendered completion-cut and
+adapter-status paragraphs were inspected, with zero idnits errors/flaws/warnings
+and the existing FIPS comment. Results and failing-before-fix evidence are in
+[`durable-work-v2-dispatch-2026-09-07.txt`](../../conformance/results/durable-work-v2-dispatch-2026-09-07.txt).
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

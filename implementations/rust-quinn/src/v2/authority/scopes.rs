@@ -560,4 +560,37 @@ impl AuthorityStore {
         }
         Ok(retained.summary)
     }
+
+    /// Check the exact committed root cut. Connection-local pending work must
+    /// also be excluded by the transport until it sends the drain response.
+    pub fn complete_session(
+        &self,
+        identity: &SessionIdentity,
+        generation: Id,
+        expected: &ScopeSummary,
+    ) -> Result<()> {
+        let mut connection = self.connect()?;
+        let tx = connection.transaction()?;
+        self.authorize_session(&tx, identity, Permission::Inspect)?;
+        generation.check()?;
+        expected.check()?;
+        if generation != identity.generation
+            || expected.scope != Number(0)
+            || expected.producer != Producer(0)
+            || expected.parent.is_some()
+        {
+            return Err(protocol(
+                ErrorCode::Conflict,
+                "drain does not name attached root",
+            ));
+        }
+        let root = load(&tx, identity.generation, Number(0))?;
+        let Some(summary) = root.summary else {
+            return Err(protocol(ErrorCode::NotReady, "root has not closed"));
+        };
+        if &summary != expected {
+            return Err(protocol(ErrorCode::Conflict, "root summary changed"));
+        }
+        Ok(())
+    }
 }

@@ -14,6 +14,8 @@ use std::{
 const HANDSHAKE: Duration = Duration::from_secs(5);
 
 mod alerts;
+#[cfg(unix)]
+mod authority;
 mod configuration;
 mod core;
 mod resumption;

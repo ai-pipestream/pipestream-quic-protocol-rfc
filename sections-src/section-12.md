@@ -616,8 +616,10 @@ before acknowledging coverage in its own durable observations.
 DRAIN operation 0 requests completed-session shutdown. It contains the attached
 generation and exact previously obtained root summary for scope 0, producer 0,
 with null parent. The server requires that same committed root summary and no
-pending admissions, checkpoints or result transfers on that connection, then
-echoes operation 1. A child-scope cut or altered summary is CONFLICT; pending
+other pending control requests, input admissions or result transfers on that
+connection, then echoes operation 1. The server MUST keep this connection-local
+cut stable until the response is sent; it MAY refuse intervening requests with
+NOT_READY. A child-scope cut or altered summary is CONFLICT; pending
 work is NOT_READY. The client may then close with QUIC application error 0.
 This does not expire the session or outputs.
 

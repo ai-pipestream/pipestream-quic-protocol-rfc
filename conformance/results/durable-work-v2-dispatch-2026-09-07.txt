@@ -1,0 +1,78 @@
+Rust V2 authenticated authority control adapter, 2026-09-07 UTC
+Base: e361207729d262dc9a32cabbd0efe2a7eebdb2aa
+Implementation and tests: the commit containing this result file.
+Dependencies remain locked; no dependency, CDDL or storage format changed.
+
+Focused checks from implementations/rust-quinn:
+cargo test --locked -p pipestream-quinn v2_tls::tests::authority -- --nocapture
+Exit 0. 12 passed, 0 failed, 0 ignored, 123 filtered out.
+Log: /tmp/pipestream-v2-dispatch-final-focused.log
+cargo clippy --locked -p pipestream-quinn --all-targets -- -D warnings
+Exit 0. Log: /tmp/pipestream-v2-dispatch-final-clippy.log
+
+These are local dispatcher calls with actual TLS peers, guarded SQLite,
+payload files and an actual streaming copy callback. They are not durable
+control/object traffic over QUIC, independent-language V2 conformance,
+process-memory bounds or a workload comparison. The Core listener is unchanged
+and still advertises neither durable profile.
+
+Negative control: drop the connection ticket from a running blocking operation.
+Command filter: dispatcher_cancelled_waiter_cannot_release_a_still_running_commit
+Exit 101. Detach incorrectly finishes while the storage operation is still held.
+  assertion failed: tokio::time::timeout(Duration::from_millis(40),
+    &mut draining).await.is_err()
+Log: /tmp/pipestream-v2-dispatch-cancel-red.log
+Captured ticket restored before final checks.
+
+Negative control: disable exact root-summary equality.
+Command filter: dispatcher_complete_checks_exact_root_and_all_connection_work
+Exit 101. Actual response is Drain(Completed) for request 5 with closed_at=1001,
+instead of CONFLICT for the changed timestamp (the committed timestamp is 1000).
+Log: /tmp/pipestream-v2-dispatch-root-red.log
+Exact comparison restored before final checks.
+
+Regression discovered by the first full suite:
+./conformance/run_all.sh
+Exit 101. Rust Quinn tests: 134 passed, 1 failed.
+Log: /tmp/pipestream-v2-dispatch-full-suite.log
+The existing watch failed when cancellation occupied the metadata slot.
+Strengthened deterministic held-transaction reproduction:
+Command filter: dispatcher_watch_and_checkpoint_waits_release_metadata_capacity
+Exit 101 with the previous polling logic:
+  watch ended while cancellation held metadata:
+  Refusal(Control request 3, LimitExceeded, "metadata concurrency exhausted")
+Log: /tmp/pipestream-v2-dispatch-contention-red.log
+Fix: subsequent polls fairly reacquire slots within the remaining wait budget,
+without holding a thread/transaction while waiting or re-admitting the request.
+The strengthened test passes with the fix in the final focused and full runs.
+
+Final repository regression:
+./conformance/run_all.sh
+Exit 0, observed from original process handle 8771 after completion.
+Started: 2026-09-07 08:54:11 UTC.
+Log: /tmp/pipestream-v2-dispatch-final-full-suite.log
+Rust workspace: 608 passed, 0 failed. Rust external examples: 6 passed.
+Java: 20 fresh Surefire XML reports, 193 tests, 0 failures/errors/skips.
+Oldest report: 2026-09-07 08:56:38 UTC. Newest: 08:59:16 UTC.
+Report counts/timestamps were read with Ruby REXML after Java completed.
+Frozen vectors/CDDL and all three bounded models passed:
+  lifecycle: 311539 states, 8723092 edges, deepest 19;
+  scopes: 5776 states, 173280 edges, deepest 17;
+  composition: 620796 states, 29177412 edges, deepest 27.
+Each model had 0 states at the depth boundary.
+Native Java SQLite checks, C++ build/CTest, 9 existing black-box pairs,
+32 raw capability probes, recursive scenarios and all external examples passed.
+Existing complete end-to-end pairs remain V1 regression evidence, not V2 proof.
+
+./build.sh core 05
+Exit 0. Log: /tmp/pipestream-v2-dispatch-draft.log
+Rendered Section 12.8 connection cut (text lines 5521-5531) and Appendix D
+adapter-status paragraph (lines 6426-6434) inspected.
+Idnits: 0 errors, 0 flaws, 0 warnings, 1 existing FIPS downref comment.
+The normative cut now covers other control requests and remains stable through
+response sending. No frozen wire bytes changed.
+
+Still required: public durable V2 input/result transport, runtime maintenance,
+client/CLI and uncertainty journals, independent Java, neutral failure driver,
+full resource gates and the external equivalent streaming-gRPC workload.
+No main merge, deployment or IETF submission is part of this checkpoint.
