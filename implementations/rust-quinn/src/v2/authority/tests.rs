@@ -508,11 +508,12 @@ fn declaration_replay_pages_and_missing_input_checkpoint_are_durable() {
 #[test]
 fn batching_does_not_change_seal_and_empty_seal_closes_immutably() {
     // This test exercises >2 full declaration batches, not quota refusal.
-    // Fund their two record-rewrite credits before comparing the seal.
+    // Fund both work and first-fence credits before comparing the seal; this
+    // membership test is separate from the unchanged small-cap exhaustion gate.
     let fixture = Fixture::with_physical(
         policy(),
         PhysicalLimits {
-            wal_bytes: 128 << 20,
+            wal_bytes: 256 << 20,
             ..PhysicalLimits::default()
         },
     );
@@ -970,7 +971,9 @@ fn physical_exhaustion_rolls_back_whole_batch_and_preserves_replay() {
     let mut accepted = 0;
     let mut refusal_seen = false;
     for operation in 1..=200u8 {
-        let entities: Vec<Id> = ((accepted + 1)..=(accepted + 16)).map(Id).collect();
+        // Eight members fit with their extra first-fence promises. A sixteen-
+        // member first batch no longer fits this unchanged 4 MiB journal cap.
+        let entities: Vec<Id> = ((accepted + 1)..=(accepted + 8)).map(Id).collect();
         match store.declare(
             &binding.identity,
             op(operation),
@@ -978,7 +981,7 @@ fn physical_exhaustion_rolls_back_whole_batch_and_preserves_replay() {
             &entities,
             false,
         ) {
-            Ok(_) => accepted += 16,
+            Ok(_) => accepted += 8,
             Err(error) => {
                 refuse::<()>(Err(error), ErrorCode::LimitExceeded);
                 refusal_seen = true;
@@ -1020,7 +1023,7 @@ fn physical_exhaustion_rolls_back_whole_batch_and_preserves_replay() {
                 &binding.identity,
                 op(1),
                 Number(0),
-                &(1..=16).map(Id).collect::<Vec<_>>(),
+                &(1..=8).map(Id).collect::<Vec<_>>(),
                 false
             )
             .unwrap()

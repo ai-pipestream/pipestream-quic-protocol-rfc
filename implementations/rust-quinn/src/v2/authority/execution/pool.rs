@@ -10,6 +10,7 @@ use std::{
 
 #[derive(Clone, Debug)]
 pub struct PoolConfig {
+    /// Application callback threads. One additional thread drives settlement.
     pub workers: usize,
     pub workers_per_owner: usize,
     /// Maximum durable records inspected by one discovery pass.
@@ -28,6 +29,9 @@ pub struct PoolSnapshot {
     pub last_refusal: Option<Diagnostic>,
     pub stopping: bool,
     pub faulted: bool,
+    pub settled: u64,
+    pub sealed_scopes: u64,
+    pub closed_scopes: u64,
 }
 
 #[derive(Default)]
@@ -60,6 +64,7 @@ impl Shared {
 }
 
 /// Runs actual callbacks on a fixed number of threads, never on a control reader.
+/// An additional maintenance thread drives settlement independently of callbacks.
 /// `request_stop` is nonblocking; `shutdown` joins in-flight callbacks. Applications
 /// must return/cooperate with their context fences; arbitrary code is not forcibly
 /// preempted. Dropping the pool requests stop but does not wait for callback code.
@@ -101,12 +106,22 @@ impl Executor {
             shared,
             workers: Vec::new(),
         };
-        for index in 0..pool.shared.config.workers {
+        for index in 0..=pool.shared.config.workers {
             let shared = pool.shared.clone();
+            let maintenance = index == pool.shared.config.workers;
             match thread::Builder::new()
-                .name(format!("pipestream-v2-{index}"))
-                .spawn(move || worker(shared))
-            {
+                .name(if maintenance {
+                    "pipestream-v2-settlement".into()
+                } else {
+                    format!("pipestream-v2-{index}")
+                })
+                .spawn(move || {
+                    if maintenance {
+                        reconcile(shared)
+                    } else {
+                        worker(shared)
+                    }
+                }) {
                 Ok(handle) => pool.workers.push(handle),
                 Err(error) => {
                     // Construction may already have dispatched durable work;
@@ -281,5 +296,50 @@ fn worker(shared: Arc<Shared>) {
                 .wake
                 .wait_timeout(state, Elapsed::from_millis(shared.config.idle_poll_ms));
         }
+    }
+}
+
+fn reconcile(shared: Arc<Shared>) {
+    let mut cursor = ReconcileCursor::default();
+    loop {
+        if shared.state().snapshot.stopping {
+            return;
+        }
+        let result = shared
+            .executor
+            .store
+            .reconcile(&mut cursor, shared.config.scan_batch);
+        let mut state = shared.state();
+        match result {
+            Ok(progress) => {
+                state.snapshot.settled = state
+                    .snapshot
+                    .settled
+                    .saturating_add(progress.settled_work as u64);
+                state.snapshot.sealed_scopes = state
+                    .snapshot
+                    .sealed_scopes
+                    .saturating_add(progress.sealed_scopes as u64);
+                state.snapshot.closed_scopes = state
+                    .snapshot
+                    .closed_scopes
+                    .saturating_add(progress.closed_scopes as u64);
+                if progress.settled_work + progress.closed_scopes != 0 {
+                    shared.wake.notify_all();
+                }
+            }
+            Err(error) => {
+                fault(&mut state, &error);
+                if state.snapshot.stopping {
+                    shared.wake.notify_all();
+                }
+            }
+        }
+        if state.snapshot.stopping {
+            return;
+        }
+        let _ = shared
+            .wake
+            .wait_timeout(state, Elapsed::from_millis(shared.config.idle_poll_ms));
     }
 }

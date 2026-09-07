@@ -43,6 +43,7 @@ CREATE TABLE work (
   producer INTEGER NOT NULL CHECK(producer IN (0,1)),
   entity INTEGER NOT NULL CHECK(entity > 0),
   view BLOB NOT NULL CHECK(length(view)>104),
+  fence BLOB NOT NULL CHECK(length(fence)=360),
   UNIQUE(generation, scope, entity),
   FOREIGN KEY(generation, scope) REFERENCES scopes(generation, scope)
 ) STRICT;
@@ -67,4 +68,4 @@ CREATE TABLE payload_refs (
   FOREIGN KEY(generation,scope,entity) REFERENCES work(generation,scope,entity)
 ) STRICT;
 PRAGMA application_id = 1347637825;
-PRAGMA user_version = 6;
+PRAGMA user_version = 7;

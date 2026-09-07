@@ -12,7 +12,9 @@ const MAGIC: &[u8; 8] = b"PSREC003";
 pub(super) const HEADER_BYTES: usize = 104;
 pub(super) const WORK_CAPACITY: usize = 2048;
 pub(super) const SCOPE_CAPACITY: usize = 1024;
-pub(super) const SCOPE_CREDITS: u64 = 2;
+pub(super) const SCOPE_CREDITS: u64 = 4;
+pub(super) const FENCE_CAPACITY: usize = 256;
+pub(super) const FENCE_CREDITS: u64 = 1;
 pub(super) const CLOCK_CAPACITY: usize = 64;
 pub(super) const CLOCK: Target = Target {
     table: Table::Clock,
@@ -27,11 +29,12 @@ pub(super) enum Table {
     Scope,
     Clock,
     Job,
+    WorkFence,
 }
 impl Table {
     fn name(self) -> &'static str {
         match self {
-            Self::Work => "work",
+            Self::Work | Self::WorkFence => "work",
             Self::Scope => "scopes",
             Self::Clock => "authority",
             Self::Job => "jobs",
@@ -40,6 +43,7 @@ impl Table {
     fn column(self) -> &'static str {
         match self {
             Self::Work => "view",
+            Self::WorkFence => "fence",
             Self::Scope => "state",
             Self::Clock => "clock",
             Self::Job => "state",
@@ -48,6 +52,9 @@ impl Table {
     fn inventory(self) -> &'static str {
         match self {
             Self::Work => "SELECT rowid,length(view),substr(view,1,104) FROM work ORDER BY rowid",
+            Self::WorkFence => {
+                "SELECT rowid,length(fence),substr(fence,1,104) FROM work ORDER BY rowid"
+            }
             Self::Scope => {
                 "SELECT rowid,length(state),substr(state,1,104) FROM scopes ORDER BY rowid"
             }
@@ -82,6 +89,7 @@ fn checksum(target: Target, prefix: &[u8]) -> [u8; 32] {
         Table::Scope => 1,
         Table::Clock => 2,
         Table::Job => 3,
+        Table::WorkFence => 4,
     }]);
     hash.update(target.row.to_be_bytes());
     hash.update(prefix);
@@ -231,7 +239,7 @@ fn audit(
     let mut reserved = 0u64;
     let mut clock_credits = 0u64;
     let mut replaced = replacement.is_none_or(|(target, _, _)| target == CLOCK);
-    for table in [Table::Work, Table::Scope, Table::Job] {
+    for table in [Table::Work, Table::Scope, Table::Job, Table::WorkFence] {
         let mut statement = tx.prepare(table.inventory())?;
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
@@ -298,7 +306,7 @@ pub(super) fn protect(tx: &Transaction<'_>, capacity: usize, credits: u64) -> Re
 pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
     let (_, clock): (_, Number) = read(tx, CLOCK)?;
     let mut statement =
-        tx.prepare("SELECT rowid,scope,producer,entity FROM work ORDER BY rowid")?;
+        tx.prepare("SELECT rowid,scope,producer,entity,generation FROM work ORDER BY rowid")?;
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
         let (_, view): (_, WorkView) = read(
@@ -308,6 +316,22 @@ pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
                 row: row.get(0)?,
             },
         )?;
+        let (_, fence): (_, Option<settlement::WorkFence>) = read(
+            tx,
+            Target {
+                table: Table::WorkFence,
+                row: row.get(0)?,
+            },
+        )?;
+        if fence
+            .as_ref()
+            .is_some_and(|fence| view.state != State::CANCELLING && view.state != fence.outcome)
+            || (view.state == State::CANCELLING && fence.is_none())
+        {
+            return Err(StoreError::Corrupt(
+                "work cancellation fence differs from outcome",
+            ));
+        }
         let key = WorkKey {
             scope: Number(number(row, 1)?),
             producer: Producer(number(row, 2)?),
@@ -318,6 +342,26 @@ pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
                 "work record identity differs from its index",
             ));
         }
+        if let Some(fence) = &fence {
+            let generation = Id(number(row, 4)?);
+            let owner = tx.query_row(
+                "SELECT owner FROM sessions WHERE generation=?1",
+                [sql(generation.0)?],
+                |row| row.get(0),
+            )?;
+            let authority = tx.query_row("SELECT name FROM authority", [], |row| row.get(0))?;
+            settlement::verify_fence(
+                tx,
+                &SessionIdentity {
+                    authority: IdentityLabel(authority),
+                    owner: IdentityLabel(owner),
+                    generation,
+                },
+                &view,
+                fence,
+                clock,
+            )?;
+        }
         if view.admitted_at.is_some_and(|time| time > clock)
             || view.terminal_at.is_some_and(|time| time > clock)
         {
@@ -327,7 +371,7 @@ pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
         }
     }
     let mut statement =
-        tx.prepare("SELECT rowid,scope,producer,parent FROM scopes ORDER BY rowid")?;
+        tx.prepare("SELECT rowid,scope,producer,parent,generation FROM scopes ORDER BY rowid")?;
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
         let (_, state): (_, scopes::ScopeState) = read(
@@ -340,18 +384,35 @@ pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
         if state.revoked && number(row, 1)? != 0 {
             return Err(StoreError::Corrupt("revocation outside root scope"));
         }
-        if let Some(summary) = state.summary {
-            let parent: Option<WorkKey> = row
-                .get::<_, Option<Vec<u8>>>(3)?
-                .map(|b| unpack(&b))
-                .transpose()?;
-            if summary.scope.0 != number(row, 1)?
+        let parent: Option<WorkKey> = row
+            .get::<_, Option<Vec<u8>>>(3)?
+            .map(|bytes| unpack(&bytes))
+            .transpose()?;
+        if let Some(parent) = &parent {
+            if parent.scope.0 >= number(row, 1)? {
+                return Err(StoreError::Corrupt("invalid scope ancestry"));
+            }
+            let (_, view) = scopes::work(tx, Id(number(row, 4)?), parent)?;
+            if view.child.as_ref()
+                != Some(&ChildScope {
+                    scope: Id(number(row, 1)?),
+                    producer: Producer(number(row, 2)?),
+                })
+            {
+                return Err(StoreError::Corrupt(
+                    "scope is not its parent's retained child",
+                ));
+            }
+        } else if number(row, 1)? != 0 || number(row, 2)? != 0 {
+            return Err(StoreError::Corrupt("nonroot scope lacks parent"));
+        }
+        if let Some(summary) = state.summary
+            && (summary.scope.0 != number(row, 1)?
                 || summary.producer.0 != number(row, 2)?
                 || summary.parent != parent
-                || summary.closed_at > clock
-            {
-                return Err(StoreError::Corrupt("scope summary differs from its index"));
-            }
+                || summary.closed_at > clock)
+        {
+            return Err(StoreError::Corrupt("scope summary differs from its index"));
         }
     }
     jobs::verify(tx)
@@ -505,6 +566,12 @@ pub(super) fn grow(
         Table::Job => {
             unpack::<jobs::JobRecord>(&bytes)?;
         }
+        Table::WorkFence => {
+            unpack::<Option<settlement::WorkFence>>(&bytes)?;
+            if capacity != FENCE_CAPACITY {
+                return Err(exhausted());
+            }
+        }
     }
     if retained.revision != expected {
         return Err(protocol(
@@ -536,6 +603,7 @@ pub(super) fn grow(
             Table::Scope => "UPDATE scopes SET state=zeroblob(?1) WHERE rowid=?2",
             Table::Clock => "UPDATE authority SET clock=zeroblob(?1) WHERE rowid=?2",
             Table::Job => "UPDATE jobs SET state=zeroblob(?1) WHERE rowid=?2",
+            Table::WorkFence => "UPDATE work SET fence=zeroblob(?1) WHERE rowid=?2",
         };
         if savepoint.execute(
             statement,

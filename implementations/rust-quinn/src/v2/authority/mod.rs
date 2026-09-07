@@ -26,12 +26,14 @@ mod jobs;
 pub mod payload;
 mod records;
 mod scopes;
+mod settlement;
+pub use settlement::{ReconcileCursor, ReconcileProgress};
 mod sessions;
 #[cfg(test)]
 mod tests;
 
 const APPLICATION_ID: i64 = 1_347_637_825;
-const FORMAT: i64 = 6;
+const FORMAT: i64 = 7;
 const SCHEMA: &str = include_str!("schema.sql");
 
 #[derive(Debug)]
@@ -99,6 +101,9 @@ pub enum Permission {
     Admit,
     Execute,
     Retry,
+    Cancel,
+    Skip,
+    Revoke,
 }
 
 pub trait Authorization: Send + Sync {

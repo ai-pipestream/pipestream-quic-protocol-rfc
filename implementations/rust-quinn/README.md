@@ -46,7 +46,7 @@ an actual successful FIN, never a stream reset.
 
 `v2::authority::AuthorityStore` adds normalized SQLite session/creation history,
 declarations, immutable operation receipts, bounded pages/revision snapshots and
-empty sealed closure. It checks current local authorization, trusted UTC,
+sealed closure. It checks current local authorization, trusted UTC,
 logical quotas and guarded database/WAL file-length limits. `initialize` is an
 explicit new-store operation; `open` fails on missing/empty history. The caller
 must supply a verified principal, a bounded local authorization policy and a
@@ -63,16 +63,20 @@ reclaims abandoned stages only under exclusive ownership; installed orphans
 remain charged until the authority's reference-safe collector removes them.
 Live installed/read handles remain pinned against collection. The database
 retains a local random store identity and a once-bound canonical payload path.
-Internal authority storage is now format 6; payload roots remain format 4.
+Internal authority storage is now format 7; payload roots remain format 4.
 Prior authority formats are refused, not silently converted or replaced.
 This changes no wire schema or frozen vector.
 
 Work views and complete mutable scope state use fixed-capacity checksummed
 records, not whole-session images. Declaration preallocates 2048 bytes per work
-view and two record-rewrite credits; scope creation preallocates 1024 bytes and
-two credits. Membership counters, seal, cancellation/revocation flags and summary
+view and two record-rewrite credits, plus a separate 256-byte first-fence record
+and one credit. Each record has a 104-byte header. Scope creation preallocates
+1024 bytes and four credits: cancellation freeze, deferred seal computation,
+root revocation upgrade and closure. Membership counters, seal,
+cancellation/revocation flags and summary
 share that scope record. Root revocation is read from it, not a separate mutable
-session column. These storage fields do not implement revocation settlement.
+session column. The typed first work fence binds to its immutable accepted
+operation receipt and preserves CANCELLED versus SKIPPED across restart.
 The shared greatest-UTC value has its own fixed 64-byte record.
 
 Each credit funds its record overwrite plus one shared-clock overwrite in the
@@ -89,8 +93,9 @@ shared clock, and reconstructs journal funding.
 The cost bound is specific to bundled SQLite 3.53.2 and its checked page/sector
 geometry. These credits fund their stated paired rewrites, not arbitrary
 additional SQL. Admission now allocates work/job credits atomically with its
-receipt. The complete execution/closure/retirement write sets and their resource
-tests are still required; record credits alone do not prove those APIs correct.
+receipt. Publication and settlement write sets now have the tests described
+below; the complete execution/retirement lifecycle still requires resource
+tests. Record credits alone do not prove those APIs correct.
 
 `PayloadStore::reserve_outputs` durably reserves the maximum output count/bytes
 before metadata admission. The immutable reservation file remains charged across
@@ -182,9 +187,10 @@ These tests do not establish a complete resource-bounded lifecycle.
 
 `Executor::start_workers(PoolConfig)` now runs a fixed pull pool over the durable
 job table. It needs neither a resubmitted job key after restart nor a volatile
-queue of admitted payloads. Configuration bounds threads (1..128), concurrent
+queue of admitted payloads. Configuration bounds callback threads (1..128), concurrent
 dispatched jobs per owner, records inspected per discovery pass (1..256), and
-idle polling (1..60000 ms). A shared row cursor advances past refused/waiting work
+idle polling (1..60000 ms). One additional maintenance thread drives settlement
+even while every callback worker is occupied. A shared row cursor advances past refused/waiting work
 and wraps through retained jobs; this is bounded-memory scanning, not an indexed
 ready queue or a constant-cost sweep of a large populated store. Accepted-job
 capacity remains separately enforced by the persisted admission policy.
@@ -204,7 +210,8 @@ readers temporarily occupy otherwise sufficient capacity.
 
 Only one pool can own the payload authority, including across executor clones.
 Optional `wake()` lowers admission/retry latency; polling supplies correctness.
-`snapshot()` reports active dispatches, scans, completions, retries, refusals and
+`snapshot()` reports active dispatches, scans, completions, retries, settlements,
+sealed/closed scopes, refusals and
 fault state using bounded counters and one bounded diagnostic, not an unbounded
 history. Clock/capacity/auth/fence refusals back off; corruption and unknown storage
 failures stop discovery. `request_stop()` and dropping the pool stop further
@@ -214,9 +221,38 @@ Callbacks must cooperate with context deadlines/renewal; arbitrary application
 code is not forcibly preempted. Real subprocess tests now use the pool for both
 crash injection and recovery without submitting known keys.
 
-Deadline/cancellation/skip/revocation settlement, nonempty closure,
-authority-expanded execution, authenticated result read leases and retention
-cleanup remain unfinished. Authority expansion is explicitly refused;
+`cancel_work` and `skip_work` atomically retain their operation receipt and first
+fence. A leaf can settle immediately; a branch remains CANCELLING until its
+descendants close. The first fence preserves its promised outcome despite later
+ancestor cancellation, deadline expiry or STRICT child failure. Existing terminal
+outcomes and manifests never change. `cancel_scope` freezes current membership,
+including an empty or authority-produced scope, before background hashing.
+`revoke_session` is a local operator API with a distinct Revoke permission, not
+an unauthenticated RPC. It denies caller access and freezes the root even when
+the caller's authorization has already been withdrawn.
+
+`reconcile(ReconcileCursor, limit)` accepts limits from 1 through 256 and visits
+at most that many work records and members of one scope per call. It settles expired ACTIVE/AWAITING_RETRY work,
+cancelled descendants and STRICT parents; frozen membership and terminal views
+feed incremental seal and status folds. Inputless declarations do not disappear.
+The cursor retains one bounded fold, not a session image. Losing it causes
+unfinished hashes to be recomputed from immutable rows; it cannot lose outcomes.
+Work and scope passes commit separately, so an error in the second pass does not
+roll back already committed work settlement. Retrying is safe. Credit accounting
+still streams retained records: bounded batches are not a constant-cost entire
+transaction or a measured scalability guarantee.
+
+The public fence, revocation and settlement commits are tested on both sides of
+actual child-process death. Tests also cover real callback publication races,
+600-member chunked closure across restart, independent maintenance while all
+callback workers are blocked, and complete work/job/scope/clock transitions with
+a pinned WAL reader after ordinary writes exhaust their allowance. These gates
+forbid SQL row replacement and check unchanged database page count. Input/output
+liveness and byte reservations stay charged; settlement does not yet retire them.
+
+Complete authority-expanded execution, child-output rehydration APIs,
+authenticated result read leases and retention cleanup remain unfinished.
+Authority expansion is explicitly refused by the executor;
 caller-branch execution requires a retained successful child closure.
 
 Record expansion preserves exact typed contents and existing credits, reserves

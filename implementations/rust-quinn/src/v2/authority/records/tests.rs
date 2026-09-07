@@ -424,9 +424,20 @@ fn record_rewrite_cost_bound_covers_page_sizes_padding_and_spilling() {
                 SCOPE_CREDITS,
             )
             .unwrap();
-            protect(&tx, capacity, 2).unwrap();
-            tx.execute("INSERT INTO work(generation,scope,producer,entity,view) VALUES(1,0,0,1,zeroblob(?1))",
-                [(capacity+HEADER_BYTES) as i64]).unwrap();
+            protect(&tx, capacity.max(FENCE_CAPACITY), 2 + FENCE_CREDITS).unwrap();
+            tx.execute("INSERT INTO work(generation,scope,producer,entity,view,fence) VALUES(1,0,0,1,zeroblob(?1),zeroblob(?2))",
+                [(capacity+HEADER_BYTES) as i64, (FENCE_CAPACITY+HEADER_BYTES) as i64]).unwrap();
+            initialize(
+                &tx,
+                Target {
+                    table: Table::WorkFence,
+                    row: tx.last_insert_rowid(),
+                },
+                &None::<settlement::WorkFence>,
+                FENCE_CAPACITY,
+                FENCE_CREDITS,
+            )
+            .unwrap();
             let target = Target {
                 table: Table::Work,
                 row: tx.last_insert_rowid(),
@@ -844,7 +855,11 @@ fn shared_clock_counter_preserves_every_promised_record_observation() {
             .query_row("SELECT rowid FROM scopes", [], |r| r.get(0))
             .unwrap(),
     };
-    let promised = WORK_CREDITS + SCOPE_CREDITS;
+    let fence = Target {
+        table: Table::WorkFence,
+        row: work.row,
+    };
+    let promised = WORK_CREDITS + SCOPE_CREDITS + FENCE_CREDITS;
     write(
         &tx,
         CLOCK,
@@ -875,7 +890,11 @@ fn shared_clock_counter_preserves_every_promised_record_observation() {
             ..
         }))
     ));
-    for (index, target) in [work, work, scope, scope].into_iter().enumerate() {
+    for (index, target) in std::iter::repeat_n(work, WORK_CREDITS as usize)
+        .chain(std::iter::repeat_n(scope, SCOPE_CREDITS as usize))
+        .chain(std::iter::repeat_n(fence, FENCE_CREDITS as usize))
+        .enumerate()
+    {
         match target.table {
             Table::Work => {
                 let (old, view): (_, WorkView) = read(&tx, target).unwrap();
@@ -884,6 +903,10 @@ fn shared_clock_counter_preserves_every_promised_record_observation() {
             Table::Scope => {
                 let (old, state): (_, scopes::ScopeState) = read(&tx, target).unwrap();
                 replace(&tx, target, old.revision, &state, true).unwrap();
+            }
+            Table::WorkFence => {
+                let (old, fence): (_, Option<settlement::WorkFence>) = read(&tx, target).unwrap();
+                replace(&tx, target, old.revision, &fence, true).unwrap();
             }
             Table::Clock | Table::Job => unreachable!(),
         }

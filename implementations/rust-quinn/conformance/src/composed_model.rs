@@ -137,9 +137,10 @@ enum Fault {
     SettlesParentTooEarly,
     ClosesBeforeDescendants,
     RevocationLeavesDeclarations,
+    FailureOverridesFence,
 }
 
-const NEGATIVE_CONTROLS: [Fault; 11] = [
+const NEGATIVE_CONTROLS: [Fault; 12] = [
     Fault::IgnoresAncestorFence,
     Fault::PublishesBeforeChildren,
     Fault::DropsDependencyPin,
@@ -151,6 +152,7 @@ const NEGATIVE_CONTROLS: [Fault; 11] = [
     Fault::SettlesParentTooEarly,
     Fault::ClosesBeforeDescendants,
     Fault::RevocationLeavesDeclarations,
+    Fault::FailureOverridesFence,
 ];
 
 impl State {
@@ -288,7 +290,10 @@ impl State {
                     }
                 }
             }
-            Action::Fail(id) if self.work[id].phase == Phase::Active && self.stop(id).is_none() => {
+            Action::Fail(id)
+                if self.work[id].phase == Phase::Active
+                    && (self.stop(id).is_none() || fault == Fault::FailureOverridesFence) =>
+            {
                 // Failure/deadline settlement does not erase a child scope.
                 self.work[id].phase = Phase::Terminal(Outcome::Failed);
             }
@@ -413,6 +418,14 @@ fn invariant(before: State, action: Action, after: State) -> Result<()> {
             ensure!(
                 work.stop == old.stop,
                 "accepted cancellation/skip fence disappeared or changed"
+            );
+        }
+        if !old.phase.terminal()
+            && let (Some(promised), Phase::Terminal(actual)) = (before.stop(id), work.phase)
+        {
+            ensure!(
+                promised == actual,
+                "terminal settlement overrode an accepted fence"
             );
         }
         if work.phase == Phase::Terminal(Outcome::Success) {

@@ -51,9 +51,12 @@ explicit retry, and commits manifests or failures with attempt/lease/ancestor
 fences. Process-death tests cover claim, publication, retry and unpublished-output
 recovery. A fixed worker pool now discovers the durable backlog in bounded scans,
 limits global/per-owner callback concurrency and reserves reusable output I/O
-capacity before claiming work. Deadline/cancellation settlement, complete branch
-execution, result reads and retention cleanup remain
-unfinished. No V2 endpoint or profile is activated by these library APIs. The
+capacity before claiming work. Durable cancel/skip receipts and revocation now
+fence unresolved work; independent bounded maintenance settles deadlines and
+descendants and commits nonempty scope seals, counts and status roots. Crash,
+publication-race and pinned-journal tests cover these transitions. Complete branch
+execution, result reads and retention cleanup remain unfinished. No V2 endpoint
+or profile is activated by these library APIs. The
 [V2 acceptance ledger](docs/standards/durable-work-v2-test-plan.md) keeps Java,
 authenticated transport, storage, execution and process-level evidence open.
 

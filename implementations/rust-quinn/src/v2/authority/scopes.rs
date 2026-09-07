@@ -68,20 +68,20 @@ impl Wire for ScopeState {
     }
 }
 
-struct RetainedScope {
-    summary_record: records::Target,
-    summary_revision: Id,
-    producer: Producer,
-    parent: Option<WorkKey>,
-    last_entity: u64,
-    declared: Number,
-    seal: Option<Digest>,
-    cancelled: bool,
-    revoked: bool,
-    summary: Option<ScopeSummary>,
+pub(super) struct RetainedScope {
+    pub summary_record: records::Target,
+    pub summary_revision: Id,
+    pub producer: Producer,
+    pub parent: Option<WorkKey>,
+    pub last_entity: u64,
+    pub declared: Number,
+    pub seal: Option<Digest>,
+    pub cancelled: bool,
+    pub revoked: bool,
+    pub summary: Option<ScopeSummary>,
 }
 
-fn load(tx: &Transaction<'_>, generation: Id, scope: Number) -> Result<RetainedScope> {
+pub(super) fn load(tx: &Transaction<'_>, generation: Id, scope: Number) -> Result<RetainedScope> {
     let mut statement =
         tx.prepare("SELECT producer,parent,rowid FROM scopes WHERE generation=?1 AND scope=?2")?;
     let mut rows = statement.query(params![sql(generation.0)?, sql(scope.0)?])?;
@@ -291,7 +291,7 @@ impl AuthorityStore {
         records::protect(
             &tx,
             records::WORK_CAPACITY,
-            entity_ids.len() as u64 * records::WORK_CREDITS,
+            entity_ids.len() as u64 * (records::WORK_CREDITS + records::FENCE_CREDITS),
         )?;
         for entity in entity_ids {
             let view = WorkView {
@@ -312,9 +312,10 @@ impl AuthorityStore {
                 manifest: None,
                 diagnostic: None,
             };
-            tx.execute("INSERT INTO work(generation,scope,producer,entity,view) VALUES(?1,?2,?3,?4,zeroblob(?5))",
+            tx.execute("INSERT INTO work(generation,scope,producer,entity,view,fence) VALUES(?1,?2,?3,?4,zeroblob(?5),zeroblob(?6))",
                 params![sql(identity.generation.0)?, sql(scope.0)?, sql(retained.producer.0)?, sql(entity.0)?,
-                    (records::HEADER_BYTES + records::WORK_CAPACITY) as i64])?;
+                    (records::HEADER_BYTES + records::WORK_CAPACITY) as i64,
+                    (records::HEADER_BYTES + records::FENCE_CAPACITY) as i64])?;
             records::initialize(
                 &tx,
                 records::Target {
@@ -324,6 +325,16 @@ impl AuthorityStore {
                 &view,
                 records::WORK_CAPACITY,
                 records::WORK_CREDITS,
+            )?;
+            records::initialize(
+                &tx,
+                records::Target {
+                    table: records::Table::WorkFence,
+                    row: tx.last_insert_rowid(),
+                },
+                &None::<settlement::WorkFence>,
+                records::FENCE_CAPACITY,
+                records::FENCE_CREDITS,
             )?;
         }
         retained.declared = Number(

@@ -23,7 +23,7 @@ scope negative control WrongShutdownScope: connection shutdown used a non-root s
 scope negative control ReopensSeal: a sealed scope's membership changed; shortest trace: [Seal(0), Declare(0)]
 composed model bounds: one branch, zero/one descendant, two attempts each, two worker epochs (one restart), symbolic output expiry/read pins; depth 32
 composed safety passed: 620796 states, 29177412 checked edges, deepest 27, 0 states at depth boundary
-composed negative control IgnoresAncestorFence: publication crossed an accepted ancestor or owner fence; shortest trace: [Admit(0), DeclareChild, Admit(1), Install(1, 1), CancelRoot, BeginPublish(1, 1, 1), Commit]
+composed negative control IgnoresAncestorFence: terminal settlement overrode an accepted fence; shortest trace: [Admit(0), DeclareChild, Admit(1), Install(1, 1), CancelRoot, BeginPublish(1, 1, 1), Commit]
 composed negative control PublishesBeforeChildren: parent published without successful sealed child closure; shortest trace: [Admit(0), Install(0, 1), BeginPublish(0, 1, 1), Commit]
 composed negative control DropsDependencyPin: promised output lost despite retention, read or dependency pin; shortest trace: [Admit(0), DeclareChild, Admit(1), Install(1, 1), BeginPublish(1, 1, 1), Commit, ExpireOutput(1), Reclaim(1)]
 composed negative control DropsReadPin: promised output lost despite retention, read or dependency pin; shortest trace: [Admit(0), Install(0, 1), BeginPublish(0, 1, 1), Seal(1), Close(1), Commit, BeginRead(0, true), ExpireOutput(0), Reclaim(0)]
@@ -34,3 +34,4 @@ composed negative control CrashLosesFence: accepted cancellation/skip fence disa
 composed negative control SettlesParentTooEarly: parent cancellation settled before descendant closure; shortest trace: [Admit(0), CancelRoot, Settle(0)]
 composed negative control ClosesBeforeDescendants: root closed before its descendant scope; shortest trace: [Admit(0), Seal(0), Fail(0), Close(0)]
 composed negative control RevocationLeavesDeclarations: revocation left unresolved declarations unfenced; shortest trace: [Revoke]
+composed negative control FailureOverridesFence: terminal settlement overrode an accepted fence; shortest trace: [Admit(0), CancelRoot, Fail(0)]

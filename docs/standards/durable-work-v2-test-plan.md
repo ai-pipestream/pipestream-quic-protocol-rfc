@@ -81,7 +81,8 @@ pass together with the 17 wire-library tests.
   work settlement. The revocation case sets the retained denial flag directly.
 - V2-SET/V2-CLOSE: declaration/replay/page, batch-independent seal, missing input,
   and empty scope tests distinguish membership from admission and completion.
-  Nonempty descendant closure is still unimplemented in this store.
+  These initial tests covered empty closure only; later nonempty closure
+  evidence is recorded in the settlement checkpoint below.
 - V2-STORE: `process_crash_on_each_side_of_creation_and_declaration_commit`
   runs four child-process exits without SQLite/Rust destructors. Reopen verifies
   pre-commit absence and post-commit replay. This covers metadata commits, not
@@ -377,11 +378,78 @@ passing tests, with strict workspace clippy clean.
 The pool scans retained jobs with a bounded batch and one shared cursor; it is not
 an indexed ready queue. These tests bound live dispatches and handle accounting,
 not whole-workload CPU/RSS/disk/network cost or forced preemption of callback code.
-Still required: deadline/cancellation/skip/revocation settlement, producer-1
-admission, nonempty closure and complete branch execution, authenticated RESULT
+Subsequent settlement evidence is below. Still required: producer-1
+admission and complete branch execution, authenticated RESULT
 read leases, dependency retention, expiry and retirement. Input/output liveness
 stays charged until safe cleanup exists. Independent Java V2, both cross-language
 failure directions and the equivalent streaming-gRPC workload remain required.
+
+### Rust authoritative settlement and nonempty closure evidence
+
+`src/v2/authority/settlement/tests.rs` adds 17 tests including its subprocess
+entry. The library now exposes real cancellation/skip/scope-cancel transactions,
+explicit operator revocation and bounded autonomous reconciliation. A dedicated
+maintenance thread runs independently of the callback-worker limit. This is
+local storage/application evidence, not authenticated V2 network conformance.
+
+- V2-CANCEL/V2-OP: `declared_cancel_skip_and_terminal_receipts_replay_without_changing_outcomes`
+  checks inputless outcomes, operation conflicts, explicit skip permission,
+  dispositions and preserved successful manifests. The late-authorization test
+  rolls back the fence, outcome, operation and clock together.
+- V2-CANCEL/V2-CLOSE: `nested_first_skip_fence_survives_parent_cancel_deadline_and_restart`
+  keeps a branch CANCELLING until its descendants close and preserves its earlier
+  SKIPPED promise under ancestor cancellation and expiry. A prepared-admission
+  test excludes admission/retry/publication before descendant materialization.
+  An authority-producer empty scope can be cancelled by its authorized owner;
+  this does not implement producer-1 declaration/admission or expansion.
+- V2-TIME/V2-CLOSE: active and awaiting-retry deadlines settle FAILED with the
+  original input, attempt and deadline. STRICT child failure settles its parent;
+  an expired parent does not cancel missing descendants. Unsafe/regressed clocks
+  refuse new promises but preserve immutable receipt replay.
+- V2-AUTH: `revocation_uses_operator_permission_and_settles_without_caller_authorization`
+  freezes the root under separate Revoke authority, denies replay/view/admission,
+  and settles even unadmitted descendants without restored caller credentials.
+- V2-RESULT/V2-CANCEL: `accepted_fences_beat_inflight_publication_without_refunding_live_payloads`
+  holds a real copy callback after output installation, commits each of work
+  cancel, skip, scope cancel and revocation, then rejects publication. Durable
+  byte charges and live handles remain intact. Success-first cancellation is
+  separately tested. Maintenance closes expired work with every callback worker
+  still occupied; callback release is not required for authoritative settlement.
+- V2-SET/V2-CLOSE: 600 declarations are cancelled, sealed and folded in batches
+  of 73 and 127 across reopen. Per-call work/member counts are bounded, computed
+  seals/status roots match complete typed folds, and repeated summaries are
+  immutable. Empty closure and foreign-cursor refusal are also tested.
+- V2-STORE: `actual_process_death_preserves_atomic_fences_settlement_seals_and_closure`
+  exits child processes before/after six commit cases: work fence, scope fence,
+  revocation, deadline settlement, computed seal and closure summary. Reopen
+  verifies the accepted state, actual retained input bytes and charged outputs.
+- V2-STORE: `autonomous_settlement_fits_reserved_wal_without_row_replacement_or_page_growth`
+  completes work/job/scope/clock writes after ordinary journal capacity is
+  exhausted with a pinned reader. Triggers forbid SQL row replacement; page count
+  stays fixed. Under the unchanged 4194304-byte WAL cap, the focused run measured
+  3048856 to 3065312 bytes for expiry and 3135376 to 3160072 for scope cancellation
+  plus deferred seal and closure. This is file-length evidence, not filesystem
+  block preallocation, full lifecycle costs or a scalability benchmark.
+- V2-STORE: format 7 preallocates a 256-byte typed first-fence body plus 104-byte
+  header and one rewrite credit per work item; scope records now carry four
+  credits. Prior format 6 is refused without conversion. Reopen binds fences to
+  immutable receipts and terminal timestamps, and validates scope-parent links.
+  Payload format 4 and all frozen wire bytes remain unchanged.
+
+Section 12 now distinguishes atomic membership freeze from deferred full seal
+computation: pages carry null until the digest is committed, without permitting
+new membership. It also explicitly serializes deadline failure with cancellation
+acceptance. An accepted fence takes precedence even when materialization follows
+expiry; an already terminal outcome stays immutable. The independent composed
+model adds a negative control for failure overriding an accepted fence.
+
+These transitions leave payload liveness charged. Producer-1 admission, complete
+branch/child-output execution, result read leases, dependency retention, expiry,
+safe retirement, Java V2, real V2 endpoints, the neutral cross-language driver
+and equivalent streaming-gRPC workload are still required. Work and scope passes
+commit separately; interrupted volatile hashes may be recomputed. Credit audits
+still scan retained records, so bounded batches do not imply constant transaction
+cost or fairness/latency guarantees for a large store.
 
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 

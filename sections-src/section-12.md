@@ -422,11 +422,30 @@ seal rule. Root scope cancellation covers the entire session. A failed parent
 does not silently cancel descendants; those obligations still require ordinary
 completion or explicit scope cancellation before root closure.
 
+The accepted fence freezes membership atomically. Computing and durably storing
+the seal digest for a large frozen set MAY proceed in bounded background batches,
+including after restart. Until that computation commits, a membership page MUST
+return sealed false and a null seal, not a placeholder or a digest of a partial
+set. These fields describe the committed seal, not permission to extend the set. The fence
+already excludes membership changes throughout the affected subtree; a null seal
+does not reopen it. Checkpoint completion still requires the committed full seal
+and immutable closure summary. Reconciliation MUST eventually materialize these
+records without requiring a now-cancelled producer to reconnect or seal them.
+
 Execution deadline expiry and session revocation must drive authoritative
 fenced settlement of accepted work, not eviction. Expiry yields FAILED;
 revocation cancels work and denies caller access. Reconciliation must complete
 those settlements after restart. They cannot retroactively retract an external
 effect or a result that committed before the fence.
+
+Reaching the execution deadline immediately excludes retry and publication, but
+does not itself commit a terminal record. Deadline settlement and acceptance of
+a cancellation/skip fence serialize at the authority: if failure commits first,
+cancellation returns that terminal outcome with disposition 1; if the fence
+commits first, its promised outcome takes precedence over later deadline
+settlement. This rule also applies when cancellation is accepted after the
+deadline but before terminal failure commits. An already accepted own or ancestor
+fence MUST NOT be overwritten with FAILED while its descendants are settling.
 
 Revocation applies an owner-independent root cancellation fence, seals existing
 scope membership and settles all unresolved declarations as well as admitted

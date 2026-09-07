@@ -950,3 +950,89 @@ bounded models, C++ tests, all nine black-box language pairs, 32 raw QUIC capabi
 probes and the external examples passed. Network evidence still concerns the
 historical profiles, not V2 interoperability. This is local verification, not hosted
 CI, a main merge, a deployment or an Internet-Draft submission.
+
+### Task 2 implementation progress: authoritative fences and bounded settlement
+
+The Rust authority now commits cancel/skip receipts together with typed first
+fences. Declared inputless work can settle without inventing admission. Branches
+remain CANCELLING until descendant obligations and scope summaries are durable;
+earlier terminal results never change. A later ancestor cancellation, deadline
+or STRICT child failure cannot replace an accepted SKIPPED/CANCELLED promise.
+Scope cancellation freezes membership immediately, including authority-producer
+scopes. A separately authorized local revocation API installs the root fence and
+denies caller access even when ordinary caller authorization has been withdrawn.
+
+`reconcile` processes bounded work batches and one incremental scope fold.
+Deadline expiry settles ACTIVE/AWAITING_RETRY work as FAILED. STRICT nonsuccess
+settles unfenced parents, but parent failure does not erase descendant obligations.
+Frozen membership yields a full seal, and terminal members yield disjoint counters
+and an immutable status root including child roots and successful manifests.
+An unfinished volatile hash may be recomputed after restart. Work and scope
+transactions are separate, so already committed work survives a later scope-pass
+refusal. The worker pool has one additional maintenance thread so occupied
+application workers do not prevent authoritative settlement.
+
+Authority format 7 adds a fixed 256-byte first-fence body plus its 104-byte record
+header and one rewrite credit. Scope credits increase from two to four to fund
+freeze, deferred seal, root revocation upgrade and closure. Prior authority
+formats are explicitly refused; payload format 4 and frozen wire bytes are
+unchanged. Existing physical-exhaustion tests retain their 4 MiB WAL cap and now
+use eight-member initial declaration batches to fit the additional promises.
+The unrelated 600-member seal-equivalence fixture receives more funding instead
+of weakening its record reservations.
+
+Seventeen new tests cover operation replay/conflicts/dispositions, four exact
+outcome buckets and manifest/child status commitments, nested fence precedence,
+late prepared-admission/retry/publication exclusion, explicit skip/revoke policy,
+last-moment authorization rollback and unsafe clocks. Real copy callbacks are
+held after installing outputs; all four fence paths beat their late publication
+without refunding live handles or byte promises. Dedicated maintenance settles
+expiry and closes the root while the only callback worker is still held.
+A 600-member closure uses batches of 73 then 127 across reopen and verifies full
+seal/status commitments. Twelve actual child-process exits bracket work fence,
+scope fence, revocation, deadline settlement, seal and summary commits; recovery
+reopens real retained input and preserves charged output reservations.
+
+Whole-write-set gates fill ordinary journal capacity behind a pinned WAL reader,
+forbid SQL row replacement and verify no database page growth. With the unchanged
+4194304-byte WAL cap, the focused run measured 3048856 to 3065312 bytes for expiry
+and 3135376 to 3160072 for cancellation plus deferred seal and closure. These are
+file-length gates, not filesystem-block preallocation, whole-lifecycle or gRPC
+baseline measurements. Reopen rejects prior formats and fences rebound to a
+changed receipt or impossible terminal timestamp, and validates scope ancestry.
+
+Implementation experience clarified Section 12: membership freeze is atomic but
+large seal computation may be deferred, with a null page seal until the full
+digest commits. Cancellation and deadline failure serialize by accepted fence or
+terminal commit, not merely by clock observation. The composed model now also
+rejects failure overriding an accepted fence. The draft rebuild passed with zero
+idnits errors, flaws or warnings; its one informational comment is the FIPS
+normative-reference downref check.
+
+Current focused verification: 136 authority tests and eight composed-model tests
+pass. The final authority rerun also checks public membership pages before and
+after the deferred seal commits. Strict workspace clippy passes.
+Logs: `/tmp/pipestream-settlement-final-authority.log`,
+`/tmp/pipestream-settlement-model.log`, `/tmp/pipestream-settlement-final-draft.log`,
+`/tmp/pipestream-settlement-final-clippy.log`,
+and `/tmp/pipestream-settlement-verified-suite.log`.
+
+Next: complete authority-produced children and branch/child-output execution,
+then authenticated RESULT lookup/read leases, dependency retention, expiry and
+safe retirement. Input/output liveness remains charged until that cleanup exists.
+Independent Java V2, real V2 Quinn/Netty endpoints, the neutral cross-language
+failure driver and external workload plus equivalent streaming-gRPC evidence
+remain explicit deliverables. No V2 profile is activated. The full goal remains
+active and incomplete; this is a storage/application checkpoint, not conformance.
+
+Final verification: `./conformance/run_all.sh` exited 0. The Rust workspace passed
+497 tests and the two Rust examples passed another six. Java's 20 Surefire reports
+contain 193 tests with zero failures, errors or skips. Formatting, strict clippy,
+frozen vectors, bounded models, C++ tests, all nine black-box language pairs,
+32 raw QUIC capability probes and the external examples passed. The composed
+model explored 620796 states and 29177412 edges with no frontier at depth 32;
+all 12 negative controls were detected. The checked-in model evidence matches
+this run. This is bounded safety evidence, not a liveness or storage proof.
+The final draft rebuild again passed with zero idnits errors, flaws or warnings.
+Network tests still concern historical profiles, not V2 interoperability. No
+main merge, deployment or Internet-Draft submission occurred.
