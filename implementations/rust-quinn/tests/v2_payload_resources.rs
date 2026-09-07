@@ -8,59 +8,10 @@ use pipestream_core::{
     },
 };
 use sha2::{Digest as _, Sha256};
-use std::{
-    alloc::{GlobalAlloc, Layout, System},
-    fs,
-    os::unix::fs::MetadataExt,
-    sync::atomic::{AtomicUsize, Ordering},
-    time::Instant,
-};
+use std::{fs, os::unix::fs::MetadataExt, time::Instant};
 
-// One test in this executable isolates the Rust allocator measurement from
-// other tests. It does not count native allocations or equate heap with RSS.
-struct Allocator;
-static LIVE: AtomicUsize = AtomicUsize::new(0);
-static PEAK: AtomicUsize = AtomicUsize::new(0);
-static LARGEST: AtomicUsize = AtomicUsize::new(0);
-fn acquired(size: usize) {
-    let live = LIVE.fetch_add(size, Ordering::SeqCst) + size;
-    PEAK.fetch_max(live, Ordering::SeqCst);
-    LARGEST.fetch_max(size, Ordering::SeqCst);
-}
-// SAFETY: all allocation/deallocation operations and layouts pass unchanged to
-// System. Counters observe successful allocation without owning the pointers.
-unsafe impl GlobalAlloc for Allocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let p = unsafe { System.alloc(layout) };
-        if !p.is_null() {
-            acquired(layout.size());
-        }
-        p
-    }
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        let p = unsafe { System.alloc_zeroed(layout) };
-        if !p.is_null() {
-            acquired(layout.size());
-        }
-        p
-    }
-    unsafe fn dealloc(&self, p: *mut u8, layout: Layout) {
-        unsafe {
-            System.dealloc(p, layout);
-        }
-        LIVE.fetch_sub(layout.size(), Ordering::SeqCst);
-    }
-    unsafe fn realloc(&self, p: *mut u8, layout: Layout, size: usize) -> *mut u8 {
-        let result = unsafe { System.realloc(p, layout, size) };
-        if !result.is_null() {
-            LIVE.fetch_sub(layout.size(), Ordering::SeqCst);
-            acquired(size);
-        }
-        result
-    }
-}
-#[global_allocator]
-static ALLOCATOR: Allocator = Allocator;
+#[path = "support/heap.rs"]
+mod heap;
 
 #[test]
 fn thirty_two_mib_v2_payload_install_and_read_have_constant_buffering() {
@@ -103,9 +54,7 @@ fn thirty_two_mib_v2_payload_install_and_read_have_constant_buffering() {
         sha256: Digest(hash.finalize().into()),
         content_type: ApplicationLabel("application/octet-stream".into()),
     };
-    let baseline = LIVE.load(Ordering::SeqCst);
-    PEAK.store(baseline, Ordering::SeqCst);
-    LARGEST.store(0, Ordering::SeqCst);
+    let sample = heap::Sample::start();
     let started = Instant::now();
     let mut stage = store.stage(&owner, &input, &caps, started).unwrap();
     for _ in 0..length / block.len() as u64 {
@@ -125,8 +74,7 @@ fn thirty_two_mib_v2_payload_install_and_read_have_constant_buffering() {
     }
     assert_eq!(read, length);
     assert!(reader.verified());
-    let peak = PEAK.load(Ordering::SeqCst).saturating_sub(baseline);
-    let largest = LARGEST.load(Ordering::SeqCst);
+    let (peak, largest) = sample.finish();
     assert!(peak < 256 << 10, "Rust heap increase {peak} bytes");
     assert!(
         largest < 64 << 10,

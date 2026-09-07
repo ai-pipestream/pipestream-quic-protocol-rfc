@@ -12,16 +12,23 @@ use std::{
     io::{Read, Seek, SeekFrom, Write},
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::PathBuf,
-    sync::{Mutex, MutexGuard},
+    sync::{
+        Mutex, MutexGuard,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Instant,
 };
 
-const MAGIC: &[u8; 8] = b"PSOBJ002";
-const ROOT_MAGIC: &[u8; 8] = b"PSROOT02";
+const MAGIC: &[u8; 8] = b"PSOBJ004";
+const ROOT_MAGIC: &[u8; 8] = b"PSROOT04";
 const HEADER_LIMIT: usize = 512;
 const OVERHEAD: u64 = 12 + HEADER_LIMIT as u64;
 const CONFIG: &str = "binding";
 const LOCK: &str = "root.lock";
+
+mod reservations;
+use reservations::{Funding, ReservationEntry};
+pub use reservations::{OutputReservation, OutputStaging, ReservationUsage};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PayloadPolicy {
@@ -84,28 +91,34 @@ impl Wire for PayloadPolicy {
 struct Header {
     owner: IdentityLabel,
     input: Input,
+    funding: Option<Funding>,
 }
 impl Wire for Header {
     fn read(d: &mut minicbor::Decoder<'_>) -> std::result::Result<Self, Error> {
-        codec::array(d, 2)?;
+        codec::array(d, 3)?;
         Ok(Self {
             owner: IdentityLabel::read(d)?,
             input: Input::read(d)?,
+            funding: Option::<Funding>::read(d)?,
         })
     }
     fn write(&self, w: &mut codec::Writer) {
-        w.array(2);
+        w.array(3);
         self.owner.write(w);
         self.input.write(w);
+        self.funding.write(w);
     }
     fn check(&self) -> std::result::Result<(), Error> {
         self.owner.check()?;
-        self.input.check()
+        self.input.check()?;
+        self.funding.check()
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PayloadUsage {
+    /// Charged slots: ordinary objects plus reservation files and their entire
+    /// promised output count, including outputs not produced yet.
     pub objects: u64,
     pub charged_bytes: u64,
     pub incomplete_objects: u64,
@@ -113,14 +126,50 @@ pub struct PayloadUsage {
 
 #[derive(Debug)]
 struct Entry {
-    header: Header,
+    owner: IdentityLabel,
+    input: Option<Input>,
+    maximum: Number,
+    funding: Option<Funding>,
     offset: u64,
     incomplete: bool,
     live: usize,
 }
 impl Entry {
     fn charge(&self) -> Result<u64> {
-        charge(self.header.input.length)
+        if self.funding.is_some() {
+            Ok(0)
+        } else {
+            charge(self.maximum)
+        }
+    }
+    fn header(&self) -> Result<Header> {
+        Ok(Header {
+            owner: self.owner.clone(),
+            input: self
+                .input
+                .clone()
+                .ok_or(StoreError::Corrupt("output is not finished"))?,
+            funding: self.funding.clone(),
+        })
+    }
+}
+
+/// One lock covers ordinary objects and durable output reservations. The map
+/// dereference is only the object inventory, never the aggregate quota count.
+#[derive(Default)]
+struct Inventory {
+    objects: BTreeMap<String, Entry>,
+    reservations: BTreeMap<String, ReservationEntry>,
+}
+impl std::ops::Deref for Inventory {
+    type Target = BTreeMap<String, Entry>;
+    fn deref(&self) -> &Self::Target {
+        &self.objects
+    }
+}
+impl std::ops::DerefMut for Inventory {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.objects
     }
 }
 struct RootLock {
@@ -138,7 +187,8 @@ struct Root {
     path: PathBuf,
     binding: StoreIdentity,
     policy: PayloadPolicy,
-    entries: Mutex<BTreeMap<String, Entry>>,
+    entries: Mutex<Inventory>,
+    uncertain: AtomicBool,
     recovered_stages: usize,
     _lock: RootLock,
 }
@@ -155,7 +205,10 @@ fn charge(length: Number) -> Result<u64> {
         .ok_or_else(|| protocol(ErrorCode::LimitExceeded, "payload charge overflow"))
 }
 fn io(error: std::io::Error) -> StoreError {
-    if error.raw_os_error() == Some(rustix::io::Errno::NOSPC.raw_os_error()) {
+    if error.raw_os_error().is_some_and(|code| {
+        code == rustix::io::Errno::NOSPC.raw_os_error()
+            || code == rustix::io::Errno::DQUOT.raw_os_error()
+    }) {
         protocol(
             ErrorCode::LimitExceeded,
             "payload filesystem capacity exhausted",
@@ -188,8 +241,24 @@ fn new_file(path: &Path) -> Result<File> {
         .open(path)
         .map_err(io)
 }
+fn new_staging_file(root: &Root, path: &Path) -> Result<File> {
+    new_file(path).inspect_err(|_| {
+        root.uncertain.store(true, Ordering::Release);
+    })
+}
+fn install_file(root: &Root, source: &Path, destination: &Path) -> Result<()> {
+    fs::rename(source, destination).map_err(|error| {
+        // Do not guess whether a failed namespace operation reached disk. No
+        // cleanup or new capacity is allowed until exclusive reopen audits it.
+        root.uncertain.store(true, Ordering::Release);
+        io(error)
+    })
+}
 fn sync(root: &Root) -> Result<()> {
-    Ok(crate::persistence::sync_directory(&root.path)?)
+    crate::persistence::sync_directory(&root.path).map_err(|error| match error {
+        crate::persistence::StoreError::Io(error) => io(error),
+        other => StoreError::Physical(other),
+    })
 }
 
 impl Root {
@@ -199,13 +268,23 @@ impl Root {
                 "payload root handle inherited across fork",
             ));
         }
+        if self.uncertain.load(Ordering::Acquire) {
+            return Err(StoreError::Corrupt(
+                "payload namespace outcome uncertain; exclusive reopen required",
+            ));
+        }
         Ok(())
     }
-    fn entries(&self) -> Result<MutexGuard<'_, BTreeMap<String, Entry>>> {
+    fn entries(&self) -> Result<MutexGuard<'_, Inventory>> {
         self.owned()?;
-        self.entries
+        let entries = self
+            .entries
             .lock()
-            .map_err(|_| StoreError::Corrupt("payload inventory poisoned"))
+            .map_err(|_| StoreError::Corrupt("payload inventory poisoned"))?;
+        // A writer may quarantine the root while this caller waits for the
+        // inventory lock. Recheck before permitting any new quota decision.
+        self.owned()?;
+        Ok(entries)
     }
     fn path(&self, key: &str, incomplete: bool) -> PathBuf {
         self.path.join(format!(
@@ -283,11 +362,12 @@ impl PayloadStore {
             path,
             binding,
             policy,
-            entries: Mutex::new(BTreeMap::new()),
+            entries: Mutex::new(Inventory::default()),
+            uncertain: AtomicBool::new(false),
             recovered_stages: 0,
             _lock: lock,
         };
-        let mut entries = BTreeMap::new();
+        let mut entries = Inventory::default();
         let mut abandoned = BTreeMap::new();
         let mut scanned = 0u64;
         for entry in fs::read_dir(&root.path)? {
@@ -302,9 +382,10 @@ impl PayloadStore {
             let (prefix, key) = name
                 .split_once('-')
                 .ok_or(StoreError::Corrupt("unexpected payload entry"))?;
-            if !matches!(prefix, "stage" | "object")
+            if !matches!(prefix, "stage" | "object" | "funding" | "reserve")
                 || !valid_key(key)
                 || entries.contains_key(key)
+                || entries.reservations.contains_key(key)
                 || abandoned.contains_key(key)
             {
                 return Err(StoreError::Corrupt(
@@ -317,7 +398,7 @@ impl PayloadStore {
                     "payload inventory exceeds object bound",
                 ));
             }
-            let incomplete = prefix == "stage";
+            let incomplete = matches!(prefix, "stage" | "funding");
             if incomplete {
                 // A stage is never referenceable by an admission. Exclusive
                 // root ownership proves its former writer is gone. Its header
@@ -329,21 +410,33 @@ impl PayloadStore {
                 abandoned.insert(key.to_owned(), entry.path());
                 continue;
             }
+            if prefix == "reserve" {
+                entries
+                    .reservations
+                    .insert(key.to_owned(), reservations::read(&entry.path())?);
+                continue;
+            }
             let (header, offset) = read_header(&entry.path(), incomplete)?;
             let proposed = Entry {
-                header,
+                owner: header.owner,
+                maximum: header.input.length,
+                input: Some(header.input),
+                funding: header.funding,
                 offset,
                 incomplete,
                 live: 0,
             };
-            check_capacity(&root.policy, &entries, &proposed)?;
             entries.insert(key.to_owned(), proposed);
         }
+        reservations::audit(&root.policy, &entries)?;
         for path in abandoned.into_values() {
             fs::remove_file(path)?;
             sync(&root)?;
             root.recovered_stages += 1;
         }
+        // Complete prior interrupted rename/unlink durability before issuing
+        // new capacity based on the reconstructed directory inventory.
+        sync(&root)?;
         *root
             .entries
             .lock()
@@ -371,13 +464,25 @@ impl PayloadStore {
         };
         for entry in entries
             .values()
-            .filter(|e| owner.is_none_or(|o| e.header.owner == *o))
+            .filter(|e| owner.is_none_or(|o| e.owner == *o))
         {
-            usage.objects += 1;
+            usage.objects += u64::from(entry.funding.is_none());
             usage.charged_bytes = usage
                 .charged_bytes
                 .checked_add(entry.charge()?)
                 .ok_or(StoreError::Corrupt("payload inventory charge overflow"))?;
+            usage.incomplete_objects += u64::from(entry.incomplete);
+        }
+        for entry in entries
+            .reservations
+            .values()
+            .filter(|e| owner.is_none_or(|o| e.owner == *o))
+        {
+            usage.objects += entry.budget.count.0 + 1;
+            usage.charged_bytes = usage
+                .charged_bytes
+                .checked_add(entry.charge()?)
+                .ok_or(StoreError::Corrupt("reservation charge overflow"))?;
             usage.incomplete_objects += u64::from(entry.incomplete);
         }
         Ok(usage)
@@ -398,11 +503,15 @@ impl PayloadStore {
         let header = Header {
             owner: owner.clone(),
             input: input.clone(),
+            funding: None,
         };
         let encoded = codec::encode(&header, HEADER_LIMIT)?;
         let proposed = Entry {
-            header,
-            offset: 12 + encoded.len() as u64,
+            owner: owner.clone(),
+            input: Some(input.clone()),
+            maximum: input.length,
+            funding: None,
+            offset: OVERHEAD,
             incomplete: true,
             live: 1,
         };
@@ -414,13 +523,13 @@ impl PayloadStore {
             .try_fill_bytes(&mut random)
             .map_err(|e| StoreError::Io(std::io::Error::other(e)))?;
         let key: String = random.iter().map(|b| format!("{b:02x}")).collect();
-        if entries.contains_key(&key) {
+        if entries.contains_key(&key) || entries.reservations.contains_key(&key) {
             return Err(protocol(
                 ErrorCode::LimitExceeded,
                 "payload identity collision",
             ));
         }
-        let file = new_file(&self.root.path(&key, true))?;
+        let file = new_staging_file(&self.root, &self.root.path(&key, true))?;
         #[cfg(test)]
         tests::crash_point("stage-created");
         // Register before any fallible write so a failed cleanup cannot release
@@ -439,6 +548,8 @@ impl PayloadStore {
         file.write_all(&(encoded.len() as u32).to_be_bytes())
             .map_err(io)?;
         file.write_all(&encoded).map_err(io)?;
+        file.write_all(&[0; HEADER_LIMIT][..HEADER_LIMIT - encoded.len()])
+            .map_err(io)?;
         #[cfg(test)]
         tests::crash_point("stage-header");
         stage.failed = false;
@@ -457,7 +568,7 @@ impl PayloadStore {
         let entry = entries
             .get(key)
             .ok_or_else(|| protocol(ErrorCode::OutputUnavailable, "retained object absent"))?;
-        if entry.incomplete || entry.header.owner != *owner || entry.header.input != *input {
+        if entry.incomplete || entry.owner != *owner || entry.input.as_ref() != Some(input) {
             return Err(protocol(
                 ErrorCode::OutputUnavailable,
                 "retained object identity mismatch",
@@ -472,7 +583,7 @@ impl PayloadStore {
                 "retained object header corrupt",
             )
         })?;
-        if header != entry.header || offset != entry.offset {
+        if header != entry.header()? || offset != entry.offset {
             return Err(protocol(
                 ErrorCode::OutputUnavailable,
                 "retained object descriptor changed",
@@ -511,7 +622,11 @@ impl PayloadStore {
         }
         let mut entries = self.root.entries()?;
         let mut removed = 0;
-        let keys: Vec<String> = entries
+        let range = (
+            after.map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded),
+            std::ops::Bound::Unbounded,
+        );
+        let mut keys: Vec<String> = entries
             .range::<str, _>((
                 after.map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded),
                 std::ops::Bound::Unbounded,
@@ -519,11 +634,48 @@ impl PayloadStore {
             .take(limit)
             .map(|(key, _)| key.clone())
             .collect();
+        keys.extend(
+            entries
+                .reservations
+                .range::<str, _>(range)
+                .take(limit)
+                .map(|(key, _)| key.clone()),
+        );
+        keys.sort_unstable();
+        keys.truncate(limit);
         let next = keys.last().cloned();
         let inspected = keys.len();
         for key in keys {
+            if let Some(reservation) = entries.reservations.get(&key) {
+                if reservation.live != 0
+                    || referenced(&key)?
+                    || entries
+                        .values()
+                        .any(|e| e.funding.as_ref().is_some_and(|f| f.key == key))
+                {
+                    continue;
+                }
+                let path = reservations::path(&self.root, &key, reservation.incomplete);
+                match checked_file(&path) {
+                    Ok(_) => fs::remove_file(path)?,
+                    Err(StoreError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(e),
+                }
+                #[cfg(test)]
+                reservations::tests::crash_point("reserve-unlinked");
+                sync(&self.root)?;
+                entries.reservations.remove(&key);
+                removed += 1;
+                continue;
+            }
             let entry = entries.get(&key).expect("inventory entry");
-            if entry.live != 0 || referenced(&key)? {
+            let budget_pinned = entry.funding.as_ref().is_some_and(|f| {
+                entries
+                    .reservations
+                    .get(&f.key)
+                    .is_some_and(|r| r.live != 0)
+            });
+            if entry.live != 0 || budget_pinned || referenced(&key)? {
                 continue;
             }
             let path = self.root.path(&key, entry.incomplete);
@@ -633,48 +785,33 @@ pub struct CollectionProgress {
     pub next: Option<String>,
 }
 
-fn check_capacity(
-    policy: &PayloadPolicy,
-    entries: &BTreeMap<String, Entry>,
-    proposed: &Entry,
-) -> Result<()> {
-    let mut bytes = proposed.charge()?;
-    let mut owner_bytes = bytes;
-    let mut owner_objects = 1;
-    for entry in entries.values() {
-        bytes = bytes.checked_add(entry.charge()?).ok_or_else(|| {
-            protocol(ErrorCode::LimitExceeded, "payload byte accounting overflow")
-        })?;
-        if entry.header.owner == proposed.header.owner {
-            owner_bytes = owner_bytes.checked_add(entry.charge()?).ok_or_else(|| {
-                protocol(ErrorCode::LimitExceeded, "owner byte accounting overflow")
-            })?;
-            owner_objects += 1;
-        }
-    }
-    if entries.len() as u64 >= policy.objects.0
-        || bytes > policy.bytes.0
-        || owner_objects > policy.owner_objects.0
-        || owner_bytes > policy.owner_bytes.0
-    {
-        return Err(protocol(
-            ErrorCode::LimitExceeded,
-            "payload reservation capacity exhausted",
-        ));
-    }
-    Ok(())
+fn check_capacity(policy: &PayloadPolicy, entries: &Inventory, proposed: &Entry) -> Result<()> {
+    reservations::check_capacity(
+        policy,
+        entries,
+        &proposed.owner,
+        u64::from(proposed.funding.is_none()),
+        proposed.charge()?,
+    )
 }
 
-fn check_handles(
-    policy: &PayloadPolicy,
-    entries: &BTreeMap<String, Entry>,
-    owner: &IdentityLabel,
-) -> Result<()> {
-    let total: usize = entries.values().map(|e| e.live).sum();
+fn check_handles(policy: &PayloadPolicy, entries: &Inventory, owner: &IdentityLabel) -> Result<()> {
+    let total: usize = entries
+        .values()
+        .map(|e| e.live)
+        .chain(entries.reservations.values().map(|r| r.live))
+        .sum();
     let owned: usize = entries
         .values()
-        .filter(|e| e.header.owner == *owner)
+        .filter(|e| e.owner == *owner)
         .map(|e| e.live)
+        .chain(
+            entries
+                .reservations
+                .values()
+                .filter(|r| r.owner == *owner)
+                .map(|r| r.live),
+        )
         .sum();
     if total as u64 >= policy.handles.0 || owned as u64 >= policy.owner_handles.0 {
         return Err(protocol(
@@ -697,7 +834,12 @@ fn read_header(path: &Path, incomplete: bool) -> Result<(Header, u64)> {
     let mut bytes = vec![0u8; length];
     file.read_exact(&mut bytes)?;
     let header: Header = codec::decode(&bytes, HEADER_LIMIT)?;
-    let offset = 12 + length as u64;
+    let mut padding = [0; HEADER_LIMIT];
+    file.read_exact(&mut padding[..HEADER_LIMIT - length])?;
+    if padding[..HEADER_LIMIT - length].iter().any(|b| *b != 0) {
+        return Err(StoreError::Corrupt("payload header padding changed"));
+    }
+    let offset = OVERHEAD;
     let expected = header
         .input
         .length
@@ -768,16 +910,18 @@ impl StagedPayload {
         self.file
             .as_mut()
             .ok_or(StoreError::Corrupt("payload stage is closed"))?
-            .sync_all()?;
+            .sync_all()
+            .map_err(io)?;
         #[cfg(test)]
         tests::crash_point("object-synced");
         let mut entries = self.store.root.entries()?;
         let entry = entries
             .get_mut(&self.key)
             .ok_or(StoreError::Corrupt("payload reservation disappeared"))?;
-        fs::rename(
-            self.store.root.path(&self.key, true),
-            self.store.root.path(&self.key, false),
+        install_file(
+            &self.store.root,
+            &self.store.root.path(&self.key, true),
+            &self.store.root.path(&self.key, false),
         )?;
         entry.incomplete = false;
         #[cfg(test)]
@@ -789,8 +933,11 @@ impl StagedPayload {
         let installed = InstalledPayload {
             store: self.store.clone(),
             key: self.key.clone(),
-            owner: entry.header.owner.clone(),
-            input: entry.header.input.clone(),
+            owner: entry.owner.clone(),
+            input: entry
+                .input
+                .clone()
+                .ok_or(StoreError::Corrupt("installed input descriptor missing"))?,
         };
         self.file.take();
         self.key.clear();

@@ -128,9 +128,10 @@ entry point; `ingress.rs` adds three header/reception tests. Their scope is:
   RSS/HWM. This is neither an end-to-end benchmark nor proof of all process-memory
   bounds or populated-inventory scaling.
 
-Funded admission, durable jobs, complete transition/output reservations and retirement
-remain unimplemented. Temporary reception quotas and object-reference cleanup do
-not substitute for those gates or for either cross-language direction.
+Funded admission, durable jobs, complete metadata-transition reservations and
+retirement remain unimplemented. Temporary reception quotas and object-reference
+cleanup do not substitute for those gates or for either cross-language direction.
+Durable output-capacity evidence is recorded separately below.
 
 ### Rust fixed-record funding evidence
 
@@ -156,9 +157,46 @@ closure, not evidence that the entire admission/job transaction is funded.
   successor. Header, body, padding and cross-row corruption fail closed; startup
   rejects corrupt bodies even when their charge headers remain intact.
 
-Global/per-owner output and job budgets, every other mutable record in a complete
-transition, dependency/read pins, metadata retirement and cross-language V2
-failure tests remain required. These record-level credits do not close those gates.
+Global/per-owner job budgets, every other mutable record in a complete transition,
+dependency/read pins, metadata retirement and cross-language V2 failure tests
+remain required. These record-level credits do not close those gates. Output-file
+budgets are covered by the reservation implementation below.
+
+### Rust output-reservation evidence
+
+`src/v2/authority/payload/reservations/tests.rs` adds 15 tests, including its
+subprocess entry point. Output file capacity is now durable; the full
+admission/job/receipt transaction and protocol-level result publication remain open.
+
+- V2-STORE/V2-ADMIT: global/per-owner byte and object forecasts survive reopen;
+  ordinary uploads cannot consume reserved output capacity. Partial outputs hold
+  their entire maximum; unused bytes remain inside the reservation. Zero-length
+  objects and a zero-count reservation have distinct behavior.
+- V2-RESULT (storage only): outputs with initially unknown length/hash install
+  their actual descriptors and verify through file-backed reads. All 256 slots
+  and maximum owner/content-type labels work with only two live handles. Slot
+  uniqueness, owner/budget mismatch, over-budget output, chunk bounds, monotonic
+  regression, idle/lifetime equality, and non-renewing empty writes are checked.
+- V2-STORE: 11 child-process exits cover reservation creation/fsync/rename/
+  directory sync/unlink and output creation/header/payload/fsync/rename/directory
+  sync. Restart retains installed output promises and reclaims only abandoned
+  stages. These tests do not simulate physical power loss or network ACK loss.
+- V2-STORE: actual SQLite reference transactions preserve reservation and object
+  liveness through cleanup. The test leaves work DECLARED; it is not a fabricated
+  admission, manifest, terminal result or retirement implementation.
+- V2-STORE: missing/corrupt/aliased funding fails closed. A negative-first test
+  forces a real rename failure and now verifies root quarantine until exclusive
+  reopen. Filesystem space/quota errors map to LIMIT_EXCEEDED; this mapping test
+  does not claim a whole-disk exhaustion experiment.
+- `v2_output_resources` streams, installs and reads 32 MiB through 16 KiB buffers
+  in an isolated allocator-instrumented executable. It uses the same 256 KiB
+  added-heap and 64 KiB allocation gates as the input test. Both report file
+  lengths, allocated blocks and RSS/HWM separately. This does not establish QUIC
+  flow-control, complete endpoint memory bounds, or a gRPC performance advantage.
+
+Executor capacity, complete metadata/journal funding, worker leases, authenticated
+manifest publication/read leases, dependency retention, session retirement,
+independent Java V2 and both cross-language failure directions remain required.
 
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 

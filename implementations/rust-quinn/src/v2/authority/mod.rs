@@ -26,7 +26,7 @@ mod sessions;
 mod tests;
 
 const APPLICATION_ID: i64 = 1_347_637_825;
-const FORMAT: i64 = 3;
+const FORMAT: i64 = 4;
 const SCHEMA: &str = include_str!("schema.sql");
 
 #[derive(Debug)]

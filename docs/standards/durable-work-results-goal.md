@@ -540,3 +540,91 @@ zero failures/errors/skips), native/C++ checks, frozen vectors and models, all
 nine black-box pairs, all 32 raw capability probes and the external examples.
 Those network interoperability tests remain historical-profile evidence, not
 V2 endpoint conformance. No draft submission, main merge or deployment occurred.
+
+### Task 2 implementation progress: durable output capacity and materialization
+
+The payload backend now installs immutable output-reservation files before a
+future metadata admission. Their full maximum count/bytes, including per-file
+overhead, remain charged across restart and cannot be consumed by unrelated
+uploads. Materialized outputs spend capacity inside that promise; they do not
+double-charge it or release unused quota globally. SQLite payload references can
+retain reservation files independently from their output files. No job admission
+or manifest publication is implied by an installed reservation.
+
+Output staging supports unknown final lengths and digests with bounded borrowed
+buffers. It writes into a preallocated header slot, computes the descriptor from
+actual bytes, syncs the file and installs it without copying/shifting the body.
+Partial output reserves its maximum; finish returns unused capacity only to that
+same reservation. Owner/budget bindings and unique output slots are checked, and
+over-budget/error/late staging cannot install a successful prefix. Storage errors
+are not themselves authoritative job outcomes; the executor still must fence and
+commit the appropriate outcome.
+
+The inventory reconstructs per-owner charges and per-reservation occupancy in a
+single pass with ordered-map lookups and 256-bit slot sets. Reservation and object
+maps share one lock. Live reservation pins protect uncommitted outputs without
+requiring 256 open producer handles. Reference-safe collection keeps a funding
+record until all its objects are gone. Startup syncs the reconstructed directory
+before granting new capacity, completing interrupted namespace durability.
+Ordinary quota/usage operations still scan the inventory; this is not a claim
+about populated-store throughput.
+
+A negative-first test caught an uncertain-installation gap. Errors creating or
+renaming staging files now quarantine the live root instead of allowing cleanup
+or new quota decisions to guess the namespace outcome. Waiting inventory callers
+recheck quarantine after taking the lock. Exclusive reopen audits what exists and
+syncs the directory before resuming. Existing work receipts are not rewritten as
+success/failure by this filesystem decision. Reopening a reservation as new
+storage evidence also completes its file/directory synchronization first.
+
+Authority schema and payload-root formats are now 4. Prior prototype formats
+are refused explicitly; no user data was converted, deleted or replaced. Local
+object files now have fixed padded headers and optional typed funding identity.
+No normative wire, CDDL or frozen-vector byte changes are involved.
+
+Focused evidence: 15 output-reservation tests, including 11 child-process exit
+boundaries and the subprocess entry point. The SQLite-reference test commits
+storage references while leaving the work DECLARED, not a fake admitted job.
+Maximum labels and 256 zero-length output slots are exercised with two handles.
+The tests also cover capacity/handle exhaustion, duplicate slots, changed owners
+and budgets, missing/corrupt/aliased funding, exact zero-output behavior, poisoned
+errors and monotonic idle/lifetime deadlines. Process-death testing is not a
+physical power-loss experiment. Space/quota errno normalization is tested as a
+mapping, not represented as an actual full-filesystem experiment.
+
+The isolated 32 MiB output resource run measured 3519 bytes of additional Rust
+heap and a largest allocation of 1952 bytes, under the 256 KiB/64 KiB gates.
+It reported 33555480 charged bytes, 33555099 file-length bytes, 33566720 allocated
+block bytes and 3912 KiB RSS/HWM. The 32 MiB input test also remains below its
+gates (2305 bytes added heap, largest allocation 1952 bytes). The tests now share
+allocator instrumentation source but remain separate one-test executables.
+These are single-object storage buffering measurements, not full endpoint,
+QUIC flow-control, populated-inventory or streaming-gRPC workload evidence.
+Reservations limit internal file-length use; they are not physical block
+preallocation or protection against unrelated filesystem/hardware failure.
+
+The complete admission transaction remains next: revalidate the installed input
+and reservation against the bound authority root, fund executor slots and every
+metadata write in the promised lifecycle, then atomically commit the input/job,
+attempt/deadline, child scope, resource references and immutable receipt. Do not
+activate V2 profiles before workers, cancellation/closure, results/read leases,
+retention/reconciliation, independent Java and neutral cross-language failure
+tests are complete. The original workload and equivalent gRPC baseline remain
+part of the goal.
+
+Local evidence logs:
+
+- `/tmp/pipestream-v2-output-reservations-authority.log`
+- `/tmp/pipestream-v2-output-reservations-focused.log`
+- `/tmp/pipestream-v2-output-reservations-resources.log`
+- `/tmp/pipestream-v2-output-reservations-clippy.log`
+- `/tmp/pipestream-v2-output-reservations-namespace-red.log` (deliberate pre-fix failure)
+- `/tmp/pipestream-v2-output-reservations-suite.log`
+
+Final validation: `./conformance/run_all.sh` exited 0. The Rust workspace passed
+420 tests, and the 20 Java Surefire reports contain 193 tests with zero failures,
+errors or skips. Strict Rust formatting/clippy, frozen-vector verification,
+bounded models, C++ tests, all nine black-box pairs, all 32 raw QUIC capability
+probes and the external examples passed. Network interoperability still covers
+historical profiles, not the unfinished V2 endpoints. This checkpoint does not
+complete the goal, submit a draft, merge main or deploy a server.

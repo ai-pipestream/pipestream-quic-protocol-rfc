@@ -64,8 +64,8 @@ CREATE TABLE payload_refs (
   generation INTEGER NOT NULL,
   scope INTEGER NOT NULL,
   entity INTEGER NOT NULL,
-  purpose INTEGER NOT NULL CHECK(purpose IN (0,1)),
+  purpose INTEGER NOT NULL CHECK(purpose IN (0,1,2)),
   FOREIGN KEY(generation,scope,entity) REFERENCES work(generation,scope,entity)
 ) STRICT;
 PRAGMA application_id = 1347637825;
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;

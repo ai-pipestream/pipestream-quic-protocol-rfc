@@ -63,8 +63,9 @@ reclaims abandoned stages only under exclusive ownership; installed orphans
 remain charged until the authority's reference-safe collector removes them.
 Live installed/read handles remain pinned against collection. The database
 retains a local random store identity and a once-bound canonical payload path.
-Internal authority storage is now format 3; prior prototype stores are refused,
-not silently converted or replaced. This changes no wire schema or frozen vector.
+Internal authority storage and payload roots are now format 4; prior prototype
+stores are refused, not silently converted or replaced. This changes no wire
+schema or frozen vector.
 
 Work views and scope summaries use fixed-capacity checksummed records, not
 whole-session images. Declaration preallocates 2048 bytes per work view and two
@@ -77,7 +78,32 @@ bodies, padding and relational identities and reconstructs journal funding.
 The cost bound is specific to bundled SQLite 3.53.2 and its checked page/sector
 geometry. These credits fund fixed-record rewrites, not arbitrary additional SQL
 or the entire admission/execution/closure transaction. The corresponding job,
-receipt, clock, output and other transition reservations are still required.
+receipt, clock and complete metadata-transition reservations are still required.
+
+`PayloadStore::reserve_outputs` durably reserves the maximum output count/bytes
+before metadata admission. The immutable reservation file remains charged across
+restart, including unused slots and bytes. `PayloadUsage::objects` now reports
+charged slots, not just present files. Global/per-owner forecasts include ordinary
+uploads, reservation files and all promised outputs. Materializing those outputs
+does not charge the same promise twice or donate unused space to another upload.
+These are bounded file-length quotas, not an allocation of filesystem blocks or
+a guarantee against external disk failure.
+
+`OutputReservation::stage` accepts a per-output maximum and streams through
+borrowed bounded buffers. The final descriptor is computed from actual writes;
+no length/hash placeholder can become an installed output. Fixed-size header
+slots avoid moving the body when its descriptor becomes known. Each output slot
+is unique within its reservation. Live reservation pins preserve uncommitted
+outputs while allowing sequential production of all 256 slots with two handles.
+Garbage collection also respects SQLite references and retains a funding record
+while any of its output objects remains. It does not implement retention expiry.
+
+Startup rebuilds owner totals and output occupancy, rejects missing/corrupt or
+contradictory funding, and syncs the directory before using reconstructed capacity.
+An error creating or renaming a staging file quarantines the root; callers must
+release its handles and reopen exclusively to establish the namespace outcome.
+An installed reservation reopened as evidence is synced before its pin is issued.
+No admission or successful-work acknowledgment follows from these filesystem APIs.
 
 `AuthorityStore::receive_input` validates ownership, membership, application/mode,
 profile, immutable operation, duration and response/byte limits before staging.
@@ -91,8 +117,10 @@ Funded admission/jobs, workers, cancellation settlement, nonempty closure,
 results/read leases, retention expiry and session retirement remain unfinished.
 Physical file caps and staging reservations alone do not reserve future
 completion space; fixed-record credits cover only their stated write set.
-Client journals, V2 mTLS/QUIC
-integration and independent Java V2 implementation also remain outstanding.
+Durable output reservations cover payload capacity, not executor slots, the
+atomic admission/job/receipt transaction or its complete metadata write set.
+Client journals, V2 mTLS/QUIC integration and independent Java V2 implementation
+also remain outstanding.
 The current contract has no backward-compatibility requirement; historical V1
 tests are regression evidence only. See the
 [V2 acceptance ledger](../../docs/standards/durable-work-v2-test-plan.md).
