@@ -1,0 +1,133 @@
+PipeStream V2 independent Java typed wire and commitments
+Date: 2026-09-07 UTC
+Branch: feat/durable-work-results-v2
+Parent: 46fa89bbecabe2f9a04bb9afb5ba460aa1fc4a27
+Runtime: OpenJDK 25.0.3; GraalVM CE 25.1.3+9.1
+Compilation: existing Maven release 21, -Xlint:all -Werror
+Formatter: google-java-format 1.28.0
+No dependency, wire schema, profile identifier or database format changed.
+
+This is a real Java library foundation, not a V2 endpoint or full goal completion.
+Independent Java authentication, request correlation, incremental object transfer,
+durable execution, cancellation/retry/retention, client recovery and end-to-end
+parent/child evidence validation remain required. The neutral Rust failure driver
+and original external workload/equivalent authenticated durable streaming-gRPC
+comparison remain mandatory. No profile is advertised by this library.
+
+Implementation:
+- Immutable typed control families and every Appendix F record/outcome. Arrays and
+  lists are defensively owned. No generic object-tree/JSON conversion or Rust link.
+- Schema-directed canonical CBOR and strict UTF-8. Length/cardinality checks precede
+  body/list allocation. Integers use V2's nonnegative 63-bit range,
+  not V1's uint64 model.
+- Incremental control framing, unsigned-u32 bounds, bounded zero-buffer ignored
+  bodies and fatal decoder poisoning; exact standalone object-header encoding.
+  This does not yet implement timed incremental object streams or correlation.
+- Profile intersection, required-set echo, dependency and minimum-limit checks.
+- Originator-qualified typed operation hashes exclude only connection request IDs;
+  target producer is not substituted for the operation originator.
+- Streaming scope seals, typed manifest/status-leaf hashes and a 63-slot status
+  frontier with V2 odd-last duplication. Scope identity, ascending IDs, exact
+  counts, terminal-only leaves and child-root presence are validated. These hashes
+  do not independently prove membership, authorization, execution or child closure.
+- WAITING_CHILDREN without a child allocation now fails structural validation.
+
+Focused gates:
+  mvn -q -f implementations/java-netty/pom.xml -Dtest=V2WireTest test
+  handle 33506, exit 0; /tmp/pipestream-java-v2-wire-tests.log
+  All 70 frozen wire expectations, exact accepted round trips and seven additional
+  tests: every control cut/bytewise delivery, invalid lengths/types/partial FIN,
+  ignored-body allocation, canonical CBOR/UTF-8/integer boundaries, immutable
+  ownership, capability selection and locator-to-manifest identity.
+
+  mvn -q -f implementations/java-netty/pom.xml -Dtest=V2WireTest,V2CommitmentsTest test
+  handle 14310, exit 0; /tmp/pipestream-java-v2-commitment-tests.log
+  77 wire + 16 commitment tests. All 12 frozen hashes are calculated from
+  independently constructed typed inputs, not just a generic hash of fixture
+  hex. Four further tests cover originator/context/request-field sensitivity,
+  invalid/missing/extra/reordered seal members, full-tree versus frontier
+  equivalence for every size 0..1025, and terminal/child/count/order refusals.
+
+Isolated resource gate:
+  mvn -q -f implementations/java-netty/pom.xml -Dtest=V2CommitmentResourceTest test
+  handle 13082, exit 0; /tmp/pipestream-java-v2-resource.log
+  Fresh child JVM: -Xmx24m -XX:+UseSerialGC; 60-second termination bound.
+  Primitive long[] membership alone would exceed the child maximum heap.
+  The test does not allocate that array; it streams each ID and view.
+Raw first run:
+members=4000003 primitiveMembershipBytes=32000024 maxHeapBytes=24379392 largestFrontierBytes=672 elapsedMs=1653 seal=ec5bfa7db4b7c4160ba514a35f642d6502697b28e748b85aae580b73f5cd0def status=14bfe4d1564c7dee064633c55a0ee92784bf5589c5f36963a98b6c2e410b7d36
+VmHWM: 385152 kB
+VmRSS: 385152 kB
+  Heap cap, hash payload and total/native process memory are different quantities.
+  RSS/HWM is observed, not gated. This is local computation, not endpoint/network
+  resource evidence. Repeated standard-suite run: 1677 ms, RSS/HWM 395912 kB.
+  No latency comparison or production-memory claim follows from these samples.
+
+Standard Java suite:
+  mvn -q -f implementations/java-netty/pom.xml test
+  handle 71406, exit 0; /tmp/pipestream-java-v2-full.log
+  278 tests in 22 fresh Surefire XML reports, zero failures/errors/skips.
+  Reports: 2026-09-07 15:32:22 through 15:33:24 America/New_York.
+  Excludes the retained old SealedInteropTest report; -Psealed-interop is separate.
+  Native SQLite file-growth test also passed.
+  No production behavior changed after this run; only package/locator docs.
+
+Documentation:
+  javadoc -quiet -Xdoclint:all -Werror -d target/v2-apidocs \
+    -classpath target/classes:/home/krickert/.m2/repository/io/netty/netty-common/4.1.131.Final/netty-common-4.1.131.Final.jar \
+    -sourcepath src/main/java ai.pipestream.quic.v2
+  cwd: implementations/java-netty
+  Final direct command exit 0; /tmp/pipestream-java-v2-doclint-final.log is empty.
+  The whole-project Maven Javadoc command failed on existing V1 missing record
+  parameter documentation and initial new V2 warnings. All new V2 warnings were
+  corrected; this does not claim the old package passes strict missing-doc checks.
+
+Draft:
+  ./build.sh core 05
+  handle 23345, exit 0; /tmp/pipestream-java-v2-draft.log
+  Updated Appendix D inspected in generated TXT and HTML. idnits zero errors,
+  flaws or warnings, one existing FIPS-180-4 reference comment.
+  Forgejo pull was ff-only and already current. No main merge, deployment or
+  Internet-Draft submission.
+
+Source SHA-256:
+eb12d68aa6900167949955516fb980e5867f0934a6484c97854691583d4e110c  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/Cbor.java
+d750dcc70a6ad73bf556e41c71d21c6de2760b01775e520bbf3ce388205088d5  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/Checks.java
+02a4780e00c51856203cf563f753cd7f56cbfd421bbc947d14c914521a55f16e  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/Commitments.java
+3c3931b6940ddc81e3af6140692c5f7a9e8622f86b441d5615e688e81fdf2cf5  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/Locator.java
+77158a0a1e8fd85241cb292ff3e142d65524580d88c2f3422fce3ed03122d313  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/MessageCodec.java
+845cc531ece159960737e22db9aa1f5dd97ae5e051dccdb5ebb4726f5e6c8b69  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/Messages.java
+a8997e6634bd74334f2e396b5f893e1a91a7606a90759a67d270a4ca9685b38c  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/ProtocolError.java
+6c893e909da77ff2d769ffdb4dba81973fcbc5681b7c244628c995ae70736333  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/RecordCodec.java
+241485c12177a1e087c6249f1d44cf99888edc3e0913152a87a78db705d255f3  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/Records.java
+e5bd0252e88bec0672a3491ba474766fc4cd0b9380140ae756f26bd20c153f61  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/Wire.java
+0ea1f32ee6d46cad60d57e7d19abb594dfa1286078a6c56191b44e26d8eb97ec  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/package-info.java
+b16ce3f76c0e847f3d5d37271a88713a3767cb69c435266c4e01a8e142efcdbd  implementations/java-netty/src/test/java/ai/pipestream/quic/v2/V2CommitmentResourceTest.java
+3b89ee6df801a4563544239a48170ce485141c0128f98f9ec826cf655eae2012  implementations/java-netty/src/test/java/ai/pipestream/quic/v2/V2CommitmentsTest.java
+17b54aac6474114881ecef9ed5b8438dddf7d771988a05f0613e3e0b2643e6cf  implementations/java-netty/src/test/java/ai/pipestream/quic/v2/V2WireTest.java
+
+Full reference suite:
+  ./conformance/run_all.sh
+  handle 84214, exit 0; /tmp/pipestream-java-v2-full-suite.log
+  788 Rust workspace tests; strict fmt/clippy; release builds; 6 external Rust tests.
+  Java install with -Psealed-interop: 287 tests in 23 fresh XML reports, zero
+  failures/errors/skips. Reports span 2026-09-07 15:38:48 through 15:39:52
+  America/New_York. The earlier standard run intentionally excluded interop.
+  Native SQLite/C++ tests passed; all nine V1 black-box client/server pairs,
+  32 raw capability probes, recursive/recovery scenarios and three examples passed.
+  These existing network pairings remain V1, not Java V2 interoperability.
+  Frozen corpus: 33 Core, 18 recursive/recovery, 70 V2 and 12 commitments.
+  Bounded models: 311539/5776/620796 states; 8723092/173280/29177412 edges;
+  deepest 19/17/27 with zero states at each configured depth boundary.
+  Repeat Java commitment probe: 1609 ms, RSS/HWM 376152 KiB; same exact seal/status
+  hashes, maximum heap and frontier as the first run.
+  Built library JAR contains the new typed V2 classes. Formatting check passed.
+  The full goal remains active; no endpoint/profile-completeness claim is made.
+
+Log SHA-256 (local logs; selected raw evidence is retained above):
+67dd42b2a426fb04c0a6060aedab72e53c05ec570586d0e29cd9834427420411  /tmp/pipestream-java-v2-full-suite.log
+baf05e545b0acbed381cb05b49a3a3d638efc8e0db033888cc2800de487e9053  /tmp/pipestream-java-v2-full.log
+25d6aa49ba3fe6467017ddc529aa6b7e5914eae5ca9ff2502870932a2a16810c  /tmp/pipestream-java-v2-commitment-tests.log
+37bf47f1516785b57018ef2b93ae148e6ccefb99fd306936d95a2d141b251b18  /tmp/pipestream-java-v2-resource.log
+52e54a95ad085cefa0a6d7fcd8fb8b632e02f2c74bbf2dd856fedb9581358cc1  /tmp/pipestream-java-v2-draft.log
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  /tmp/pipestream-java-v2-doclint-final.log

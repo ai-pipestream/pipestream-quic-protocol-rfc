@@ -1634,6 +1634,45 @@ holding unlinked files. Arbitrary-path direct downloads retain their documented
 crash-left staging limits. These are Rust implementation gates, not independent
 Java V2, neutral cross-language failures or the original comparative workload.
 
+### Independent Java typed wire and commitments, 2026-09-07
+
+Sources: `implementations/java-netty/src/main/java/ai/pipestream/quic/v2/`.
+Tests: the matching `src/test/java/ai/pipestream/quic/v2/` package.
+Evidence: `conformance/results/durable-work-v2-java-wire-2026-09-07.txt`.
+
+- V2-WIRE: `V2WireTest` consumes every one of the 70 frozen expectations, checks
+  the fixture byte digest, and requires accepted frames/records to round-trip
+  byte-for-byte. It exercises every control split and one-byte delivery, strict
+  CBOR/UTF-8, nonnegative 63-bit integer boundaries, checked aggregate overflow, immutable
+  collections/digests, partial FIN and failure poisoning. Oversized u32 declarations
+  fail before body allocation; 1 MiB ignored bodies retain zero body-buffer bytes.
+- V2-NEG: the same test validates profile intersection/required union, exact
+  minimum ceilings/deadlines, unsupported dependencies, increased limits and
+  unavailable required profiles. It does not yet test a real Java negotiation
+  exchange, connection correlation or authenticated profile activation.
+- V2-OP/RESULT/CLOSE: `V2CommitmentsTest` constructs typed inputs for all 12
+  frozen hashes. Context, originator namespace, work identity, operation ID/type,
+  retry attempt and declaration changes alter the digest; connection request
+  numbers do not. Locator numeric identity must agree with its manifest. A status
+  leaf requires terminal work and exactly the child-root presence in its view.
+- V2-CLOSE: streaming seals reject incomplete, extra, duplicate and reordered
+  members. The status frontier agrees with independent full-level reduction at
+  every size 0..1025, including repeated odd-last duplication. Counts, exact scope
+  identity and ascending member IDs are checked; any error invalidates the builder.
+  These functions do not prove parent membership or descendant coverage by
+  themselves; retained relationship validation remains part of Java's next work.
+- V2-STORE/resource foundation only: `V2CommitmentResourceTest` starts an isolated
+  `-Xmx24m` JVM and streams 4,000,003 members, more primitive IDs than fit in that
+  heap. It checks the fixed frontier/count bound and reports elapsed time, heap,
+  hash bytes and total RSS/HWM separately. First run: 1653 ms, 24379392-byte maximum
+  heap, 672 retained hash bytes and 385152 KiB observed RSS/HWM. This is not a storage,
+  endpoint, flow-control, network-memory or full-process bound.
+
+The separate V2 package does not activate profiles or reinterpret historical
+storage. Full independent Java durable state, authenticated endpoints, timed
+incremental objects, recovery/refusals, both-language failure/resource driver and
+the original external workload/equivalent streaming-gRPC comparison remain open.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

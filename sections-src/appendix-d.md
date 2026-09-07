@@ -34,6 +34,19 @@ the Rust nor Java endpoint advertised these profiles at that checkpoint. Those l
 are not version-2 mutual-TLS, durable execution, crash recovery, cross-language
 interoperability or measured resource-conformance evidence.
 
+A separate independent Java version-2 library now supplies immutable typed
+messages/records, schema-directed deterministic CBOR, incremental control framing,
+profile-selection checks and domain-separated commitments. It consumes the same
+70 frozen wire cases and constructs typed inputs for all 12 frozen commitments;
+it does not import Rust implementation code or use a JSON conversion layer.
+Tests check fragmented controls, noncanonical encoding, UTF-8/integer limits,
+bounded ignored frames, immutable values and contradictory record fields.
+Its constant-memory seal and bounded status fold are tested over 4,000,003 members
+under a 24 MiB Java heap cap; process RSS/HWM is measured separately and is not
+bounded by that heap setting. These are local library tests, not Java V2
+authentication, durable recovery, result transport or cross-language conformance.
+The Java endpoint does not advertise either V2 durable profile.
+
 As of 2026-09-07, the Rust authority library also implements transactional
 admission and replay, fenced worker execution, both branch producers and real
 child-output reassembly, cancellation/closure, retained result reads,

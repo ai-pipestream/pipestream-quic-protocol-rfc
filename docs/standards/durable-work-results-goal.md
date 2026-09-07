@@ -2148,3 +2148,41 @@ outcome/refusal/resource evidence, and the external chunk/distribute/transform/
 reassemble workload with reconnect/worker failure plus equivalent authenticated,
 durable streaming-gRPC baseline and pinned raw measurements remain mandatory.
 The full goal remains active.
+
+### Independent Java V2 wire and commitments, 2026-09-07
+
+The pending Java codec work is now a typed library in `ai.pipestream.quic.v2`.
+It implements every Appendix F message/record schema, deterministic CBOR,
+incremental control framing, profile-selection checks and all domain-separated
+commitments independently of Rust. The 70 frozen wire cases and 12 typed-input
+hashes pass. Structural checks now also reject WAITING_CHILDREN without a child.
+The exact-count scope seal streams IDs, and the status fold validates identity,
+ordering, terminal views and child-root presence with at most 63 subtree hashes.
+An independent full-level tree reduction agrees for every size 0 through 1025.
+
+A fresh JVM folded 4,000,003 members under a 24 MiB heap cap with at most 672
+retained hash bytes. Primitive membership IDs alone would exceed its heap. Total
+RSS/HWM was 385152 KiB in that first run, separately recorded: this is not a
+low-RSS claim or a network/endpoint gate. Standard Java verification passed 278
+tests in 22 fresh reports, excluding the separate V1 interop profile. New V2
+Javadoc passes strict doclint; the whole project's older V1 missing-doc warnings
+remain. The draft rebuilt cleanly and its implementation-status paragraph was
+inspected in generated TXT/HTML. Evidence and source hashes are in
+`conformance/results/durable-work-v2-java-wire-2026-09-07.txt`.
+
+Next remains the complete independent Java implementation: bounded correlation
+and timed incremental objects, authenticated Netty V2 endpoints, transactional
+admission/execution/fencing/results/retention and durable client recovery with
+parent/child validation in both observation orders. No V2 profile is advertised
+from this codec. Both-language failure/resource evidence, the protocol-neutral
+Rust driver, and the original external workload plus equivalent authenticated,
+durable streaming-gRPC baseline remain mandatory. This is progress, not Task 2
+or full-goal completion.
+
+Full reference suite handle 84214 then exited zero: 788 Rust workspace tests,
+287 Java tests in 23 fresh XML reports including V1 interop, native guards,
+frozen vectors and bounded models, six external Rust tests, nine V1 client/server
+pairs, 32 capability probes and three examples. These network gates remain V1;
+they do not establish Java V2 interoperability. No implementation changes followed
+that full run. Forgejo was already current on ff-only pull; no main merge,
+deployment or draft submission is part of this checkpoint.

@@ -28,6 +28,44 @@ transfer used by the CLI: deterministic CBOR capability negotiation, one
 SHA-256-protected entity with optional `parent-id`, checkpoint acknowledgement,
 cursor advancement, and GOAWAY. They currently implement Layer 0 only.
 
+## Version 2 typed library foundation
+
+The separate `ai.pipestream.quic.v2` package implements the current Section 12
+and Appendix F binary schemas independently. It does not wrap Rust, convert
+messages through JSON, reuse the version-1 CBOR object model, or advertise V2
+profiles from an endpoint. Authentication, V2 durable execution/storage, client
+recovery and actual V2 object transport remain to be implemented in Java.
+
+- `Records` and `Messages` expose immutable typed values for every current
+  record and control-message family. Constructors reject structural contradictions;
+  session authorization, correlation and retained-state checks remain separate.
+- `Wire.Decoder` consumes at most one frame per call, validates the unsigned
+  body length before allocation, rejects unknown required/private types, and
+  discards ignorable bodies incrementally without buffering them. A malformed
+  stream cannot be resynchronized. The schema-driven parser rejects nonminimal
+  CBOR, invalid UTF-8, wrong cardinalities and trailing items.
+- `Commitments` hashes typed mutations with explicit originator/session context,
+  excluding connection-local request numbers. It also hashes manifests, membership
+  seals and terminal status trees. `Seal` retains no member list; `StatusTree`
+  retains at most 63 subtree hashes, validates ordering/counts and uses V2's odd-node
+  duplication rule. These hashes do not prove authorization or computation.
+
+`V2WireTest` checks all 70 frozen wire expectations and exact accepted round trips,
+every control split/bytewise delivery, allocation guards, Unicode/integer boundaries,
+locator identity and profile selection. `V2CommitmentsTest` constructs typed inputs
+for all 12 frozen hashes and compares streaming status folds with an independent
+level reduction for sizes 0 through 1025. A separate JVM test folds 4,000,003
+members under `-Xmx24m`, reporting heap, retained hash bytes and process RSS/HWM
+separately. This is a local hashing gate, not an endpoint or total-memory guarantee.
+
+```bash
+mvn -Dtest=V2WireTest,V2CommitmentsTest,V2CommitmentResourceTest test
+```
+
+Neither these library checks nor the existing V1 interoperability suite establish
+V2 Java/Rust interoperability. The complete independent Java implementation and
+the original failure-driver/workload comparison remain required.
+
 ## Sealed-work library foundation
 
 The independent Java `SealedWork`, `SealedScope`, and `SealedSessionStore`
