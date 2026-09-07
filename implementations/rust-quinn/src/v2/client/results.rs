@@ -18,6 +18,7 @@ use crate::{
 use sha2::{Digest as _, Sha256};
 use std::{path::Path, time::Instant};
 type Result<T> = std::result::Result<T, StoreError>;
+pub mod exports;
 
 /// All copies and unfinished downloads in this root share its immutable quota.
 /// The trusted authority/owner binding deliberately permits multiple session
@@ -136,7 +137,14 @@ impl ResultStore {
             return Ok(None);
         };
         let reader = self.payloads.open_object(&key, &self.owner, &input)?;
-        Ok(Some(LocalResult { key, reader }))
+        Ok(Some(LocalResult {
+            key,
+            reader,
+            authority: self.authority.clone(),
+            owner: self.owner.clone(),
+            descriptor: input,
+            chunk: self.chunk_limit(),
+        }))
     }
     /// Explicitly discard one local copy, never remote work or journal evidence.
     /// Live download/read handles refuse removal. File capacity is released only
@@ -185,6 +193,10 @@ impl PendingResult {
 pub struct LocalResult {
     key: String,
     reader: ObjectReader,
+    authority: IdentityLabel,
+    owner: IdentityLabel,
+    descriptor: Input,
+    chunk: usize,
 }
 impl LocalResult {
     pub fn key(&self) -> &str {

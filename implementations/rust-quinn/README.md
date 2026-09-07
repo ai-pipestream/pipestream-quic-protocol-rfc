@@ -742,9 +742,52 @@ The low-level blocking API is `pipestream_core::v2::client::results::ResultStore
 Its `PendingResult::finish` requires already authenticated, correlated transport
 FIN evidence; the async wrapper obtains that evidence from the opaque transport
 verification result. The core API itself does not authenticate arbitrary records.
-Managed-store CLI integration and crash-safe arbitrary-path exports remain open,
-alongside complete Java V2, the neutral failure driver and the original external
-workload/equivalent authenticated, durable streaming-gRPC comparison.
+The CLI now supplies `init-results`, authenticated `client download`, and offline
+`local verify`/`local export`, with separate `results`/`exports` usage and explicit
+removal commands. See the [managed CLI workflow](docs/v2-cli.md#managed-downloads-and-offline-exports).
+Complete Java V2, the neutral failure driver and the original external workload/
+equivalent authenticated, durable streaming-gRPC comparison remain open.
+
+### Version-2 managed raw exports
+
+`session::files::managed::exports::ManagedExports` provides raw files within a
+separately initialized private root. The blocking implementation is
+`pipestream_core::v2::client::results::exports::ExportStore`. Its immutable
+authority/owner binding and `ExportPolicy` must match on every exclusive reopen.
+An export reserves one object and the full raw length plus a 112-byte intent
+before copying. The fixed binding adds 72 file bytes outside the charged budget;
+filesystem directory/allocated-block costs and external readers' unlinked files
+are not covered by this named-file quota. Raw consumers must coordinate removal.
+
+`export(nonzero_id, retained_reference, local_copy)` commits the complete
+manifest/index digest under that stable local ID. The selected source is pinned
+while copied in at most 8 KiB chunks. The destination `file-ID` appears only after
+verified source EOF, independent verification of copied bytes, file sync and
+rename; success additionally requires directory sync. Exact replay rehashes the
+installed file and returns `replayed=true`; another selection cannot reuse the
+ID even if its payload bytes are equal. A partially consumed source cannot publish
+a prefix. These extra reads/hashes and the extra raw copy are real costs.
+
+Accepted async exports remain owned by a fixed file worker after the waiter is
+cancelled. Abrupt process death is different: reopen audits the entire bounded
+inventory before deleting recognized incomplete staging. Committed intent remains
+charged, allowing retry with the same selection and ID. Complete files are retained;
+same-size body corruption is detected on verification/replay, not by the startup
+metadata audit. Any failed export/removal directory sync quarantines the live root
+until audited reopen. `remove(id)` removes only that local raw export and intent,
+releasing the charge after namespace synchronization. It neither removes the source
+copy nor mutates journal or server state. Explicit removal ends the local ID binding.
+
+Six substantive core tests plus a subprocess entry cover quotas, ownership,
+corruption, consumed readers, sync failures and five process-exit boundaries.
+The actual-QUIC/offline test also uses a held worker and explicit future polling to
+prove an accepted export completes after waiter cancellation. Two added CLI process
+tests exercise missing/existing roots, changed policy/owner, preserved unknown files,
+download quotas, stopped-server verification/export, same-byte/different-work
+identity conflict and local-only cleanup. The isolated 32 MiB gate bounds additional
+Rust heap below 256 KiB and individual allocations below 64 KiB, checks exact named
+export file lengths, reopen/replay and cleanup, and reports observed RSS separately.
+It is not cross-language, network, filesystem-block or machine-power-loss evidence.
 
 ### Version-2 asynchronous journal owner
 

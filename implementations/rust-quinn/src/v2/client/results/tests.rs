@@ -75,7 +75,7 @@ fn caps() -> Capabilities {
         stream_lifetime_ms: LifetimeMs(30000),
     }
 }
-fn reference(directory: &Path, owner: &str, bytes: &[u8]) -> RetainedReference {
+pub(super) fn reference(directory: &Path, owner: &str, bytes: &[u8]) -> RetainedReference {
     let creation = Creation {
         authority: IdentityLabel("issuer-a".into()),
         owner: IdentityLabel(owner.into()),
@@ -142,7 +142,7 @@ fn header(reference: &RetainedReference) -> ResultHeader {
         sha256: manifest.outputs[0].sha256,
     }
 }
-fn open(path: &Path, fresh: bool) -> ResultStore {
+pub(super) fn open(path: &Path, fresh: bool) -> ResultStore {
     let open = if fresh {
         ResultStore::initialize
     } else {
@@ -156,7 +156,11 @@ fn open(path: &Path, fresh: bool) -> ResultStore {
     )
     .unwrap()
 }
-fn fill(store: &ResultStore, reference: &RetainedReference, bytes: &[u8]) -> InstalledPayload {
+pub(super) fn fill(
+    store: &ResultStore,
+    reference: &RetainedReference,
+    bytes: &[u8],
+) -> InstalledPayload {
     let mut pending = store
         .stage(reference.clone(), &caps(), Instant::now())
         .unwrap();

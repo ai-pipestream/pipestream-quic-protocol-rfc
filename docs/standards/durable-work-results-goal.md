@@ -2102,3 +2102,49 @@ Arbitrary-path file exports still require trusted stable directories and can lea
 temporary files after process death. This is not a measured total heap/RSS claim.
 Forgejo was pulled ff-only with no incoming changes; no main merge, deployment or
 draft submission occurred. The goal remains active.
+
+### Managed CLI downloads and raw export recovery, 2026-09-07
+
+The preceding implementation turn was progress: `3b62f78` was published, with
+unfinished export code retained in the worktree. This checkpoint finishes that
+code and connects the managed libraries to actual CLI commands. It is not a
+replacement for the original complete Rust/Java/failure/workload objective.
+
+Explicit initialization binds each private local root to trusted authority/owner
+and immutable quotas. Authenticated `client download` uses the saved selection;
+offline `local verify`/`local export` opens original journal evidence without an
+endpoint or remote fallback. Raw exports commit stable local IDs and full
+manifest/index identity before copying. Pending reservations survive process death,
+reopen audits before staging cleanup, exact replay verifies existing bytes, and
+changed identity cannot overwrite them. Explicit local cleanup does not change
+source copies, journal evidence or authority outcomes. The old arbitrary-path
+adapter keeps its documented limits; its temporary files are not adopted/deleted.
+
+Six substantive core tests plus a crash entry exercise five exit points, quotas,
+corruption, partially consumed readers and sync failures. A deterministic held-worker
+case verifies completion after waiter cancellation. Two new actual CLI tests cover
+offline retrieval/export, missing roots, unchanged remote state, changed owner/policy
+and same-byte/different-work conflict. They exposed a real argument-group collision,
+now fixed and protected by a full command-tree check. The isolated 32 MiB local gate
+measured 4266 bytes additional Rust heap, largest allocation 1952 bytes, observed
+RSS/HWM 7160 KiB, and exact named export bytes. Extra copy/hash I/O and the limits of
+named-file quotas versus external readers/allocated blocks are documented.
+
+Full suite handle 14007 exited zero (787 Rust tests in that phase, 193 Java tests
+in 20 fresh reports, native guards, frozen vectors/models, six external Rust tests,
+nine V1 pairings, 32 probes and examples). Final Rust handle 47787 exited zero with
+strict clippy and 788 tests, including the command-tree check; final fmt/clippy and
+focused check handle 11247 also exited zero. Draft handle 74049 exited zero;
+Appendix D TXT/HTML inspected, idnits zero errors/flaws/warnings and the existing
+FIPS comment. Evidence: `conformance/results/durable-work-v2-managed-exports-2026-09-07.txt`.
+No wire, dependency or journal/database-format change. Forgejo pull was ff-only
+and already current; no main merge, deployment or draft submission.
+
+Next is the complete independent Java V2 implementation, starting with its own
+typed framing/records against the frozen vectors, then authenticated durable
+execution, recovery and actual outputs. This does not reduce that requirement to
+a codec or a profile subset. The protocol-neutral Rust failure driver, both-language
+outcome/refusal/resource evidence, and the external chunk/distribute/transform/
+reassemble workload with reconnect/worker failure plus equivalent authenticated,
+durable streaming-gRPC baseline and pinned raw measurements remain mandatory.
+The full goal remains active.

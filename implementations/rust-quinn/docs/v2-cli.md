@@ -149,6 +149,72 @@ It installs only after length, SHA-256 and FIN verification, synchronizes the
 file/directory, and never overwrites an existing destination. `VERIFIED` describes
 that transfer; diagnostic stdout is not a stable wire format or portable proof.
 
+## Managed downloads and offline exports
+
+For restart-recoverable local storage, initialize separate private directories
+once. Their authority/owner and quota settings are immutable; repeat them on
+every open. These local labels are trusted configuration, not credentials.
+
+```bash
+owner_args=(--authority issuer-a --owner alice)
+result_args=(--result-dir /srv/client/copies --result-objects 10000 --result-bytes 8589934592)
+export_args=(--export-dir /srv/client/exports --export-objects 10000 --export-bytes 8589934592)
+"${cli[@]}" init-results "${owner_args[@]}" "${result_args[@]}"
+"${cli[@]}" init-exports "${owner_args[@]}" "${export_args[@]}"
+"${client[@]}" download --work 0:0:1 --attempt 1 --index 0 "${result_args[@]}"
+```
+
+`download` requires the previous `select`, an existing result root, and the
+authenticated session. It prints `DOWNLOADED COPY_KEY` only after verified FIN
+and durable installation. Each download reserves another copy, even for equal
+bytes; quota failure does not evict another copy. Missing roots are `NOT_FOUND`,
+not implicit initialization. Defaults are 10,000 objects and 8 GiB for each root.
+Copies charge full body length plus 524 bytes each; exports charge full raw length
+plus a 112-byte intent, with a separate fixed 72-byte root binding.
+
+The following commands take **no connection options**. They reopen the original
+journal, require its exact saved work/attempt/output selection, and use only
+already possessed local bytes. They do not renew retention or prove current
+server authorization. A missing selection/copy is an error, never a network read
+or a replacement work submission.
+
+```bash
+local_args=("${journal_args[@]}" "${result_args[@]}")
+"${cli[@]}" local "${local_args[@]}" verify --work 0:0:1 --attempt 1 --index 0
+"${cli[@]}" local "${local_args[@]}" export --work 0:0:1 --attempt 1 --index 0 \
+  "${export_args[@]}" --export-id 03030303030303030303030303030303
+```
+
+`LOCAL_VERIFIED` requires a full read and matching length/hash. `LOCAL_EXPORTED`
+reports a raw `file-EXPORT_ID` path inside the export root. Use the same nonzero
+32-hex-digit export ID when recovering the same local export. Its immutable intent
+binds the full manifest and output index; changing selection yields `CONFLICT`,
+even for equal payload bytes. Exact replay verifies the existing file and reports
+`replayed=true`, without overwriting it. Pending intent stays charged after a crash.
+Exclusive reopen audits before removing recognized incomplete staging; retry then
+starts the copy again under the original ID. It does not resume at a byte offset.
+Unknown files, symlinks, changed configuration and corrupt metadata refuse reopen.
+Body corruption is detected during verification/replay. Leave managed roots under
+application control; do not place unrelated files there or edit installed files.
+
+Maintenance needs the original root binding/policy, but not a client journal,
+source copy or network connection:
+
+```bash
+"${cli[@]}" results "${owner_args[@]}" "${result_args[@]}" usage
+"${cli[@]}" results "${owner_args[@]}" "${result_args[@]}" remove --copy-key COPY_KEY
+"${cli[@]}" exports "${owner_args[@]}" "${export_args[@]}" usage
+"${cli[@]}" exports "${owner_args[@]}" "${export_args[@]}" remove \
+  --export-id 03030303030303030303030303030303
+```
+
+Removal is explicitly local and idempotent; it cannot cancel work, delete server
+outputs or rewrite journal evidence. Source copies and raw exports are independent.
+Raw consumers must close their files before removal if physical disk release is
+required: the named-file budget cannot account for external readers retaining an
+unlinked file. Quotas are not allocated-block reservations. Exporting costs an
+additional local copy and integrity reads; these costs belong in comparisons.
+
 ## Branch applications and closure
 
 Application names are explicit reference contracts, not protocol profiles:
@@ -214,13 +280,12 @@ client SQLite limits are 256 MiB database, 64 MiB WAL, 64 MiB rollback journal a
 512 KiB shared memory per store. These are file-length/count bounds, not measured
 whole-process heap/RSS or allocated filesystem blocks.
 
-Client downloads currently require a trusted, stable destination directory.
+The direct `client read --output` adapter requires a trusted, stable destination directory.
 Ordinary failure cleans its own staging, but process death can leave
-`.pipestream-result-*` files. The separate library
-[`ManagedResults`](../README.md#version-2-managed-local-result-copies) now supplies
-exclusive result-root ownership, shared disk quotas and restart cleanup, but
-these CLI commands do not yet use it. Do not delete files by
-prefix while another transfer may own them. A download's ambiguous local outcome
+`.pipestream-result-*` files. The managed workflow above supplies exclusive
+root ownership, shared quotas and restart cleanup within its explicit roots.
+It does not adopt or clean old arbitrary-path temporary files. Do not delete files
+by prefix while another transfer may own them. A download's ambiguous local outcome
 does not authorize another remote execution.
 
 The subprocess tests in `server/tests/v2_cli.rs` exercise the Rust implementation.

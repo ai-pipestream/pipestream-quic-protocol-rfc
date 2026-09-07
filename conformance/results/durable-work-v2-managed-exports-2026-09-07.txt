@@ -1,0 +1,96 @@
+PipeStream V2 managed CLI downloads and recoverable raw exports
+Date: 2026-09-07 UTC
+Branch: feat/durable-work-results-v2
+Parent: 3b62f7816cd7492fec9fa6812fde7e63d33fa344
+Toolchain: rustc 1.97.1 (8bab26f4f 2026-07-14)
+
+No wire/CDDL/dependency/journal-format changes. Export root format is new and
+explicitly initialized. No directory adoption, network fallback, replacement work,
+automatic eviction or arbitrary-path staging cleanup. Offline possession is not
+fresh authority authorization. Goal remains active; independent Java V2, neutral
+cross-language failure/resource evidence and the original external workload plus
+equivalent authenticated/durable streaming-gRPC comparison remain mandatory.
+
+Source SHA-256:
+6e78fc80cc14f26ad603756cfc4849cab33afede1022feb22bc87d4bebc5ca30  implementations/rust-quinn/src/v2/client/results/exports.rs
+64a43d2cbc8d573a51d64efcaa30702efe077f367b27cbb8f5095275faa5a70a  implementations/rust-quinn/src/v2/client/results/exports/tests.rs
+4361d1b30ecd4c41bb9e3d986318c0610a0bed3699672d02b86389a2978cf16b  implementations/rust-quinn/quinn/src/v2_client/session/files/managed/exports.rs
+6aed8074a4cdb638a1db6c29cc64b4bd93c897a3328912bfbe3691dce70defd8  implementations/rust-quinn/quinn/src/v2_client/session/files/managed/exports/tests.rs
+64dd29fd4bcbc0ad929a07061e32c14f1cad9404b970c9af6ba96497fc1ba1c4  implementations/rust-quinn/server/src/v2/results.rs
+a5b61501922651af69f23da82d1d13ec3021eedc3767867b63cda2ab91cbd410  implementations/rust-quinn/server/tests/v2_cli/managed.rs
+af5605fadbae4f508da3effe051862943441c4b65db096a9c9c9ed206e1a5e5e  implementations/rust-quinn/tests/v2_local_export_resources.rs
+
+Focused CLI: handle 88413, exit 0, two tests.
+  cargo test --locked -p pipestream-server --test v2_cli managed:: -- --nocapture
+  /tmp/pipestream-v2-managed-cli.log
+The preceding run (62520) failed on a Clap Exports group collision. Explicit
+ExportStorage group identity fixes it. Both real subprocess cases now pass:
+authenticated download, quotas, offline exact bytes after server shutdown,
+same-byte/different-work export conflict, missing selection/copy without fallback,
+local-only removal, unchanged authority receipts/manifests after restart, wrong
+owner/policy, missing/existing roots and preserved unknown files.
+
+Focused core/async: handle 41458, exit 0.
+  cargo test --locked -p pipestream-core v2::client::results::exports::tests -- --nocapture
+  cargo test --locked -p pipestream-quinn managed_ -- --nocapture
+  /tmp/pipestream-v2-export-core-tests.log (7 tests, six substantive plus crash entry)
+  /tmp/pipestream-v2-export-async-tests.log (2 tests)
+Crash subprocess exit 78 is verified at intent/body/installed/synced/removed.
+Injected export/removal directory-sync failures quarantine until audited reopen.
+The async test uses a held worker plus explicit future poll and FIFO barrier to
+prove queued export completion after waiter cancellation, followed by exact replay.
+
+Isolated resource gate:
+  cargo test --locked -p pipestream-core --test v2_local_export_resources -- --nocapture
+  /tmp/pipestream-v2-export-resources.log
+Raw first run:
+V2 local export: bytes=33554432 chunk_bytes=8192 rust_heap_peak_increase=4266 largest_rust_allocation=1952 export_file_bytes=33554616 replay_verified=true cleanup_charged_bytes=0 elapsed_ms=1683
+process VmHWM: 7160 kB
+process VmRSS: 7160 kB
+Gate: additional Rust heap < 256 KiB, largest allocation < 64 KiB, exact file-length
+accounting and cleanup. RSS is observed, not constrained by allocator measurement.
+This is local storage with trusted fixture metadata, not network interoperability.
+The subsequent clippy in handle 94626 failed a test-module layout lint, corrected
+by moving the helper into its own source module; the resource test itself passed.
+
+Draft: handle 74049, exit 0.
+  ./build.sh core 05
+  /tmp/pipestream-v2-export-draft.log
+Updated Appendix D inspected in rendered TXT and HTML. idnits: zero errors,
+zero flaws, zero warnings, one existing FIPS-180-4 down-reference comment.
+No Internet-Draft submission, main merge or deployment performed.
+
+Limits: exports reserve full length plus 112 intent bytes per ID; fixed binding
+adds 72 bytes. File-length quotas exclude allocated blocks, directory overhead and
+external consumers holding unlinked raw files. Export copies and replay require
+integrity reads; bytes are not a free or freshly authorized remote result.
+Process-exit tests and injected sync failures are not power-cut evidence.
+
+Full verification:
+  ./conformance/run_all.sh
+  handle 14007, exit 0; /tmp/pipestream-v2-export-full-suite.log
+  Rust workspace phase: 787 passed. Final Rust run below adds the command-tree test.
+  Java: 193 tests, 20 fresh Surefire XML reports, zero failures/errors/skips.
+  XML report times: 2026-09-07 14:50:18 through 14:52:51 America/New_York.
+  Native guards, 6 external Rust tests, 9 V1 black-box pairs, 32 capability probes,
+  recursive/recovery scenarios and all 3 external examples passed.
+  Frozen vectors: 33 Core, 18 recursive/recovery, 70 V2 plus 12 commitments.
+  Bounded models: 311539/5776/620796 states; 8723092/173280/29177412 checked edges;
+  deepest 19/17/27; zero states at each configured depth boundary.
+
+Final Rust:
+  cargo clippy --locked --workspace --all-targets -- -D warnings
+  cargo test --locked --workspace
+  handle 47787, exit 0; /tmp/pipestream-v2-export-final-rust.log
+  788 passed: 434 core, 235 Quinn, 69 wire integration, 30 driver, 8 isolated
+  resource/lifetime tests, 4 server unit tests and 8 actual CLI tests.
+  Final fmt/clippy and command-tree test after moving its helper source module:
+  handle 11247, exit 0. No production code changes after the full suite.
+
+Log SHA-256 (logs are local, selected raw evidence above is checked in):
+84592950ad1c2eb62564105fdd46e369fb6b80377583a8f1d347ef12c1edd93b  /tmp/pipestream-v2-export-full-suite.log
+b81dca47217d11d2f25fce5eefb4b90124c46a6887c9644bb3e0da531021a62f  /tmp/pipestream-v2-export-final-rust.log
+15299eae419d92ea164afd2166725c6223497e46785edcbd3e3569282cf73022  /tmp/pipestream-v2-export-resources.log
+6d8e359d1369815d9724fd6951052639e0a5773a5a5f2b7774e10e40530c1292  /tmp/pipestream-v2-export-draft.log
+
+Forgejo pull --ff-only reported already up to date before publication.

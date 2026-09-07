@@ -52,8 +52,10 @@ files. The [V2 CLI guide](implementations/rust-quinn/docs/v2-cli.md) covers expl
 initialization, authenticated serving, original-operation recovery, both branch
 modes, cancellation, retry and verified downloads. A separate managed-result library
 now provides exclusive local storage, shared disk quotas, restart cleanup and
-verified local reads. The CLI still uses the direct-file adapter; wiring managed
-storage/export into those commands and independent Java V2 remain open.
+verified local reads. Explicit CLI commands now initialize managed copies and raw
+exports, download into an existing root, and verify/export saved selections offline
+without remote fallback. Independent Java V2 and the neutral failure/workload
+comparison remain open.
 The Rust `pipestream_core::v2` library now implements typed codecs for every
 version-2 message and record, frozen commitments, negotiation checks, bounded
 client correlation and incremental object validation. This is a library
@@ -96,7 +98,7 @@ commits eligibility before bounded metadata deletion and preserves generation an
 owner creation history. The listener and explicit `v2` command group integrate
 these authority libraries; original version-1 commands remain separate. The
 [V2 acceptance ledger](docs/standards/durable-work-v2-test-plan.md) distinguishes
-the Rust evidence from unfinished client staging recovery, Java parity, neutral process
+the Rust evidence from unfinished Java parity, neutral process
 failures and workload/resource comparison gates.
 
 Draft -04 now defines supported/required extension negotiation, implemented

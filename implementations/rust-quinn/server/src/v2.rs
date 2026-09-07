@@ -11,10 +11,55 @@ use std::{net::SocketAddr, path::PathBuf};
 mod applications;
 mod client;
 mod configuration;
+mod results;
 mod server;
+
+#[cfg(test)]
+mod command_tests;
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Initialize a new private, owner-bound managed result directory.
+    InitResults {
+        #[command(flatten)]
+        owner: results::Owner,
+        #[command(flatten)]
+        copies: results::Copies,
+    },
+    /// Initialize a separate private raw export directory with immutable quotas.
+    InitExports {
+        #[command(flatten)]
+        owner: results::Owner,
+        #[command(flatten)]
+        exports: results::Exports,
+    },
+    /// Use only local bytes and the original saved selection. No network fallback.
+    Local {
+        #[command(flatten)]
+        journal: ClientJournal,
+        #[command(flatten)]
+        copies: results::Copies,
+        #[command(subcommand)]
+        operation: results::Local,
+    },
+    /// Inspect or explicitly remove local copies without contacting the authority.
+    Results {
+        #[command(flatten)]
+        owner: results::Owner,
+        #[command(flatten)]
+        copies: results::Copies,
+        #[command(subcommand)]
+        operation: results::CopyMaintenance,
+    },
+    /// Inspect or explicitly remove raw exports without contacting the authority.
+    Exports {
+        #[command(flatten)]
+        owner: results::Owner,
+        #[command(flatten)]
+        exports: results::Exports,
+        #[command(subcommand)]
+        operation: results::ExportMaintenance,
+    },
     /// Explicitly initialize new authority history and its paired object root.
     InitAuthority {
         #[command(flatten)]
@@ -171,6 +216,23 @@ impl ClientJournal {
 
 pub async fn run(command: Command) -> Result<()> {
     match command {
+        Command::InitResults { owner, copies } => results::init_results(owner, copies).await?,
+        Command::InitExports { owner, exports } => results::init_exports(owner, exports).await?,
+        Command::Local {
+            journal,
+            copies,
+            operation,
+        } => results::local(journal, copies, operation).await?,
+        Command::Results {
+            owner,
+            copies,
+            operation,
+        } => results::copy_maintenance(owner, copies, operation).await?,
+        Command::Exports {
+            owner,
+            exports,
+            operation,
+        } => results::export_maintenance(owner, exports, operation).await?,
         Command::InitAuthority { storage } => {
             let _ = storage.open(true)?;
             println!("AUTHORITY_INITIALIZED {}", storage.authority);

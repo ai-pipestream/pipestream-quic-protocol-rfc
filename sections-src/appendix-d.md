@@ -237,13 +237,29 @@ Explicit removal cannot delete pinned copies or alter remote work outcomes.
 Six substantive storage tests and a subprocess entry point cover quota/ownership,
 corruption and crashes before/after installation and unlink. Two async tests
 include a real authenticated 256 KiB download, quota rejection, unchanged terminal
-revision and local retrieval after the server stops. The managed path is a library;
-CLI integration, arbitrary-path export recovery, independent V2 failure testing,
+revision and local retrieval after the server stops. Independent V2 failure testing,
 Java V2 and the original workload/resource comparison remain unfinished.
 An injected directory-synchronization failure reproduced a live copy being
 accessible despite uncertain installation durability. The shared Rust object
 store now quarantines that root until exclusive audited reopen; prior bytes
 are retained rather than deleted or treated as durably committed by the failed call.
+
+The Rust CLI now integrates explicit managed-root initialization, authenticated
+downloads and offline verification/export from the original saved selection,
+without network fallback. A separate private raw-export directory commits a
+stable local ID and full manifest/index commitment before copying. Reopen audits
+the bounded inventory before reclaiming incomplete staging; committed intent
+stays charged. Exact replay verifies installed bytes, and changed identity cannot
+overwrite them. Explicit removal is local only. Six substantive storage tests and
+a subprocess entry cover five crash points, quotas, corruption and directory-sync
+failure. A deterministic held-worker test covers cancelled export waiters; two
+added CLI subprocess tests cover offline use, identity, initialization and cleanup.
+The isolated 32 MiB local-copy/export/replay gate uses 8 KiB chunks, limits additional
+Rust heap to below 256 KiB and individual allocations below 64 KiB, checks named
+file lengths and reports observed RSS separately. Exporting adds a raw copy and
+integrity reads. These are not independent V2 interoperability, allocated-block
+reservations, external-reader accounting or machine-power-loss evidence. The old
+arbitrary-path file adapter does not gain automatic crash-left staging cleanup.
 
 ## Java/Netty Reference Implementation
 

@@ -1585,9 +1585,54 @@ format changes, new dependencies or automatic adoption of arbitrary directories.
 Section 12 now explicitly distinguishes already delivered local bytes from current
 authority access. These tests are not proof of remote erasure, a new authorization
 lease, measured total heap/RSS, power-loss behavior, or independent cross-language
-V2 conformance. Managed-store CLI/export integration remains open. The neutral
+V2 conformance. Managed-store CLI/export integration is recorded below. The neutral
 failure driver, Java V2 and original external/equivalent streaming-gRPC workload
 with pinned raw measurements remain required.
+
+### Managed CLI and raw export recovery, 2026-09-07
+
+Rust locations: `src/v2/client/results/exports.rs`, its `tests.rs`,
+`quinn/src/v2_client/session/files/managed/exports.rs`,
+`quinn/src/v2_tls/tests/authority/server/session/files/managed.rs`,
+`server/src/v2/results.rs`, `server/tests/v2_cli/managed.rs`, and
+`tests/v2_local_export_resources.rs` (all below `implementations/rust-quinn`).
+
+- V2-RESULT: real authenticated CLI downloads require the existing managed root
+  and saved selection. Offline verification/export receives no endpoint or TLS
+  options. The test stops the server, uses the original journal, verifies raw
+  bytes, and rejects missing local copies without remote fallback. Restarted
+  authority receipt/manifest and unresolved operations remain unchanged.
+- V2-RESULT/STORE: a stable nonzero local export ID commits the full manifest/index
+  digest before copying; both pending and complete exports reserve full length plus
+  112 bytes. Identical payload bytes under another work identity still conflict.
+  Verified source EOF, copied-file verification, file sync, rename and directory
+  sync precede successful installation. Partially consumed sources cannot publish
+  a prefix; exact replay rehashes existing raw bytes without overwriting them.
+- V2-STORE: six substantive core tests plus a subprocess entry cover empty/raw
+  bytes, owner/policy/lock checks, quotas, unknown-file preservation, body corruption,
+  and process exit at intent commit, body copy, rename, directory sync and removal.
+  Complete inventory/byte audit precedes staging cleanup. Intent stays charged
+  until explicit local removal. Failed sync at either export or removal boundary
+  quarantines the live root until exclusive audited reopen.
+- V2-STORE: a held single worker and an explicit poll enqueue the actual export
+  before dropping its waiter; a FIFO completion barrier and verified replay prove
+  that the accepted operation and source pin survived cancellation. Clone close
+  cannot release another root owner. This does not simulate machine power loss.
+- V2-STORE: the isolated 32 MiB local gate includes copy staging, export, full-file
+  replay verification and cleanup. Additional Rust heap must remain below 256 KiB,
+  largest allocation below 64 KiB; exact named export lengths and quota release are
+  asserted. RSS is reported separately, not bounded by the Rust allocator counter.
+  The first run measured 4266/1952 bytes peak/largest, 7160 KiB observed RSS/HWM and
+  33554616 named export file bytes (body, 112-byte intent, 72-byte binding).
+
+The initial real CLI tests caught a duplicate argument-group name; that is fixed
+with an explicit group identity and covered by the complete command-tree check.
+No protocol encoding, dependency or journal/database-format change was needed.
+Extra copy/hash I/O is documented, not hidden as a free cache hit. Named-file
+quotas do not account for filesystem allocation or external raw-file readers
+holding unlinked files. Arbitrary-path direct downloads retain their documented
+crash-left staging limits. These are Rust implementation gates, not independent
+Java V2, neutral cross-language failures or the original comparative workload.
 
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 

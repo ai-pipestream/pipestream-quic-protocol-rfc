@@ -11,7 +11,7 @@ pub fn hex<const N: usize>(text: &str) -> Result<[u8; N]> {
     }
     Ok(bytes)
 }
-fn operation_id(text: &str) -> std::result::Result<OperationId, String> {
+pub(super) fn operation_id(text: &str) -> std::result::Result<OperationId, String> {
     let id = OperationId(hex(text).map_err(|e| e.to_string())?);
     if id.0 == [0; 16] {
         return Err("operation ID cannot be zero".into());
@@ -21,7 +21,7 @@ fn operation_id(text: &str) -> std::result::Result<OperationId, String> {
 fn digest(text: &str) -> std::result::Result<Digest, String> {
     Ok(Digest(hex(text).map_err(|e| e.to_string())?))
 }
-fn work(text: &str) -> std::result::Result<WorkKey, String> {
+pub(super) fn work(text: &str) -> std::result::Result<WorkKey, String> {
     let parts: Vec<_> = text.split(':').collect();
     if parts.len() != 3 {
         return Err("work must be scope:producer:entity".into());
@@ -49,6 +49,13 @@ fn work(text: &str) -> std::result::Result<WorkKey, String> {
 
 #[derive(Debug, Subcommand)]
 pub enum Operation {
+    /// Download a saved selection into an existing quota-bound local result store.
+    Download {
+        #[command(flatten)]
+        selection: results::Selection,
+        #[command(flatten)]
+        copies: results::Copies,
+    },
     /// Display the validated, durably saved session binding.
     Binding,
     Declare {
@@ -189,6 +196,9 @@ fn show(name: &str, value: impl std::fmt::Debug) {
 pub async fn run(client: &Client, command: Operation, maximum: u64) -> Result<()> {
     use journal::Intent;
     match command {
+        Operation::Download { selection, copies } => {
+            results::download(client, selection, copies).await?
+        }
         Operation::Binding => show("BINDING", client.binding()),
         Operation::Declare {
             operation,

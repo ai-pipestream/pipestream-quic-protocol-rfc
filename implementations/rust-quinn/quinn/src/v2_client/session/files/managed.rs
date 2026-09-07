@@ -8,6 +8,8 @@ use pipestream_core::v2::{
 };
 use std::time::Instant;
 
+pub mod exports;
+
 fn storage(error: StoreError) -> Error {
     match error {
         StoreError::Protocol(e) => e,

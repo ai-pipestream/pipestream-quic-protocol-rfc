@@ -110,6 +110,38 @@ async fn managed_download_reopens_exact_bytes_without_remote_reexecution_and_enf
     assert!(local.verified());
     assert_eq!(actual, bytes);
     local.close().await.unwrap();
+    let exports = durable::files::managed::exports::ManagedExports::initialize(
+        directory.path().join("exports"),
+        creation().authority,
+        creation().owner,
+        durable::files::managed::exports::ExportPolicy {
+            objects: 1,
+            bytes: 262144 + 112,
+        },
+    )
+    .await
+    .unwrap();
+    let exports = durable::files::managed::exports::tests::cancel_after_enqueue(
+        exports,
+        OperationId([1; 16]),
+        retained.clone(),
+        store.find(retained.clone()).await.unwrap().unwrap(),
+    )
+    .await;
+    assert_eq!(exports.usage().await.unwrap().charged_bytes, 262144 + 112);
+    let replayed = exports
+        .export(
+            OperationId([1; 16]),
+            retained.clone(),
+            store.find(retained.clone()).await.unwrap().unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(replayed.replayed);
+    assert_eq!(std::fs::read(replayed.path).unwrap(), bytes);
+    let clone = exports.clone();
+    assert!(exports.close().await.is_err());
+    clone.close().await.unwrap();
     assert!(store.remove(saved.key).await.unwrap());
     assert!(store.find(retained).await.unwrap().is_none());
     assert_eq!(store.usage().await.unwrap().objects, 0);

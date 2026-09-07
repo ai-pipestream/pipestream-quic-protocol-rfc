@@ -16,6 +16,8 @@ use std::{
 };
 
 static COMMANDS: AtomicUsize = AtomicUsize::new(0);
+#[path = "v2_cli/managed.rs"]
+mod managed;
 fn text(path: &Path) -> String {
     path.to_str().unwrap().to_owned()
 }
