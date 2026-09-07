@@ -1,0 +1,156 @@
+Rust V2 authenticated durable listener, 2026-09-07 UTC
+Base: 0cffeb137f3fe1df9a13ce802f648d5579a3c177
+Implementation and tests: the commit containing this result file.
+
+Scope
+  v2_authority::server::Server binds the actual TLS identity boundary,
+  authority transactions, input/result file pools, connection-owned flow
+  reservation and execution/maintenance runtime to a public QUIC listener.
+  Deployment explicitly supplies paired roots, application callbacks, result
+  endpoint and limits. This is an embeddable listener, not a V2 CLI/client pair.
+  The existing v2_core::Server remains intentionally Core-only. Standalone
+  commands remain V1. No wire bytes, CDDL, storage formats or dependencies changed.
+
+  Bounded persistent frame reading preserves partial frames across unrelated
+  stream/job events. Negotiated frame deadlines start at the first byte;
+  permitted 30-second WORK waits do not become incomplete-frame timeouts.
+  One bounded writer retains response and transfer pins through actual writes.
+  Input tasks, including refused transfers without admission slots, have their
+  own negotiated stream ceiling. Global and owner quotas share stable identity
+  across credential rotation; anonymous Core has its own quota.
+
+  Shutdown stops admissions and requests runtime stop. It separately reports
+  actual child-future destruction, metadata permits, file leases, runtime threads
+  and transport. Expired grace does not release live callbacks/commits or claim
+  they have finished. drained() describes local resource owners, not successful
+  or terminal outcomes for every durable job. The two 128 MiB raw encoded-state
+  and transport-credit configuration ceilings are not measured heap/RSS bounds.
+
+Fifteen public-listener tests use actual control/input/result QUIC streams.
+Their typed wire codec is the existing Rust codec, not an independent oracle.
+  listener_copies_real_objects_repeats_reads_and_completes_an_exact_root_cut
+    Empty and 64 KiB input, real copy outputs, repeated verified reads, unchanged
+    revision/view/manifest, exact root checkpoint and completed cut.
+  listener_keeps_a_partial_control_frame_while_input_and_execution_progress
+    Three control-prefix bytes, unrelated real input admission, remaining
+    control bytes, correctly correlated response and successful execution.
+  listener_frame_deadline_starts_at_first_byte_and_bounds_partial_headers
+    A 400 ms between-frame silence exceeds a 200 ms frame bound without error;
+    a subsequent partial header receives LIMIT_EXCEEDED.
+  listener_core_fallback_requires_no_identity_but_required_durable_does
+    Anonymous and unmapped optional Core, correlated profile refusal, detach,
+    post-detach refusal and FIN; required durable negotiation is UNAUTHORIZED.
+  listener_control_stop_and_duplicate_ids_have_named_connection_errors
+    Idle control STOP_SENDING is CONTROL_RESET; reused request ID is FRAME_ERROR.
+  listener_reconnects_with_rotated_credentials_without_readmitting_work
+    Disconnect after admission; another credential for the same owner attaches
+    and reads the actual retained output from attempt 1.
+  listener_shutdown_reports_a_metadata_commit_still_running_after_grace
+    A blocked real creation commit holds the only metadata slot. Another request
+    is refused LIMIT_EXCEEDED. Shutdown reports non-idle metadata; releasing the
+    access hook lets the original commit finish and advances creation sequence.
+  listener_long_watch_does_not_block_control_and_detach_drains_queued_refusals
+    Two funded metadata slots allow overlapping initial reads. A 600 ms watch
+    does not block a sequence response. Detach, eight late requests and FIN
+    preserve all ten expected responses, with watch preceding DETACHED.
+    Saturated one-slot behavior is tested separately, not disabled in production.
+  listener_stalled_result_keeps_control_live_and_refuses_a_premature_completed_cut
+    An unread 64 KiB result exceeds an 8 KiB receive window. COMPLETE refuses
+    NOT_READY; another control response proceeds; then real output is verified.
+  listener_bad_input_refusal_preserves_the_declared_obligation_and_control_stream
+    Invalid header and digest yield FRAME_ERROR and INTEGRITY_ERROR, respectively.
+    The obligation remains DECLARED; valid later input admits attempt 1.
+  listener_malformed_controls_close_by_name_without_poisoning_other_connections
+    Unknown mandatory/private frame, excessive length, noncanonical body, wrong
+    direction and first ID other than 1 retain named connection errors. A later
+    healthy connection still negotiates and receives a valid response.
+  listener_reopens_real_roots_and_returns_the_same_creation_work_and_output
+    Stop listener, drop all old authority/payload handles and exclusively reopen
+    both real roots. Creation identity, view, attempt and actual output persist.
+    This is not a cross-process crash/kill test.
+  listener_maximum_work_wait_outlasts_default_peer_idle_without_faking_progress
+    Actual 30000 ms watch, unchanged DECLARED/revision 1, elapsed at least 29 s.
+    QUIC keep-alives do not renew application progress or fabricate a revision.
+  listener_rotated_certificates_share_owner_quota_without_exhausting_anonymous_core
+    One mapped-owner connection fills its quota; a rotated credential is refused
+    LIMIT_EXCEEDED while a separate anonymous Core connection remains usable.
+  listener_nonreading_control_peer_is_bounded_and_other_connections_progress
+    10000 requests without consuming replies close with LIMIT_EXCEEDED; another
+    connection negotiates and detaches while the non-reader is present.
+
+Two listener unit tests
+  listener_rejects_unfunded_geometry_queues_and_configuration
+    Eight invalid count, geometry, timeout and aggregate-budget configurations.
+  child_task_accounting_waits_for_future_cleanup_after_parent_abort
+    Polled and unpolled child futures retain their live count through destruction
+    of held resources. Parent cancellation alone cannot report the child gone.
+
+Actual red -> green regressions
+  New listener: Core fallback with detach, late request and client FIN lost queued
+  responses when QUIC closed immediately. Original handle 17273 exited 101
+  (6 passed, 1 failed); after the fix handle 39972 exited 0 (7 passed).
+    /tmp/pipestream-v2-server-fin-red.log
+    /tmp/pipestream-v2-server-focused-green.log
+
+  Existing Core: core_half_close_preserves_detach_and_pipelined_refusal_bytes
+  failed before its fix with ConnectionLost/ApplicationClosed(0), handle 81488
+  exit 101. The focused test and strict clippy passed on handle 10731, exit 0.
+    /tmp/pipestream-v2-core-fin-red.log
+    /tmp/pipestream-v2-core-fin-green.log
+
+  Non-reading control peer: handle 42977 exited 101 because writer timeout was
+  relabeled CONTROL_RESET (526) when its channel closed. Publishing the actual
+  writer error before dropping the receiver preserves LIMIT_EXCEEDED. The same
+  assertion passed afterward; no test expectation was weakened.
+    /tmp/pipestream-v2-server-nonreader.log
+    /tmp/pipestream-v2-server-nonreader-green.log
+
+  Both V2 listeners now finish control and await acknowledgment under a bound
+  before graceful close. Section 12.8 explicitly requires preserving pre-FIN
+  responses, does not extend detach lifetime, and distinguishes transport ACK
+  from application validation/persistence. Existing RFC 9000 Section 10.2 is
+  the reference for immediate connection-close behavior.
+
+Repository-wide regression
+  ./conformance/run_all.sh
+  Original handle 91100 exited 0, started 2026-09-07 12:07:46 UTC.
+  Log: /tmp/pipestream-v2-server-full-suite.log
+  This snapshot had 662 Rust tests (186 Quinn library tests), before the final
+  two owner/non-reader tests and their final Rust-only refinements. It passed
+  six external Rust example tests and 193 Java tests in 20 fresh Surefire XML
+  reports, with zero failures/errors/skips. Report timestamps span
+  2026-09-07T12:10:57Z through 12:13:43Z, verified with Ruby REXML.
+  Frozen vectors/CDDL and all three bounded models passed:
+    lifecycle: 311539 states, 8723092 edges, deepest 19;
+    scopes: 5776 states, 173280 edges, deepest 17;
+    composition: 620796 states, 29177412 edges, deepest 27.
+  All had zero states at the depth boundary. Native/C++ CTest, nine existing
+  interop pairs, 32 raw capability probes, recursive scenarios and all examples
+  passed. Full language-pair interoperability here remains V1 evidence, not V2.
+
+Final Rust source verification
+  From implementations/rust-quinn, a set-e chain on original handle 56661:
+    cargo fmt --all --check
+    cargo clippy --locked --workspace --all-targets -- -D warnings
+    cargo test --locked --workspace
+  Direct completion returned exit 0. Final workspace: 664 tests passed, zero
+  failures/ignored, including 188 Quinn library tests. This rerun covers the
+  final input-task ceiling, owner/non-reader tests and preserved writer error.
+    /tmp/pipestream-v2-server-checkpoint-clippy.log
+    /tmp/pipestream-v2-server-checkpoint-rust.log
+  No Java, C++, model, vector or dependency source changed after the full suite.
+
+Draft verification
+  ./build.sh core 05
+  Original handle 14811 exited 0.
+  Log: /tmp/pipestream-v2-server-final-draft.log
+  Rendered Section 12.8 half-close text and Appendix D lines 6554-6592 inspected.
+  Idnits: zero errors/flaws/warnings, one existing FIPS downref comment.
+
+Still required
+  Usable V2 client/CLI and uncertainty journals; independent complete Java V2;
+  neutral cross-language failure driver with real process crashes and lost ACKs;
+  full measured process resource gates; and the original external workload with
+  equivalent streaming-gRPC authentication/durability and raw cost/failure data.
+  This endpoint checkpoint does not satisfy those gates or complete the goal.
+  No main merge, deployment or IETF submission occurred.

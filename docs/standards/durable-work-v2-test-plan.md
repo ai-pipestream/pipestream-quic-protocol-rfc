@@ -1174,6 +1174,67 @@ whole-workspace Rust/clippy rerun passed after test-only pin/snapshot refinement
 The rebuilt draft's runtime status was inspected; idnits reported zero
 errors/flaws/warnings and its existing FIPS comment.
 
+### Rust public durable listener, 2026-09-07
+
+`v2_authority::server::Server` now connects authenticated negotiation to the actual
+authority, input/result file pools and execution/maintenance runtime. It is an
+embeddable Rust listener, not a V2 CLI/client pair or an independent-language
+implementation. Fifteen tests send actual control/input/result streams rather
+than calling the local dispatcher. Two unit tests check configuration budgets
+and destruction accounting for aborted child futures. Coverage includes:
+
+- V2-NEG/AUTH: optional anonymous/unmapped Core versus required durable refusal;
+  identity/store validation before capability acknowledgment; rotated credentials
+  share their stable owner's quota while anonymous Core remains available.
+- V2-WIRE/NEG: actual partial control frames survive unrelated input completion;
+  first-byte frame deadlines, malformed types/lengths/canonical forms, direction,
+  repeated IDs and stopped control directions retain named fatal errors.
+- V2-ADMIT/RESULT: empty/64 KiB inputs and copy outputs, actual stream tags,
+  invalid input preserving its declaration, immutable repeated reads, manifest
+  lookup, and control progress while a result exceeds an unread receive window.
+- V2-VIEW/CLOSE: out-of-order revision waits and other responses; the full
+  30000 ms wait returns unchanged DECLARED/revision 1 with transport keep-alives,
+  not fabricated processing progress. Exact root completion refuses live result
+  transfers; detach drains prior work and pipelined NOT_READY refusals.
+- V2-SESSION/STORE: reconnect with rotated credentials and exclusive close/reopen
+  of real authority/payload roots preserves creation, view, attempt and output.
+  This is not a cross-process kill/recovery test.
+- V2-STORE/CLOSE: metadata saturation produces named refusal on a live control
+  stream. Shutdown grace expiry reports the still-running metadata commit and
+  does not undo it. Owned child futures are counted until their held resources
+  are destroyed, separately from blocking metadata/file jobs and runtime threads.
+
+Two half-close tests failed before their respective fixes: the new durable
+listener's Core-fallback case and
+`core_half_close_preserves_detach_and_pipelined_refusal_bytes` in the existing
+Core-only listener. Immediate QUIC close discarded queued responses. Both paths
+now finish control and await its acknowledgment under a bounded deadline.
+Section 12.8 clarifies that transport acknowledgment is not proof of application
+validation or persisted recovery evidence. A non-reading-peer test also exposed
+a writer timeout incorrectly relabeled CONTROL_RESET after its response channel
+closed; the writer now preserves LIMIT_EXCEEDED before dropping that channel.
+
+Input tasks have their own negotiated stream-count ceiling, including refused
+inputs that hold no admission slot. Control response queues and connection-owned
+send reservation remain separate from execution/file workers. Raw encoded-state
+and transport-credit products have independent 128 MiB configuration ceilings;
+neither is measured process heap/RSS/native memory. The bounded models and V1
+interoperability checks remain regression evidence, not independent V2 endpoint
+proof. Evidence: [`durable-work-v2-server-2026-09-07.txt`](../../conformance/results/durable-work-v2-server-2026-09-07.txt).
+
+Still required: independent Java V2, complete client/CLI uncertainty journals,
+the neutral cross-language process-failure oracle, full resource gates and the
+original external workload/equivalent streaming-gRPC comparison. This listener
+checkpoint does not complete the full goal.
+
+Final source verification passed 664 Rust workspace tests, formatting and
+strict clippy. The preceding full repository run passed 662 Rust tests before
+the final two listener regressions, six external Rust example tests, 193 Java
+tests from 20 fresh XML reports, bounded models, frozen vectors/CDDL, native/C++
+checks, nine V1 interop pairs, 32 raw capability probes and all examples. The
+remaining source changes were Rust-only. Draft rebuild and inspection passed;
+idnits has zero errors/flaws/warnings and its existing FIPS comment.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

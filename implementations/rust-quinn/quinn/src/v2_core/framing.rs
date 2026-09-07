@@ -6,7 +6,7 @@ use anyhow::Result;
 use pipestream_core::v2::{Control, ErrorCode, control_body_length};
 use tokio::time::Instant;
 
-pub(super) enum Frame {
+pub(crate) enum Frame {
     Control(Control),
     Ignored,
     Fin,
@@ -46,7 +46,7 @@ async fn fill(recv: &mut quinn::RecvStream, bytes: &mut [u8], deadline: Instant)
     Ok(())
 }
 
-pub(super) async fn receive(
+pub(crate) async fn receive(
     recv: &mut quinn::RecvStream,
     limit: Option<usize>,
     deadline: Instant,
@@ -55,6 +55,36 @@ pub(super) async fn receive(
     let Some(n) = read(recv, &mut prefix, deadline).await? else {
         return Ok(Frame::Fin);
     };
+    remainder(recv, prefix, n, limit, deadline).await
+}
+
+/// Between negotiated frames a healthy connection may have only data or a
+/// long-running request in flight. Start the frame deadline at its first byte,
+/// not while waiting for a new frame. Cancellation abandons the control stream.
+pub(crate) async fn receive_next(
+    recv: &mut quinn::RecvStream,
+    limit: usize,
+    timeout: std::time::Duration,
+) -> Result<Frame> {
+    let mut prefix = [0; 5];
+    let n = match recv.read(&mut prefix).await {
+        Ok(Some(n)) => n,
+        Ok(None) => return Ok(Frame::Fin),
+        Err(quinn::ReadError::Reset(_)) => {
+            return Err(failure(ErrorCode::ControlReset, "control reset").into());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    remainder(recv, prefix, n, Some(limit), Instant::now() + timeout).await
+}
+
+async fn remainder(
+    recv: &mut quinn::RecvStream,
+    mut prefix: [u8; 5],
+    n: usize,
+    limit: Option<usize>,
+    deadline: Instant,
+) -> Result<Frame> {
     fill(recv, &mut prefix[n..], deadline).await?;
     let length = control_body_length(prefix, limit)?;
     match prefix[0] {

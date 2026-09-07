@@ -1631,3 +1631,41 @@ pairs and 32 capability probes passed. After refining the explicit read-pin test
 and its nonblocking snapshot observations, the entire Rust workspace and strict
 clippy passed again. The draft rebuild exited zero; the rendered runtime status
 was inspected, with zero idnits errors/flaws/warnings and the existing FIPS comment.
+
+### Public Rust durable listener, 2026-09-07
+
+The preceding runtime checkpoint was progress (`0cffeb1`, published to Forgejo).
+The next implementation now connects negotiation, authenticated authority control,
+input/result streams, shared flow reservation and runtime supervision through
+`v2_authority::server::Server`. Standalone commands remain V1. The listener uses
+bounded persistent frame reading/writing, ordered submissions and fixed operation
+ceilings. Shutdown distinguishes owned child-future destruction, native runtime
+threads, metadata commits, file cleanup and transport; expiry never releases a
+running callback's pins or reports unfinished local work as drained.
+
+Actual wire tests found and reproduced lost responses on client half-close in
+both the new durable listener and the existing Core listener. Immediate QUIC
+close discarded queued bytes. Both now finish their control send direction and
+wait for its acknowledgment under a deadline; Section 12.8 explicitly separates
+that transport observation from application validation or durable recovery.
+Tests also cover real output, exact root cuts, stalled-data independence, partial
+control frames, the full 30-second work wait, invalid input/control, optional Core
+fallback, rotated credentials, exclusive root reopen, and a metadata commit still
+running beyond shutdown grace. No storage format or wire/CDDL change was required.
+
+The full goal stays active. Required next work remains the usable V2 client/CLI
+and uncertainty journals, independent Java V2, the neutral cross-language
+process-failure driver, and the original external workload with equivalent
+streaming-gRPC authentication/durability plus raw resource/cost evidence. These
+Rust listener tests share the Rust wire codec; they do not satisfy the neutral
+oracle, independent implementation or external-usefulness gates.
+
+Final verification: the complete Rust workspace passed 664 tests, formatting
+and strict clippy on the final source. The preceding repository-wide regression
+passed 662 Rust tests before the final two listener regressions, six external
+Rust example tests, 193 Java tests in 20 fresh XML reports, all bounded models,
+frozen vectors/CDDL, native/C++ checks, nine V1 interop pairs, 32 raw capability
+probes and all examples. No non-Rust implementation or model/vector source
+changed afterward. The rebuilt draft was inspected and reports zero idnits
+errors/flaws/warnings with its existing FIPS comment. Evidence:
+`conformance/results/durable-work-v2-server-2026-09-07.txt`.

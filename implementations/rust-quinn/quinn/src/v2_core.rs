@@ -14,7 +14,7 @@ use std::{
 };
 use tokio::{task::JoinSet, time::Instant};
 
-mod framing;
+pub(crate) mod framing;
 use framing::Frame;
 
 fn failure(code: ErrorCode, detail: &'static str) -> Error {
@@ -278,6 +278,25 @@ async fn connection(peer: &Peer, security: &ServerSecurity, options: &Options) -
         let message = match frame {
             Frame::Ignored => continue,
             Frame::Fin if detach_deadline.is_some() => {
+                // A queued response is not delivery. Immediate QUIC close can
+                // discard it, so finish this direction and await its FIN ACK.
+                send.finish()
+                    .map_err(|_| failure(ErrorCode::ControlReset, "control closed before FIN"))?;
+                let stopped = tokio::time::timeout_at(deadline, send.stopped())
+                    .await
+                    .map_err(|_| {
+                        failure(
+                            ErrorCode::LimitExceeded,
+                            "control FIN acknowledgment deadline",
+                        )
+                    })??;
+                if stopped.is_some() {
+                    return Err(failure(
+                        ErrorCode::ControlReset,
+                        "control response direction stopped",
+                    )
+                    .into());
+                }
                 connection.close(0u32.into(), b"detached");
                 return Ok(());
             }

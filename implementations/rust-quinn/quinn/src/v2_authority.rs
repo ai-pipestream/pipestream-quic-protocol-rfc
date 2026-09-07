@@ -1,7 +1,8 @@
 //! Authenticated durable control dispatch and connection-local accounting.
 //!
 //! This adapter uses the real authority transactions, not a second state store.
-//! It is not yet wired into the Core listener and advertises no profile. The
+//! The durable listener in `server` integrates it; the separate Core listener
+//! remains Core-only. Direct adapter use negotiates no profile. The
 //! endpoint must decode frames in order, discard ignorable frames, send immediate
 //! refusals through its bounded control writer, and keep each `Response` alive
 //! until its control write or result transfer ends. Input transport must retain
@@ -29,6 +30,7 @@ use tokio::{
 pub mod input;
 pub mod output;
 pub mod runtime;
+pub mod server;
 mod workers;
 
 fn error(code: ErrorCode, detail: &'static str) -> Error {
@@ -61,6 +63,7 @@ pub struct Authority {
     payloads: PayloadStore,
     results: ResultService,
     slots: Arc<Semaphore>,
+    metadata_jobs: usize,
 }
 impl Authority {
     /// Call during setup, outside the async control reader. File/database root
@@ -82,6 +85,7 @@ impl Authority {
             payloads,
             results,
             slots: Arc::new(Semaphore::new(metadata_jobs)),
+            metadata_jobs,
         })
     }
 

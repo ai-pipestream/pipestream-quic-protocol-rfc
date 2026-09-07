@@ -15,8 +15,10 @@ IETF contributors. This is not intended as, and must not be construed
 to be, a catalog of available implementations or their features.
 Readers are advised to note that other implementations may exist.
 
-The implementations below implement documented version-1 subsets. They do not
-yet implement or advertise the version-2 profiles in Section 12. Independent
+The standalone implementations below implement documented version-1 subsets.
+The Rust library additionally supplies version-2 Core and authenticated durable
+listeners, described below; Java V2 and a complete V2 command-line pair remain
+unfinished. Independent
 Rust abstract models explore durable attempts/results/retention and sealed
 scope closure. A third bounded model composes a branch and leaf with attempts,
 worker epochs, ancestor cancellation, output read/dependency pins and closure.
@@ -28,7 +30,7 @@ implements typed messages and records, canonical/cross-field validation,
 negotiation checks, domain-separated commitments, bounded client correlation
 and incremental payload verification. Library tests consume the frozen
 70 wire examples and 12 commitments, including semantic refusals. Neither
-the Rust nor Java endpoint advertises these profiles. These library tests
+the Rust nor Java endpoint advertised these profiles at that checkpoint. Those library tests
 are not version-2 mutual-TLS, durable execution, crash recovery, cross-language
 interoperability or measured resource-conformance evidence.
 
@@ -47,12 +49,12 @@ establish those missing interoperability or usefulness claims.
 
 The Rust library now also supplies a Core-only version-2 QUIC server, with
 bounded concurrent connections, owner/anonymous quotas, capability selection,
-control framing, correlated refusals and connection detach. Fourteen Core
+control framing, correlated refusals and connection detach. Fifteen Core
 tests cover configuration and real QUIC paths, including a 128 KiB ignored frame crossing a
 64 KiB flow-control window and a non-reading peer. Twenty TLS tests include
 owned authentication-configuration selection. Neither durable profile is
 advertised by this Core server. The standalone commands remain version 1;
-independent Java V2, full durable endpoints, process-level resource evidence
+independent Java V2, complete V2 command-line endpoints, process-level resource evidence
 and the workload comparison remain open.
 
 A separate Rust durable control adapter now connects authenticated peer identity
@@ -61,8 +63,8 @@ session binding, replay, revision/checkpoint waits, cancellation/retry, actual
 stored result reads and connection drain accounting. They use real TLS peers
 but do not send those durable controls or objects over QUIC. In-flight database
 jobs retain their connection and metadata slots after an async waiter is
-cancelled. This adapter is not yet connected to the Core listener, and neither
-durable profile is advertised.
+cancelled. The adapter is now used by the separate durable listener below, not
+by the intentionally Core-only listener.
 
 The Rust input adapter now receives actual QUIC object streams through bounded
 file workers into the durable authority. Nine input tests cover incremental
@@ -71,9 +73,9 @@ inputs, owner/connection checks, idle/lifetime expiry and cancelled or blocked
 file work.
 A worker test checks that asynchronous cancellation cannot release a file's
 resource pin before off-executor cleanup. The accompanying control calls remain
-local adapter calls. Public durable-listener integration,
-client recovery journals, independent Java V2 and full workload/resource evidence
-remain unfinished. No additional profile is advertised by this input adapter.
+local adapter calls. Client recovery journals, independent Java V2 and full
+workload/resource evidence remain unfinished. The input adapter does not
+advertise profiles by itself.
 
 A separate Rust result adapter now streams actual retained outputs over QUIC.
 Ten tests cover empty and larger-than-window objects, repeated reads without
@@ -99,8 +101,25 @@ admissions, copy execution, read expiry during blocked execution, safe-clock
 and read-pin retirement gates, and configuration/ownership refusal. A unit test
 checks maintenance failure classification. Three execution regressions cover
 retained profile selection, nonblocking stop and partial thread-pool startup.
-The public durable listener, client journals, Java V2 and external workload
-comparison remain unfinished; this runtime alone advertises no profile.
+This runtime is used by the durable listener; it alone advertises no profile.
+
+The Rust library now includes an authenticated durable-work/result-delivery
+QUIC listener with the actual authority, file workers and runtime. Fifteen
+black-box tests exercise real control/input/result streams, exact root completion,
+repeated reads, blocked data/control independence, full 30-second work waits,
+credential rotation/owner quotas, a non-reading control peer, malformed/refused
+requests, exclusive storage reopen and
+shutdown with an unfinished metadata commit. Two unit tests cover configuration
+limits and child-task destruction accounting. These tests use the existing Rust
+wire codec, not the still-required independent failure driver's acceptance oracle.
+
+Half-close testing exposed lost control replies in both Rust V2 listeners:
+immediate QUIC close could discard queued responses. Both now finish control
+and await its transport acknowledgment before graceful close. Section 12.8
+clarifies that this does not prove peer application validation or persistence.
+Independent Java V2, client/CLI uncertainty journals, neutral cross-language
+process failures, whole-process resource gates and the original external
+workload/equivalent streaming-gRPC comparison remain unfinished.
 
 ## Java/Netty Reference Implementation
 

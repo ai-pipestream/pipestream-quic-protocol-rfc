@@ -1,5 +1,5 @@
 //! Actual QUIC input reception through validated durable admission. This module
-//! is not yet connected to the public listener and enables no profile itself.
+//! is used by the durable listener and enables no profile by itself.
 use super::*;
 use pipestream_core::v2::authority::ingress::{
     Applications, InputPreparation, InputReception, ReceivingInput,
@@ -77,6 +77,14 @@ enum Beginning {
 }
 
 impl Inputs {
+    /// Only meaningful after the endpoint has stopped scheduling new transfers.
+    /// Deferred file cleanup retains its lease until the resource is released.
+    pub(super) fn is_idle(&self) -> bool {
+        self.shared
+            .counts
+            .try_lock()
+            .is_ok_and(|counts| counts.active == 0)
+    }
     /// Set up paired roots and a fixed I/O pool before accepting input streams.
     /// Clone this value across connections to share its global/owner ceilings.
     pub fn new(

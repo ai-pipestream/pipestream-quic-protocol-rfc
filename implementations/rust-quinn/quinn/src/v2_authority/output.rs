@@ -72,6 +72,13 @@ impl Pins {
 type Read = workers::Value<ResultRead, Pins>;
 
 impl Outputs {
+    /// Busy or poisoned accounting is not evidence of completed file cleanup.
+    pub(super) fn is_idle(&self) -> bool {
+        self.shared
+            .counts
+            .try_lock()
+            .is_ok_and(|counts| counts.active == 0)
+    }
     /// One shared output quota and file pool for an authority's connections.
     pub fn new(authority: Authority, options: Options) -> Result<Self, Error> {
         if !(1..=128).contains(&options.active)

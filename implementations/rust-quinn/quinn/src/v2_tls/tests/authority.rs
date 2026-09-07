@@ -16,6 +16,7 @@ use sha2::Digest as _;
 use std::sync::{Condvar, atomic::AtomicBool};
 use tokio::sync::Notify;
 mod runtime;
+mod server;
 
 struct StoreClock(AtomicU64);
 impl store::Clock for StoreClock {
@@ -93,6 +94,34 @@ struct Database {
     authority: Authority,
     clock: Arc<StoreClock>,
 }
+fn storage_policy() -> StorePolicy {
+    StorePolicy {
+        owners: Id(2),
+        sessions: Id(8),
+        sessions_per_owner: Id(4),
+        active_jobs: Id(8),
+        active_jobs_per_owner: Id(4),
+        session_limits: Limits {
+            scopes: Id(8),
+            entities: Id(1000),
+            operations: Id(64),
+            active_jobs: Id(4),
+            retained_input_bytes: Number(1 << 20),
+            retained_output_bytes: Number(1 << 20),
+        },
+    }
+}
+fn object_policy() -> PayloadPolicy {
+    PayloadPolicy {
+        objects: Id(32),
+        bytes: Number(4 << 20),
+        owner_objects: Id(32),
+        owner_bytes: Number(4 << 20),
+        chunk_bytes: Id(8192),
+        handles: Id(16),
+        owner_handles: Id(16),
+    }
+}
 impl Database {
     fn new() -> Self {
         Self::with_authority("issuer-a")
@@ -104,21 +133,7 @@ impl Database {
         let store = AuthorityStore::initialize(
             &directory.path().join("authority.sqlite"),
             IdentityLabel(name.into()),
-            StorePolicy {
-                owners: Id(2),
-                sessions: Id(8),
-                sessions_per_owner: Id(4),
-                active_jobs: Id(8),
-                active_jobs_per_owner: Id(4),
-                session_limits: Limits {
-                    scopes: Id(8),
-                    entities: Id(1000),
-                    operations: Id(64),
-                    active_jobs: Id(4),
-                    retained_input_bytes: Number(1 << 20),
-                    retained_output_bytes: Number(1 << 20),
-                },
-            },
+            storage_policy(),
             PhysicalLimits::default(),
             clock.clone(),
             access.clone(),
@@ -127,15 +142,7 @@ impl Database {
         let payloads = PayloadStore::initialize(
             &directory.path().join("objects"),
             store.payload_identity().unwrap(),
-            PayloadPolicy {
-                objects: Id(32),
-                bytes: Number(4 << 20),
-                owner_objects: Id(32),
-                owner_bytes: Number(4 << 20),
-                chunk_bytes: Id(8192),
-                handles: Id(16),
-                owner_handles: Id(16),
-            },
+            object_policy(),
         )
         .unwrap();
         store.bind_payloads(&payloads).unwrap();

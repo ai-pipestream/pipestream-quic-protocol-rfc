@@ -59,11 +59,63 @@ change it. Rotated certificates share their mapped owner's quota. Credential
 expiry cannot be reversed on a live peer. `DRAIN` detach acknowledges only the
 connection cut; subsequent valid control requests receive correlated NOT_READY.
 No detach, transport close or operator shutdown asserts durable completion.
-Fourteen Core tests cover configuration and real QUIC paths, including non-reading peers,
+Fifteen Core tests cover configuration and real QUIC paths, including non-reading peers,
 oversized/truncated frames, resets, quota boundaries and shutdown. Twenty TLS
-tests cover the underlying security boundary. Full durable dispatch, client
-journals, storage/execution integration, Java V2 and whole-process resource
-measurements remain unfinished.
+tests cover the underlying security boundary. The separate durable listener
+below integrates storage/execution; client journals, Java V2 and whole-process
+resource measurements remain unfinished.
+
+## Version-2 durable server
+
+`pipestream_quic::v2_authority::server::Server::bind(address, security, authority,
+applications, result_endpoint, options)` supplies the authenticated durable-work
+and result-delivery listener. Binding audits paired storage and starts the real
+executor/maintenance runtime; it is a blocking setup operation, not a connection
+callback. The caller supplies the application registry and trusted result endpoint.
+The existing Core-only listener and standalone V1 commands remain separate.
+
+The durable listener negotiates both profiles, or only durable work when results
+are not selected. Optional profiles are excluded for anonymous/unmapped peers;
+requiring durable work without an identity closes before a capability response.
+Identity/store matching also precedes the response. Core fallback supports detach
+and correlated profile refusals without creating a session.
+
+Each connection has one persistent bounded control reader and writer, bounded
+operation/input tasks and a shared control/result flow owner. Other streams cannot
+cancel a partially consumed control frame. After negotiation, the frame deadline
+starts at its first byte; a long WORK wait is not an incomplete frame. Stream 0
+STOP_SENDING is monitored even with an empty response queue. Responses retain their
+pending/input/output pins through writes. A half-closed client can still receive
+queued replies: the server finishes control and waits for its FIN acknowledgment
+before graceful close, within the drain/deadline bound. Neither enqueue nor a
+transport acknowledgment asserts application validation or persisted receipt.
+
+Defaults: 16 connections, four per mapped principal or anonymous group, a two-item
+response queue, five-second handshake and shutdown grace, ten-second frame bound,
+four incoming data streams, and the runtime/input/output defaults below. A
+60-second local QUIC idle bound and five-second PING interval accommodate the
+30-second WORK wait; transport PING is not input/result progress. Encoded-state
+accounting includes request/response pairs and queued refusals. Configurations
+exceeding either 128 MiB raw-control or 128 MiB transport-credit budget are refused.
+These ceilings are not measured heap, native memory, RSS or allocator bounds.
+
+`run(shutdown_future)` supervises runtime faults and returns a `Shutdown` report.
+It stops admissions, cancels owned connection tasks and waits up to the grace
+for their actual destruction, metadata permits, file leases and runtime threads.
+`drained()` means those local owners and transport are idle, not that all durable
+work succeeded or became terminal. A timed-out join reports what remains live;
+accepted callbacks/commits keep their roots and pins. Dropping the server requests
+stop without blocking on arbitrary application code or claiming completion.
+
+Fifteen black-box listener tests cover actual empty/64 KiB copy results, repeated
+reads, exact root completion, stalled output/control progress, partial frames,
+full-duration waits, detach/refusal ordering, invalid input/control, credential
+rotation and owner quotas, a non-reading control peer, exclusive storage reopen
+and shutdown with a commit still in flight.
+Two unit tests cover configuration bounds and child-future destruction accounting.
+The neutral process-kill driver, independent Java V2, production V2 client/CLI
+journals and equivalent external streaming-gRPC workload/resource comparison
+remain required. This is Rust endpoint evidence, not completion of those gates.
 
 ## Version-2 TLS boundary
 
@@ -71,8 +123,8 @@ measurements remain unfinished.
 `pipestream/2`, client DNS/IP identity verification, explicit verified-leaf
 mapping, and a completed server-side `Peer`. It does not implement a complete
 Core/durable dispatcher or advertise the new profiles on its own. The separate
-Core server above wires the Core path; authenticated durable/object dispatch and
-storage integration remain required before advertising those profiles.
+Core server wires the Core path, and the separate durable server above connects
+the authority, object streams and execution/maintenance runtime.
 
 `ServerSecurity::accept` awaits a full handshake within a positive, at-most-30-
 second timeout after the host reserves a connection slot. It explicitly selects
@@ -123,8 +175,8 @@ endpoint is implied by those tests. See the
 ## Version-2 library foundation
 
 `pipestream_quic::v2_authority` is the authenticated control adapter for the
-existing transactional authority. It is not yet connected to `v2_core::Server`:
-the listener remains Core-only. No partial durable profile is advertised.
+existing transactional authority. `v2_authority::server` connects it to the
+durable listener; `v2_core::Server` intentionally remains Core-only.
 
 Construct one `Authority` during setup with the paired authority/payload roots
 and a ceiling of 1..64 concurrent metadata jobs, then clone it across listeners
@@ -159,10 +211,10 @@ These slots account for unresolved requests, including completed responses not
 yet written and result reads waiting for a stream. Cancelled async database
 waiters do not release the slots of still-running blocking jobs.
 
-The future endpoint still must provide bounded control readers/writers,
-input/result-adapter integration, shared reserved control capacity, runtime
-supervision and connection-level shutdown, plus the V2 client/journals.
-The execution/maintenance runtime below supplies its independent workers.
+The durable server supplies bounded control readers/writers, input/result
+integration, shared control capacity, runtime supervision and connection-level
+shutdown. The execution/maintenance runtime below supplies independent workers.
+The V2 client/journals remain unfinished.
 Twelve adapter tests use actual TLS peers
 and on-disk stores but call the dispatcher locally. They are not V2 wire,
 cross-language or whole-process resource evidence. See the acceptance ledger.
@@ -232,8 +284,8 @@ C each range from 1 byte to 8 MiB; W from 1024 bytes to 1 MiB; N from 0 to 128.
 These are transport-credit/admission limits, not measured process-memory limits.
 Nine flow tests and two additional result-adapter tests cover this layer,
 including an actual stored result stalled while a control response crosses the
-same connection. Control dispatch in that integration test remains local; no
-public durable profile is newly advertised.
+same connection. Control dispatch in those earlier adapter tests remains local;
+the durable listener has additional black-box tests described above.
 
 ### Version-2 input transport adapter
 
@@ -316,8 +368,8 @@ repeated reads, stopped/slow readers, pending stream creation, current credentia
 expiry, wrong commitments, actual retained-byte corruption, rotated and distinct
 owners, configuration and connection/global quotas, and cancelled file preflight.
 They also cover shared control/data send ownership and wrong-connection refusal.
-These tests still call control adapters locally. The Core listener is unchanged;
-public durable-runtime integration, independent Java V2, neutral cross-language
+Those adapter tests still call control locally; the separate durable listener
+now supplies public integration. Independent Java V2, neutral cross-language
 failure tests, full resource measurements and the equivalent workload remain open.
 
 `pipestream_core::v2` implements Section 12/Appendix F typed wire records,

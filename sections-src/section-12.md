@@ -657,6 +657,20 @@ the session's durable work has completed.
 Applications can disconnect without detach; reconnect must negotiate and
 authenticate again. Neither detach nor abrupt disconnect cancels durable work.
 
+A client MAY finish its control send direction after requesting detach. Such
+FIN ends further control requests, not the server's pending responses. The
+server MUST preserve responses to complete requests received before that FIN,
+including correlated refusals following detach, until their bounded delivery
+attempt ends. If the server initiates graceful connection close in response to
+control FIN, it MUST first finish its control send direction and observe QUIC
+acknowledgment of that direction's bytes and FIN. It MAY instead leave connection
+close to the client. An acknowledgment wait MUST be bounded and MUST NOT extend
+the detach lifetime. Failure or timeout ends the connection without a successful
+drain assertion. Merely enqueueing bytes is insufficient: CONNECTION_CLOSE can
+end open streams immediately under {{RFC9000}}, Section 10.2. Transport
+acknowledgment does not prove that the peer application validated or persisted
+a response, and does not replace authenticated durable recovery.
+
 ## Lifetimes, Clocks and Crash-Safe Accounting
 
 All timestamps are unsigned Unix milliseconds in 0..9223372036854775807.

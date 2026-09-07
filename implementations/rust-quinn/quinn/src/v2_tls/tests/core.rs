@@ -162,6 +162,42 @@ fn core_offer() -> Capabilities {
 }
 
 #[tokio::test]
+async fn core_half_close_preserves_detach_and_pipelined_refusal_bytes() {
+    let running = Running::start(Options::default());
+    let mut client = running.session(None).await;
+    client.negotiate(core_offer()).await;
+    client
+        .send(Control::Drain(Drain::Detach { request: Id(1) }))
+        .await;
+    client
+        .send(Control::Session(
+            pipestream_core::v2::Session::NextSequence { request: Id(2) },
+        ))
+        .await;
+    client.send.finish().unwrap();
+    assert_eq!(
+        client.receive().await,
+        Control::Drain(Drain::Detached { request: Id(1) })
+    );
+    assert!(matches!(
+        client.receive().await,
+        Control::Refusal(Refusal {
+            request: RequestTag::Control { request: Id(2) },
+            code: ErrorCode::NotReady,
+            ..
+        })
+    ));
+    let closed = tokio::time::timeout(HANDSHAKE, client.connection.closed())
+        .await
+        .unwrap();
+    assert!(
+        matches!(closed, quinn::ConnectionError::ApplicationClosed(c) if c.error_code.into_inner() == 0)
+    );
+    drop(client);
+    running.finish().await;
+}
+
+#[tokio::test]
 async fn core_negotiates_minima_streams_large_ignored_frames_and_detaches() {
     let mut options = Options::default();
     options.offer.control_limit = ControlLimit(1_048_576);
