@@ -33,8 +33,9 @@ cursor advancement, and GOAWAY. They currently implement Layer 0 only.
 The separate `ai.pipestream.quic.v2` package implements the current Section 12
 and Appendix F binary schemas independently. It does not wrap Rust, convert
 messages through JSON, reuse the version-1 CBOR object model, or advertise V2
-profiles from an endpoint. Authenticated endpoint integration, V2 durable execution/storage, client
-recovery and actual V2 object transport remain to be implemented in Java.
+durable profiles from an endpoint. The Core-only authenticated listener is described
+below; V2 durable execution/storage, client recovery and actual V2 object transport
+remain to be implemented in Java.
 
 - `Records` and `Messages` expose immutable typed values for every current
   record and control-message family. Constructors reject structural contradictions;
@@ -164,6 +165,62 @@ resumption flag distinguishes resumption from another full handshake. The small
 test dispatcher is not a durable endpoint. No V2 profile is advertised by the
 shipped Java CLI yet; complete V2 endpoint/durability/recovery, independent failure
 testing and the original external/gRPC workload remain mandatory.
+
+## Version 2 Core listener
+
+`v2.CoreServer.start(address, authentication, options)` binds an actual QUIC-v1
+UDP listener with the V2 TLS guard and HMAC address-validation Retry tokens. The
+caller owns and closes it. `CoreOptions` supplies explicit quotas and deadlines;
+invalid configurations are rejected, not silently enlarged. It advertises **Core
+only**, not durable work/results. It does not create simulated session state.
+
+Only client bidirectional Stream 0 is control. Negotiation selects exact minima
+and no unimplemented profile. Every valid profile-dependent request gets a
+correlated `EXTENSION_UNSUPPORTED`; shared request IDs start at one and strictly
+increase. Detach acknowledges connection draining, not work completion. Later
+valid requests, including another detach, get `NOT_READY`; wrong direction,
+correlation or framing still terminates the connection with the named error.
+
+The decoder incrementally consumes frames larger than the receive window. Real
+FIN is permitted after detach and preserves replies to all preceding complete
+requests. After locally draining writes the server sends FIN but leaves graceful
+connection close to the client: Netty write/FIN completion is not a peer ACK.
+The absolute detach deadline remains armed. RESET, STOP and unexpected control
+loss are not successful drain or computation outcomes.
+
+One event-loop owner schedules independent handshake, incomplete/idle-control,
+oldest-queued-write and detach deadlines. Partial-frame progress cannot renew
+the control deadline; new complete requests cannot renew an older stalled write
+or the detach lifetime. Global admitted connections include incomplete handshakes;
+mapped owners and all anonymous/unmapped callers have separate bounded buckets.
+Native close finishes before admission capacity is released.
+
+The pinned Netty codec needs to process the Initial packet before sending a
+pre-handshake refusal. A synchronous datagram boundary holds **at most one extra
+packet-local refusal transport**, then closes it with transport
+`CONNECTION_REFUSED` (0x02). It does not queue rejected handshakes or await their
+completion. `snapshot()` distinguishes admitted high water from admitted plus
+that extra transport. Its refusal count measures admission attempts, including
+repeated Initial packets, not distinct peers. Per-owner refusal after TLS uses
+application `LIMIT_EXCEEDED`.
+
+Queued application response counts/bytes and the oldest write are bounded.
+Configuration limits the aggregate of queue, one frame and one read-buffer
+allowance per admitted connection to 128 MiB. This is not a total heap/RSS or
+native transport-memory guarantee: native retransmission/TLS buffers are separate,
+and local write completion means native acceptance, not remote delivery. Core
+accepts no object streams, so data cannot consume its control credit. Enabling
+durable objects still requires a separately proven shared data/control budget.
+
+```bash
+mvn -Dtest=V2CoreServerTest test
+```
+
+The 13 actual-network scenarios cover all profile-dependent request families,
+malformed negotiation/direction/IDs/FIN, resets/stops, tiny windows, paused readers,
+absolute timers, global/per-owner overload and cleanup. These are Java Core tests,
+not a public V2 client, independent cross-language failure driver, durable profile
+implementation or workload comparison. All those full-goal requirements remain.
 
 ## Sealed-work library foundation
 

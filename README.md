@@ -58,8 +58,10 @@ without remote fallback. Independent Java V2 and the neutral failure/workload
 comparison remain open.
 Java now has an independent [V2 typed library foundation](implementations/java-netty/README.md#version-2-typed-library-foundation)
 for the frozen wire schemas and commitments, including bounded streaming scope
-hashes. It does not yet supply V2 authenticated endpoints or durable execution;
-those full-contract requirements remain unchanged.
+hashes. Its authenticated Core-only Netty listener now implements negotiation,
+correlated refusals, detach/half-close, connection quotas and live deadlines.
+Independent Java durable execution/results/recovery, complete cross-language
+failure evidence and the workload comparison remain unfinished.
 The Rust `pipestream_core::v2` library now implements typed codecs for every
 version-2 message and record, frozen commitments, negotiation checks, bounded
 client correlation and incremental object validation. This is a library

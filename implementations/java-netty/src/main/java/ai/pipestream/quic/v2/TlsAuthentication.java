@@ -160,6 +160,14 @@ public final class TlsAuthentication {
   }
 
   /**
+   * Inspect the configured TLS role before constructing a matching QUIC codec.
+   * @return true for a server configuration
+   */
+  public boolean isServer() {
+    return server;
+  }
+
+  /**
    * Atomically replace this server's bounded principal mapping. Existing connections cannot change
    * owners: removed or remapped credentials lose request authorization. Rotations may map multiple
    * certificates to the same owner. This does not revoke an already accepted job's separate grant.

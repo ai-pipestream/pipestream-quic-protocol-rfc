@@ -114,6 +114,13 @@ retained bytes and storage journals. Global and per-principal exhaustion
 refuses new work, not existing promises. Negotiated limits are ceilings, not
 an unconditional reservation against aggregate deployment quotas.
 
+Connection admission can be refused before caller authentication. A server
+rejecting a new QUIC connection SHOULD use transport error CONNECTION_REFUSED
+as specified in {{RFC9000}}, Section 5.2.2, not a fabricated authenticated
+application REFUSAL. This transport rejection does not report a durable work
+outcome. Implementations MUST account for incomplete handshakes and temporary
+refusal state in their documented connection resource bounds.
+
 ## Correlation and Error Scope
 
 The requests specified here are sent by the client and the responses by the

@@ -16,11 +16,11 @@ public final class ObjectStream {
     return milliseconds * 1_000_000;
   }
 
-  private static void before(long now, long then, long interval) {
+  static void before(long now, long then, long interval) {
     // nanoTime subtraction deliberately permits wrap at the signed-long boundary.
     long elapsed = now - then;
     if (elapsed < 0 || elapsed >= interval)
-      throw limit("object deadline or monotonic clock violation");
+      throw limit("deadline or monotonic clock violation");
   }
 
   /**

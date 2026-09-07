@@ -2275,3 +2275,56 @@ outcome/refusal/resource evidence and the original external workload with
 reconnect/worker failure plus equivalent authenticated durable streaming-gRPC
 baseline remain mandatory. The full goal remains active and incomplete.
 Forgejo was current on ff-only pull; no main merge, deployment or draft submission.
+
+### Java V2 Core listener and live resource deadlines, 2026-09-07
+
+The preceding implementation turn was progress: it left the actual Core listener
+and a failing global-admission network test. This checkpoint finishes that listener
+without replacing the full independent Java contract with a Core-only target.
+`CoreServer` now integrates verified TLS, Stream 0, capability minima, all valid
+profile-dependent refusals, strict request IDs, detach/half-close and independent
+handshake/control/queued-write/detach deadlines. It does not advertise either
+durable profile or fabricate work state. Native write completion is not a peer
+ACK; the server leaves graceful parent close to the client after sending FIN.
+
+The original overload test found that closing inside Netty's initializer preceded
+Initial-packet processing and suppressed the peer's refusal. A synchronous packet
+boundary now emits transport CONNECTION_REFUSED using at most one additional
+packet-local transport, with no rejected-handshake queue. Admission capacity is
+released after native close; global limits include incomplete handshakes and
+per-owner limits include a shared anonymous bucket. Application write counts/bytes
+and aggregate configured buffer allowances are bounded separately from native
+memory. The exact bundled quiche commit and its distinct send-capacity accounting
+are recorded for the forthcoming data/control flow-control work.
+
+Full-suite testing also corrected two invalid observation assumptions: TLS can
+finish before the overload close arrives, and repeated Initial packets can create
+more refusal attempts than distinct clients. Tests now require each peer's actual
+transport refusal and counter increase, while checking exact active/owner counts,
+bounded transport high water, preserved existing connections and replacement
+admission. Timeouts never count as successful refusals. The 13 scenarios also
+cover every profile-dependent request family, malformed controls, gapped/decreasing
+IDs, reset/stop, actual FIN with a paused reader, tiny windows, separate byte/count
+exhaustion, stalled TLS and deadlines that later requests cannot renew.
+
+Final full reference handle 78781 exited zero: 788 Rust workspace tests, 327 Java
+tests in 28 fresh reports with no failures/errors/skips, native guards/C++ checks,
+frozen vectors/bounded models, six external Rust tests, nine V1 pairs, 32 probes
+and all examples. Final strict V2/shared-helper doclint, formatting and whitespace
+checks passed. Draft handle 59469 exited zero; Section 12.1 and Appendix D were
+inspected in generated TXT/HTML, with idnits zero errors/flaws/warnings and the
+existing FIPS comment. The draft now distinguishes pre-authentication transport
+refusal and requires documented handshake/refusal-state accounting. No wire
+layout, profile identifier, dependency or persistent-format change. Evidence:
+`conformance/results/durable-work-v2-java-core-2026-09-07.txt`.
+
+Next remains complete independent Java V2 client/object transport and durable
+admission, execution/fences, publication/results, retention/retirement and recovery
+with parent/child validation in both observation orders. Shared data/control credit
+and whole-process resource evidence are not proven by Core's no-object tests.
+The protocol-neutral Rust failure driver, both-language outcome/refusal/restart/
+resource evidence, and the original external chunk/distribute/transform/reassemble
+workload with reconnect/worker failure plus equivalent authenticated durable
+streaming-gRPC baseline and pinned raw measurements remain mandatory. The full goal
+is active and incomplete. Forgejo was current on ff-only pull; no main merge,
+deployment or draft submission occurred.

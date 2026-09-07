@@ -73,6 +73,26 @@ cross-language failure evidence or the original workload/gRPC comparison.
 Section 12 explicitly withholds protocol processing until resumed credential
 revalidation succeeds; this clarification changes no wire fields.
 
+The independent Java library now also supplies a Core-only Netty V2 listener.
+Thirteen actual-network scenarios cover capability selection, all profile-dependent
+request refusals, strict shared request IDs, malformed framing/direction, detach,
+half-close, reset/stop, tiny receive windows and paused readers. The server leaves
+graceful connection close to the client after sending its control FIN; local
+Netty write completion is not treated as acknowledgment. Live timers bound
+handshake, control framing/idle, oldest queued response and absolute detach waits.
+Tests check that later requests cannot renew older blocked writes or detach.
+Connection admission counts incomplete handshakes and mapped-owner/anonymous
+buckets. An excess connection is refused after its Initial packet is processed,
+with transport CONNECTION_REFUSED and at most one extra packet-local transport;
+repeated refusals preserve existing connections and release native state before
+reusing admission capacity. Queued application counts/bytes and aggregate configured
+buffer allowances are bounded; these are not native-memory or total-RSS measurements.
+Core has no data streams, so its tests do not prove the shared control/data credit
+reservation required by durable object transport. Java durable storage/execution,
+results, client recovery, independent cross-language failure/resource evidence and
+the external workload/equivalent streaming-gRPC comparison remain incomplete.
+Neither durable profile is advertised by this listener.
+
 As of 2026-09-07, the Rust authority library also implements transactional
 admission and replay, fenced worker execution, both branch producers and real
 child-output reassembly, cancellation/closure, retained result reads,

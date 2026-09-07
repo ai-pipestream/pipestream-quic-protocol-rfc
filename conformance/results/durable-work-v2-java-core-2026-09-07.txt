@@ -1,0 +1,171 @@
+PipeStream V2 independent Java Core listener
+Date: 2026-09-07
+Branch: feat/durable-work-results-v2
+Parent: e13081992dd936ba14eb3453cc14b094c5bf33ea
+Compilation: Java release 21, -Xlint:all -Werror
+Formatter: google-java-format 1.28.0
+Netty QUIC: unchanged 0.0.75.Final, linux-x86_64 native classifier
+No dependency, wire layout, profile identifier or persistent-format change.
+
+Scope and boundaries
+- CoreServer is a reusable actual QUIC-v1/ALPN pipestream/2 listener, with the
+  independent Java TLS guard, explicit caller mapping and HMAC Retry tokens.
+  It implements Core only and never advertises or simulates durable profiles.
+- One client bidi Stream 0; incremental deterministic control framing and
+  negotiation; strict shared IDs from one; all 15 profile-dependent control
+  families receive correlated EXTENSION_UNSUPPORTED. Post-detach valid requests
+  receive NOT_READY, including later increasing detach requests. Malformed
+  framing/direction/correlation remains fatal. Unknown ignorable bodies are
+  consumed without buffering or changing request identity.
+- Client FIN after detach preserves all preceding complete requests' replies.
+  After local writes drain the server sends its FIN and leaves graceful parent
+  close to the client. Netty native write acceptance is not a peer ACK. Absolute
+  detach lifetime remains armed; timeout/reset/stop asserts no work completion.
+- Live independent timers bound handshake, missing/partial/idle control,
+  oldest queued write and absolute detach. Completed requests cannot renew an
+  older blocked write or detach; partial bytes cannot renew the frame deadline.
+- Global admitted connections include incomplete handshakes. Mapped owners
+  and the shared anonymous/unmapped bucket have per-owner ceilings. Native
+  close finishes before its admission permit is released; cleanup is idempotent.
+- Excess connection handling uses one additional packet-local native transport,
+  synchronously closed after the codec processes the Initial packet. No rejected
+  handshake queue or asynchronous refusal pool exists. The peer sees QUIC
+  transport CONNECTION_REFUSED (0x02), not a synthetic application response.
+- Control write counts/bytes are bounded until native acceptance. Configuration
+  caps connections*(queue bytes + maximum body + read chunk) at 128 MiB.
+  Native TLS/retransmission/receive allocations and JVM/object overhead are
+  separate. These counters/configuration gates are not measured total heap/RSS.
+  Core has no object streams. Future durable objects require independently
+  proven shared data/control credit, including batched credit replenishment.
+
+Pinned-source review
+  Maven source JAR SHA-256:
+  b5b978f0115232be15ecc12a069ea38197475c1e64a7ff247f22e6d5bf47bee7
+  https://repo.maven.apache.org/maven2/io/netty/incubator/netty-incubator-codec-classes-quic/0.0.75.Final/netty-incubator-codec-classes-quic-0.0.75.Final-sources.jar
+  QuicheQuicServerCodec creates/registers one connection for the datagram before
+  QuicheQuicCodec calls its recv. Closing inside ChannelInitializer precedes
+  Initial-key processing and did not deliver the rejection. The enclosing
+  datagram handler now closes after recv, synchronously before the next packet.
+  QuicheQuicChannel.doClose sends/flushes close then frees native state before
+  closeFuture completion. QuicheQuicStreamChannel local write and FIN futures
+  do not establish acknowledgment. allowHalfClosure is enabled explicitly.
+  The native JAR manifest and native Maven POM both pin quiche to
+  4f347477006bf7f928335d28f05056013f70b87e (not an inferred latest version).
+  https://github.com/cloudflare/quiche/blob/4f347477006bf7f928335d28f05056013f70b87e/quiche/src/lib.rs
+  stream_do_send/stream_capacity use connection tx_cap and stream capacity;
+  update_tx_cap derives capacity from available congestion window and peer
+  connection credit. That is not the Java application's queue-byte counter.
+  Native send/receive/TLS bounds still need separate measurement and the durable
+  shared-credit proof; no total-memory conclusion is drawn from these local caps.
+  QUIC reference: RFC 9000 Sections 5.2.2, 10.2.3 and 20 (CONNECTION_REFUSED).
+  https://www.rfc-editor.org/rfc/rfc9000.html#section-5.2.2
+  Section 12.1 now requires documented accounting for handshake/refusal state
+  and distinguishes early transport rejection from authenticated work evidence.
+  Rust's existing Core/durable listeners use Quinn Incoming.refuse() at their
+  global admission limit; no Rust source needed changing for that distinction.
+
+Regression evidence
+  Original focused run handle 19907 exit 1: 12 tests, one failure. Excess global
+  connection timed out instead of completing exceptionally; not accepted as a
+  passing refusal. Native packet-lifecycle inspection changed the next action.
+  First packet-boundary correction handle 65937 exit 0: all 12 tests passed.
+  Additional close-ownership hardening handle 29871 exit 1 exposed incorrect
+  early-vs-authenticated error selection at the per-owner ceiling. TLS success
+  is now recorded before checking that ceiling; no permit is released early.
+  Focused handle 53501 exit 0: 13 tests, 3.938 seconds, zero failures/errors/skips.
+    mvn -q -f implementations/java-netty/pom.xml -Dtest=V2CoreServerTest test
+    /tmp/pipestream-java-v2-core-focused.log
+  The aggregate configuration ceiling and its boundary test were added after
+  that focused run and are included in the full-suite validation below.
+  First full reference run handle 8575 exited 1 after all 788 Rust workspace
+  tests and frozen/model checks passed. Java ran 327 tests with one failure:
+  TLS completed before the global refusal was observed. The test incorrectly
+  required the local connect future to fail, although native TLS can complete
+  just before the close. No production change was needed for this test correction.
+    /tmp/pipestream-java-v2-core-full-suite.log
+  The test now requires actual peer-observed transport error 0x02 plus unchanged
+  admission counts; local success/failure cannot substitute, and a timeout still
+  fails. Added explicit decreasing/gapped-ID and anonymous-bucket checks.
+  Final focused handle 99268 exit 0: 13 tests, 3.924 seconds, zero failures/errors/skips.
+    /tmp/pipestream-java-v2-core-final-focused.log
+  Second full run handle 91895 exited 1: all 788 Rust tests and models passed;
+  Java ran 327 tests with one failure, refusal count 18 rather than the assumed
+  17. Native transport admission can recur for another Initial packet from the
+  same peer. Refusal telemetry is now explicitly admission attempts, not unique
+  clients. The test requires each peer's actual refusal plus a counter increase,
+  while retaining exact active/owner/high-water and replacement-admission checks.
+    /tmp/pipestream-java-v2-core-final-full-suite.log
+  Admission-focused handle 24282 exited 0 with all 13 scenarios after that change.
+    /tmp/pipestream-java-v2-core-admission-focused.log
+
+  V2CoreServerTest scenarios:
+  - Paused reader, 128-byte window, coalesced requests and actual FIN; every
+    ordered reply and server FIN arrives, parent stays open until client close.
+  - All 15 profile request kinds refused without closing; max request ID accepted
+    for detach, then duplicate rejected without overflow/wrap.
+  - Invalid negotiation, direction, first/duplicate IDs, private types, oversized
+    initial body prefix, early and truncated FIN: exact named connection errors.
+  - Required unknown/legacy/durable profile failures and optional exclusion;
+    unauthenticated required durable fails UNAUTHORIZED before capabilities.
+  - 12000-byte ignored body crosses a 128-byte receive window and keeps ID one.
+  - Actual RESET and STOP cause CONTROL_RESET, not work outcome changes.
+  - Missing control, partial headers and trickled frames expire independently.
+  - Client TLS verification deliberately paused; server handshake slot expires
+    without owner activation, and a replacement authenticates and detaches.
+  - Global two/per-owner one; duplicate owner refused, 16 excess global peers
+    each observe transport error 0x02 and unchanged admission counts. TLS may
+    complete before that close; neither local TLS success nor failure substitutes
+    for the peer-observed refusal. An observation timeout never passes.
+    Admitted high water two, transport high water three including refusal slot.
+    Existing and replacement peers remain usable; active/owner counts exact.
+    Refusal attempts include repeated Initial packets and are not a unique-peer count.
+    The anonymous bucket also rejects its second connection while a mapped owner
+    is admitted independently. Gapped increasing IDs are valid; decreasing IDs fail.
+  - Separate count and byte saturation with a nonreading peer; measured queue
+    high-water counters remain bounded and another connection makes progress.
+  - Increasing later requests cannot renew absolute detach lifetime.
+  - Valid incoming requests continue while oldest unread response expires,
+    below both count/byte caps (deadline, not accidental queue exhaustion).
+  - Invalid role/budgets and aggregate-policy boundary refuse before bind.
+
+Validation
+  ./conformance/run_all.sh
+  Final handle 78781 exit 0; /tmp/pipestream-java-v2-core-verified-full-suite.log
+  788 Rust workspace tests, strict fmt/clippy, frozen vectors and bounded models;
+  327 Java tests in 28 fresh XML reports, zero failures/errors/skips. Reports span
+  17:48:47 to 17:50:07 America/New_York; V2CoreServerTest is 13 tests, 3.575 seconds.
+  Native SQLite/C++ checks, six external Rust tests (794 Rust total), all nine V1
+  black-box pairs, 32 capability probes, recursive/recovery checks and all three
+  examples passed. V1 pairings are not independent V2 interoperability evidence.
+  Existing local Java gates also passed: 4000003 members, max frontier 672 bytes,
+  max heap 24379392 bytes, 1829 ms, RSS/HWM 384572 KiB; 64 MiB payload through an
+  8 KiB buffer, 52 ms, RSS/HWM 135540 KiB. These are not Core/TLS memory gates.
+
+  Final strict Javadoc -Xdoclint:all -Werror passed for every V2 source plus shared
+  TlsPeerIdentity and AddressValidationTokenHandler, with explicit source scope.
+    /tmp/pipestream-java-v2-core-final-doclint.log
+  Formatting and whitespace checks passed. Source hashes below were verified
+  unchanged after the successful full suite; subsequent edits only record evidence.
+
+  ./build.sh core 05
+  Handle 59469 exit 0; /tmp/pipestream-java-v2-core-draft.log
+  New Section 12.1 and Appendix D paragraphs inspected in generated TXT and HTML.
+  idnits: zero errors, flaws and warnings; one existing FIPS-180-4 comment.
+  Forgejo ff-only pull was already current before commit. No main merge,
+  deployment or draft submission is part of this checkpoint.
+
+Source SHA-256
+  a87f83a932460ca7616c69a6ca5300c6235b1491087a11dcf7d95def31112a86  v2/CoreServer.java
+  966f1575601c7782848bc6fcc9476cb7577aba79ce74f2b7c7f242be68c6b216  v2/CoreOptions.java
+  fb3fc63c778e44fef73d0f7f503c3c484b97347c8363a2bd0c6f9bfb604e8972  v2/ControlWrites.java
+  0252961be3eafc6d74359ca0fe47810cf4054a2d354dd91fef063527ce43fe91  v2/V2CoreServerTest.java
+
+Remaining full goal
+  Complete independent Java V2 client/object transport, durable admission,
+  execution/fences, publication/results, retention/retirement and client recovery
+  with parent/child validation in both observation orders. Complete independent
+  Rust failure driver and both-language outcomes/refusals/restart/resource evidence.
+  Original external chunk/distribute/transform/reassemble workload with reconnect
+  and worker failure plus equivalent authenticated durable streaming-gRPC baseline,
+  pinned raw measurements and feedback into the draft. No subset milestone
+  completes Task 2 or the goal. No main merge, deployment or draft submission.

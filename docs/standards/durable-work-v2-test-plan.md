@@ -1757,6 +1757,47 @@ driver, measured both-language resource/outcome evidence and original external
 chunk/distribute/transform/reassemble workload plus equivalent authenticated durable
 streaming-gRPC comparison remain required.
 
+## Java V2 Core listener evidence, 2026-09-07
+
+Sources: `CoreServer.java`, `CoreOptions.java`, `ControlWrites.java`; tests:
+`V2CoreServerTest.java`. Actual Java QUIC, not a mocked stream. The reusable
+listener advertises no durable profile and supplies no fake work state.
+
+- V2-WIRE/NEG: exact Core minima; optional unknown profiles excluded; required
+  unsupported or unauthenticated durable profiles rejected before response.
+  Wrong first frames, direction, repeated negotiation, oversized prefix, private
+  types, repeated/decreasing IDs and truncated/early FIN cause named fatal errors.
+  Every one of the 15 profile-dependent control request families receives a
+  correlated `EXTENSION_UNSUPPORTED` without closing unrelated requests.
+- V2-CLOSE: paused client reader with a 128-byte receive window, batched requests
+  and real client FIN; every earlier refusal, detach response and later `NOT_READY`
+  arrives in order before server FIN. Parent remains open for client-owned close.
+  Duplicate detach IDs remain fatal. RESET and STOP yield `CONTROL_RESET`.
+- V2-TIME: independently scheduled missing-stream, partial-prefix and trickled-frame
+  expiry; actual stalled TLS verification releases its global slot. Increasing
+  requests cannot extend the oldest blocked response or absolute detach deadline.
+- V2-NEG/resources: global two/per-owner one permits; duplicate owner rejected
+  after TLS, then 16 global excess connections each receive actual transport
+  `CONNECTION_REFUSED`, not an accepted observation timeout. TLS may finish before
+  that close; the actual transport refusal and unchanged admission counts are the
+  oracle, not the local connect-future outcome. Admitted high water
+  stays two; total observed transport high water is three, including the explicitly
+  bounded packet-local refusal slot. Existing and replacement peers still work.
+  The shared anonymous bucket rejects a second peer independently of mapped owners.
+  Refusal telemetry counts admission attempts, including repeated Initial packets;
+  it is not asserted equal to the number of distinct clients. Each peer observes
+  its own exact transport refusal and an increase in the refusal counter.
+- V2-WIRE/resources: count and byte queue exhaustion tested separately with a
+  nonreading peer. High-water counters stay within configured bounds; another
+  peer makes progress. A 12000-byte ignored body crosses a 128-byte receive window
+  without taking a request ID. Invalid and excessive aggregate buffer policies fail.
+
+The 128 MiB configuration gate covers queue/frame/read-buffer allowances only,
+not native TLS/retransmission allocation or measured total heap/RSS. There are no
+Core object streams. Complete independent Java client/durable execution/results/
+recovery, shared data/control credit proof, neutral both-language failure/resource
+driver and the original external/equivalent streaming-gRPC workload remain required.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

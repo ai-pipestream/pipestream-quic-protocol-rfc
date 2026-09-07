@@ -385,7 +385,7 @@ public final class ClientCorrelation {
     return pending.size();
   }
 
-  private static long requestId(Message message) {
+  static long requestId(Message message) {
     return switch (message) {
       case Create r -> r.request();
       case Attach r -> r.request();

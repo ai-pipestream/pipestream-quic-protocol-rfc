@@ -10,14 +10,15 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
 /** Process-scoped HMAC address-validation tokens for the Netty QUIC listener. */
-final class AddressValidationTokenHandler implements QuicTokenHandler {
+public final class AddressValidationTokenHandler implements QuicTokenHandler {
   private static final int TAG_LENGTH = 32;
   private static final int MAX_CONNECTION_ID_LENGTH = 20;
   private static final int MAX_ADDRESS_LENGTH = 16;
   private static final int MAX_TOKEN_LENGTH = 1 + MAX_ADDRESS_LENGTH + TAG_LENGTH + MAX_CONNECTION_ID_LENGTH;
   private final SecretKeySpec key;
 
-  AddressValidationTokenHandler() {
+  /** Creates a fresh process-local signing key; tokens do not survive listener restart. */
+  public AddressValidationTokenHandler() {
     byte[] secret = new byte[32];
     new SecureRandom().nextBytes(secret);
     key = new SecretKeySpec(secret, "HmacSHA256");
