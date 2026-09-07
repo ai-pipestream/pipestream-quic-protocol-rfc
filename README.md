@@ -34,7 +34,10 @@ activate either durable profile or provide the complete V2 application endpoint.
 A separate authenticated Rust control adapter now dispatches session, scope,
 work, result and drain requests to the on-disk authority, with bounded metadata
 jobs and pending-transfer accounting. Its tests are local dispatch with real TLS
-peers, not durable wire interoperability; input/result QUIC integration remains.
+peers, not durable wire interoperability. A separate input adapter now receives
+real QUIC objects through bounded file workers into validated durable admission,
+including replay, deadlines and cancellation-safe cleanup. Its control calls
+are still local; result transport and public durable-listener integration remain.
 The Rust `pipestream_core::v2` library now implements typed codecs for every
 version-2 message and record, frozen commitments, negotiation checks, bounded
 client correlation and incremental object validation. This is a library

@@ -29,6 +29,7 @@ struct Access {
     allowed: AtomicBool,
     pause: AtomicBool,
     pause_cancel: AtomicBool,
+    pause_admit: AtomicBool,
     entered: Notify,
     release: (Mutex<bool>, Condvar),
 }
@@ -38,6 +39,7 @@ impl Default for Access {
             allowed: AtomicBool::new(true),
             pause: AtomicBool::new(false),
             pause_cancel: AtomicBool::new(false),
+            pause_admit: AtomicBool::new(false),
             entered: Notify::new(),
             release: (Mutex::new(false), Condvar::new()),
         }
@@ -59,6 +61,7 @@ impl Authorization for Access {
     fn permits(&self, owner: &IdentityLabel, permission: Permission) -> bool {
         if (permission == Permission::Create && self.pause.swap(false, Ordering::SeqCst))
             || (permission == Permission::Cancel && self.pause_cancel.swap(false, Ordering::SeqCst))
+            || (permission == Permission::Admit && self.pause_admit.swap(false, Ordering::SeqCst))
         {
             self.entered.notify_one();
             let (released, _) = self
@@ -731,6 +734,7 @@ async fn dispatcher_rechecks_credentials_and_retained_authorization_before_looku
     immediate(&connection, next(4), 4, ErrorCode::Unauthorized);
 }
 
+mod inputs;
 mod results;
 
 #[tokio::test]

@@ -1,0 +1,73 @@
+Rust V2 authenticated QUIC input transport, 2026-09-07 UTC
+Base: 7fb1be44df772d03cfa414b5dd0516854ccab4e2
+Implementation and tests: the commit containing this result file.
+Dependencies, CDDL, normative wire text and storage formats are unchanged.
+
+Focused checks from implementations/rust-quinn:
+cargo test --locked -p pipestream-quinn --lib v2_ -- --nocapture
+Exit 0, observed from original process handle 62955 after completion.
+55 passed, 0 failed, 0 ignored, 89 filtered out, 1.21 seconds.
+Log: /tmp/pipestream-v2-input-final-focused.log
+cargo clippy --locked -p pipestream-quinn --all-targets -- -D warnings
+Exit 0, same command chain. Log: /tmp/pipestream-v2-input-final-clippy.log
+
+Eight input tests use actual authenticated QUIC unidirectional streams and
+guarded SQLite/payload storage. A 65536-byte object crosses a 4096-byte stream
+and 16384-byte connection receive window, commits once and runs a real copy
+executor. Replay needs only the immutable header, stops reception with 0,
+returns the same receipt and preserves revision/attempt. New empty input still
+waits for FIN. Header/geometry/hash, owner/generation/application, unbound input,
+authority-instance pairing, configuration, quota, idle/lifetime and cancelled
+file-preflight paths have named expected outcomes.
+
+The tests' control requests are local adapter calls, not durable control
+frames on QUIC. The public Core listener remains unchanged and advertises no
+durable profile. No independent Java V2, complete endpoint, process-resource
+measurement or equivalent-workload claim is made by this checkpoint.
+
+The file-worker queue has two slots per configured active input. At most one
+ordinary job and one deferred returned-value destructor retain a live input's
+lease. File cleanup ends before releasing that lease or its connection pending
+ticket. A held actual input preflight proves async cancellation cannot refund
+owner quota or complete detach before the file work and stage cleanup end.
+Header bodies are limited to 4096 bytes before allocation. The reused input
+buffer is at most 16384 bytes and no larger than the payload chunk ceiling.
+These are construction bounds and tests, not measured heap/RSS or network I/O.
+
+Negative control: replace deferred file-value destruction with direct drop.
+Command filter:
+  async_value_drop_runs_cleanup_before_releasing_its_pin_on_a_file_worker
+Exit 101, observed from original handle 36514.
+The file destructor's assertion fails because it is running on the async
+executor instead of a pipestream-v2-file-* thread. 0 passed, 1 failed.
+Log: /tmp/pipestream-v2-input-cleanup-red.log
+The deferred cleanup was restored before final focused/full validation.
+
+Final repository regression:
+./conformance/run_all.sh
+Exit 0, observed from original process handle 41501 after completion.
+Started: 2026-09-07 09:38:53 UTC.
+Log: /tmp/pipestream-v2-input-final-full-suite.log
+Rust workspace: 617 passed, 0 failed. Rust external examples: 6 passed.
+Java: 20 fresh Surefire XML reports, 193 tests, 0 failures/errors/skips.
+Oldest report: 2026-09-07 09:41:16 UTC. Newest: 09:43:45 UTC.
+Report counts/timestamps were read with Ruby REXML after Java completed.
+Frozen vectors/CDDL and all three bounded models passed:
+  lifecycle: 311539 states, 8723092 edges, deepest 19;
+  scopes: 5776 states, 173280 edges, deepest 17;
+  composition: 620796 states, 29177412 edges, deepest 27.
+Each model had 0 states at the depth boundary.
+Native Java SQLite checks, C++ build/CTest, 9 existing black-box pairs,
+32 raw capability probes, recursive scenarios and all external examples passed.
+Existing complete end-to-end pairs remain V1 regression evidence, not V2 proof.
+
+./build.sh core 05
+Exit 0, observed from original process handle 24196 after completion.
+Log: /tmp/pipestream-v2-input-draft.log
+Rendered Appendix D input-status paragraph inspected at text lines 6445-6456.
+Idnits: 0 errors, 0 flaws, 0 warnings, 1 existing FIPS downref comment.
+
+Still required: result QUIC transport, public durable listener and runtime
+maintenance, client/CLI and uncertainty journals, independent Java, neutral
+failure driver, full resource gates and the external equivalent streaming-gRPC
+workload. No main merge, deployment or IETF submission is part of this checkpoint.

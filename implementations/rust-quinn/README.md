@@ -157,12 +157,51 @@ These slots account for unresolved requests, including completed responses not
 yet written and result reads waiting for a stream. Cancelled async database
 waiters do not release the slots of still-running blocking jobs.
 
-The future endpoint still must provide bounded readers/writers, stream-ID
-correlation, input/result QUIC I/O, reserved control capacity separate from
+The future endpoint still must provide bounded control readers/writers,
+input-adapter integration, result QUIC I/O, reserved control capacity separate from
 payload/execution workers, result-read maintenance, lifecycle workers, live
 shutdown and the V2 client/journals. Twelve adapter tests use actual TLS peers
 and on-disk stores but call the dispatcher locally. They are not V2 wire,
 cross-language or whole-process resource evidence. See the acceptance ledger.
+
+### Version-2 input transport adapter
+
+`v2_authority::input::Inputs` receives actual authenticated QUIC input streams
+through the authority's existing receive/prepare/admit path. Construct it once
+with the same `Authority` instance and registered applications, and clone it
+across connections. It refuses a mismatched authority instance before accepting
+a stream. `accept` derives the request tag from the actual peer stream ID and
+reserves connection, global and owner transfer capacity before reading a header.
+Retain the returned `Reply` through its control response write. The adapter does
+not advertise profiles or connect itself to the public Core listener.
+
+Options bound active transfers (1..128), per-owner transfers (1..active), file
+workers (1..32 and no more than active transfers) and whole-header receipt time
+(positive, at most 30 seconds). Defaults are 8, 4, 4 and 5 seconds. Header bodies
+are bounded to 4096 bytes before allocation; the reused body buffer is at most
+16 KiB and no larger than the payload store's chunk ceiling. Progress renews
+only idle time, never lifetime; queued/slow file writes cannot renew either.
+Matching committed operations replay their receipt without payload/FIN and stop
+the redundant stream with application error 0. New empty inputs still need FIN.
+
+A fixed native file pool keeps file work separate from the control metadata
+pool. At most one ordinary job and one deferred file destructor per live input
+can occupy the queue, with two queue slots reserved per configured active input.
+Jobs and returned file-owning values retain the same transfer lease. Cancelling
+an async waiter cannot refund quota or complete detach while its file work or
+stage cleanup remains. Abandoned staging files are removed and directory-synced
+on those file workers, not a Tokio executor thread. A possible admission commit
+is not wrapped in an async timeout that could falsely report pre-commit refusal.
+
+Eight input tests use actual QUIC streams and guarded storage, including a
+64 KiB input across 4 KiB stream/16 KiB connection windows, malformed/truncated
+headers, identity and application checks, integrity failures, unbound/empty
+input, owner quota across rotated certificates, stalled headers and payloads,
+continuous-progress lifetime expiry, and cancelled file work. A ninth worker
+test checks off-executor cleanup before pin release and fails when that cleanup
+is deliberately made synchronous. Control operations in these tests remain local
+adapter calls, not durable control traffic over QUIC. No Java interoperability,
+whole-process memory bound, public durable endpoint or workload result is implied.
 
 `pipestream_core::v2` implements Section 12/Appendix F typed wire records,
 control and object-header framing, canonical and cross-field validation,

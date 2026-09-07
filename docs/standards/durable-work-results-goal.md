@@ -1497,3 +1497,37 @@ journals, Java parity, neutral failure driver, full resource measurements and
 the original external/equivalent-gRPC workload remain required. This checkpoint
 does not complete the goal or authorize a partial-profile advertisement.
 No main merge, deployment or IETF submission occurred.
+
+### Authenticated QUIC input transport, 2026-09-07
+
+The input adapter now receives actual QUIC objects through the existing durable
+admission path. Eight tests cover bounded reception across smaller windows,
+receipt replay without body/FIN, malformed and empty inputs, owner identity and
+configuration limits, stalled headers, idle/lifetime expiry, and cancellation.
+An independent worker test checks that file destruction precedes quota release
+and runs outside the async executor. Its deliberate direct-drop negative control
+failed, and the deferred-cleanup guard was restored. All 55 focused V2 tests and
+strict clippy pass. Storage formats, dependencies and normative wire bytes did
+not change; Appendix D records only the implemented input subset.
+
+Cancelling an input task cannot cancel an already-running storage operation or
+refund its quota early. File jobs and returned staged values retain connection
+and input leases until cleanup ends. Fixed file workers and a bounded queue keep
+that work separate from metadata dispatch. Empty declared length does not replace
+FIN, and ongoing payload progress does not extend lifetime. The actual 64 KiB
+QUIC input commits once and later runs the real copy application.
+
+These tests still call durable controls locally. Public durable-listener and
+result I/O integration, runtime maintenance, V2 client/journals, independent Java,
+neutral failure testing, full resource measurement and the original external
+workload/equivalent streaming-gRPC baseline remain required. This input checkpoint
+does not complete the goal. Validation evidence is in
+`conformance/results/durable-work-v2-input-2026-09-07.txt`.
+
+Final regression and draft builds exited 0. The suite passed 617 Rust workspace
+tests, six Rust-example tests and 193 Java tests from 20 fresh XML reports
+(zero failures/errors/skips), frozen vectors/CDDL, all three bounded models,
+native checks, nine existing interop pairs, 32 raw capability probes and all
+examples. The complete language pairs remain V1 evidence. Rendered Appendix D
+was inspected; idnits reports zero errors/flaws/warnings and the existing FIPS
+comment. No main merge, deployment or IETF submission occurred.

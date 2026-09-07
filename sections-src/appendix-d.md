@@ -64,6 +64,16 @@ jobs retain their connection and metadata slots after an async waiter is
 cancelled. This adapter is not yet connected to the Core listener, and neither
 durable profile is advertised.
 
+The Rust input adapter now receives actual QUIC object streams through bounded
+file workers into the durable authority. Eight input tests cover incremental
+reception across smaller flow-control windows, replay, empty and malformed
+inputs, owner/connection checks, idle/lifetime expiry and cancelled file work.
+A worker test checks that asynchronous cancellation cannot release a file's
+resource pin before off-executor cleanup. The accompanying control calls remain
+local adapter calls. Result-stream transport, public durable-listener integration,
+client recovery journals, independent Java V2 and full workload/resource evidence
+remain unfinished. No additional profile is advertised by this input adapter.
+
 ## Java/Netty Reference Implementation
 
 Organization:

@@ -324,7 +324,9 @@ impl PayloadStore {
             })?;
         Ok(WorkerPoolPin(self.root.clone()))
     }
-    pub(super) fn chunk_limit(&self) -> usize {
+    /// Maximum chunk accepted by the configured storage root. Transports use
+    /// this ceiling before allocating a reusable input/output buffer.
+    pub fn chunk_limit(&self) -> usize {
         self.root.policy.chunk_bytes.0 as usize
     }
     /// Check permanent feasibility, not current occupancy: queued work may wait

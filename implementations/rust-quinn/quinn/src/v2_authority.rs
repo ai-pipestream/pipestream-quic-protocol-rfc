@@ -26,6 +26,9 @@ use tokio::{
     time::Instant,
 };
 
+pub mod input;
+mod workers;
+
 fn error(code: ErrorCode, detail: &'static str) -> Error {
     Error { code, detail }
 }
@@ -53,6 +56,7 @@ fn refusal(request: Id, error: Error) -> Control {
 #[derive(Clone)]
 pub struct Authority {
     store: AuthorityStore,
+    payloads: PayloadStore,
     results: ResultService,
     slots: Arc<Semaphore>,
 }
@@ -70,9 +74,10 @@ impl Authority {
                 "metadata jobs must be in 1..64",
             ));
         }
-        let results = ResultService::new(store.clone(), payloads).map_err(storage)?;
+        let results = ResultService::new(store.clone(), payloads.clone()).map_err(storage)?;
         Ok(Self {
             store,
+            payloads,
             results,
             slots: Arc::new(Semaphore::new(metadata_jobs)),
         })

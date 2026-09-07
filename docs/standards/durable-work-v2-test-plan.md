@@ -964,6 +964,68 @@ adapter-status paragraphs were inspected, with zero idnits errors/flaws/warnings
 and the existing FIPS comment. Results and failing-before-fix evidence are in
 [`durable-work-v2-dispatch-2026-09-07.txt`](../../conformance/results/durable-work-v2-dispatch-2026-09-07.txt).
 
+### Rust authenticated QUIC input adapter, 2026-09-07
+
+`v2_authority::input` now carries actual client unidirectional streams into the
+existing durable receive/prepare/admit pipeline. It accepts only a stream from
+its `Connection` peer and checks the authority instance before accepting. It
+remains separate from the public Core listener, with no additional advertised
+profile. Its eight input tests use real TLS/QUIC and guarded storage, but their
+control operations are local adapter calls, not durable wire interoperability.
+
+- V2-WIRE/ADMIT: a 64 KiB object crosses 4 KiB stream and 16 KiB connection
+  windows, commits one real receipt/attempt and later produces matching bytes
+  through the actual copy executor. The reply tag uses the real stream ID.
+  A repeated immutable header receives the same receipt without body or FIN,
+  STOP_SENDING 0, and no revision or attempt change.
+- V2-WIRE/AUTH/ADMIT: zero/oversized/truncated header prefixes and malformed
+  CBOR refuse FRAME_ERROR. Missing/trailing/wrong-hash bytes refuse
+  INTEGRITY_ERROR. Stale generation, external producer 1 and unknown application
+  get their named errors without retaining the operation or losing declaration.
+  An unbound connection refuses NOT_READY. Empty input remains DECLARED until
+  actual FIN, then admits with the real empty-string digest. Configuration
+  limits and independently owned authority quota domains are checked before I/O.
+- V2-NEG/TIME: a stalled header is bounded by one whole-header deadline; a
+  rotated certificate cannot evade its owner's active-input quota. Local control
+  metadata still progresses while that input waits. A stopped payload and a
+  continuously progressing payload both expire without admission; progress does
+  not extend absolute lifetime. This is not the integrated endpoint's reserved
+  QUIC control-credit test, which remains required.
+- V2-STORE/CLOSE: a deliberately held file preflight survives cancellation of
+  its async receiver, keeps owner quota occupied, and prevents detach. Releasing
+  the file worker allows abandoned-stage cleanup, then detach and quota reuse;
+  no input operation or attempt was committed. File I/O uses fixed native
+  workers separate from control metadata capacity. File-owning returned values
+  retain their transfer lease through deferred destruction on that pool.
+- V2-STORE: a separate worker drop test checks that file cleanup happens on a
+  file worker before releasing its pin. Replacing deferred cleanup with direct
+  destruction makes this test fail on the executor thread assertion (exit 101).
+  The guard was restored before final validation. This guards an actual eager
+  staged-file removal and directory-sync path, not merely a mock job count.
+
+The configured active-input ceiling funds two queue slots per live input: at
+most one ordinary job and one deferred destructor, both retaining that lease.
+The header body is at most 4096 bytes; the reused payload buffer is at most
+16 KiB and bounded by the payload store's chunk limit. These construction
+bounds and tests are not measured heap/RSS, native transport allocations,
+disk/network I/O or complete endpoint resource evidence. Storage formats,
+dependencies, normative wire text and frozen examples are unchanged.
+
+Focused checks: 55 V2 transport/security tests pass, including eight input and
+one worker cleanup test; strict clippy passes. Public durable listener/result
+I/O, lifecycle/read maintenance, client uncertainty journals, independent Java,
+neutral cross-language failures and the original external workload/gRPC
+comparison all remain required. Full-suite and draft results are recorded in
+[`durable-work-v2-input-2026-09-07.txt`](../../conformance/results/durable-work-v2-input-2026-09-07.txt).
+
+Final `./conformance/run_all.sh` exited 0: 617 Rust workspace tests, six Rust
+example tests, 193 Java tests in 20 fresh XML reports (zero failures/errors/skips),
+frozen vectors/CDDL, all three bounded models, native checks, nine existing
+interop pairs, 32 raw capability probes and all examples. The full language pairs
+remain V1 evidence. `./build.sh core 05` exited 0, and the rendered Appendix D
+status was inspected, with zero idnits errors/flaws/warnings and the existing
+FIPS downref comment.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently
