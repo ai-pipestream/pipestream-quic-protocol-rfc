@@ -292,11 +292,54 @@ job ceilings; payload format 4 and normative wire/commitments are unchanged.
 - V2-STORE: reopen rejects missing/changed job, input reference, operation receipt,
   parameters and stage. The maximum typed job representation fits its fixed slot.
 
-This is external admission and durable job storage, not a working V2 executor.
-Local producer-1 admission, worker leases and fencing, actual callbacks, retries,
-cancellation/deadline settlement, nonempty closure, authenticated results and
-retirement still need implementation. The allocated job/work credits must be
-validated against those complete transition write sets. Java, both cross-language
+This checkpoint covers external admission and durable job storage. Subsequent
+execution evidence is below; it does not activate a V2 endpoint or complete the
+remaining lifecycle, Java, cross-language or workload gates.
+
+### Rust worker execution and publication evidence
+
+`src/v2/authority/execution/tests.rs` adds 16 tests, including its subprocess
+entry. Applications register real callbacks. The synchronous executor claims a
+known retained job, runs outside the metadata writer and commits authoritative
+outcomes; it is not yet a persistent background scheduler or V2 listener.
+
+- V2-ATTEMPT/V2-RESULT: a real streaming copy callback publishes a manifest and
+  the test opens and verifies the output bytes. Admission and receipt replay do
+  not invoke the callback. Resultless work has no fabricated manifest; trying to
+  emit an output without a budget fails instead of silently discarding it.
+- V2-ATTEMPT/V2-AUTH: claim and publication check owner, ancestor fence, original
+  deadline, wire attempt and private worker lease. Equality at lease expiry is
+  stale. Renewal retains the lease and cannot resurrect it. A callback commits a
+  scope fence through a separate connection, proving it runs outside the writer;
+  that accepted fence prevents its later publication.
+- V2-OP/V2-ATTEMPT: retryable outcomes wait for explicit retry. The retry operation
+  commits one replayable receipt and a new wire attempt, fences a live old worker,
+  retains input/child/deadline and replenishes record credits. Changed operations,
+  stale expected attempts, expired deadlines and terminal work refuse by name.
+- V2-RESULT: ignored output-limit errors, panic, invalid diagnostics and unfinished
+  outputs cannot produce SUCCEEDED. Publication verifies installed inventory under
+  the live reservation pin without acquiring an extra result read handle. Reopen
+  refuses a checksummed manifest rebound to another owner.
+- V2-CLOSE (partial): caller-branch execution waits for actual retained successful
+  child closure; the test uses the implemented empty closure. Authority-expanded
+  execution is explicitly refused, not silently treated as a leaf.
+- V2-STORE: actual process death before/after claim, publication and explicit retry
+  preserves the relevant committed outcome. Recovery after an unpublished output
+  unlink preserves the original funded budget; live old handles prevent recycling.
+  Reopened output bytes are verified and committed success is never executed again.
+- V2-STORE: the complete publication work/job/clock write set commits with 0, 1 and
+  256 real zero-byte outputs after ordinary WAL capacity is exhausted by a pinned
+  reader. SQL triggers forbid row replacement; database page count does not grow.
+  With a 4194304-byte WAL cap, the focused run grew from 3308416 to 3320752 bytes
+  for 0/1 outputs and from 2006496 to 2348432 for 256 outputs. These are actual
+  file lengths, not allocated blocks, complete lifecycle funding or baseline costs.
+
+Still required: callback I/O handle permits reserved before claim (concurrent
+reads can currently consume staging capacity), bounded persistent job discovery
+and scheduling, deadline/cancellation/skip/revocation settlement, producer-1
+admission, nonempty closure and complete branch execution, authenticated RESULT
+read leases, dependency retention, expiry and retirement. Input/output liveness
+stays charged until safe cleanup exists. Independent Java V2, both cross-language
 failure directions and the equivalent streaming-gRPC workload remain required.
 
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)

@@ -45,8 +45,13 @@ writes, with clock-counter and commit-crash tests.
 `admit_input` now atomically commits the validated input reference, attempt,
 deadline, child scope, fixed job record, reservations and immutable receipt.
 Executor and byte limits span the retained jobs; commit-crash tests reopen real
-input bytes and replay lost acknowledgments. Worker leases/callback execution,
-results and retention cleanup remain to be implemented for that authority. The
+input bytes and replay lost acknowledgments. The library now runs registered
+streamed callbacks under durable worker leases, supports lease renewal and
+explicit retry, and commits manifests or failures with attempt/lease/ancestor
+fences. Process-death tests cover claim, publication, retry and unpublished-output
+recovery. Bounded scheduling and callback I/O permits, deadline/cancellation
+settlement, complete branch execution, result reads and retention cleanup remain
+unfinished. No V2 endpoint or profile is activated by these library APIs. The
 [V2 acceptance ledger](docs/standards/durable-work-v2-test-plan.md) keeps Java,
 authenticated transport, storage, execution and process-level evidence open.
 

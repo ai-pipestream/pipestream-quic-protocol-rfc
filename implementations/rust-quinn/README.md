@@ -110,8 +110,9 @@ outputs while allowing sequential production of all 256 slots with two handles.
 Garbage collection also respects SQLite references: a committed live reservation
 pins its installed outputs even after all process handles are gone. It retains a
 funding record while any of its output objects remains. Reclaiming unpublished
-outputs for a replacement worker requires a separate lease-fenced operation;
-the orphan collector does not implement that or retention expiry.
+outputs for a replacement worker now uses the executor's lease-fenced recovery
+operation, which refuses while any old reservation/output handle remains live.
+The orphan collector does not implement retention expiry.
 
 Startup rebuilds owner totals and output occupancy, rejects missing/corrupt or
 contradictory funding, and syncs the directory before using reconstructed capacity.
@@ -122,8 +123,9 @@ No admission or successful-work acknowledgment follows from these filesystem API
 
 `AuthorityStore::receive_input` validates ownership, membership, application/mode,
 profile, immutable operation, duration and response/byte limits before staging.
-Applications must register immutable versioned labels and explicit safe-restart
-semantics; an unknown contract has no fallback. `ValidatedInput` is installed
+Applications must register immutable versioned labels, explicit safe-restart
+semantics and an actual `Application` callback; an unknown contract has no
+fallback. `ValidatedInput` is installed
 storage evidence only: it does not change DECLARED work, schedule a job or permit
 an admission acknowledgment. The committing transaction must revalidate authority
 and reserve every execution/publication/retention resource before admission.
@@ -152,10 +154,37 @@ this is an accepted-job limit, not a count of running threads. Job liveness flag
 and four rewrite credits per job/work record provide storage for subsequent branch,
 fence, settlement and release transitions. Quota reconciliation streams these
 records instead of caching a whole-session image. Reopen validates job/work,
-child, payload-reference and admission-receipt consistency. No worker lease,
-callback dispatcher, explicit retry, nonempty closure, result publication/read
-or retention API is implemented by this admission checkpoint. Their full write
-sets and failure/resource gates remain open before any V2 profile activation.
+child, payload-reference and admission-receipt consistency, including manifest
+owner, session, profile and admitted output limits.
+
+`authority::execution::Executor` now claims a known job under a durable private
+lease and invokes its registered callback outside the metadata transaction.
+`WorkContext` streams the real input and stages bounded outputs, checking current
+authorization, ancestor fences, attempt, lease and original deadline on each I/O
+operation and again at publication. Lease renewal cannot revive an expired lease
+or extend the execution deadline. The included `CopyApplication` streams actual
+bytes through an 8192-byte stack buffer, clipped to the configured I/O limit.
+Callbacks cannot supply result locators; a validated authority endpoint does.
+
+Success publishes a manifest derived from fsynced immutable outputs and terminal
+timestamps in the same work/job/clock transaction. Panic, incomplete output or an
+ignored output error cannot publish success. Retryable outcomes remain nonterminal;
+`retry_work` must explicitly advance the attempt, retain input/child/deadline,
+replenish credits and commit its immutable receipt. Restart recovery advances only
+the private lease, not the wire attempt. Replacement workers recycle unpublished
+output slots only after old handles drain, preserving the original quota promise.
+Publication uses the live reservation pin without acquiring another read handle.
+
+The complete publication write set is tested with 0, 1 and 256 actual outputs,
+a pinned WAL reader, ordinary writes exhausted and SQL row replacement forbidden.
+Real subprocess exits bracket claim, publication, retry and output recovery.
+These tests do not establish a complete resource-bounded lifecycle: the host
+still needs a bounded persistent scheduler and callback I/O permits reserved
+before claim. In particular, concurrent reads can currently exhaust the extra
+handle needed to stage an output. Deadline/cancellation settlement, nonempty
+closure, authority-expanded execution, authenticated result read leases and
+retention cleanup remain unfinished. Authority expansion is explicitly refused;
+caller-branch execution requires a retained successful child closure.
 
 Record expansion preserves exact typed contents and existing credits, reserves
 the larger future WAL write cost before allocating pages, and uses a savepoint
@@ -164,12 +193,12 @@ cannot reduce existing capacity or credits. Process-crash, full-page/full-WAL,
 stale-revision and rollback tests cover this path. These guarantees concern the
 work-view record, not the complete job/receipt/clock/closure write set.
 
-Funded admission/jobs, workers, cancellation settlement, nonempty closure,
-results/read leases, retention expiry and session retirement remain unfinished.
+No V2 profile is activated until the remaining lifecycle and resource gates pass.
 Physical file caps and staging reservations alone do not reserve future
-completion space; fixed-record credits cover only their stated write set.
-Durable output reservations cover payload capacity, not executor slots, the
-atomic admission/job/receipt transaction or its complete metadata write set.
+completion space; fixed-record credits cover only their stated write sets.
+Durable output reservations cover payload capacity, not running-worker I/O
+permits. Input/output liveness remains charged pending reference-safe cleanup;
+manifest publication alone does not release those reservations.
 Client journals, V2 mTLS/QUIC integration and independent Java V2 implementation
 also remain outstanding.
 The current contract has no backward-compatibility requirement; historical V1

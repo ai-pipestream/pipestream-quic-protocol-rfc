@@ -111,6 +111,15 @@ fn load(tx: &Transaction<'_>, generation: Id, scope: Number) -> Result<RetainedS
     })
 }
 
+#[cfg(unix)]
+pub(super) fn closed(
+    tx: &Transaction<'_>,
+    generation: Id,
+    scope: Number,
+) -> Result<Option<ScopeSummary>> {
+    Ok(load(tx, generation, scope)?.summary)
+}
+
 /// Inspect one scope at a time. Child scope numbers strictly exceed parents;
 /// corrupt ancestry cannot cycle or create an unbounded recursive stack.
 pub(super) fn unfenced(tx: &Transaction<'_>, generation: Id, mut scope: Number) -> Result<()> {

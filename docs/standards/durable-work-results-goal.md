@@ -818,3 +818,65 @@ clippy, frozen vectors, bounded models, C++ tests, all nine black-box language
 pairs, 32 raw QUIC capability probes and the external examples passed. Network
 interop still exercises historical profiles, not V2 execution. No main merge,
 deployment or Internet-Draft submission occurred.
+
+### Task 2 implementation progress: fenced workers and publication
+
+Registered applications now carry real executable callbacks. The Rust authority
+claims a known durable job under a private lease, runs the callback outside its
+SQLite writer and publishes actual output manifests or failure outcomes. The
+included copy application streams input into a real output without buffering the
+whole payload. Every context I/O call and the committing publication transaction
+check current authorization, ancestor fences, attempt, lease and original deadline.
+Callback panic, invalid diagnostics, unfinished output and ignored output errors
+cannot publish success. Result locators come from validated server configuration.
+
+Lease renewal preserves the lease identity and original deadline and cannot revive
+an expired lease. Recovery increments only the private lease; explicit `retry_work`
+increments the wire attempt, retains input/child/deadline, replenishes credits and
+atomically commits its replayable operation receipt. Replacement workers wait for
+all old payload handles to drain before recovering unpublished output slots under
+the original reservation. Committed results are never recycled through that path.
+Publication verifies the immutable inventory under its reservation pin without
+needing an additional reader handle. Reopen verifies manifest ownership, session,
+selected result profile and admitted output budgets. Authority format 6, payload
+format 4 and normative wire/frozen examples are unchanged.
+
+Sixteen execution tests include real subprocess deaths on both sides of claim,
+publication and retry commits, plus death during unpublished-output recovery.
+The recovery paths reopen and check actual output bytes. Lease equality, stale
+attempts, retry replay/conflict/deadline/terminal refusals, callback-time fencing,
+resultless work, output-limit errors and corrupt manifest ownership are covered.
+Caller-branch execution requires retained successful child closure (the current
+test exercises empty closure); authority expansion is explicitly refused.
+
+The complete publication write set, including work, job and shared clock, also
+commits with 0, 1 and 256 actual outputs under a pinned WAL reader after ordinary
+writes exhaust their allowance. SQL triggers forbid row replacement, and database
+page count stays fixed. The focused run's WAL lengths were 3308416 to 3320752 bytes
+for 0/1 outputs and 2006496 to 2348432 bytes for 256 outputs, all below 4194304.
+These are local file-length gates, not allocated-block, entire lifecycle or gRPC
+baseline measurements. All 106 focused authority tests and strict clippy pass.
+
+Local logs:
+
+- `/tmp/pipestream-execution-authority.log`
+- `/tmp/pipestream-execution-clippy.log`
+- `/tmp/pipestream-execution-suite.log`
+
+Next: reserve worker callback I/O permits before claim and build bounded persistent
+job discovery/scheduling. Current callbacks can still lose staging-handle capacity
+to concurrent reads; publication's fixed write set does not solve that. Implement
+deadline/cancellation/skip/revocation settlement and the full branch lifecycle,
+including producer-1 admission and nonempty closure. Input/output liveness remains
+charged pending authenticated result reads, read/dependency retention, expiry and
+safe retirement. Independent Java V2, actual Quinn/Netty V2 endpoints, the neutral
+cross-language failure driver and equivalent streaming-gRPC workload remain
+required. No V2 profile is activated and the full goal remains incomplete.
+
+Final verification: `./conformance/run_all.sh` exited 0. The Rust workspace
+passed 467 tests and the two Rust examples passed another six. Java's 20 Surefire
+reports contain 193 tests with zero failures, errors or skips. Formatting, strict
+clippy, frozen vectors, bounded models, C++ tests, all nine black-box language
+pairs, 32 raw QUIC capability probes and the external examples passed. The network
+evidence remains historical-profile coverage, not V2 interoperability. No main
+merge, deployment or Internet-Draft submission occurred.

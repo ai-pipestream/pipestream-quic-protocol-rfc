@@ -36,6 +36,7 @@ fn applications() -> Applications {
         ApplicationLabel("copy/v1".into()),
         vec![Mode(0), Mode(1), Mode(2)],
         RestartSafety::Pure,
+        Arc::new(super::super::execution::CopyApplication),
     )
     .unwrap();
     apps

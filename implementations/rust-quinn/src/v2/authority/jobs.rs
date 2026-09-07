@@ -174,7 +174,7 @@ pub(super) fn capacity(
 }
 
 pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
-    let mut statement = tx.prepare("SELECT w.row_id,w.generation,s.owner,j.work_row FROM work w JOIN sessions s ON s.generation=w.generation LEFT JOIN jobs j ON j.work_row=w.row_id ORDER BY w.row_id")?;
+    let mut statement = tx.prepare("SELECT w.row_id,w.generation,s.owner,j.work_row,s.results FROM work w JOIN sessions s ON s.generation=w.generation LEFT JOIN jobs j ON j.work_row=w.row_id ORDER BY w.row_id")?;
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
         let work_row: i64 = row.get(0)?;
@@ -186,6 +186,8 @@ pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
             },
         )?;
         let present = row.get::<_, Option<i64>>(3)?.is_some();
+        view.validate_profiles(row.get(4)?)
+            .map_err(|_| StoreError::Corrupt("work result profile changed"))?;
         if present != view.admitted_at.is_some() {
             return Err(StoreError::Corrupt(
                 "admitted work and restartable job disagree",
@@ -257,6 +259,26 @@ pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
             owner: IdentityLabel(row.get(2)?),
             generation: Id(number(row, 1)?),
         };
+        if let Some(manifest) = &view.manifest {
+            let bytes = manifest
+                .outputs
+                .iter()
+                .try_fold(0u64, |sum, output| sum.checked_add(output.length.0));
+            if manifest.authority != identity.authority
+                || manifest.owner != identity.owner
+                || manifest.generation != identity.generation
+                || manifest.outputs.len() as u64 > job.parameters.outputs.count.0
+                || bytes.is_none_or(|sum| sum > job.parameters.outputs.total_bytes.0)
+                || manifest
+                    .outputs
+                    .iter()
+                    .any(|output| output.length > job.object_limit)
+            {
+                return Err(StoreError::Corrupt(
+                    "manifest binding or output budget changed",
+                ));
+            }
+        }
         let receipt = scopes::operation(tx, identity.generation, job.originator, job.operation)?
             .ok_or(StoreError::Corrupt("job admission receipt missing"))?;
         let expected = Mutation::Admit(job.parameters.clone()).digest(

@@ -19,22 +19,36 @@ pub enum RestartSafety {
 
 #[derive(Default)]
 pub struct Applications {
-    contracts: BTreeMap<String, (Vec<Mode>, RestartSafety)>,
+    contracts: BTreeMap<String, ApplicationContract>,
+}
+struct ApplicationContract {
+    modes: Vec<Mode>,
+    safety: RestartSafety,
+    implementation: Arc<dyn super::execution::Application>,
 }
 impl Applications {
     pub(super) fn safety(&self, label: &ApplicationLabel, mode: Mode) -> Result<Number> {
         self.require(label, mode)?;
-        Ok(Number(match self.contracts[&label.0].1 {
+        Ok(Number(match self.contracts[&label.0].safety {
             RestartSafety::Pure => 0,
             RestartSafety::IdempotentEffects => 1,
             RestartSafety::ExternallyFenced => 2,
         }))
+    }
+    pub(super) fn implementation(
+        &self,
+        label: &ApplicationLabel,
+        mode: Mode,
+    ) -> Result<Arc<dyn super::execution::Application>> {
+        self.require(label, mode)?;
+        Ok(self.contracts[&label.0].implementation.clone())
     }
     pub fn register(
         &mut self,
         name: ApplicationLabel,
         modes: Vec<Mode>,
         safety: RestartSafety,
+        implementation: Arc<dyn super::execution::Application>,
     ) -> Result<()> {
         name.check()?;
         require(
@@ -56,14 +70,21 @@ impl Applications {
                 "application contract already registered",
             ));
         }
-        self.contracts.insert(name.0, (modes, safety));
+        self.contracts.insert(
+            name.0,
+            ApplicationContract {
+                modes,
+                safety,
+                implementation,
+            },
+        );
         Ok(())
     }
     fn require(&self, label: &ApplicationLabel, mode: Mode) -> Result<()> {
         if !self
             .contracts
             .get(&label.0)
-            .is_some_and(|(modes, _)| modes.contains(&mode))
+            .is_some_and(|contract| contract.modes.contains(&mode))
         {
             return Err(protocol(
                 ErrorCode::ApplicationUnsupported,
@@ -392,9 +413,10 @@ mod tests {
             let mut applications = Applications::default();
             applications
                 .register(
-                    ApplicationLabel("uppercase/v1".into()),
+                    ApplicationLabel("copy/v1".into()),
                     vec![Mode(0), Mode(1), Mode(2)],
                     RestartSafety::Pure,
+                    Arc::new(super::super::execution::CopyApplication),
                 )
                 .unwrap();
             Self {
@@ -436,7 +458,7 @@ mod tests {
                         sha256: Digest(Sha256::digest(b"abc").into()),
                         content_type: ApplicationLabel("application/octet-stream".into()),
                     },
-                    application: ApplicationLabel("uppercase/v1".into()),
+                    application: ApplicationLabel("copy/v1".into()),
                     mode: Mode(0),
                     execution_ms: Duration(1000),
                     outputs: OutputBudget {

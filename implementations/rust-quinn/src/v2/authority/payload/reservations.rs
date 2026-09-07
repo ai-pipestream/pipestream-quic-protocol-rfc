@@ -281,6 +281,82 @@ impl Drop for Installation {
 }
 
 impl PayloadStore {
+    /// Storage lookup only. The authority must separately authorize the exact
+    /// committed manifest and pin a read lease before exposing this reader.
+    pub fn open_output(
+        &self,
+        reservation: &str,
+        index: OutputIndex,
+        owner: &IdentityLabel,
+        descriptor: &Input,
+    ) -> Result<ObjectReader> {
+        let entries = self.root.entries()?;
+        let key = entries
+            .iter()
+            .find(|(_, entry)| {
+                entry
+                    .funding
+                    .as_ref()
+                    .is_some_and(|funding| funding.key == reservation && funding.index == index)
+            })
+            .map(|(key, _)| key.clone())
+            .ok_or_else(|| protocol(ErrorCode::OutputUnavailable, "reserved output absent"))?;
+        drop(entries);
+        self.open_object(&key, owner, descriptor)
+    }
+    /// Caller holds the authority writer and has proved the job nonterminal and
+    /// its prior lease absent/expired. None of this reservation's installed
+    /// outputs is published. Live handles prevent recycling, even for an old
+    /// lease. This is not the ordinary orphan/retention collector.
+    pub(in crate::v2::authority) fn recover_outputs(
+        &self,
+        key: &str,
+        owner: &IdentityLabel,
+        budget: &OutputBudget,
+    ) -> Result<OutputReservation> {
+        let reservation = self.open_reservation(key, owner, budget)?;
+        let mut entries = self.root.entries()?;
+        let mut keys = Vec::new();
+        for (object, entry) in entries.iter() {
+            if entry
+                .funding
+                .as_ref()
+                .is_some_and(|funding| funding.key == key)
+            {
+                if entry.live != 0 {
+                    return Err(protocol(
+                        ErrorCode::NotReady,
+                        "previous worker output handles remain live",
+                    ));
+                }
+                keys.push(object.clone());
+                if keys.len() > 256 {
+                    return Err(StoreError::Corrupt("reservation output count invalid"));
+                }
+            }
+        }
+        if entries.reservations.get(key).is_none_or(|r| r.live != 1) {
+            return Err(protocol(
+                ErrorCode::NotReady,
+                "previous worker reservation remains live",
+            ));
+        }
+        for object in keys {
+            let entry = entries.get(&object).expect("checked output");
+            let path = self.root.path(&object, entry.incomplete);
+            match checked_file(&path) {
+                Ok(_) => fs::remove_file(path)?,
+                Err(StoreError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+            #[cfg(test)]
+            super::super::tests::crash_boundary("worker-cleanup", "unlinked");
+            sync(&self.root)?;
+            entries.remove(&object);
+        }
+        drop(entries);
+        Ok(reservation)
+    }
     /// Reserve maximum output count/bytes durably before a metadata admission.
     /// This is a quota promise and installed file evidence, not job acceptance.
     pub fn reserve_outputs(
@@ -410,6 +486,29 @@ pub struct OutputReservation {
     budget: OutputBudget,
 }
 impl OutputReservation {
+    pub(in crate::v2::authority) fn verify_output(
+        &self,
+        index: OutputIndex,
+        descriptor: &Input,
+    ) -> Result<()> {
+        let entries = self.store.root.entries()?;
+        let valid = entries.values().any(|entry| {
+            !entry.incomplete
+                && entry.owner == self.owner
+                && entry.input.as_ref() == Some(descriptor)
+                && entry
+                    .funding
+                    .as_ref()
+                    .is_some_and(|funding| funding.key == self.key && funding.index == index)
+        });
+        if !valid {
+            return Err(protocol(
+                ErrorCode::OutputUnavailable,
+                "installed worker output binding changed",
+            ));
+        }
+        Ok(())
+    }
     pub(crate) fn store(&self) -> &PayloadStore {
         &self.store
     }

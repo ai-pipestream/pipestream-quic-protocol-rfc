@@ -295,6 +295,9 @@ impl Root {
 }
 
 impl PayloadStore {
+    pub(super) fn chunk_limit(&self) -> usize {
+        self.root.policy.chunk_bytes.0 as usize
+    }
     /// Initialization only accepts a newly created directory. A damaged or lost
     /// existing root is never silently replaced, adopted, or cleared.
     pub fn initialize(path: &Path, binding: StoreIdentity, policy: PayloadPolicy) -> Result<Self> {

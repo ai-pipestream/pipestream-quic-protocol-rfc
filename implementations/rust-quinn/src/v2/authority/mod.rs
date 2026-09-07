@@ -18,6 +18,8 @@ use std::{path::Path, sync::Arc, time::Duration as Elapsed};
 #[cfg(unix)]
 mod admission;
 #[cfg(unix)]
+pub mod execution;
+#[cfg(unix)]
 pub mod ingress;
 mod jobs;
 #[cfg(unix)]
@@ -95,6 +97,8 @@ pub enum Permission {
     Create,
     Declare,
     Admit,
+    Execute,
+    Retry,
 }
 
 pub trait Authorization: Send + Sync {
