@@ -32,6 +32,19 @@ the Rust nor Java endpoint advertises these profiles. These library tests
 are not version-2 mutual-TLS, durable execution, crash recovery, cross-language
 interoperability or measured resource-conformance evidence.
 
+As of 2026-09-07, the Rust authority library also implements transactional
+admission and replay, fenced worker execution, both branch producers and real
+child-output reassembly, cancellation/closure, retained result reads,
+dependency-aware payload reclamation and crash-safe session retirement.
+Local storage tests include process death, pinned journals, retained read
+handles and a 32 MiB result-resource case. A separate V2 TLS boundary now tests
+real QUIC handshakes, certificate mapping/rotation, live credential validity,
+server identity, clock failure and disabled resumption. It does not advertise
+the durable profiles or supply the complete V2 application dispatcher.
+Independent Java V2, cross-language V2 failures and the equivalent streaming-gRPC
+workload comparison remain unfinished. Local library and TLS tests do not
+establish those missing interoperability or usefulness claims.
+
 ## Java/Netty Reference Implementation
 
 Organization:

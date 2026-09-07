@@ -1,0 +1,64 @@
+Rust V2 TLS/library checkpoint, 2026-09-07 UTC
+Base commit: dcc682619019b2c0053754680115e92267058ff2
+Implementation and tests: the commit containing this result file.
+Host: Linux 7.0.0-31-generic x86_64 GNU/Linux
+Compiler: rustc 1.97.1 (8bab26f4f 2026-07-14)
+Locked Cargo dependencies: rustls 0.23.43, quinn 0.11.11, quinn-proto 0.11.17.
+
+From implementations/rust-quinn:
+cargo test --locked -p pipestream-quinn --lib v2_tls -- --nocapture
+Exit 0. 16 passed, 0 failed, 0 ignored, 89 filtered out.
+Log: /tmp/pipestream-v2-tls-tests-final.log
+cargo clippy --locked --workspace --all-targets -- -D warnings
+Exit 0. Log: /tmp/pipestream-v2-tls-clippy.log
+
+Deliberate removed-guard controls, each exit 101:
+1. Remove Peer::authorize's certificate re-verification and run
+   expired_live_credentials_never_resurrect_or_become_anonymous.
+   Failure: unwrap_err received Ok(Some(Identity { issuer-a, alice })).
+   Log: /tmp/pipestream-v2-tls-expiry-red.log
+2. Enable server session storage and two tickets; run
+   a_resumption_enabled_client_gets_no_ticket_and_expiry_requires_full_handshake.
+   Failure: observed 2 tickets, expected 0.
+   Log: /tmp/pipestream-v2-tls-resumption-red.log
+3. Remove client resumption disablement; run
+   public_client_requires_fresh_tls_even_when_the_other_server_offers_tickets.
+   Failure: client resumed rather than requiring full TLS.
+   Log: /tmp/pipestream-v2-tls-client-resumption-red.log
+All three protections restored before final validation.
+
+Initial clock-boundary test failure, exit 101:
+TransportError { code: PROTOCOL_VIOLATION,
+                 reason: "TLS error: failed to get current time" }
+Log: /tmp/pipestream-v2-tls-clock.log
+Known missing time is now refused before handshake, with local CLOCK_UNSAFE
+and wire CONNECTION_REFUSED. A separate clock-loss-during-TLS test verifies
+that no application peer is produced. The pinned stack's mid-handshake error
+categorization remains an explicit follow-up.
+
+Scope: actual local QUIC/TLS handshakes, public security factories, live peer
+guards, a Core capability transport round trip and certificate/TLS refusals.
+No V2 durable profile was advertised. These are not full V2 RPC, independent
+Java, neutral failure-driver, process-resource or equivalent gRPC benchmark
+results. No storage or frozen wire format changed.
+
+Repository regression gates:
+./conformance/run_all.sh
+Exit 0, observed from the original process handle after completion.
+Log: /tmp/pipestream-v2-tls-full-suite.log
+Rust workspace: 578 passed, 0 failed; separate Rust examples: 6 passed.
+Java: 20 fresh Surefire XML reports, 193 tests, 0 failures/errors/skips.
+Oldest report timestamp: 2026-09-07 03:21:53 -0400.
+Frozen vectors/CDDL and all three bounded models passed:
+  lifecycle: 311539 states, 8723092 edges, deepest 19;
+  scopes: 5776 states, 173280 edges, deepest 17;
+  composition: 620796 states, 29177412 edges, deepest 27.
+Each model had 0 states at the depth boundary.
+C++ build/CTest, 9 existing black-box pairs, 32 raw capability probes,
+recursive tests and all external examples passed. These existing end-to-end
+checks are V1 regression evidence, not complete V2 interoperability evidence.
+
+./build.sh core 05
+Exit 0. Log: /tmp/pipestream-v2-tls-draft.log
+Rendered Appendix D implementation-status paragraph inspected.
+Idnits: 0 errors, 0 flaws, 0 warnings, 1 existing FIPS downref comment.

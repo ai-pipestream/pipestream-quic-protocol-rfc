@@ -134,6 +134,13 @@ text_field!(ApplicationLabel, 1, 128, |s: &str| s
     .all(|b| (0x20..=0x7e).contains(&b)));
 text_field!(Detail, 0, 512, |_: &str| true);
 
+impl IdentityLabel {
+    /// Validate an operator-supplied identity using the same rules as the wire.
+    pub fn validate(&self) -> Result<(), Error> {
+        self.check()
+    }
+}
+
 record!(
     Policy {
         execution_limit_ms: Duration,

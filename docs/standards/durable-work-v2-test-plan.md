@@ -733,6 +733,70 @@ coverage; it does not close the still-unimplemented V2 network/Java gates.
 the rendered retirement paragraph was inspected. Idnits reports zero errors,
 flaws and warnings, with the existing informational FIPS downref comment.
 
+### Rust V2 TLS and current-credential boundary, 2026-09-07
+
+`quinn/src/v2_tls.rs` now supplies V2-only TLS configuration, completed
+server-handshake peers and per-request credential revalidation. Sixteen
+`v2_tls::tests` cases cover the constructors and real Quinn/rustls connections.
+Credential decisions do not use a supplied mock authentication Boolean.
+Capability selection is then checked using the verified
+peer result. These are TLS/library tests, not the complete V2 request dispatcher
+or independent Java authentication evidence.
+
+- V2-AUTH/NEG: rotated certificates map to the same stable owner. Anonymous
+  and valid-unmapped peers can only authorize Core; a required durable profile
+  refuses UNAUTHORIZED. Mapped expired/future/wrong-usage/untrusted certificates
+  fail actual TLS validation with CRYPTO_ERROR, before application negotiation.
+- V2-AUTH: every guard call rechecks certificate validity, trust and current
+  mapping. Owner/authority changes, one/all removed mappings and changed roots
+  refuse without live identity replacement or anonymous fallback. A serialized
+  invalidation latch prevents a later check resurrecting that connection.
+- V2-AUTH/TIME: tests cover exact certificate validity endpoints, unavailable
+  and regressed time, recovery of safe time before credential expiry, and
+  permanent refusal after expiry. Known missing time before TLS produces local
+  CLOCK_UNSAFE and wire CONNECTION_REFUSED. Time lost during TLS never produces
+  an application peer, but the pinned stack currently reports PROTOCOL_VIOLATION
+  for that local failure. Correct categorization remains a follow-up, not proven
+  by failing closed. The first clock test exposed this distinction directly.
+- V2-AUTH/NEG: real clients reject incorrect DNS names, IP identities, trust roots
+  and legacy ALPN. A Core-only server never fabricates a client principal when
+  a configured client credential was not requested by TLS.
+- V2-AUTH: a resumption-enabled client receives no tickets from the public server;
+  another connection after credential expiry requires a full TLS failure.
+  Independently, the public client requires fresh TLS even when the other server
+  offers tickets and early data. It cannot rely solely on the server factory's
+  no-ticket behavior. No resumption/early-data fallback is performed.
+- V2-STORE/NEG: local certificate/mapping bounds and an oversized peer certificate
+  inventory refuse before application dispatch. Peer capture allows at most 16
+  certificates/65535 DER bytes; this is not a process-memory or connection-flood
+  resource gate. The enclosing server still must reserve bounded connection slots.
+
+Three deliberate negative controls failed: removing live certificate verification
+accepted an expired owner; enabling server ticket storage/issuance delivered two
+tickets instead of zero; removing client resumption disablement resumed TLS
+instead of reaching the required fresh-certificate handshake failure. All guards
+were restored. Focused test/clippy logs and captured failures are listed in
+[`durable-work-v2-tls-2026-09-07.txt`](../../conformance/results/durable-work-v2-tls-2026-09-07.txt).
+
+The validity endpoint check follows
+[RFC 5280 Section 4.1.2.5](https://www.rfc-editor.org/rfc/rfc5280.html#section-4.1.2.5),
+independently of the V2 stream deadline rule. TLS alert transport mapping follows
+[RFC 9001 Section 4.8](https://www.rfc-editor.org/rfc/rfc9001.html#section-4.8);
+pre-handshake connection refusal uses
+[RFC 9000 Section 20.1](https://www.rfc-editor.org/rfc/rfc9000.html#section-20.1).
+No normative wire bytes, authority storage or existing profile behavior changed.
+Appendix D now records the actual Rust library/TLS progress and keeps complete
+V2 dispatch, Java parity and workload evidence explicitly open.
+
+Final regression validation: `./conformance/run_all.sh` exited 0 with 578 Rust
+workspace tests, six Rust-example tests, 193 Java tests across 20 fresh XML
+reports (zero failures/errors/skips), frozen vectors/CDDL, all three bounded
+models, C++/CTest, nine existing interop pairs, 32 raw capability probes and the
+recursive/external examples. `./build.sh core 05` exited 0; the rendered
+implementation-status paragraph was inspected, and idnits reports zero
+errors/flaws/warnings plus the existing FIPS downref comment. The existing
+end-to-end pairs remain V1 regression evidence, not V2 interoperability proof.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

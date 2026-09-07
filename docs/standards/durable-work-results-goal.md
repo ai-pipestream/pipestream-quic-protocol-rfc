@@ -1335,3 +1335,45 @@ interoperability evidence. No main merge, deployment or IETF submission occurred
 `./build.sh core 05` exited 0 (`/tmp/pipestream-retirement-draft-final.log`),
 the rendered retirement paragraph was inspected, and idnits reports zero
 errors/flaws/warnings plus the existing informational FIPS downref comment.
+
+### V2 TLS and live credential checkpoint, 2026-09-07
+
+The separate Rust `v2_tls` module now provides V2 TLS 1.3 configuration and
+full-handshake peers, with mandatory validation of presented certificates and
+an explicit stable fingerprint-to-owner mapping. Missing/valid-unmapped peers
+remain Core-only; they cannot activate a required durable profile. Live request
+checks revalidate credential validity, current trust and mapping under one
+serialized guard. Invalidating a peer cannot change its identity or make it
+anonymous, and it cannot resurrect if the old policy/time later returns.
+
+Server session storage/tickets and client resumption are disabled independently.
+Sixteen tests, including real QUIC handshakes, cover certificate rotation, invalid chains/usage/time,
+DNS/IP server identity, Core-only peers, mapping/trust replacement, exact PKIX
+validity boundaries, pre-handshake and in-handshake clock failure, chain bounds,
+legacy ALPN refusal and both sides of resumption policy. Three removed-guard
+negative controls failed as intended and were restored; raw captures are in
+`conformance/results/durable-work-v2-tls-2026-09-07.txt`.
+
+The clock test exposed a local-stack diagnostic limitation: absent time inside
+rustls reaches Quinn as PROTOCOL_VIOLATION rather than a certificate TLS alert.
+Known absence is now refused before handshake as local CLOCK_UNSAFE/wire
+CONNECTION_REFUSED. Mid-handshake clock loss still fails closed; correct wire
+categorization remains an integration follow-up before declaring that gate done.
+The injected clock is a trusted deployment input, not an independent UTC proof.
+
+This checkpoint does not activate a partial durable profile or complete Task 2.
+Next is bounded Core framing/dispatch and connection accounting, followed by
+the authenticated authority/input/result paths and durable client uncertainty
+journals. Independent Java, the neutral cross-language failure driver and every
+external workload/equivalent-gRPC measurement remain required. Appendix D now
+reflects real Rust authority/TLS progress without claiming those missing pieces.
+The full goal remains active and incomplete.
+
+The TLS checkpoint passed `./conformance/run_all.sh`: 578 Rust workspace tests,
+six Rust-example tests, 193 Java tests in 20 fresh XML reports with no failures,
+errors or skips, frozen vectors/CDDL, all three bounded models, C++/CTest,
+nine existing interop pairs, 32 raw capability probes and recursive/external
+examples. The original suite process exited 0; these existing end-to-end
+checks remain V1 regression evidence. `./build.sh core 05` also exited 0;
+the rendered implementation-status paragraph was inspected, with zero idnits
+errors/flaws/warnings and the existing FIPS downref comment.

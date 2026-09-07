@@ -23,6 +23,56 @@ cargo test --locked
 cargo build --release --locked
 ```
 
+## Version-2 TLS boundary
+
+`pipestream_quic::v2_tls` supplies separate TLS 1.3 configuration for
+`pipestream/2`, client DNS/IP identity verification, explicit verified-leaf
+mapping, and a completed server-side `Peer`. It does not implement a complete
+Core/durable dispatcher or advertise the new profiles. Standalone commands still
+serve version 1. The enclosing endpoint must still enforce QUIC-v1 support,
+global/per-principal connections, bounded control/object dispatch and storage
+integration before advertising V2 behavior.
+
+`ServerSecurity::accept` awaits a full handshake within a positive, at-most-30-
+second timeout after the host reserves a connection slot. Configured client
+authentication requests a certificate but allows its absence for Core. A
+presented expired, future, wrong-usage or untrusted certificate fails TLS even
+if its fingerprint is mapped. A valid unmapped or absent certificate supplies
+no durable identity. An empty mapping withdraws all durable identities while
+retaining TLS verification. Authority/owner labels use the core wire validator.
+
+Call `Peer::authorize` with current trust/mapping before every new request.
+It checks credential validity and stable identity under a serialized guard;
+current owner authorization/revocation must also be checked by the authority.
+Changed owner/authority, removed mapping, changed trust or invalid credentials
+cannot rebind a live connection or downgrade it to anonymous access. Once
+invalidated it requires a fresh handshake, even if the policy or clock later
+returns to its old value. A certificate's validity endpoints use TLS/PKIX rules,
+not the protocol's exclusive stream deadlines. Accepted job authorization is
+separate from the presenting certificate's lifetime.
+
+The supplied TLS time provider must provide trusted UTC. Within a peer, unknown
+or regressed time refuses a new check without extending validity. Known missing
+time before a handshake refuses the incoming QUIC connection and reports local
+CLOCK_UNSAFE. Time disappearing during TLS still fails closed through the
+pinned stack; Quinn currently maps that local failure to PROTOCOL_VIOLATION.
+Correct wire categorization of that mid-handshake local failure remains an
+integration follow-up. This is not a persisted cross-connection clock proof or
+an online CRL/OCSP service; current trust/mapping is operator-supplied.
+
+Server tickets, server session storage, early data and client resumption are
+disabled. Client and server policies are tested independently against peers that
+offer/request resumable sessions. Certificate inventories are capped at 16
+entries/65535 DER bytes, mappings at 4096, and post-handshake peer capture also
+checks its input bound. These limits are not a measured whole-process TLS memory
+bound or a replacement for global/per-owner connection quotas.
+
+Sixteen security tests, including real QUIC handshakes, and three
+failing-when-disabled negative controls cover these APIs. No durable request,
+result transfer, client journal or Java V2
+endpoint is implied by those tests. See the
+[acceptance ledger](../../docs/standards/durable-work-v2-test-plan.md).
+
 ## Version-2 library foundation
 
 `pipestream_core::v2` implements Section 12/Appendix F typed wire records,

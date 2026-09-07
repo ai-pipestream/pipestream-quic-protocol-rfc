@@ -26,8 +26,10 @@ The [durable-work/results goal](docs/standards/durable-work-results-goal.md)
 tracks the successor contract, independent Rust/Java implementation, and equivalent
 streaming-gRPC workload evidence. Local draft -05 defines the version-2 contract
 in Section 12 and Appendix F, with frozen wire examples. Its executable lifecycle
-models are bounded design checks. No version-2 endpoint is implemented or
-advertised yet; the existing interoperability evidence is for version 1.
+models are bounded design checks. No complete version-2 application endpoint is
+implemented or advertised yet; existing full interoperability evidence is for
+version 1. The separate Rust V2 TLS boundary now has real QUIC handshake and
+live-credential tests, but does not activate either durable profile.
 The Rust `pipestream_core::v2` library now implements typed codecs for every
 version-2 message and record, frozen commitments, negotiation checks, bounded
 client correlation and incremental object validation. This is a library
@@ -67,8 +69,8 @@ these library APIs. Dependency-aware retention now commits deletion eligibility,
 collects unpinned files, then releases logical capacity. Restart/admission audits
 distinguish interrupted cleanup from missing live storage. Session retirement now
 commits eligibility before bounded metadata deletion and preserves generation and
-owner creation history. Authenticated transport integration and independent Java
-V2 remain unfinished. No V2 endpoint
+owner creation history. Authenticated application dispatch and independent Java
+V2 remain unfinished. No complete V2 application endpoint
 or profile is activated by these library APIs. The
 [V2 acceptance ledger](docs/standards/durable-work-v2-test-plan.md) keeps Java,
 authenticated transport, storage, execution and process-level evidence open.
