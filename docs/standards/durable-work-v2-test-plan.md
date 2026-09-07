@@ -581,6 +581,79 @@ zero idnits errors/flaws/warnings and the existing informational FIPS downref.
 This preserves historical-profile coverage; it does not close the V2 transport
 or independent-Java acceptance gates.
 
+### Rust reference-safe retention and accounting evidence
+
+The retention checkpoint adds `authority::reclaim` and startup/admission payload
+audits. Thirteen `execution/tests/retention_tests.rs` tests include a subprocess
+entry; the existing real branch-reassembly and 32 MiB resource tests also now
+run cleanup. These are local Rust storage/library tests, not V2 network tests.
+
+- V2-TIME/V2-STORE: a durable typed intent precedes deletion; directory sync and
+  disappearance of input/funded outputs/reservation precede logical quota refund.
+  Work views, manifests, operation receipts and status roots remain retained.
+  Input can be reclaimed independently of the longer output promise. Equality
+  at output expiry is eligible, not before it. Cleanup is repeatable and bounded
+  by separate job/file batches; invalid batches and foreign cursors refuse.
+- V2-RESULT/V2-ATTEMPT: a read granted before expiry keeps bytes and logical quota
+  charged after expiry until it finishes. An old cancelled callback similarly
+  pins its input and output reservation; its late write refuses. Active jobs
+  and unclosed missing descendants are not collected just because time passed.
+  New admitted jobs cannot keep the metadata cursor above an older due job.
+- V2-CLOSE/V2-TIME: the actual caller-expanded `ABC` reassembly test now runs
+  cleanup after child outputs expire, checks that their inputs are released but
+  their outputs remain pinned by the active parent, and then executes the parent.
+  Child outputs are released only after that settlement; the parent's output
+  obeys its own later expiry.
+- V2-AUTH/V2-TIME: local maintenance still runs after owner authorization is
+  withdrawn. Unsafe/regressed UTC refuses destructive collection, while an
+  accounting audit issues no new time promise and remains permitted.
+- V2-STORE: actual process exits occur before/after `retention-intent` and
+  `retention-finish` commits, after object unlink and after reservation unlink.
+  Exclusive reopen accepts legitimate partially completed deletion, reconciles
+  accounting, finishes cleanup and preserves the exact published view/manifest.
+- V2-STORE: rebind, executor startup and fresh input refuse missing required
+  input, reservation or published output. Reopen with a missing live input does
+  not silently gain capacity. The audit streams all jobs and reads bounded
+  headers/file lengths, not payload bodies; it is not a constant-time admission
+  path or a full body-integrity scan. Storage reads retain their hash checks.
+- V2-STORE: format 9 adds the release record and six job rewrite credits. Prior
+  format 8 and checksummed early/future/pre-terminal intents refuse. A deliberate
+  negative control removing validation of the prior intent failed: it let a
+  future intent acquire a new valid timestamp instead of rejecting corruption.
+  The restored guard prevents that laundering before any cleanup mutation.
+- V2-STORE: a pinned reader exhausts ordinary table inserts and the smaller clock
+  rewrite shape. Four distinct input/output intent/finish transactions still
+  commit with clock advances, SQL row-update triggers and unchanged 284 DB pages.
+  The focused run filled 236 writes; WAL grew from 3052976 to 3085912 bytes under
+  the 4194304-byte cap. This is file-length/paired-rewrite evidence, not native
+  heap, allocated disk blocks or complete session-retirement funding.
+- V2-STORE/RESULT: the 32 MiB test holds a live read during batch-one cleanup,
+  verifies only input deletion, then drops the read and deletes the output and
+  reservation. The focused cleanup phase measured 1374 bytes of additional Rust
+  heap, a largest allocation of 338 bytes, unchanged 69632-byte DB and zero WAL,
+  over 102 ms. This covers local library cleanup, not network performance or
+  a SQLite/native-memory bound.
+
+Section 12 now explicitly requires recoverable deletion eligibility before
+cross-store deletion and prohibits early quota refunds or treating missing live
+storage as expired. Payload format 4 and all frozen wire bytes are unchanged.
+Session retirement, authenticated V2 endpoints, independent Java V2, the neutral
+cross-language failure driver and equivalent workload/gRPC evidence remain open.
+
+Focused logs: `/tmp/pipestream-retention-authority.log`,
+`/tmp/pipestream-retention-wal.log`, `/tmp/pipestream-retention-resources.log`,
+`/tmp/pipestream-retention-corrupt-intent-red.log` (deliberate negative control).
+Captured measurements and reproduction commands are retained in
+[`conformance/results/durable-work-v2-retention-2026-09-07.txt`](../../conformance/results/durable-work-v2-retention-2026-09-07.txt).
+
+Final validation: `/tmp/pipestream-retention-full-suite.log`, exit 0, passes
+549 Rust workspace tests, six Rust example tests, 193 Java tests from 20 fresh
+XML reports (zero failures/errors/skips), C++ checks, frozen vectors/models,
+nine language pairs, 32 raw QUIC probes and recursive/external examples.
+Formatting and strict clippy pass. The draft build exits 0 with zero idnits
+errors/flaws/warnings and the existing informational FIPS downref. These remain
+historical-profile network gates, not independent Java or V2 interoperability.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

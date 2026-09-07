@@ -26,6 +26,7 @@ const OVERHEAD: u64 = 12 + HEADER_LIMIT as u64;
 const CONFIG: &str = "binding";
 const LOCK: &str = "root.lock";
 
+mod audit;
 mod read_credit;
 mod reservations;
 pub(super) use read_credit::ReadCredit;
@@ -685,9 +686,20 @@ impl PayloadStore {
     /// The authority must hold its SQLite writer transaction while testing
     /// references and deleting. All temporary/installed live handles are pinned.
     /// Deletion is idempotent across restart; unknown paths are never collected.
+    #[cfg(test)]
     pub(crate) fn collect(
         &self,
         after: Option<&str>,
+        limit: usize,
+        referenced: impl FnMut(&str) -> Result<bool>,
+    ) -> Result<CollectionProgress> {
+        self.collect_until(after, None, limit, referenced)
+    }
+
+    fn collect_until(
+        &self,
+        after: Option<&str>,
+        through: Option<&str>,
         limit: usize,
         mut referenced: impl FnMut(&str) -> Result<bool>,
     ) -> Result<CollectionProgress> {
@@ -696,15 +708,19 @@ impl PayloadStore {
         }
         let mut entries = self.root.entries()?;
         let mut removed = 0;
+        if after.zip(through).is_some_and(|(a, b)| a >= b) {
+            return Ok(CollectionProgress {
+                inspected: 0,
+                removed: 0,
+                next: None,
+            });
+        }
         let range = (
             after.map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded),
-            std::ops::Bound::Unbounded,
+            through.map_or(std::ops::Bound::Unbounded, std::ops::Bound::Included),
         );
         let mut keys: Vec<String> = entries
-            .range::<str, _>((
-                after.map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded),
-                std::ops::Bound::Unbounded,
-            ))
+            .range::<str, _>(range)
             .take(limit)
             .map(|(key, _)| key.clone())
             .collect();
@@ -773,6 +789,33 @@ impl PayloadStore {
             next,
         })
     }
+
+    pub(super) fn last_retained_key(&self) -> Result<Option<String>> {
+        let entries = self.root.entries()?;
+        Ok(entries
+            .last_key_value()
+            .map(|(key, _)| key)
+            .max(entries.reservations.last_key_value().map(|(key, _)| key))
+            .cloned())
+    }
+
+    /// Called under the authority writer after a committed release intent.
+    /// Absence in this inventory follows a successful directory sync (or an
+    /// exclusive reopen), not merely an unlink or an expired wall clock.
+    pub(super) fn reclamation_status(
+        &self,
+        input: &str,
+        reservation: &str,
+    ) -> Result<(bool, bool)> {
+        let entries = self.root.entries()?;
+        Ok((
+            !entries.contains_key(input),
+            !entries.reservations.contains_key(reservation)
+                && !entries
+                    .values()
+                    .any(|entry| entry.funding.as_ref().is_some_and(|f| f.key == reservation)),
+        ))
+    }
 }
 
 impl AuthorityStore {
@@ -811,6 +854,7 @@ impl AuthorityStore {
         if retained.as_deref().is_some_and(|p| p != path) {
             return Err(StoreError::Corrupt("authority payload root path changed"));
         }
+        payloads.audit_references(&tx)?;
         records::protect(&tx, 0, 0)?;
         tx.execute(
             "UPDATE authority SET payload_path=?1 WHERE singleton=1",
@@ -824,6 +868,16 @@ impl AuthorityStore {
         &self,
         payloads: &PayloadStore,
         after: Option<&str>,
+        limit: usize,
+    ) -> Result<CollectionProgress> {
+        self.collect_payloads_until(payloads, after, None, limit)
+    }
+
+    pub(super) fn collect_payloads_until(
+        &self,
+        payloads: &PayloadStore,
+        after: Option<&str>,
+        through: Option<&str>,
         limit: usize,
     ) -> Result<CollectionProgress> {
         let mut connection = self.connect()?;
@@ -840,9 +894,10 @@ impl AuthorityStore {
                 "payload root is not bound to authority",
             ));
         }
+        self.check_clock(&tx)?;
         // The writer lock excludes publication of new references. A live
         // installed token excludes collection before its admission commits.
-        payloads.collect(after, limit, |key| {
+        payloads.collect_until(after, through, limit, |key| {
             let reference: Option<(u64, Option<i64>)> = tx
                 .query_row(
                     "SELECT p.purpose,j.work_row FROM payload_refs p JOIN work w ON w.generation=p.generation AND w.scope=p.scope AND w.entity=p.entity LEFT JOIN jobs j ON j.work_row=w.row_id WHERE p.object_key=?1",
@@ -855,7 +910,19 @@ impl AuthorityStore {
             let (_, job): (_, jobs::JobRecord) = records::read(&tx, records::Target {
                 table: records::Table::Job, row,
             })?;
-            Ok(if purpose == 0 { job.input_live } else { job.outputs_live })
+            if let Some(release) = &job.release {
+                let (_, view): (_, WorkView) = records::read(&tx, records::Target { table: records::Table::Work, row })?;
+                let (generation, owner): (u64, String) = tx.query_row(
+                    "SELECT w.generation,s.owner FROM work w JOIN sessions s ON s.generation=w.generation WHERE w.row_id=?1",
+                    [row], |r| Ok((number(r, 0)?, r.get(1)?)))?;
+                let identity = SessionIdentity { authority: self.authority.clone(), owner: IdentityLabel(owner), generation: Id(generation) };
+                super::retention::verify_release(&tx, &identity, &view, release)?;
+            }
+            Ok(if purpose == 0 {
+                job.input_live && !job.release.as_ref().is_some_and(|r| r.input)
+            } else {
+                job.outputs_live && !job.release.as_ref().is_some_and(|r| r.outputs)
+            })
         })
     }
 }

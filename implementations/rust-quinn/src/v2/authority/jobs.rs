@@ -4,10 +4,10 @@
 use super::*;
 
 pub(super) const CAPACITY: usize = 2048;
-// A branch can wait, become ready for rehydration, settle, then release its
-// retained outputs. Lease acquisition/renewal is an ordinary protected write;
-// it cannot consume these four autonomous-transition allowances.
-pub(super) const CREDITS: u64 = 4;
+// Expansion completion and terminal settlement need at most two job writes.
+// Input/output reclamation each needs an intent and a completion write. Lease
+// acquisition/renewal cannot spend these six autonomous-transition allowances.
+pub(super) const CREDITS: u64 = 6;
 // A branch's work view can wait, resume, accept a cancellation fence, and settle.
 // Explicit retries must replenish their own transition budget before commit.
 pub(super) const WORK_CREDITS: u64 = 4;
@@ -33,11 +33,41 @@ pub(super) struct JobRecord {
     // Membership can be sealed before any inputs are admitted. Only a separate
     // completed expansion transition switches a mode-2 job to rehydration.
     pub expansion_complete: bool,
+    pub release: Option<Release>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Release {
+    pub input: bool,
+    pub outputs: bool,
+    pub at: Number,
+}
+impl Wire for Release {
+    fn read(d: &mut minicbor::Decoder<'_>) -> std::result::Result<Self, Error> {
+        codec::array(d, 3)?;
+        let value = Self {
+            input: bool::read(d)?,
+            outputs: bool::read(d)?,
+            at: Number::read(d)?,
+        };
+        value.check()?;
+        Ok(value)
+    }
+    fn write(&self, w: &mut codec::Writer) {
+        w.array(3);
+        self.input.write(w);
+        self.outputs.write(w);
+        self.at.write(w);
+    }
+    fn check(&self) -> std::result::Result<(), Error> {
+        self.at.check()?;
+        require(self.input || self.outputs, "empty resource release intent")
+    }
 }
 
 impl Wire for JobRecord {
     fn read(d: &mut minicbor::Decoder<'_>) -> std::result::Result<Self, Error> {
-        codec::array(d, 15)?;
+        codec::array(d, 16)?;
         let value = Self {
             parameters: AdmitParameters::read(d)?,
             operation: OperationId::read(d)?,
@@ -54,12 +84,13 @@ impl Wire for JobRecord {
             outputs_live: bool::read(d)?,
             executor_live: bool::read(d)?,
             expansion_complete: bool::read(d)?,
+            release: Option::<Release>::read(d)?,
         };
         value.check()?;
         Ok(value)
     }
     fn write(&self, w: &mut codec::Writer) {
-        w.array(15);
+        w.array(16);
         self.parameters.write(w);
         self.operation.write(w);
         self.originator.write(w);
@@ -75,6 +106,7 @@ impl Wire for JobRecord {
         self.outputs_live.write(w);
         self.executor_live.write(w);
         self.expansion_complete.write(w);
+        self.release.write(w);
     }
     fn check(&self) -> std::result::Result<(), Error> {
         self.parameters.check()?;
@@ -84,6 +116,7 @@ impl Wire for JobRecord {
         self.lease.check()?;
         self.lease_until.check()?;
         self.object_limit.check()?;
+        self.release.check()?;
         require(
             self.restart_safety.0 <= 2 && self.stage.0 <= 4,
             "invalid job state",
@@ -106,7 +139,10 @@ impl Wire for JobRecord {
                 && self.executor_live == (self.stage.0 != 4)
                 && (!self.executor_live || self.input_live && self.outputs_live)
                 && (self.parameters.mode == Mode(2) || self.expansion_complete)
-                && (self.stage != Number(2) || self.expansion_complete),
+                && (self.stage != Number(2) || self.expansion_complete)
+                && (self.release.is_none() || !self.executor_live)
+                && (self.input_live || self.release.as_ref().is_some_and(|r| r.input))
+                && (self.outputs_live || self.release.as_ref().is_some_and(|r| r.outputs)),
             "job lease or resource liveness inconsistent",
         )
     }
@@ -277,6 +313,10 @@ pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
             owner: IdentityLabel(row.get(2)?),
             generation: Id(number(row, 1)?),
         };
+        #[cfg(unix)]
+        if let Some(release) = &job.release {
+            super::retention::verify_release(tx, &identity, &view, release)?;
+        }
         if let Some(manifest) = &view.manifest {
             let bytes = manifest
                 .outputs

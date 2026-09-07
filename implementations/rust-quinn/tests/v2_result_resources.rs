@@ -14,16 +14,24 @@ use pipestream_core::{
     },
 };
 use sha2::{Digest as _, Sha256};
-use std::{fs, sync::Arc, time::Instant};
+use std::{
+    fs,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Instant,
+};
 
 #[path = "support/heap.rs"]
 mod heap;
 const LENGTH: u64 = 32 << 20;
 struct TestPolicy;
-impl Clock for TestPolicy {
+struct TestClock(AtomicU64);
+impl Clock for TestClock {
     fn read(&self) -> ClockReading {
         ClockReading {
-            utc_ms: Number(1000),
+            utc_ms: Number(self.0.load(Ordering::SeqCst)),
             trusted: true,
         }
     }
@@ -52,6 +60,7 @@ impl Application for Produce {
 #[test]
 fn thirty_two_mib_result_delivery_has_bounded_heap_handles_and_no_database_growth() {
     let directory = tempfile::tempdir().unwrap();
+    let clock = Arc::new(TestClock(AtomicU64::new(1000)));
     let store = AuthorityStore::initialize(
         &directory.path().join("authority.sqlite"),
         IdentityLabel("resource-authority".into()),
@@ -71,7 +80,7 @@ fn thirty_two_mib_result_delivery_has_bounded_heap_handles_and_no_database_growt
             },
         },
         PhysicalLimits::default(),
-        Arc::new(TestPolicy),
+        clock.clone(),
         Arc::new(TestPolicy),
     )
     .unwrap();
@@ -285,5 +294,60 @@ fn thirty_two_mib_result_delivery_has_bounded_heap_handles_and_no_database_growt
     {
         println!("process {line}");
     }
+    store.integrity_check().unwrap();
+
+    let pinned = results
+        .begin_read(
+            &binding.identity,
+            &ResultMessage::Read {
+                request: Id(10),
+                work,
+                attempt: Id(1),
+                index: OutputIndex(0),
+                expected_sha256: manifest.outputs[0].sha256,
+            },
+            &caps,
+            Instant::now(),
+        )
+        .unwrap();
+    clock.0.store(21000, Ordering::SeqCst);
+    let before = store.physical_usage().unwrap();
+    let cleanup_started = Instant::now();
+    let sample = heap::Sample::start();
+    let mut cursor = RetentionCursor::default();
+    let mut files = 0;
+    store.audit_payloads(&payloads).unwrap();
+    for _ in 0..40 {
+        let report = store.reclaim(&payloads, &mut cursor, 1).unwrap();
+        assert!(report.inspected_files <= 1 && report.inspected_jobs <= 1);
+        files += report.removed_files;
+    }
+    assert_eq!(
+        files, 1,
+        "only the input can be deleted while the result is pinned"
+    );
+    assert!(payloads.usage(None).unwrap().charged_bytes >= LENGTH);
+    drop(pinned);
+    for _ in 0..40 {
+        let report = store.reclaim(&payloads, &mut cursor, 1).unwrap();
+        files += report.removed_files;
+    }
+    store.audit_payloads(&payloads).unwrap();
+    let (peak, largest) = sample.finish();
+    assert!(peak < 256 << 10, "cleanup Rust heap increase {peak}");
+    assert!(
+        largest < 64 << 10,
+        "cleanup largest Rust allocation {largest}"
+    );
+    assert_eq!(files, 3);
+    assert_eq!(payloads.usage(None).unwrap().charged_bytes, 0);
+    let after = store.physical_usage().unwrap();
+    assert_eq!(before.database_bytes, after.database_bytes);
+    println!(
+        "V2 result reclamation: bytes={LENGTH} batch=1 removed_files={files} rust_heap_peak_increase={peak} largest_rust_allocation={largest} database_bytes={} wal_bytes={} elapsed_ms={}",
+        after.database_bytes,
+        after.wal_bytes,
+        cleanup_started.elapsed().as_millis()
+    );
     store.integrity_check().unwrap();
 }

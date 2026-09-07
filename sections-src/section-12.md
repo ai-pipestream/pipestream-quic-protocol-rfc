@@ -694,3 +694,13 @@ pins, and is itself replayable after interruption. A successful restart must
 reconcile accounting before admitting new capacity. Independent implementations
 must test these boundaries against their real storage, not infer them from
 the abstract models or a metadata-only unit test.
+
+When payload deletion and authoritative accounting cannot share one atomic
+commit, cleanup MUST retain recoverable evidence of deletion eligibility before
+removing referenced bytes. It MUST NOT refund their reserved capacity while a
+dependent callback, result-read pin or unsynchronized deletion still retains the
+resource. Recovery MUST distinguish a deletion authorized by that evidence from
+an unexplained missing live object; missing storage alone is not evidence that
+a retention promise ended. Repeated cleanup may leave conservative charges until
+reconciliation completes, but cannot manufacture available capacity or erase
+retained outcomes, manifests or non-reuse history.

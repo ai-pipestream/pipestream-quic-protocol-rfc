@@ -29,6 +29,10 @@ pub mod payload;
 mod records;
 #[cfg(unix)]
 pub mod results;
+#[cfg(unix)]
+mod retention;
+#[cfg(unix)]
+pub use retention::{RetentionCursor, RetentionProgress};
 mod scopes;
 mod settlement;
 pub use settlement::{ReconcileCursor, ReconcileProgress};
@@ -37,7 +41,7 @@ mod sessions;
 mod tests;
 
 const APPLICATION_ID: i64 = 1_347_637_825;
-const FORMAT: i64 = 8;
+const FORMAT: i64 = 9;
 const SCHEMA: &str = include_str!("schema.sql");
 
 #[derive(Debug)]

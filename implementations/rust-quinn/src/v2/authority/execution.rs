@@ -122,6 +122,7 @@ impl Executor {
                 "worker lease exceeds local maximum",
             ));
         }
+        store.audit_payloads(&payloads)?;
         Ok(Self {
             store,
             payloads,

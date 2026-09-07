@@ -403,6 +403,7 @@ impl AuthorityStore {
                 "input payload root is not bound to authority",
             ));
         }
+        payloads.audit_references(tx)?;
         Ok(None)
     }
 }

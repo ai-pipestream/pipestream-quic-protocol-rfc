@@ -1,0 +1,36 @@
+Rust V2 retention library checkpoint, 2026-09-07 UTC
+Base commit: c73b70d94aec33839ae54d38e0442a72d3d3be10
+Implementation and tests: the commit containing this result file.
+Host: Linux 7.0.0-31-generic x86_64 GNU/Linux
+Compiler: rustc 1.97.1 (8bab26f4f 2026-07-14)
+Build: locked Cargo dependencies, debug test profile.
+
+Focused commands, from implementations/rust-quinn:
+cargo test --locked --lib retained_job_cleanup_uses_reserved_wal -- --nocapture
+cargo test --locked --test v2_result_resources -- --nocapture
+
+Captured focused WAL output (exit 0):
+retention fill=236 pages=284 WAL=3052976 -> 3085912 cap=4194304
+test v2::authority::execution::tests::retention_tests::retained_job_cleanup_uses_reserved_wal_without_row_replacement_or_page_growth ... ok
+
+Captured focused resource output (exit 0):
+V2 result delivery: bytes=33554432 pending_limit=8 chunk_bytes=16384 rust_heap_peak_increase=6035 largest_rust_allocation=464 database_bytes=69632 wal_bytes=0 elapsed_ms=2984
+process VmHWM: 7292 kB
+process VmRSS: 7292 kB
+V2 result reclamation: bytes=33554432 batch=1 removed_files=3 rust_heap_peak_increase=1374 largest_rust_allocation=338 database_bytes=69632 wal_bytes=0 elapsed_ms=102
+
+Negative control, captured exit 101:
+Temporarily remove verification of the previously retained release intent in
+AuthorityStore::reclaim, then run:
+cargo test --locked --lib checksummed_early_or_future_release_and_prior_format_refuse_on_reopen
+test v2::authority::execution::tests::retention_tests::checksummed_early_or_future_release_and_prior_format_refuse_on_reopen ... FAILED
+Failure case: future
+The guard was restored before final verification. This negative control is not
+enabled in the committed implementation.
+
+Scope: real local application output, file-backed result delivery and deletion,
+held handles, SQLite WAL file lengths and Rust allocator counters. The RSS/HWM
+sample follows delivery, before cleanup. These numbers are not a native heap
+bound, allocated-block count, network benchmark, Java V2 interoperability claim,
+session-retirement result or equivalent streaming-gRPC workload comparison.
+Single-run elapsed times are observations, not comparative performance claims.

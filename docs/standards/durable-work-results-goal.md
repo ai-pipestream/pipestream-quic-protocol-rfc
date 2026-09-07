@@ -1183,3 +1183,90 @@ and external example scenarios passed. These remain historical-profile network
 tests, not V2 interoperability. The current draft build exited 0 with zero idnits
 errors/flaws/warnings and the existing informational FIPS downref comment.
 No main merge, deployment or Internet-Draft submission occurred.
+
+### Dependency-aware retention and cross-store accounting (2026-09-07)
+
+This checkpoint implements Rust payload reclamation, not session retirement.
+`AuthorityStore::reclaim` first commits a typed, timestamped release intent while
+the job remains logically charged. A separate writer-locked collector removes
+only eligible unpinned files and syncs the directory. A later fixed-record commit
+releases logical input/output capacity only after those files and their funded
+reservation are absent. Crashes can retain conservative charges but cannot
+refund still-occupied resources. Manifests, receipts, work views, scope summaries
+and authority/owner high-water marks remain untouched.
+
+Terminal input additionally waits for child closure. Outputs wait for their
+external interval to expire and for their direct dependent parent to settle.
+Actual result-read and callback handles still block physical deletion even
+after intent commits. Local maintenance is independent of current caller
+permission, but destructive expiry refuses unsafe or regressed UTC. Reclaim
+uses separate bounded metadata and file cursors; descending job passes revisit
+old jobs even while new work is admitted.
+
+Matched-root rebind, executor startup and fresh admission now audit every
+retained job against input, output reservation and published manifest files.
+Missing required bytes fail closed unless a verified committed release intent
+authorizes their absence. These are bounded-header/file-length audits, not
+hashes of every body; actual readers still verify length and SHA-256. They
+stream all jobs under the writer/inventory locks and are not constant-time
+admission checks. Record-credit audits also still stream retained metadata;
+batch limits bound materialization and mutations, not total database work.
+
+Thirteen new retention tests include six actual process deaths around intent,
+unlink and quota commits, held result/callback pins, independent input/output
+expiry, unchanged retained evidence, unsafe UTC, authorization withdrawal,
+missing live files before new capacity, cursor limits/fairness and checksummed
+invalid intents. The real `ABC` branch test now runs cleanup after child output
+expiry, proves the active parent still retains those outputs, reassembles them,
+and then releases child and parent outputs at their separate eligibility cuts.
+
+A deliberately removed prior-intent validation guard caused the corruption
+regression to fail: cleanup could replace a forged future intent with a new
+otherwise valid timestamp. The restored guard validates the old evidence before
+any mutation. Reopen also refuses early/pre-terminal/future intent and authority
+format 8. Authority format 9 adds the release field and six funded job rewrites;
+payload format 4 and frozen wire bytes do not change.
+
+The focused pinned-WAL test exhausts ordinary inserts and smaller clock writes,
+then commits four separately timed input/output intent/finish writes. SQL
+triggers forbid row replacement; the database stays at 284 pages and WAL grows
+from 3052976 to 3085912 bytes under the 4194304-byte cap (236 fill writes).
+The 32 MiB library resource test now holds a result pin through batch-one cleanup,
+checks that only input can disappear, drops the pin and reclaims the output and
+reservation. Its focused cleanup phase measured 1374 bytes of additional Rust
+heap, largest allocation 338 bytes, unchanged 69632-byte DB and zero WAL over
+102 ms. These are scoped local measurements, not native heap, allocated disk
+blocks, network flow control or an equivalent gRPC benchmark.
+
+Section 12 now explicitly requires recoverable deletion eligibility before
+cross-store deletion and prohibits early quota refunds or treating missing live
+storage as proof of expiry. Focused logs are
+`/tmp/pipestream-retention-authority.log`, `/tmp/pipestream-retention-wal.log`,
+`/tmp/pipestream-retention-resources.log`, and
+`/tmp/pipestream-retention-corrupt-intent-red.log` (deliberate negative control).
+Focused captured measurements and commands are checked in at
+`conformance/results/durable-work-v2-retention-2026-09-07.txt`.
+
+Next: implement session retirement after closed-root creation-receipt retention
+and every longer work/output/read/dependency promise. Retirement must preserve
+authority generation and owner creation high-water marks and remain recoverable
+through bounded metadata deletion; `sessions::load` currently assumes its root
+exists, so partial retirement needs an explicit retained state before removing
+that root. Existing per-record rewrite credits do not by themselves fund
+arbitrary SQL deletion. This is still implementation work, not an external
+permission blocker. Independent Java V2, authenticated endpoints, the neutral
+cross-language driver and the full external workload/gRPC comparison remain
+required. The full goal is active and incomplete.
+
+Final retention checkpoint verification: `./conformance/run_all.sh` exited 0
+(`/tmp/pipestream-retention-full-suite.log`). The 549 Rust workspace tests and
+six Rust example tests pass. All 20 fresh Java Surefire XML reports total 193
+tests, zero failures/errors/skips. C++ checks, frozen vectors, bounded models,
+nine black-box language pairs, all 32 raw QUIC capability probes and recursive
+and external examples pass. Formatting and strict workspace clippy pass in that
+same run. These network tests still exercise historical profiles, not V2
+interoperability. `./build.sh core 05` exited 0
+(`/tmp/pipestream-retention-draft.log`); the rendered cleanup paragraph was
+inspected and idnits reports zero errors/flaws/warnings with the existing FIPS
+downref comment. `git diff --check` passes. No main merge, deployment or IETF
+submission occurred.

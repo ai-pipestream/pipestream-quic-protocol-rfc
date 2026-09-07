@@ -1,10 +1,10 @@
 use super::*;
 use crate::v2::authority::results::{ReadCursor, ResultRead, ResultService};
 
-fn service(fixture: &Fixture) -> ResultService {
+pub(super) fn service(fixture: &Fixture) -> ResultService {
     ResultService::new(fixture.store.clone(), fixture.payloads.clone()).unwrap()
 }
-fn request(fixture: &Fixture) -> ResultMessage {
+pub(super) fn request(fixture: &Fixture) -> ResultMessage {
     ResultMessage::Read {
         request: Id(7),
         work: fixture.key(),
@@ -13,13 +13,13 @@ fn request(fixture: &Fixture) -> ResultMessage {
         expected_sha256: Digest(Sha256::digest(b"abc").into()),
     }
 }
-fn published() -> Fixture {
+pub(super) fn published() -> Fixture {
     let fixture = Fixture::new(Arc::new(CopyApplication));
     fixture.admit(0, 1, 3);
     fixture.run().unwrap();
     fixture
 }
-fn drain(mut read: ResultRead, now: Instant) -> Vec<u8> {
+pub(super) fn drain(mut read: ResultRead, now: Instant) -> Vec<u8> {
     let header = read.start(now).unwrap();
     assert_eq!(header.request, Id(7));
     assert_eq!(header.length, Number(3));

@@ -63,7 +63,7 @@ reclaims abandoned stages only under exclusive ownership; installed orphans
 remain charged until the authority's reference-safe collector removes them.
 Live installed/read handles remain pinned against collection. The database
 retains a local random store identity and a once-bound canonical payload path.
-Internal authority storage is now format 8; payload roots remain format 4.
+Internal authority storage is now format 9; payload roots remain format 4.
 Prior authority formats are refused, not silently converted or replaced.
 This changes no wire schema or frozen vector.
 
@@ -117,7 +117,8 @@ pins its installed outputs even after all process handles are gone. It retains a
 funding record while any of its output objects remains. Reclaiming unpublished
 outputs for a replacement worker now uses the executor's lease-fenced recovery
 operation, which refuses while any old reservation/output handle remains live.
-The orphan collector does not implement retention expiry.
+`AuthorityStore::reclaim` supplies the separate retention eligibility and
+logical-capacity transitions; the collector alone does not decide expiry.
 
 Startup rebuilds owner totals and output occupancy, rejects missing/corrupt or
 contradictory funding, and syncs the directory before using reconstructed capacity.
@@ -156,8 +157,8 @@ real reopenable input/reservation files.
 The retained policy bounds global and per-owner accepted jobs as well as session
 jobs and retained input/output bytes. Waiting branches consume executor capacity;
 this is an accepted-job limit, not a count of running threads. Job liveness flags
-and four rewrite credits per job/work record provide storage for subsequent branch,
-fence, settlement and release transitions. Quota reconciliation streams these
+and six rewrite credits per job plus four per admitted work record provide
+storage for subsequent branch, fence, settlement and release transitions. Quota reconciliation streams these
 records instead of caching a whole-session image. Reopen validates job/work,
 child, payload-reference and admission-receipt consistency, including manifest
 owner, session, profile and admitted output limits.
@@ -331,8 +332,33 @@ heap increase, largest allocation 464 bytes, unchanged 69632-byte DB and zero WA
 growth, with 7228 KiB process RSS/HWM reported separately. This is a local library
 resource gate, not QUIC flow-control coverage or a gRPC performance comparison.
 
-Reference-safe retention cleanup remains unfinished; all accepted input/output
-reservations still stay charged after delivery completes.
+`AuthorityStore::reclaim` drives three-phase retention under trusted UTC: commit
+a typed release intent, delete reference/pin-safe files and sync their directory,
+then clear logical liveness only after the files and funded output reservation
+are gone. Input requires terminal work and closed children. Outputs additionally
+require their external interval to end and the direct dependent parent to settle.
+Published manifests, work views, receipts and status roots are not deleted by
+this API. A held result read or cancelled callback can keep physical and logical
+capacity charged after an otherwise eligible intent. Revocation does not prevent
+local cleanup; an unsafe or regressed clock does.
+
+`RetentionCursor` bounds inspected jobs and file keys independently to 1..256
+per call. Each metadata pass walks descending retained job IDs; the file pass
+has a saved upper key. Keep the cursor across calls. This bounds batch memory
+and mutations, not total database work: record-credit audits still stream the
+retained metadata. `audit_payloads`, rebind, executor startup and fresh input
+also stream all jobs and check their input/reservation/manifest files under
+the authority writer and root inventory lock. They read bounded headers and
+file lengths, not complete payload bodies; actual readers verify body hashes.
+Missing required bytes fail closed unless a verified, committed release intent
+authorizes their absence. Auditing a missing live file does not repair it.
+
+Crash tests cover both sides of intent and quota commits and interrupted object
+and reservation unlink. A pinned-WAL gate exhausts ordinary inserts and smaller
+clock writes, then completes four separately timed input/output release writes
+without SQL row replacement or page growth. The 32 MiB resource test also runs
+batch-one cleanup while a result pin remains held, then after it drops. Session
+retirement remains unfinished; this API only reclaims payload resources.
 
 Record expansion preserves exact typed contents and existing credits, reserves
 the larger future WAL write cost before allocating pages, and uses a savepoint
@@ -346,7 +372,7 @@ Physical file caps and staging reservations alone do not reserve future
 completion space; fixed-record credits cover only their stated write sets.
 Durable output reservations cover payload capacity; the worker's separately
 charged transient slot covers output I/O. Input/output liveness remains charged
-pending reference-safe cleanup;
+until reference-safe cleanup has actually released those resources;
 manifest publication alone does not release those reservations.
 Client journals, V2 mTLS/QUIC integration and independent Java V2 implementation
 also remain outstanding.

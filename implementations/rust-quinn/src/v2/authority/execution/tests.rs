@@ -1455,3 +1455,4 @@ fn reopening_refuses_a_checksummed_manifest_rebound_to_another_owner() {
 
 mod branch_tests;
 mod result_tests;
+mod retention_tests;

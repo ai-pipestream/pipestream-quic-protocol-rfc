@@ -392,8 +392,38 @@ fn caller_expanded_branch_uses_the_same_reassembly_and_dependency_reads_survive_
     admit_external_child(&fixture, 2, b"c");
     execute_children(&fixture, Producer(0));
     fixture.clock.0.store(1002, Ordering::SeqCst);
+    super::retention_tests::sweep(&fixture.store, &fixture.payloads);
+    for entity in 1..=2 {
+        let mut connection = fixture.store.connect().unwrap();
+        let tx = connection.transaction().unwrap();
+        let (_, child, _, _, _) = load(
+            &tx,
+            &fixture.binding.identity,
+            &WorkKey {
+                scope: Number(1),
+                producer: Producer(0),
+                entity: Id(entity),
+            },
+        )
+        .unwrap();
+        assert!(!child.input_live && child.outputs_live);
+        assert!(
+            !child.release.unwrap().outputs,
+            "active parent still needs expired child output"
+        );
+    }
     fixture.run().unwrap();
     assert_eq!(output_bytes(&fixture), b"ABC");
+    super::retention_tests::sweep(&fixture.store, &fixture.payloads);
+    assert!(
+        fixture.job().outputs_live,
+        "parent output has a new independent deadline"
+    );
+    assert_eq!(fixture.payloads.usage(None).unwrap().objects, 2);
+    fixture.clock.0.store(1003, Ordering::SeqCst);
+    super::retention_tests::sweep(&fixture.store, &fixture.payloads);
+    assert_eq!(fixture.payloads.usage(None).unwrap().objects, 0);
+    fixture.store.audit_payloads(&fixture.payloads).unwrap();
     fixture.reopen().integrity_check().unwrap();
 }
 

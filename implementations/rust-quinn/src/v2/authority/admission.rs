@@ -132,6 +132,7 @@ impl AuthorityStore {
             outputs_live: true,
             executor_live: true,
             expansion_complete: parameters.mode != Mode(2),
+            release: None,
         };
         records::protect(&tx, jobs::CAPACITY, jobs::CREDITS)?;
         tx.execute(
