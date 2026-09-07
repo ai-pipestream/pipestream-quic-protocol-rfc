@@ -1,0 +1,98 @@
+Rust V2 control-credit reservation, 2026-09-07 UTC
+Base: ead643fbbe10e719a93ad1989dc1601045a7053b
+Implementation and tests: the commit containing this result file.
+Section 12.1 and implementation status changed; wire bytes, CDDL, storage
+formats and dependency versions did not change.
+
+Focused checks from implementations/rust-quinn:
+cargo fmt --all --check
+cargo test --locked -p pipestream-quinn v2_ -- --nocapture
+cargo clippy --locked --workspace --all-targets -- -D warnings
+The set-e chain completed on original handle 81697 with exit 0.
+Focused V2 tests: 77 passed, 0 failed, 0 ignored, 89 filtered, 1.29 seconds.
+Logs: /tmp/pipestream-v2-flow-final-focused.log
+      /tmp/pipestream-v2-flow-final-clippy.log
+
+Nine flow tests use actual authenticated QUIC peers. Local send admission is
+B bytes for data, B+C for one control poll, restored before unlocking. No await,
+filesystem operation or application callback runs under the admission mutex.
+Transport role limits grant incoming bidi credit only to the server, so a
+client's control receive half does not also grant a second server-opened stream.
+Control Stream 0 is checked on actual stream handles, not predicted data IDs.
+
+The receive geometry accounts for pinned quinn-proto 0.11.17's MAX_DATA batching:
+R = ceil(8*(N+1)*W/7), preserving R-R/8 >= (N+1)*W. Source inspected:
+  quinn-proto/src/connection/streams/state.rs: add_read_credits, write_limit, poll
+  quinn-proto/src/connection/streams/recv.rs: Chunks::finalize_inner
+  quinn/src/connection.rs: Connection::set_send_window
+Default R=374492 bytes for N=4, W=65536. Tested geometry ceilings cover all
+N=0..128 and W=1024,4096,65536,1048576. These are credit limits, not measured
+process-memory, packet-loss resilience or whole-system throughput guarantees.
+
+Red regression: batched_connection_credit_updates_cannot_spend_the_control_reservation
+Original handle 30897 exited 101. With (N+1)*W receive credit, N=16 and W=1024,
+two 512-byte partial reads extended stream credit before MAX_DATA was due.
+Replacement data consumed control's 1024 bytes; its send timed out at 250 ms.
+Log: /tmp/pipestream-v2-flow-credit-update-red.log
+The headroom correction passes that same test, without changing its workload.
+
+Red regression: blocked_control_registers_retry_independent_of_data_credit
+Original handle 59468 exited 101. A pending control writer registered no wake
+while remote connection credit remained exhausted. Quinn's ordinary Writable
+condition observes the restored B window, not B+C.
+Log: /tmp/pipestream-v2-flow-control-wake-red.log
+Fix: one control-owned 20 ms retry timer. No extra task or queue is spawned.
+This timer cannot manufacture remote credit or acknowledge unsent bytes.
+
+Removed-guard negative control:
+  failed_control_poll_restores_the_lower_data_send_window
+Deliberately leave B+C installed after a failed control poll. Original handle
+10513 exited 101 because data admission no longer stopped at the 8192-byte B.
+Log: /tmp/pipestream-v2-flow-restore-red.log
+Restoration was reinstated before final focused and full verification.
+
+The unsafe-peer counterexample deliberately grants only N*W receive credit and
+expects control to block until data consumption returns credit. Other tests
+exercise all data windows stalled, consumed/reset stream replacement, role and
+stream-zero checks, byte/count refusal, and exact local data/control admission.
+
+Two additional result-adapter tests:
+  stored_result_and_control_share_one_reserved_flow_owner
+  authority_refuses_a_flow_owner_from_another_tls_connection
+The first admits input, runs the real copy executor, and reads its stored 64 KiB
+result over QUIC. A test-only counter observes actual Pending data writes.
+While the result receiver consumes no header/body, an actual control response
+crosses the same connection. The resumed result matches the retained digest
+and bytes; its work view/attempt remains unchanged. The second refuses a flow
+owner from another live TLS connection before authority binding.
+Control dispatch remains a local adapter call in these tests. The Core listener
+does not advertise a durable profile. No Java V2 or complete endpoint is implied.
+
+Full repository regression:
+./conformance/run_all.sh
+Original handle 24776 exited 0. Started 2026-09-07 10:41:15 UTC.
+Log: /tmp/pipestream-v2-flow-full-suite.log
+Rust workspace: 639 passed, 0 failed. Rust external examples: 6 passed.
+Java: 20 fresh Surefire XML reports, 193 tests, 0 failures/errors/skips.
+Oldest report: 2026-09-07 10:43:35 UTC. Newest: 10:46:38 UTC.
+Report counts/timestamps were read with Ruby REXML after Java completed.
+Frozen vectors/CDDL and all three bounded models passed:
+  lifecycle: 311539 states, 8723092 edges, deepest 19;
+  scopes: 5776 states, 173280 edges, deepest 17;
+  composition: 620796 states, 29177412 edges, deepest 27.
+Each model had 0 states at its depth boundary. Native checks, C++ build/CTest,
+9 existing interoperability pairs, 32 raw capability probes, recursive scenarios
+and all external examples passed. Complete cross-language pairs remain V1
+regression evidence, not V2 conformance or the requested workload comparison.
+
+Draft verification:
+./build.sh core 05
+Original handle 88011 exited 0. Log: /tmp/pipestream-v2-flow-draft.log
+Rendered Section 12.1 inspected at text lines 4782-4831; Appendix D at 6512-6533.
+Idnits: 0 errors, 0 flaws, 0 warnings, 1 existing FIPS downref comment.
+
+Still required: public durable runtime/control integration, lifecycle and result
+maintenance, shutdown, client/CLI and uncertainty journals, independent Java V2,
+neutral cross-language failures, full resource gates and the original external
+workload/equivalent streaming-gRPC baseline. This checkpoint does not complete
+the goal. No main merge, deployment or IETF submission occurred.

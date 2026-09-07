@@ -130,6 +130,8 @@ Construct one `Authority` during setup with the paired authority/payload roots
 and a ceiling of 1..64 concurrent metadata jobs, then clone it across listeners
 and connections sharing that ceiling. Construct a `Connection` only from its
 actual TLS `Peer`, owned `ServerSecurity` and validated selected capabilities.
+Pass its single `v2_flow::Connection` owner as well; another TLS connection's
+owner is refused before binding. Result writers cannot bypass this owner.
 The TLS issuing identity must match the store. `submit` runs synchronously in
 control decode order and returns either a correlated immediate refusal or a
 `Pending` request that can run concurrently. Malformed/direction/correlation
@@ -163,6 +165,41 @@ payload/execution workers, result-read maintenance, lifecycle workers, live
 shutdown and the V2 client/journals. Twelve adapter tests use actual TLS peers
 and on-disk stores but call the dispatcher locally. They are not V2 wire,
 cross-language or whole-process resource evidence. See the acceptance ledger.
+
+### Version-2 control reservation
+
+`v2_flow::Limits::configure` sets transport limits before the handshake, with
+the actual client/server role. Only the server grants incoming bidirectional
+stream credit; the client opens Control Stream 0. Both sides grant the bounded
+data-stream count and uniform per-stream receive window W. Create exactly one
+`v2_flow::Connection` for each actual QUIC connection, then share it between
+control and result writers. Do not write through raw handles or change the
+underlying windows while that owner is active.
+
+Short nonblocking write polls serialize under the owner's mutex. Data uses
+send-window B; a control poll temporarily uses B+C, then restores B before
+unlocking, including on error. No await, file I/O or callback runs under this
+lock. Thus data cannot borrow control's extra local send space. Priorities are
+also set, but packet ordering alone is not the reservation mechanism.
+Pending control polls also register a 20 ms retry wake: Quinn's ordinary
+writable-event condition observes the restored B window, not B+C. One timer
+belongs to the control writer; no retry task or unbounded queue is spawned.
+
+The receive budget is `ceil(8*(N+1)*W/7)`, not merely `(N+1)*W`. Pinned
+quinn-proto 0.11.17 batches MAX_DATA at R/8 consumed bytes, independently of
+stream-credit updates. The larger budget preserves a full control window even
+while those connection credits are withheld. Recheck this policy when upgrading
+Quinn. Tests reproduce a deadlock without this headroom, then verify the fixed
+geometry, stream retirement/replacement and a deliberately unsafe peer. Local
+reservation cannot supply credit withheld by a peer or guarantee network delivery.
+
+Defaults are B=C=W=65536 and N=4, giving 374492 connection receive bytes. B and
+C each range from 1 byte to 8 MiB; W from 1024 bytes to 1 MiB; N from 0 to 128.
+These are transport-credit/admission limits, not measured process-memory limits.
+Nine flow tests and two additional result-adapter tests cover this layer,
+including an actual stored result stalled while a control response crosses the
+same connection. Control dispatch in that integration test remains local; no
+public durable profile is newly advertised.
 
 ### Version-2 input transport adapter
 
@@ -240,10 +277,11 @@ a second control response. Cancelling the async task resets its stream; queued
 file work retains its read and quota until cleanup. A new identical read serves
 the same output without retrying execution or changing its manifest/attempt.
 
-Ten result transport tests cover empty/64 KiB output, small receive/send windows,
+Twelve result transport tests cover empty/64 KiB output, small receive/send windows,
 repeated reads, stopped/slow readers, pending stream creation, current credential
 expiry, wrong commitments, actual retained-byte corruption, rotated and distinct
 owners, configuration and connection/global quotas, and cancelled file preflight.
+They also cover shared control/data send ownership and wrong-connection refusal.
 These tests still call control adapters locally. The Core listener is unchanged;
 public durable-runtime integration, independent Java V2, neutral cross-language
 failure tests, full resource measurements and the equivalent workload remain open.

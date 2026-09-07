@@ -160,6 +160,23 @@ impl Database {
         exchange: &mut Exchange,
         caps: Capabilities,
     ) -> Result<Connection, Error> {
+        let flow = crate::v2_flow::Connection::new(
+            exchange.server.as_ref().unwrap().connection().clone(),
+            crate::v2_flow::Limits {
+                data_send: 8192,
+                control_send: 4096,
+                ..Default::default()
+            },
+        )?;
+        self.adapter_with_flow(tls, exchange, caps, flow)
+    }
+    fn adapter_with_flow(
+        &self,
+        tls: &Fixture,
+        exchange: &mut Exchange,
+        caps: Capabilities,
+        flow: crate::v2_flow::Connection,
+    ) -> Result<Connection, Error> {
         let peer = std::mem::replace(
             &mut exchange.server,
             Err(anyhow::anyhow!("peer transferred")),
@@ -172,7 +189,7 @@ impl Database {
         )
         .unwrap();
         self.authority
-            .connection(Arc::new(peer), Arc::new(security), caps)
+            .connection(Arc::new(peer), Arc::new(security), caps, flow)
     }
 }
 fn caps() -> Capabilities {

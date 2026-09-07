@@ -1566,3 +1566,33 @@ native checks, nine existing interop pairs, 32 raw capability probes and all
 examples. These complete language pairs remain V1 evidence. Rendered Appendix D
 was inspected; idnits reports zero errors/flaws/warnings and the existing FIPS
 comment. No main merge, deployment or IETF submission occurred.
+
+### Connection-owned control reservation, 2026-09-07
+
+The result adapter now shares one send-admission owner with control traffic;
+cross-connection owners are refused. Nine real QUIC tests and two result tests
+exercise send/receive reservations, actual stored-result/control progress,
+role limits, stream replacement and named configuration refusals. Review found
+and reproduced two missing liveness conditions: batched connection-credit
+updates need headroom beyond `(N+1)*W`, and blocked control polls need an
+independent retry wake because Quinn's normal wake condition uses the lower
+data window. Both regressions fail before their fixes and pass afterward.
+A deliberate removal of the send-window restoration guard also fails its test.
+
+Section 12.1 now specifies reservation through replenishment/replacement and
+its limits when a peer or network cannot make progress. The implementation uses
+the pinned transport's actual credit policy, not stream priority as a substitute.
+The focused run passes 77 V2 tests and strict clippy. No wire/CDDL, storage or
+dependency version changed. This is not the public durable runtime: integration
+of bounded readers/writers, lifecycle maintenance/shutdown, V2 client/journals,
+independent Java, neutral failure driver and the original external workload plus
+equivalent streaming-gRPC/resource comparison remain required. The goal remains
+active. Evidence: `conformance/results/durable-work-v2-flow-2026-09-07.txt`.
+
+Final full regression and draft builds exited 0: 639 Rust workspace tests, six
+Rust-example tests, 193 Java tests in 20 fresh XML reports without failures,
+errors or skips, all three bounded models, frozen vectors/CDDL, native checks,
+nine existing V1 interop pairs, 32 raw capability probes and all examples.
+Rendered Section 12.1 and Appendix D were inspected; idnits has zero errors,
+flaws or warnings and its existing FIPS comment. No main merge, deployment or
+IETF submission occurred.

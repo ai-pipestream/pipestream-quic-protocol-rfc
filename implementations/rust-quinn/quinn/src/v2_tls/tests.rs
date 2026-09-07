@@ -18,6 +18,7 @@ mod alerts;
 mod authority;
 mod configuration;
 mod core;
+mod flow;
 mod resumption;
 
 #[derive(Debug)]

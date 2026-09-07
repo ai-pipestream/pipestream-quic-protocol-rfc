@@ -86,12 +86,21 @@ impl Authority {
 
     /// The supplied capabilities must be the validated selection for this TLS
     /// peer. This does not negotiate or enable a profile on a listener.
+    /// Use the same flow owner for this connection's control and result writers;
+    /// configure its receive limits before the handshake on both peers.
     pub fn connection(
         &self,
         peer: Arc<Peer>,
         security: Arc<ServerSecurity>,
         caps: Capabilities,
+        flow: crate::v2_flow::Connection,
     ) -> Result<Connection, Error> {
+        if !flow.belongs_to(peer.connection()) {
+            return Err(error(
+                ErrorCode::InternalError,
+                "flow owner belongs to another TLS connection",
+            ));
+        }
         Control::Capabilities(caps.clone()).encode(INITIAL_CONTROL_LIMIT)?;
         if caps.response.0 != 1 || !caps.has(DURABLE_WORK) {
             return Err(error(
@@ -116,6 +125,7 @@ impl Authority {
                 security,
                 identity,
                 caps,
+                flow,
                 state: Mutex::new(State::default()),
                 changed: Notify::new(),
             }),
@@ -140,6 +150,7 @@ struct Shared {
     security: Arc<ServerSecurity>,
     identity: Identity,
     caps: Capabilities,
+    flow: crate::v2_flow::Connection,
     state: Mutex<State>,
     changed: Notify,
 }

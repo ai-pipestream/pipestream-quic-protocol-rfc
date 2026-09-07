@@ -167,6 +167,109 @@ async fn results_cross_small_quic_windows_and_reopen_without_new_execution() {
 }
 
 #[tokio::test]
+async fn stored_result_and_control_share_one_reserved_flow_owner() {
+    use crate::v2_flow::{Connection as Flow, Limits};
+    let limits = Limits {
+        data_send: 8192,
+        control_send: 4096,
+        receive_stream: 4096,
+        data_streams: 1,
+    };
+    let db = Database::new();
+    let mut tls = Fixture::new();
+    let mut transport = quinn::TransportConfig::default();
+    limits
+        .configure(&mut transport, quinn::Side::Server)
+        .unwrap();
+    tls.security.set_transport_config(Arc::new(transport));
+    let mut transport = quinn::TransportConfig::default();
+    limits
+        .configure(&mut transport, quinn::Side::Client)
+        .unwrap();
+    let mut config = tls.config(Some(0));
+    config.transport_config(Arc::new(transport));
+    let mut wire = tls.connect(config, "localhost").await;
+    let flow = Flow::new(wire.server.as_ref().unwrap().connection().clone(), limits).unwrap();
+    let client = wire.client.as_ref().unwrap();
+    let (mut client_send, mut client_recv) = client.open_bi().await.unwrap();
+    client_send.write_all(b"x").await.unwrap();
+    let (mut server_send, mut server_recv) = flow.accept_control().await.unwrap();
+    server_recv.read_exact(&mut [0; 1]).await.unwrap();
+    let connection = db
+        .adapter_with_flow(&tls, &mut wire, caps(), flow.clone())
+        .unwrap();
+    let bytes = vec![0x5a; 65536];
+    let (identity, manifest) = publish(&db, &connection, &wire, &bytes).await;
+    let before = db.store.work_view(&identity, &key(), Number(0)).unwrap();
+    let outputs = Outputs::new(db.authority.clone(), options()).unwrap();
+    let task = tokio::spawn(
+        outputs
+            .request(pending(&connection, read(3, &manifest)))
+            .unwrap()
+            .run(),
+    );
+    let mut recv = wire.client.as_ref().unwrap().accept_uni().await.unwrap();
+    // Do not consume even the object header. Wait for an actual Pending data
+    // write in the shared owner, rather than assuming a sleep proves blockage.
+    tokio::time::timeout(HANDSHAKE, async {
+        while flow.blocked_data_polls() == 0 {
+            assert!(!task.is_finished(), "result must remain blocked");
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let mut response = response(&connection, next(4)).await;
+    let ResponseBody::Control(message) = response.body() else {
+        panic!("sequence must have a control response");
+    };
+    let expected = message.clone();
+    let frame = message.encode(8192).unwrap();
+    tokio::time::timeout(HANDSHAKE, server_send.write_all(&frame))
+        .await
+        .unwrap()
+        .unwrap();
+    let mut actual = vec![0; frame.len()];
+    client_recv.read_exact(&mut actual).await.unwrap();
+    assert_eq!(Control::decode(&actual, 8192).unwrap(), expected);
+    assert!(
+        !task.is_finished(),
+        "control must not await the result body"
+    );
+    drop(response);
+    let header = header(&mut recv).await;
+    assert_eq!(header.request, Id(3));
+    assert_eq!(header.sha256, manifest.outputs[0].sha256);
+    assert_eq!(recv.read_to_end(65536).await.unwrap(), bytes);
+    assert!(matches!(result(task).await.status(), Status::Sent));
+    assert_eq!(
+        db.store.work_view(&identity, &key(), Number(0)).unwrap(),
+        before
+    );
+    detach(&connection, 5).await;
+}
+
+#[tokio::test]
+async fn authority_refuses_a_flow_owner_from_another_tls_connection() {
+    let db = Database::new();
+    let tls = Fixture::new();
+    let first = tls.connect(tls.config(Some(0)), "localhost").await;
+    let mut second = tls.connect(tls.config(Some(0)), "localhost").await;
+    let wrong = crate::v2_flow::Connection::new(
+        first.server.as_ref().unwrap().connection().clone(),
+        Default::default(),
+    )
+    .unwrap();
+    assert!(matches!(
+        db.adapter_with_flow(&tls, &mut second, caps(), wrong),
+        Err(Error {
+            code: ErrorCode::InternalError,
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
 async fn stalled_result_resets_after_header_without_a_second_control_response() {
     let db = Database::new();
     let tls = fixture();

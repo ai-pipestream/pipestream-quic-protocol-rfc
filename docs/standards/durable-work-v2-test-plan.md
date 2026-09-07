@@ -1090,6 +1090,47 @@ interop pairs, 32 raw capability probes and all examples. The full language pair
 remain V1 evidence. `./build.sh core 05` exited 0; rendered Appendix D was inspected,
 with zero idnits errors/flaws/warnings and the existing FIPS downref comment.
 
+### Rust connection-level control reservation, 2026-09-07
+
+`quinn/src/v2_flow.rs` now owns outgoing stream admission for authority result
+writers and their control writer. Nine actual-QUIC flow tests plus two new
+result-adapter tests cover:
+
+- V2-STORE: data cannot consume the control-only local send allowance; a failed
+  control poll restores the lower data window before releasing the mutex.
+- V2-RESULT: a stored 64 KiB output blocks on the receiver while an actual
+  control response crosses the same connection. The result then finishes with
+  unchanged committed work state. Wrong-TLS-connection flow owners are refused.
+- V2-STORE: control progresses with all data receive windows full. The explicit
+  unsafe-peer counterexample cannot progress until data consumption returns
+  connection credit. Local send admission cannot create remote credit.
+- V2-STORE: `batched_connection_credit_updates_cannot_spend_the_control_reservation`
+  failed with only `(N+1)*W` receive credit. Quinn's independently batched stream
+  updates spent the control reserve before MAX_DATA was due. Accounting for its
+  R/8 update threshold fixes the observed deadlock. Section 12.1 now requires
+  preserving the reservation during replenishment and stream replacement.
+- V2-STORE: `blocked_control_registers_retry_independent_of_data_credit` failed
+  before adding a control-owned retry timer. Ordinary Quinn writable events use
+  the restored data window. The bounded retry wake rechecks control's allowance
+  without depending on data credit or spawning another task.
+- V2-WIRE/NEG: role-specific bidi credit, actual Control Stream 0 checks,
+  consumed/reset stream replacement, and checked byte/count ceilings.
+
+The deliberately disabled send-window restoration also fails its regression;
+the guard is restored. All 77 focused V2 tests and strict workspace clippy pass.
+Wire bytes, CDDL, storage and dependency versions are unchanged. These remain
+local-dispatch/real-object adapter tests, not full V2 endpoints, Java V2 or neutral
+cross-language failure evidence. Process-resource measurements, client journals,
+runtime maintenance and the original workload/baseline remain open. Evidence:
+[`durable-work-v2-flow-2026-09-07.txt`](../../conformance/results/durable-work-v2-flow-2026-09-07.txt).
+
+The full suite exited 0 with 639 Rust workspace tests, six Rust-example tests,
+193 Java tests in 20 fresh XML reports (zero failures/errors/skips), all three
+bounded models, frozen vectors/CDDL, native checks, nine existing interop pairs,
+32 raw capability probes and all examples. The draft build also exited 0;
+rendered Section 12.1 and Appendix D were inspected. Idnits reports zero
+errors/flaws/warnings and the existing FIPS downref comment.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

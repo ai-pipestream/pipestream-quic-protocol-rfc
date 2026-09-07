@@ -84,6 +84,15 @@ post-header failures reset only that stream. The control calls in these tests
 remain local. These adapters do not activate a durable profile or establish
 complete V2 endpoints, Java interoperability or workload/resource conformance.
 
+The Rust result adapter now shares connection-owned send admission with control
+writers. Nine flow tests cover local send reservation, stalled receive windows,
+batched credit updates, retry wakes, stream replacement and transport role limits. Two more
+result tests check real stored-output/control progress and wrong-connection
+ownership refusal. Testing exposed a deadlock when stream credit was replenished
+before connection credit; the implementation now budgets update headroom and
+Section 12.1 explicitly requires preserving the reservation across updates.
+This is adapter evidence, not complete durable-endpoint interoperability.
+
 ## Java/Netty Reference Implementation
 
 Organization:

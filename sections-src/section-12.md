@@ -84,6 +84,25 @@ storage and result delivery, with bounded queues and reserved control
 capacity. QUIC stream priority alone does not supply connection credit.
 Flow-control and dependency considerations in {{RFC9308}} apply.
 
+Reserved control capacity MUST cover both local send admission and the
+receiver's connection-level credit, in addition to control-stream credit.
+Endpoints MUST preserve that reservation as they consume data, replenish
+credit and retire or replace streams. In particular, independently batched
+stream and connection credit updates MUST NOT allow replacement data to
+consume the control reservation. For example, a receiver allowing N data
+streams with unread windows of W bytes can budget N*W bytes for data, a
+separate control window, and headroom for consumed bytes whose connection
+credit update has not yet been advertised. The necessary headroom depends on
+the transport's credit-update policy; initial stream counts alone are not a
+proof of continued control progress.
+
+These requirements prevent dependencies on stalled data within a functioning
+connection; they do not guarantee delivery when a peer withholds control
+credit or the network cannot deliver packets. Implementations MUST bound
+waiting and queued control state for such a connection and isolate that
+waiting from other connections. They MUST NOT report unsent responses as
+received or treat a control timeout as durable work completion.
+
 Stream idle time runs between payload-progress observations. Stream lifetime
 runs from accepting its header, without extension by progress. Reaching or
 exceeding either bound aborts that stream with LIMIT_EXCEEDED as defined in

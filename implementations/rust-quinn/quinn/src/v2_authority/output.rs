@@ -4,7 +4,6 @@ use super::*;
 use std::{
     collections::BTreeMap,
     future::Future,
-    pin::Pin,
     task::{Context, Poll, Wake, Waker},
 };
 
@@ -197,7 +196,7 @@ impl Request {
 }
 
 struct Sending {
-    stream: quinn::SendStream,
+    stream: crate::v2_flow::Writer,
     finished: bool,
 }
 impl Sending {
@@ -304,12 +303,12 @@ async fn transfer(
     )
     .await?;
     let open_deadline = deadline.min(Instant::now() + shared.options.stream_open_timeout);
-    let opening = pins.ticket.shared.peer.connection().open_uni();
+    let opening = pins.ticket.shared.flow.open_data();
     tokio::pin!(opening);
     let stream = loop {
         live(pins, open_deadline)?;
         tokio::select! {
-            result = &mut opening => break result.map_err(|_| error(ErrorCode::Cancelled, "result connection closed"))?,
+            result = &mut opening => break result?,
             _ = tokio::time::sleep_until(open_deadline.min(Instant::now() + Elapsed::from_millis(20))) => {
                 (read, deadline) = checked(shared, read, open_deadline).await?;
             }
@@ -347,7 +346,7 @@ async fn send_object(
     read: Read,
     deadline: Instant,
     lifetime: Instant,
-    send: &mut quinn::SendStream,
+    send: &mut crate::v2_flow::Writer,
     started: &mut bool,
 ) -> Result<(), Error> {
     let workers = shared.workers.clone();
@@ -467,7 +466,7 @@ async fn write(
     mut read: Read,
     bytes: &[u8],
     mut deadline: Instant,
-    send: &mut quinn::SendStream,
+    send: &mut crate::v2_flow::Writer,
     writable: &Arc<Writable>,
 ) -> Result<(Read, usize, Instant), Error> {
     let waker = Waker::from(writable.clone());
@@ -476,7 +475,7 @@ async fn write(
         live(pins, deadline)?;
         // Never leave a write future armed across an authorization check. Quinn
         // gets one poll after fresh validation, then wakes our separate notifier.
-        let result = Pin::new(&mut *send).poll_write(&mut Context::from_waker(&waker), bytes);
+        let result = send.poll_write(&mut Context::from_waker(&waker), bytes);
         match result {
             Poll::Ready(Ok(count)) if count != 0 => return Ok((read, count, deadline)),
             Poll::Ready(Ok(_)) => {
@@ -485,9 +484,7 @@ async fn write(
                     "result writer made no progress",
                 ));
             }
-            Poll::Ready(Err(_)) => {
-                return Err(error(ErrorCode::Cancelled, "result receiver stopped"));
-            }
+            Poll::Ready(Err(error)) => return Err(error),
             Poll::Pending => {}
         }
         tokio::select! {

@@ -8,4 +8,5 @@ pub mod transport;
 #[cfg(unix)]
 pub mod v2_authority;
 pub mod v2_core;
+pub mod v2_flow;
 pub mod v2_tls;
