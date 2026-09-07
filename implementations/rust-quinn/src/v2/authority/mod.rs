@@ -27,6 +27,8 @@ use origin::Origin;
 #[cfg(unix)]
 pub mod payload;
 mod records;
+#[cfg(unix)]
+pub mod results;
 mod scopes;
 mod settlement;
 pub use settlement::{ReconcileCursor, ReconcileProgress};
@@ -98,6 +100,7 @@ fn protocol(code: ErrorCode, detail: &'static str) -> StoreError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Permission {
     Inspect,
+    ReadResult,
     Create,
     Declare,
     Admit,

@@ -558,7 +558,7 @@ fn eligible(view: &WorkView) -> Result<()> {
     }
     Ok(())
 }
-fn bound_payloads(tx: &Transaction<'_>, payloads: &PayloadStore) -> Result<()> {
+pub(super) fn bound_payloads(tx: &Transaction<'_>, payloads: &PayloadStore) -> Result<()> {
     let (binding, path): (Vec<u8>, Option<String>) =
         tx.query_row("SELECT store_id,payload_path FROM authority", [], |r| {
             Ok((r.get(0)?, r.get(1)?))
@@ -571,7 +571,11 @@ fn bound_payloads(tx: &Transaction<'_>, payloads: &PayloadStore) -> Result<()> {
     Ok(())
 }
 type Loaded = (i64, jobs::JobRecord, Id, WorkView, Id);
-fn load(tx: &Transaction<'_>, identity: &SessionIdentity, key: &WorkKey) -> Result<Loaded> {
+pub(super) fn load(
+    tx: &Transaction<'_>,
+    identity: &SessionIdentity,
+    key: &WorkKey,
+) -> Result<Loaded> {
     let (work_revision, view) = scopes::work(tx, identity.generation, key)?;
     let row: Option<i64> = tx.query_row("SELECT j.work_row FROM jobs j JOIN work w ON w.row_id=j.work_row WHERE w.generation=?1 AND w.scope=?2 AND w.entity=?3",
         params![sql(identity.generation.0)?, sql(key.scope.0)?, sql(key.entity.0)?], |r| r.get(0)).optional()?;

@@ -515,6 +515,72 @@ examples. The draft build also exited 0 with zero idnits errors/flaws/warnings
 and the existing informational FIPS downref comment. Historical network tests
 do not satisfy the open V2 endpoint/Java/neutral-driver gates.
 
+### Rust retained-result delivery evidence, 2026-09-07
+
+Source: `src/v2/authority/results.rs`; 19 tests including the child-process entry
+point in `execution/tests/result_tests.rs`, plus the standalone allocator test
+`tests/v2_result_resources.rs`. The focused authority suite now passes 174 tests
+and strict workspace clippy passes. The service consumes a host-verified identity;
+it does not authenticate a certificate or activate a V2 endpoint.
+
+- V2-RESULT/ATTEMPT: repeated reads and aborted delivery reproduce the exact
+  committed bytes without invoking execution, changing the attempt/work revision,
+  or replacing the manifest. Tests distinguish zero outputs, a real zero-byte
+  output and unsuccessful work; wrong attempt/index, unpublished output, changed
+  digest and profile/limit errors retain their named refusals.
+- V2-AUTH/TIME: a separate `ReadResult` permission is checked before retained
+  lookup and at read commitment. Last-moment withdrawal rolls back the clock and
+  releases the pending pin. Tests cover pending/active revocation, cancellation
+  preserving earlier successful results, exact output-expiry boundaries and
+  continued admitted delivery under later unsafe UTC. A manifest is evidence,
+  not a fresh lease; current UTC is required only for new availability grants.
+- V2-RESULT/TIME/STORE: pending time, partial/empty progress, idle/lifetime equality
+  and incomplete FIN are checked. Only one chunk can be outstanding. A delayed
+  maintenance timestamp originally misdiagnosed newer send progress as clock
+  regression; the failing regression now passes without extending any deadline.
+  A second negative-first regression prevents continual arrivals from starving
+  expiry of an older held lease: each maintenance pass fixes its upper bound.
+  Bounded maintenance releases stalled tokens' handles; global/per-owner limits
+  span service instances, and dropping the last service aborts held transfers.
+- V2-STORE: `result_process_death_drops_only_delivery_and_reopens_exact_published_output`
+  exits a process before/after the grant's clock commit and after reading a chunk.
+  Reopen has no pending delivery but preserves the same work and output bytes.
+  Missing/header/body/truncation/trailing-byte corruption refuses
+  OUTPUT_UNAVAILABLE without re-execution or a fabricated replacement result.
+- V2-STORE: `admitted_result_delivery_needs_no_further_database_writes_or_publication_credit`
+  exhausts ordinary capacity behind a pinned WAL reader, including the smaller
+  clock-rewrite shape after table inserts refuse. New grants refuse, while the
+  existing delivery completes with unchanged 3226016-byte WAL, 299 DB pages,
+  work view and reservations under the 4194304-byte WAL cap.
+- V2-STORE/RESULT: `thirty_two_mib_result_delivery_has_bounded_heap_handles_and_no_database_growth`
+  publishes and reads 33554432 real bytes, checks their SHA-256 with the receiver,
+  bounds eight pending reads and a 16384-byte buffer, then expires seven held
+  tokens without caller Drop. The focused run measured 6035 bytes of additional
+  Rust heap and largest allocation 464 bytes; DB length stayed 69632 bytes with
+  no WAL growth. Process RSS/HWM was 7228 KiB, reported separately from Rust heap.
+  The delivery phase took 2600 ms on this host. This is not a throughput claim,
+  a native-allocation bound or a network/gRPC workload comparison.
+
+Section 12 now explicitly permits retained-manifest evidence without a fresh
+availability grant and forbids indefinite pending-read pins or disk/application
+buffering as sender idle progress. Frozen wire bytes and authority format 8 are
+unchanged. The endpoint must drive maintenance independently, check before writes,
+enforce connection limits and bound its transport buffers. Reference-safe
+retention/dependency cleanup, real authenticated V2 endpoints, independent Java
+V2, the neutral cross-language driver and workload/gRPC evidence remain open.
+
+Logs: `/tmp/pipestream-result-final-authority.log`,
+`/tmp/pipestream-result-resources-final.log`,
+`/tmp/pipestream-result-final-clippy.log`.
+
+The final full suite (`/tmp/pipestream-result-final-suite.log`, exit 0) passes
+536 Rust workspace tests, six Rust example tests, 193 Java tests from 20 fresh
+reports, C++ tests, frozen vectors/models, nine basic language pairs, 32 raw QUIC
+capability probes and recursive/external examples. The draft build passes with
+zero idnits errors/flaws/warnings and the existing informational FIPS downref.
+This preserves historical-profile coverage; it does not close the V2 transport
+or independent-Java acceptance gates.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

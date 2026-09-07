@@ -514,7 +514,10 @@ and manifests are authenticated when obtained from the authority over TLS;
 neither is specified as a portable signature or bearer capability.
 
 RESULT operation 1 reads a retained manifest for a work/attempt; operation 2
-returns it. RESULT operation 0 requests a specific object with its expected
+returns it. A retained manifest MAY be returned after its output availability
+has expired or while the authority clock is unsafe; that response is immutable
+evidence, not a fresh read lease. It neither extends availability nor asserts
+that the bytes are still retained. RESULT operation 0 requests a specific object with its expected
 SHA-256. The authority checks current owner authorization, the exact committed
 work/attempt/index/digest and unexpired output availability before pinning a
 read lease. Wrong commitment is INTEGRITY_ERROR; unpublished output is
@@ -539,7 +542,11 @@ the job, advance an attempt or alter terminal outcome. Pending result requests,
 read leases, send buffers and file handles have bounded global/per-principal
 accounting. A read admitted before output expiry may finish within its
 negotiated stream lifetime; its bytes remain charged and pinned until FIN or
-abort. Revocation stops new reads and further scheduling on live reads;
+abort. Waiting for a response-stream slot or send capacity MUST NOT leave an
+admitted read pinned indefinitely. Count that pending time within a bounded read
+lifetime, and enforce idle/lifetime deadlines even when the peer makes no
+progress. Reading from disk or enqueueing application buffers is not transport
+progress and MUST NOT renew the sender's idle deadline. Revocation stops new reads and further scheduling on live reads;
 already transmitted or transport-buffered bytes cannot be retracted.
 
 Each output's locator uses the version-2 URI form in Section 11.6. It names

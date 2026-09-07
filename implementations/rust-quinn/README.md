@@ -287,8 +287,52 @@ six subprocess commit crashes, explicit retries, stale grants, unverified reads,
 handle saturation/lifetime, minimum-policy execution, and pinned-WAL completion
 without SQL row replacement or database page growth. Reopen refuses format 7
 and semantically impossible successful work with unfinished expansion.
-Authenticated result read leases and reference-safe retention cleanup remain
-unfinished; all accepted input/output reservations still stay charged.
+`authority::results::ResultService` now implements retained manifest lookup and
+object-read leases under the separate `ReadResult` permission. The supplied
+identity must already be authenticated by the host; this is not a TLS endpoint.
+Manifest lookup may return retained immutable evidence after output expiry or
+under unsafe UTC, without granting availability. Fresh object reads require
+trusted current UTC, the exact committed attempt/index/digest and unexpired
+availability. They pin the object under the authority writer transaction and
+persist the clock before returning a pending transfer. No read runs an executor.
+
+`ResultRead::start` returns the exact response header; `read_chunk` borrows a
+bounded buffer and permits only one outstanding chunk. The host must call
+`check_deadline` before scheduling a transport write/FIN, then `sent` for bytes
+actually accepted by its bounded transport writer. Disk reads and empty progress
+do not renew idle time. `finish` requires verified source EOF and complete send
+progress but does not claim client receipt; the receiver independently checks
+its complete object and FIN. Drop aborts delivery only. The original manifest,
+work revision and attempt remain unchanged, including after corrupt/missing
+storage or process death. A new read never retries computation.
+
+Pending and active reads share the payload root's global/per-owner handle limits,
+even across service instances. No send buffer is allocated by the service.
+The endpoint must separately enforce negotiated connection limits and drive
+`maintain(ReadCursor, limit, now)` with batches 1..256 when peers stop progressing.
+It closes expired/revoked leases even if callers keep their tokens. Each scan
+fixes an upper bound so continuous arrivals cannot starve older leases. Pending time
+is included in the lifetime; UTC output expiry does not terminate an already
+admitted lease, and later unsafe UTC does not replace its monotonic timer.
+Maintenance skips busy I/O without releasing its pin; no registry lock spans
+per-read I/O or authorization. The host still owns timers, socket resets and
+bounded transport buffers. These integration obligations are not implemented
+by the historical network endpoints.
+
+Nineteen result unit tests include negative-first delayed-timer and scan-fairness regressions,
+three actual child-process deaths, corrupt/missing object refusals, distinct and
+late-withdrawn read permission, expiry/FIN equality, zero objects versus an empty
+object, and cancellation versus revocation. A pinned-WAL test fills both ordinary
+table-insert and smaller clock-rewrite capacity: new grants refuse, while an
+already admitted result completes with unchanged work and journal length.
+`tests/v2_result_resources.rs` exercises actual 32 MiB publication and delivery,
+eight pending reads and 16 KiB buffers. The focused run measured a 6035-byte Rust
+heap increase, largest allocation 464 bytes, unchanged 69632-byte DB and zero WAL
+growth, with 7228 KiB process RSS/HWM reported separately. This is a local library
+resource gate, not QUIC flow-control coverage or a gRPC performance comparison.
+
+Reference-safe retention cleanup remains unfinished; all accepted input/output
+reservations still stay charged after delivery completes.
 
 Record expansion preserves exact typed contents and existing credits, reserves
 the larger future WAL write cost before allocating pages, and uses a savepoint

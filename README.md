@@ -59,7 +59,12 @@ authority expansion now creates actual children through the same admission path;
 both branch modes stream retained child outputs into application reassembly.
 Expansion completion is durable and separate from the membership seal. Process
 death, retry, stale producer grants and reserved child-reader capacity have
-focused tests. Authenticated result reads and retention cleanup remain unfinished. No V2 endpoint
+focused tests. `ResultService` now authorizes retained manifest lookup and bounded
+object-read leases against the supplied verified owner identity. Reads enforce
+commitments, expiry, revocation, send progress and bounded maintenance without
+running application code. Crash/corruption tests and a 32 MiB resource gate cover
+these library APIs. Authenticated transport integration and retention cleanup
+remain unfinished. No V2 endpoint
 or profile is activated by these library APIs. The
 [V2 acceptance ledger](docs/standards/durable-work-v2-test-plan.md) keeps Java,
 authenticated transport, storage, execution and process-level evidence open.

@@ -1107,3 +1107,79 @@ raw QUIC capability probes and recursive/external example scenarios passed.
 The network evidence still covers historical profiles, not V2 interoperability.
 `./build.sh core 05` exited 0; the rendered text includes the new expansion
 requirements. No main merge, deployment or Internet-Draft submission occurred.
+
+## Retained result lookup and bounded delivery checkpoint, 2026-09-07
+
+Continued from `85977e9`. Rust now supplies `ResultService` independently of the
+executor. It checks the host-verified identity under a separate `ReadResult`
+permission, retrieves immutable manifests, and grants object reads only for the
+exact published work/attempt/index/digest while trusted UTC is before availability
+expiry. Object pinning and the clock commit precede the returned pending transfer.
+Manifest lookup can expose retained evidence under unsafe time or after output
+expiry without granting a fresh lease. No read path invokes application code,
+advances an attempt or changes the successful work view.
+
+Result tokens expose the exact response header and one bounded outstanding chunk.
+The host checks before scheduling writes/FIN and reports actual bounded transport
+acceptance; disk reads and empty progress do not renew idle time. Source EOF is
+hash/length verified, and the receiver still validates its own object and FIN.
+Drop/reset affects only delivery. Current authorization and monotonic deadlines
+remain enforceable after output expiry; no later UTC regression can turn a
+previously granted stream into a new or extended availability promise.
+
+Pending and active reads use the shared root's global/per-owner handle ceiling,
+including across separate service instances. Bounded maintenance closes idle,
+expired or revoked transfers while callers retain their tokens. Registry locks
+do not span per-read I/O or authorization, and busy I/O remains charged until it
+can be closed safely. A negative-first regression caught a timer race: a delayed
+maintenance timestamp could incorrectly label newer send progress a clock
+regression. The fix preserves foreground observations without extending deadlines.
+Another negative-first regression showed that continuous arrivals could keep the
+cursor past an older expired lease. Each pass now captures a finite upper bound,
+so it revisits older leases even while new reads arrive.
+The endpoint must still drive maintenance, enforce connection limits, bound
+transport buffers and reset stopped streams; no V2 endpoint exists yet.
+
+Nineteen result tests include three actual process exits around grant/clock commit
+and partial delivery, exact replay without re-execution, distinct/late-withdrawn
+permission, corrupt or missing output, named identity/commitment/state refusals,
+pending/idle/lifetime/FIN equality, zero outputs versus empty output, cancellation
+versus revocation, global/per-owner pressure and shutdown with retained tokens.
+A pinned-WAL test exhausts ordinary table writes and then the smaller clock-write
+shape: new grants refuse while an admitted delivery completes with unchanged
+work, 299 DB pages and a 3226016-byte WAL under the 4194304-byte cap.
+
+The standalone 32 MiB result test publishes actual bytes through the application
+API, opens eight reads, transfers in 16 KiB chunks, independently verifies the
+receiver digest and expires seven stalled tokens without caller Drop. The focused
+run measured 6035 bytes of added Rust heap, a largest allocation of 464 bytes,
+unchanged 69632-byte database and zero WAL growth; process RSS/HWM was 7228 KiB.
+Its 2600 ms delivery phase is a local measurement, not a network throughput or
+gRPC comparison. This does not bound SQLite/native allocations by the Rust heap
+gate. Source: `tests/v2_result_resources.rs`.
+
+Focused verification passes 174 authority tests, the standalone resource gate,
+and strict workspace clippy. Logs: `/tmp/pipestream-result-final-authority.log`,
+`/tmp/pipestream-result-resources-final.log`,
+`/tmp/pipestream-result-final-clippy.log`,
+`/tmp/pipestream-result-final-draft.log`,
+`/tmp/pipestream-result-final-suite.log`.
+
+Section 12 now explicitly separates manifest evidence from new read permission,
+bounds pending-read pins and excludes disk/application buffering from sender
+idle progress. Authority format 8, payload format 4 and frozen wire bytes remain
+unchanged. Next is reference-safe retention and dependency cleanup/retirement;
+accepted input/output reservations remain charged until that lifecycle is built.
+Independent Java V2, authenticated V2 endpoints, the neutral cross-language
+failure driver and external workload plus equivalent streaming-gRPC evidence
+remain required. The full goal is active and incomplete.
+
+Final verification after the fairness fix: `./conformance/run_all.sh` exited 0
+(`/tmp/pipestream-result-final-suite.log`). Rust workspace tests passed 536/0,
+plus six Rust example tests. Java's 20 fresh Surefire reports total 193 tests
+with zero failures/errors/skips. C++ tests, frozen vectors, bounded models, all
+nine basic language pairs, all 32 raw QUIC capability probes and the recursive
+and external example scenarios passed. These remain historical-profile network
+tests, not V2 interoperability. The current draft build exited 0 with zero idnits
+errors/flaws/warnings and the existing informational FIPS downref comment.
+No main merge, deployment or Internet-Draft submission occurred.
