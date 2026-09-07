@@ -54,10 +54,12 @@ separate from the presenting certificate's lifetime.
 The supplied TLS time provider must provide trusted UTC. Within a peer, unknown
 or regressed time refuses a new check without extending validity. Known missing
 time before a handshake refuses the incoming QUIC connection and reports local
-CLOCK_UNSAFE. Time disappearing during TLS still fails closed through the
-pinned stack; Quinn currently maps that local failure to PROTOCOL_VIOLATION.
-Correct wire categorization of that mid-handshake local failure remains an
-integration follow-up. This is not a persisted cross-connection clock proof or
+CLOCK_UNSAFE. A private adapter at the pinned Quinn/rustls `read_handshake`
+boundary maps a TLS failure without an alert to fatal `handshake_failure`
+(QUIC 0x128). Existing TLS alerts and QUIC transport-parameter errors retain
+their codes; no error text is parsed, and no stale time is substituted.
+The adapter is applied independently to client and server TLS configuration.
+This is not a persisted cross-connection clock proof or
 an online CRL/OCSP service; current trust/mapping is operator-supplied.
 
 Server tickets, server session storage, early data and client resumption are
@@ -67,8 +69,8 @@ entries/65535 DER bytes, mappings at 4096, and post-handshake peer capture also
 checks its input bound. These limits are not a measured whole-process TLS memory
 bound or a replacement for global/per-owner connection quotas.
 
-Sixteen security tests, including real QUIC handshakes, and three
-failing-when-disabled negative controls cover these APIs. No durable request,
+Nineteen security tests, including real QUIC handshakes, and removed-guard
+negative controls cover these APIs. No durable request,
 result transfer, client journal or Java V2
 endpoint is implied by those tests. See the
 [acceptance ledger](../../docs/standards/durable-work-v2-test-plan.md).

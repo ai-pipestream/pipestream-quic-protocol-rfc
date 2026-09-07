@@ -558,6 +558,7 @@ dependencies = [
  "anyhow",
  "pipestream-core",
  "quinn",
+ "quinn-proto",
  "rustix",
  "rustls",
  "sha2",

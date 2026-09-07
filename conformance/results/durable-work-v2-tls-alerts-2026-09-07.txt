@@ -1,0 +1,48 @@
+Rust V2 local TLS error mapping, 2026-09-07 UTC
+Base commit: 285b5e4d069aa2e88c09d5f797d04549c0a19c6f
+Implementation and tests: the commit containing this result file.
+Locked dependencies unchanged: rustls 0.23.43, quinn 0.11.11,
+quinn-proto 0.11.17. The latter is now an explicit exact-version dependency.
+
+From implementations/rust-quinn:
+cargo test --locked -p pipestream-quinn --lib clock_loss_during_tls -- --nocapture
+Before the adapter: exit 101.
+Log: /tmp/pipestream-v2-tls-alert-red.log
+Failure: local TLS failure must use a fatal TLS close:
+TransportError(Error { code: PROTOCOL_VIOLATION, frame: None,
+reason: "TLS error: failed to get current time" })
+
+cargo test --locked -p pipestream-quinn --lib v2_tls -- --nocapture
+After the adapter: exit 0, 19 passed, 0 failed, 0 ignored, 89 filtered out.
+Log: /tmp/pipestream-v2-tls-alert-final.log
+Real client/server clock failures use TLS handshake_failure (QUIC 0x128)
+locally and in the peer-observed CONNECTION_CLOSE. Incorrect QUIC initial
+source CID parameters retain TRANSPORT_PARAMETER_ERROR in both observations.
+All 256 existing TLS alert codes are preserved by a separate local check.
+
+cargo clippy --locked --workspace --all-targets -- -D warnings
+Exit 0. Log: /tmp/pipestream-v2-tls-alert-clippy.log
+
+From the repository root:
+./build.sh core 05
+Exit 0. Log: /tmp/pipestream-v2-tls-alert-draft.log
+Idnits: 0 errors, 0 flaws, 0 warnings, 1 existing FIPS downref comment.
+
+./conformance/run_all.sh
+Exit 0, observed from the original process handle after completion.
+Log: /tmp/pipestream-v2-tls-alert-full-suite.log
+Rust workspace: 581 passed, 0 failed; Rust external examples: 6 passed.
+Java: 20 fresh Surefire reports, 193 tests, 0 failures/errors/skips.
+Oldest report timestamp: 2026-09-07 03:41:13 -0400.
+Frozen vectors/CDDL and three bounded models passed:
+  lifecycle: 311539 states, 8723092 edges, deepest 19;
+  scopes: 5776 states, 173280 edges, deepest 17;
+  composition: 620796 states, 29177412 edges, deepest 27.
+Each model had 0 states at the depth boundary.
+C++ build/CTest, 9 existing black-box pairs, 32 raw capability probes,
+recursive scenarios and all external examples passed. Existing end-to-end
+pairs remain V1 regression evidence, not complete V2 interoperability proof.
+
+Scope: Rust TLS error correction only. No V2 durable profile, full V2 RPC,
+Java V2 parity, neutral cross-language failures or workload comparison is
+claimed. No frozen wire format or authority storage changed.

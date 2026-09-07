@@ -1377,3 +1377,36 @@ examples. The original suite process exited 0; these existing end-to-end
 checks remain V1 regression evidence. `./build.sh core 05` also exited 0;
 the rendered implementation-status paragraph was inspected, with zero idnits
 errors/flaws/warnings and the existing FIPS downref comment.
+
+### V2 local TLS error correction, 2026-09-07
+
+The clock-loss follow-up from the TLS checkpoint is now corrected in both
+client and server configurations. The stricter real-handshake test first
+failed with PROTOCOL_VIOLATION. A private adapter at Quinn's pinned rustls
+handshake-read boundary now uses fatal TLS `handshake_failure` (QUIC 0x128)
+when rustls fails without an alert. Existing TLS alerts and genuine transport
+errors are preserved. It does not substitute a clock value or enable fallback.
+
+Nineteen TLS/security tests pass, including both peers' observed clock-failure
+closes, all 256 existing TLS alert codes, and a real incorrect-connection-ID
+transport-parameter failure that retains its own error. No normative wire
+format or storage changed. Complete V2 dispatch/quotas, client journals,
+independent Java, neutral failures and the equivalent-workload measurements
+remain unfinished; the original goal remains active.
+
+Before exposing the endpoint, bind `ServerSecurity::accept` to its owned
+configuration with Quinn's `Incoming::accept_with`, and test an incoming
+connection created under a different endpoint default. Currently it awaits
+the incoming connection's default configuration; the embedding application
+must keep that default identical to `ServerSecurity::configuration`. The
+existing ticket-offering peer fixture must remain an independent test after
+this tightening. Then wire bounded Core dispatch and connection accounting.
+
+Final correction verification: `./conformance/run_all.sh` exited 0. It passed
+581 Rust workspace tests, six Rust-example tests, 193 Java tests in 20 fresh
+XML reports (no failures/errors/skips), frozen vectors/CDDL, all three bounded
+models, C++/CTest, nine existing interop pairs, 32 raw capability probes and
+all recursive/external examples. `./build.sh core 05` exited 0 with zero
+idnits errors/flaws/warnings and the existing FIPS downref comment. Raw results
+are in `conformance/results/durable-work-v2-tls-alerts-2026-09-07.txt`.
+No main merge, deployment or IETF submission occurred.

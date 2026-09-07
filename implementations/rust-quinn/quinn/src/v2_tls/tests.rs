@@ -13,6 +13,7 @@ use std::{
 
 const HANDSHAKE: Duration = Duration::from_secs(5);
 
+mod alerts;
 mod resumption;
 
 #[derive(Debug)]
@@ -577,7 +578,7 @@ async fn unknown_tls_time_refuses_the_handshake_without_application_negotiation(
 }
 
 #[tokio::test]
-async fn clock_loss_during_tls_never_returns_an_application_peer() {
+async fn clock_loss_during_tls_uses_a_fatal_tls_close_without_an_application_peer() {
     #[derive(Debug)]
     struct LostClock(AtomicU64);
     impl TimeProvider for LostClock {
@@ -615,9 +616,23 @@ async fn clock_loss_during_tls_never_returns_an_application_peer() {
         .as_ref()
         .err()
         .expect("lost clock still created an application peer");
-    // Unlike invalid certificates, this is a local TLS-stack failure. Do not
-    // relabel every transport failure as a certificate CRYPTO_ERROR.
-    assert!(error.downcast_ref::<quinn::ConnectionError>().is_some());
+    let error = error.downcast_ref::<quinn::ConnectionError>().unwrap();
+    let expected =
+        quinn::TransportErrorCode::crypto(rustls::AlertDescription::HandshakeFailure.into());
+    assert!(
+        matches!(error, quinn::ConnectionError::TransportError(error) if error.code == expected),
+        "local TLS failure must use a fatal TLS close: {error:?}"
+    );
+    let close = match &exchange.client {
+        Ok(client) => tokio::time::timeout(HANDSHAKE, client.closed())
+            .await
+            .unwrap(),
+        Err(error) => error.clone(),
+    };
+    assert!(
+        matches!(&close, quinn::ConnectionError::ConnectionClosed(close) if close.error_code == expected),
+        "remote peer must observe the same TLS close: {close:?}"
+    );
     assert!(
         clock.0.load(Ordering::SeqCst) >= 2,
         "clock must fail after preflight"

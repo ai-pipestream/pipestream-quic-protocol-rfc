@@ -20,6 +20,8 @@ use std::{
 const MAX_CERTIFICATE_BYTES: usize = 65_535;
 const MAX_CERTIFICATES: usize = 16;
 
+mod alert_mapping;
+
 fn refusal(code: ErrorCode, detail: &'static str) -> Error {
     Error { code, detail }
 }
@@ -200,7 +202,9 @@ impl ServerSecurity {
             || Arc::new(DefaultTimeProvider) as Arc<dyn TimeProvider>,
             |policy| policy.clock.clone(),
         );
-        let config = quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls)?));
+        let config = quinn::ServerConfig::with_crypto(Arc::new(alert_mapping::Server::new(
+            QuicServerConfig::try_from(tls)?,
+        )));
         Ok(Self {
             config,
             authentication,
@@ -212,8 +216,9 @@ impl ServerSecurity {
     }
 
     /// Await a full handshake, never a 0.5-RTT server connection. Certificate
-    /// validation failures retain their TLS alerts/QUIC CRYPTO_ERRORs. Other
-    /// local TLS-stack failures propagate without producing an application peer.
+    /// validation failures retain their TLS alerts/QUIC CRYPTO_ERRORs. A local
+    /// TLS read failure without an alert uses fatal handshake_failure; neither
+    /// case produces an application peer. QUIC transport errors stay unchanged.
     /// The enclosing server must reserve a bounded connection slot first.
     pub async fn accept(&self, incoming: quinn::Incoming, timeout: Duration) -> Result<Peer> {
         if timeout.is_zero() || timeout > Duration::from_secs(30) {
@@ -313,7 +318,9 @@ pub fn client_configuration(
     tls.alpn_protocols = vec![ALPN.to_vec()];
     tls.resumption = rustls::client::Resumption::disabled();
     tls.enable_early_data = false;
-    let mut config = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls)?));
+    let mut config = quinn::ClientConfig::new(Arc::new(alert_mapping::Client::new(
+        QuicClientConfig::try_from(tls)?,
+    )));
     config.version(1);
     Ok(config)
 }

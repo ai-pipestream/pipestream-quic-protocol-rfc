@@ -755,9 +755,10 @@ or independent Java authentication evidence.
   and regressed time, recovery of safe time before credential expiry, and
   permanent refusal after expiry. Known missing time before TLS produces local
   CLOCK_UNSAFE and wire CONNECTION_REFUSED. Time lost during TLS never produces
-  an application peer, but the pinned stack currently reports PROTOCOL_VIOLATION
-  for that local failure. Correct categorization remains a follow-up, not proven
-  by failing closed. The first clock test exposed this distinction directly.
+  an application peer. At this checkpoint the pinned stack reported
+  PROTOCOL_VIOLATION for that local failure; the following alert-mapping
+  checkpoint fixes its categorization. The first clock test exposed this
+  distinction directly rather than treating failing closed as sufficient.
 - V2-AUTH/NEG: real clients reject incorrect DNS names, IP identities, trust roots
   and legacy ALPN. A Core-only server never fabricates a client principal when
   a configured client credential was not requested by TLS.
@@ -796,6 +797,36 @@ recursive/external examples. `./build.sh core 05` exited 0; the rendered
 implementation-status paragraph was inspected, and idnits reports zero
 errors/flaws/warnings plus the existing FIPS downref comment. The existing
 end-to-end pairs remain V1 regression evidence, not V2 interoperability proof.
+
+### Rust V2 local TLS error mapping, 2026-09-07
+
+The strengthened mid-handshake clock test first failed on the actual
+PROTOCOL_VIOLATION close. A private client/server adapter now maps only the
+pinned Quinn/rustls `read_handshake` alertless TLS error to fatal
+`handshake_failure` (QUIC 0x128), as allowed by
+[RFC 9001 Section 4.8](https://www.rfc-editor.org/rfc/rfc9001.html#section-4.8).
+It preserves existing TLS alerts and all other error codes, never parses error
+strings and never replaces unavailable time with stale time. There is no
+application negotiation after this failure. The same Quinn dependency version
+already in every lockfile is now explicitly pinned for this integration boundary.
+
+Nineteen TLS/security tests pass. Both client and server clock-failure tests
+check the local error and the peer-observed CONNECTION_CLOSE. A hostile real
+QUIC client sends a syntactically valid but incorrect initial source connection
+ID; its transport-parameter failure remains TRANSPORT_PARAMETER_ERROR, not a
+TLS error. A local exhaustive check preserves all 256 existing TLS alert codes.
+This closes the specific categorization follow-up above, not the complete V2
+authentication/dispatch, Java or resource acceptance families.
+
+Final validation: `./conformance/run_all.sh` exited 0 with 581 Rust workspace
+tests, six Rust-example tests, 193 Java tests in 20 fresh XML reports with no
+failures/errors/skips, frozen vectors/CDDL, all three bounded models,
+C++/CTest, nine existing interop pairs, 32 raw capability probes and all
+recursive/external examples. `./build.sh core 05` exited 0 with zero idnits
+errors/flaws/warnings and the existing FIPS comment. Captured red/green and
+regression results are in
+[`durable-work-v2-tls-alerts-2026-09-07.txt`](../../conformance/results/durable-work-v2-tls-alerts-2026-09-07.txt).
+Existing end-to-end pairs remain V1 evidence, not complete V2 interop.
 
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
