@@ -628,3 +628,59 @@ bounded models, C++ tests, all nine black-box pairs, all 32 raw QUIC capability
 probes and the external examples passed. Network interoperability still covers
 historical profiles, not the unfinished V2 endpoints. This checkpoint does not
 complete the goal, submit a draft, merge main or deploy a server.
+
+### Task 2 implementation progress: input preparation and funded record growth
+
+The admission path needed to expand a declaration's 2048-byte work-view slot to
+represent its future manifest. Record growth now preserves the exact validated
+body and observable revision, retains existing credits, and protects credits at
+the expanded WAL write cost before allocating pages. Capacity/credits cannot be
+shrunk by this API. A savepoint restores the old initialized record if the SQL
+resize succeeds but the subsequent BLOB initialization fails. Other records'
+promises remain protected. No storage or wire format change was required.
+
+`AuthorityStore::prepare_input` now combines an opaque validated input with its
+durable output reservation and expanded work-view capacity. Filesystem I/O runs
+outside the SQLite writer transaction; the final writer repeats input preflight,
+checks the exact database-bound root, and checks current authorization again
+before commit. Preparation issues no operation receipt, leaves work DECLARED at
+the same revision, and confers no execution permission. Late refusal rolls back
+metadata; unreferenced payloads stay charged until reference-safe collection.
+Expanded metadata belongs to the declared record until later retirement, rather
+than being silently released when a preparatory handle is dropped.
+
+New evidence covers unchanged work/revision under repeated preparation, live
+input/output pins, exact-root substitution refusal despite a matching store ID,
+changed application/limits/scope fences, final authorization denial and unsafe
+time. Record tests cover preservation of other credits, additional-credit
+funding, stale revisions, overflow, corrupt source, refusal after a real SQL
+resize, SQLite page exhaustion and four process-death points. The pinned-WAL
+test now exercises an expanded record and refused further growth before spending
+both records' existing credits. A separate representation test encodes 0/1/256
+manifest outputs with large fields; it does not claim an admitted or completed
+job. The focused authority run passes 70 tests, and strict workspace clippy passes.
+In that focused run, 50 ordinary commits filled the protected WAL ceiling at
+622176 bytes; refused growth preserved both promises, and their four reserved
+rewrites finished at 667472 bytes under the 1048576-byte cap with database growth
+disabled. These are record-level measurements, not complete job-transition costs.
+
+The next required work remains the atomic admission/job/receipt transaction with
+executor and complete metadata/clock/closure funding. Then durable worker leases,
+attempt/cancellation/deadline settlement, manifest/read/dependency retention,
+independent Java V2 and real cross-language failure testing are still required.
+The external workload and equivalent streaming-gRPC baseline remain in scope.
+Neither these preparations nor the historical interop suite complete the goal.
+
+Local evidence logs:
+
+- `/tmp/pipestream-admission-preparation-records.log`
+- `/tmp/pipestream-admission-preparation-authority.log`
+- `/tmp/pipestream-admission-preparation-clippy.log`
+- `/tmp/pipestream-admission-preparation-suite.log`
+
+Final verification: `./conformance/run_all.sh` exited 0. The Rust workspace
+passed 431 tests; 20 Java Surefire reports contain 193 tests with zero failures,
+errors or skips. Formatting, strict clippy, frozen vectors, bounded models, C++
+tests, nine black-box pairs, 32 raw capability probes and the external examples
+passed. The network tests remain historical-profile evidence, not V2 conformance.
+No main merge, server deployment or Internet-Draft submission occurred.

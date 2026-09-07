@@ -975,6 +975,9 @@ pub struct InstalledPayload {
     input: Input,
 }
 impl InstalledPayload {
+    pub(super) fn store(&self) -> &PayloadStore {
+        &self.store
+    }
     pub fn key(&self) -> &str {
         &self.key
     }

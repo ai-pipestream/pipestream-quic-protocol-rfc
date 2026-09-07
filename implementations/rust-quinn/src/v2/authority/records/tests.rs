@@ -261,6 +261,11 @@ fn pinned_wal_exhaustion_preserves_both_records_promised_rewrites() {
         work_slot(&fixture.store, binding.identity.generation, Id(2)),
     ];
     let mut writer = fixture.store.connect().unwrap();
+    let mut tx = writer
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
+    grow(&mut tx, targets[0], Id(1), 16384, WORK_CREDITS).unwrap();
+    tx.commit().unwrap();
     // A test-only ordinary record supplies unrelated pressure, through the
     // same protected transaction and VFS as real authority metadata writers.
     writer
@@ -307,6 +312,18 @@ fn pinned_wal_exhaustion_preserves_both_records_promised_rewrites() {
         accepted > 0 && refused,
         "ordinary writes must reach the protected ceiling"
     );
+    let mut tx = writer
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
+    assert!(matches!(
+        grow(&mut tx, targets[1], Id(1), MAX_CONTROL_LIMIT, WORK_CREDITS),
+        Err(StoreError::Protocol(Error {
+            code: ErrorCode::LimitExceeded,
+            ..
+        }))
+    ));
+    assert_eq!(header(&tx, targets[1]).unwrap().capacity, WORK_CAPACITY);
+    tx.rollback().unwrap();
     let pages: u64 = writer
         .query_row("PRAGMA page_count", [], |r| number(r, 0))
         .unwrap();
@@ -455,6 +472,167 @@ fn record_rewrite_cost_bound_covers_page_sizes_padding_and_spilling() {
     }
 }
 
+#[test]
+fn growth_preserves_exact_body_revision_and_other_records_across_restart() {
+    let (fixture, binding, target) = declared();
+    fixture
+        .store
+        .declare(
+            &binding.identity,
+            OperationId([2; 16]),
+            Number(0),
+            &[Id(2)],
+            false,
+        )
+        .unwrap();
+    let other = work_slot(&fixture.store, binding.identity.generation, Id(2));
+    let mut reader = fixture.store.connect().unwrap();
+    let snapshot = reader.transaction().unwrap();
+    let (old, expected): (_, WorkView) = read(&snapshot, target).unwrap();
+    let mut writer = fixture.store.connect().unwrap();
+    let mut tx = writer
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
+    let capacity = super::super::ingress::response_capacity(BatchCount(256)).unwrap() as usize;
+    grow(&mut tx, target, Id(1), capacity, 4).unwrap();
+    // Identical preparation consumes neither another revision nor another credit.
+    grow(&mut tx, target, Id(1), capacity, 4).unwrap();
+    let (funded, actual): (_, WorkView) = read(&tx, target).unwrap();
+    assert_eq!(actual, expected);
+    assert_eq!(
+        (funded.revision, funded.capacity, funded.credits),
+        (old.revision, capacity, 4)
+    );
+    assert_eq!(header(&tx, other).unwrap().capacity, WORK_CAPACITY);
+    assert_eq!(header(&tx, other).unwrap().credits, WORK_CREDITS);
+    tx.commit().unwrap();
+    assert_eq!(header(&snapshot, target).unwrap().capacity, WORK_CAPACITY);
+    drop(snapshot);
+    let reopened = reopen(&fixture.directory.path().join("authority.sqlite"));
+    let connection = reopened.connect().unwrap();
+    let (retained, actual): (_, WorkView) = read(&connection, target).unwrap();
+    assert_eq!(actual, expected);
+    assert_eq!(
+        (retained.revision, retained.capacity, retained.credits),
+        (Id(1), capacity, 4)
+    );
+    reopened.integrity_check().unwrap();
+}
+
+#[test]
+fn growth_refuses_stale_revision_released_promises_overflow_and_corrupt_source() {
+    let (fixture, _, target) = declared();
+    let mut connection = fixture.store.connect().unwrap();
+    let mut tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
+    for (revision, capacity, credits, code) in [
+        (Id(2), 4096, 2, ErrorCode::Conflict),
+        (Id(1), WORK_CAPACITY - 1, 2, ErrorCode::LimitExceeded),
+        (Id(1), 4096, 1, ErrorCode::LimitExceeded),
+        (Id(1), MAX_CONTROL_LIMIT + 1, 2, ErrorCode::LimitExceeded),
+        (Id(1), 4096, MAX_NUMBER, ErrorCode::LimitExceeded),
+    ] {
+        let result = grow(&mut tx, target, revision, capacity, credits);
+        assert!(
+            matches!(result, Err(StoreError::Protocol(Error {code: actual, ..})) if actual == code)
+        );
+        let retained = header(&tx, target).unwrap();
+        assert_eq!(
+            (retained.revision, retained.capacity, retained.credits),
+            (Id(1), WORK_CAPACITY, WORK_CREDITS)
+        );
+    }
+    let mut blob = tx
+        .blob_open("main", "work", "view", target.row, false)
+        .unwrap();
+    blob.write_at(&[0xff], HEADER_BYTES).unwrap();
+    blob.close().unwrap();
+    assert!(matches!(
+        grow(&mut tx, target, Id(1), 4096, 2),
+        Err(StoreError::Corrupt(_))
+    ));
+    tx.rollback().unwrap();
+    fixture.store.integrity_check().unwrap();
+}
+
+#[test]
+fn failed_growth_after_resize_restores_the_original_record_even_if_caller_commits() {
+    let (fixture, _, target) = declared();
+    let mut connection = fixture.store.connect().unwrap();
+    // The SQL resize succeeds, then this test-only trigger changes its length.
+    // The subsequent BLOB initialization fails. The API must roll back both.
+    connection.execute_batch("CREATE TEMP TRIGGER disrupt_growth AFTER UPDATE OF view ON main.work BEGIN UPDATE work SET view=zeroblob(105) WHERE rowid=NEW.rowid; END").unwrap();
+    let mut tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
+    let (_, before): (_, WorkView) = read(&tx, target).unwrap();
+    assert!(matches!(
+        grow(&mut tx, target, Id(1), 16384, 4),
+        Err(StoreError::Corrupt(_))
+    ));
+    let (retained, after): (_, WorkView) = read(&tx, target).unwrap();
+    assert_eq!(after, before);
+    assert_eq!(
+        (retained.revision, retained.capacity, retained.credits),
+        (Id(1), WORK_CAPACITY, WORK_CREDITS)
+    );
+    tx.commit().unwrap();
+    connection
+        .execute_batch("DROP TRIGGER disrupt_growth")
+        .unwrap();
+    let mut tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
+    grow(&mut tx, target, Id(1), 16384, 4).unwrap();
+    tx.commit().unwrap();
+    fixture.store.integrity_check().unwrap();
+}
+
+#[test]
+fn physical_growth_exhaustion_keeps_the_prior_committed_reservation() {
+    let (fixture, _, target) = declared();
+    let mut connection = fixture.store.connect().unwrap();
+    let pages: u64 = connection
+        .query_row("PRAGMA page_count", [], |r| number(r, 0))
+        .unwrap();
+    connection
+        .pragma_update(None, "max_page_count", sql(pages).unwrap())
+        .unwrap();
+    let mut tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
+    let result = grow(&mut tx, target, Id(1), MAX_CONTROL_LIMIT, 4);
+    assert!(
+        matches!(
+            result,
+            Err(StoreError::Protocol(Error {
+                code: ErrorCode::LimitExceeded,
+                ..
+            }))
+        ),
+        "{result:?}"
+    );
+    drop(tx); // SQLite may have rolled back the outer transaction on SQLITE_FULL.
+    let connection = fixture.store.connect().unwrap();
+    let retained = header(&connection, target).unwrap();
+    assert_eq!(
+        (retained.revision, retained.capacity, retained.credits),
+        (Id(1), WORK_CAPACITY, WORK_CREDITS)
+    );
+    fixture.store.integrity_check().unwrap();
+}
+
+pub(super) fn growth_crash_point(point: &str) {
+    if std::env::var("PIPESTREAM_RECORD_TEST_CRASH")
+        .ok()
+        .as_deref()
+        == Some(&format!("grow-{point}"))
+    {
+        std::process::exit(87);
+    }
+}
+
 struct FixedClock;
 impl Clock for FixedClock {
     fn read(&self) -> ClockReading {
@@ -523,10 +701,17 @@ fn record_crash_child() {
     let store = reopen(&path);
     let target = work_slot(&store, Id(1), Id(1));
     let mut connection = store.connect().unwrap();
-    let tx = connection
+    let mut tx = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .unwrap();
     let (header, view): (_, WorkView) = read(&tx, target).unwrap();
+    if boundary.starts_with("grow-") {
+        grow(&mut tx, target, header.revision, 16384, 4).unwrap();
+        growth_crash_point("before-commit");
+        tx.commit().unwrap();
+        growth_crash_point("after-commit");
+        panic!("growth crash boundary not reached");
+    }
     replace(&tx, target, header.revision, &view, true).unwrap();
     if boundary == "before" {
         std::process::exit(87);
@@ -565,6 +750,44 @@ fn crash_brackets_credit_spending_and_reopen_reconstructs_remaining_funding() {
         protect(&tx, 0, 0).unwrap();
         replace(&tx, target, retained.revision, &view, true).unwrap();
         tx.commit().unwrap();
+        store.integrity_check().unwrap();
+    }
+}
+
+#[test]
+fn crash_during_growth_never_exposes_a_half_initialized_or_unfunded_record() {
+    for boundary in [
+        "grow-resized",
+        "grow-written",
+        "grow-before-commit",
+        "grow-after-commit",
+    ] {
+        let (fixture, _, target) = declared();
+        let path = fixture.directory.path().join("authority.sqlite");
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "v2::authority::records::tests::record_crash_child",
+                "--nocapture",
+            ])
+            .env("PIPESTREAM_RECORD_TEST_CRASH", boundary)
+            .env("PIPESTREAM_RECORD_TEST_PATH", &path)
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(87), "{boundary}");
+        let store = reopen(&path);
+        let connection = store.connect().unwrap();
+        let (retained, view): (_, WorkView) = read(&connection, target).unwrap();
+        assert_eq!((retained.revision, view.state), (Id(1), State::DECLARED));
+        assert_eq!(
+            (retained.capacity, retained.credits),
+            if boundary == "grow-after-commit" {
+                (16384, 4)
+            } else {
+                (WORK_CAPACITY, WORK_CREDITS)
+            },
+            "{boundary}"
+        );
         store.integrity_check().unwrap();
     }
 }

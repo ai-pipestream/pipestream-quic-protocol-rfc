@@ -38,7 +38,9 @@ immutable installation, header preflight and reference-safe orphan collection ar
 now present as well. Work views and scope summaries have preallocated storage
 and persistent fixed-record rewrite credits. Durable output reservations and
 bounded unknown-length output materialization now preserve promised file capacity
-across restart. Funded admission, execution, results and retention cleanup
+across restart. Input preparation now joins that output reservation with
+transaction-safe expansion of the work-view record, without accepting a job.
+Funded admission, execution, results and retention cleanup
 remain to be implemented for that authority. The
 [V2 acceptance ledger](docs/standards/durable-work-v2-test-plan.md) keeps Java,
 authenticated transport, storage, execution and process-level evidence open.

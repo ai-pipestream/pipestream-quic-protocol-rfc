@@ -102,7 +102,7 @@ fn parse(target: Target, length: u64, bytes: &[u8]) -> Result<Header> {
     })
 }
 
-pub(super) fn header(tx: &Transaction<'_>, target: Target) -> Result<Header> {
+pub(super) fn header(tx: &Connection, target: Target) -> Result<Header> {
     let blob = tx.blob_open(
         "main",
         target.table.name(),
@@ -118,7 +118,7 @@ pub(super) fn header(tx: &Transaction<'_>, target: Target) -> Result<Header> {
     parse(target, blob.len() as u64, &bytes)
 }
 
-pub(super) fn read<T: Wire>(tx: &Transaction<'_>, target: Target) -> Result<(Header, T)> {
+fn read_bytes(tx: &Connection, target: Target) -> Result<(Header, Vec<u8>)> {
     let retained = header(tx, target)?;
     let blob = tx.blob_open(
         "main",
@@ -144,6 +144,11 @@ pub(super) fn read<T: Wire>(tx: &Transaction<'_>, target: Target) -> Result<(Hea
             "authority record body checksum changed",
         ));
     }
+    Ok((retained, bytes))
+}
+
+pub(super) fn read<T: Wire>(tx: &Connection, target: Target) -> Result<(Header, T)> {
+    let (retained, bytes) = read_bytes(tx, target)?;
     Ok((retained, unpack(&bytes)?))
 }
 
@@ -180,7 +185,7 @@ fn physical_error(error: crate::persistence::StoreError) -> StoreError {
     }
 }
 
-fn audit(tx: &Transaction<'_>, page: u64, replacement: Option<(Target, u64)>) -> Result<u64> {
+fn audit(tx: &Connection, page: u64, replacement: Option<(Target, usize, u64)>) -> Result<u64> {
     let mut reserved = 0u64;
     let mut replaced = replacement.is_none();
     for table in [Table::Work, Table::Scope] {
@@ -192,16 +197,18 @@ fn audit(tx: &Transaction<'_>, page: u64, replacement: Option<(Target, u64)>) ->
                 row: row.get(0)?,
             };
             let retained = parse(target, number(row, 1)?, &row.get::<_, Vec<u8>>(2)?)?;
-            let credits = if let Some((_, credits)) = replacement.filter(|(t, _)| *t == target) {
+            let (capacity, credits) = if let Some((_, capacity, credits)) =
+                replacement.filter(|(t, _, _)| *t == target)
+            {
                 replaced = true;
-                credits
+                (capacity, credits)
             } else {
-                retained.credits
+                (retained.capacity, retained.credits)
             };
             reserved = reserved
                 .checked_add(
                     credits
-                        .checked_mul(rewrite_bytes(retained.capacity, page)?)
+                        .checked_mul(rewrite_bytes(capacity, page)?)
                         .ok_or_else(exhausted)?,
                 )
                 .ok_or_else(exhausted)?;
@@ -287,9 +294,20 @@ pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
 }
 
 fn write<T: Wire>(
-    tx: &Transaction<'_>,
+    tx: &Connection,
     target: Target,
     value: &T,
+    revision: Id,
+    capacity: usize,
+    credits: u64,
+) -> Result<()> {
+    write_encoded(tx, target, &pack(value)?, revision, capacity, credits)
+}
+
+fn write_encoded(
+    tx: &Connection,
+    target: Target,
+    encoded: &[u8],
     revision: Id,
     capacity: usize,
     credits: u64,
@@ -302,8 +320,7 @@ fn write<T: Wire>(
     {
         return Err(exhausted());
     }
-    let encoded = pack(value)?;
-    if encoded.len() > capacity {
+    if encoded.is_empty() || encoded.len() > capacity {
         return Err(exhausted());
     }
     let mut bytes = [0; HEADER_BYTES];
@@ -312,7 +329,7 @@ fn write<T: Wire>(
     bytes[16..24].copy_from_slice(&credits.to_be_bytes());
     bytes[24..32].copy_from_slice(&(encoded.len() as u64).to_be_bytes());
     bytes[32..40].copy_from_slice(&(capacity as u64).to_be_bytes());
-    bytes[40..72].copy_from_slice(&Sha256::digest(&encoded));
+    bytes[40..72].copy_from_slice(&Sha256::digest(encoded));
     let digest = checksum(target, &bytes[..72]);
     bytes[72..].copy_from_slice(&digest);
     let mut blob = tx.blob_open(
@@ -326,7 +343,7 @@ fn write<T: Wire>(
         return Err(StoreError::Corrupt("authority slot capacity changed"));
     }
     blob.write_at(&bytes, 0)?;
-    blob.write_at(&encoded, HEADER_BYTES)?;
+    blob.write_at(encoded, HEADER_BYTES)?;
     let zeros = [0; 8192];
     let mut offset = encoded.len();
     while offset < capacity {
@@ -382,10 +399,75 @@ pub(super) fn replace<T: Wire>(
         return Err(exhausted());
     }
     let page = crate::persistence::completion_geometry(tx).map_err(physical_error)?;
-    let reserved = audit(tx, page, Some((target, credits)))?;
+    let reserved = audit(tx, page, Some((target, retained.capacity, credits)))?;
     crate::persistence::reserve_completion(tx, page, reserved).map_err(physical_error)?;
     write(tx, target, value, revision, retained.capacity, credits)?;
     Ok(revision)
+}
+
+/// Expand a retained slot before accepting a larger promise. This is private
+/// funding, not an observable work change: preserve the exact body and revision.
+/// Existing capacity/credits cannot be taken away. The expanded credits are
+/// protected before allocating pages, and the old record survives any refusal.
+pub(super) fn grow(
+    tx: &mut Transaction<'_>,
+    target: Target,
+    expected: Id,
+    capacity: usize,
+    credits: u64,
+) -> Result<()> {
+    let (retained, bytes) = read_bytes(tx, target)?;
+    match target.table {
+        Table::Work => {
+            unpack::<WorkView>(&bytes)?;
+        }
+        Table::Scope => {
+            unpack::<Option<ScopeSummary>>(&bytes)?;
+        }
+    }
+    if retained.revision != expected {
+        return Err(protocol(
+            ErrorCode::Conflict,
+            "authority record revision changed",
+        ));
+    }
+    if capacity < retained.capacity
+        || capacity > MAX_CONTROL_LIMIT
+        || credits < retained.credits
+        || credits > MAX_NUMBER
+        || expected.0 > MAX_NUMBER - credits
+    {
+        return Err(exhausted());
+    }
+    // Validate the writer even for a no-op; no caller may treat a stale read
+    // snapshot as a reservation accepted under the authority writer lock.
+    let page = crate::persistence::completion_geometry(tx).map_err(physical_error)?;
+    if (capacity, credits) == (retained.capacity, retained.credits) {
+        return Ok(());
+    }
+    let reserved = audit(tx, page, Some((target, capacity, credits)))?;
+    crate::persistence::reserve_completion(tx, page, reserved).map_err(physical_error)?;
+    let savepoint = tx.savepoint()?;
+    if capacity != retained.capacity {
+        let statement = match target.table {
+            Table::Work => "UPDATE work SET view=zeroblob(?1) WHERE rowid=?2",
+            Table::Scope => "UPDATE scopes SET summary=zeroblob(?1) WHERE rowid=?2",
+        };
+        if savepoint.execute(
+            statement,
+            params![(HEADER_BYTES + capacity) as i64, target.row],
+        )? != 1
+        {
+            return Err(StoreError::Corrupt("authority growth target disappeared"));
+        }
+        #[cfg(test)]
+        tests::growth_crash_point("resized");
+    }
+    write_encoded(&savepoint, target, &bytes, expected, capacity, credits)?;
+    #[cfg(test)]
+    tests::growth_crash_point("written");
+    savepoint.commit()?;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -113,6 +113,22 @@ storage evidence only: it does not change DECLARED work, schedule a job or permi
 an admission acknowledgment. The committing transaction must revalidate authority
 and reserve every execution/publication/retention resource before admission.
 
+`AuthorityStore::prepare_input` combines validated input with a durable output
+reservation and expands its work-view record to the conservative promised
+response size. Filesystem installation occurs outside the metadata writer;
+membership, application, limits, exact bound payload root and authorization are
+rechecked before private funding commits. Preparation preserves DECLARED and its
+revision and creates no operation receipt or job. Dropped/failed preparations
+leave charged, reference-safe payload orphans. Expanded metadata remains charged
+to its declared work until later retirement; it is not an untracked staging file.
+
+Record expansion preserves exact typed contents and existing credits, reserves
+the larger future WAL write cost before allocating pages, and uses a savepoint
+so a failed resize cannot leave an uninitialized record. It can add credits but
+cannot reduce existing capacity or credits. Process-crash, full-page/full-WAL,
+stale-revision and rollback tests cover this path. These guarantees concern the
+work-view record, not the complete job/receipt/clock/closure write set.
+
 Funded admission/jobs, workers, cancellation settlement, nonempty closure,
 results/read leases, retention expiry and session retirement remain unfinished.
 Physical file caps and staging reservations alone do not reserve future

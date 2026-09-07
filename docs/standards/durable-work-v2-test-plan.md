@@ -135,7 +135,7 @@ Durable output-capacity evidence is recorded separately below.
 
 ### Rust fixed-record funding evidence
 
-`src/v2/authority/records/tests.rs` has 11 tests, including its subprocess entry.
+`src/v2/authority/records/tests.rs` has 16 tests, including its subprocess entry.
 This is persistent storage implementation used by declarations and empty scope
 closure, not evidence that the entire admission/job transaction is funded.
 
@@ -197,6 +197,38 @@ admission/job/receipt transaction and protocol-level result publication remain o
 Executor capacity, complete metadata/journal funding, worker leases, authenticated
 manifest publication/read leases, dependency retention, session retirement,
 independent Java V2 and both cross-language failure directions remain required.
+
+### Rust admission-preparation evidence
+
+`AuthorityStore::prepare_input` is executable storage preparation, not admission.
+It retains the validated input/output pins and funds a larger work-view record
+without changing DECLARED, its revision, or operation history. The complete job
+transaction remains unimplemented; this API must not trigger an admission ACK.
+
+- V2-ADMIT/V2-STORE: preparation checks the exact database-bound payload root,
+  not merely its store identity. Application, response limits, scope fences,
+  current authorization and trusted clock are rechecked. A denial at the final
+  authorization check rolls back record expansion; installed orphans remain
+  charged until safe collection. Repeated preparation preserves the work view.
+- V2-STORE: expansion preserves exact typed contents, revision and prior credits;
+  larger credit costs are protected before page allocation. A real trigger-induced
+  failure after resizing rolls back even if the caller commits its outer
+  transaction. Corrupt source, shrinking promises, counter exhaustion and stale
+  revisions are refused. Four process exits bracket resize, initialization and
+  the outer commit; restart never sees a partially initialized record.
+- V2-STORE: real SQLite page exhaustion refuses growth without changing the prior
+  committed record. The pinned-reader WAL test now grows one work record before
+  filling ordinary capacity, refuses another enlargement, then successfully spends
+  both records' promised rewrites without database growth. The 18 page/capacity
+  rewrite-bound cases continue to run.
+- V2-ADMIT/V2-RESULT (representation only): sizing checks encode 0, 1 and 256
+  outputs with maximum labels/numeric fields and a maximum-length DNS host. They
+  fit the conservative response reservation. No result is published by this test.
+
+Preparation does not fund executor slots or the complete metadata transition,
+install jobs, grant worker leases, publish manifests or implement retention.
+Private expanded work-view capacity remains charged to declared work. Neither
+V2 endpoint nor cross-language conformance follows from this checkpoint.
 
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
