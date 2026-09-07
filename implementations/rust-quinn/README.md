@@ -63,7 +63,7 @@ reclaims abandoned stages only under exclusive ownership; installed orphans
 remain charged until the authority's reference-safe collector removes them.
 Live installed/read handles remain pinned against collection. The database
 retains a local random store identity and a once-bound canonical payload path.
-Internal authority storage is now format 5; payload roots remain format 4.
+Internal authority storage is now format 6; payload roots remain format 4.
 Prior authority formats are refused, not silently converted or replaced.
 This changes no wire schema or frozen vector.
 
@@ -88,8 +88,9 @@ verifies record bodies, padding, relational identities and timestamps against th
 shared clock, and reconstructs journal funding.
 The cost bound is specific to bundled SQLite 3.53.2 and its checked page/sector
 geometry. These credits fund their stated paired rewrites, not arbitrary
-additional SQL or the entire admission/execution/closure transaction. Jobs,
-receipts and every other lifecycle write still require complete funding.
+additional SQL. Admission now allocates work/job credits atomically with its
+receipt. The complete execution/closure/retirement write sets and their resource
+tests are still required; record credits alone do not prove those APIs correct.
 
 `PayloadStore::reserve_outputs` durably reserves the maximum output count/bytes
 before metadata admission. The immutable reservation file remains charged across
@@ -106,8 +107,11 @@ no length/hash placeholder can become an installed output. Fixed-size header
 slots avoid moving the body when its descriptor becomes known. Each output slot
 is unique within its reservation. Live reservation pins preserve uncommitted
 outputs while allowing sequential production of all 256 slots with two handles.
-Garbage collection also respects SQLite references and retains a funding record
-while any of its output objects remains. It does not implement retention expiry.
+Garbage collection also respects SQLite references: a committed live reservation
+pins its installed outputs even after all process handles are gone. It retains a
+funding record while any of its output objects remains. Reclaiming unpublished
+outputs for a replacement worker requires a separate lease-fenced operation;
+the orphan collector does not implement that or retention expiry.
 
 Startup rebuilds owner totals and output occupancy, rejects missing/corrupt or
 contradictory funding, and syncs the directory before using reconstructed capacity.
@@ -132,6 +136,26 @@ rechecked before private funding commits. Preparation preserves DECLARED and its
 revision and creates no operation receipt or job. Dropped/failed preparations
 leave charged, reference-safe payload orphans. Expanded metadata remains charged
 to its declared work until later retirement; it is not an untracked staging file.
+
+`AuthorityStore::admit_input` consumes that opaque preparation and repeats current
+authorization, scope/operation/application/limit and payload-root checks under the
+SQLite writer. It commits input and reservation references, attempt 1, exact
+timestamps, one child for either branch mode, a fixed 2048-byte job record and
+the immutable admission receipt together. It invokes no callback. Duplicate
+prepared inputs serialize to the same receipt, not two jobs. A pre-commit refusal
+leaves work DECLARED; post-commit process death leaves replayable admission and
+real reopenable input/reservation files.
+
+The retained policy bounds global and per-owner accepted jobs as well as session
+jobs and retained input/output bytes. Waiting branches consume executor capacity;
+this is an accepted-job limit, not a count of running threads. Job liveness flags
+and four rewrite credits per job/work record provide storage for subsequent branch,
+fence, settlement and release transitions. Quota reconciliation streams these
+records instead of caching a whole-session image. Reopen validates job/work,
+child, payload-reference and admission-receipt consistency. No worker lease,
+callback dispatcher, explicit retry, nonempty closure, result publication/read
+or retention API is implemented by this admission checkpoint. Their full write
+sets and failure/resource gates remain open before any V2 profile activation.
 
 Record expansion preserves exact typed contents and existing credits, reserves
 the larger future WAL write cost before allocating pages, and uses a savepoint

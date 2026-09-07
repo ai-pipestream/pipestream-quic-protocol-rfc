@@ -885,7 +885,7 @@ fn shared_clock_counter_preserves_every_promised_record_observation() {
                 let (old, state): (_, scopes::ScopeState) = read(&tx, target).unwrap();
                 replace(&tx, target, old.revision, &state, true).unwrap();
             }
-            Table::Clock => unreachable!(),
+            Table::Clock | Table::Job => unreachable!(),
         }
         let clock = header(&tx, CLOCK).unwrap();
         let revision = replace(

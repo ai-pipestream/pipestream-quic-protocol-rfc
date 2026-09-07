@@ -748,3 +748,73 @@ frozen vectors, bounded models, C++ tests, all nine black-box pairs, 32 raw QUIC
 capability probes and the external examples passed. Those network tests still
 exercise historical profiles, not the unfinished V2 authority. No main merge,
 server deployment or Internet-Draft submission occurred.
+
+### Task 2 implementation progress: atomic external admission
+
+`AuthorityStore::admit_input` now consumes a real prepared input and commits
+its input/output-reservation references, immutable admission receipt, attempt 1,
+timestamps, child scope and fixed job record under one SQLite writer transaction.
+All three modes retain the correct child ownership; only caller-expanded branches
+start WAITING_CHILDREN. The API never invokes a callback or advertises a profile.
+Preparation alone remains unadmitted and produces no receipt.
+
+Authority format 6 adds a checksummed 2048-byte job slot and global/per-owner
+accepted-job limits. Payload format 4 and the normative wire are unchanged.
+Admission allocates four rewrite credits in each job and admitted work record
+and checks the whole current
+insertion transaction against the guarded journal; future lifecycle transitions
+must still prove their complete write sets fit the reserved allowances. The job
+retains immutable application/input/output parameters, safe-restart classification,
+attempt and lease fields, and input/output/executor liveness. Capacity is derived
+from retained records, including waiting branches and separate sessions, rather
+than a volatile thread count. Session input/output/job, operation, scope and
+largest-response/object requirements are checked in the committing transaction.
+
+The 13 admission tests include concurrent identical preparations, changed replay,
+all three child modes, exact timestamps above 2^53, replay with an unsafe clock,
+cross-session owner/global budgets, every session budget, and late authorization
+rollback. Actual child-process death on both sides of the admission commit
+distinguishes no accepted operation from a replayable lost-ACK receipt. Restart
+opens and verifies the real input bytes and reopens the actual output reservation;
+it does not fabricate a completed callback or result manifest.
+
+A negative-first test found that an installed output could be collected after
+its process handles disappeared despite its committed reservation. Collection now
+honors the reservation's durable liveness too. Its former test expectation was
+changed explicitly: orphan collection cannot recycle a retained worker's output
+slots. Replacement-worker cleanup needs an attempt/lease-fenced operation that
+preserves live handles and charged bytes; it is not implemented here.
+
+The pinned-journal admission test committed 284 unrelated bounded test writes,
+then refused admission at WAL 3670976 bytes under a 4194304-byte limit, with DB
+73728 under 131072. Existing declaration receipts remain readable, work remains
+DECLARED, and no partial job, child, reference or receipt survives. Reopen also
+rejects missing/changed job, input-reference, admission-receipt, parameter and
+stage evidence. The maximum typed job record fits its reserved slot. These are
+storage/API gates, not complete lifecycle, physical-power-loss, V2 QUIC or gRPC
+performance evidence.
+
+Focused authority verification passes 90 tests and strict workspace clippy.
+Local logs:
+
+- `/tmp/pipestream-admission-initial.log` (deliberate pre-fix collection failure)
+- `/tmp/pipestream-admission-authority.log`
+- `/tmp/pipestream-admission-clippy.log`
+- `/tmp/pipestream-admission-suite.log`
+
+Next is the real worker lifecycle: register executable application callbacks,
+claim/recover durable leases without changing the wire attempt, fence old workers,
+and implement publication, explicit retry and terminal/deadline/cancellation
+settlement with complete transaction cost tests. Local producer-1 admission and
+descendant generation must use the same validation/funding rules. Nonempty closure,
+result/read/dependency retention and retirement remain open. Independent Java V2,
+neutral cross-language failures and the equivalent streaming-gRPC workload remain
+required by the unchanged goal. This checkpoint does not complete Task 2.
+
+Final verification: `./conformance/run_all.sh` exited 0. The Rust workspace
+passed 451 tests and the two Rust examples passed another six. Java's 20 Surefire
+reports contain 193 tests with zero failures, errors or skips. Formatting, strict
+clippy, frozen vectors, bounded models, C++ tests, all nine black-box language
+pairs, 32 raw QUIC capability probes and the external examples passed. Network
+interop still exercises historical profiles, not V2 execution. No main merge,
+deployment or Internet-Draft submission occurred.

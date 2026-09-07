@@ -90,7 +90,7 @@ pass together with the 17 wire-library tests.
   exercises 128 KiB DB/journal, 4 MiB WAL and 64 KiB SHM caps; committed evidence
   remains readable/replayable after refusal and reopen. This measures file
   lengths, not allocated blocks. The WAL cap now funds record rewrite credits;
-  the database cap still refuses a later declaration after a committed batch.
+  bounded storage refuses a later declaration after a committed batch.
 - Reopen/initialization tests prevent accidental empty-store creation during
   recovery. Exact large-integer tests include values above 2^53 and the maximum
   signed-63-bit entity ID. No JSON or floating-point persistence is used.
@@ -98,9 +98,9 @@ pass together with the 17 wire-library tests.
   failed before the fix and now checks overflow refusal without a committed seal
   or operation, plus acceptance at the exact maximum representable deadline.
 
-The full cross-language gates below remain open. Funded payload admission,
-workers/leases/cancellation, nonempty closure, results/read pins, retirement and
-cleanup are the next authority implementation work, not implied by these tests.
+The full cross-language gates below remain open. Admission evidence added after
+this initial checkpoint is recorded below. Workers/leases/cancellation, nonempty
+closure, results/read pins, retirement and cleanup are not implied by these tests.
 
 ### Rust payload/ingress evidence
 
@@ -128,9 +128,9 @@ entry point; `ingress.rs` adds three header/reception tests. Their scope is:
   RSS/HWM. This is neither an end-to-end benchmark nor proof of all process-memory
   bounds or populated-inventory scaling.
 
-Funded admission, durable jobs, complete metadata-transition reservations and
-retirement remain unimplemented. Temporary reception quotas and object-reference
-cleanup do not substitute for those gates or for either cross-language direction.
+Temporary reception quotas and object-reference cleanup do not substitute for
+admission or either cross-language direction. Subsequent admission evidence is
+recorded below; complete lifecycle transitions and retirement remain open.
 Durable output-capacity evidence is recorded separately below.
 
 ### Rust fixed-record funding evidence
@@ -159,9 +159,9 @@ closure, not evidence that the entire admission/job transaction is funded.
   successor. Header, body, padding and cross-row corruption fail closed; startup
   rejects corrupt bodies even when their charge headers remain intact.
 
-Global/per-owner job budgets, every other mutable record in a complete transition,
-dependency/read pins, metadata retirement and cross-language V2 failure tests
-remain required. These record-level credits do not close those gates. Output-file
+Complete lifecycle write sets, dependency/read pins, metadata retirement and
+cross-language V2 failure tests remain required. These record-level credits do
+not close those gates. Global/per-owner job-budget evidence is below. Output-file
 budgets are covered by the reservation implementation below.
 
 ### Shared-clock and complete scope-record evidence
@@ -184,15 +184,15 @@ The payload-root format and normative wire representation are unchanged.
   another owner's corrupt binding or scope. Both cases now return UNAUTHORIZED,
   not a storage-corruption diagnostic from the other owner's retained state.
 
-Complete job/receipt admission, durable lease/execution/publication transitions,
-cancellation settlement, retention and Java V2 remain open. Paired-record funding
-does not claim arbitrary SQL writes or whole-job costs are reserved.
+Paired-record funding does not claim arbitrary SQL writes or whole-job costs
+are reserved. Admission evidence is below; durable lease/execution/publication
+transitions, cancellation settlement, retention and Java V2 remain open.
 
 ### Rust output-reservation evidence
 
 `src/v2/authority/payload/reservations/tests.rs` adds 15 tests, including its
-subprocess entry point. Output file capacity is now durable; the full
-admission/job/receipt transaction and protocol-level result publication remain open.
+subprocess entry point. Output file capacity is durable; these filesystem tests
+are not admission/job/receipt or protocol-level result-publication evidence.
 
 - V2-STORE/V2-ADMIT: global/per-owner byte and object forecasts survive reopen;
   ordinary uploads cannot consume reserved output capacity. Partial outputs hold
@@ -220,7 +220,7 @@ admission/job/receipt transaction and protocol-level result publication remain o
   lengths, allocated blocks and RSS/HWM separately. This does not establish QUIC
   flow-control, complete endpoint memory bounds, or a gRPC performance advantage.
 
-Executor capacity, complete metadata/journal funding, worker leases, authenticated
+Complete lifecycle metadata/journal funding, worker leases, authenticated
 manifest publication/read leases, dependency retention, session retirement,
 independent Java V2 and both cross-language failure directions remain required.
 
@@ -228,8 +228,8 @@ independent Java V2 and both cross-language failure directions remain required.
 
 `AuthorityStore::prepare_input` is executable storage preparation, not admission.
 It retains the validated input/output pins and funds a larger work-view record
-without changing DECLARED, its revision, or operation history. The complete job
-transaction remains unimplemented; this API must not trigger an admission ACK.
+without changing DECLARED, its revision, or operation history. This API must not
+trigger an admission ACK; the separate admission transaction is described below.
 
 - V2-ADMIT/V2-STORE: preparation checks the exact database-bound payload root,
   not merely its store identity. Application, response limits, scope fences,
@@ -255,6 +255,49 @@ Preparation does not fund executor slots or the complete metadata transition,
 install jobs, grant worker leases, publish manifests or implement retention.
 Private expanded work-view capacity remains charged to declared work. Neither
 V2 endpoint nor cross-language conformance follows from this checkpoint.
+
+### Rust atomic admission evidence
+
+`src/v2/authority/admission/tests.rs` adds 13 tests, including its subprocess
+entry. `AuthorityStore::admit_input` now commits external admission in the actual
+SQLite authority. Storage format 6 adds fixed job records and global/per-owner
+job ceilings; payload format 4 and normative wire/commitments are unchanged.
+
+- V2-ADMIT/V2-SET: all three modes commit input, attempt 1, timestamps, reservation,
+  fixed job and immutable receipt together; branch modes allocate exactly one
+  correctly owned child. Stored input bytes are read and verified, not inferred
+  from a descriptor. No callback runs in admission.
+- V2-OP: concurrent duplicate prepared inputs serialize to one job/child/receipt;
+  changed parameters conflict. Replay under an unsafe clock issues no new promise.
+- V2-ADMIT/V2-STORE: global/per-owner executor ceilings span separate sessions;
+  session job/input/output, operation and scope ceilings refuse without accepting
+  a second job. Waiting branches remain charged. Limits on reconnection preserve
+  the promised response/object representation; timestamps above 2^53 stay exact.
+- V2-AUTH/V2-CLOCK: preparation is not authority to bypass current application,
+  scope, revocation, clock, counter or limit checks. A late authorization denial
+  rolls back the entire job, child, references, receipt and extra record credits.
+- V2-STORE: actual subprocess death immediately before/after admission commit
+  leaves respectively DECLARED/no receipt or admitted/replayable work. Both paths
+  reopen real input bytes and the output reservation. This exercises lost-ACK
+  state at the storage API, not a V2 QUIC transport.
+- V2-STORE: a pinned reader fills guarded journal capacity. The focused run
+  committed 284 ordinary fill writes, then refused admission at WAL 3670976 bytes
+  under a 4194304-byte cap (DB 73728 under 131072). Prior receipts remain readable;
+  no partial job/child/reference or new operation survives. These are file lengths,
+  not allocated-block, whole-lifecycle or end-to-end cost measurements.
+- V2-STORE: a negative-first regression found installed outputs could be collected
+  after process pins disappeared despite a committed reservation. Collection now
+  honors that reservation's durable liveness. This does not publish a result;
+  replacement-worker cleanup requires an explicit lease-fenced implementation.
+- V2-STORE: reopen rejects missing/changed job, input reference, operation receipt,
+  parameters and stage. The maximum typed job representation fits its fixed slot.
+
+This is external admission and durable job storage, not a working V2 executor.
+Local producer-1 admission, worker leases and fencing, actual callbacks, retries,
+cancellation/deadline settlement, nonempty closure, authenticated results and
+retirement still need implementation. The allocated job/work credits must be
+validated against those complete transition write sets. Java, both cross-language
+failure directions and the equivalent streaming-gRPC workload remain required.
 
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 

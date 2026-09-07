@@ -42,8 +42,11 @@ across restart. Input preparation now joins that output reservation with
 transaction-safe expansion of the work-view record, without accepting a job.
 Mutable scope state and the shared clock now participate in reserved record
 writes, with clock-counter and commit-crash tests.
-Funded admission, execution, results and retention cleanup
-remain to be implemented for that authority. The
+`admit_input` now atomically commits the validated input reference, attempt,
+deadline, child scope, fixed job record, reservations and immutable receipt.
+Executor and byte limits span the retained jobs; commit-crash tests reopen real
+input bytes and replay lost acknowledgments. Worker leases/callback execution,
+results and retention cleanup remain to be implemented for that authority. The
 [V2 acceptance ledger](docs/standards/durable-work-v2-test-plan.md) keeps Java,
 authenticated transport, storage, execution and process-level evidence open.
 

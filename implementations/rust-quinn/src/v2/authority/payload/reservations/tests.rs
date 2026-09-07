@@ -317,8 +317,9 @@ fn retained_binding_slot_uniqueness_and_live_pins_exclude_conflicting_use_and_cl
     );
     let key = reservation.key().to_owned();
     drop(reservation);
-    // A retained reservation can coexist with collection of its unreferenced
-    // outputs, after all live producer pins are gone. The global promise stays.
+    // A committed reservation pins its outputs across process-handle loss.
+    // Reclaiming unpublished outputs for a replacement worker needs a separate
+    // lease-fenced operation, not the orphan collector.
     fixture
         .store
         .collect(None, 256, |candidate| Ok(candidate == key))
@@ -328,7 +329,7 @@ fn retained_binding_slot_uniqueness_and_live_pins_exclude_conflicting_use_and_cl
         .store
         .open_reservation(&key, &owner("alice"), &budget())
         .unwrap();
-    assert_eq!(reopened.usage().unwrap().outputs, 0);
+    assert_eq!(reopened.usage().unwrap().outputs, 1);
     drop(reopened);
     collect_all(&fixture.store);
 }

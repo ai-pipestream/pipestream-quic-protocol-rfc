@@ -410,6 +410,9 @@ pub struct OutputReservation {
     budget: OutputBudget,
 }
 impl OutputReservation {
+    pub(crate) fn store(&self) -> &PayloadStore {
+        &self.store
+    }
     pub fn key(&self) -> &str {
         &self.key
     }

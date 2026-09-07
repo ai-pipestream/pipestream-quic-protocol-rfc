@@ -26,6 +26,7 @@ pub(super) enum Table {
     Work,
     Scope,
     Clock,
+    Job,
 }
 impl Table {
     fn name(self) -> &'static str {
@@ -33,6 +34,7 @@ impl Table {
             Self::Work => "work",
             Self::Scope => "scopes",
             Self::Clock => "authority",
+            Self::Job => "jobs",
         }
     }
     fn column(self) -> &'static str {
@@ -40,6 +42,7 @@ impl Table {
             Self::Work => "view",
             Self::Scope => "state",
             Self::Clock => "clock",
+            Self::Job => "state",
         }
     }
     fn inventory(self) -> &'static str {
@@ -51,6 +54,7 @@ impl Table {
             Self::Clock => {
                 "SELECT rowid,length(clock),substr(clock,1,104) FROM authority ORDER BY rowid"
             }
+            Self::Job => "SELECT rowid,length(state),substr(state,1,104) FROM jobs ORDER BY rowid",
         }
     }
 }
@@ -77,6 +81,7 @@ fn checksum(target: Target, prefix: &[u8]) -> [u8; 32] {
         Table::Work => 0,
         Table::Scope => 1,
         Table::Clock => 2,
+        Table::Job => 3,
     }]);
     hash.update(target.row.to_be_bytes());
     hash.update(prefix);
@@ -226,7 +231,7 @@ fn audit(
     let mut reserved = 0u64;
     let mut clock_credits = 0u64;
     let mut replaced = replacement.is_none_or(|(target, _, _)| target == CLOCK);
-    for table in [Table::Work, Table::Scope] {
+    for table in [Table::Work, Table::Scope, Table::Job] {
         let mut statement = tx.prepare(table.inventory())?;
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
@@ -349,7 +354,7 @@ pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
             }
         }
     }
-    Ok(())
+    jobs::verify(tx)
 }
 
 fn write<T: Wire>(
@@ -497,6 +502,9 @@ pub(super) fn grow(
                 return Err(exhausted());
             }
         }
+        Table::Job => {
+            unpack::<jobs::JobRecord>(&bytes)?;
+        }
     }
     if retained.revision != expected {
         return Err(protocol(
@@ -527,6 +535,7 @@ pub(super) fn grow(
             Table::Work => "UPDATE work SET view=zeroblob(?1) WHERE rowid=?2",
             Table::Scope => "UPDATE scopes SET state=zeroblob(?1) WHERE rowid=?2",
             Table::Clock => "UPDATE authority SET clock=zeroblob(?1) WHERE rowid=?2",
+            Table::Job => "UPDATE jobs SET state=zeroblob(?1) WHERE rowid=?2",
         };
         if savepoint.execute(
             statement,

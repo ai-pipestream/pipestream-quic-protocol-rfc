@@ -669,12 +669,15 @@ impl PayloadStore {
                 continue;
             }
             let entry = entries.get(&key).expect("inventory entry");
-            let budget_pinned = entry.funding.as_ref().is_some_and(|f| {
+            let budget_pinned = if let Some(funding) = &entry.funding {
                 entries
                     .reservations
-                    .get(&f.key)
+                    .get(&funding.key)
                     .is_some_and(|r| r.live != 0)
-            });
+                    || referenced(&funding.key)?
+            } else {
+                false
+            };
             if entry.live != 0 || budget_pinned || referenced(&key)? {
                 continue;
             }
@@ -766,14 +769,19 @@ impl AuthorityStore {
         // The writer lock excludes publication of new references. A live
         // installed token excludes collection before its admission commits.
         payloads.collect(after, limit, |key| {
-            Ok(tx
+            let reference: Option<(u64, Option<i64>)> = tx
                 .query_row(
-                    "SELECT 1 FROM payload_refs WHERE object_key=?1",
+                    "SELECT p.purpose,j.work_row FROM payload_refs p JOIN work w ON w.generation=p.generation AND w.scope=p.scope AND w.entity=p.entity LEFT JOIN jobs j ON j.work_row=w.row_id WHERE p.object_key=?1",
                     [key],
-                    |_| Ok(()),
+                    |r| Ok((number(r, 0)?, r.get(1)?)),
                 )
-                .optional()?
-                .is_some())
+                .optional()?;
+            let Some((purpose, job_row)) = reference else { return Ok(false); };
+            let Some(row) = job_row else { return Ok(true); };
+            let (_, job): (_, jobs::JobRecord) = records::read(&tx, records::Target {
+                table: records::Table::Job, row,
+            })?;
+            Ok(if purpose == 0 { job.input_live } else { job.outputs_live })
         })
     }
 }
@@ -975,6 +983,9 @@ pub struct InstalledPayload {
     input: Input,
 }
 impl InstalledPayload {
+    pub(super) fn check_owned(&self) -> Result<()> {
+        self.store.root.owned()
+    }
     pub(super) fn store(&self) -> &PayloadStore {
         &self.store
     }

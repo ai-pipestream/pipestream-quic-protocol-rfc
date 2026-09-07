@@ -22,6 +22,14 @@ pub struct Applications {
     contracts: BTreeMap<String, (Vec<Mode>, RestartSafety)>,
 }
 impl Applications {
+    pub(super) fn safety(&self, label: &ApplicationLabel, mode: Mode) -> Result<Number> {
+        self.require(label, mode)?;
+        Ok(Number(match self.contracts[&label.0].1 {
+            RestartSafety::Pure => 0,
+            RestartSafety::IdempotentEffects => 1,
+            RestartSafety::ExternallyFenced => 2,
+        }))
+    }
     pub fn register(
         &mut self,
         name: ApplicationLabel,
@@ -76,9 +84,9 @@ pub struct ReceivingInput {
     stage: StagedPayload,
 }
 pub struct ValidatedInput {
-    header: InputHeader,
-    identity: SessionIdentity,
-    payload: InstalledPayload,
+    pub(super) header: InputHeader,
+    pub(super) identity: SessionIdentity,
+    pub(super) payload: InstalledPayload,
 }
 impl ReceivingInput {
     pub fn receive(&mut self, bytes: &[u8], now: Instant) -> Result<()> {
@@ -114,10 +122,10 @@ pub enum InputPreparation {
 
 /// Owns validated input and a durable output-space pin. This is preparatory
 /// storage, not an admission receipt, a runnable job, or execution permission.
-/// The future admission transaction must revalidate and fund its whole write set.
+/// Admission revalidates this evidence and commits the job and receipt together.
 pub struct PreparedInput {
-    input: ValidatedInput,
-    outputs: OutputReservation,
+    pub(super) input: ValidatedInput,
+    pub(super) outputs: OutputReservation,
 }
 impl PreparedInput {
     pub fn input(&self) -> &ValidatedInput {
@@ -241,7 +249,7 @@ impl AuthorityStore {
         })))
     }
 
-    fn check_input(
+    pub(super) fn check_input(
         &self,
         tx: &Transaction<'_>,
         identity: &SessionIdentity,

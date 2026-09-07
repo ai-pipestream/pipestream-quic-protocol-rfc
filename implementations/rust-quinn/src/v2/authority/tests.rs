@@ -40,6 +40,8 @@ pub(super) fn policy() -> StorePolicy {
         owners: Id(2),
         sessions: Id(10),
         sessions_per_owner: Id(5),
+        active_jobs: Id(200),
+        active_jobs_per_owner: Id(100),
         session_limits: Limits {
             scopes: Id(100),
             entities: Id(1000),

@@ -16,7 +16,10 @@ use rusqlite::{
 use std::{path::Path, sync::Arc, time::Duration as Elapsed};
 
 #[cfg(unix)]
+mod admission;
+#[cfg(unix)]
 pub mod ingress;
+mod jobs;
 #[cfg(unix)]
 pub mod payload;
 mod records;
@@ -26,7 +29,7 @@ mod sessions;
 mod tests;
 
 const APPLICATION_ID: i64 = 1_347_637_825;
-const FORMAT: i64 = 5;
+const FORMAT: i64 = 6;
 const SCHEMA: &str = include_str!("schema.sql");
 
 #[derive(Debug)]
@@ -116,36 +119,45 @@ pub struct StorePolicy {
     pub owners: Id,
     pub sessions: Id,
     pub sessions_per_owner: Id,
+    pub active_jobs: Id,
+    pub active_jobs_per_owner: Id,
     pub session_limits: Limits,
 }
 
 impl Wire for StorePolicy {
     fn read(d: &mut minicbor::Decoder<'_>) -> std::result::Result<Self, Error> {
-        codec::array(d, 4)?;
+        codec::array(d, 6)?;
         let value = Self {
             owners: Id::read(d)?,
             sessions: Id::read(d)?,
             sessions_per_owner: Id::read(d)?,
+            active_jobs: Id::read(d)?,
+            active_jobs_per_owner: Id::read(d)?,
             session_limits: Limits::read(d)?,
         };
         value.check()?;
         Ok(value)
     }
     fn write(&self, w: &mut codec::Writer) {
-        w.array(4);
+        w.array(6);
         self.owners.write(w);
         self.sessions.write(w);
         self.sessions_per_owner.write(w);
+        self.active_jobs.write(w);
+        self.active_jobs_per_owner.write(w);
         self.session_limits.write(w);
     }
     fn check(&self) -> std::result::Result<(), Error> {
         self.owners.check()?;
         self.sessions.check()?;
         self.sessions_per_owner.check()?;
+        self.active_jobs.check()?;
+        self.active_jobs_per_owner.check()?;
         self.session_limits.check()?;
         require(
-            self.sessions_per_owner <= self.sessions,
-            "owner session limit exceeds global limit",
+            self.sessions_per_owner <= self.sessions
+                && self.active_jobs_per_owner <= self.active_jobs,
+            "owner limit exceeds global limit",
         )
     }
 }

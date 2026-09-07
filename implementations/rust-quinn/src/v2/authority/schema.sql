@@ -54,6 +54,10 @@ CREATE TABLE operations (
   receipt BLOB NOT NULL,
   PRIMARY KEY(generation, originator, operation)
 ) STRICT;
+CREATE TABLE jobs (
+  work_row INTEGER PRIMARY KEY REFERENCES work(row_id),
+  state BLOB NOT NULL CHECK(length(state)=2152)
+) STRICT;
 CREATE TABLE payload_refs (
   object_key TEXT PRIMARY KEY NOT NULL CHECK(length(object_key)=32),
   generation INTEGER NOT NULL,
@@ -63,4 +67,4 @@ CREATE TABLE payload_refs (
   FOREIGN KEY(generation,scope,entity) REFERENCES work(generation,scope,entity)
 ) STRICT;
 PRAGMA application_id = 1347637825;
-PRAGMA user_version = 5;
+PRAGMA user_version = 6;
