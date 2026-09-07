@@ -60,6 +60,8 @@ Java now has an independent [V2 typed library foundation](implementations/java-n
 for the frozen wire schemas and commitments, including bounded streaming scope
 hashes. Its authenticated Core-only Netty listener now implements negotiation,
 correlated refusals, detach/half-close, connection quotas and live deadlines.
+The Java Core client now verifies selection and waits for the correlated detach
+response and actual peer FIN, with independently bounded lifecycle and cleanup.
 Independent Java durable execution/results/recovery, complete cross-language
 failure evidence and the workload comparison remain unfinished.
 The Rust `pipestream_core::v2` library now implements typed codecs for every

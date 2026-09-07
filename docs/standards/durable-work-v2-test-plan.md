@@ -1798,6 +1798,46 @@ Core object streams. Complete independent Java client/durable execution/results/
 recovery, shared data/control credit proof, neutral both-language failure/resource
 driver and the original external/equivalent streaming-gRPC workload remain required.
 
+## Java V2 Core client evidence, 2026-09-07
+
+Sources: `CoreClient.java` and shared `ControlWrites.java`; network tests in
+`V2CoreClientTest.java`. This client exposes only Core and never advertises a
+partially implemented durable profile. Readiness requires validated capabilities,
+and repeated detach calls share one logical request and read-only completion.
+
+- V2-NEG/AUTH: real Java server negotiation, wrong local TLS role, bad service
+  identity, invalid capability response/increased limit, and missing/partial
+  capabilities. Transport observation timeouts are not accepted as refusals.
+- V2-CLOSE: an explicitly gated early detach tests caller cancellation without
+  losing correlation or issuing another request. Actual request and client FIN
+  are observed before the independent peer supplies Detached and server FIN.
+  Tests reject premature FIN, wrong or duplicate acknowledgment, unsolicited
+  response, reset/stop and acknowledgment without FIN. Named detach refusal is
+  retained; explicit local close is CANCELLED, not successful drain.
+- V2-TIME/WIRE: a 12000-byte ignored body crosses a 128-byte window; a separate
+  peer sends an acknowledgment followed by continued ignored traffic without FIN.
+  The latter must hit the one-second detach lifetime before the five-second
+  control timeout; sent traffic and the elapsed-time boundary are both checked.
+- V2-NEG/resources: actual silent UDP peer, 64 admitted client instances,
+  refusal of the next, then replacement after owned termination. A separate
+  configured-buffer test reaches the 128 MiB aggregate allowance before the
+  client-count cap. This checks admission accounting, not measured heap/RSS or
+  native-memory ceilings.
+- V2-NEG/CLOSE interoperability: the `sealed-interop` build profile includes a
+  Java Core client against the real Rust V2 authority CLI, first anonymous then
+  certificate-mapped. It requires empty selected profiles, successful detach,
+  owned client termination and the Rust process's clean DRAINED exit. No mocked
+  authority or wire-to-JSON adapter is used. This proves only the tested Core
+  direction, not full Java durable-profile or bidirectional failure conformance.
+
+Execution results and exact source hashes belong in
+`conformance/results/durable-work-v2-java-core-client-2026-09-07.txt`.
+Java object/control credit, durable admission/execution/fences, publication,
+results, retention/retirement and recovery remain required. So do the complete
+neutral Rust failure driver and both-language outcomes/refusals/restart/resource
+evidence, plus the original external workload and equivalent streaming-gRPC
+baseline with pinned raw measurements. This checkpoint does not complete the goal.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

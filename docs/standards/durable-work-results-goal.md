@@ -2328,3 +2328,33 @@ workload with reconnect/worker failure plus equivalent authenticated durable
 streaming-gRPC baseline and pinned raw measurements remain mandatory. The full goal
 is active and incomplete. Forgejo was current on ff-only pull; no main merge,
 deployment or draft submission occurred.
+
+### Java V2 Core client and Rust authority check, 2026-09-07
+
+The previous implementation checkpoint was verified progress, not completion of
+the full goal. The Java Core client now owns authenticated selection, bounded
+detach, actual peer FIN validation and cleanup. Repeated/cancelled application
+waiters cannot invent another request or a successful drain. Process-local client
+count and configured buffer admission are held through owned termination.
+
+Fourteen new network tests cover malformed/miscorrelated replies, reset/stop,
+gated caller cancellation, incomplete-frame and absolute detach deadlines,
+tiny windows and admission exhaustion. The tagged Java-client/Rust-authority
+case negotiates Core and drains with anonymous and mapped callers. It does not
+claim the reverse direction, Java durable behavior, native memory bounds or the
+complete failure driver. Detailed commands, hashes, initial compiler failure,
+corrected test oracles and scope limits are recorded in
+`conformance/results/durable-work-v2-java-core-client-2026-09-07.txt`.
+
+Full reference handle 43271 exited zero: 788 Rust workspace tests, six external
+Rust tests, 341 Java tests in 29 fresh reports with no failures/errors/skips,
+native checks, frozen vectors, bounded models, nine existing V1 pairs, 32 probes,
+recursive/recovery and all examples. Strict Javadoc, formatting and draft build
+passed; rendered Appendix D was inspected. Forgejo was current on ff-only pull.
+
+Next remains complete independent Java object/control credit and durable
+admission/execution/fences, publication/results, retention/retirement and client
+recovery, including parent/child evidence in both orders. The neutral Rust failure
+driver, both-language outcome/refusal/restart/resource evidence and original
+external workload/equivalent durable streaming-gRPC comparison remain mandatory.
+No goal requirement is waived. The full goal remains active and incomplete.

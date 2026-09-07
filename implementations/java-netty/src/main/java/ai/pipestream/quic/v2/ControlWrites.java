@@ -47,7 +47,16 @@ final class ControlWrites {
       failure.accept(ProtocolError.limit("control write count exhausted"));
       return false;
     }
-    byte[] frame = Wire.encode(message, limit);
+    return sendEncoded(Wire.encode(message, limit));
+  }
+
+  /** Accept a frame already encoded and registered by the connection's correlation owner. */
+  boolean sendEncoded(byte[] frame) {
+    if (ended) return false;
+    if (pending.size() >= countLimit || frame.length > limit + 5) {
+      failure.accept(ProtocolError.limit("control write count or frame ceiling exhausted"));
+      return false;
+    }
     if (frame.length > options.queuedControlBytes() - bytes) {
       failure.accept(ProtocolError.limit("control write bytes exhausted"));
       return false;

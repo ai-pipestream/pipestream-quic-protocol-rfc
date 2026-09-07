@@ -33,7 +33,7 @@ cursor advancement, and GOAWAY. They currently implement Layer 0 only.
 The separate `ai.pipestream.quic.v2` package implements the current Section 12
 and Appendix F binary schemas independently. It does not wrap Rust, convert
 messages through JSON, reuse the version-1 CBOR object model, or advertise V2
-durable profiles from an endpoint. The Core-only authenticated listener is described
+durable profiles from an endpoint. The Core-only authenticated listener and client are described
 below; V2 durable execution/storage, client recovery and actual V2 object transport
 remain to be implemented in Java.
 
@@ -219,8 +219,55 @@ mvn -Dtest=V2CoreServerTest test
 The 13 actual-network scenarios cover all profile-dependent request families,
 malformed negotiation/direction/IDs/FIN, resets/stops, tiny windows, paused readers,
 absolute timers, global/per-owner overload and cleanup. These are Java Core tests,
-not a public V2 client, independent cross-language failure driver, durable profile
-implementation or workload comparison. All those full-goal requirements remain.
+not the independent cross-language failure driver, durable profile implementation
+or workload comparison. All those full-goal requirements remain.
+
+## Version 2 Core client
+
+`v2.CoreClient.connect(remote, authentication, options)` binds its own UDP socket
+and starts authenticated Core negotiation. The remote socket address must already
+be resolved and have a nonzero port; the independent DNS/IP reference identity
+comes from `TlsAuthentication.client`, with no insecure fallback. `ready()` means
+the server's exact capability response has been validated, not merely that TLS
+connected. The client opens only bidirectional Stream 0 and grants no peer-created
+streams. It advertises no durable profiles and promises no object transport.
+
+`detach()` may be requested before readiness. Repeated calls share one logical
+request and one cached read-only completion stage; they cannot enqueue an
+unbounded collection of commands. Cancelling or completing a derived future does
+not change the operation. Successful detach requires its correlated response,
+the peer's actual control FIN, and local output FIN completion. It then closes
+with application error zero. A refusal retains its named code; unsolicited,
+duplicate, wrong-kind or miscorrelated responses remain fatal. Neither an ACK
+alone nor a transport close with error zero substitutes for verified drain.
+
+Handshake, complete-frame/idle-control, oldest queued write and absolute detach
+deadlines have independently scheduled checks. Partial frames cannot renew the
+frame deadline; even complete ignorable frames cannot renew detach's lifetime.
+An aborted or failed connection resolves outstanding stages exceptionally, never
+as durable success. `close()` is an idempotent abort unless detach already
+succeeded. `closed()` separately observes owned socket/event-loop termination.
+Callbacks must not block networking or termination threads; use asynchronous
+continuations for blocking application work.
+
+Each instance owns one socket and one event loop. The class admits at most 64
+instances, including unfinished handshakes, and 128 MiB of aggregate configured
+application queue/frame/read-buffer allowance. Capacity remains charged until
+the event loop terminates. These are process-local library admission limits,
+not total heap/RSS/native-memory measurements or limits on unrelated clients.
+`CoreOptions.connections` and `connectionsPerOwner` are listener policy only.
+Native write acceptance is still not a peer ACK; object/control credit and full
+Java durable execution, storage, result delivery and recovery remain required.
+
+```bash
+mvn -Dtest=V2CoreClientTest,V2CoreServerTest test
+```
+
+The existing `sealed-interop` Maven profile additionally runs the Java Core client
+against the release Rust V2 authority CLI with both anonymous and mapped callers.
+It requires a clean shutdown of the owned test process. Build that Rust binary
+first, or use the repository's full `conformance/run_all.sh` runner. The tagged
+test proves this Core direction only; it is not durable-profile interoperability.
 
 ## Sealed-work library foundation
 

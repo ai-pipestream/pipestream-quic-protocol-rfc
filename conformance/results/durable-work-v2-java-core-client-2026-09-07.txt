@@ -1,0 +1,141 @@
+Java V2 Core client and independent Rust authority check, 2026-09-07
+================================================================
+
+Repository: pipestream-quic-protocol-rfc
+Branch: feat/durable-work-results-v2
+Base: 8e3b21db43e223250ef8f6de24b7b3ae9f7e6f09
+Environment: Linux x86_64, OpenJDK 25.0.3/GraalVM CE, Java release 21 compilation.
+Pinned transport remains Netty QUIC 0.0.75.Final; no dependency change.
+
+Source SHA-256, relative to implementations/java-netty:
+1c2c4b3b603656806f4572e836a1290af30ce419cafe745bda404292cf0446e1  src/main/java/ai/pipestream/quic/v2/CoreClient.java
+0805c132fed1bc79dfd5e8d1853f11ac490b1f5d0b8a456412973356a5d7a4e6  src/main/java/ai/pipestream/quic/v2/ControlWrites.java
+e10c94c7076beecc38087970c3b3cb5f0502a1707ec2300bbcc3d91119b0596e  src/test/java/ai/pipestream/quic/v2/V2CoreClientTest.java
+
+Behavior
+--------
+CoreClient binds one owned socket/event loop, verifies TLS and server capability
+selection, and opens only client bidirectional Stream 0. Core alone is offered;
+no data streams are permitted or durable profiles advertised. One monotonic
+request identifies detach. Repeated public calls share a cached minimal stage
+and cannot enqueue additional operations; derived-future cancellation does not
+change transport state. Refused, malformed or incomplete drain is never success.
+
+The client sends control FIN after locally draining the request. It requires a
+correlated Detached and actual peer FIN before completing detach, then closes
+with application error zero. Native write/FIN acceptance is not treated as a peer
+ACK or durable outcome. Separate scheduled checks bound handshake, complete-frame/
+idle-control, oldest local write and absolute detach lifetime, including callbacks
+at the deadline. Partial data cannot renew frame time; complete ignored frames
+cannot renew detach. TLS failures defer cleanup past the native alert callback.
+
+Configured application queue/frame/read-buffer allowances are capped at 128 MiB
+across at most 64 class-owned clients, including incomplete handshakes. Slots
+remain charged through event-loop termination. These are admission policies,
+not heap, total RSS, native handshake or retransmission memory measurements.
+CoreOptions listener connection/per-owner limits do not configure this client.
+Callbacks must use asynchronous continuations for blocking application work.
+
+Network test cases (V2CoreClientTest)
+-----------------------------------
+realCoreServerNegotiatesAndDetachWaitsForBothHalfCloses
+detachDuringHandshakeIsOneCancellationProofLogicalRequest
+wrongTlsRoleAndBadServiceIdentityFailWithoutForgingReadiness
+invalidOrMissingCapabilitiesNeverBecomeReady
+detachRequiresCorrelatedAcknowledgmentBeforePeerFin
+unsolicitedDetachedResponseIsRejectedEvenAfterAValidSelection
+resetAndStopOfControlRemainNamedProtocolFailures
+correlatedDetachRefusalRetainsItsNamedProtocolError
+largeIgnoredFrameCrossesTinyWindowWithoutBlockingDetach
+ignoredTrafficCannotRenewAbsoluteDetachLifetime
+processClientCountAdmissionReleasesOnlyAfterOwnedTermination
+configuredBufferAdmissionCanBindBeforeTheCountCeiling
+javaCoreClientNegotiatesAndDetachesFromRustAuthorityWithBothIdentityModes
+closeBeforeSuccessfulDetachAbortsEveryOutstandingOutcome
+
+The independent malicious peer uses public binary codecs and actual QUIC/TLS,
+not client internals. Script failures are inspected after fixture shutdown.
+Early cancellation is gated before capabilities; the peer observes precisely
+Detach(1) and actual client FIN before supplying its acknowledgment/FIN.
+STOP is sent while the client send direction is unfinished, not after FIN.
+Negative tests require the specific named failure, never observation timeout.
+A 12000-byte ignored body crosses a 128-byte receive window. An ACK plus repeated
+ignored frames without FIN fails within three seconds under a one-second detach
+lifetime and five-second control timeout; at least three sends are observed.
+The count test fills 64 silent-peer clients and checks refusal/replacement. A
+separate 17 MiB-plus configured per-client allowance reaches aggregate byte
+admission before the count ceiling. Neither test allocates or measures that full
+allowance as live heap/native memory.
+
+The tagged interoperability case launches the existing release Rust V2 authority
+CLI with fresh explicit state, CA, server identity and principal mapping. Java
+negotiates Core and detaches first anonymously, then with mapped caller identity.
+Both client instances terminate; SIGTERM of the owned Rust test process must
+exit zero with DRAINED. No running external service is stopped or modified.
+This covers Java-client/Rust-authority Core only, not the reverse direction or
+Java durable-work/results behavior. It is not the complete neutral failure driver.
+
+Verification record
+-------------------
+Initial focused invocation stopped at test compilation: missing shared
+AddressValidationTokenHandler import. No tests executed, no fresh reports.
+The tool wrapper did not retain an explicit process exit object; Maven's terminal
+BUILD FAILURE and exact compiler error are retained in:
+/tmp/pipestream-quic-v2-focused-20260907T180411-0400.log
+The test import was corrected. Review also corrected an invalid lifetime
+configuration and replaced race-prone cancellation/STOP assertions with gated
+wire observations before the final executable test run.
+
+Production compile and strict -Xdoclint:all -Werror Javadoc exited zero:
+/tmp/pipestream-quic-v2-production-compile-20260907T1809.log
+/tmp/pipestream-quic-v2-strict-javadoc-20260907T1811.log
+Javadoc used all 18 V2 sources plus TlsPeerIdentity and AddressValidationTokenHandler.
+
+mvn -f implementations/java-netty/pom.xml -Psealed-interop \
+  -Dtest=V2CoreClientTest,V2CoreServerTest test
+Exit zero (synchronous tool completion), BUILD SUCCESS at
+2026-09-07 18:15:31 America/New_York.
+Fresh XML: 14 client tests, 13 server tests, zero failures/errors/skips.
+Client time 2.730 s, server time 3.452 s. Native SQLite file-growth check passed.
+Raw log: /tmp/pipestream-quic-v2-sealed-focused-20260907T181516.log
+
+Draft -05 build exited zero. Appendix D was inspected in generated TXT/HTML;
+idnits: zero errors/flaws/warnings, one existing FIPS-180-4 comment.
+Raw log: /tmp/pipestream-quic-core-05-draft-20260907T1812.log
+No normative wire/profile change and no draft submission.
+
+Full reference suite ./conformance/run_all.sh exited zero in retained handle
+43271, started 2026-09-07 18:15:31 America/New_York. The same handle was polled
+through its terminal result; no process was restarted on an observation timeout.
+Raw log: /tmp/pipestream-quic-conformance-full-20260907T181531.log
+788 Rust workspace tests plus 6 external Rust example tests passed. Product Java
+reports: 341 tests in 29 fresh XML files, zero failures/errors/skips, timestamps
+18:20:31.404 through 18:21:45.531 America/New_York. This includes all 14 new client
+tests, including both Rust-authority identity modes. Native guards, C++ checks,
+33 Core/18 recursive-and-recovery/70 V2 frozen rows and 12 commitment vectors,
+bounded models, nine existing V1 black-box pairs, 32 capability probes,
+recursive/recovery checks and all three existing examples passed.
+
+Existing local resource gates (not new Core/native endpoint memory evidence):
+4000003 members, 32000024 primitive-membership bytes, 24379392 max heap bytes,
+672 frontier bytes, 1563 ms; RSS/HWM 384760 KiB. A 67108864-byte object verified
+in 8192-byte chunks, 45 ms; RSS/HWM 136064 KiB. These gates retain their existing
+local scope and do not prove the remaining full-profile resource requirements.
+
+Google Java formatter dry run exited zero over both Core endpoint tests,
+CoreClient and ControlWrites. No edits; source hashes above remain unchanged.
+Raw log: /tmp/pipestream-quic-v2-google-java-format-dry-run-20260907T1824.log
+Root reviewed fresh XML, raw test/draft output, implementation and test assertions.
+Forgejo ff-only pull was current before edits and again before commit. No main
+merge, deployment, generation deletion or draft submission.
+
+Remaining full-goal requirements
+-------------------------------
+Complete independent Java V2 object/control transport with shared credit proof;
+transactional admission/execution/fences, publication/results, retention and
+retirement; durable client recovery with parent/child checks in both orders.
+Complete protocol-neutral Rust failure driver, both-language outcomes/refusals,
+restart and resource evidence. Original external chunk/distribute/transform/
+reassemble workload with reconnect/worker failure and equivalent authenticated
+durable streaming-gRPC baseline, pinned raw resource/latency/failure measurements
+and findings fed back into the draft. The full goal remains active/incomplete.

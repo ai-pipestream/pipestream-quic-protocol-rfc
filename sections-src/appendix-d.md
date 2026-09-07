@@ -93,6 +93,15 @@ results, client recovery, independent cross-language failure/resource evidence a
 the external workload/equivalent streaming-gRPC comparison remain incomplete.
 Neither durable profile is advertised by this listener.
 
+The Java Core client now owns authenticated negotiation and bounded detach on
+Stream 0. It checks capability selection, response correlation and actual peer
+FIN before reporting successful drain; transport close alone cannot supply that
+result. Repeated detach calls share one operation, and cancelling an application
+waiter cannot cancel that operation. Independent timers bound stalled negotiation,
+framing, writes and detach, while process-local count and configured application
+buffer quotas remain charged through owned transport termination. These are not
+measurements of native memory or evidence of durable-profile implementation.
+
 As of 2026-09-07, the Rust authority library also implements transactional
 admission and replay, fenced worker execution, both branch producers and real
 child-output reassembly, cancellation/closure, retained result reads,
