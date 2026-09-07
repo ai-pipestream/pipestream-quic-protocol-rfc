@@ -1673,6 +1673,49 @@ storage. Full independent Java durable state, authenticated endpoints, timed
 incremental objects, recovery/refusals, both-language failure/resource driver and
 the original external workload/equivalent streaming-gRPC comparison remain open.
 
+### Independent Java correlation and object verification, 2026-09-07
+
+Sources: `ClientCorrelation.java` and `ObjectStream.java` under the Java V2
+package. Tests: `V2ClientCorrelationTest`, `V2ObjectStreamTest` and
+`V2ObjectResourceTest`. Evidence:
+`conformance/results/durable-work-v2-java-streams-2026-09-07.txt`.
+
+- V2-WIRE/NEG: one capability exchange, ignored frames only after negotiation,
+  explicit profile use, ID 1 first and strictly increasing shared request IDs,
+  maximum-ID exhaustion, negotiated pending ceilings and exact response-family
+  matching. Every control response kind is tested against every different kind.
+  Reordered replies succeed; unsolicited, duplicate or wrong-direction responses
+  invalidate correlation while preserving unresolved requests for recovery.
+- V2-ADMIT/OP: actual input stream tags are disjoint from control IDs and may be
+  registered out of order. Stream/pending ceilings are separate; duplicates and
+  wrong stream type fail. There is no API that promotes STOP_SENDING to admission;
+  only a correlated receipt/refusal or connection uncertainty resolves the slot.
+  Typed receipt content still requires independent durable-journal verification.
+- V2-RESULT: retained selected descriptors bind every result-header field. Wrong
+  generation/work/attempt/index/length/digest fails only that delivery; another
+  control request still completes. Unknown/non-result/duplicate header correlation,
+  or a second control response after stream start, is fatal. Transfer exhaustion
+  does not mask commitment mismatch. Aborting a rejected stream cannot free another
+  transfer's permit. Requests remain pending until verified FIN, failure FIN,
+  abort or connection loss; neither reset nor another read changes work state.
+- V2-ADMIT/RESULT/TIME: all header split positions leave coalesced payload untouched;
+  lengths fail before allocation and header progress cannot renew its absolute
+  deadline. Actual FIN must match length/digest, including empty bodies. Extra,
+  truncated or corrupt bytes fail; equal-to-idle/lifetime deadlines fail before
+  progress or FIN. Explicit timer calls enforce bounds without callbacks. Monotonic
+  signed-long wrap succeeds; backward time cannot create extra lifetime.
+- V2-STORE/resource foundation only: a fresh `-Xmx24m` JVM verifies a 64 MiB zero
+  object through a reusable 8 KiB direct buffer against a separately checked
+  SHA-256 fixture. First run: 49 ms, 24379392-byte maximum heap, 135844 KiB RSS/HWM.
+  This is local hashing, not a network, file-persistence or low-RSS guarantee.
+
+These helpers do not activate profiles or authorize work. Real Netty stream
+ownership, connection credit reservation, timer scheduling, bounded pending
+result creation/header queues, authenticated durable execution and recovery still
+need implementation and actual endpoint tests. The complete cross-language
+failure/resource driver and original external/equivalent streaming-gRPC workload
+remain required by the unchanged goal.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

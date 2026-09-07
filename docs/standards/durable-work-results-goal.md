@@ -2186,3 +2186,42 @@ pairs, 32 capability probes and three examples. These network gates remain V1;
 they do not establish Java V2 interoperability. No implementation changes followed
 that full run. Forgejo was already current on ff-only pull; no main merge,
 deployment or draft submission is part of this checkpoint.
+
+### Java V2 correlation and incremental objects, 2026-09-07
+
+The prior goal turn was verified progress: `8a0ae61` is on Forgejo and GitHub.
+The Java V2 library now adds bounded client correlation and incremental object
+validation. It checks negotiation, all request/response families, actual input
+stream tags, out-of-order replies, pending capacity and separate active-result
+permits. A mismatched retained object is a delivery-local integrity failure;
+unknown, wrong-kind or duplicate response correlation invalidates the connection.
+Unresolved requests remain available for uncertainty recovery on close.
+
+Header parsing leaves payload bytes for authorization/reservation. Payload hashing
+requires exact length, digest and actual FIN, with independent monotonic idle and
+lifetime checks. Reaching either deadline cannot be repaired by late progress.
+The test suite covers every response-family mismatch, all header split points,
+wrong object fields, permit ownership after rejection, reset, malformed FIN,
+deadline equality and clock wrap. A 64 MiB object verified through an 8 KiB buffer
+under a 24 MiB heap cap; first measured RSS/HWM was 135844 KiB, not a low-total-memory
+claim. These are 18 new local tests, not Java endpoint interoperability.
+
+Next is actual Java V2 Netty integration with server identity, mutual TLS and
+stable principal mapping, bounded connection/control/stream ownership and live
+deadline scheduling; then transactional admission/execution/fences/results,
+retention/retirement and durable client recovery including parent/child evidence
+in both arrival orders. Control correlation alone does not verify or persist
+an admission receipt. No profile is advertised by these helpers. All original
+both-language failure/resource testing and external workload/equivalent
+authenticated durable streaming-gRPC deliverables remain mandatory. The full
+goal is active and incomplete. Evidence is in
+`conformance/results/durable-work-v2-java-streams-2026-09-07.txt`.
+
+Full reference suite handle 28864 exited zero: 788 Rust workspace tests,
+305 Java tests in 26 fresh XML reports, native checks, frozen vectors/bounded
+models, six external Rust tests, nine V1 black-box pairs, 32 capability probes
+and all three examples. Final V2 doclint and formatting passed. Draft handle
+41637 exited zero; the new Appendix D paragraph was inspected in rendered
+TXT/HTML, with zero idnits errors/flaws/warnings and the existing FIPS comment.
+No implementation changes followed the full suite. Forgejo ff-only pull was
+already current; this checkpoint does not merge main, deploy or submit a draft.

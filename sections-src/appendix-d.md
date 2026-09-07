@@ -47,6 +47,17 @@ bounded by that heap setting. These are local library tests, not Java V2
 authentication, durable recovery, result transport or cross-language conformance.
 The Java endpoint does not advertise either V2 durable profile.
 
+The Java library also now supplies bounded caller-side request correlation and
+incremental object verification. Local tests exercise every response family,
+out-of-order replies and input tags, duplicate/wrong-direction responses,
+delivery-local result commitment failures and separate transfer permits. Object
+tests enforce header bounds, exact length/digest/FIN, independent idle/lifetime
+deadlines, reset behavior and deadline equality. An isolated 24 MiB-heap JVM
+verifies a 64 MiB object through an 8 KiB buffer against an independently checked
+digest. This is not network flow-control, persistence, authentication, total-process
+memory conformance or cross-language V2 evidence. Timer scheduling, QUIC stream
+ownership and authenticated durable endpoint integration remain unfinished.
+
 As of 2026-09-07, the Rust authority library also implements transactional
 admission and replay, fenced worker execution, both branch producers and real
 child-output reassembly, cancellation/closure, retained result reads,

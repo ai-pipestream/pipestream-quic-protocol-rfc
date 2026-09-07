@@ -66,6 +66,51 @@ Neither these library checks nor the existing V1 interoperability suite establis
 V2 Java/Rust interoperability. The complete independent Java implementation and
 the original failure-driver/workload comparison remain required.
 
+## Version 2 correlation and incremental objects
+
+`ClientCorrelation` enforces one capability exchange, profile use, positive
+increasing shared control IDs, actual input-stream tags, bounded pending requests
+and result-transfer ceilings. It matches every control family and permits
+out-of-order replies. Wrong-kind, duplicate or unsolicited responses invalidate
+the connection state. Input receipt obligations remain pending after transport
+stop; closing returns unresolved requests for uncertainty recovery, not success.
+
+Result reads retain only the selected manifest descriptor. The first result header
+must match generation, work, attempt, index, length and digest. A contradiction is
+delivery-local `INTEGRITY_ERROR`, including when transfer capacity is exhausted;
+unknown or duplicate correlation is connection-fatal `FRAME_ERROR`. No second
+control response is accepted after a result stream starts. Failed deliveries stay
+charged until abort (or actual FIN/connection loss); rejected streams cannot
+release another result's permit. A correlated control reply is still untrusted
+durable evidence until the future Java journal validates its immutable fields and
+persists it. This helper does not implicitly authorize or bind a session.
+
+`ObjectStream.HeaderReader` consumes only the bounded prefix/body, leaving any
+coalesced payload untouched for authorization and reservation. It enforces an
+absolute local header deadline without resetting it for progress. `Payload` hashes
+incrementally, enforces negotiated size/idle/lifetime ceilings and validates exact
+length, digest and actual FIN. Empty objects also need the correct digest and FIN.
+Deadline equality fails; empty callbacks cannot renew idle time. Reset does not
+assert a durable work outcome. The receiver verifier is not a sender-progress
+tracker: reading files or enqueueing data cannot renew the sender's idle deadline.
+
+Tests cover all response-family pairs and mismatches, reordered replies/inputs,
+limits and exact-deadline cases, corrupt/mismatched results with independent control
+progress, and monotonic-clock wrap. An isolated `-Xmx24m` JVM verifies a 64 MiB
+object in reusable 8 KiB buffers against an independently checked fixture digest.
+This proves incremental local validation, not actual network flow control, storage
+commitment, low total RSS, authenticated endpoints or cross-language V2 behavior.
+
+```bash
+mvn -Dtest=V2ObjectStreamTest,V2ClientCorrelationTest,V2ObjectResourceTest test
+```
+
+The Netty owner still must enforce actual stream directions/non-reuse, reserve
+control credit, drive timers without callbacks, bound pending result creation and
+incomplete headers, and distinguish QUIC FIN/RESET/STOP from durable receipts.
+Full Java authentication, durable execution/recovery and both-language failure
+and workload evidence remain mandatory; neither V2 durable profile is advertised.
+
 ## Sealed-work library foundation
 
 The independent Java `SealedWork`, `SealedScope`, and `SealedSessionStore`

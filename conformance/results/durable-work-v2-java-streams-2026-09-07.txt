@@ -1,0 +1,125 @@
+PipeStream V2 Java correlation and incremental object validation
+Date: 2026-09-07 UTC
+Branch: feat/durable-work-results-v2
+Parent: 8a0ae61c407773301c3b767d1ea4dd01945dcd84
+Runtime: OpenJDK 25.0.3; GraalVM CE 25.1.3+9.1
+Compilation: existing Java release 21, -Xlint:all -Werror
+Formatter: google-java-format 1.28.0
+No dependencies, wire schemas, profile identifiers or persistent formats changed.
+
+Scope and limits:
+- ClientCorrelation validates a single capability exchange, activated profiles,
+  increasing control IDs starting at 1, actual input-stream tags, pending ceilings
+  and all response families. It returns correlated controls to the caller; it does
+  NOT authenticate peers, check durable receipt fields or persist successful evidence.
+- Out-of-order controls/inputs do not require history growing with completed work.
+  Inputs remain pending until admission response/refusal or connection uncertainty;
+  STOP_SENDING is not an admission receipt. QUIC owns actual stream non-reuse.
+- A result header binds generation/work/attempt/index/length/digest to the selected
+  retained descriptor. Unknown/non-result/duplicate correlation and a second control
+  response after result start poison the connection. Contradictions are local
+  INTEGRITY_ERROR even when valid-transfer slots are exhausted. Failed deliveries
+  remain pending until abort/FIN/close; releasing one cannot free another's permit.
+- Result Bytes/FIN verify the exact payload before completion. Local failure, reset
+  or another identical read does not mutate work or advance an execution attempt.
+  Close returns unresolved original requests, not terminal work claims.
+- HeaderReader checks a u32 prefix before allocating at most 4096 header body bytes,
+  preserves coalesced payload for authorization/reservation, and enforces an absolute
+  local header deadline. Payload hashes incrementally, rejects size overflow,
+  truncation/trailing bytes/digest mismatch and requires actual FIN even when empty.
+- Independent idle/lifetime deadline checks can be called without callbacks.
+  Deadline equality fails before progress/FIN. Empty callbacks do not renew idle
+  time. Signed-long nanoTime wrap works; backward time cannot extend the stream.
+- The future Netty owner must drive those timers, gate all incomplete streams/headers,
+  bound waiting result creation and queues, enforce actual stream direction/non-reuse,
+  preserve control credit and distinguish sender transport progress from queued/file
+  bytes. These functions do not establish authenticated endpoint or flow-control
+  conformance. Full Java durable execution/recovery, cross-language failure driver
+  and original external/equivalent streaming-gRPC workload remain mandatory.
+
+Focused tests:
+  mvn -q -f implementations/java-netty/pom.xml -Dtest=V2ObjectStreamTest test
+  handle 82390, exit 0; /tmp/pipestream-java-v2-object-tests.log
+  Six tests: every header cut and coalesced bytes, allocation/FIN/header deadline,
+  direct-buffer payload hashing and exact byte/digest/FIN geometry, empty/reset,
+  deadline equality/independent timers and monotonic wrap/backward time.
+
+  mvn -q -f implementations/java-netty/pom.xml -Dtest=V2ObjectStreamTest,V2ClientCorrelationTest test
+  handle 33401, exit 0; /tmp/pipestream-java-v2-correlation-tests.log
+  Initial nine correlation tests cover all response pairs/cross-kind failures,
+  negotiated profiles, reordered IDs/inputs, capacity, uncertainty inventory,
+  every mismatched result field, duplicate response and unrelated request progress.
+  Subsequent changes added independent result permits and mismatch-before-quota.
+
+Final focused:
+  mvn -q -f implementations/java-netty/pom.xml -Dtest=V2ObjectStreamTest,V2ClientCorrelationTest,V2ObjectResourceTest test
+  handle 56580, exit 0; /tmp/pipestream-java-v2-stream-focused-final.log
+  18 tests: 6 object, 11 correlation, 1 isolated resource, no failures/errors/skips.
+  Fresh focused XMLs: 2026-09-07 15:58:53 America/New_York.
+  Permit tests prove an aborted over-limit or mismatched stream cannot release
+  another's live permit. Header contradiction retains INTEGRITY_ERROR priority.
+
+Isolated resource probe:
+  Same Maven command above, or -Dtest=V2ObjectResourceTest.
+  Fresh child JVM with -Xmx24m -XX:+UseSerialGC and a 60-second test bound.
+  Expected 64 MiB zero-object SHA-256 was separately verified with:
+    head -c 67108864 /dev/zero | sha256sum
+  3b6a07d0d404fab4e23b6d34bc6696a6a312dd92821332385e5af7c01c421351
+  The probe streams one reusable 8192-byte direct buffer; byte count alone never
+  sets verified before FIN. Its payload is larger than its JVM maximum heap.
+Raw first run (handle 91679, exit 0):
+payloadBytes=67108864 chunkBytes=8192 verified=true maxHeapBytes=24379392 elapsedMs=49
+VmHWM: 135844 kB
+VmRSS: 135844 kB
+  Final focused repeat: 47 ms, RSS/HWM 136720 KiB, same bytes/buffer/max heap.
+  These are local hashing samples, not network throughput or low-RSS guarantees.
+  Heap cap, direct buffer and process memory are separate quantities.
+
+Documentation:
+  javadoc -quiet -Xdoclint:all -Werror -d target/v2-apidocs \
+    -classpath target/classes:/home/krickert/.m2/repository/io/netty/netty-common/4.1.131.Final/netty-common-4.1.131.Final.jar \
+    -sourcepath src/main/java ai.pipestream.quic.v2
+  cwd: implementations/java-netty
+  Direct final command exit 0; /tmp/pipestream-java-v2-stream-doclint-final.log empty.
+  This checks the complete new V2 package, not the older V1 missing-doc warnings.
+
+Draft:
+  ./build.sh core 05
+  handle 41637, exit 0; /tmp/pipestream-java-v2-stream-draft.log
+  New Appendix D paragraph inspected in generated TXT and HTML.
+  idnits: zero errors/flaws/warnings, one existing FIPS-180-4 reference comment.
+  Forgejo pull was ff-only and already current. No main merge, deployment or
+  Internet-Draft submission is authorized by or claimed for this checkpoint.
+
+Source SHA-256:
+851d76537cda1284d12394e78239bee9f251407bd0cef7bae10e8a26af0badbd  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/ClientCorrelation.java
+5d5824282579746b0c075a2bf0701022b904c0b1a67080629e09841be3d97ff1  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/ObjectStream.java
+16c0158edf9e7cb1e880f5255324618123edcad36d2783d3760c2aaa7cfd05b2  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/package-info.java
+ee0c4f53ac50437dbe4213568ce97b323cdeacb533e4d44b6803ab78e8ea8c1a  implementations/java-netty/src/test/java/ai/pipestream/quic/v2/V2ClientCorrelationTest.java
+2178dbcf95f5eef1417cca4eab7a737501ffbadd48e3b1e50be1c58f84bee163  implementations/java-netty/src/test/java/ai/pipestream/quic/v2/V2ObjectStreamTest.java
+00d9ad6271118aa4c35c3fbfa89c101ba43d1656639adeb6137a9f4ad0924c5d  implementations/java-netty/src/test/java/ai/pipestream/quic/v2/V2ObjectResourceTest.java
+
+Full reference suite:
+  ./conformance/run_all.sh
+  handle 28864, exit 0; /tmp/pipestream-java-v2-stream-full-suite.log
+  788 Rust workspace tests and six external Rust tests; strict fmt/clippy.
+  Java install -Psealed-interop: 305 tests in 26 fresh XML reports, zero
+  failures/errors/skips. Reports: 2026-09-07 16:04:42 through 16:05:48
+  America/New_York. Native SQLite/C++ checks and release/example builds passed.
+  All nine existing V1 black-box pairs, 32 raw capability probes, recursive/
+  recovery scenarios and all three external examples passed. These do not
+  establish Java V2 network interoperability.
+  Frozen vectors: 33 Core, 18 recursive/recovery, 70 V2 plus 12 commitments.
+  Bounded safety models: 311539/5776/620796 states, 8723092/173280/29177412
+  edges, deepest 19/17/27 and zero states at each configured depth boundary.
+  Repeat object probe: 46 ms, max heap 24379392 bytes, RSS/HWM 135156 KiB.
+  Prior scope commitment probe also passed: 4000003 members, 672 retained
+  hash bytes, 1637 ms, same hashes; observed RSS/HWM 399356 KiB.
+  Formatting and source-hash checks passed. No implementation changes followed
+  this run. Full goal remains active and incomplete.
+
+Log SHA-256 (local logs, selected raw evidence retained above):
+5064855e23801e4fa6c24b8735b78717927d0759ca55483d6ac76c984f1a6f39  /tmp/pipestream-java-v2-stream-focused-final.log
+f1f6039722060269c4a0aa2002d7dec679c4204473b24f632afff96e55030da4  /tmp/pipestream-java-v2-stream-full-suite.log
+00f19b36b88217b0f2a803fcda7f098b0b6566f06b7d9f3a644d9ae3681aa78f  /tmp/pipestream-java-v2-stream-draft.log
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  /tmp/pipestream-java-v2-stream-doclint-final.log
