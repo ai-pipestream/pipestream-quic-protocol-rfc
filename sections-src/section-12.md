@@ -193,7 +193,12 @@ fallback is permitted. Core-only operation does not require a client principal.
 
 TLS certificate validation failures terminate the handshake using the QUIC
 CRYPTO_ERROR mapping in {{RFC9001}}, Section 4.8; an endpoint MUST NOT suppress
-that failure to reach application negotiation. After a successful handshake,
+that failure to reach application negotiation. When an implementation revalidates
+retained peer credentials after a resumed TLS handshake, it MUST withhold all
+protocol processing until that revalidation succeeds; failure terminates the
+connection using the same transport-error mapping. A session ticket alone does
+not establish current credential validity or application authorization.
+After a successful handshake,
 if required durable work cannot activate because caller identity is absent or
 unmapped, close with UNAUTHORIZED before a capabilities response. When durable
 work is merely optional, it and result delivery are

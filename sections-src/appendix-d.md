@@ -58,6 +58,21 @@ digest. This is not network flow-control, persistence, authentication, total-pro
 memory conformance or cross-language V2 evidence. Timer scheduling, QUIC stream
 ownership and authenticated durable endpoint integration remain unfinished.
 
+Java now also has a real Netty QUIC/TLS authentication guard for `pipestream/2`.
+Loopback tests exercise certificate trust/usage/validity, service DNS/IP names,
+stable DER-leaf mapping, rotation, missing/unmapped callers, optional/required
+profile policy, live credential expiry and actual TLS resumption. Every resumed
+server connection rechecks current peer credentials and mapping before application
+activation. The guard delays Netty's early application-activation event. Tests
+exposed reentrant closure that could suppress the native TLS alert; it preserves
+the native error path. It also resolves readiness when an unsuccessful connection
+unregisters without becoming active. Configured trust/mapping and peer verification
+limits do not establish native handshake or whole-process memory bounds. These
+are Java TLS-boundary tests, not a complete Java V2 durable endpoint, independent
+cross-language failure evidence or the original workload/gRPC comparison.
+Section 12 explicitly withholds protocol processing until resumed credential
+revalidation succeeds; this clarification changes no wire fields.
+
 As of 2026-09-07, the Rust authority library also implements transactional
 admission and replay, fenced worker execution, both branch producers and real
 child-output reassembly, cancellation/closure, retained result reads,

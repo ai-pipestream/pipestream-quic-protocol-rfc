@@ -14,7 +14,7 @@ import javax.net.ssl.SSLSession;
  * IP addresses. Callers supply IDNA A-labels, not Unicode U-labels. Common Names
  * and unrelated SAN types are never used as a fallback.
  */
-final class TlsPeerIdentity {
+public final class TlsPeerIdentity {
   private TlsPeerIdentity() {}
 
   /**
@@ -25,11 +25,22 @@ final class TlsPeerIdentity {
    * @throws SSLPeerUnverifiedException for missing or mismatched service identity
    */
   static void verify(SSLSession session, String reference) throws SSLPeerUnverifiedException {
-    if (reference == null || reference.isEmpty() || reference.length() > 253 || reference.indexOf('%') >= 0) throw refusal();
-    byte[] ip = NetUtil.createByteArrayFromIpAddressString(reference);
-    if (ip == null && !dns(reference)) throw refusal();
     var chain = session.getPeerCertificates();
     if (chain.length == 0 || !(chain[0] instanceof X509Certificate leaf)) throw refusal();
+    verify(leaf, reference);
+  }
+
+  /**
+   * Checks a leaf inside a TLS certificate-verification callback.
+   * This name check does not establish chain trust or private-key possession.
+   * @param leaf peer leaf certificate
+   * @param reference independently configured ASCII DNS name or IP literal
+   * @throws SSLPeerUnverifiedException for malformed or mismatched service identity
+   */
+  public static void verify(X509Certificate leaf, String reference) throws SSLPeerUnverifiedException {
+    if (leaf == null || reference == null || reference.isEmpty() || reference.length() > 253 || reference.indexOf('%') >= 0) throw refusal();
+    byte[] ip = NetUtil.createByteArrayFromIpAddressString(reference);
+    if (ip == null && !dns(reference)) throw refusal();
     try {
       var names = leaf.getSubjectAlternativeNames();
       if (names == null) throw refusal();

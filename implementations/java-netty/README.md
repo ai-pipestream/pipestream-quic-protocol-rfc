@@ -33,7 +33,7 @@ cursor advancement, and GOAWAY. They currently implement Layer 0 only.
 The separate `ai.pipestream.quic.v2` package implements the current Section 12
 and Appendix F binary schemas independently. It does not wrap Rust, convert
 messages through JSON, reuse the version-1 CBOR object model, or advertise V2
-profiles from an endpoint. Authentication, V2 durable execution/storage, client
+profiles from an endpoint. Authenticated endpoint integration, V2 durable execution/storage, client
 recovery and actual V2 object transport remain to be implemented in Java.
 
 - `Records` and `Messages` expose immutable typed values for every current
@@ -108,8 +108,62 @@ mvn -Dtest=V2ObjectStreamTest,V2ClientCorrelationTest,V2ObjectResourceTest test
 The Netty owner still must enforce actual stream directions/non-reuse, reserve
 control credit, drive timers without callbacks, bound pending result creation and
 incomplete headers, and distinguish QUIC FIN/RESET/STOP from durable receipts.
-Full Java authentication, durable execution/recovery and both-language failure
+Full Java authenticated endpoint integration, durable execution/recovery and both-language failure
 and workload evidence remain mandatory; neither V2 durable profile is advertised.
+
+## Version 2 QUIC/TLS authentication
+
+`v2.TlsAuthentication` configures real Netty QUIC/TLS 1.3 with ALPN `pipestream/2`
+and no application 0-RTT. Its client verifies configured CA trust and independent
+DNS/IP service identity inside the certificate callback, with no Common Name
+fallback. The shared Java SAN matcher is also still used by the V1 client.
+The server requests optional client certificates and validates every presented
+chain. Missing or unmapped identity may use Core, but cannot activate durable work
+or results. Required caller-dependent profiles fail with `UNAUTHORIZED` before
+the capabilities response; optional ones are excluded.
+
+Install a separate `Guard` first in every connection pipeline. Netty's activation
+event precedes its handshake notification; the guard delays downstream activation
+until verification succeeds. Stream owners must call `requireAuthenticated()`
+before Core access and `requireOwner()` before durable access. A terminated or
+unregistered connection is no longer authorized, including connections that never
+became active. The read-only readiness stage also fails on those early exits.
+
+Mapping keys are SHA-256 of the **complete DER leaf**, not just its public key.
+Multiple certificates can map to the same stable owner. An atomic mapping update
+cannot change an existing connection's owner. Certificate expiry and mapping
+removal/remapping prevent further requests. This does not revoke an accepted job's
+separate retained grant: the future durable store must enforce session revocation,
+owner policy and deadline again inside committing transactions and publication.
+
+The built-in client disables its pinned Netty session cache. The server also
+supports external clients which resume: every successful native handshake, resumed
+or full, rechecks the retained certificate chain's current trust/validity and maps
+it before application activation. Revalidation failure sends a TLS transport error,
+never an application refusal. Native TLS exceptions retain the native alert path;
+reentrant channel closure previously prevented the peer from receiving that alert,
+and a regression covers this. Empty ticket keys are **not** a resumption-disable
+switch in this Netty version; the implementation does not use that assumption.
+
+Configuration limits are 1 MiB of trusted PEM, 256 anchors and 16,384 mapped
+credentials. Verification checks at most 16 peer certificates and 64 KiB of encoded
+chain data. The latter is a post-native-decoding verification bound, not a bound
+on native handshake allocation, total heap or RSS. The guard does not buffer
+application payloads, implement connection admission quotas or schedule stream timers.
+
+```bash
+mvn -Dtest=V2TlsTest,TlsPeerIdentityTest,SealedServerTest test
+```
+
+`V2TlsTest` uses actual loopback QUIC, temporary EC certificates and typed capability
+frames. Tests exercise valid rotation, same-public-key/unmapped reissuance, optional
+and required activation, invalid trust/usage/time, inconsistent local key material,
+DNS/IP/wildcards/CN-only certificates, ALPN mismatch, live expiry/remapping and
+actual resumed handshakes. A test-only observation of the pinned Netty engine's
+resumption flag distinguishes resumption from another full handshake. The small
+test dispatcher is not a durable endpoint. No V2 profile is advertised by the
+shipped Java CLI yet; complete V2 endpoint/durability/recovery, independent failure
+testing and the original external/gRPC workload remain mandatory.
 
 ## Sealed-work library foundation
 

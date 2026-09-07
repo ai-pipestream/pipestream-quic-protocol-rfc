@@ -1716,6 +1716,47 @@ need implementation and actual endpoint tests. The complete cross-language
 failure/resource driver and original external/equivalent streaming-gRPC workload
 remain required by the unchanged goal.
 
+## Java V2 QUIC/TLS boundary evidence, 2026-09-07
+
+Sources: `TlsAuthentication.java`, the shared Java `TlsPeerIdentity.java` SAN matcher,
+and `V2TlsTest.java`. No Rust implementation is linked and no protocol JSON
+translation is involved. The dispatcher in these tests only exercises authentication
+and capability policy; it is not a durable endpoint and does not establish V2
+cross-language interoperability.
+
+- V2-AUTH: actual mutual-TLS handshakes bind two different certificates to one
+  configured owner. A reissued certificate with the same public key but different
+  full DER remains unmapped. Missing/unmapped callers can negotiate Core but cannot
+  activate required durable work or results, including result-only required sets.
+  Rejected negotiation sends no capabilities response.
+- V2-AUTH/WIRE: untrusted, wrong-EKU, expired/future certificates, inconsistent
+  local cert/key material and ALPN mismatch fail TLS. Service-name cases cover
+  exact DNS, literal IP, whole-label wildcard, multiple-label mismatch, CN-only,
+  malformed reference, wrong server EKU and wrong server trust root. Peer-observed
+  close codes are transport CRYPTO_ERROR values, not application refusals.
+- V2-AUTH/TIME: existing connections reject expiry at the exact certificate end
+  time and removal/remapping of the original owner. Three reconnects with the
+  built-in client use full handshakes. An external caching client demonstrably
+  resumes; subsequent connections revalidate current mapping and credential time.
+  An expired resumed peer never activates downstream application handlers.
+- V2-NEG/lifecycle: application activation follows credential verification, not
+  Netty's earlier channel-active notification. Reentrant close on TLS exception
+  originally suppressed peer alert delivery; negative network tests failed before
+  that fix. A never-active connection's unregistration resolves readiness as failure,
+  not an indefinitely pending promise. Negative readiness assertions require an
+  actual exceptional completion; a test observation timeout is not a passing refusal.
+- V2-STORE/configuration only: empty/over-1-MiB trust files, over-256 anchor files,
+  malformed owners and over-16,384 mappings refuse. Peer chain checks allow at most
+  16 certificates/64 KiB after native decoding. This is not proof of bounded native
+  TLS allocations, listener admission quotas or total process memory.
+
+Java still needs complete bounded connection/control/object ownership, scheduling,
+transactional work/results/retention and client recovery, including the same
+parent/child evidence checks in both arrival orders. The neutral Rust failure
+driver, measured both-language resource/outcome evidence and original external
+chunk/distribute/transform/reassemble workload plus equivalent authenticated durable
+streaming-gRPC comparison remain required.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

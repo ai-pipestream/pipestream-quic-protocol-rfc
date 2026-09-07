@@ -1,0 +1,140 @@
+PipeStream V2 independent Java QUIC/TLS authentication boundary
+Date: 2026-09-07 UTC
+Branch: feat/durable-work-results-v2
+Parent: 17e5a58f6fefaeec727c463f5f75ec8276532bad
+Runtime: OpenJDK 25.0.3; GraalVM CE 25.1.3+9.1
+Compilation: existing Java release 21, -Xlint:all -Werror
+Formatter: google-java-format 1.28.0
+Netty QUIC: unchanged 0.0.75.Final, linux-x86_64 native classifier
+No dependencies, wire layouts, profile identifiers or persistent formats changed.
+
+Scope
+- TlsAuthentication configures actual QUIC TLS 1.3, ALPN pipestream/2 and no
+  application early data. Server trust is explicit. Client service DNS/IP identity
+  is checked inside the chain-verification callback using the existing independent
+  Java SAN matcher, now also callable with a certificate. No Common Name fallback.
+- Optional client-certificate authentication permits anonymous Core, not anonymous
+  durable activation. A presented invalid certificate fails TLS. Missing/unmapped
+  identity excludes optional durable/results; requiring either fails UNAUTHORIZED
+  before any capabilities response. Capability records remain caller-supplied
+  descriptions of implemented profiles, not proof that an endpoint implements them.
+- Mapping hashes the complete verified DER leaf. Same-key certificate reissuance
+  has a different key in that map. Atomic configuration replacement cannot change
+  an existing connection's bound owner. Every durable caller check uses current
+  mapping and credential time, including equality with certificate expiry.
+- Netty fires channel-active before handshake-complete. The per-connection guard
+  delays downstream activation until credential verification. Its read-only ready
+  promise fails on TLS error, close or unregistration even if never activated.
+  Stream dispatchers must require the guard before processing any request.
+- Built-in Java clients have a zero-sized pinned Netty session cache. External
+  caching clients can resume against this server: the guard rechecks retained
+  chain trust/time and maps the leaf before application activation. Failed
+  resumed credential verification sends a transport CRYPTO_ERROR, not an
+  application refusal. Section 12 now makes this no-processing-before-revalidation
+  requirement explicit. These credential checks do not replace durable session
+  authorization, revocation, publication fencing or the accepted job's grant.
+- Configuration bounds: 1 MiB of trust PEM, 256 anchors, 16384 mapped credentials.
+  Peer verification bounds: 16 certificates and 64 KiB encoded chain after native
+  parsing. These are not native handshake-allocation, total heap/RSS, listener
+  admission or application-stream resource bounds. No application payload is
+  buffered by this guard. Complete endpoint quotas/timers remain to be implemented.
+
+Pinned-source review
+  Maven source JAR SHA-256:
+  b5b978f0115232be15ecc12a069ea38197475c1e64a7ff247f22e6d5bf47bee7
+  https://repo.maven.apache.org/maven2/io/netty/incubator/netty-incubator-codec-classes-quic/0.0.75.Final/netty-incubator-codec-classes-quic-0.0.75.Final-sources.jar
+  QuicSslSessionContext and QuicheQuicSslContext show that empty/null ticket keys
+  restore library-managed keys, not disabled resumption. QuicClientSessionCache
+  evicts every saved session at size zero. The guard does not assume the server's
+  SSLSessionContext zero cache or empty ticket keys disable tickets.
+  Native callback/cache behavior was checked at the POM's actual release tag:
+  https://github.com/netty/netty-incubator-codec-quic/blob/netty-incubator-codec-parent-quic-0.0.75.Final/codec-native-quic/src/main/c/netty_quic_boringssl.c
+  Error/service-identity references: RFC 9001 Section 4.8 and RFC 9525 Section 6.
+
+Tests and regression trail
+  V2TlsTest: nine substantive scenarios using actual loopback Netty QUIC and
+  temporary EC certificates. The typed-capabilities dispatcher is a test fixture,
+  not a claimed V2 durable reference endpoint.
+  - Mutual TLS and two-certificate same-owner rotation; same-public-key reissuance
+    remains unmapped unless the complete new DER leaf is configured.
+  - Missing/unmapped Core, optional downgrade and required caller-dependent
+    profile denial before response, including result-only required sets.
+  - Untrusted/invalid-EKU/expired/future clients and inconsistent local cert/key
+    material. The wrong-key test exercises local TLS key consistency, not a custom
+    on-wire forged CertificateVerify implementation.
+  - Exact DNS, literal IP and one-label wildcard; wrong name, multi-label wildcard,
+    malformed references, CN-only, invalid server EKU and untrusted server chain.
+  - Live expiry at equality and removed/remapped owner; no silent owner switch.
+  - Actual resumed external clients, removed mapping and expired resumed credential;
+    three reconnects with the built-in client prove full handshakes instead.
+  - ALPN mismatch, never-ready guards, incomplete key configuration, empty/large
+    trust files, excessive anchor/mapping counts and invalid owner labels.
+  Test-only inspection of the pinned engine's isSessionReused flag observes the
+  actual engine retained by the test provider, including after native cleanup.
+  There is no production reflection or substituted TLS session. A timeout does
+  not satisfy a negative readiness assertion; it requires exceptional completion.
+
+  First compiling network run: handle 47826 exit 1, eight tests, two observation
+  timeouts because reentrant close on native TLS exception suppressed the alert.
+    /tmp/pipestream-java-v2-tls-focused.log
+  Removing that reentrant close lets native QUIC flush its TLS error. Both
+  formerly failing network cases passed: handle 26995 exit 0.
+    /tmp/pipestream-java-v2-tls-errors.log
+  Stronger readiness assertions then exposed never-active connection promises
+  left pending. Handle 67293 exit 1 recorded two failures; channelUnregistered
+  now ends those promises. The wrong-key fixture's TLS failure is locally
+  generated: its peer, not the failing local client, observes that TLS close.
+    /tmp/pipestream-java-v2-tls-regressions.log
+  Focused V2TlsTest/TlsPeerIdentityTest/SealedServerTest: handle 46965 exit 0,
+  36 tests (initial eight TLS scenarios plus 28 existing identity/server tests).
+    /tmp/pipestream-java-v2-tls-verified-focused.log
+
+Full reference verification
+  ./conformance/run_all.sh
+  Handle 1782 exit 0; /tmp/pipestream-java-v2-tls-full-suite.log
+  788 Rust workspace tests; strict Rust fmt/clippy; 314 Java tests in 27 fresh
+  XML reports, zero failures/errors/skips, including nine new TLS scenarios and
+  V1 sealed interoperability. Java reports 16:38:45 to 16:39:56 America/New_York.
+  Native SQLite and C++ checks; six external Rust tests; all nine V1 language
+  pairings; 32 raw capability probes; recursive/recovery and all three examples.
+  Frozen vectors: 33 Core, 18 recursive/recovery, 70 V2, 12 V2 commitments.
+  Models: 311539/5776/620796 states; 8723092/173280/29177412 checked edges;
+  deepest 19/17/27, zero depth-boundary states; negative controls detect violations.
+  Old local JVM resource gates repeated: 4,000,003 members, max frontier 672 bytes,
+  1718 ms, RSS/HWM 382648 KiB; 64 MiB payload, 8 KiB buffer, 52 ms, RSS/HWM 137556
+  KiB. Both use max heap 24379392 bytes; these are not TLS-resource measurements.
+  No production code changed after this full suite began. A test-only resumption
+  observer was then made independent of native connection-release timing.
+  Final complete Java verification:
+    mvn install -q -Psealed-interop -f implementations/java-netty/pom.xml
+    Handle 87216 exit 0; /tmp/pipestream-java-v2-tls-final-java.log
+    314 tests in 27 fresh XML reports, zero failures/errors/skips. Reports span
+    16:43:00 to 16:44:11 America/New_York; V2TlsTest has nine tests, 1.506 seconds.
+  Final source hashes below were rechecked unchanged after that Java run.
+
+Draft/docs
+  ./build.sh core 05, final handle 83060 exit 0.
+  /tmp/pipestream-java-v2-tls-final-draft.log
+  Section 12.3 and new Appendix D paragraph inspected in generated TXT/HTML;
+  idnits zero errors/flaws/warnings, one existing FIPS-180-4 comment.
+  Strict -Xdoclint:all -Werror passed for all V2 sources and shared TlsPeerIdentity,
+  using explicit source files and compiled dependency resolution. The initial
+  broad source-path invocation also loaded unrelated V1 ProtocolException private
+  fields with existing missing-doc warnings; those were not changed or suppressed.
+  /tmp/pipestream-java-v2-tls-final-doclint.log
+  Formatting and git diff whitespace checks pass.
+
+Source SHA-256
+  d4eea1a5a3fb3fd294f0d2fcabde25d38bf24df76982d7d7d144208685d0ac25  TlsPeerIdentity.java
+  eb8cab9286ace577c22f9fa0a3fb6fd7b93cceced3bd339f1233ec8e0f756dcb  v2/TlsAuthentication.java
+  6214e70ea93ba60f38dbde69a04d80010b298cea94238d6a43373eceb76745fe  v2/V2TlsTest.java
+
+Remaining full goal
+  Java V2 connection/control/object ownership and live timers; transactional
+  execution, cancellation/fences, publication, retention/retirement and durable
+  client recovery, including both parent/child observation orders. The shipped
+  Java CLI still does not advertise V2 durable profiles. Independent Rust failure
+  driver, both-language measured resource/outcome/refusal evidence and original
+  external chunk/distribute/transform/reassemble workload with reconnect/worker
+  failure plus equivalent authenticated durable streaming-gRPC baseline remain
+  mandatory. This checkpoint does not complete Task 2 or the full goal.

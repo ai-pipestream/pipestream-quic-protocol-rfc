@@ -2225,3 +2225,53 @@ and all three examples. Final V2 doclint and formatting passed. Draft handle
 TXT/HTML, with zero idnits errors/flaws/warnings and the existing FIPS comment.
 No implementation changes followed the full suite. Forgejo ff-only pull was
 already current; this checkpoint does not merge main, deploy or submit a draft.
+
+### Java V2 actual QUIC/TLS authentication, 2026-09-07
+
+The preceding implementation checkpoint was verified progress: `17e5a58` is
+published. This turn adds the independent Java TLS boundary, not a replacement
+for the full Rust/Java/failure/workload objective. Netty now has a V2 guard with
+explicit CA trust, handshake service-name verification, optional validated caller
+certificates, full-DER stable mapping, current owner checks and no application
+0-RTT. The built-in client uses full handshakes. External resumed clients revalidate
+their actual retained certificate chain and current mapping before application
+activation. Missing/unmapped callers cannot activate required durable/results.
+
+The implementation accounts for Netty's channel-active notification preceding
+handshake-complete. Tests exposed reentrant closure suppressing peer TLS errors
+and never-active connections leaving readiness unresolved; both paths are fixed.
+Nine new actual-QUIC scenarios cover rotation, same-key certificate reissuance,
+bad trust/usage/time, inconsistent local keys, DNS/IP/wildcard/CN-only identity,
+ALPN mismatch, required/optional profile policy, live expiry/remapping, actual
+resumption and configuration limits. Negative readiness tests require an actual
+exceptional completion, not a timeout. A test-only retained engine observation
+keeps resumption evidence available after native connection cleanup.
+
+Full reference handle 1782 exited zero: 788 Rust workspace tests, 314 Java tests
+in 27 fresh reports, native guards/C++ checks, frozen vectors and bounded models,
+six external Rust tests, all nine V1 language pairings, 32 probes and the existing
+recursive/recovery/examples. After the test-only observer correction, final full
+Java handle 87216 exited zero with 314 tests in 27 fresh reports and no failures,
+errors or skips; source hashes remain unchanged. Strict doclint passed for the
+entire V2 package plus shared SAN helper; unrelated older V1 private-field warnings
+remain outside that explicit source scope. Formatting and whitespace checks pass.
+
+Section 12 now explicitly forbids protocol processing before resumed credential
+revalidation; this changes no wire fields. Final draft handle 83060 exited zero,
+with Section 12.3 and Appendix D inspected in generated TXT/HTML and idnits zero
+errors/flaws/warnings plus the existing FIPS comment. Evidence:
+`conformance/results/durable-work-v2-java-tls-2026-09-07.txt`.
+
+Next is the actual bounded Java V2 connection/control/object owner: stream-zero
+rules, complete Core client/server behavior, control-credit reservation and
+independent live deadline scheduling. Then complete transactional admission,
+execution/fences, results/retention/retirement and durable client recovery,
+including parent/child evidence in both arrival orders. The guard is not a
+durable authorization store and the test dispatcher is not a shipped endpoint.
+Native handshake memory, total RSS and full endpoint resource bounds are not
+proven by configuration ceilings. Neither V2 durable profile is advertised by
+the shipped Java CLI yet. The independent Rust failure driver, both-language
+outcome/refusal/resource evidence and the original external workload with
+reconnect/worker failure plus equivalent authenticated durable streaming-gRPC
+baseline remain mandatory. The full goal remains active and incomplete.
+Forgejo was current on ff-only pull; no main merge, deployment or draft submission.
