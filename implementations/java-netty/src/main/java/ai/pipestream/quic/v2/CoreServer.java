@@ -12,14 +12,15 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.FixedRecvByteBufAllocator;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.ChannelInputShutdownEvent;
 import io.netty.channel.socket.nio.NioDatagramChannel;
-import io.netty.incubator.codec.quic.QuicChannel;
-import io.netty.incubator.codec.quic.QuicServerCodecBuilder;
-import io.netty.incubator.codec.quic.QuicStreamChannel;
-import io.netty.incubator.codec.quic.QuicStreamType;
+import io.netty.handler.codec.quic.QuicChannel;
+import io.netty.handler.codec.quic.QuicServerCodecBuilder;
+import io.netty.handler.codec.quic.QuicStreamChannel;
+import io.netty.handler.codec.quic.QuicStreamType;
 import io.netty.util.AttributeKey;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -44,7 +45,7 @@ public final class CoreServer implements AutoCloseable {
       AttributeKey.valueOf(CoreServer.class, "connection");
   private final TlsAuthentication authentication;
   private final CoreOptions options;
-  private final NioEventLoopGroup group;
+  private final MultiThreadIoEventLoopGroup group;
   private final Set<Connection> connections = new HashSet<>();
   private final Map<Optional<String>, Integer> owners = new HashMap<>();
   private final AtomicBoolean stopping = new AtomicBoolean();
@@ -61,7 +62,7 @@ public final class CoreServer implements AutoCloseable {
     this.options = Objects.requireNonNull(options);
     if (!authentication.isServer())
       throw new IllegalArgumentException("server TLS configuration required");
-    group = new NioEventLoopGroup(1);
+    group = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
   }
 
   /**

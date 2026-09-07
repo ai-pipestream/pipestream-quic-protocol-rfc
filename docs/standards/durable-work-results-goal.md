@@ -2358,3 +2358,58 @@ recovery, including parent/child evidence in both orders. The neutral Rust failu
 driver, both-language outcome/refusal/restart/resource evidence and original
 external workload/equivalent durable streaming-gRPC comparison remain mandatory.
 No goal requirement is waived. The full goal remains active and incomplete.
+
+### Maintained Java QUIC dependency and credit review, 2026-09-07
+
+The previous implementation continuation made progress through the mechanical
+Netty migration. This continuation revalidated the dirty checkout and completed
+the migration's verification and fixes. Both Java Maven projects now use the
+Netty 4.2.17.Final BOM and maintained QUIC artifacts, with one-thread NIO owners.
+The native JAR manifest still identifies the same bundled quiche/BoringSSL
+revisions as the prior incubator package. No wire, profile or storage format
+changed and neither Java V2 durable profile is advertised.
+
+The first full run failed three old certificate-name exception assertions.
+Pinned upstream source confirms Netty 4.2 checks hostnames during TLS by default.
+The clients keep that earlier check explicitly enabled, as well as PipeStream's
+stricter SAN-only guard. Corrected tests require precise certificate failure,
+zero decoded controls for invalid names, and valid-name negotiation using the
+same certificates. Review also corrected positive test capabilities and
+removed an asynchronous STATUS-count assumption before verification. No timeout
+or arbitrary exception is accepted as a successful refusal.
+
+Final full suite handle 60811 exited zero: 788 Rust workspace tests plus six
+external Rust tests, 341 Java tests in 29 fresh XML reports with zero failures,
+errors or skips, native/C++ checks, frozen vectors and bounded models, all nine
+existing V1 interop pairs, 32 probes and the recursive/recovery/examples.
+Strict V2/shared-helper Javadoc and seven-file V2 formatting checks passed.
+Both resolved Java dependency trees use only Netty 4.2.17.Final. The draft built
+with zero idnits errors/flaws/warnings and the existing FIPS comment; Section
+12.1 and Appendix D were inspected in generated TXT/HTML. Failed-run provenance,
+tool-output limitations, scoped metrics and source/artifact hashes are recorded
+in `conformance/results/durable-work-v2-java-netty42-2026-09-07.txt`.
+
+The important remaining transport constraint is now explicit in
+`docs/standards/java-v2-transport-credit.md`: quiche's initial connection credit
+is not its later replenishment window, receive windows autotune, and native
+write acceptance is not release of unacknowledged transport data. Section 12.1
+now includes those facts in the control-reservation invariant. This is source
+analysis and a stronger acceptance boundary, not proof that the Java object
+transport exists or satisfies it. The legacy listener README now correctly
+labels its values as initial credit instead of fixed windows.
+
+An unmodified, clean Netty release checkout is available at
+`/work/reference-code/netty-quic-pipestream`, detached at the verified peeled
+tag commit `e0789d32c72f46fd2e7c99b6fdbbf7e2f4409e44`. It is outside the RFC
+notes and is not a local Maven override. Its native build deletes its generated
+`quicheSourceDir`; that property must not point at a retained reference checkout.
+
+Next close the actual Java transport admission/credit API and object ownership
+boundary with repeat/replacement and stalled-data tests, then complete Java
+durable admission/execution/fences, publication/results, retention/retirement
+and client recovery. The neutral Rust process driver, full both-language failure
+and resource evidence, and original external workload/equivalent authenticated
+durable streaming-gRPC comparison remain mandatory. No requirement was removed
+or replaced by this migration checkpoint. Forgejo was current on ff-only pull;
+no main merge, deployment or draft submission occurred. The full goal is active
+and incomplete.

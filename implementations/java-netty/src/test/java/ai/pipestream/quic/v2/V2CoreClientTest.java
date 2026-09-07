@@ -10,12 +10,13 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.ChannelInputShutdownEvent;
 import io.netty.channel.socket.nio.NioDatagramChannel;
-import io.netty.incubator.codec.quic.QuicServerCodecBuilder;
-import io.netty.incubator.codec.quic.QuicStreamChannel;
+import io.netty.handler.codec.quic.QuicServerCodecBuilder;
+import io.netty.handler.codec.quic.QuicStreamChannel;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -597,7 +598,8 @@ final class V2CoreClientTest {
 
   /** Independent network peer: it decodes client requests but never invokes client internals. */
   private static final class MaliciousServer implements AutoCloseable {
-    final NioEventLoopGroup group = new NioEventLoopGroup(1);
+    final MultiThreadIoEventLoopGroup group =
+        new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
     final CoreOptions options;
     final boolean negotiate;
     final BiConsumer<MaliciousServer, QuicStreamChannel> attack;

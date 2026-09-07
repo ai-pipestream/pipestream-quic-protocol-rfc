@@ -12,15 +12,16 @@ import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.EventLoop;
 import io.netty.channel.FixedRecvByteBufAllocator;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.ChannelInputShutdownEvent;
 import io.netty.channel.socket.nio.NioDatagramChannel;
-import io.netty.incubator.codec.quic.QuicChannel;
-import io.netty.incubator.codec.quic.QuicClientCodecBuilder;
-import io.netty.incubator.codec.quic.QuicConnectionCloseEvent;
-import io.netty.incubator.codec.quic.QuicStreamChannel;
-import io.netty.incubator.codec.quic.QuicStreamType;
+import io.netty.handler.codec.quic.QuicChannel;
+import io.netty.handler.codec.quic.QuicClientCodecBuilder;
+import io.netty.handler.codec.quic.QuicConnectionCloseEvent;
+import io.netty.handler.codec.quic.QuicStreamChannel;
+import io.netty.handler.codec.quic.QuicStreamType;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -44,7 +45,7 @@ public final class CoreClient implements AutoCloseable {
   private final CoreOptions options;
   private final TlsAuthentication authentication;
   private final TlsAuthentication.Guard guard;
-  private final NioEventLoopGroup group;
+  private final MultiThreadIoEventLoopGroup group;
   private final EventLoop loop;
   private final ClientCorrelation correlation;
   private final CompletableFuture<Capabilities> readiness = new CompletableFuture<>();
@@ -85,7 +86,7 @@ public final class CoreClient implements AutoCloseable {
       reservedBytes += bufferBudget;
     }
     try {
-      group = new NioEventLoopGroup(1);
+      group = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
       loop = group.next();
     } catch (RuntimeException | Error failure) {
       release();

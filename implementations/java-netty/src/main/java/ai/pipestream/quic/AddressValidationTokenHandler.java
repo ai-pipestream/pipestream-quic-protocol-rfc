@@ -1,7 +1,7 @@
 package ai.pipestream.quic;
 
 import io.netty.buffer.ByteBuf;
-import io.netty.incubator.codec.quic.QuicTokenHandler;
+import io.netty.handler.codec.quic.QuicTokenHandler;
 import java.net.InetSocketAddress;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;

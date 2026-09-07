@@ -1,0 +1,194 @@
+PipeStream Java maintained Netty QUIC migration, 2026-09-07
+========================================================
+
+Repository: /work/main/pipestream-ai/dev-tools/pipestream-quic-protocol-rfc
+Branch: feat/durable-work-results-v2
+Base commit: 9c9c134fe053c1ad56e06af08cf3530f8d841cca
+
+Scope
+-----
+Move Java reference and external Java example from archived incubator QUIC
+0.0.75.Final to io.netty QUIC 4.2.17.Final with an exact matching BOM. Migrate
+package imports and single-thread NIO event-loop APIs. No wire/profile/storage
+format change. The actual native JAR still bundles the same quiche/BoringSSL
+revisions as the prior dependency; no native-engine upgrade is claimed.
+
+Exact upstream and resolved artifact provenance
+----------------------------------------------
+Upstream archive notice (verified 2026-09-07; archived 2026-05-08):
+  https://github.com/netty/netty-incubator-codec-quic
+Netty tag netty-4.2.17.Final:
+  tag object 0fcd36c690eefc45d5dbfafa1212284f9e253965
+  peeled commit e0789d32c72f46fd2e7c99b6fdbbf7e2f4409e44
+Maven Central BOM metadata lastUpdated: 20260806134114
+Maven Central native-QUIC metadata lastUpdated: 20260804225331
+Both metadata inventories end at 4.2.17.Final on inspection.
+
+SHA-256 of resolved artifacts:
+  netty-bom-4.2.17.Final.pom
+    0951aa35bdcbf6dbc87af75a67e9af43c01687ed571f77c2e9195417c3afe969
+  netty-codec-classes-quic-4.2.17.Final.jar
+    542e718fdd8fa4f6d57bef9f91a5fa01200940cb8b381fd4c21fb5c170276c71
+  netty-codec-native-quic-4.2.17.Final-linux-x86_64.jar
+    9225b069850e2238126359b6d3ad00df1c8c528ce5123682b8090c09ec37bdbf
+
+Native JAR manifest, inspected directly from resolved runtime artifact:
+  Implementation-Version: 4.2.17.Final
+  Bundle-NativeCode: META-INF/native/libnetty_quiche42_linux_x86_64.so
+  Quiche-Revision: 4f347477006bf7f928335d28f05056013f70b87e
+  BoringSSL-Revision: 0226f30467f540a3f62ef48d453f93927da199b6
+
+Resolved Netty dependency tree (all 4.2.17.Final):
+  netty-codec-classes-quic (compile)
+    netty-common, netty-buffer, netty-transport, netty-resolver,
+    netty-codec-base, netty-handler, netty-transport-native-unix-common
+  netty-codec-native-quic:linux-x86_64 (runtime)
+  No old incubator artifacts or Netty 4.1 modules in the inspected tree.
+Logs, terminal exit 0:
+  /tmp/pipestream-quic-netty42-dependency-tree-20260907T183413.log
+  /tmp/pipestream-quic-netty42-runtime-classpath-20260907T183413.log
+Runtime classpath regenerated at implementations/java-netty/target/v2-tls-classpath.
+
+Initial clean focused verification
+----------------------------------
+Command:
+  mvn -f implementations/java-netty/pom.xml -Psealed-interop \
+    -Dtest=V2CoreClientTest,V2CoreServerTest,V2TlsTest,TlsPeerIdentityTest clean test
+Log: /tmp/pipestream-quic-netty42-focused-clean-20260907T183337.log
+Retained process handle 17556, terminal exit 0.
+Strict javac: 42 main and 30 test sources, release 21, -Xlint:all -Werror.
+39 tests from four fresh XML reports, zero failures/errors/skips:
+  TlsPeerIdentityTest 3; V2CoreClientTest 14; V2CoreServerTest 13; V2TlsTest 9.
+Report timestamps: 2026-09-07 18:34:06 through 18:34:13 -0400.
+
+First full run and corrected acceptance oracle
+---------------------------------------------
+Command: ./conformance/run_all.sh
+Log: /tmp/pipestream-quic-netty42-conformance-full-20260907T183445.log
+Retained process handle 4593, terminal exit 1. Not restarted while live.
+Java completed 341 tests with three failures, zero errors/skips. Failures:
+  SealedServerTest.layerZeroRejectsWrongPeerBeforeSendingCapabilities
+  SealedServerTest.sealedClientsRejectWrongCertificateNamesBeforeAttaching
+  SealedServerTest.sealedClientChecksDnsWildcardsAndIpSubjectAlternativeNamesOverQuic
+All asserted SSLPeerUnverifiedException but received SSLHandshakeException with
+CERTIFICATE_VERIFY_FAILED / QUICHE_ERR_TLS_FAIL. No failed full run is counted as
+passing conformance.
+
+Pinned Netty source explains the earlier refusal: client endpoint identification
+defaults to HTTPS in 4.2. The V1 clients now explicitly retain that algorithm and
+their stricter SAN guard. Do not disable native identity checking merely to get
+the old exception shape. Regression checks must preserve positive same-certificate
+cases, exact SAN-only rules and no application data before valid identity.
+
+Review caught two defects in the first revised test fixtures before a test
+run: their positive controls required sealed capabilities rather than a Layer-0
+reply, and exact frame counts after successful clients raced asynchronous STATUS
+frames. The repaired fixtures run all negative names first with exactly zero
+decoded controls, observe STATUS before ignoring it, then run valid-name controls
+and count their actual capability requests separately. These were test-fixture
+repairs, not production-protocol changes. The Layer-0 positive fixture check uses
+the raw sealed test peer for TLS/negotiation; actual public Layer-0 success remains
+the full interoperability matrix's responsibility.
+
+Post-fix focused command:
+  mvn -f implementations/java-netty/pom.xml -Psealed-interop \
+    '-Dtest=SealedServerTest#sealedClientsRejectWrongCertificateNamesBeforeAttaching+layerZeroRejectsWrongPeerBeforeSendingCapabilities+sealedClientDoesNotFallBackToCertificateCommonName+sealedClientChecksDnsWildcardsAndIpSubjectAlternativeNamesOverQuic,V2CoreClientTest,V2CoreServerTest,V2TlsTest' test
+Log: /tmp/pipestream-quic-netty42-tls-focused-20260907T184844.log
+Maven terminal log records BUILD SUCCESS at 18:49:06 -0400; 40 tests,
+zero failures/errors/skips (4 identity, 14 Core client, 13 Core server, 9 TLS).
+The tool wrapper failed serializing after completion, so this invocation has
+terminal-log evidence but no captured exit-code result object or reusable handle.
+It is not used as a substitute for the full suite's retained terminal handle.
+
+Final full verification
+-----------------------
+Command: ./conformance/run_all.sh
+Log: /tmp/pipestream-quic-netty42-postfix-conformance-full-20260907T184906.log
+Retained process handle 60811, actual terminal exit 0. No source edits during run.
+788 Rust workspace tests plus six external Rust example tests passed (794 total).
+341 Java tests, zero failures/errors/skips, counted independently from 29 fresh
+XML reports (18:54:03.396 through 18:55:17.050 -0400). Native SQLite/C++ checks,
+frozen vectors/CDDL, bounded models and their negative controls, all nine existing
+V1 language pairings, 32 capability probes, recursive/recovery and all three
+external examples passed. This does not promote V1 evidence to V2 conformance.
+
+Post-fix commands, each terminal exit 0:
+  Runtime dependency classpath regenerated:
+    /tmp/pipestream-quic-netty42-postfix-runtime-classpath-20260907T1854.log
+  Strict Javadoc (-Xdoclint:all -Werror) for all V2 sources plus TlsPeerIdentity
+  and AddressValidationTokenHandler, against the regenerated classpath:
+    /tmp/pipestream-quic-netty42-postfix-strict-javadoc-20260907T1854.log
+    empty log, 163 generated output files; not whole V1-package doclint.
+  Java example dependency tree after the successful reference install:
+    /tmp/pipestream-quic-netty42-example-dependency-tree-20260907T1854.log
+    QUIC classes/native and all transitive Netty modules are 4.2.17.Final.
+  Google Java Format 1.28.0 dry run, seven migrated V2 source/test files:
+    /tmp/pipestream-quic-netty42-postfix-v2-google-java-format-dry-run-20260907T1854.log
+    empty log, no edits; no mass reformatting of legacy V1 sources.
+
+Scoped local resource output from the full run:
+  Membership: 4,000,003 members; a primitive array would need 32,000,024 bytes;
+    max heap 24,379,392 bytes; retained hash frontier 672 bytes; 1617 ms;
+    VmRSS/VmHWM 390584 KiB. The test feeds the fold incrementally, without
+    allocating that array; these figures do not imply a 24 MiB process bound.
+  Object verification: 67,108,864 payload bytes; 8192-byte chunks; verified=true;
+    max heap 24,379,392 bytes; 48 ms; VmRSS/VmHWM 132676 KiB.
+  These are existing local hashing/verification gates, not native QUIC memory,
+  authenticated durable endpoint load or the required workload comparison.
+
+Verified source SHA-256 snapshot:
+  implementations/java-netty/pom.xml
+    d7f8726fc7c33c20e5a9afdfa83e91ba3454c829f192b13d2e559742a91a14b7
+  examples/java-to-rust/pom.xml
+    e0e78ef08b6b71e6e6616f6f34eb7638c78e689418aa2d13c2c9057e2d5739e0
+  implementations/java-netty/src/main/java/ai/pipestream/quic/PipeStreamClient.java
+    45dd26716f8afac2be32063e0d7d8ed01f6180f2fef28b986579bd50cbf7e443
+  implementations/java-netty/src/main/java/ai/pipestream/quic/SealedClient.java
+    4169ae5d49938c19dab63b16ef7f6c561b2c5d8df045ca6d82a41c3a9a484a3c
+  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/CoreClient.java
+    53271eb7e6cbc96511b3366b24f67069f9e1001f9f20c0f56540037ce7adbded
+  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/CoreServer.java
+    a3e83b7242fa362299d8538d95f08aaa1e130d99eea24fecdfe89a968e11176f
+  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/TlsAuthentication.java
+    863d820b94b7b3c6e50818b000919e889acf40a341c3f50b83b4c1f3a1ace983
+  implementations/java-netty/src/test/java/ai/pipestream/quic/SealedServerTest.java
+    98f4d8fef07f59ec918b1b2a400d652d9ecf43f25c1dd4c7830d5786dfde3dfb
+  implementations/java-netty/src/test/java/ai/pipestream/quic/SealedTestPeer.java
+    4ca7b5a4724848e0ae27821c6cb116fc7050286c5643b65d97c65b05b7c8ab57
+
+Reference source preparation
+----------------------------
+Unmodified Netty source cloned outside the RFC repository at:
+  /work/reference-code/netty-quic-pipestream
+Clone process handle 42924 exited 0; detached HEAD is the peeled release commit
+e0789d32c72f46fd2e7c99b6fdbbf7e2f4409e44 and the checkout is clean. The RFC
+build still resolves the Maven Central release; no local dependency override or
+native ABI patch is installed. The native POM deletes its generated
+quicheSourceDir after building: never point that property at a retained reference
+checkout. Future native work must preserve source ownership and reproducibility.
+
+Specification review
+--------------------
+Section 12.1 explicitly includes receive-window autotuning/replenishment limits
+and transport-owned charged send data. Local write completion is not proof of
+buffer release absent an explicit transport API guarantee. Appendix D limits the
+migration claim. No wire bytes, profile identifiers or persistent formats changed.
+Exact source analysis and still-outstanding acceptance gates:
+  docs/standards/java-v2-transport-credit.md
+This is source review, not measured Java V2 data/control-reservation evidence.
+
+Draft command: ./build.sh core 05 draft
+Log: /tmp/pipestream-quic-core-05-netty42-docs-20260907T1840.log
+Terminal exit 0; idnits 0 errors/flaws/warnings, one existing FIPS-180-4 comment.
+Rendered Section 12.1 and Appendix D inspected in TXT and HTML.
+
+Remaining scope
+---------------
+Java V2 durable objects, admission/execution/fences, results, retention/retirement
+and client recovery remain incomplete. The shared native data/control reservation
+is not solved by this upgrade. The neutral Rust process/failure driver, complete
+both-language outcomes/refusals/restart/resource evidence and original external
+chunk/distribute/transform/reassemble workload with an equivalent authenticated
+durable streaming-gRPC baseline remain mandatory. Core and existing V1 interop
+tests cannot replace them. No goal completion, main merge, deployment or draft
+submission is claimed.

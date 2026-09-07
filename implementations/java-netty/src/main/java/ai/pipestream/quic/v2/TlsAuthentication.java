@@ -8,12 +8,12 @@ import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.handler.codec.quic.QuicChannel;
+import io.netty.handler.codec.quic.QuicSslContext;
+import io.netty.handler.codec.quic.QuicSslContextBuilder;
+import io.netty.handler.codec.quic.QuicSslEngine;
 import io.netty.handler.ssl.ClientAuth;
 import io.netty.handler.ssl.SslHandshakeCompletionEvent;
-import io.netty.incubator.codec.quic.QuicChannel;
-import io.netty.incubator.codec.quic.QuicSslContext;
-import io.netty.incubator.codec.quic.QuicSslContextBuilder;
-import io.netty.incubator.codec.quic.QuicSslEngine;
 import io.netty.util.ReferenceCountUtil;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -161,6 +161,7 @@ public final class TlsAuthentication {
 
   /**
    * Inspect the configured TLS role before constructing a matching QUIC codec.
+   *
    * @return true for a server configuration
    */
   public boolean isServer() {

@@ -9,16 +9,17 @@ import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.FixedRecvByteBufAllocator;
 import io.netty.channel.SimpleChannelInboundHandler;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.ChannelInputShutdownReadComplete;
 import io.netty.channel.socket.nio.NioDatagramChannel;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import io.netty.handler.codec.TooLongFrameException;
-import io.netty.incubator.codec.quic.QuicChannel;
-import io.netty.incubator.codec.quic.QuicServerCodecBuilder;
-import io.netty.incubator.codec.quic.QuicSslContextBuilder;
-import io.netty.incubator.codec.quic.QuicStreamChannel;
-import io.netty.incubator.codec.quic.QuicStreamType;
+import io.netty.handler.codec.quic.QuicChannel;
+import io.netty.handler.codec.quic.QuicServerCodecBuilder;
+import io.netty.handler.codec.quic.QuicSslContextBuilder;
+import io.netty.handler.codec.quic.QuicStreamChannel;
+import io.netty.handler.codec.quic.QuicStreamType;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -52,7 +53,7 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public final class SealedServer implements AutoCloseable {
   private static final int MAX_CONNECTIONS = 32, MAX_STREAMS = 8, MAX_OBSERVERS = 128;
-  private final NioEventLoopGroup group;
+  private final MultiThreadIoEventLoopGroup group;
   private final ThreadPoolExecutor metadata;
   private final ThreadPoolExecutor ingress;
   // A connection slot is retained until its cleanup returns, so this queue cannot overflow.
@@ -74,7 +75,7 @@ public final class SealedServer implements AutoCloseable {
     this.limits = Objects.requireNonNull(limits); this.jobs = new SealedJobs(sessions);
     SealedTransport.capabilities(limits);
     executor = SealedExecutor.start(sessions, payloads, processor, execution);
-    group = new NioEventLoopGroup(1);
+    group = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
     metadata = pool("sealed-metadata", 4, 64); ingress = pool("sealed-ingress", 4, 32);
     cleanup = pool("sealed-cleanup", 1, MAX_CONNECTIONS);
   }

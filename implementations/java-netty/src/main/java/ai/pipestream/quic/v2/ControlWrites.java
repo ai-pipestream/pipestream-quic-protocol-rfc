@@ -1,7 +1,7 @@
 package ai.pipestream.quic.v2;
 
 import io.netty.buffer.Unpooled;
-import io.netty.incubator.codec.quic.QuicStreamChannel;
+import io.netty.handler.codec.quic.QuicStreamChannel;
 import java.util.ArrayDeque;
 import java.util.function.Consumer;
 

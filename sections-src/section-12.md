@@ -96,6 +96,13 @@ credit update has not yet been advertised. The necessary headroom depends on
 the transport's credit-update policy; initial stream counts alone are not a
 proof of continued control progress.
 
+Receive bounds MUST account for any window autotuning, including the limits
+used for later credit replenishment, not only the initial transport parameters.
+Send admission accounting MUST include transport-owned data still charged
+against the shared capacity. Completion of an application write MUST NOT be
+treated as releasing that capacity unless the transport API guarantees the
+release.
+
 These requirements prevent dependencies on stalled data within a functioning
 connection; they do not guarantee delivery when a peer withholds control
 credit or the network cannot deliver packets. Implementations MUST bound

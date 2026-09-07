@@ -4,8 +4,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelInboundHandlerAdapter;
-import io.netty.incubator.codec.quic.QuicStreamChannel;
-import io.netty.incubator.codec.quic.QuicStreamType;
+import io.netty.handler.codec.quic.QuicStreamChannel;
+import io.netty.handler.codec.quic.QuicStreamType;
+import io.netty.handler.codec.quic.QuicException;
 import java.io.InputStream;
 import java.math.BigInteger;
 import java.net.InetSocketAddress;
@@ -210,33 +211,45 @@ final class SealedServerTest {
   }
 
   @Test void sealedClientsRejectWrongCertificateNamesBeforeAttaching() throws Exception {
-    Path certs = certificates();
-    try (var fixture = new Fixture(certs, (context, input) -> complete(input))) {
+    Path certs = certificates(); var frames = new AtomicInteger(); var capabilities = new AtomicInteger();
+    try (var server = new SealedTestPeer.ScriptServer(certs, frame -> {
+      frames.incrementAndGet(); if (frame.type() == Wire.FRAME_CAPABILITIES) capabilities.incrementAndGet();
+    }, frame -> List.of(SealedTransport.capabilities(SealedTransport.Limits.defaults())))) {
       for (boolean durable : List.of(false, true)) {
         var failure = assertThrows(java.util.concurrent.ExecutionException.class, () -> {
           try (var client = durable
-              ? SealedClient.connectDurable(fixture.server.address(), certs.resolve("ca.crt"), "not-localhost.example",
+              ? SealedClient.connectDurable(server.address(), certs.resolve("ca.crt"), "not-localhost.example",
                   SealedTransport.Limits.defaults(), Duration.ofSeconds(3), SealedClient.Durability.at(directory.resolve("wrong-peer.db")))
-              : SealedClient.connect(fixture.server.address(), certs.resolve("ca.crt"), "not-localhost.example",
+              : SealedClient.connect(server.address(), certs.resolve("ca.crt"), "not-localhost.example",
                   SealedTransport.Limits.defaults(), Duration.ofSeconds(3))) {
             assertNotNull(client.limits());
           }
         }, "a CA-valid certificate for another DNS name must be rejected");
-        assertInstanceOf(javax.net.ssl.SSLPeerUnverifiedException.class, failure.getCause());
+        assertCertificateNameFailure(failure, "not-localhost.example");
+        assertEquals(0, frames.get(), "wrong-name TLS must precede every application frame");
       }
+      try (var client = SealedClient.connect(server.address(), certs.resolve("ca.crt"), "localhost",
+          SealedTransport.Limits.defaults(), Duration.ofSeconds(3))) { assertNotNull(client.limits()); }
+      assertTrue(capabilities.get() >= 1, "same certificate and its valid name must negotiate");
     }
   }
 
   @Test void layerZeroRejectsWrongPeerBeforeSendingCapabilities() throws Exception {
     Path certs = certificates(), body = directory.resolve("body.bin"); Files.writeString(body, "input");
-    var frames = new AtomicInteger();
+    var frames = new AtomicInteger(); var capabilities = new AtomicInteger();
     try (var server = new SealedTestPeer.ScriptServer(certs, frame -> {
-      frames.incrementAndGet(); return List.of(Wire.encodeCapabilities(Wire.Capabilities.defaults()));
+      frames.incrementAndGet(); if (frame.type() == Wire.FRAME_CAPABILITIES) capabilities.incrementAndGet();
+    }, frame -> {
+      return List.of(SealedTransport.capabilities(SealedTransport.Limits.defaults()));
     })) {
       var failure = assertThrows(java.util.concurrent.ExecutionException.class, () ->
           PipeStreamClient.send(server.address(), certs.resolve("ca.crt"), "wrong.example", 1, body, "text/plain"));
-      assertInstanceOf(javax.net.ssl.SSLPeerUnverifiedException.class, failure.getCause());
+      assertCertificateNameFailure(failure, "wrong.example");
       assertEquals(0, frames.get());
+      try (var control = new SealedTestPeer.RawClient(server.address(), certs)) {
+        assertNotNull(control.control);
+      }
+      assertTrue(capabilities.get() >= 1, "same certificate and localhost must negotiate");
     }
   }
 
@@ -257,18 +270,23 @@ final class SealedServerTest {
         + "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\n");
     command(certs, "openssl", "x509", "-req", "-in", "server.csr", "-CA", "ca.crt", "-CAkey", "ca.key", "-CAcreateserial",
         "-out", "server.crt", "-days", "2", "-extfile", "extensions");
-    try (var fixture = new Fixture(certs, (context, input) -> complete(input))) {
-      for (String name : List.of("node.example.com", "127.0.0.1", "::1")) {
-        try (var client = SealedClient.connect(fixture.server.address(), certs.resolve("ca.crt"), name,
-            SealedTransport.Limits.defaults(), Duration.ofSeconds(3))) { assertNotNull(client.limits()); }
-      }
+    var frames = new AtomicInteger(); var capabilities = new AtomicInteger();
+    try (var server = new SealedTestPeer.ScriptServer(certs, frame -> {
+      frames.incrementAndGet(); if (frame.type() == Wire.FRAME_CAPABILITIES) capabilities.incrementAndGet();
+    }, frame -> List.of(SealedTransport.capabilities(SealedTransport.Limits.defaults())))) {
       for (String name : List.of("example.com", "two.node.example.com", "127.0.0.2", "::2", "localhost")) {
         var failure = assertThrows(java.util.concurrent.ExecutionException.class, () -> {
-          try (var client = SealedClient.connect(fixture.server.address(), certs.resolve("ca.crt"), name,
+          try (var client = SealedClient.connect(server.address(), certs.resolve("ca.crt"), name,
               SealedTransport.Limits.defaults(), Duration.ofSeconds(3))) { assertNotNull(client.limits()); }
         }, name);
-        assertInstanceOf(javax.net.ssl.SSLPeerUnverifiedException.class, failure.getCause(), name);
+        assertCertificateNameFailure(failure, name);
+        assertEquals(0, frames.get(), name + " sent an application frame");
       }
+      for (String name : List.of("node.example.com", "127.0.0.1", "::1")) {
+        try (var client = SealedClient.connect(server.address(), certs.resolve("ca.crt"), name,
+            SealedTransport.Limits.defaults(), Duration.ofSeconds(3))) { assertNotNull(client.limits()); }
+      }
+      assertTrue(capabilities.get() >= 3, "all valid DNS/IP identities must negotiate");
     }
   }
 
@@ -800,6 +818,27 @@ final class SealedServerTest {
     stream.writeAndFlush(Unpooled.wrappedBuffer(bytes)).get(5, TimeUnit.SECONDS);
     if (fin) stream.writeAndFlush(Unpooled.EMPTY_BUFFER).addListener(QuicStreamChannel.SHUTDOWN_OUTPUT).get(5, TimeUnit.SECONDS);
     return stream;
+  }
+  private static void assertCertificateNameFailure(
+      java.util.concurrent.ExecutionException failure, String reference) {
+    Throwable cause = failure.getCause();
+    if (cause instanceof javax.net.ssl.SSLPeerUnverifiedException explicit) {
+      assertEquals(
+          "server certificate SAN does not match the configured service identity",
+          explicit.getMessage(),
+          reference);
+      return;
+    }
+    var handshake = assertInstanceOf(javax.net.ssl.SSLHandshakeException.class, cause, reference);
+    assertEquals(
+        "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED",
+        handshake.getMessage(),
+        reference);
+    var quic = assertInstanceOf(QuicException.class, handshake.getCause(), reference);
+    assertEquals(
+        "QuicTransportError{code=0, name='NO_ERROR'}: QUICHE_ERR_TLS_FAIL",
+        quic.getMessage(),
+        reference);
   }
   private Path certificates() throws Exception {
     Path certs = Files.createDirectory(directory.resolve("certs"));

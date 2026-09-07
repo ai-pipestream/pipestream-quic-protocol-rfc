@@ -8,17 +8,18 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.SimpleChannelInboundHandler;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.nio.NioDatagramChannel;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import io.netty.handler.codec.TooLongFrameException;
 import io.netty.handler.ssl.SslHandshakeCompletionEvent;
-import io.netty.incubator.codec.quic.QuicChannel;
-import io.netty.incubator.codec.quic.QuicClientCodecBuilder;
-import io.netty.incubator.codec.quic.QuicConnectionCloseEvent;
-import io.netty.incubator.codec.quic.QuicSslContextBuilder;
-import io.netty.incubator.codec.quic.QuicStreamChannel;
-import io.netty.incubator.codec.quic.QuicStreamType;
+import io.netty.handler.codec.quic.QuicChannel;
+import io.netty.handler.codec.quic.QuicClientCodecBuilder;
+import io.netty.handler.codec.quic.QuicConnectionCloseEvent;
+import io.netty.handler.codec.quic.QuicSslContextBuilder;
+import io.netty.handler.codec.quic.QuicStreamChannel;
+import io.netty.handler.codec.quic.QuicStreamType;
 import java.io.IOException;
 import java.io.ByteArrayInputStream;
 import java.math.BigInteger;
@@ -58,7 +59,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class SealedClient implements AutoCloseable {
   private static final int MAX_TRACKED_ENTITIES = 65_536;
   private static final int MAX_CHUNKS = 65_536;
-  private final NioEventLoopGroup group;
+  private final MultiThreadIoEventLoopGroup group;
   private final Channel datagram;
   private final QuicChannel connection;
   private final QuicStreamChannel control;
@@ -80,7 +81,7 @@ public final class SealedClient implements AutoCloseable {
   private Long rootCheckpoint;
   private boolean closed;
 
-  private SealedClient(NioEventLoopGroup group, Channel datagram, QuicChannel connection,
+  private SealedClient(MultiThreadIoEventLoopGroup group, Channel datagram, QuicChannel connection,
       QuicStreamChannel control, Inbox inbox, long operationNanos, SealedTransport.Limits limits, SealedProducerJournal journal) {
     this.group = group; this.datagram = datagram; this.connection = connection;
     this.control = control; this.inbox = inbox; this.operationNanos = operationNanos; this.limits = limits;
@@ -157,7 +158,7 @@ public final class SealedClient implements AutoCloseable {
       try (var input = Files.newInputStream(caCertificate)) { trusted = input.readNBytes((1 << 20) + 1); }
       if (trusted.length == 0 || trusted.length > 1 << 20) throw new IOException("durable CA file exceeds local bound or is empty");
     }
-    var builder = QuicSslContextBuilder.forClient().applicationProtocols(Wire.ALPN);
+    var builder = QuicSslContextBuilder.forClient().endpointIdentificationAlgorithm("HTTPS").applicationProtocols(Wire.ALPN);
     if (trusted == null) builder.trustManager(caCertificate.toFile());
     else {
       var certificates = java.security.cert.CertificateFactory.getInstance("X.509")
@@ -166,7 +167,7 @@ public final class SealedClient implements AutoCloseable {
       builder.trustManager(certificates);
     }
     var tls = builder.build();
-    NioEventLoopGroup group = new NioEventLoopGroup(1);
+    MultiThreadIoEventLoopGroup group = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
     Channel datagram = null; QuicChannel connection = null;
     SealedProducerJournal journal = null;
     Inbox inbox = new Inbox();

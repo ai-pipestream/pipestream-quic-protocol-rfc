@@ -9,12 +9,19 @@ mvn verify
 java -jar target/pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar --help
 ```
 
-The current build uses Netty's `linux-x86_64` native classifier. Building also
+The reference library and Java example pin the Netty `4.2.17.Final` BOM and
+maintained `io.netty:netty-codec-classes-quic` / `netty-codec-native-quic`
+artifacts. The former incubator QUIC repository is archived; its package names
+and Netty 4.1 dependencies are no longer used. The single-thread NIO owners use
+`MultiThreadIoEventLoopGroup` with `NioIoHandler`. The current build uses Netty's
+`linux-x86_64` native classifier. Building also
 requires CMake 3.24 or newer and a C11 compiler for the small SQLite file-limit
 extension. Maven builds and packages it in both JARs and runs its native tests
 during `test`. See [native storage guard](native/README.md) for the pinned source,
 supported backend, and sanitizer command. No Rust protocol or storage code is
 linked into the Java library.
+Dependency provenance and the remaining V2 shared-credit requirement are recorded
+in the [Java transport review](../../docs/standards/java-v2-transport-credit.md).
 The client
 requires a CA certificate and the server requires an end-entity certificate and
 private key. Both public clients verify the certificate chain and the configured
@@ -658,7 +665,9 @@ work, admit partial input, or cancel an already-admitted job.
 Fixed listener limits are 32 connections, eight entity readers per connection,
 four file/receive workers with 32 queued tasks, and four metadata workers with
 64 queued tasks. A reader's Java byte backlog is at most eight 8-KiB pieces;
-QUIC windows are 1 MiB per connection and 64 KiB per Entity Stream. Readers may
+initial QUIC credit is 1 MiB per connection and 64 KiB per Entity Stream. The
+native transport can autotune receive windows; those initial values are not
+fixed receive-memory ceilings or a control-credit reservation. Readers may
 occupy a file worker while waiting for network input. Per-connection limits
 include 32 partial assemblies, 128 result observers, 32 queued storage actions
 with 4 MiB of encoded controls, and 1 MiB of pending control output. These are

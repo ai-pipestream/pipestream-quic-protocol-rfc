@@ -246,8 +246,12 @@ Dependency versions are reproducible: Ruby dependencies are exact in
 plugins in `pom.xml`, and MsQuic at an immutable Git tag in `CMakeLists.txt`.
 The direct dependencies were checked against their upstream registries on
 2026-09-04; the reference suite uses the latest compatible stable releases at
-that point. Rustls remains on the latest 0.23 release required by Quinn rather
-than the 0.24 development series.
+that point. The Java reference and example were subsequently migrated on
+2026-09-07 to the maintained Netty `4.2.17.Final` QUIC artifacts and matching BOM.
+The [Java transport review](docs/standards/java-v2-transport-credit.md) records
+the pinned native provenance and remaining control/data-credit work. Rustls
+remains on the 0.23 series required by Quinn rather than the 0.24 development
+series.
 
 ### Styling Conventions for Rendering
 

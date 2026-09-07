@@ -9,16 +9,17 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.SimpleChannelInboundHandler;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.ChannelInputShutdownReadComplete;
 import io.netty.channel.socket.nio.NioDatagramChannel;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
-import io.netty.incubator.codec.quic.QuicChannel;
-import io.netty.incubator.codec.quic.QuicServerCodecBuilder;
-import io.netty.incubator.codec.quic.QuicSslContext;
-import io.netty.incubator.codec.quic.QuicSslContextBuilder;
-import io.netty.incubator.codec.quic.QuicStreamChannel;
-import io.netty.incubator.codec.quic.QuicStreamType;
+import io.netty.handler.codec.quic.QuicChannel;
+import io.netty.handler.codec.quic.QuicServerCodecBuilder;
+import io.netty.handler.codec.quic.QuicSslContext;
+import io.netty.handler.codec.quic.QuicSslContextBuilder;
+import io.netty.handler.codec.quic.QuicStreamChannel;
+import io.netty.handler.codec.quic.QuicStreamType;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -33,7 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Standalone Netty server for the PipeStream Layer 0 reference contract. */
 public final class PipeStreamServer implements AutoCloseable {
-  private final NioEventLoopGroup group;
+  private final MultiThreadIoEventLoopGroup group;
   private final Channel datagram;
   private final Path outputDirectory;
   private final ConcurrentHashMap<QuicChannel, Session> sessions = new ConcurrentHashMap<>();
@@ -41,7 +42,7 @@ public final class PipeStreamServer implements AutoCloseable {
   private final CompletableFuture<Void> firstSessionComplete = new CompletableFuture<>();
 
   private PipeStreamServer(
-      NioEventLoopGroup group, Channel datagram, Path outputDirectory) {
+      MultiThreadIoEventLoopGroup group, Channel datagram, Path outputDirectory) {
     this.group = group;
     this.datagram = datagram;
     this.outputDirectory = outputDirectory;
@@ -65,7 +66,7 @@ public final class PipeStreamServer implements AutoCloseable {
         .forServer(privateKey.toFile(), null, certificate.toFile())
         .applicationProtocols(Wire.ALPN)
         .build();
-    NioEventLoopGroup group = new NioEventLoopGroup(1);
+    MultiThreadIoEventLoopGroup group = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
     PipeStreamServer[] holder = new PipeStreamServer[1];
     ChannelHandler codec = new QuicServerCodecBuilder()
         .sslContext(tls)

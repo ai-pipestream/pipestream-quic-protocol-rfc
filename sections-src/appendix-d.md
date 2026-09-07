@@ -102,6 +102,16 @@ framing, writes and detach, while process-local count and configured application
 buffer quotas remain charged through owned transport termination. These are not
 measurements of native memory or evidence of durable-profile implementation.
 
+The Java reference and external Java example now use Netty 4.2.17.Final's
+maintained QUIC artifacts and aligned dependency BOM, replacing the archived
+incubator module. This dependency migration does not establish the shared
+control/data reservation. Review of the bundled transport found that initial
+receive credit differs from the replenishment window and that receive windows
+autotune. Section 12.1 now explicitly includes those changing windows and
+transport-owned send buffering in the reservation requirement. Java's Core-only
+endpoints still accept no data streams; independent durable object transport
+and its stalled-data/resource evidence remain required.
+
 As of 2026-09-07, the Rust authority library also implements transactional
 admission and replay, fenced worker execution, both branch producers and real
 child-output reassembly, cancellation/closure, retained result reads,

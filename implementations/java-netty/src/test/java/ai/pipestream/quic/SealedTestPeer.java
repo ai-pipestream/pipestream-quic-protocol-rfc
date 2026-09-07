@@ -8,29 +8,31 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.SimpleChannelInboundHandler;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.nio.NioDatagramChannel;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
-import io.netty.incubator.codec.quic.QuicChannel;
-import io.netty.incubator.codec.quic.QuicClientCodecBuilder;
-import io.netty.incubator.codec.quic.QuicConnectionCloseEvent;
-import io.netty.incubator.codec.quic.QuicServerCodecBuilder;
-import io.netty.incubator.codec.quic.QuicSslContextBuilder;
-import io.netty.incubator.codec.quic.QuicStreamChannel;
-import io.netty.incubator.codec.quic.QuicStreamType;
+import io.netty.handler.codec.quic.QuicChannel;
+import io.netty.handler.codec.quic.QuicClientCodecBuilder;
+import io.netty.handler.codec.quic.QuicConnectionCloseEvent;
+import io.netty.handler.codec.quic.QuicServerCodecBuilder;
+import io.netty.handler.codec.quic.QuicSslContextBuilder;
+import io.netty.handler.codec.quic.QuicStreamChannel;
+import io.netty.handler.codec.quic.QuicStreamType;
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /** Fault-injection transports, not reference implementations or protocol oracles. */
 final class SealedTestPeer {
   private SealedTestPeer() {}
 
   static final class RawClient implements AutoCloseable {
-    final NioEventLoopGroup group = new NioEventLoopGroup(1);
+    final MultiThreadIoEventLoopGroup group = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
     Channel datagram; QuicChannel connection; QuicStreamChannel control;
     final ArrayBlockingQueue<byte[]> replies = new ArrayBlockingQueue<>(16);
     final CompletableFuture<Long> closeCode = new CompletableFuture<>();
@@ -98,9 +100,12 @@ final class SealedTestPeer {
 
   /** Sends scripted malformed replies. It deliberately has no storage or processing behavior. */
   static final class ScriptServer implements AutoCloseable {
-    final NioEventLoopGroup group = new NioEventLoopGroup(1);
+    final MultiThreadIoEventLoopGroup group = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
     Channel datagram;
     ScriptServer(Path certs, Responder responder) throws Exception {
+      this(certs, ignored -> {}, responder);
+    }
+    ScriptServer(Path certs, Consumer<Wire.ControlFrame> observer, Responder responder) throws Exception {
       try {
       var tls = QuicSslContextBuilder.forServer(certs.resolve("server.key").toFile(), null, certs.resolve("server.crt").toFile())
           .applicationProtocols(Wire.ALPN).build();
@@ -117,6 +122,7 @@ final class SealedTestPeer {
                     @Override protected void channelRead0(ChannelHandlerContext context, ByteBuf bytes) throws Exception {
                       byte[] encoded = new byte[bytes.readableBytes()]; bytes.readBytes(encoded);
                       var frame = Wire.decodeControl(encoded);
+                      observer.accept(frame);
                       if (frame.type() == Wire.FRAME_STATUS) return;
                       for (byte[] response : responder.respond(frame)) context.writeAndFlush(Unpooled.wrappedBuffer(response));
                     }

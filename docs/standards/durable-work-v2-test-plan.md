@@ -1838,6 +1838,20 @@ neutral Rust failure driver and both-language outcomes/refusals/restart/resource
 evidence, plus the original external workload and equivalent streaming-gRPC
 baseline with pinned raw measurements. This checkpoint does not complete the goal.
 
+## Java transport migration and outstanding credit gates, 2026-09-07
+
+The Java reference and external example now use the aligned Netty 4.2.17.Final
+BOM and maintained QUIC artifacts. The
+[transport review](java-v2-transport-credit.md) maps the actual bundled quiche
+receive-window autotuning/replenishment and send-buffer ownership to Section
+12.1. Initial receive limits and local write completion do not prove the shared
+reservation. The review specifies repeated stream replacement, native data
+saturation, independent control progress, negative controls and separate memory
+measurements required before Java durable object transport can satisfy V2-STORE.
+These gates are still outstanding; migrated Core/TLS and V1 tests do not replace
+them. The full Java durable contract, neutral failure driver and original workload
+comparison remain required.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

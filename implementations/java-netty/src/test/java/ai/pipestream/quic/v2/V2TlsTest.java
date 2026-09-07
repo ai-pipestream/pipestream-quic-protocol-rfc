@@ -10,18 +10,19 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.nio.NioDatagramChannel;
-import io.netty.incubator.codec.quic.InsecureQuicTokenHandler;
-import io.netty.incubator.codec.quic.QuicChannel;
-import io.netty.incubator.codec.quic.QuicClientCodecBuilder;
-import io.netty.incubator.codec.quic.QuicConnectionCloseEvent;
-import io.netty.incubator.codec.quic.QuicServerCodecBuilder;
-import io.netty.incubator.codec.quic.QuicSslContext;
-import io.netty.incubator.codec.quic.QuicSslContextBuilder;
-import io.netty.incubator.codec.quic.QuicStreamChannel;
-import io.netty.incubator.codec.quic.QuicStreamType;
+import io.netty.handler.codec.quic.InsecureQuicTokenHandler;
+import io.netty.handler.codec.quic.QuicChannel;
+import io.netty.handler.codec.quic.QuicClientCodecBuilder;
+import io.netty.handler.codec.quic.QuicConnectionCloseEvent;
+import io.netty.handler.codec.quic.QuicServerCodecBuilder;
+import io.netty.handler.codec.quic.QuicSslContext;
+import io.netty.handler.codec.quic.QuicSslContextBuilder;
+import io.netty.handler.codec.quic.QuicStreamChannel;
+import io.netty.handler.codec.quic.QuicStreamType;
 import io.netty.util.AttributeKey;
 import io.netty.util.concurrent.Future;
 import java.net.InetSocketAddress;
@@ -651,7 +652,8 @@ final class V2TlsTest {
 
   /** Transport test fixture, not a durable endpoint or conformance implementation. */
   private static final class Network implements AutoCloseable {
-    final NioEventLoopGroup group = new NioEventLoopGroup(1);
+    final MultiThreadIoEventLoopGroup group =
+        new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
     final List<Channel> datagrams = new ArrayList<>();
     final LinkedBlockingQueue<Probe> accepted = new LinkedBlockingQueue<>();
     final AtomicInteger responses = new AtomicInteger();
