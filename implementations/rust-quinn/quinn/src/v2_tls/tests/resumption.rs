@@ -149,8 +149,12 @@ async fn public_client_requires_fresh_tls_even_when_the_other_server_offers_tick
     tls.alpn_protocols = vec![ALPN.to_vec()];
     tls.time_provider = fixture.clock.clone();
     tls.max_early_data_size = u32::MAX;
+    // Deliberately replace the test server's owned crypto, not just its
+    // listener default: production acceptance now selects the owned policy.
+    fixture.security.config =
+        quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls).unwrap()));
     fixture.endpoint = quinn::Endpoint::server(
-        quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls).unwrap())),
+        fixture.security.configuration(),
         "127.0.0.1:0".parse().unwrap(),
     )
     .unwrap();

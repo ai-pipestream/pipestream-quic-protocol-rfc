@@ -322,7 +322,9 @@ impl Correlation {
     }
 }
 
-fn request_id(control: &Control) -> Option<Id> {
+/// Control correlation ID, excluding admission responses tagged by input stream.
+/// This accessor does not validate message direction, fields or connection state.
+pub fn request_id(control: &Control) -> Option<Id> {
     Some(match control {
         Control::Session(s) => match s {
             Session::Create { request, .. }

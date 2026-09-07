@@ -45,6 +45,16 @@ Independent Java V2, cross-language V2 failures and the equivalent streaming-gRP
 workload comparison remain unfinished. Local library and TLS tests do not
 establish those missing interoperability or usefulness claims.
 
+The Rust library now also supplies a Core-only version-2 QUIC server, with
+bounded concurrent connections, owner/anonymous quotas, capability selection,
+control framing, correlated refusals and connection detach. Fourteen Core
+tests cover configuration and real QUIC paths, including a 128 KiB ignored frame crossing a
+64 KiB flow-control window and a non-reading peer. Twenty TLS tests include
+owned authentication-configuration selection. Neither durable profile is
+advertised by this Core server. The standalone commands remain version 1;
+independent Java V2, full durable endpoints, process-level resource evidence
+and the workload comparison remain open.
+
 ## Java/Netty Reference Implementation
 
 Organization:

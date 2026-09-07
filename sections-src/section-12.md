@@ -626,6 +626,13 @@ new requests on that connection and, after existing connection requests and
 transfers drain, is acknowledged by operation 3. Detach makes no assertion
 about durable work completion and is not a root checkpoint. If it cannot drain
 within the negotiated stream lifetime, close without a completed-work claim.
+After accepting operation 2, the server MUST return a correlated NOT_READY
+refusal for each subsequent otherwise valid new control request, including
+another detach request. Such refusals still consume their increasing request
+identifiers. Existing requests and transfers continue to drain; malformed
+frames, wrong message direction and invalid correlation remain fatal under
+Section 12.2. Neither the detach acknowledgment nor later refusals assert that
+the session's durable work has completed.
 Applications can disconnect without detach; reconnect must negotiate and
 authenticate again. Neither detach nor abrupt disconnect cancels durable work.
 

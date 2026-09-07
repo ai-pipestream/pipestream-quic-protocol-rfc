@@ -23,18 +23,63 @@ cargo test --locked
 cargo build --release --locked
 ```
 
+## Version-2 Core server
+
+`pipestream_quic::v2_core::Server::bind(address, security, options)` creates
+an actual QUIC-v1, `pipestream/2` Core listener. `server.run(shutdown_future)`
+serves bounded concurrent connections until that future completes. The
+embedding application supplies `v2_tls::ServerSecurity` and can obtain the
+bound address with `local_addr()`. Standalone CLI commands still use version 1;
+this is the server library integration point, not a complete V2 CLI/client pair.
+
+Core advertises no durable profiles; supplying such an enabled inventory is
+refused at configuration time. It implements capability minima/required-profile
+refusals, Stream 0 framing, canonical decoding, increasing request IDs,
+correlated refusals and connection-only detach. Unknown ignorable frames use
+a 4096-byte discard buffer, including frames larger than the 64 KiB receive
+window. Known lengths are checked before body allocation. No input/result
+streams or second control stream receive QUIC stream credit in Core-only mode.
+Each fully received control request rechecks credential validity. Stopped/reset
+control directions terminate the connection, and headers/frames have bounded
+receive and send deadlines. Empty ignorable-frame floods yield the scheduler
+at least every 32 frames.
+
+`Options` separates negotiated limits from deployment ceilings. Defaults are
+64 global connections, eight active connections per stable authority/owner,
+eight anonymous/unmapped connections, a five-second handshake timeout and a
+ten-second whole-control-frame timeout. The global admission check includes
+Quinn's retained closed/draining connections and bounds the owned task set.
+Quinn's pending-incoming queue, handshake buffers, receive windows and send
+window are bounded separately. The configurable raw-control-buffer product
+cannot exceed 64 MiB. That is not a measurement or bound for the whole process
+heap/RSS; TLS, decoded values and QUIC state also consume memory.
+
+The policy is immutable for a Core server instance; replace the listener to
+change it. Rotated certificates share their mapped owner's quota. Credential
+expiry cannot be reversed on a live peer. `DRAIN` detach acknowledges only the
+connection cut; subsequent valid control requests receive correlated NOT_READY.
+No detach, transport close or operator shutdown asserts durable completion.
+Fourteen Core tests cover configuration and real QUIC paths, including non-reading peers,
+oversized/truncated frames, resets, quota boundaries and shutdown. Twenty TLS
+tests cover the underlying security boundary. Full durable dispatch, client
+journals, storage/execution integration, Java V2 and whole-process resource
+measurements remain unfinished.
+
 ## Version-2 TLS boundary
 
 `pipestream_quic::v2_tls` supplies separate TLS 1.3 configuration for
 `pipestream/2`, client DNS/IP identity verification, explicit verified-leaf
 mapping, and a completed server-side `Peer`. It does not implement a complete
-Core/durable dispatcher or advertise the new profiles. Standalone commands still
-serve version 1. The enclosing endpoint must still enforce QUIC-v1 support,
-global/per-principal connections, bounded control/object dispatch and storage
-integration before advertising V2 behavior.
+Core/durable dispatcher or advertise the new profiles on its own. The separate
+Core server above wires the Core path; authenticated durable/object dispatch and
+storage integration remain required before advertising those profiles.
 
 `ServerSecurity::accept` awaits a full handshake within a positive, at-most-30-
-second timeout after the host reserves a connection slot. Configured client
+second timeout after the host reserves a connection slot. It explicitly selects
+its owned configuration with `Incoming::accept_with`; a stale listener default
+cannot change its authentication policy. `set_transport_config` changes
+transport limits on future accepts and listener configurations without exposing
+the owned TLS verifier. Configured client
 authentication requests a certificate but allows its absence for Core. A
 presented expired, future, wrong-usage or untrusted certificate fails TLS even
 if its fingerprint is mapped. A valid unmapped or absent certificate supplies
@@ -69,7 +114,7 @@ entries/65535 DER bytes, mappings at 4096, and post-handshake peer capture also
 checks its input bound. These limits are not a measured whole-process TLS memory
 bound or a replacement for global/per-owner connection quotas.
 
-Nineteen security tests, including real QUIC handshakes, and removed-guard
+Twenty security tests, including real QUIC handshakes, and removed-guard
 negative controls cover these APIs. No durable request,
 result transfer, client journal or Java V2
 endpoint is implied by those tests. See the

@@ -211,8 +211,27 @@ impl ServerSecurity {
         })
     }
 
+    /// Listener configuration. Acceptance also selects this owned configuration;
+    /// changing a returned clone cannot change the admission TLS policy.
     pub fn configuration(&self) -> quinn::ServerConfig {
         self.config.clone()
+    }
+
+    /// Set transport limits on both future accepts and listener configurations.
+    /// This cannot replace the owned TLS verifier, certificate or ALPN policy.
+    pub fn set_transport_config(&mut self, transport: Arc<quinn::TransportConfig>) {
+        self.config.transport_config(transport);
+    }
+
+    pub(crate) fn bound_incoming(&mut self, count: usize, per_attempt: u64, total: u64) {
+        self.config
+            .max_incoming(count)
+            .incoming_buffer_size(per_attempt)
+            .incoming_buffer_size_total(total);
+    }
+
+    pub(crate) fn authorize<'a>(&self, peer: &'a Peer) -> Result<Option<&'a Identity>, Error> {
+        peer.authorize(self.authentication.as_deref())
     }
 
     /// Await a full handshake, never a 0.5-RTT server connection. Certificate
@@ -236,7 +255,8 @@ impl ServerSecurity {
             )
             .into());
         }
-        let connection = tokio::time::timeout(timeout, incoming).await??;
+        let connecting = incoming.accept_with(Arc::new(self.configuration()))?;
+        let connection = tokio::time::timeout(timeout, connecting).await??;
         let data = connection
             .handshake_data()
             .and_then(|d| d.downcast::<HandshakeData>().ok());

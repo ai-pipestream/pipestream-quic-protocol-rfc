@@ -828,6 +828,62 @@ regression results are in
 [`durable-work-v2-tls-alerts-2026-09-07.txt`](../../conformance/results/durable-work-v2-tls-alerts-2026-09-07.txt).
 Existing end-to-end pairs remain V1 evidence, not complete V2 interop.
 
+### Rust V2 owned TLS configuration and Core server, 2026-09-07
+
+`v2_core::Server` is now a real, bounded Core-only Quinn listener, not an
+advertisement of either incomplete durable profile. Its 14 Core tests include
+configuration refusals and 13 real-QUIC cases with a raw client control reader
+distinct from the server's framing code. The TLS
+boundary has 20 tests. These are local Rust tests, not Java V2 interoperability
+or the neutral multi-process failure driver's completed acceptance gates.
+
+- V2-AUTH: `ServerSecurity::accept` selects its own configuration explicitly.
+  The regression first failed when a no-client-auth endpoint default silently
+  produced an anonymous peer instead of the mapped owner. Now valid certificates
+  map correctly and invalid presented certificates fail TLS under that same
+  stale listener default. The independent ticket-offering peer was retained;
+  removing client resumption disablement still makes its test fail.
+- V2-WIRE/NEG: real negotiation checks minima and required profiles. Missing
+  identity with required durable work closes UNAUTHORIZED; an authenticated
+  caller requiring the unimplemented profile closes EXTENSION_UNSUPPORTED.
+  No capabilities acknowledgment is sent in either case. Unknown type classes,
+  duplicate capabilities, wrong direction, noncanonical values, oversize
+  prefixes, truncation and invalid request IDs have their named fatal scope.
+- V2-WIRE/CORE: ignorable frames are incrementally discarded using 4096 bytes.
+  A 128 KiB frame traverses the 64 KiB QUIC receive window and preserves the
+  following detach frame's alignment. Core alone grants no object/second-control
+  stream credit. Reset and STOP_SENDING on either control direction close with
+  CONTROL_RESET; incomplete headers and blocked response writes are bounded.
+- V2-AUTH/STORE: the global connection check includes retained QUIC connections
+  as well as owned tasks; stable-principal and anonymous quotas are independent.
+  Rotated credentials share the owner's quota, without blocking another owner.
+  A deliberate quota off-by-one caused the named-refusal test to time out.
+  Known raw parser-buffer budgets and QUIC queues/windows are finite; this does
+  not close the whole-process heap/RSS/CPU resource-measurement requirement.
+- V2-CORE/TIME: a non-reading client advertises only 4096 bytes of receive credit
+  before TLS, then floods requests deliberately beyond its pending allowance.
+  Its blocked output is bounded while a second peer can detach. Live credential
+  expiry is checked per request and cannot resurrect after a clock reset.
+- V2-CLOSE: detach does not claim root closure. Later otherwise valid control
+  requests receive NOT_READY, while wrong correlation remains fatal. Section
+  12.8 now names that previously unspecified post-detach refusal. Shutdown
+  closes active connections without manufacturing any completion response.
+
+Remaining integration: the public V2 client and standalone commands, authenticated
+durable/input/result dispatch, durable uncertainty journals, independent Java,
+neutral cross-language restart/failure cases, and the external equivalent-gRPC
+workload. No frozen wire bytes or authority storage format changed here.
+
+Final validation: `./conformance/run_all.sh` exited 0, with 596 Rust workspace
+tests, six Rust-example tests, 193 Java tests in 20 fresh XML reports (no
+failures/errors/skips), frozen vectors/CDDL, all three bounded models,
+C++/CTest, nine existing interop pairs, 32 raw capability probes and all
+recursive/external examples. The existing end-to-end pairs remain V1 evidence.
+`./build.sh core 05` exited 0; the rendered detach and implementation-status
+paragraphs were inspected. Idnits reports zero errors/flaws/warnings and the
+existing FIPS comment. Red/green and final results are captured in
+[`durable-work-v2-core-2026-09-07.txt`](../../conformance/results/durable-work-v2-core-2026-09-07.txt).
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

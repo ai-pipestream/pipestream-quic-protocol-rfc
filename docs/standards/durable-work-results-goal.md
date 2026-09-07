@@ -1410,3 +1410,42 @@ all recursive/external examples. `./build.sh core 05` exited 0 with zero
 idnits errors/flaws/warnings and the existing FIPS downref comment. Raw results
 are in `conformance/results/durable-work-v2-tls-alerts-2026-09-07.txt`.
 No main merge, deployment or IETF submission occurred.
+
+### Owned V2 TLS configuration and Core endpoint, 2026-09-07
+
+The previous configuration integration follow-up is implemented: acceptance
+selects the owned TLS configuration explicitly. Its regression first reproduced
+the stale-default anonymous-peer error. The ticket-offering test peer remains
+independent, and removing client resumption disablement still fails that test.
+
+The Rust `v2_core::Server` library now provides an actual QUIC-v1 Core-only
+listener, bounded concurrent tasks and retained transport connections,
+stable-owner and anonymous quotas, canonical incremental control framing,
+capability selection, named/correlated refusals and connection detach. Fourteen
+Core tests, including 13 real-QUIC cases, pass alongside 20 TLS tests. A deliberately relaxed quota
+boundary failed its refusal test. All negative-control edits were restored.
+The post-detach control-request refusal is now explicitly NOT_READY in Section
+12.8; it consumes correlation IDs but never asserts durable work completion.
+
+These are bounded local network tests, not a completed V2 durable endpoint or
+independent-language/process-resource proof. The raw control-buffer product is
+bounded separately from process heap/RSS. The Core server cannot advertise the
+unimplemented durable profiles. Existing standalone commands still run V1.
+
+Next integrate the authenticated authority, input staging and result streams
+through this transport, including independent progress and aggregate quotas;
+provide the V2 client and durable uncertainty journals and expose the runnable
+reference commands. Java parity, the neutral failure driver, external workload,
+equivalent streaming-gRPC baseline and every original measurement remain
+required. The goal remains active and incomplete.
+
+The Core checkpoint passed `./conformance/run_all.sh` with exit 0: 596 Rust
+workspace tests, six Rust-example tests, 193 Java tests in 20 fresh XML reports
+(no failures/errors/skips), frozen vectors/CDDL, all three bounded models,
+C++/CTest, nine existing interop pairs, 32 raw capability probes and all
+recursive/external examples. The existing end-to-end pairs remain V1 evidence.
+`./build.sh core 05` exited 0; the rendered Section 12.8 clarification and
+Appendix D status were inspected, with zero idnits errors/flaws/warnings and
+the existing FIPS downref comment. Results are captured in
+`conformance/results/durable-work-v2-core-2026-09-07.txt`.
+No main merge, deployment or IETF submission occurred.

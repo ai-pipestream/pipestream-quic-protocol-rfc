@@ -28,8 +28,9 @@ streaming-gRPC workload evidence. Local draft -05 defines the version-2 contract
 in Section 12 and Appendix F, with frozen wire examples. Its executable lifecycle
 models are bounded design checks. No complete version-2 application endpoint is
 implemented or advertised yet; existing full interoperability evidence is for
-version 1. The separate Rust V2 TLS boundary now has real QUIC handshake and
-live-credential tests, but does not activate either durable profile.
+version 1. Rust now also has a Core-only V2 QUIC server library with real
+negotiation, bounded framing, credential, quota and detach tests. It does not
+activate either durable profile or provide the complete V2 application endpoint.
 The Rust `pipestream_core::v2` library now implements typed codecs for every
 version-2 message and record, frozen commitments, negotiation checks, bounded
 client correlation and incremental object validation. This is a library

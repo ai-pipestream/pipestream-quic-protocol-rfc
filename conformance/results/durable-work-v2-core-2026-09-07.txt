@@ -1,0 +1,66 @@
+Rust V2 owned TLS configuration and Core endpoint, 2026-09-07 UTC
+Base: 64eefc5aa5c6bb0d6b82c7f82ddca642253842d9
+Implementation and tests: the commit containing this result file.
+Compiler: rustc 1.97.1 (8bab26f4f 2026-07-14)
+Dependencies remain locked; no dependency or storage format changed.
+
+Focused checks from implementations/rust-quinn:
+cargo test --locked -p pipestream-quinn --lib v2_tls -- --nocapture
+Exit 0. 34 passed, 0 failed, 0 ignored, 89 filtered out.
+20 TLS/security tests; 14 Core tests (13 real-QUIC cases and one setup check).
+Log: /tmp/pipestream-v2-core-final-focused.log
+cargo clippy --locked --workspace --all-targets -- -D warnings
+Exit 0. Log: /tmp/pipestream-v2-core-final-clippy.log
+
+Owned-config regression before the fix:
+cargo test --locked -p pipestream-quinn --lib accepted_peer_uses_owned -- --nocapture
+Exit 101. An endpoint default with no client authentication produced an
+anonymous peer; expected a mapped owner. Option::unwrap() received None.
+Log: /tmp/pipestream-v2-owned-tls-red.log
+After selecting the owned configuration, the entire focused set passes.
+
+Preserved independence of the ticket-offering test peer:
+Temporarily remove public client resumption disablement; run
+public_client_requires_fresh_tls_even_when_the_other_server_offers_tickets.
+Exit 101: client resumed rather than requiring full TLS.
+Log: /tmp/pipestream-v2-owned-tls-resumption-red.log
+Protection restored.
+
+Quota boundary negative control:
+Change principal admission from count >= ceiling to count > ceiling; run
+core_principal_rotation_and_anonymous_quotas_do_not_block_another_owner.
+Exit 101. Expected quota close never arrived; bounded wait failed with Elapsed.
+Log: /tmp/pipestream-v2-core-quota-red.log
+Correct comparison restored before final checks.
+
+Network evidence includes a 128 KiB ignored frame through a 64 KiB QUIC receive
+window; a non-reading client advertises 4096-byte receive windows before TLS;
+an independent peer can detach while the flooded connection hits its bounded
+write deadline. These are behavioral bounds, not whole-process heap/RSS/CPU
+measurements or independent-language interoperability results.
+
+The normative post-detach control refusal is now explicitly NOT_READY. No
+frozen frame bytes changed. Neither durable profile is advertised. Full V2
+client/CLI, durable authority and object dispatch, uncertainty journals, Java,
+neutral failure driver and equivalent-gRPC workload remain required.
+
+Final repository regression:
+./conformance/run_all.sh
+Exit 0, observed from the original process handle after completion.
+Log: /tmp/pipestream-v2-core-full-suite.log
+Rust workspace: 596 passed, 0 failed. Rust external examples: 6 passed.
+Java: 20 fresh Surefire reports, 193 tests, 0 failures/errors/skips.
+Oldest report timestamp: 2026-09-07 04:14:11 -0400.
+Frozen vectors/CDDL and three bounded models passed:
+  lifecycle: 311539 states, 8723092 edges, deepest 19;
+  scopes: 5776 states, 173280 edges, deepest 17;
+  composition: 620796 states, 29177412 edges, deepest 27.
+Each model had 0 states at the depth boundary.
+C++ build/CTest, 9 existing black-box pairs, 32 raw capability probes,
+recursive scenarios and all external examples passed. These existing full
+end-to-end pairs remain V1 regression evidence, not V2 interoperability proof.
+
+./build.sh core 05
+Exit 0. Log: /tmp/pipestream-v2-core-draft.log
+Rendered Section 12.8 detach rule and Appendix D Core status inspected.
+Idnits: 0 errors, 0 flaws, 0 warnings, 1 existing FIPS downref comment.
