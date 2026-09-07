@@ -10,7 +10,11 @@ use pipestream_core::{
 };
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex, OnceLock, mpsc},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot, watch};
 
@@ -67,6 +71,13 @@ struct Inner {
     slots: Arc<Semaphore>,
     options: Options,
     creation: Creation,
+    session_owned: AtomicBool,
+}
+pub(super) struct SessionOwner(Arc<Inner>);
+impl Drop for SessionOwner {
+    fn drop(&mut self) {
+        self.0.session_owned.store(false, Ordering::Release);
+    }
 }
 
 /// Cloneable async handles sharing one worker and one exclusive journal owner.
@@ -136,6 +147,7 @@ impl Journal {
                 slots: Arc::new(Semaphore::new(options.in_flight)),
                 options,
                 creation: creation.clone(),
+                session_owned: AtomicBool::new(false),
             }),
         };
         std::thread::Builder::new()
@@ -199,6 +211,18 @@ impl Journal {
 
     pub fn creation(&self) -> &Creation {
         &self.inner.creation
+    }
+    pub(super) fn claim_session(&self) -> Result<SessionOwner> {
+        self.inner
+            .session_owned
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| {
+                error(
+                    ErrorCode::Conflict,
+                    "journal already belongs to a durable client",
+                )
+            })?;
+        Ok(SessionOwner(self.inner.clone()))
     }
 
     /// Locally retained operation/reply slots, not server outstanding requests.

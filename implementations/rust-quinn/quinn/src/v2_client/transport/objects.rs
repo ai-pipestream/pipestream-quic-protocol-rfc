@@ -53,7 +53,34 @@ pub struct Input {
     response: Option<oneshot::Receiver<Packet>>,
     finished: bool,
 }
+/// Independently owned upload half. Dropping it aborts unfinished transmission,
+/// but does not cancel its separately owned admission-response collector.
+pub struct InputWriter(Input);
+impl InputWriter {
+    pub fn stream_id(&self) -> StreamId {
+        self.0.stream_id()
+    }
+    pub async fn write(&mut self, bytes: &[u8]) -> Result<()> {
+        self.0.write(bytes).await
+    }
+    pub async fn finish(&mut self) -> Result<()> {
+        self.0.finish().await
+    }
+}
+pub struct InputResponse(oneshot::Receiver<Packet>);
+impl InputResponse {
+    pub async fn receive(self) -> Result<Control> {
+        match self.0.await.map_err(|_| stopped())?.reply? {
+            Reply::Control(control) => Ok(control),
+            Reply::Object(_) => Err(error(ErrorCode::InternalError, "input got an object reply")),
+        }
+    }
+}
 impl Input {
+    pub fn split(mut self) -> (InputWriter, InputResponse) {
+        let response = self.response.take().expect("unsplit input response");
+        (InputWriter(self), InputResponse(response))
+    }
     pub fn stream_id(&self) -> StreamId {
         self.stream
     }
@@ -88,17 +115,9 @@ impl Input {
     /// Also usable after an upload was stopped: an identical header replay can
     /// legitimately return its original admission without sending the body again.
     pub async fn response(mut self) -> Result<Control> {
-        match self
-            .response
-            .take()
-            .ok_or_else(stopped)?
+        InputResponse(self.response.take().ok_or_else(stopped)?)
+            .receive()
             .await
-            .map_err(|_| stopped())?
-            .reply?
-        {
-            Reply::Control(control) => Ok(control),
-            Reply::Object(_) => Err(error(ErrorCode::InternalError, "input got an object reply")),
-        }
     }
 }
 

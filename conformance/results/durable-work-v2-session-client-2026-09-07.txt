@@ -1,0 +1,84 @@
+Rust V2 durable session client checkpoint, 2026-09-07
+Repository: pipestream-quic-protocol-rfc
+Branch: feat/durable-work-results-v2
+Parent: 16262c7a2d4456976a5bc74a6f872186cf63009f
+
+The public session::Client now owns the async journal and authenticated transport.
+It commits original intent before sending, validates/persists returned evidence
+before success, and keeps accepted collectors alive after waiter cancellation.
+This is not completed independent Java V2 interoperability, a standalone V2 CLI,
+or the original comparative workload/resource deliverable. No wire/CDDL, storage
+format or dependency changes. No deployment, submission or merge to main.
+
+Final Rust verification, direct process handle 24983, exit 0:
+  cargo fmt --all
+  cargo test --locked -p pipestream-quinn v2_tls::tests::authority::server::session -- --nocapture
+  cargo clippy --locked --workspace --all-targets -- -D warnings
+  cargo test --locked --workspace
+Working directory: implementations/rust-quinn
+Focused result: 9 passed, 0 failed.
+Workspace: 746 passed, 0 failed = 420 core + 221 Quinn + 69 wire + 30 driver
+  + 6 isolated resource tests. Zero doc tests.
+Logs:
+  /tmp/pipestream-v2-durable-client-focused.log
+  /tmp/pipestream-v2-durable-client-clippy.log
+  /tmp/pipestream-v2-durable-client-workspace.log
+
+Full conformance, direct process handle 36763, exit 0:
+  ./conformance/run_all.sh
+Log: /tmp/pipestream-v2-durable-client-full-suite.log
+  746 Rust workspace tests; strict clippy and formatting
+  33 immutable language-neutral vectors
+  18 immutable recursive/recovery vectors
+  70 frozen V2 framing/CDDL vectors and 12 domain-separated commitments
+  bounded lifecycle/scope/composed models and expected negative controls
+  193 Java tests; 20 fresh Surefire XML reports; 0 failures/errors/skips
+  XML mtimes 2026-09-07 12:36:56.324313631 .. 12:39:27.528765637 -0400
+  Java native and C++ native checks passed
+  6 external Rust example tests
+  all 9 V1 black-box language pairs
+  all 32 raw QUIC capability probes
+  recursive/recovery and all external examples
+No source changes occurred between final Rust verification and full conformance.
+These existing language pairs are V1 evidence, not independent V2 evidence.
+
+Draft verification, direct process handle 63449, exit 0:
+  ./build.sh core 05
+Log: /tmp/pipestream-v2-durable-client-draft.log
+Rendered Appendix D TXT and HTML inspected for the new implementation status.
+idnits: 0 errors, 0 flaws, 0 warnings, 1 existing FIPS reference comment.
+The normative contract did not need to change for this integration.
+
+Actual-server regression coverage (session test module):
+- 262144 input/output bytes, incremental delivery, explicit saved manifest/index,
+  journal reopen and same-owner certificate rotation, original-operation lookup,
+  saved terminal evidence, sealed membership/coverage and exact root completion.
+- Cancelled mutation waiter after dispatch retains its operation slot; its exact
+  intent precedes authority commit and its late receipt survives journal reopen.
+- Dropped upload waiter and shutdown while admission is paused: shutdown remains
+  pending until the owned collector saves the late receipt.
+- Missing covering declaration receipt refuses before admission preparation;
+  changed same-operation input refuses CONFLICT without changing saved evidence.
+- Second facade cannot claim the same journal or close the first owner's worker.
+- Completion waits for accepted operations and blocks new calls; an incomplete
+  cut refuses, reopens acceptance and can later complete with exact saved coverage.
+- Binding identity mismatch leaves original creation intact and binding absent.
+- UNAUTHORIZED leaves original intent unresolved; an explicit same-operation
+  retry succeeds after authorization is restored, with no replacement identity.
+- Cancelled connect waiter still saves the original binding before shutdown.
+
+One development test incorrectly expected WAIT_TIMEOUT for a WORK watch. The
+current contract returns the unchanged view on WORK wait expiry; only an
+unfinished checkpoint wait returns WAIT_TIMEOUT. The assertion was corrected
+after checking Section 12; implementation/spec were not weakened to satisfy it.
+
+Structural ceilings: 64 facade owners, 1..=32 operations/internal replies per
+facade (default 16). Cancelled waiters retain their slot through collector/reply
+cleanup; returned output handles retain it until dropped. Journal operations
+serialize off the control reader. The tests use a one-slot journal. These are
+count/ownership assertions, not measured heap/RSS/disk/network/latency claims.
+
+Pending original deliverables: standalone V2 CLI and bounded owned file adapters;
+full independent Java V2; neutral cross-language crash/failure/resource driver;
+external chunk/distribute/transform/reassemble workload and equivalent
+authenticated/durable streaming-gRPC baseline with pinned raw measurements.

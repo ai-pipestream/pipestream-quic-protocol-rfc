@@ -182,10 +182,22 @@ exercise reordered/cancelled waits, abandoned inputs, malformed control/selectio
 wrong commitments, corrupt/truncated/extra bytes, slow consumers and pending
 deadlines. An isolated gate opens 64 actual Core connections, refuses a 65th and
 admits a replacement after draining. These are count/behavior checks, not measured
-whole-process memory or independent V2 interoperability. The durable client facade,
-CLI/file integration, Java V2 and workload comparison remain incomplete. Section
+whole-process memory or independent V2 interoperability. CLI/file integration,
+Java V2 and workload comparison remain incomplete. Section
 12 clarifies that an identifiable result's wrong commitment fails that delivery;
 invalid correlation remains fatal. The wire encoding is unchanged.
+
+The Rust durable session client now composes the journal and transport. Owned
+collectors persist original intent before transmission and validate/save receipts,
+work views, manifests, selections and scope coverage before returning success.
+Cancelling a creation/mutation/upload waiter does not cancel that collector or
+allocate another identity. Completion/detach barriers first drain accepted client
+operations, then request the authority's actual cut. Real authenticated-server
+tests exercise a 256 KiB round trip across reopen and credential rotation, late
+receipt persistence, missing/changed commitments, binding identity mismatch,
+refused-operation recovery and exclusive journal ownership. These remain Rust
+implementation tests, not the independent V2 failure driver or workload comparison.
+No wire or database-format change was needed for this client integration.
 
 ## Java/Netty Reference Implementation
 

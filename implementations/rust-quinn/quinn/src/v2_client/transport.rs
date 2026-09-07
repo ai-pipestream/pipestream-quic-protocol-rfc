@@ -18,7 +18,7 @@ use tokio::{
 
 mod objects;
 mod requests;
-pub use objects::{Input, Output, VerifiedObject};
+pub use objects::{Input, InputResponse, InputWriter, Output, VerifiedObject};
 
 const CHUNK: usize = 8192;
 static CONNECTIONS: Semaphore = Semaphore::const_new(64);

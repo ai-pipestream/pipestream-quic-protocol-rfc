@@ -510,8 +510,9 @@ to 73,728 bytes (WAL 0). The physical-exhaustion fixtures now use 128 KiB limits
 for the database, WAL and rollback journal and 64 KiB for shared memory; they still
 exercise actual exhaustion/refusal and verify earlier evidence survives reopen.
 
-The V2 transport below now supplies the network event loop. The durable client
-facade, CLI and full automatic integration of these coverage APIs remain open.
+The V2 transport below supplies the network event loop, and the durable session
+client composes these journal/coverage APIs automatically. CLI/file integration
+remains open.
 The async journal owner supplies bounded off-runtime storage ownership.
 Independent Java V2, neutral cross-language failures and the original
 external workload/equivalent streaming-gRPC resource comparison remain open.
@@ -563,6 +564,70 @@ before using their commitments. A real-server test composes the public journal
 and transport across a 256 KiB transfer, replay, certificate rotation/reopen and
 exact root completion. Standalone V2 CLI/file adapters, complete independent
 Java V2 and neutral cross-language/workload evidence remain unfinished.
+
+### Version-2 durable session client
+
+`v2_client::session::Client` owns one journal and one authenticated connection.
+Supply a previously initialized or reopened async `Journal` and a trusted
+`Endpoint` (socket, verified TLS server name, trust and caller certificate).
+The client requires exactly the durable profile combination retained by its
+journal; it neither follows a locator nor changes the retained identity/policy.
+It replays the original creation if no binding was saved, otherwise attaches to
+that same session. Binding identity/policy validation and persistence finish
+before `connect` returns. A cancelled connect waiter still has an owned binding
+collector, followed by journal/transport shutdown.
+
+`mutate` persists the exact immutable intent before transmission and validates/
+records the receipt before successful return. `recover_operation` looks up only
+a locally retained original operation, then saves the returned receipt. Refusals,
+NOT_FOUND, transport loss and journal errors never authorize another operation
+identity. `intent`, `receipt` and `unresolved` expose bounded local recovery reads;
+there is no automatic new operation or retry-attempt allocation.
+
+`input` requires the operation ID of an already saved declaration receipt that
+actually covers the entity. It then commits admission intent before opening the
+stream. The upload writer and admission collector have separate owners. Dropping
+an upload or receipt waiter cannot stop persistence of a legitimate late admission.
+`Admission::finish` is local FIN only; `receipt` reports success only after the
+receipt is validated and committed. The low-level transport also exposes
+`Input::split` for separately owned writer/response halves.
+
+`watch`, `scope_page`, `checkpoint`, `manifest` and `select_output` authenticate,
+correlate and persist their evidence before returning it. Reordered work replies
+return the newest consistent locally saved view. WORK wait expiry returns an
+unchanged view, while an unfinished checkpoint wait refuses WAIT_TIMEOUT.
+`checkpoint` still requires the journal's complete local closure evidence;
+missing evidence is not invented. `manifest` permits legitimate zero-output
+success without requiring an output selection. `read_output` uses an explicitly
+saved manifest/index and performs a fresh authorized read of those same bytes.
+Output stays unverified until length, digest and FIN pass.
+
+`complete` and `detach` are barriers over accepted client operations before
+requesting the authority's actual connection cut. New calls refuse NOT_READY
+while a barrier is active. A failed cut reopens acceptance; a successful cut
+closes it. Complete uses the exact saved root summary; detach never claims work
+completion. `close` refuses new calls, drains owned collectors and closes the
+transport/journal; `closed` waits for that cleanup, and `shutdown` does both.
+A timeout around `closed` is not completed shutdown. Last-handle drop also drains
+accepted collectors. Reconnect by reopening the original journal, not replacing it.
+
+Only one durable client can claim a given async journal owner. Do not mutate
+through retained raw journal clones while attached. Disk calls serialize off
+the control reader, with bounded waiting under the client operation ceiling.
+There are at most 64 client owners per process; `Options::in_flight` is 1..=32,
+default 16, including queued/running work and unconsumed internal replies.
+Cancelled waiters retain capacity until their collector and reply are finished
+or discarded. Returned output handles retain a slot until dropped. Ordinary
+returned records become caller-owned. These are structural/count bounds, not
+measured heap/RSS or comparative workload costs.
+
+Real-server tests cover a persisted 256 KiB round trip and root completion across
+reopen/certificate rotation, cancelled creation/mutation/upload waiters, identity
+mismatch, missing covering receipts, changed intent, refused-operation recovery,
+exclusive ownership and failed/successful barriers. The journal is configured
+with a single operation slot in these tests to exercise serialized storage.
+Standalone V2 CLI/file adapters, independent Java V2, the neutral failure/resource
+driver and original external workload/streaming-gRPC comparison remain required.
 
 ### Version-2 asynchronous journal owner
 

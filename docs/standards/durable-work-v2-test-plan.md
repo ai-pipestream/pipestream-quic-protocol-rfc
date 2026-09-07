@@ -1440,6 +1440,42 @@ durable facade/CLI/file integration, independent Java V2, neutral cross-language
 failure driver and original workload/equivalent streaming-gRPC comparison remain
 required. Evidence: `conformance/results/durable-work-v2-client-transport-2026-09-07.txt`.
 
+### Rust durable session client, 2026-09-07
+
+`v2_client::session::Client` now owns journal/transport composition. Its typed
+operations persist intent before transmission and validated evidence before
+returning success. Nine actual-server tests (not an independent codec oracle)
+cover:
+
+- V2-OP/WIRE/RESULT/SCOPE: 256 KiB input/output, stored original receipts, explicit
+  manifest selection, reopen with a rotated same-owner certificate, original
+  operation lookup, terminal evidence, sealed coverage and exact root DRAIN.
+- V2-OP/RESOURCE: cancelled mutation waiter after request dispatch, original intent
+  visible before the authority commit, retained single-slot capacity until the
+  collector finishes, and receipt persistence despite the cancelled waiter.
+- V2-OP/STORE: dropped upload waiter while actual admission is blocked; client
+  shutdown remains pending until the collector saves the late receipt. Reopen
+  retains it. A cancelled creation waiter likewise saves the original binding
+  before shutdown; neither path allocates replacement identity.
+- V2-IDENTITY/SCOPE: absent covering declaration receipt refuses before admission
+  intent/transmission; changed admission intent refuses CONFLICT; mismatched
+  binding leaves original creation intact without saving the wrong binding.
+- V2-OP/AUTH: UNAUTHORIZED preserves the original intent and missing local receipt;
+  an explicit same-operation retry after authorization succeeds, with no automatic
+  replacement or attempt allocation.
+- V2-RESOURCE: a second facade cannot claim the same journal or shut down its
+  existing client. A one-slot journal serializes storage under concurrent facade
+  activity. Result and metadata waits remain independent of the storage reader.
+- V2-SCOPE/CORE: completion waits for already accepted facade operations, refuses
+  new calls during its barrier and reopens acceptance on a failed cut. WORK wait
+  timeout returns the unchanged view. Later exact coverage completes successfully;
+  detach alone records no completed-work coverage.
+
+No wire/CDDL, storage format or dependency changes. The new facade is not a
+standalone V2 CLI/file adapter, measured whole-process resource bound, independent
+Java V2 implementation or the original workload/equivalent gRPC comparison.
+Evidence: `conformance/results/durable-work-v2-session-client-2026-09-07.txt`.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

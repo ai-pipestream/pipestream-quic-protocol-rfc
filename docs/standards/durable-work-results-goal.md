@@ -1892,3 +1892,46 @@ observation. Full independent Java V2, the neutral cross-language failure/resour
 driver, and the original external workload/equivalent streaming-gRPC comparison
 with pinned raw cost/failure evidence remain required. No submission, deployment
 or merge to main occurred.
+
+### Durable V2 session client integration, 2026-09-07
+
+The public Rust `v2_client::session::Client` now composes the asynchronous journal
+and authenticated transport. Original creation/operation intent is persisted
+before transmission; binding, receipts, work views, manifests, explicit output
+selections and scope coverage are validated and saved before successful return.
+Owned collectors outlive cancelled connect/mutation/upload waiters. The input
+writer and admission response have separate owners, so dropping an upload handle
+does not discard a legitimate late receipt. Refusals and transport/storage errors
+leave the original intent available for explicit recovery, never automatic new
+operation/attempt allocation.
+
+Only one facade may claim a journal owner. Client operation/reply tickets bound
+queued and running work, including abandoned waiters; disk calls serialize without
+holding the network reader. Completion and detach first drain accepted facade
+operations, then obtain the authority's actual connection cut. A failed cut
+reopens acceptance; a successful cut closes it. Shutdown waits for owned collectors,
+then transport and journal cleanup. These are structural ownership/count bounds,
+not whole-process resource measurements.
+
+Nine actual authenticated-server scenarios cover a 256 KiB persisted round trip,
+credential rotation/reopen, exact root completion, cancellation at creation and
+mutation/admission commits, missing/changed commitments, identity mismatch,
+authorization refusal/retry and exclusive ownership. A development assertion
+confused WORK wait expiry with checkpoint WAIT_TIMEOUT; checking Section 12
+confirmed WORK returns the unchanged view. The test was corrected without changing
+the contract. No normative wire, CDDL, storage format or dependency change was
+needed for this integration.
+
+Verification: final Rust handle 24983 exited zero with 9 focused tests, strict
+clippy and 746 workspace tests. Full suite handle 36763 exited zero with the same
+Rust tests, 193 Java tests in 20 fresh XML reports, six external Rust tests,
+vectors/models, native checks, nine V1 pairs, 32 capability probes and examples.
+Draft handle 63449 exited zero; rendered Appendix D TXT/HTML inspected; idnits
+has zero errors/flaws/warnings and the existing FIPS comment. Evidence:
+`conformance/results/durable-work-v2-session-client-2026-09-07.txt`.
+
+The full objective remains active. Standalone V2 CLI/file adapters, complete
+independent Java V2, the neutral cross-language crash/failure/resource driver,
+and the original external workload/equivalent authenticated, durable streaming-
+gRPC baseline with pinned raw measurements remain required. The existing
+cross-language suite is V1 evidence, not proof of Java V2 interoperability.
