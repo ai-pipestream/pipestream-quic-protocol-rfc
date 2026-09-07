@@ -93,6 +93,15 @@ before connection credit; the implementation now budgets update headroom and
 Section 12.1 explicitly requires preserving the reservation across updates.
 This is adapter evidence, not complete durable-endpoint interoperability.
 
+The Rust authority runtime now independently drives execution, read expiry,
+retention and retirement. Three integration tests cover discovery of prior
+admissions, copy execution, read expiry during blocked execution, safe-clock
+and read-pin retirement gates, and configuration/ownership refusal. A unit test
+checks maintenance failure classification. Three execution regressions cover
+retained profile selection, nonblocking stop and partial thread-pool startup.
+The public durable listener, client journals, Java V2 and external workload
+comparison remain unfinished; this runtime alone advertises no profile.
+
 ## Java/Netty Reference Implementation
 
 Organization:

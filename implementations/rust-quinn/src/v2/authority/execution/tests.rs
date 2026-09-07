@@ -1322,6 +1322,103 @@ impl Application for EmptyOutputs {
         Ok(ApplicationOutcome::Succeeded)
     }
 }
+
+#[test]
+fn executor_accepts_retained_durable_only_work_without_adding_result_delivery() {
+    let mut selected = caps();
+    selected
+        .supported
+        .retain(|id| id.0 != u64::from(RESULT_DELIVERY));
+    let mut fixture = Fixture::configured(
+        Arc::new(EmptyOutputs(0)),
+        selected.clone(),
+        PhysicalLimits::default(),
+    );
+    fixture.admit(0, 0, 0);
+    // The listener supports results for other sessions; this session did not
+    // select them. Worker support is a ceiling, not a change to its binding.
+    fixture.executor.caps = caps();
+    let view = fixture
+        .executor
+        .run(&fixture.binding.identity, &fixture.key())
+        .unwrap();
+    assert_eq!(view.state, State::SUCCEEDED);
+    assert!(view.manifest.is_none());
+    assert!(view.output_until.is_none());
+    let binding = fixture
+        .store
+        .attach_session(
+            &fixture.binding.identity.owner,
+            &fixture.binding.identity,
+            &selected,
+        )
+        .unwrap();
+    assert!(!binding.results);
+}
+
+#[test]
+fn worker_pool_stop_request_does_not_wait_for_a_discovery_state_lock() {
+    let fixture = Fixture::new(Arc::new(EmptyOutputs(0)));
+    let pool = Arc::new(fixture.executor.start_workers(pool_config()).unwrap());
+    let (entered, ready) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let held = pool.clone();
+    let holder = std::thread::spawn(move || {
+        held.with_state_lock_for_test(|| {
+            entered.send(()).unwrap();
+            let _ = released.recv();
+        });
+    });
+    ready.recv_timeout(Elapsed::from_secs(5)).unwrap();
+    assert!(pool.try_snapshot().is_none());
+    let (done, completed) = std::sync::mpsc::channel();
+    let stopping = pool.clone();
+    let stopper = std::thread::spawn(move || {
+        stopping.request_stop();
+        done.send(()).unwrap();
+    });
+    let result = completed.recv_timeout(Elapsed::from_millis(100));
+    release.send(()).unwrap();
+    holder.join().unwrap();
+    stopper.join().unwrap();
+    let pool = Arc::try_unwrap(pool).ok().unwrap();
+    assert!(pool.shutdown().unwrap().stopping);
+    assert!(result.is_ok(), "request_stop waited for the discovery lock");
+}
+
+#[test]
+fn failed_worker_pool_startup_never_dispatches_an_application_callback() {
+    struct Observe(std::sync::mpsc::Sender<()>);
+    impl Application for Observe {
+        fn execute(&self, context: &mut WorkContext) -> Result<ApplicationOutcome> {
+            self.0.send(()).unwrap();
+            CopyApplication.execute(context)
+        }
+    }
+    let (started, received) = std::sync::mpsc::channel();
+    let fixture = Fixture::new(Arc::new(Observe(started)));
+    fixture.admit(0, 1, 3);
+    let mut premature = false;
+    let result = fixture
+        .executor
+        .start_workers_with_start_hook(pool_config(), |index| {
+            if index == 1 {
+                premature = received.recv_timeout(Elapsed::from_millis(100)).is_ok();
+                Err(std::io::Error::other("injected thread creation failure"))
+            } else {
+                Ok(())
+            }
+        });
+    assert!(matches!(result, Err(StoreError::Io(_))));
+    assert!(!premature, "callback ran before all pool threads existed");
+    assert_eq!(fixture.view().state, State::ACTIVE);
+    let pool = fixture.executor.start_workers(pool_config()).unwrap();
+    received.recv_timeout(Elapsed::from_secs(5)).unwrap();
+    wait_until(|| pool.snapshot().completed == 1);
+    pool.shutdown().unwrap();
+    assert_eq!(fixture.view().state, State::SUCCEEDED);
+    assert!(received.try_recv().is_err());
+}
 #[test]
 fn full_publication_fits_reserved_journal_without_row_replacement_or_page_growth() {
     for count in [0, 1, 256] {

@@ -1131,6 +1131,49 @@ bounded models, frozen vectors/CDDL, native checks, nine existing interop pairs,
 rendered Section 12.1 and Appendix D were inspected. Idnits reports zero
 errors/flaws/warnings and the existing FIPS downref comment.
 
+### Rust authority execution/maintenance runtime, 2026-09-07
+
+`Authority::start_runtime` now owns execution and three independent native
+maintenance loops for read leases, retention and retirement. It is not yet
+connected to a public durable listener. Three local-dispatch/real-QUIC-input
+runtime tests and one failure-classification unit test add evidence for:
+
+- V2-ATTEMPT/STORE: discovery of previously admitted work without resubmission,
+  actual copy execution and background sealed closure.
+- V2-RESULT/TIME: background read expiry while the one callback worker is held;
+  the closed lease is observed before another foreground check can expire it.
+- V2-STORE/TIME: unsafe clock pauses destructive maintenance without treating
+  it as a fatal runtime error; safe-time restoration and read-pin release permit
+  retirement, with owner creation history still refusing reuse.
+- V2-STORE: invalid batch/interval refusal and duplicate worker ownership.
+  Only clock/capacity and typed SQLite busy/locked errors are retried; corruption
+  and arbitrary I/O failures are not parsed as transient text.
+
+Three core regressions exposed and cover runtime integration defects:
+`worker_pool_stop_request_does_not_wait_for_a_discovery_state_lock` failed before
+the atomic stop signal; `executor_accepts_retained_durable_only_work_without_adding_result_delivery`
+failed when deployment capabilities replaced the retained session's profile
+combination; bypassing the new startup barrier makes
+`failed_worker_pool_startup_never_dispatches_an_application_callback` fail.
+All guards are restored. Focused checks pass 81 V2 transport/runtime tests,
+90 execution tests and strict workspace clippy.
+
+Stop and health observation are nonblocking. Explicit joins remain blocking;
+in-flight callbacks/I/O retain roots and resource pins. The completion flag
+describes execution/maintenance threads, not connection metadata or input/output
+file jobs. Existing full accounting and retirement eligibility scans are not
+bounded by the cursor step count. Public supervision/shutdown, complete client
+journals, independent Java V2, neutral failures, resource gates and the original
+workload/baseline remain due. No partial durable profile is advertised. Evidence:
+[`durable-work-v2-runtime-2026-09-07.txt`](../../conformance/results/durable-work-v2-runtime-2026-09-07.txt).
+
+Full repository conformance passed 646 Rust tests, 6 external Rust example tests,
+193 Java tests in 20 fresh XML reports, all bounded models/vectors/CDDL, native
+checks, nine V1 interoperability pairs and 32 raw capability probes. A final
+whole-workspace Rust/clippy rerun passed after test-only pin/snapshot refinements.
+The rebuilt draft's runtime status was inspected; idnits reported zero
+errors/flaws/warnings and its existing FIPS comment.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

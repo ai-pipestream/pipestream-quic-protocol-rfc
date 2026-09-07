@@ -141,7 +141,17 @@ impl Executor {
         let binding = self
             .store
             .authorize_session(&tx, identity, Permission::Execute)?;
-        sessions::check_connection(&tx, &binding, &self.caps)?;
+        // Deployment support may include results while this retained session
+        // selected durable work alone. Keep its exact profile combination;
+        // never add a profile or enable one absent from this executor's support.
+        let mut caps = self.caps.clone();
+        if !binding.results {
+            caps.supported
+                .retain(|id| id.0 != u64::from(RESULT_DELIVERY));
+            caps.required
+                .retain(|id| id.0 != u64::from(RESULT_DELIVERY));
+        }
+        sessions::check_connection(&tx, &binding, &caps)?;
         let (row, mut job, job_revision, mut view, work_revision) = load(&tx, identity, key)?;
         scopes::unfenced(&tx, identity.generation, key.scope)?;
         eligible(&view)?;
@@ -215,7 +225,6 @@ impl Executor {
         self.store.remember_clock(&tx, now)?;
         self.store.authorize(&identity.owner, Permission::Execute)?;
         commit(tx, "worker-claim")?;
-        let mut caps = self.caps.clone();
         caps.object_limit = job.object_limit.min(caps.object_limit);
         Ok(Execution {
             application,

@@ -56,6 +56,16 @@ pub enum StoreError {
     Corrupt(&'static str),
 }
 
+impl StoreError {
+    /// Local lock contention can be retried without treating arbitrary storage
+    /// failures as transient. Callers need not inspect SQLite error text.
+    pub fn is_storage_contention(&self) -> bool {
+        matches!(self,
+            Self::Database(error) if matches!(error.sqlite_error_code(),
+                Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)))
+    }
+}
+
 impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

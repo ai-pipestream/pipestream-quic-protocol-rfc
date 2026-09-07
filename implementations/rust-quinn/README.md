@@ -160,11 +160,45 @@ yet written and result reads waiting for a stream. Cancelled async database
 waiters do not release the slots of still-running blocking jobs.
 
 The future endpoint still must provide bounded control readers/writers,
-input/result-adapter integration, reserved control capacity separate from
-payload/execution workers, result-read maintenance, lifecycle workers, live
-shutdown and the V2 client/journals. Twelve adapter tests use actual TLS peers
+input/result-adapter integration, shared reserved control capacity, runtime
+supervision and connection-level shutdown, plus the V2 client/journals.
+The execution/maintenance runtime below supplies its independent workers.
+Twelve adapter tests use actual TLS peers
 and on-disk stores but call the dispatcher locally. They are not V2 wire,
 cross-language or whole-process resource evidence. See the acceptance ledger.
+
+### Version-2 authority runtime
+
+`Authority::start_runtime` starts the real durable executor plus three separate
+native threads for read leases, retention and retirement. Each retains its own
+bounded cursor; no client must resubmit admitted keys after startup. The existing
+execution pool has its own independent cancellation/deadline/closure reconciler.
+Read expiry therefore does not wait behind a blocked application callback or a
+retention pass. Unsafe clocks, capacity refusal and SQLite lock contention retry
+at the configured interval. Other maintenance failures stop maintenance and appear
+in its bounded health snapshot; the enclosing listener must supervise that fault
+and stop new admissions. No storage error text is parsed or sent as a wire label.
+
+Defaults are four callback workers, two per owner, 32-item cursor steps, 20 ms idle
+and maintenance intervals, and a 30-second worker lease. Maintenance batches are
+1..256 and intervals 1 ms..60 seconds. Existing accounting and retirement
+eligibility audits still scan retained records; the batch is not a latency or
+whole-inventory scan bound. Setup and explicit `shutdown` are blocking.
+`request_stop`, `snapshot` and `is_finished` do not wait for callback/storage I/O;
+a busy execution snapshot is None, never an idle assertion. Thread completion
+covers this runtime only, not separate connection metadata or input/output jobs.
+Dropping requests stop without joining, and live threads keep roots and pins.
+Already dispatched accepted work can finish after stop or a later setup failure.
+
+The executor preserves each retained session's exact result-profile selection
+even when the deployment supports more profiles. A startup barrier prevents a
+partially created execution pool from dispatching callbacks. Three runtime
+integration tests cover pre-existing admission, real copy execution, independent
+read expiry during blocked execution, safe-clock/pinned-read retirement and
+duplicate/configuration refusal; a fourth checks failure classification. Three
+core regressions cover profile selection, stop behind a discovery lock and failed
+thread creation. These tests do not activate a public durable listener or prove
+Java V2, cross-language recovery, whole-process bounds or workload usefulness.
 
 ### Version-2 control reservation
 

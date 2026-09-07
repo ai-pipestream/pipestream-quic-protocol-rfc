@@ -28,6 +28,7 @@ use tokio::{
 
 pub mod input;
 pub mod output;
+pub mod runtime;
 mod workers;
 
 fn error(code: ErrorCode, detail: &'static str) -> Error {

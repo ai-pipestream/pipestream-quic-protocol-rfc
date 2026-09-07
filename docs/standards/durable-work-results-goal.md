@@ -1596,3 +1596,38 @@ nine existing V1 interop pairs, 32 raw capability probes and all examples.
 Rendered Section 12.1 and Appendix D were inspected; idnits has zero errors,
 flaws or warnings and its existing FIPS comment. No main merge, deployment or
 IETF submission occurred.
+
+### Authority execution and maintenance runtime, 2026-09-07
+
+The Rust authority now has an owned execution pool and independent native read,
+retention and retirement loops. Tests exercise prior admission discovery, real
+copy execution, background read expiry while a callback is blocked, unsafe-clock
+pause/recovery, read-pinned retirement and identity non-reuse. The runtime reports
+typed failure/health state; only explicit clock, capacity and storage contention
+are retried. Existing full accounting/retirement eligibility scans remain visible
+limitations, not hidden behind the cursor batch parameter.
+
+Integration also reproduced and fixed a stop request blocked on the discovery
+mutex, an executor rejecting retained durable-only sessions, and callback dispatch
+before successful creation of every worker thread. The startup guard's negative
+control fails; final focused checks pass 81 V2 transport/runtime tests, 90
+execution tests and strict workspace clippy. Storage formats and wire/CDDL did
+not change. Evidence: `conformance/results/durable-work-v2-runtime-2026-09-07.txt`.
+
+This is the execution/maintenance component, not a finished public durable
+listener. The full goal stays active. Next integration must own bounded control
+reader/writer and operation tasks, preserve partially read frames across other
+stream events, apply control-frame deadlines after its first byte rather than
+timing out healthy long result transfers between frames, and supervise runtime
+faults. Shutdown must account separately for connection metadata/file jobs; the
+runtime's thread-completion flag alone is insufficient. The public listener,
+client/journals, independent Java, neutral failures and original external workload
+plus equivalent streaming-gRPC/resource comparison remain required.
+
+Final verification: full repository conformance exited zero with 646 Rust tests,
+6 external Rust example tests and 193 Java tests in 20 fresh XML reports; all
+three bounded models, frozen vectors/CDDL, native/C++ checks, nine V1 interop
+pairs and 32 capability probes passed. After refining the explicit read-pin test
+and its nonblocking snapshot observations, the entire Rust workspace and strict
+clippy passed again. The draft rebuild exited zero; the rendered runtime status
+was inspected, with zero idnits errors/flaws/warnings and the existing FIPS comment.

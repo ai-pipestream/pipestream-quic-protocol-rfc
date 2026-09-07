@@ -15,13 +15,15 @@ use pipestream_core::{
 use sha2::Digest as _;
 use std::sync::{Condvar, atomic::AtomicBool};
 use tokio::sync::Notify;
+mod runtime;
 
-struct StoreClock;
+struct StoreClock(AtomicU64);
 impl store::Clock for StoreClock {
     fn read(&self) -> ClockReading {
+        let now = self.0.load(Ordering::SeqCst);
         ClockReading {
-            utc_ms: Number(1000),
-            trusted: true,
+            utc_ms: Number(now),
+            trusted: now != 0,
         }
     }
 }
@@ -89,6 +91,7 @@ struct Database {
     payloads: PayloadStore,
     access: Arc<Access>,
     authority: Authority,
+    clock: Arc<StoreClock>,
 }
 impl Database {
     fn new() -> Self {
@@ -97,6 +100,7 @@ impl Database {
     fn with_authority(name: &str) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let access = Arc::new(Access::default());
+        let clock = Arc::new(StoreClock(AtomicU64::new(1000)));
         let store = AuthorityStore::initialize(
             &directory.path().join("authority.sqlite"),
             IdentityLabel(name.into()),
@@ -116,7 +120,7 @@ impl Database {
                 },
             },
             PhysicalLimits::default(),
-            Arc::new(StoreClock),
+            clock.clone(),
             access.clone(),
         )
         .unwrap();
@@ -142,6 +146,7 @@ impl Database {
             payloads,
             access,
             authority,
+            clock,
         }
     }
     async fn connect(

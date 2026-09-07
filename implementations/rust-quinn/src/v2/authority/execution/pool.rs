@@ -4,7 +4,10 @@
 use super::*;
 use std::{
     collections::BTreeMap,
-    sync::{Condvar, Mutex, MutexGuard},
+    sync::{
+        Condvar, Mutex, MutexGuard,
+        atomic::{AtomicBool, Ordering},
+    },
     thread::{self, JoinHandle},
 };
 
@@ -38,6 +41,7 @@ pub struct PoolSnapshot {
 
 #[derive(Default)]
 struct PoolState {
+    starting: bool,
     cursor: i64,
     owners: BTreeMap<String, usize>,
     snapshot: PoolSnapshot,
@@ -48,10 +52,11 @@ struct Shared {
     config: PoolConfig,
     executor: Executor,
     _pin: payload::WorkerPoolPin,
+    stop: AtomicBool,
 }
 impl Shared {
     fn state(&self) -> MutexGuard<'_, PoolState> {
-        match self.state.lock() {
+        let mut state = match self.state.lock() {
             Ok(state) => state,
             Err(error) => {
                 let mut state = error.into_inner();
@@ -61,7 +66,9 @@ impl Shared {
                     Some(diag(ErrorCode::InternalError, "worker pool state poisoned"));
                 state
             }
-        }
+        };
+        state.snapshot.stopping |= self.stop.load(Ordering::Acquire);
+        state
     }
 }
 
@@ -77,6 +84,21 @@ pub struct WorkerPool {
 
 impl Executor {
     pub fn start_workers(&self, config: PoolConfig) -> Result<WorkerPool> {
+        self.start_workers_inner(config, |_| Ok(()))
+    }
+    #[cfg(test)]
+    pub(super) fn start_workers_with_start_hook(
+        &self,
+        config: PoolConfig,
+        before_spawn: impl FnMut(usize) -> std::io::Result<()>,
+    ) -> Result<WorkerPool> {
+        self.start_workers_inner(config, before_spawn)
+    }
+    fn start_workers_inner(
+        &self,
+        config: PoolConfig,
+        mut before_spawn: impl FnMut(usize) -> std::io::Result<()>,
+    ) -> Result<WorkerPool> {
         if config.workers == 0
             || config.workers > 128
             || config.workers as u64 > self.store.policy.active_jobs.0
@@ -98,11 +120,15 @@ impl Executor {
         drop(tx);
         drop(connection);
         let shared = Arc::new(Shared {
-            state: Mutex::new(PoolState::default()),
+            state: Mutex::new(PoolState {
+                starting: true,
+                ..Default::default()
+            }),
             wake: Condvar::new(),
             config,
             executor: self.clone(),
             _pin: self.payloads.pin_worker_pool()?,
+            stop: AtomicBool::new(false),
         });
         let mut pool = WorkerPool {
             shared,
@@ -111,35 +137,81 @@ impl Executor {
         for index in 0..=pool.shared.config.workers {
             let shared = pool.shared.clone();
             let maintenance = index == pool.shared.config.workers;
-            match thread::Builder::new()
-                .name(if maintenance {
-                    "pipestream-v2-settlement".into()
-                } else {
-                    format!("pipestream-v2-{index}")
-                })
-                .spawn(move || {
-                    if maintenance {
-                        reconcile(shared)
+            let launch = before_spawn(index).and_then(|()| {
+                thread::Builder::new()
+                    .name(if maintenance {
+                        "pipestream-v2-settlement".into()
                     } else {
-                        worker(shared)
-                    }
-                }) {
+                        format!("pipestream-v2-{index}")
+                    })
+                    .spawn(move || {
+                        if !await_start(&shared) {
+                            return;
+                        }
+                        if maintenance {
+                            reconcile(shared)
+                        } else {
+                            worker(shared)
+                        }
+                    })
+            });
+            match launch {
                 Ok(handle) => pool.workers.push(handle),
                 Err(error) => {
-                    // Construction may already have dispatched durable work;
-                    // stop and join those threads before returning the error.
+                    // No callback has been dispatched before all native threads
+                    // exist. Joining a failed startup cannot await application I/O.
                     pool.shutdown()?;
                     return Err(error.into());
                 }
             }
         }
+        pool.shared.state().starting = false;
+        pool.shared.wake.notify_all();
         Ok(pool)
     }
 }
 
+fn await_start(shared: &Shared) -> bool {
+    loop {
+        let state = shared.state();
+        if state.snapshot.stopping {
+            return false;
+        }
+        if !state.starting {
+            return true;
+        }
+        // Stop is an atomic signal, so a short bounded wait also covers a stop
+        // notification racing with entry into the condition-variable wait.
+        let _ = shared.wake.wait_timeout(state, Elapsed::from_millis(10));
+    }
+}
+
 impl WorkerPool {
+    #[cfg(test)]
+    pub(super) fn with_state_lock_for_test(&self, run: impl FnOnce()) {
+        let _guard = self.shared.state();
+        run();
+    }
     pub fn snapshot(&self) -> PoolSnapshot {
         self.shared.state().snapshot.clone()
+    }
+    /// Nonblocking health observation for an async endpoint. Discovery may hold
+    /// the ordinary state lock during storage I/O; None means it is busy, not idle.
+    pub fn try_snapshot(&self) -> Option<PoolSnapshot> {
+        match self.shared.state.try_lock() {
+            Ok(state) => {
+                let mut snapshot = state.snapshot.clone();
+                snapshot.stopping |= self.shared.stop.load(Ordering::Acquire);
+                Some(snapshot)
+            }
+            Err(std::sync::TryLockError::WouldBlock) => None,
+            Err(std::sync::TryLockError::Poisoned(_)) => Some(PoolSnapshot {
+                stopping: true,
+                faulted: true,
+                last_refusal: Some(diag(ErrorCode::InternalError, "worker pool state poisoned")),
+                ..Default::default()
+            }),
+        }
     }
     /// Optional latency hint after admission/retry. Correctness does not depend
     /// on it: polling discovers commits made by any connection or before restart.
@@ -147,8 +219,12 @@ impl WorkerPool {
         self.shared.wake.notify_all();
     }
     pub fn request_stop(&self) {
-        self.shared.state().snapshot.stopping = true;
+        self.shared.stop.store(true, Ordering::Release);
         self.wake();
+    }
+    /// Inspect native thread completion without waiting for callbacks or locks.
+    pub fn is_finished(&self) -> bool {
+        self.workers.iter().all(JoinHandle::is_finished)
     }
     pub fn shutdown(mut self) -> Result<PoolSnapshot> {
         self.request_stop();

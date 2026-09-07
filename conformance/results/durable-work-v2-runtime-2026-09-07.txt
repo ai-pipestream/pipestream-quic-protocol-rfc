@@ -1,0 +1,111 @@
+Rust V2 authority execution/maintenance runtime, 2026-09-07 UTC
+Base: 74c8787fe360641535730b9f0993015bd93ebe51
+Implementation and tests: the commit containing this result file.
+Appendix D implementation status changed; normative wire bytes, CDDL, storage
+formats and dependency versions did not change.
+
+Authority::start_runtime owns the real execution pool and separate native
+read-lease, retention and retirement maintenance threads. The execution pool
+already has independent cancellation/deadline/closure reconciliation. Existing
+durable jobs are discovered without a resubmission or volatile queue replay.
+Stop and health inspection are nonblocking. Explicit shutdown joins and can
+wait for application I/O; dropping requests stop and leaves live roots/pins
+owned by running threads. Runtime completion does not assert that separate
+connection metadata or input/output file jobs have finished.
+
+Three actual-TLS/input-stream tests, with local control dispatch:
+  runtime_discovers_admitted_work_and_retires_only_after_read_pins_and_safe_time
+    Admit before starting runtime; execute the real copy callback; close the
+    sealed root; pause destructive maintenance on CLOCK_UNSAFE; restore safe
+    time; retain the session while a read is pinned; retire after releasing it;
+    refuse old creation identity reuse. The read's 30-second idle/lifetime
+    keeps this explicit-release test separate from automatic read expiry.
+  runtime_expires_reads_and_requests_stop_while_a_callback_is_blocked
+    Hold the only callback worker on a second job. Background maintenance
+    closes a first job's read lease before another foreground check. Stop
+    does not wait for the callback or falsely assert that it completed. After
+    release, the accepted second job finishes normally; stop is not cancellation.
+  runtime_rejects_invalid_limits_and_duplicate_execution_ownership
+    Refuse out-of-range batch/interval values and a second execution owner.
+    A new runtime can start after the first has stopped and joined.
+
+Failure-classification unit test:
+  maintenance_retries_only_explicit_clock_capacity_and_storage_contention
+    CLOCK_UNSAFE, LIMIT_EXCEEDED and typed SQLite BUSY/LOCKED may retry.
+    Corruption, arbitrary I/O and other protocol errors are fatal. No error
+    strings or new production SQLite dependency are used in the transport.
+    Fatal maintenance state must be supervised by the enclosing listener;
+    this component does not itself stop execution on a maintenance fault.
+
+Three execution regressions:
+  executor_accepts_retained_durable_only_work_without_adding_result_delivery
+    Before the fix, deployment support for results rejected a retained
+    durable-only session with EXTENSION_UNSUPPORTED, "session profile
+    combination changed". The test failed with exit 101. Execution now uses
+    the retained profile combination without enabling unsupported profiles.
+    Log: /tmp/pipestream-v2-runtime-profile-red.log
+  worker_pool_stop_request_does_not_wait_for_a_discovery_state_lock
+    Before the atomic stop signal, a deliberately held discovery lock kept
+    request_stop blocked beyond 100 ms. Original handle 14088 exited 101.
+    try_snapshot now reports a busy lock as None, not idle/healthy state.
+    Log: /tmp/pipestream-v2-runtime-stop-red.log
+  failed_worker_pool_startup_never_dispatches_an_application_callback
+    A startup barrier prevents dispatch until every native thread exists.
+    Deliberately bypassing the barrier made the test fail with exit 101:
+    "callback ran before all pool threads existed". The barrier is restored.
+    Injected thread creation failure leaves admitted work unexecuted; a
+    subsequent successful pool starts that callback exactly once.
+    Log: /tmp/pipestream-v2-runtime-startup-red.log
+
+Focused checks from implementations/rust-quinn:
+  cargo test --locked -p pipestream-quinn v2_ -- --nocapture
+  cargo test --locked -p pipestream-core v2::authority::execution::tests -- --nocapture
+  cargo clippy --locked --workspace --all-targets -- -D warnings
+Set-e chain on original handle 9897 exited 0.
+V2 transport/runtime: 81 passed, 0 failed, 0 ignored, 89 filtered, 1.41 s.
+Execution: 90 passed, 0 failed, 0 ignored, 283 filtered, 8.16 s.
+Logs: /tmp/pipestream-v2-runtime-final-v2.log
+      /tmp/pipestream-v2-runtime-final-execution.log
+      /tmp/pipestream-v2-runtime-clippy.log
+
+Full repository regression:
+  ./conformance/run_all.sh
+Original handle 74406 exited 0. Started 2026-09-07 11:20:08 UTC.
+Log: /tmp/pipestream-v2-runtime-full-suite.log
+Rust workspace: 646 passed, 0 failed. Rust external examples: 6 passed.
+Java: 20 fresh Surefire XML reports, 193 tests, 0 failures/errors/skips.
+Oldest report: 2026-09-07 11:22:41 UTC. Newest: 11:25:19 UTC.
+Report counts/timestamps were read with Ruby REXML after completion.
+Frozen vectors/CDDL and all three bounded models passed:
+  lifecycle: 311539 states, 8723092 edges, deepest 19;
+  scopes: 5776 states, 173280 edges, deepest 17;
+  composition: 620796 states, 29177412 edges, deepest 27.
+Each model had 0 states at its depth boundary. Native checks, C++ build/CTest,
+9 existing interoperability pairs, 32 raw capability probes, recursive scenarios
+and all external examples passed. These full cross-language pairs still cover
+V1; they are not proof of complete V2 interoperability or the new workload.
+
+Final Rust tree verification after tightening the read-pin test and making its
+nonblocking snapshot observations tolerate a busy lock:
+  cargo fmt --all --check
+  cargo test --locked --workspace
+  cargo clippy --locked --workspace --all-targets -- -D warnings
+Set-e chain on original handle 6568 exited 0. 646 passed, 0 failed, 0 ignored.
+Logs: /tmp/pipestream-v2-runtime-verified-rust.log
+      /tmp/pipestream-v2-runtime-verified-clippy.log
+No Java, C++, vector/model or dependency changes occurred after the full suite.
+
+Draft verification:
+  ./build.sh core 05
+Original handle 31448 exited 0.
+Log: /tmp/pipestream-v2-runtime-verified-draft.log
+Rendered runtime status inspected at text lines 6535-6544.
+Idnits: 0 errors, 0 flaws, 0 warnings, 1 existing FIPS downref comment.
+
+Still required: public durable control/runtime integration and supervision,
+connection-level shutdown, client/CLI and uncertainty journals, independent Java
+V2, neutral cross-language failure tests, full resource gates and the original
+external workload/equivalent streaming-gRPC baseline. Existing full accounting
+and retirement eligibility scans are not bounded by the cursor step count.
+This checkpoint does not activate a public durable profile or complete the goal.
+No main merge, deployment or IETF submission occurred.
