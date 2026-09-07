@@ -117,6 +117,7 @@ impl AuthorityStore {
             if revoked {
                 return Err(protocol(ErrorCode::Unauthorized, "authority access denied"));
             }
+            retirement::require_live(&tx, Id(generation))?;
             check_connection(&tx, &binding, caps)?;
             if &binding.policy != policy {
                 return Err(protocol(ErrorCode::Conflict, "creation policy changed"));

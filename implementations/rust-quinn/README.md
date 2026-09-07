@@ -63,7 +63,7 @@ reclaims abandoned stages only under exclusive ownership; installed orphans
 remain charged until the authority's reference-safe collector removes them.
 Live installed/read handles remain pinned against collection. The database
 retains a local random store identity and a once-bound canonical payload path.
-Internal authority storage is now format 9; payload roots remain format 4.
+Internal authority storage is now format 10; payload roots remain format 4.
 Prior authority formats are refused, not silently converted or replaced.
 This changes no wire schema or frozen vector.
 
@@ -249,7 +249,8 @@ actual child-process death. Tests also cover real callback publication races,
 callback workers are blocked, and complete work/job/scope/clock transitions with
 a pinned WAL reader after ordinary writes exhaust their allowance. These gates
 forbid SQL row replacement and check unchanged database page count. Input/output
-liveness and byte reservations stay charged; settlement does not yet retire them.
+liveness and byte reservations stay charged until the separate reclamation pass;
+settlement alone does not release them.
 
 Authority-expanded applications now register an actual `Expansion` callback;
 registering mode 2 without one is APPLICATION_UNSUPPORTED. `ExpansionContext`
@@ -262,7 +263,8 @@ external callers still cannot supply producer-1 inputs or claim that namespace.
 Expansion can complete, yield, request explicit retry or fail. Yield preserves
 accepted children and the attempt, releases the worker and uses ordinary writes,
 not terminal-transition credits. Discovery backs off after a yield. The fixed
-job record now has 15 typed fields, including a durable expansion-complete flag:
+job record now has 16 typed fields, including a durable expansion-complete flag
+and the later resource-release intent:
 sealing membership alone cannot suppress missing child admissions after restart.
 An explicit retry preserves the child scope, operations and completed expansion;
 once expansion finished it reruns only reassembly, not child generation.
@@ -357,8 +359,46 @@ Crash tests cover both sides of intent and quota commits and interrupted object
 and reservation unlink. A pinned-WAL gate exhausts ordinary inserts and smaller
 clock writes, then completes four separately timed input/output release writes
 without SQL row replacement or page growth. The 32 MiB resource test also runs
-batch-one cleanup while a result pin remains held, then after it drops. Session
-retirement remains unfinished; this API only reclaims payload resources.
+batch-one cleanup while a result pin remains held, then after it drops. This API
+only reclaims payload resources; session metadata has a separate retirement cut.
+
+`AuthorityStore::retire` inspects one session per call, using descending generation
+passes in a `RetirementCursor`. Eligibility requires root closure plus the full
+creation-receipt interval, every longer retained work/output promise, and no
+live input/output/executor resources. It streams the records and audits the
+matched payload root before committing a paired session flag and immutable
+1024-byte eligibility record. Missing or inconsistent halves fail closed.
+All valid authorized session operations then refuse EXPIRED; denied owners still
+receive UNAUTHORIZED. No partially deleted session is a live binding.
+
+Subsequent calls remove at most 1..256 work bundles, nonroot scopes or operations,
+one transaction per unit. Jobs and payload references are deleted with their
+work. The closed root, session and eligibility record survive until one final
+atomic commit; the session quota slot is only then reusable. Authority generation
+and per-owner creation high-water marks are never removed or reduced. Known
+creation replay stays EXPIRED after retirement; a new creation advances both
+its owner sequence and the authority generation. Audits accept missing retired
+relationships only under the verified proof, never live jobs or payloads.
+
+Retirement uses ordinary protected SQL, not the fixed-record credits promised
+to active work. A pinned WAL can therefore refuse it with LIMIT_EXCEEDED before
+or after eligibility commits. Previously committed batches survive; a refused
+transaction releases no session capacity. The host must drive
+`checkpoint_storage` to truncate committed WAL after bounded readers release
+their snapshots. It does not require trusted protocol UTC and does not change
+authoritative contents. It uses a nonblocking checkpoint and refuses while a
+reader still pins the WAL; releasing a reader alone need not truncate it.
+Actual tests cover both refusal states and completion after checkpoint, with
+SQL triggers protecting owner and generation history. Root eligibility scans
+and record-credit audits remain streaming all-record work, not constant-time
+operations or bounded CPU per batch.
+
+Ten actual process deaths cover both sides of eligibility, work-bundle, scope,
+operation and final retirement commits. Tests also cover empty/skipped sessions,
+longer output/read promises, owner isolation, safe clocks, quota reuse, malformed
+proofs and storage format refusal. The 32 MiB resource gate now finishes with
+batch-one retirement and verifies the next creation cannot reuse the old identity.
+V2 client journals, authenticated endpoints and independent Java remain open.
 
 Record expansion preserves exact typed contents and existing credits, reserves
 the larger future WAL write cost before allocating pages, and uses a savepoint
@@ -808,7 +848,15 @@ The root has an exclusive Unix advisory lock using the existing pinned
 [rustix file-lock API](https://docs.rs/rustix/latest/rustix/fs/fn.flock.html).
 Same-process handles share accounting, and payload readers, spool loans and
 in-flight operations retain root ownership. A second cooperating writer process
-is refused. Use a private directory; external filesystem mutation is outside
+is refused. Reopening while the last local handle is being destroyed uses a
+five-second condition-variable wait budget for that handle's lock release.
+This is not a bound on filesystem operations or mutex acquisition.
+The registry keeps its entry
+until unlock, so a zero Arc strong count cannot falsely imply available ownership.
+Simultaneous reopeners share the new accounting state; other roots can progress
+while the old finalizer is paused. A live same-process maintenance owner or an
+external owner is still refused, not waited out.
+Use a private directory; external filesystem mutation is outside
 this boundary. Symlinks, foreign files, noncanonical directories, unexpected
 hardlinks, policy changes and corrupt complete metadata are refused rather than
 repaired. The only permitted two-name alias is the matching payload/stage pair.

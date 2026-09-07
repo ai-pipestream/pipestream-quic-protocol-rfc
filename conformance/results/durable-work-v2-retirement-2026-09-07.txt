@@ -1,0 +1,71 @@
+Rust V2 session retirement library checkpoint, 2026-09-07 UTC
+Base commit: 3370263f56e2b293beeec910f69506ecea4d7aea
+Implementation and tests: the commit containing this result file.
+Host: Linux 7.0.0-31-generic x86_64 GNU/Linux
+Compiler: rustc 1.97.1 (8bab26f4f 2026-07-14)
+Build: locked Cargo dependencies, debug test profile.
+
+Focused commands, from implementations/rust-quinn:
+cargo test --locked --workspace retirement -- --nocapture
+cargo test --locked --workspace v2::authority::
+cargo test --locked --test v2_result_resources -- --nocapture
+cargo test --locked -p pipestream-quinn --lib recursive::retained -- --nocapture
+cargo test --locked -p pipestream-quinn --lib reopen_waits_for_last_handle_to_release_its_os_lock -- --nocapture
+
+Captured focused results:
+retirement filter: 13 passed, including 12 new tests and one existing test.
+authority filter: 199 passed, 0 failed, 171 filtered out.
+retained-root filter: 56 passed, 0 failed, 33 filtered out.
+two-opener regression: 1 passed, 0 failed, 88 filtered out.
+
+Captured focused WAL output (exit 0):
+retirement already_started=false fill=262 WAL_before=3399056 WAL_refusal=3399056 cap=4194304
+retirement already_started=true fill=262 WAL_before=3399056 WAL_refusal=3399056 cap=4194304
+
+Captured focused resource output (exit 0):
+V2 result delivery: bytes=33554432 pending_limit=8 chunk_bytes=16384 rust_heap_peak_increase=6035 largest_rust_allocation=464 database_bytes=73728 wal_bytes=0 elapsed_ms=3241
+process VmHWM: 7492 kB
+process VmRSS: 7492 kB
+V2 result reclamation: bytes=33554432 batch=1 removed_files=3 rust_heap_peak_increase=1374 largest_rust_allocation=338 database_bytes=73728 wal_bytes=0 elapsed_ms=100
+V2 session retirement: batch=1 deleted_units=3 rust_heap_peak_increase=1105 largest_rust_allocation=338 database_bytes=73728 wal_bytes=0 elapsed_ms=26
+
+Negative control, captured exit 101:
+Temporarily disable the executor/input/output liveness eligibility guard, then:
+cargo test --locked --lib longer_output_and_live_read_promises_prevent_retirement_after_receipt_expiry
+test v2::authority::execution::tests::retirement_tests::longer_output_and_live_read_promises_prevent_retirement_after_receipt_expiry ... FAILED
+The guard was restored before verification. No disabled guard is committed.
+
+Initial full-suite failure (exit 101):
+authenticated_sessions::retained_recovery::application_refusal_replays_after_restart_without_retrying_resume
+Error: Resource temporarily unavailable (os error 11)
+draft04_wire result: 68 passed; 1 failed.
+One hundred isolated repeats passed, without identifying the original call.
+An independent deterministic destructor barrier reproduced the retained-root
+ownership race, before the fix (exit 101):
+reopen must coordinate with the retiring local owner: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
+After the registry handoff fix, the two-opener regression passes. The full-suite
+failure had no call-site backtrace; this is a proven race consistent with it,
+not a claim that its original provenance was conclusively identified.
+
+Scope: real local callback output, retained result reads, file deletion, metadata
+retirement, SQLite file lengths and Rust allocator counters. RSS/HWM was sampled
+after delivery, before reclamation/retirement. These are not native-heap bounds,
+allocated-block counts, network/Java V2 interoperability measurements, or the
+required equivalent streaming-gRPC workload comparison. Single-run elapsed times
+are observations, not comparative performance claims.
+
+Final full verification:
+./conformance/run_all.sh
+Exit: 0. Log: /tmp/pipestream-retirement-full-suite-final.log
+Rust: 562 workspace tests plus 6 example tests; no failures/ignored tests.
+Java: 193 tests, 0 failures, 0 errors, 0 skipped; 20 freshly written XML reports.
+C++ checks, frozen vectors, bounded models, all 9 black-box language pairs,
+32 raw QUIC capability probes and recursive/external examples passed.
+Formatting and strict workspace/example clippy passed in the same run.
+The initial historical restart test and deterministic root-handoff regression
+both pass. Existing-profile network success is not V2 interoperability evidence.
+
+./build.sh core 05
+Exit: 0. Log: /tmp/pipestream-retirement-draft-final.log
+Rendered retirement paragraph inspected at draft text lines 5630-5641.
+Idnits: 0 errors, 0 flaws, 0 warnings; existing FIPS-180-4 downref comment.

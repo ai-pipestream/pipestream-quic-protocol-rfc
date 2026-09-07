@@ -1270,3 +1270,68 @@ interoperability. `./build.sh core 05` exited 0
 inspected and idnits reports zero errors/flaws/warnings with the existing FIPS
 downref comment. `git diff --check` passes. No main merge, deployment or IETF
 submission occurred.
+
+### Session retirement and restart ownership checkpoint, 2026-09-07
+
+Rust now implements the retirement step identified above. A fixed immutable
+proof records eligibility before any bounded metadata deletion; the closed root
+and session slot survive until the final atomic deletion. Every work receipt,
+output/read/dependency promise must have drained first. Requests by a currently
+authorized owner receive EXPIRED during partial retirement, with authorization
+denials taking precedence. Owner creation and authority generation high-water
+marks are preserved and old identities cannot be reused. Authority format 10
+refuses its predecessor without conversion; payload and frozen wire formats do
+not change. Section 12 now explicitly specifies the durable retirement cut.
+
+Twelve focused tests cover corrupt proof/flag/history, full creation retention
+from root closure, longer output/read promises, empty and SKIPPED-only sessions,
+other-owner isolation, quota timing, clock safety and bounded cursor refusals.
+Ten actual process exits straddle all five retirement commit phases using real
+authority-expanded child output and `ABC` reassembly. Intermediate reopen,
+payload audit and settlement/reclamation remain valid through partial deletion.
+Disabling the job-liveness guard made the held-read test fail; it is restored.
+
+Retirement uses protected ordinary SQL capacity, not unfunded claims about
+fixed-record rewrite credits. Pinned-WAL tests refuse safely both before and
+after intent without refunding capacity or losing history. Releasing the reader
+alone did not reliably reclaim journal space with another connection open;
+`checkpoint_storage` now provides explicit nonblocking local WAL maintenance.
+It refuses while the reader is pinned and permits retirement after release and
+checkpoint. Eligibility/integrity audits stream metadata: batch size is not a
+constant-time scan guarantee.
+
+The extended 32 MiB gate measures delivery, payload reclamation and session
+retirement separately. Retirement used 1105 bytes of additional Rust heap,
+largest allocation 338 bytes, unchanged 73728-byte DB and zero WAL over 26 ms
+in the focused run. Raw scoped measurements and commands are checked in at
+`conformance/results/durable-work-v2-retirement-2026-09-07.txt`.
+
+The first full run failed a historical application-refusal restart test with
+OS error 11. A hundred isolated repeats passed without locating the call. A
+deterministic destructor barrier then reproduced a real retained-root race:
+zero Arc strong count was mistaken for completed OS-lock release. The registry
+now coordinates this local ownership handoff with a five-second condition-variable
+wait budget and still refuses live or external owners. This does not bound
+filesystem operations or mutex acquisition. Two simultaneous reopeners share one
+root; an unrelated root progresses while the old finalizer is paused. All 56
+focused retained-root tests pass. This is regression-driven repair, not proof
+that the original untraced failure could have no other source.
+
+Next: integrate the complete Rust V2 authority/result lifecycle with
+authenticated Quinn endpoints and durable client uncertainty journals; implement
+the same current contract independently in Java and the neutral Rust failure
+driver. Then complete the external chunk/distribute/transform/reassemble workload
+and equivalent streaming-gRPC baseline, with all requested process/resource and
+failure evidence. These are implementation deliverables, not permission blockers.
+The full goal remains active and incomplete; no V2 endpoint is advertised yet.
+
+Final full-suite validation: `./conformance/run_all.sh` exited 0, captured in
+`/tmp/pipestream-retirement-full-suite-final.log`. The 562 Rust workspace tests,
+six Rust example tests, and 193 Java tests in 20 fresh XML reports pass without
+failures/errors/skips. Formatting, strict clippy, frozen vectors, bounded models,
+C++ checks, nine black-box language pairs, 32 raw QUIC capability probes and
+recursive/external examples pass. Historical network coverage is not V2
+interoperability evidence. No main merge, deployment or IETF submission occurred.
+`./build.sh core 05` exited 0 (`/tmp/pipestream-retirement-draft-final.log`),
+the rendered retirement paragraph was inspected, and idnits reports zero
+errors/flaws/warnings plus the existing informational FIPS downref comment.

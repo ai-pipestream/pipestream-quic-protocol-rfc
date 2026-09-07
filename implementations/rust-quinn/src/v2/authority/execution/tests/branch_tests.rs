@@ -1,6 +1,6 @@
 use super::*;
 
-struct UppercaseScatter;
+pub(super) struct UppercaseScatter;
 impl Application for UppercaseScatter {
     fn expansion(&self) -> Option<&dyn Expansion> {
         Some(self)
@@ -131,7 +131,7 @@ fn output_bytes(fixture: &Fixture) -> Vec<u8> {
     }
     result
 }
-fn execute_children(fixture: &Fixture, producer: Producer) {
+pub(super) fn execute_children(fixture: &Fixture, producer: Producer) {
     for entity in 1..=2 {
         let work = WorkKey {
             scope: Number(1),

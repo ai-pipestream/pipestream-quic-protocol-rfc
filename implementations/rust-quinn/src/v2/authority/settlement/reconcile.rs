@@ -106,7 +106,7 @@ impl AuthorityStore {
         }
         cursor.binding = Some(binding);
         let now = self.check_clock(&tx)?;
-        let mut statement = tx.prepare("SELECT w.row_id,w.generation,s.owner FROM work w JOIN sessions s ON s.generation=w.generation WHERE (?1 IS NULL OR w.row_id<?1) ORDER BY w.row_id DESC LIMIT ?2")?;
+        let mut statement = tx.prepare("SELECT w.row_id,w.generation,s.owner FROM work w JOIN sessions s ON s.generation=w.generation WHERE NOT EXISTS(SELECT 1 FROM retirements r WHERE r.generation=s.generation) AND (?1 IS NULL OR w.row_id<?1) ORDER BY w.row_id DESC LIMIT ?2")?;
         let mut rows = statement.query(params![cursor.work_before, limit as i64])?;
         let mut before = cursor.work_before;
         while let Some(row) = rows.next()? {
@@ -213,7 +213,7 @@ impl AuthorityStore {
             scan
         } else {
             let next: Option<(i64, u64, u64, String)> = tx.query_row(
-                "SELECT s.rowid,s.generation,s.scope,se.owner FROM scopes s JOIN sessions se ON se.generation=s.generation WHERE (?1 IS NULL OR s.rowid<?1) ORDER BY s.rowid DESC LIMIT 1",
+                "SELECT s.rowid,s.generation,s.scope,se.owner FROM scopes s JOIN sessions se ON se.generation=s.generation WHERE NOT EXISTS(SELECT 1 FROM retirements r WHERE r.generation=se.generation) AND (?1 IS NULL OR s.rowid<?1) ORDER BY s.rowid DESC LIMIT 1",
                 [cursor.scope_before], |row| Ok((row.get(0)?, number(row,1)?, number(row,2)?, row.get(3)?))).optional()?;
             let Some((row, generation, scope, owner)) = next else {
                 cursor.scope_before = None;
@@ -239,6 +239,11 @@ impl AuthorityStore {
             }
             ScopeScan::new(identity, Number(scope), &retained)?
         };
+        let active: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM sessions s WHERE s.generation=?1 AND NOT EXISTS(SELECT 1 FROM retirements r WHERE r.generation=s.generation))", [sql(scan.identity.generation.0)?], |r| r.get(0))?;
+        if !active {
+            cursor.scope_before = None;
+            return Ok(());
+        }
         let retained = scopes::load(&tx, scan.identity.generation, scan.scope)?;
         if retained.summary.is_some() {
             return Ok(());

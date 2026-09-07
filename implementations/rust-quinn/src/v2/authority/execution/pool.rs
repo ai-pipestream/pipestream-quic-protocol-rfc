@@ -209,7 +209,7 @@ fn discover(shared: &Shared, state: &mut PoolState) -> Result<Option<Candidate>>
     let mut connection = shared.executor.store.connect()?;
     let tx = connection.transaction()?;
     let now = shared.executor.store.check_clock(&tx)?;
-    let mut statement = tx.prepare("SELECT j.work_row,w.generation,s.owner FROM jobs j JOIN work w ON w.row_id=j.work_row JOIN sessions s ON s.generation=w.generation WHERE j.work_row>?1 ORDER BY j.work_row LIMIT ?2")?;
+    let mut statement = tx.prepare("SELECT j.work_row,w.generation,s.owner FROM jobs j JOIN work w ON w.row_id=j.work_row JOIN sessions s ON s.generation=w.generation WHERE NOT EXISTS(SELECT 1 FROM retirements r WHERE r.generation=s.generation) AND j.work_row>?1 ORDER BY j.work_row LIMIT ?2")?;
     let mut rows = statement.query(params![state.cursor, shared.config.scan_batch as i64])?;
     let mut inspected = 0;
     while let Some(row) = rows.next()? {

@@ -908,7 +908,7 @@ fn shared_clock_counter_preserves_every_promised_record_observation() {
                 let (old, fence): (_, Option<settlement::WorkFence>) = read(&tx, target).unwrap();
                 replace(&tx, target, old.revision, &fence, true).unwrap();
             }
-            Table::Clock | Table::Job => unreachable!(),
+            Table::Clock | Table::Job | Table::Retirement => unreachable!(),
         }
         let clock = header(&tx, CLOCK).unwrap();
         let revision = replace(

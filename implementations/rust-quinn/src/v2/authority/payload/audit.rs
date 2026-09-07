@@ -50,7 +50,16 @@ impl PayloadStore {
                 owner: IdentityLabel(row.get(2)?),
                 generation: Id(number(row, 1)?),
             };
-            if let Some(release) = &job.release {
+            let retiring = retirement::load(tx, identity.generation)?;
+            if let Some(proof) = &retiring {
+                retirement::verify_work(proof, &view)?;
+                if job.executor_live || job.input_live || job.outputs_live {
+                    return Err(StoreError::Corrupt("retiring job retains resources"));
+                }
+            }
+            if let Some(release) = &job.release
+                && retiring.is_none()
+            {
                 super::super::retention::verify_release(tx, &identity, &view, release)?;
             }
             let input_releasing = job.release.as_ref().is_some_and(|r| r.input);

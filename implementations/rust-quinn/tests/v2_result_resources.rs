@@ -350,4 +350,54 @@ fn thirty_two_mib_result_delivery_has_bounded_heap_handles_and_no_database_growt
         cleanup_started.elapsed().as_millis()
     );
     store.integrity_check().unwrap();
+
+    let mut closure = ReconcileCursor::default();
+    for _ in 0..16 {
+        store.reconcile(&mut closure, 1).unwrap();
+    }
+    clock.0.store(51000, Ordering::SeqCst);
+    store.checkpoint_storage().unwrap();
+    let before = store.physical_usage().unwrap();
+    let retirement_started = Instant::now();
+    let sample = heap::Sample::start();
+    let mut cursor = RetirementCursor::default();
+    let mut completed = false;
+    let mut deleted = 0;
+    for _ in 0..32 {
+        let report = store.retire(&payloads, &mut cursor, 1).unwrap();
+        let rows = report.deleted_work + report.deleted_scopes + report.deleted_operations;
+        assert!(rows <= 1);
+        deleted += rows;
+        store.integrity_check().unwrap();
+        if report.completed {
+            completed = true;
+            break;
+        }
+    }
+    let (peak, largest) = sample.finish();
+    assert!(completed);
+    assert!(peak < 256 << 10, "retirement Rust heap increase {peak}");
+    assert!(
+        largest < 64 << 10,
+        "retirement largest Rust allocation {largest}"
+    );
+    let after = store.physical_usage().unwrap();
+    assert_eq!(before.database_bytes, after.database_bytes);
+    println!(
+        "V2 session retirement: batch=1 deleted_units={deleted} rust_heap_peak_increase={peak} largest_rust_allocation={largest} database_bytes={} wal_bytes={} elapsed_ms={}",
+        after.database_bytes,
+        after.wal_bytes,
+        retirement_started.elapsed().as_millis()
+    );
+    assert!(matches!(
+        store.create_session(&binding.identity.owner, Id(1), &binding.policy, &caps),
+        Err(StoreError::Protocol(Error {
+            code: ErrorCode::Expired,
+            ..
+        }))
+    ));
+    let next = store
+        .create_session(&binding.identity.owner, Id(2), &binding.policy, &caps)
+        .unwrap();
+    assert_eq!(next.identity.generation, Id(2));
 }

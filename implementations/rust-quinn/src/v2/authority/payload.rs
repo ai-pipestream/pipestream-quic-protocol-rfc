@@ -916,7 +916,14 @@ impl AuthorityStore {
                     "SELECT w.generation,s.owner FROM work w JOIN sessions s ON s.generation=w.generation WHERE w.row_id=?1",
                     [row], |r| Ok((number(r, 0)?, r.get(1)?)))?;
                 let identity = SessionIdentity { authority: self.authority.clone(), owner: IdentityLabel(owner), generation: Id(generation) };
-                super::retention::verify_release(&tx, &identity, &view, release)?;
+                if let Some(proof) = retirement::load(&tx, identity.generation)? {
+                    retirement::verify_work(&proof, &view)?;
+                    if job.executor_live || job.input_live || job.outputs_live {
+                        return Err(StoreError::Corrupt("retiring job retains resources"));
+                    }
+                } else {
+                    super::retention::verify_release(&tx, &identity, &view, release)?;
+                }
             }
             Ok(if purpose == 0 {
                 job.input_live && !job.release.as_ref().is_some_and(|r| r.input)

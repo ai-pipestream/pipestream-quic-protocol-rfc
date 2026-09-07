@@ -30,6 +30,7 @@ pub(super) enum Table {
     Clock,
     Job,
     WorkFence,
+    Retirement,
 }
 impl Table {
     fn name(self) -> &'static str {
@@ -38,12 +39,14 @@ impl Table {
             Self::Scope => "scopes",
             Self::Clock => "authority",
             Self::Job => "jobs",
+            Self::Retirement => "retirements",
         }
     }
     fn column(self) -> &'static str {
         match self {
             Self::Work => "view",
             Self::WorkFence => "fence",
+            Self::Retirement => "state",
             Self::Scope => "state",
             Self::Clock => "clock",
             Self::Job => "state",
@@ -62,6 +65,9 @@ impl Table {
                 "SELECT rowid,length(clock),substr(clock,1,104) FROM authority ORDER BY rowid"
             }
             Self::Job => "SELECT rowid,length(state),substr(state,1,104) FROM jobs ORDER BY rowid",
+            Self::Retirement => {
+                "SELECT rowid,length(state),substr(state,1,104) FROM retirements ORDER BY rowid"
+            }
         }
     }
 }
@@ -90,6 +96,7 @@ fn checksum(target: Target, prefix: &[u8]) -> [u8; 32] {
         Table::Clock => 2,
         Table::Job => 3,
         Table::WorkFence => 4,
+        Table::Retirement => 5,
     }]);
     hash.update(target.row.to_be_bytes());
     hash.update(prefix);
@@ -304,6 +311,7 @@ pub(super) fn protect(tx: &Transaction<'_>, capacity: usize, credits: u64) -> Re
 /// rather than trusting a well-formed charge header on corrupt contents. This
 /// audit is streaming across records; payload/job reconciliation is separate.
 pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
+    retirement::verify_all(tx)?;
     let (_, clock): (_, Number) = read(tx, CLOCK)?;
     let mut statement =
         tx.prepare("SELECT rowid,scope,producer,entity,generation FROM work ORDER BY rowid")?;
@@ -341,6 +349,9 @@ pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
             return Err(StoreError::Corrupt(
                 "work record identity differs from its index",
             ));
+        }
+        if let Some(proof) = retirement::load(tx, Id(number(row, 4)?))? {
+            retirement::verify_work(&proof, &view)?;
         }
         if let Some(fence) = &fence {
             let generation = Id(number(row, 4)?);
@@ -388,23 +399,36 @@ pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
             .get::<_, Option<Vec<u8>>>(3)?
             .map(|bytes| unpack(&bytes))
             .transpose()?;
+        let retiring = retirement::load(tx, Id(number(row, 4)?))?;
         if let Some(parent) = &parent {
             if parent.scope.0 >= number(row, 1)? {
                 return Err(StoreError::Corrupt("invalid scope ancestry"));
             }
-            let (_, view) = scopes::work(tx, Id(number(row, 4)?), parent)?;
-            if view.child.as_ref()
-                != Some(&ChildScope {
-                    scope: Id(number(row, 1)?),
-                    producer: Producer(number(row, 2)?),
-                })
-            {
-                return Err(StoreError::Corrupt(
-                    "scope is not its parent's retained child",
-                ));
+            if retiring.is_none() {
+                let (_, view) = scopes::work(tx, Id(number(row, 4)?), parent)?;
+                if view.child.as_ref()
+                    != Some(&ChildScope {
+                        scope: Id(number(row, 1)?),
+                        producer: Producer(number(row, 2)?),
+                    })
+                {
+                    return Err(StoreError::Corrupt(
+                        "scope is not its parent's retained child",
+                    ));
+                }
             }
         } else if number(row, 1)? != 0 || number(row, 2)? != 0 {
             return Err(StoreError::Corrupt("nonroot scope lacks parent"));
+        }
+        if let Some(proof) = retiring
+            && state
+                .summary
+                .as_ref()
+                .is_none_or(|s| s.closed_at > proof.cutoff)
+        {
+            return Err(StoreError::Corrupt(
+                "retiring scope has an unresolved promise",
+            ));
         }
         if let Some(summary) = state.summary
             && (summary.scope.0 != number(row, 1)?
@@ -572,6 +596,7 @@ pub(super) fn grow(
                 return Err(exhausted());
             }
         }
+        Table::Retirement => return Err(exhausted()),
     }
     if retained.revision != expected {
         return Err(protocol(
@@ -604,6 +629,7 @@ pub(super) fn grow(
             Table::Clock => "UPDATE authority SET clock=zeroblob(?1) WHERE rowid=?2",
             Table::Job => "UPDATE jobs SET state=zeroblob(?1) WHERE rowid=?2",
             Table::WorkFence => "UPDATE work SET fence=zeroblob(?1) WHERE rowid=?2",
+            Table::Retirement => return Err(exhausted()),
         };
         if savepoint.execute(
             statement,

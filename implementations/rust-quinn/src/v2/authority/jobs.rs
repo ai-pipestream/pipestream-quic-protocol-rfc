@@ -313,8 +313,17 @@ pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
             owner: IdentityLabel(row.get(2)?),
             generation: Id(number(row, 1)?),
         };
+        let retiring = retirement::load(tx, identity.generation)?;
+        if let Some(proof) = &retiring {
+            retirement::verify_work(proof, &view)?;
+            if job.executor_live || job.input_live || job.outputs_live {
+                return Err(StoreError::Corrupt("retiring job retains resources"));
+            }
+        }
         #[cfg(unix)]
-        if let Some(release) = &job.release {
+        if let Some(release) = &job.release
+            && retiring.is_none()
+        {
             super::retention::verify_release(tx, &identity, &view, release)?;
         }
         if let Some(manifest) = &view.manifest {

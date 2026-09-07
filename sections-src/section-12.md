@@ -683,6 +683,17 @@ that mark cannot be created again. A known-owner retired creation is EXPIRED;
 an attachment whose owner cannot be authorized is UNAUTHORIZED, not a disclosure
 of another owner's historical state. Quotas never justify evicting a live promise.
 
+Retirement is an authoritative lifecycle transition, not an inference from
+missing records. Before incrementally removing session metadata, an
+implementation MUST durably record that all retirement conditions were met.
+While that cleanup is incomplete, a valid request from a currently authorized
+owner targeting the retiring session MUST receive EXPIRED rather than replay
+partial state as a live binding. Authentication and authorization denials still
+take precedence. After all session metadata is removed, lookup may return
+NOT_FOUND, but creation-sequence replay still obeys the EXPIRED and non-reuse
+rules above. Recovery MUST distinguish intentional partial retirement from
+unexplained missing live metadata and preserve the required high-water marks.
+
 Storage must atomically couple admission/jobs/receipts, attempt/lease fences,
 terminal manifests, scope summaries and their resource reservations. Durable
 payload installation precedes metadata references. A crash before metadata

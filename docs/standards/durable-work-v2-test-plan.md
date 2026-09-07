@@ -654,6 +654,85 @@ Formatting and strict clippy pass. The draft build exits 0 with zero idnits
 errors/flaws/warnings and the existing informational FIPS downref. These remain
 historical-profile network gates, not independent Java or V2 interoperability.
 
+### Rust crash-safe session retirement evidence, 2026-09-07
+
+`AuthorityStore::retire` now commits an immutable eligibility record before
+incremental metadata deletion. The closed root, creation receipt and occupied
+session slot remain until the final atomic root/proof/session deletion. Global
+generation and per-owner creation history are not changed by retirement.
+Authority format 10 adds the paired retirement flag and checksummed proof;
+format 9 is refused without conversion. Payload format 4 and frozen wire bytes
+are unchanged. These are Rust library tests, not authenticated V2 endpoints.
+
+- V2-SESSION/V2-AUTH: `retirement_fences_access_before_bounded_deletion_and_preserves_nonreuse_history`
+  checks EXPIRED during partial cleanup, authorization-denial precedence, final
+  absence, and non-reusable creation/generation history. Separate tests preserve
+  another owner's active session and retain the session quota until final commit.
+- V2-TIME/V2-RESULT: `retirement_requires_closed_root_and_the_full_creation_receipt_interval`
+  and `longer_output_and_live_read_promises_prevent_retirement_after_receipt_expiry`
+  require closed-root receipt retention, every longer output promise and drained
+  read pins/accounting. Empty roots and never-admitted SKIPPED work retire without
+  inventing job records. Unsafe/regressed UTC, invalid batches and foreign cursors
+  refuse before starting or resuming deletion.
+- V2-STORE: `actual_process_death_recovers_every_retirement_phase_without_reusing_identity`
+  kills a real authority-expanded `ABC` workload before and after each of five
+  commit phases: intent, work bundle, nonroot scope, operation, and final session.
+  All ten boundaries reopen the paired stores, audit every batch and interleave
+  reclamation/settlement before completing retirement and issuing a new identity.
+- V2-STORE: `corrupted_retirement_proof_never_authorizes_deletion_or_successful_reopen`
+  rejects changed identities, creation/root commitments, premature/future cuts,
+  forged credits, rolled-back history, missing flags/proofs and the prior format.
+  Rewrites of the immutable proof are refused. Maximum legal identity/summary
+  fields fit the fixed 1024-byte body plus 104-byte record header.
+- V2-STORE: `pinned_wal_refusal_preserves_retirement_state_then_resumes_after_reader_release`
+  exhausts ordinary writes before and after intent. Retirement refuses without
+  deleting work, freeing the session slot or altering high-water marks. Both
+  focused cases filled 262 writes and kept WAL at 3399056 bytes under a 4194304-byte
+  cap. `checkpoint_storage` refuses a pinned reader without waiting; after that
+  reader releases, an explicit local checkpoint and retirement complete. Ordinary
+  SQL deletion is not falsely charged to fixed-record rewrite credits.
+- V2-STORE/RESULT: the 32 MiB resource gate now also runs batch-one retirement,
+  verifies each intermediate store, checks old creation replay and reuses the
+  released one-session quota with a new generation. Focused retirement measured
+  1105 bytes of additional Rust heap, largest allocation 338 bytes, unchanged
+  73728-byte DB and zero WAL over 26 ms. This is local Rust allocator/file-length
+  evidence, not a native-memory bound or a network/gRPC comparison.
+
+Removing the job-liveness eligibility guard deliberately caused the held-read
+regression to fail; the guard was restored before verification. Section 12 now
+defines the authoritative retirement cut, partial-cleanup access refusal and
+restart distinction from unexplained missing live metadata. Eligibility and
+integrity checks stream retained records; a deletion batch bounds mutations and
+materialization, not total metadata-scan cost. WAL reclamation is host-driven.
+
+Full validation initially failed the historical application-refusal restart
+test with OS error 11. One hundred isolated repeats passed, so repeats were not
+accepted as a fix. A deterministic last-Arc destructor test reproduced the same
+file-lock failure: the registry discarded a zero-strong-count entry before its
+owner released the OS lock. The corrected registry retains that entry through
+unlock, coordinates local reopeners with a bounded condition-variable wait, and
+preserves external/live-owner exclusion. The regression checks two reopeners
+share one root and another root progresses while this finalizer is paused.
+All 56 focused retained-root tests pass. This fixes an independently reproduced
+race consistent with the initial error; the original failure had no backtrace
+identifying its exact failing call.
+
+Focused captures and commands:
+[`durable-work-v2-retirement-2026-09-07.txt`](../../conformance/results/durable-work-v2-retirement-2026-09-07.txt).
+Authenticated V2 endpoints, independent Java V2, neutral cross-language failures
+and the complete external workload/gRPC comparison remain open.
+
+Final full-suite validation: `./conformance/run_all.sh`, exit 0, captured in
+`/tmp/pipestream-retirement-full-suite-final.log`. All 562 Rust workspace tests,
+six Rust example tests and 193 Java tests from 20 freshly written XML reports
+pass, with no failures/errors/skips. Strict formatting/clippy, frozen vectors,
+bounded models, C++ checks, nine black-box language pairs, 32 raw QUIC probes and
+the recursive/external examples pass. This preserves existing-profile network
+coverage; it does not close the still-unimplemented V2 network/Java gates.
+`./build.sh core 05` also exited 0 (`/tmp/pipestream-retirement-draft-final.log`);
+the rendered retirement paragraph was inspected. Idnits reports zero errors,
+flaws and warnings, with the existing informational FIPS downref comment.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

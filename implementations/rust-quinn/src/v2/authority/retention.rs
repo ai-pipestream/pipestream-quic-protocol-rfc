@@ -101,7 +101,7 @@ impl AuthorityStore {
             execution::bound_payloads(&tx, payloads)?;
             let now = self.check_clock(&tx)?;
             let candidate: Option<(i64, u64, String)> = tx.query_row(
-                "SELECT j.work_row,w.generation,s.owner FROM jobs j JOIN work w ON w.row_id=j.work_row JOIN sessions s ON s.generation=w.generation WHERE (?1 IS NULL OR j.work_row<?1) ORDER BY j.work_row DESC LIMIT 1",
+                "SELECT j.work_row,w.generation,s.owner FROM jobs j JOIN work w ON w.row_id=j.work_row JOIN sessions s ON s.generation=w.generation WHERE NOT EXISTS(SELECT 1 FROM retirements r WHERE r.generation=s.generation) AND (?1 IS NULL OR j.work_row<?1) ORDER BY j.work_row DESC LIMIT 1",
                 [cursor.before], |r| Ok((r.get(0)?, number(r, 1)?, r.get(2)?))).optional()?;
             let Some((row, generation, owner)) = candidate else {
                 cursor.before = None;

@@ -33,7 +33,10 @@ pub mod results;
 mod retention;
 #[cfg(unix)]
 pub use retention::{RetentionCursor, RetentionProgress};
+mod retirement;
 mod scopes;
+#[cfg(unix)]
+pub use retirement::{RetirementCursor, RetirementProgress};
 mod settlement;
 pub use settlement::{ReconcileCursor, ReconcileProgress};
 mod sessions;
@@ -41,7 +44,7 @@ mod sessions;
 mod tests;
 
 const APPLICATION_ID: i64 = 1_347_637_825;
-const FORMAT: i64 = 9;
+const FORMAT: i64 = 10;
 const SCHEMA: &str = include_str!("schema.sql");
 
 #[derive(Debug)]
@@ -461,11 +464,31 @@ impl AuthorityStore {
         if revoked || binding.identity.owner != identity.owner {
             return Err(protocol(ErrorCode::Unauthorized, "authority access denied"));
         }
+        retirement::require_live(tx, identity.generation)?;
         Ok(binding)
     }
 
     pub fn physical_usage(&self) -> Result<PhysicalUsage> {
         Ok(self.physical.usage()?)
+    }
+
+    /// Reclaim committed WAL space without changing authoritative contents.
+    /// The host drives this local maintenance independently of protocol UTC.
+    /// Never wait for a pinned reader: it keeps its snapshot and this call
+    /// refuses, so the host can retry after bounded readers have released it.
+    pub fn checkpoint_storage(&self) -> Result<()> {
+        let connection = self.connect()?;
+        connection.busy_timeout(Elapsed::ZERO)?;
+        let busy: i64 =
+            connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0))?;
+        if busy != 0 {
+            return Err(protocol(
+                ErrorCode::LimitExceeded,
+                "WAL checkpoint blocked by a live reader",
+            ));
+        }
+        self.physical.verify()?;
+        Ok(())
     }
 
     pub fn integrity_check(&self) -> Result<()> {

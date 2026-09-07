@@ -65,8 +65,10 @@ commitments, expiry, revocation, send progress and bounded maintenance without
 running application code. Crash/corruption tests and a 32 MiB resource gate cover
 these library APIs. Dependency-aware retention now commits deletion eligibility,
 collects unpinned files, then releases logical capacity. Restart/admission audits
-distinguish interrupted cleanup from missing live storage. Session retirement,
-authenticated transport integration and independent Java V2 remain unfinished. No V2 endpoint
+distinguish interrupted cleanup from missing live storage. Session retirement now
+commits eligibility before bounded metadata deletion and preserves generation and
+owner creation history. Authenticated transport integration and independent Java
+V2 remain unfinished. No V2 endpoint
 or profile is activated by these library APIs. The
 [V2 acceptance ledger](docs/standards/durable-work-v2-test-plan.md) keeps Java,
 authenticated transport, storage, execution and process-level evidence open.

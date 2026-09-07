@@ -25,6 +25,7 @@ CREATE TABLE sessions (
   entities INTEGER NOT NULL DEFAULT 0 CHECK(entities >= 0),
   operations INTEGER NOT NULL DEFAULT 0 CHECK(operations >= 0),
   last_scope INTEGER NOT NULL DEFAULT 0 CHECK(last_scope >= 0),
+  retiring INTEGER NOT NULL DEFAULT 0 CHECK(retiring IN (0,1)),
   UNIQUE(owner, creation_sequence)
 ) STRICT;
 CREATE INDEX session_owner ON sessions(owner);
@@ -68,4 +69,8 @@ CREATE TABLE payload_refs (
   FOREIGN KEY(generation,scope,entity) REFERENCES work(generation,scope,entity)
 ) STRICT;
 PRAGMA application_id = 1347637825;
-PRAGMA user_version = 9;
+CREATE TABLE retirements (
+  generation INTEGER PRIMARY KEY REFERENCES sessions(generation),
+  state BLOB NOT NULL CHECK(length(state)=1128)
+) STRICT;
+PRAGMA user_version = 10;
