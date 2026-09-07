@@ -2,6 +2,8 @@ use super::*;
 use pipestream_core::ProtocolError;
 use std::io::Cursor;
 
+pub(super) mod retirement_race;
+
 fn key(id: u32) -> EntityKey {
     EntityKey {
         scope_id: 0,

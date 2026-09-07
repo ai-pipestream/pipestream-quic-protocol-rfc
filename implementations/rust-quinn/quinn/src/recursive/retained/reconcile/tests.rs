@@ -232,7 +232,14 @@ fn final_owner_release_unlocks_despite_an_inherited_file_description() {
     // An unrelated fork/exec child temporarily inherits this open-file
     // description even with CLOEXEC. A duplicate models that interval without
     // scheduling-dependent process creation or an unsafe post-fork callback.
-    let inherited = files.retained._lock.file.try_clone().unwrap();
+    let inherited = files
+        .retained
+        ._lock
+        .as_ref()
+        .unwrap()
+        .file
+        .try_clone()
+        .unwrap();
     drop(files);
     let report = reconcile(&root, &store);
     assert_eq!(report.orphan_bodies_removed, 1);

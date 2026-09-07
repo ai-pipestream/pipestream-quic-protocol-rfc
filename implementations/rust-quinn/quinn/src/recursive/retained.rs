@@ -11,7 +11,8 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock, Weak},
+    sync::{Arc, Condvar, Mutex, OnceLock, Weak},
+    time::{Duration, Instant},
 };
 
 const RECORD_BYTES: usize = 512;
@@ -390,7 +391,44 @@ pub(crate) struct RetainedRoot {
     identity: StoreIdentity,
     binding: Mutex<Option<PayloadBinding>>,
     exclusive: bool,
-    _lock: RootLock,
+    _lock: Option<RootLock>,
+}
+
+#[derive(Default)]
+struct RootRegistry {
+    roots: Mutex<BTreeMap<PathBuf, Weak<RetainedRoot>>>,
+    changed: Condvar,
+}
+
+fn root_registry() -> &'static RootRegistry {
+    static ROOTS: OnceLock<RootRegistry> = OnceLock::new();
+    ROOTS.get_or_init(RootRegistry::default)
+}
+
+impl Drop for RetainedRoot {
+    fn drop(&mut self) {
+        if self
+            ._lock
+            .as_ref()
+            .is_some_and(|lock| lock.owner_process != std::process::id())
+        {
+            return;
+        }
+        #[cfg(test)]
+        tests::retirement_race::before_drop(&self.path);
+        let registry = root_registry();
+        let mut roots = registry.roots.lock().unwrap_or_else(|e| e.into_inner());
+        // Arc's strong count is already zero. Keep its registry entry until
+        // ownership is released; the remaining fields only drop in-memory state.
+        drop(self._lock.take());
+        if roots
+            .get(&self.path)
+            .is_some_and(|weak| std::ptr::eq(weak.as_ptr(), self))
+        {
+            roots.remove(&self.path);
+        }
+        registry.changed.notify_all();
+    }
 }
 
 #[derive(Debug)]
@@ -462,24 +500,44 @@ impl RetainedRoot {
         let durable_parent = durable_parent.canonicalize()?;
         fs::create_dir_all(&root)?;
         let root = root.canonicalize()?;
-        static ROOTS: OnceLock<Mutex<BTreeMap<PathBuf, Weak<RetainedRoot>>>> = OnceLock::new();
-        let mut roots = ROOTS
-            .get_or_init(Mutex::default)
+        let registry = root_registry();
+        let mut roots = registry
+            .roots
             .lock()
             .map_err(|_| corrupt("retained registry poisoned"))?;
-        roots.retain(|_, weak| weak.strong_count() != 0);
-        if let Some(existing) = roots.get(&root).and_then(Weak::upgrade) {
-            if exclusive || existing.exclusive {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while let Some(weak) = roots.get(&root) {
+            if let Some(existing) = weak.upgrade() {
+                // An error below can drop the last Arc and enter the registry
+                // finalizer, so do not hold this lock during validation.
+                drop(roots);
+                if exclusive || existing.exclusive {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        "retained root has a live handle or maintenance owner",
+                    ));
+                }
+                existing.verify_policy()?;
+                if requested.is_some_and(|limits| limits != existing.limits) {
+                    return Err(corrupt("retained policy cannot change on reopen"));
+                }
+                return Ok(existing);
+            }
+            // Weak::upgrade fails before RetainedRoot::drop releases flock.
+            // Wait only for that local finalizer, never for an external owner.
+            #[cfg(test)]
+            tests::retirement_race::before_wait(&root);
+            let (updated, timeout) = registry
+                .changed
+                .wait_timeout(roots, deadline.saturating_duration_since(Instant::now()))
+                .map_err(|_| corrupt("retained registry poisoned"))?;
+            roots = updated;
+            if timeout.timed_out() && roots.contains_key(&root) {
                 return Err(io::Error::new(
                     io::ErrorKind::WouldBlock,
-                    "retained root has a live handle or maintenance owner",
+                    "retained root finalizer did not release ownership before timeout",
                 ));
             }
-            existing.verify_policy()?;
-            if requested.is_some_and(|limits| limits != existing.limits) {
-                return Err(corrupt("retained policy cannot change on reopen"));
-            }
-            return Ok(existing);
         }
         if roots.len() >= MAX_ROOTS {
             return Err(limit("too many retained stores"));
@@ -528,7 +586,7 @@ impl RetainedRoot {
             identity,
             binding: Mutex::new(binding),
             exclusive,
-            _lock: lock,
+            _lock: Some(lock),
         });
         roots.insert(root, Arc::downgrade(&store));
         Ok(store)
