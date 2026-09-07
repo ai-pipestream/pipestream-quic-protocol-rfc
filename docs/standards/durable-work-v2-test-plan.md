@@ -301,7 +301,7 @@ remaining lifecycle, Java, cross-language or workload gates.
 `src/v2/authority/execution/tests.rs` adds 16 tests, including its subprocess
 entry. Applications register real callbacks. The synchronous executor claims a
 known retained job, runs outside the metadata writer and commits authoritative
-outcomes; it is not yet a persistent background scheduler or V2 listener.
+outcomes. Subsequent worker-pool evidence is below; no V2 listener is activated.
 
 - V2-ATTEMPT/V2-RESULT: a real streaming copy callback publishes a manifest and
   the test opens and verifies the output bytes. Admission and receipt replay do
@@ -334,9 +334,50 @@ outcomes; it is not yet a persistent background scheduler or V2 listener.
   for 0/1 outputs and from 2006496 to 2348432 for 256 outputs. These are actual
   file lengths, not allocated blocks, complete lifecycle funding or baseline costs.
 
-Still required: callback I/O handle permits reserved before claim (concurrent
-reads can currently consume staging capacity), bounded persistent job discovery
-and scheduling, deadline/cancellation/skip/revocation settlement, producer-1
+### Rust bounded workers and reserved I/O evidence
+
+Ten additional execution tests and two payload-reservation tests cover the fixed
+pull pool and callback I/O capacity. The earlier process-death test now uses that
+pool to discover jobs in both the crashed process and its replacement; neither
+startup requires a caller-supplied work key. An additional admission test checks
+permanent worker-I/O feasibility. The focused authority suite has 119
+passing tests, with strict workspace clippy clean.
+
+- V2-STORE: a negative-first test filled the handle pool with unrelated readers
+  after claim and reproduced FAILED instead of SUCCEEDED. Claim now reserves a
+  reusable output slot before committing the lease; the same test completes real
+  output under saturated reader capacity. Insufficient claim capacity leaves the
+  job unchanged and invokes no callback. Completion returns all transient slots.
+- V2-ADMIT: another negative-first regression reproduced admission under an
+  immutable two-handle ceiling that could never run an output-producing callback.
+  Admission now refuses that global/per-owner configuration without a job or
+  receipt; work declaring no outputs can still admit with two handles. Temporary occupancy
+  is not confused with permanent impossibility.
+- V2-STORE: real global/per-owner handle ceilings cover sequential output reuse,
+  refusing concurrent reuse of one slot, dropping a stage, and a stage/installed
+  token outliving its reservation. Charge transfer never exposes occupied capacity
+  or double charges the reserved slot. The existing 256-output tests still pass.
+- V2-ATTEMPT/V2-STORE: polling discovers later committed admission without a wake
+  or submit call, retains known terminal work without re-executing it, and recovers
+  after actual process death. Retryable work remains dormant through further
+  scans until explicit retry commits a replacement attempt.
+- V2-AUTH/V2-STORE: held real callbacks demonstrate the configured global/per-owner
+  concurrency ceilings while authoritative work-view reads still complete.
+  Clock regression and reader saturation refuse before callback execution; removal
+  of the condition lets the same durable job execute without resubmission.
+- V2-CLOSE (partial): one-record scans progress past unimplemented authority
+  expansion and unclosed caller branches to execute a later leaf, preserving
+  named NOT_READY refusals. This does not implement those missing branch paths.
+- V2-STORE: invalid pool limits and a second pool refuse explicitly. Dropping a
+  pool stops further discovery but preserves admitted backlog and retains its
+  ownership until dispatched callbacks return. A new pool then executes remaining
+  jobs. Corrupt job storage stops discovery visibly without invoking callbacks or
+  replacing the damaged job.
+
+The pool scans retained jobs with a bounded batch and one shared cursor; it is not
+an indexed ready queue. These tests bound live dispatches and handle accounting,
+not whole-workload CPU/RSS/disk/network cost or forced preemption of callback code.
+Still required: deadline/cancellation/skip/revocation settlement, producer-1
 admission, nonempty closure and complete branch execution, authenticated RESULT
 read leases, dependency retention, expiry and retirement. Input/output liveness
 stays charged until safe cleanup exists. Independent Java V2, both cross-language

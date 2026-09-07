@@ -880,3 +880,73 @@ clippy, frozen vectors, bounded models, C++ tests, all nine black-box language
 pairs, 32 raw QUIC capability probes and the external examples passed. The network
 evidence remains historical-profile coverage, not V2 interoperability. No main
 merge, deployment or Internet-Draft submission occurred.
+
+### Task 2 implementation progress: bounded pull workers and reserved I/O
+
+The previous worker implementation could fail a promised callback output when
+unrelated readers exhausted the handle pool after claim. A new negative-first
+regression reproduced FAILED instead of SUCCEEDED. A claim now charges one
+reusable output-I/O slot before committing its lease, in addition to its input
+reader and output reservation. Each output staging/installed token borrows that
+slot without double charging. Finishing or dropping an output returns the slot
+to that worker, not unrelated readers. Dropping the reservation while its output
+remains live transfers the charge under the inventory lock. Jobs declaring no
+outputs need no output slot. Pressure can defer a claim without mutating its job or
+invoking its application; the existing accepted job remains the backlog.
+
+`Executor::start_workers(PoolConfig)` now supplies a real fixed pull pool. It
+discovers retained jobs in bounded row batches with a shared wraparound cursor,
+runs callbacks outside metadata/control handling, and bounds concurrent dispatches
+globally and per owner. There is no volatile payload queue or required work-key
+resubmission. Polling finds admissions and retries from any connection; optional
+wake notifications only reduce latency. One pool owns a payload authority across
+executor clones, retaining that ownership until all worker threads return.
+Shutdown is cooperative: stop requests halt further discovery, while dispatched
+callbacks may finish. No cancellation receipt is fabricated by stopping a pool.
+
+The process-death test now injects failures through the pool and recovers through
+a new pool without known-key submission. Claim/publication/retry/cleanup boundaries
+continue to reopen and verify actual bytes. Ten new execution tests cover later
+admission discovery, explicit retry, clock/handle-pressure recovery, real callback
+concurrency with independent work-view reads, progress past unready branches,
+invalid/duplicate pools, drop/shutdown with retained backlog, and visible fail-stop
+on corrupt job storage. Two payload tests cover global/per-owner slot accounting,
+sequential use, concurrent-use refusal, and stage/installed-token drop order.
+Final review added a second negative-first regression: an immutable two-handle
+ceiling previously admitted output-producing work that could never run. Admission
+now checks permanent worker-I/O feasibility without confusing temporary reader
+occupancy with an impossible policy. Refusal leaves no job/receipt; work declaring
+no outputs still admits with two handles. All 119 focused authority tests and strict
+workspace clippy pass.
+
+This is bounded-memory discovery, not an indexed ready queue or a measured
+constant-cost populated-store sweep. Arbitrary application code cannot be forcibly
+preempted; it must cooperate with context deadlines and lease renewal. Transient
+I/O slots are reacquired after restart; immutable byte budgets remain persisted.
+Authority format 6, payload format 4, normative text and frozen bytes are unchanged.
+
+Local logs:
+
+- `/tmp/pipestream-worker-io-red.log` (the reproduced pre-fix output failure)
+- `/tmp/pipestream-worker-admission-io-red.log` (the impossible admission)
+- `/tmp/pipestream-worker-pool-authority.log`
+- `/tmp/pipestream-worker-pool-clippy.log`
+- `/tmp/pipestream-worker-pool-suite.log`
+- `/tmp/pipestream-worker-pool-final-suite.log`
+
+Next: authoritative deadline/cancellation/skip/revocation settlement and complete
+branch execution, including producer-1 admission and nonempty closure. The pool
+currently refuses those unfinished transitions; it does not settle expired work.
+Authenticated RESULT read leases, dependency retention, expiry and retirement
+remain required. Independent Java V2, actual V2 Quinn/Netty endpoints, neutral
+cross-language failure tests and the equivalent streaming-gRPC workload remain
+part of the unchanged full goal. No V2 profile is activated by this checkpoint.
+
+Final verification after the admission correction:
+`./conformance/run_all.sh` exited 0. The Rust workspace passed 480 tests and the
+two Rust examples passed another six. Java's 20 Surefire reports contain 193 tests
+with zero failures, errors or skips. Formatting, strict clippy, frozen vectors,
+bounded models, C++ tests, all nine black-box language pairs, 32 raw QUIC capability
+probes and the external examples passed. Network evidence still concerns the
+historical profiles, not V2 interoperability. This is local verification, not hosted
+CI, a main merge, a deployment or an Internet-Draft submission.

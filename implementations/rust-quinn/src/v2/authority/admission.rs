@@ -41,6 +41,10 @@ impl AuthorityStore {
             return Err(StoreError::Corrupt("prepared admission evidence changed"));
         }
         input.payload.check_owned()?;
+        input
+            .payload
+            .store()
+            .check_execution_capacity(&parameters.outputs)?;
         outputs.usage()?; // also rejects a quarantined or inherited reservation root
         jobs::capacity(&tx, &self.policy, &binding, parameters)?;
         let (operations, last_scope): (u64, u64) = tx.query_row(

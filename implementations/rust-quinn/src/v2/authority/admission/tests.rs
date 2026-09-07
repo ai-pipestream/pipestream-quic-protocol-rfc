@@ -106,6 +106,13 @@ impl Fixture {
         Self::with_physical(policy, PhysicalLimits::default())
     }
     fn with_physical(policy: StorePolicy, physical: PhysicalLimits) -> Self {
+        Self::with_payload_policy(policy, physical, payload_policy())
+    }
+    fn with_payload_policy(
+        policy: StorePolicy,
+        physical: PhysicalLimits,
+        payload_policy: PayloadPolicy,
+    ) -> Self {
         let authority = super::super::tests::Fixture::with_physical(policy, physical);
         let binding = authority.create();
         authority
@@ -121,7 +128,7 @@ impl Fixture {
         let payloads = PayloadStore::initialize(
             &authority.directory.path().join("objects"),
             authority.store.payload_identity().unwrap(),
-            payload_policy(),
+            payload_policy,
         )
         .unwrap();
         authority.store.bind_payloads(&payloads).unwrap();
@@ -277,6 +284,77 @@ fn admission_commits_real_input_job_receipt_and_exactly_one_child_for_each_mode(
             receipt
         );
         fixture.authority.store.integrity_check().unwrap();
+    }
+}
+
+#[test]
+fn admission_refuses_an_immutable_handle_ceiling_that_cannot_ever_run_its_outputs() {
+    for (global, owner, outputs) in [(2, 2, true), (8, 2, true), (2, 2, false)] {
+        let mut policy = payload_policy();
+        policy.handles = Id(global);
+        policy.owner_handles = Id(owner);
+        let fixture = Fixture::with_payload_policy(
+            super::super::tests::policy(),
+            PhysicalLimits::default(),
+            policy,
+        );
+        let mut requested = header(&fixture.binding, 1, 0);
+        if !outputs {
+            requested.parameters.outputs = OutputBudget {
+                count: BatchCount(0),
+                total_bytes: Number(0),
+            };
+        }
+        let prepared = prepared(
+            &fixture.authority.store,
+            &fixture.binding,
+            &fixture.payloads,
+            &requested,
+        );
+        let result = fixture
+            .authority
+            .store
+            .admit_input(prepared, &caps(), &applications());
+        if outputs {
+            match result {
+                Err(StoreError::Protocol(error)) => {
+                    assert_eq!(error.code, ErrorCode::LimitExceeded)
+                }
+                other => panic!("expected impossible admission refusal, got {other:?}"),
+            }
+            assert_eq!(
+                fixture
+                    .authority
+                    .store
+                    .work_view(
+                        &fixture.binding.identity,
+                        &requested.parameters.work,
+                        Number(0)
+                    )
+                    .unwrap()
+                    .1
+                    .state,
+                State::DECLARED
+            );
+            let jobs: i64 = fixture
+                .authority
+                .store
+                .connect()
+                .unwrap()
+                .query_row("SELECT count(*) FROM jobs", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(jobs, 0);
+            assert!(
+                fixture
+                    .authority
+                    .store
+                    .operation(&fixture.binding.identity, requested.operation)
+                    .is_err()
+            );
+        } else {
+            result.unwrap();
+            assert_eq!(fixture.job(1).parameters.outputs.count, BatchCount(0));
+        }
     }
 }
 

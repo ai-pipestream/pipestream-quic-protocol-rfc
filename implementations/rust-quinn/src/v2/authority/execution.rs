@@ -9,7 +9,9 @@ use super::{
 };
 use std::time::Instant;
 
+mod pool;
 mod retry;
+pub use pool::{PoolConfig, PoolSnapshot, WorkerPool};
 
 pub trait Application: Send + Sync {
     fn execute(&self, context: &mut WorkContext) -> Result<ApplicationOutcome>;
@@ -188,11 +190,12 @@ impl Executor {
         let input =
             self.payloads
                 .open_object(&job.input_key.0, &identity.owner, &job.parameters.input)?;
-        let outputs = self.payloads.recover_outputs(
+        let mut outputs = self.payloads.recover_outputs(
             &job.reservation_key.0,
             &identity.owner,
             &job.parameters.outputs,
         )?;
+        outputs.reserve_worker_io()?;
         job.lease = Number(increment(job.lease.0)?);
         job.lease_until = Some(add_duration(now, self.lease_ms)?.min(view.deadline.unwrap()));
         job.stage = Number(1);

@@ -74,6 +74,14 @@ impl Fixture {
         caps: Capabilities,
         physical: PhysicalLimits,
     ) -> Self {
+        Self::with_members(application, caps, physical, 1)
+    }
+    fn with_members(
+        application: Arc<dyn Application>,
+        caps: Capabilities,
+        physical: PhysicalLimits,
+        members: u64,
+    ) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let clock = Arc::new(TestClock(AtomicU64::new(1000)));
         let auth = Arc::new(Auth(AtomicBool::new(true)));
@@ -103,7 +111,7 @@ impl Fixture {
                 &binding.identity,
                 OperationId([1; 16]),
                 Number(0),
-                &[Id(1)],
+                &(1..=members).map(Id).collect::<Vec<_>>(),
                 true,
             )
             .unwrap();
@@ -141,12 +149,18 @@ impl Fixture {
         }
     }
     fn admit(&self, mode: u64, count: u64, bytes: u64) {
+        self.admit_entity(1, mode, count, bytes);
+    }
+    fn admit_entity(&self, entity: u64, mode: u64, count: u64, bytes: u64) {
         let header = InputHeader {
             kind: Literal,
             generation: self.binding.identity.generation,
-            operation: OperationId([2; 16]),
+            operation: OperationId([(entity + 1).try_into().unwrap(); 16]),
             parameters: AdmitParameters {
-                work: self.key(),
+                work: WorkKey {
+                    entity: Id(entity),
+                    ..self.key()
+                },
                 input: Input {
                     length: Number(3),
                     sha256: Digest(Sha256::digest(b"abc").into()),
@@ -349,6 +363,85 @@ fn expired_or_unauthorized_execution_never_invokes_application() {
         refuse(fixture.run(), code);
         assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
+}
+
+#[test]
+fn claimed_worker_keeps_output_io_capacity_when_unrelated_reads_fill_the_pool() {
+    let fixture = Fixture::new(Arc::new(CopyApplication));
+    fixture.admit(0, 1, 3);
+    let job = fixture.job();
+    let execution = fixture
+        .executor
+        .claim(&fixture.binding.identity, &fixture.key())
+        .unwrap();
+    let mut readers = Vec::new();
+    loop {
+        match fixture.payloads.open_object(
+            &job.input_key.0,
+            &fixture.binding.identity.owner,
+            &job.parameters.input,
+        ) {
+            Ok(reader) => readers.push(reader),
+            error => {
+                refuse(error, ErrorCode::LimitExceeded);
+                break;
+            }
+        }
+    }
+    assert!(!readers.is_empty());
+    assert_eq!(execution.run().unwrap().state, State::SUCCEEDED);
+    // Input, reservation and reusable output-I/O credit all return on completion.
+    while readers.len() < payload_policy().handles.0 as usize {
+        readers.push(
+            fixture
+                .payloads
+                .open_object(
+                    &job.input_key.0,
+                    &fixture.binding.identity.owner,
+                    &job.parameters.input,
+                )
+                .unwrap(),
+        );
+    }
+    refuse(
+        fixture.payloads.open_object(
+            &job.input_key.0,
+            &fixture.binding.identity.owner,
+            &job.parameters.input,
+        ),
+        ErrorCode::LimitExceeded,
+    );
+}
+
+#[test]
+fn handle_pressure_refuses_claim_before_leasing_or_invoking_callback() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let fixture = Fixture::new(Arc::new(CountCopy(calls.clone())));
+    fixture.admit(0, 1, 3);
+    let job = fixture.job();
+    let readers: Vec<_> = (0..payload_policy().handles.0 - 2)
+        .map(|_| {
+            fixture
+                .payloads
+                .open_object(
+                    &job.input_key.0,
+                    &fixture.binding.identity.owner,
+                    &job.parameters.input,
+                )
+                .unwrap()
+        })
+        .collect();
+    refuse(
+        fixture
+            .executor
+            .claim(&fixture.binding.identity, &fixture.key()),
+        ErrorCode::LimitExceeded,
+    );
+    assert_eq!(fixture.job(), job);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    drop(readers);
+    assert_eq!(fixture.run().unwrap().state, State::SUCCEEDED);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 struct BadOutput;
@@ -646,7 +739,7 @@ fn execution_crash_child() {
             payload_policy(),
         )
         .unwrap();
-        Executor::new(
+        let executor = Executor::new(
             store,
             payloads,
             applications(Arc::new(CopyApplication)),
@@ -654,9 +747,10 @@ fn execution_crash_child() {
             caps(),
             Duration(100),
         )
-        .unwrap()
-        .run(&identity, &key)
         .unwrap();
+        let pool = executor.start_workers(pool_config()).unwrap();
+        wait_until(|| pool.snapshot().completed != 0 || pool.snapshot().faulted);
+        pool.shutdown().unwrap();
     }
     panic!("worker crash boundary did not fire");
 }
@@ -776,11 +870,20 @@ fn process_death_brackets_claim_publication_retry_and_unpublished_output_reclama
                 executor.run(&binding.identity, &key),
                 ErrorCode::AlreadyTerminal,
             );
+            let pool = executor.start_workers(pool_config()).unwrap();
+            wait_until(|| pool.snapshot().inspected > 0);
+            pool.shutdown().unwrap();
             assert_eq!(calls.load(Ordering::SeqCst), 0);
             before
         } else {
             assert!(before.manifest.is_none());
-            let view = executor.run(&binding.identity, &key).unwrap();
+            let pool = executor.start_workers(pool_config()).unwrap();
+            wait_until(|| pool.snapshot().completed == 1 || pool.snapshot().faulted);
+            assert!(!pool.shutdown().unwrap().faulted);
+            let view = store
+                .work_view(&binding.identity, &key, Number(0))
+                .unwrap()
+                .1;
             assert_eq!(calls.load(Ordering::SeqCst), 1);
             view
         };
@@ -809,6 +912,388 @@ fn process_death_brackets_claim_publication_retry_and_unpublished_output_reclama
         assert_eq!(&bytes, b"abc");
         store.integrity_check().unwrap();
     }
+}
+
+fn pool_config() -> PoolConfig {
+    PoolConfig {
+        workers: 2,
+        workers_per_owner: 2,
+        scan_batch: 2,
+        idle_poll_ms: 5,
+    }
+}
+fn wait_until(mut condition: impl FnMut() -> bool) {
+    let started = Instant::now();
+    while !condition() {
+        assert!(
+            started.elapsed() < Elapsed::from_secs(5),
+            "bounded worker condition timed out"
+        );
+        std::thread::sleep(Elapsed::from_millis(5));
+    }
+}
+
+#[test]
+fn worker_pool_discovers_later_commits_without_submission_or_notification() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let fixture = Fixture::new(Arc::new(CountCopy(calls.clone())));
+    let pool = fixture.executor.start_workers(pool_config()).unwrap();
+    fixture.admit(0, 1, 3);
+    wait_until(|| pool.snapshot().completed == 1);
+    let status = pool.shutdown().unwrap();
+    assert!(!status.faulted);
+    assert_eq!(status.active, 0);
+    assert_eq!(fixture.view().state, State::SUCCEEDED);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let pool = fixture.executor.start_workers(pool_config()).unwrap();
+    wait_until(|| pool.snapshot().inspected > 0);
+    pool.shutdown().unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn worker_pool_recovers_from_clock_and_io_pressure_without_losing_the_job() {
+    for clock in [true, false] {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fixture = Fixture::new(Arc::new(CountCopy(calls.clone())));
+        fixture.admit(0, 1, 3);
+        let job = fixture.job();
+        let mut readers = Vec::new();
+        if clock {
+            fixture.clock.0.store(900, Ordering::SeqCst);
+        } else {
+            for _ in 0..payload_policy().handles.0 {
+                readers.push(
+                    fixture
+                        .payloads
+                        .open_object(
+                            &job.input_key.0,
+                            &fixture.binding.identity.owner,
+                            &job.parameters.input,
+                        )
+                        .unwrap(),
+                );
+            }
+        }
+        let pool = fixture.executor.start_workers(pool_config()).unwrap();
+        wait_until(|| pool.snapshot().refused > 0);
+        let status = pool.snapshot();
+        assert!(!status.faulted);
+        assert_eq!(
+            status.last_refusal.unwrap().code,
+            DiagnosticCode(if clock {
+                ErrorCode::ClockUnsafe
+            } else {
+                ErrorCode::LimitExceeded
+            } as u64)
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(fixture.job(), job);
+        drop(readers);
+        fixture.clock.0.store(1000, Ordering::SeqCst);
+        wait_until(|| pool.snapshot().completed == 1);
+        pool.shutdown().unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.view().state, State::SUCCEEDED);
+    }
+}
+
+struct GateApplication {
+    entered: std::sync::mpsc::Sender<()>,
+    release: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    active: AtomicUsize,
+    maximum: AtomicUsize,
+}
+impl Application for GateApplication {
+    fn execute(&self, context: &mut WorkContext) -> Result<ApplicationOutcome> {
+        let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.maximum.fetch_max(active, Ordering::SeqCst);
+        self.entered.send(()).unwrap();
+        let (lock, wake) = &*self.release;
+        let (guard, _) = wake
+            .wait_timeout_while(lock.lock().unwrap(), Elapsed::from_secs(5), |released| {
+                !*released
+            })
+            .unwrap();
+        assert!(*guard, "application gate timed out");
+        drop(guard);
+        let outcome = CopyApplication.execute(context);
+        self.active.fetch_sub(1, Ordering::SeqCst);
+        outcome
+    }
+}
+
+#[test]
+fn worker_pool_bounds_running_callbacks_and_keeps_control_reads_independent() {
+    for (workers, owner_limit) in [(1, 1), (3, 2)] {
+        let (entered, received) = std::sync::mpsc::channel();
+        let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let application = Arc::new(GateApplication {
+            entered,
+            release: release.clone(),
+            active: AtomicUsize::new(0),
+            maximum: AtomicUsize::new(0),
+        });
+        let fixture =
+            Fixture::with_members(application.clone(), caps(), PhysicalLimits::default(), 5);
+        for entity in 1..=5 {
+            fixture.admit_entity(entity, 0, 1, 3);
+        }
+        let pool = fixture
+            .executor
+            .start_workers(PoolConfig {
+                workers,
+                workers_per_owner: owner_limit,
+                ..pool_config()
+            })
+            .unwrap();
+        for _ in 0..owner_limit {
+            received.recv_timeout(Elapsed::from_secs(5)).unwrap();
+        }
+        // Real authoritative observation completes while every callback is held.
+        assert_eq!(fixture.view().state, State::ACTIVE);
+        if workers > owner_limit {
+            wait_until(|| pool.snapshot().inspected >= 7);
+        }
+        assert_eq!(pool.snapshot().active, owner_limit);
+        assert_eq!(application.maximum.load(Ordering::SeqCst), owner_limit);
+        *release.0.lock().unwrap() = true;
+        release.1.notify_all();
+        wait_until(|| pool.snapshot().completed == 5);
+        assert_eq!(pool.shutdown().unwrap().active, 0);
+        assert_eq!(application.maximum.load(Ordering::SeqCst), owner_limit);
+        for entity in 1..=5 {
+            assert_eq!(
+                fixture
+                    .store
+                    .work_view(
+                        &fixture.binding.identity,
+                        &WorkKey {
+                            entity: Id(entity),
+                            ..fixture.key()
+                        },
+                        Number(0)
+                    )
+                    .unwrap()
+                    .1
+                    .state,
+                State::SUCCEEDED
+            );
+        }
+    }
+}
+
+#[test]
+fn worker_pool_makes_progress_past_unready_branches_and_reports_named_refusals() {
+    let fixture = Fixture::with_members(
+        Arc::new(CopyApplication),
+        caps(),
+        PhysicalLimits::default(),
+        3,
+    );
+    fixture.admit_entity(1, 2, 1, 3);
+    fixture.admit_entity(2, 1, 1, 3);
+    fixture.admit_entity(3, 0, 1, 3);
+    let pool = fixture
+        .executor
+        .start_workers(PoolConfig {
+            workers: 1,
+            workers_per_owner: 1,
+            scan_batch: 1,
+            ..pool_config()
+        })
+        .unwrap();
+    wait_until(|| pool.snapshot().completed == 1);
+    let status = pool.shutdown().unwrap();
+    assert!(!status.faulted);
+    assert!(status.refused >= 2);
+    assert_eq!(
+        status.last_refusal.unwrap().code,
+        DiagnosticCode(ErrorCode::NotReady as u64)
+    );
+    assert_eq!(
+        fixture
+            .store
+            .work_view(
+                &fixture.binding.identity,
+                &WorkKey {
+                    entity: Id(3),
+                    ..fixture.key()
+                },
+                Number(0)
+            )
+            .unwrap()
+            .1
+            .state,
+        State::SUCCEEDED
+    );
+    assert_eq!(fixture.view().state, State::ACTIVE);
+}
+
+#[test]
+fn worker_pool_configuration_and_duplicate_pool_refuse_without_leaking_ownership() {
+    let fixture = Fixture::new(Arc::new(CopyApplication));
+    for config in [
+        PoolConfig {
+            workers: 0,
+            ..pool_config()
+        },
+        PoolConfig {
+            workers: 129,
+            ..pool_config()
+        },
+        PoolConfig {
+            workers_per_owner: 0,
+            ..pool_config()
+        },
+        PoolConfig {
+            workers_per_owner: 3,
+            ..pool_config()
+        },
+        PoolConfig {
+            scan_batch: 0,
+            ..pool_config()
+        },
+        PoolConfig {
+            scan_batch: 257,
+            ..pool_config()
+        },
+        PoolConfig {
+            idle_poll_ms: 0,
+            ..pool_config()
+        },
+        PoolConfig {
+            idle_poll_ms: 60001,
+            ..pool_config()
+        },
+    ] {
+        refuse(
+            fixture.executor.start_workers(config),
+            ErrorCode::LimitExceeded,
+        );
+    }
+    let pool = fixture.executor.start_workers(pool_config()).unwrap();
+    refuse(
+        fixture.executor.start_workers(pool_config()),
+        ErrorCode::Conflict,
+    );
+    pool.shutdown().unwrap();
+    fixture
+        .executor
+        .start_workers(pool_config())
+        .unwrap()
+        .shutdown()
+        .unwrap();
+}
+
+struct RetryOnce(AtomicUsize);
+impl Application for RetryOnce {
+    fn execute(&self, context: &mut WorkContext) -> Result<ApplicationOutcome> {
+        if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+            Ok(ApplicationOutcome::Retryable(diag(
+                ErrorCode::NotReady,
+                "application asks for explicit retry",
+            )))
+        } else {
+            CopyApplication.execute(context)
+        }
+    }
+}
+
+#[test]
+fn worker_pool_waits_for_explicit_retry_then_discovers_the_replacement_attempt() {
+    let application = Arc::new(RetryOnce(AtomicUsize::new(0)));
+    let fixture = Fixture::new(application.clone());
+    fixture.admit(0, 1, 3);
+    let pool = fixture.executor.start_workers(pool_config()).unwrap();
+    wait_until(|| pool.snapshot().awaiting_retry == 1);
+    let inspected = pool.snapshot().inspected;
+    wait_until(|| pool.snapshot().inspected > inspected + 2);
+    assert_eq!(fixture.view().state, State::AWAITING_RETRY);
+    assert_eq!(application.0.load(Ordering::SeqCst), 1);
+    fixture
+        .store
+        .retry_work(
+            &fixture.binding.identity,
+            OperationId([3; 16]),
+            &fixture.key(),
+            Id(1),
+        )
+        .unwrap();
+    wait_until(|| pool.snapshot().completed == 1);
+    assert!(!pool.shutdown().unwrap().faulted);
+    assert_eq!(application.0.load(Ordering::SeqCst), 2);
+    assert_eq!(fixture.view().attempt, Number(2));
+    assert_eq!(fixture.view().state, State::SUCCEEDED);
+}
+
+#[test]
+fn dropping_pool_stops_new_claims_and_retains_ownership_until_callbacks_return() {
+    let (entered, received) = std::sync::mpsc::channel();
+    let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let application = Arc::new(GateApplication {
+        entered,
+        release: release.clone(),
+        active: AtomicUsize::new(0),
+        maximum: AtomicUsize::new(0),
+    });
+    let fixture = Fixture::with_members(application.clone(), caps(), PhysicalLimits::default(), 3);
+    for entity in 1..=3 {
+        fixture.admit_entity(entity, 0, 1, 3);
+    }
+    let pool = fixture
+        .executor
+        .start_workers(PoolConfig {
+            workers: 1,
+            workers_per_owner: 1,
+            ..pool_config()
+        })
+        .unwrap();
+    received.recv_timeout(Elapsed::from_secs(5)).unwrap();
+    drop(pool); // must not wait for the held callback
+    refuse(
+        fixture.executor.start_workers(pool_config()),
+        ErrorCode::Conflict,
+    );
+    *release.0.lock().unwrap() = true;
+    release.1.notify_all();
+    wait_until(|| fixture.payloads.pin_worker_pool().is_ok());
+    assert_eq!(fixture.view().state, State::SUCCEEDED);
+    assert!(received.try_recv().is_err());
+    let pool = fixture.executor.start_workers(pool_config()).unwrap();
+    wait_until(|| pool.snapshot().completed == 2);
+    pool.shutdown().unwrap();
+}
+
+#[test]
+fn worker_pool_faults_on_corrupt_storage_without_running_or_replacing_jobs() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let fixture = Fixture::new(Arc::new(CountCopy(calls.clone())));
+    fixture.admit(0, 1, 3);
+    fixture
+        .store
+        .connect()
+        .unwrap()
+        .execute("UPDATE jobs SET state=zeroblob(2152)", [])
+        .unwrap();
+    let pool = fixture.executor.start_workers(pool_config()).unwrap();
+    wait_until(|| pool.snapshot().faulted);
+    let status = pool.shutdown().unwrap();
+    assert!(status.stopping);
+    assert_eq!(
+        status.last_refusal.unwrap().code,
+        DiagnosticCode(ErrorCode::InternalError as u64)
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let changed: bool = fixture
+        .store
+        .connect()
+        .unwrap()
+        .query_row("SELECT state!=zeroblob(2152) FROM jobs", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert!(!changed);
 }
 
 struct EmptyOutputs(usize);

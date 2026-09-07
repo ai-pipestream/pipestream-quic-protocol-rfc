@@ -43,6 +43,147 @@ fn input(bytes: &[u8]) -> Input {
         content_type: ApplicationLabel("application/octet-stream".into()),
     }
 }
+
+#[test]
+fn worker_io_credit_is_reusable_and_transfers_to_a_stage_that_outlives_its_reservation() {
+    for (global, principal) in [(3, 3), (8, 3)] {
+        let mut limits = policy();
+        limits.handles = Id(global);
+        limits.owner_handles = Id(principal);
+        let fixture = Fixture::with_policy(limits);
+        let descriptor = input(b"x");
+        let now = Instant::now();
+        let mut upload = fixture
+            .store
+            .stage(&owner("alice"), &descriptor, &caps(), now)
+            .unwrap();
+        upload.receive(b"x", now).unwrap();
+        let installed = upload.finish(now).unwrap();
+        let key = installed.key().to_owned();
+        drop(installed);
+        let mut reservation = fixture.reserve();
+        reservation.reserve_worker_io().unwrap();
+        reservation.reserve_worker_io().unwrap(); // no second charge
+        let reader = fixture
+            .store
+            .open_object(&key, &owner("alice"), &descriptor)
+            .unwrap();
+        refuse(
+            fixture
+                .store
+                .open_object(&key, &owner("alice"), &descriptor),
+            ErrorCode::LimitExceeded,
+        );
+        let mut stage = reservation
+            .stage(
+                OutputIndex(0),
+                Number(1),
+                descriptor.content_type.clone(),
+                &caps(),
+                now,
+            )
+            .unwrap();
+        stage.write(b"x", now).unwrap();
+        let output = stage.finish(now).unwrap();
+        refuse(
+            reservation.stage(
+                OutputIndex(1),
+                Number(1),
+                descriptor.content_type.clone(),
+                &caps(),
+                now,
+            ),
+            ErrorCode::NotReady,
+        );
+        drop(output);
+        // Finishing an output returns its slot only to the same worker.
+        refuse(
+            fixture
+                .store
+                .open_object(&key, &owner("alice"), &descriptor),
+            ErrorCode::LimitExceeded,
+        );
+        let mut stage = reservation
+            .stage(
+                OutputIndex(1),
+                Number(1),
+                descriptor.content_type.clone(),
+                &caps(),
+                now,
+            )
+            .unwrap();
+        drop(reservation);
+        let second = fixture
+            .store
+            .open_object(&key, &owner("alice"), &descriptor)
+            .unwrap();
+        refuse(
+            fixture
+                .store
+                .open_object(&key, &owner("alice"), &descriptor),
+            ErrorCode::LimitExceeded,
+        );
+        stage.write(b"x", now).unwrap();
+        let output = stage.finish(now).unwrap();
+        refuse(
+            fixture
+                .store
+                .open_object(&key, &owner("alice"), &descriptor),
+            ErrorCode::LimitExceeded,
+        );
+        drop(output);
+        let third = fixture
+            .store
+            .open_object(&key, &owner("alice"), &descriptor)
+            .unwrap();
+        drop((reader, second, third));
+    }
+}
+
+#[test]
+fn dropping_prepaid_staging_does_not_return_its_worker_credit_to_unrelated_reads() {
+    let mut limits = policy();
+    limits.handles = Id(2);
+    limits.owner_handles = Id(2);
+    let fixture = Fixture::with_policy(limits);
+    let mut reservation = fixture.reserve();
+    reservation.reserve_worker_io().unwrap();
+    let stage = reservation
+        .stage(
+            OutputIndex(0),
+            Number(1),
+            input(b"x").content_type,
+            &caps(),
+            Instant::now(),
+        )
+        .unwrap();
+    drop(stage);
+    refuse(
+        fixture.store.open_reservation(
+            reservation.key(),
+            reservation.owner(),
+            reservation.budget(),
+        ),
+        ErrorCode::LimitExceeded,
+    );
+    let stage = reservation
+        .stage(
+            OutputIndex(0),
+            Number(1),
+            input(b"x").content_type,
+            &caps(),
+            Instant::now(),
+        )
+        .unwrap();
+    drop(stage);
+    let key = reservation.key().to_owned();
+    drop(reservation);
+    let mut reopened = fixture
+        .store
+        .open_reservation(&key, &owner("alice"), &budget())
+        .unwrap();
+    reopened.reserve_worker_io().unwrap();
+}
 fn refuse<T>(result: Result<T>, code: ErrorCode) {
     match result {
         Err(StoreError::Protocol(error)) => assert_eq!(error.code, code),

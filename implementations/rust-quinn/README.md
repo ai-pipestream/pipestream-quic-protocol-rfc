@@ -178,12 +178,45 @@ Publication uses the live reservation pin without acquiring another read handle.
 The complete publication write set is tested with 0, 1 and 256 actual outputs,
 a pinned WAL reader, ordinary writes exhausted and SQL row replacement forbidden.
 Real subprocess exits bracket claim, publication, retry and output recovery.
-These tests do not establish a complete resource-bounded lifecycle: the host
-still needs a bounded persistent scheduler and callback I/O permits reserved
-before claim. In particular, concurrent reads can currently exhaust the extra
-handle needed to stage an output. Deadline/cancellation settlement, nonempty
-closure, authority-expanded execution, authenticated result read leases and
-retention cleanup remain unfinished. Authority expansion is explicitly refused;
+These tests do not establish a complete resource-bounded lifecycle.
+
+`Executor::start_workers(PoolConfig)` now runs a fixed pull pool over the durable
+job table. It needs neither a resubmitted job key after restart nor a volatile
+queue of admitted payloads. Configuration bounds threads (1..128), concurrent
+dispatched jobs per owner, records inspected per discovery pass (1..256), and
+idle polling (1..60000 ms). A shared row cursor advances past refused/waiting work
+and wraps through retained jobs; this is bounded-memory scanning, not an indexed
+ready queue or a constant-cost sweep of a large populated store. Accepted-job
+capacity remains separately enforced by the persisted admission policy.
+
+Before committing a claim, the worker opens its input and reservation and charges
+one reusable output-I/O slot when outputs are allowed. A staged/installed token
+borrows that slot without double charging. Between outputs the slot remains
+unavailable to unrelated reads. If an output outlives its reservation, its charge
+transfers to the ordinary live pin under the same inventory lock. Capacity
+pressure can defer a new claim without changing the job or invoking its callback;
+it cannot steal staging capacity from an already claimed worker. These transient
+slots are re-acquired on restart, not confused with durable byte reservations.
+Admission also checks permanent feasibility: the immutable global/per-owner
+handle ceiling must permit at least three slots for output-producing work, or
+two for work declaring no outputs. It does not reject queued work merely because other
+readers temporarily occupy otherwise sufficient capacity.
+
+Only one pool can own the payload authority, including across executor clones.
+Optional `wake()` lowers admission/retry latency; polling supplies correctness.
+`snapshot()` reports active dispatches, scans, completions, retries, refusals and
+fault state using bounded counters and one bounded diagnostic, not an unbounded
+history. Clock/capacity/auth/fence refusals back off; corruption and unknown storage
+failures stop discovery. `request_stop()` and dropping the pool stop further
+discovery without cancelling durable work; dispatched callbacks may finish.
+`shutdown()` joins them. The pool retains ownership until all its threads return.
+Callbacks must cooperate with context deadlines/renewal; arbitrary application
+code is not forcibly preempted. Real subprocess tests now use the pool for both
+crash injection and recovery without submitting known keys.
+
+Deadline/cancellation/skip/revocation settlement, nonempty closure,
+authority-expanded execution, authenticated result read leases and retention
+cleanup remain unfinished. Authority expansion is explicitly refused;
 caller-branch execution requires a retained successful child closure.
 
 Record expansion preserves exact typed contents and existing credits, reserves
@@ -196,8 +229,9 @@ work-view record, not the complete job/receipt/clock/closure write set.
 No V2 profile is activated until the remaining lifecycle and resource gates pass.
 Physical file caps and staging reservations alone do not reserve future
 completion space; fixed-record credits cover only their stated write sets.
-Durable output reservations cover payload capacity, not running-worker I/O
-permits. Input/output liveness remains charged pending reference-safe cleanup;
+Durable output reservations cover payload capacity; the worker's separately
+charged transient slot covers output I/O. Input/output liveness remains charged
+pending reference-safe cleanup;
 manifest publication alone does not release those reservations.
 Client journals, V2 mTLS/QUIC integration and independent Java V2 implementation
 also remain outstanding.

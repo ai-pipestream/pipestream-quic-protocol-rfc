@@ -133,6 +133,9 @@ struct Entry {
     offset: u64,
     incomplete: bool,
     live: usize,
+    // The staging/installed token (not additional readers) borrows a worker's
+    // already charged reservation I/O slot. Never persisted across processes.
+    prepaid: bool,
 }
 impl Entry {
     fn charge(&self) -> Result<u64> {
@@ -189,12 +192,20 @@ struct Root {
     policy: PayloadPolicy,
     entries: Mutex<Inventory>,
     uncertain: AtomicBool,
+    worker_pool: AtomicBool,
     recovered_stages: usize,
     _lock: RootLock,
 }
 #[derive(Clone)]
 pub struct PayloadStore {
     root: Arc<Root>,
+}
+
+pub(super) struct WorkerPoolPin(Arc<Root>);
+impl Drop for WorkerPoolPin {
+    fn drop(&mut self) {
+        self.0.worker_pool.store(false, Ordering::Release);
+    }
 }
 
 fn charge(length: Number) -> Result<u64> {
@@ -295,8 +306,33 @@ impl Root {
 }
 
 impl PayloadStore {
+    pub(super) fn pin_worker_pool(&self) -> Result<WorkerPoolPin> {
+        self.root.owned()?;
+        self.root
+            .worker_pool
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| {
+                protocol(
+                    ErrorCode::Conflict,
+                    "payload authority already has a worker pool",
+                )
+            })?;
+        Ok(WorkerPoolPin(self.root.clone()))
+    }
     pub(super) fn chunk_limit(&self) -> usize {
         self.root.policy.chunk_bytes.0 as usize
+    }
+    /// Check permanent feasibility, not current occupancy: queued work may wait
+    /// for other readers, but must be runnable under the immutable root policy.
+    pub(super) fn check_execution_capacity(&self, outputs: &OutputBudget) -> Result<()> {
+        let required = if outputs.count.0 == 0 { 2 } else { 3 };
+        if self.root.policy.handles.0 < required || self.root.policy.owner_handles.0 < required {
+            return Err(protocol(
+                ErrorCode::LimitExceeded,
+                "payload policy cannot fund worker I/O",
+            ));
+        }
+        Ok(())
     }
     /// Initialization only accepts a newly created directory. A damaged or lost
     /// existing root is never silently replaced, adopted, or cleared.
@@ -367,6 +403,7 @@ impl PayloadStore {
             policy,
             entries: Mutex::new(Inventory::default()),
             uncertain: AtomicBool::new(false),
+            worker_pool: AtomicBool::new(false),
             recovered_stages: 0,
             _lock: lock,
         };
@@ -428,6 +465,7 @@ impl PayloadStore {
                 offset,
                 incomplete,
                 live: 0,
+                prepaid: false,
             };
             entries.insert(key.to_owned(), proposed);
         }
@@ -517,6 +555,7 @@ impl PayloadStore {
             offset: OVERHEAD,
             incomplete: true,
             live: 1,
+            prepaid: false,
         };
         let mut entries = self.root.entries()?;
         check_capacity(&self.root.policy, &entries, &proposed)?;
@@ -809,19 +848,24 @@ fn check_capacity(policy: &PayloadPolicy, entries: &Inventory, proposed: &Entry)
 fn check_handles(policy: &PayloadPolicy, entries: &Inventory, owner: &IdentityLabel) -> Result<()> {
     let total: usize = entries
         .values()
-        .map(|e| e.live)
-        .chain(entries.reservations.values().map(|r| r.live))
+        .map(|e| e.live - usize::from(e.prepaid))
+        .chain(
+            entries
+                .reservations
+                .values()
+                .map(|r| r.live + usize::from(r.io_reserved)),
+        )
         .sum();
     let owned: usize = entries
         .values()
         .filter(|e| e.owner == *owner)
-        .map(|e| e.live)
+        .map(|e| e.live - usize::from(e.prepaid))
         .chain(
             entries
                 .reservations
                 .values()
                 .filter(|r| r.owner == *owner)
-                .map(|r| r.live),
+                .map(|r| r.live + usize::from(r.io_reserved)),
         )
         .sum();
     if total as u64 >= policy.handles.0 || owned as u64 >= policy.owner_handles.0 {
@@ -1007,7 +1051,12 @@ impl InstalledPayload {
 }
 impl Drop for InstalledPayload {
     fn drop(&mut self) {
-        unpin(&self.store, &self.key);
+        if let Ok(mut entries) = self.store.root.entries()
+            && let Some(entry) = entries.get_mut(&self.key)
+        {
+            entry.live = entry.live.saturating_sub(1);
+            entry.prepaid = false;
+        }
     }
 }
 fn unpin(store: &PayloadStore, key: &str) {

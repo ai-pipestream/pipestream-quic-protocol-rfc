@@ -37,6 +37,7 @@ pub(super) struct ReservationEntry {
     pub owner: IdentityLabel,
     pub budget: OutputBudget,
     pub live: usize,
+    pub io_reserved: bool,
     pub incomplete: bool,
 }
 impl Wire for ReservationEntry {
@@ -46,6 +47,7 @@ impl Wire for ReservationEntry {
             owner: IdentityLabel::read(d)?,
             budget: OutputBudget::read(d)?,
             live: 0,
+            io_reserved: false,
             incomplete: false,
         })
     }
@@ -370,6 +372,7 @@ impl PayloadStore {
             owner: owner.clone(),
             budget: budget.clone(),
             live: 1,
+            io_reserved: false,
             incomplete: true,
         };
         let mut entries = self.root.entries()?;
@@ -427,6 +430,7 @@ impl PayloadStore {
             key,
             owner: owner.clone(),
             budget: budget.clone(),
+            io_reserved: false,
         })
     }
 
@@ -472,6 +476,7 @@ impl PayloadStore {
             key: key.to_owned(),
             owner: owner.clone(),
             budget: budget.clone(),
+            io_reserved: false,
         })
     }
 }
@@ -484,8 +489,31 @@ pub struct OutputReservation {
     key: String,
     owner: IdentityLabel,
     budget: OutputBudget,
+    io_reserved: bool,
 }
 impl OutputReservation {
+    /// Reserve one reusable staging handle before a worker lease commits. The
+    /// slot stays charged between outputs; extra readers cannot consume it.
+    pub(in crate::v2::authority) fn reserve_worker_io(&mut self) -> Result<()> {
+        if self.io_reserved || self.budget.count.0 == 0 {
+            return Ok(());
+        }
+        let mut entries = self.store.root.entries()?;
+        check_handles(&self.store.root.policy, &entries, &self.owner)?;
+        let retained = entries
+            .reservations
+            .get_mut(&self.key)
+            .ok_or(StoreError::Corrupt("live reservation disappeared"))?;
+        if retained.io_reserved {
+            return Err(protocol(
+                ErrorCode::NotReady,
+                "worker I/O slot already reserved",
+            ));
+        }
+        retained.io_reserved = true;
+        self.io_reserved = true;
+        Ok(())
+    }
     pub(in crate::v2::authority) fn verify_output(
         &self,
         index: OutputIndex,
@@ -574,7 +602,22 @@ impl OutputReservation {
                 "output slot already allocated",
             ));
         }
-        check_handles(&self.store.root.policy, &entries, &self.owner)?;
+        if self.io_reserved {
+            if !retained.io_reserved {
+                return Err(StoreError::Corrupt("worker I/O reservation disappeared"));
+            }
+            if entries.values().any(|entry| {
+                entry.prepaid
+                    && entry
+                        .funding
+                        .as_ref()
+                        .is_some_and(|funding| funding.key == self.key)
+            }) {
+                return Err(protocol(ErrorCode::NotReady, "worker I/O slot is in use"));
+            }
+        } else {
+            check_handles(&self.store.root.policy, &entries, &self.owner)?;
+        }
         let key = key(&entries)?;
         let file = new_staging_file(&self.store.root, &self.store.root.path(&key, true))?;
         #[cfg(test)]
@@ -592,6 +635,7 @@ impl OutputReservation {
                 offset: OVERHEAD,
                 incomplete: true,
                 live: 1,
+                prepaid: self.io_reserved,
             },
         );
         drop(entries);
@@ -625,10 +669,26 @@ impl OutputReservation {
 }
 impl Drop for OutputReservation {
     fn drop(&mut self) {
-        if let Ok(mut entries) = self.store.root.entries()
-            && let Some(entry) = entries.reservations.get_mut(&self.key)
-        {
-            entry.live = entry.live.saturating_sub(1);
+        if let Ok(mut entries) = self.store.root.entries() {
+            if let Some(entry) = entries.reservations.get_mut(&self.key) {
+                entry.live = entry.live.saturating_sub(1);
+                if self.io_reserved {
+                    entry.io_reserved = false;
+                }
+            }
+            if self.io_reserved {
+                // A stage or installed token may outlive this reservation.
+                // Transfer the charge to its ordinary live pin under the same
+                // lock, without briefly returning occupied capacity to others.
+                for entry in entries.values_mut().filter(|entry| {
+                    entry
+                        .funding
+                        .as_ref()
+                        .is_some_and(|funding| funding.key == self.key)
+                }) {
+                    entry.prepaid = false;
+                }
+            }
         }
     }
 }
@@ -760,6 +820,7 @@ impl Drop for OutputStaging {
             && let Some(entry) = entries.get_mut(&self.key)
         {
             entry.live = entry.live.saturating_sub(1);
+            entry.prepaid = false;
             if entry.incomplete
                 && fs::remove_file(self.store.root.path(&self.key, true)).is_ok()
                 && sync(&self.store.root).is_ok()
