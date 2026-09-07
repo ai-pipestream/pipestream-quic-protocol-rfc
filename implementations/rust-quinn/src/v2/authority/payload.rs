@@ -26,7 +26,9 @@ const OVERHEAD: u64 = 12 + HEADER_LIMIT as u64;
 const CONFIG: &str = "binding";
 const LOCK: &str = "root.lock";
 
+mod read_credit;
 mod reservations;
+pub(super) use read_credit::ReadCredit;
 use reservations::{Funding, ReservationEntry};
 pub use reservations::{OutputReservation, OutputStaging, ReservationUsage};
 
@@ -163,6 +165,8 @@ impl Entry {
 struct Inventory {
     objects: BTreeMap<String, Entry>,
     reservations: BTreeMap<String, ReservationEntry>,
+    readers: BTreeMap<u64, read_credit::CreditEntry>,
+    next_reader: u64,
 }
 impl std::ops::Deref for Inventory {
     type Target = BTreeMap<String, Entry>;
@@ -324,8 +328,19 @@ impl PayloadStore {
     }
     /// Check permanent feasibility, not current occupancy: queued work may wait
     /// for other readers, but must be runnable under the immutable root policy.
-    pub(super) fn check_execution_capacity(&self, outputs: &OutputBudget) -> Result<()> {
-        let required = if outputs.count.0 == 0 { 2 } else { 3 };
+    pub(super) fn check_execution_capacity(&self, parameters: &AdmitParameters) -> Result<()> {
+        let ordinary = if parameters.outputs.count.0 == 0 {
+            2
+        } else {
+            3
+        };
+        let required = if parameters.mode == Mode(2) {
+            ordinary + 2
+        } else if parameters.mode == Mode(1) {
+            ordinary + 1
+        } else {
+            ordinary
+        };
         if self.root.policy.handles.0 < required || self.root.policy.owner_handles.0 < required {
             return Err(protocol(
                 ErrorCode::LimitExceeded,
@@ -606,6 +621,15 @@ impl PayloadStore {
         owner: &IdentityLabel,
         input: &Input,
     ) -> Result<ObjectReader> {
+        self.open_object_with(key, owner, input, None)
+    }
+    fn open_object_with(
+        &self,
+        key: &str,
+        owner: &IdentityLabel,
+        input: &Input,
+        credit: Option<&Arc<ReadCredit>>,
+    ) -> Result<ObjectReader> {
         let mut entries = self.root.entries()?;
         let entry = entries
             .get(key)
@@ -616,7 +640,11 @@ impl PayloadStore {
                 "retained object identity mismatch",
             ));
         }
-        check_handles(&self.root.policy, &entries, owner)?;
+        if let Some(credit) = credit {
+            credit.check(&entries, owner)?;
+        } else {
+            check_handles(&self.root.policy, &entries, owner)?;
+        }
         let entry = entries.get_mut(key).expect("checked object");
         let path = self.root.path(key, false);
         let (header, offset) = read_header(&path, false).map_err(|_| {
@@ -638,15 +666,19 @@ impl PayloadStore {
             .live
             .checked_add(1)
             .ok_or_else(|| protocol(ErrorCode::LimitExceeded, "object pin counter exhausted"))?;
+        if let Some(credit) = credit {
+            credit.set_busy(&mut entries, true);
+        }
         Ok(ObjectReader {
             store: self.clone(),
             key: key.to_owned(),
-            file,
+            file: Some(file),
             remaining: input.length.0,
             expected: input.sha256,
             hash: Sha256::new(),
             verified: false,
             failed: false,
+            credit: credit.cloned(),
         })
     }
 
@@ -855,6 +887,7 @@ fn check_handles(policy: &PayloadPolicy, entries: &Inventory, owner: &IdentityLa
                 .values()
                 .map(|r| r.live + usize::from(r.io_reserved)),
         )
+        .chain(entries.readers.values().map(|r| usize::from(!r.busy)))
         .sum();
     let owned: usize = entries
         .values()
@@ -866,6 +899,13 @@ fn check_handles(policy: &PayloadPolicy, entries: &Inventory, owner: &IdentityLa
                 .values()
                 .filter(|r| r.owner == *owner)
                 .map(|r| r.live + usize::from(r.io_reserved)),
+        )
+        .chain(
+            entries
+                .readers
+                .values()
+                .filter(|r| r.owner == *owner)
+                .map(|r| usize::from(!r.busy)),
         )
         .sum();
     if total as u64 >= policy.handles.0 || owned as u64 >= policy.owner_handles.0 {
@@ -1070,12 +1110,13 @@ fn unpin(store: &PayloadStore, key: &str) {
 pub struct ObjectReader {
     store: PayloadStore,
     key: String,
-    file: File,
+    file: Option<File>,
     remaining: u64,
     expected: Digest,
     hash: Sha256,
     verified: bool,
     failed: bool,
+    credit: Option<Arc<ReadCredit>>,
 }
 impl ObjectReader {
     /// Bounded read with end-to-end verification at EOF. Bytes before verified
@@ -1101,7 +1142,12 @@ impl ObjectReader {
         let maximum = self.remaining.min(buffer.len() as u64) as usize;
         if maximum == 0 {
             let mut extra = [0u8; 1];
-            if self.file.read(&mut extra)? != 0
+            if self
+                .file
+                .as_mut()
+                .ok_or(StoreError::Corrupt("reader closed"))?
+                .read(&mut extra)?
+                != 0
                 || Digest(self.hash.clone().finalize().into()) != self.expected
             {
                 return Err(protocol(
@@ -1113,7 +1159,11 @@ impl ObjectReader {
             self.failed = false;
             return Ok(0);
         }
-        let count = self.file.read(&mut buffer[..maximum])?;
+        let count = self
+            .file
+            .as_mut()
+            .ok_or(StoreError::Corrupt("reader closed"))?
+            .read(&mut buffer[..maximum])?;
         if count == 0 {
             return Err(protocol(
                 ErrorCode::OutputUnavailable,
@@ -1131,7 +1181,17 @@ impl ObjectReader {
 }
 impl Drop for ObjectReader {
     fn drop(&mut self) {
-        unpin(&self.store, &self.key);
+        self.file.take();
+        if let Some(credit) = &self.credit {
+            if let Ok(mut entries) = self.store.root.entries() {
+                if let Some(entry) = entries.get_mut(&self.key) {
+                    entry.live = entry.live.saturating_sub(1);
+                }
+                credit.set_busy(&mut entries, false);
+            }
+        } else {
+            unpin(&self.store, &self.key);
+        }
     }
 }
 

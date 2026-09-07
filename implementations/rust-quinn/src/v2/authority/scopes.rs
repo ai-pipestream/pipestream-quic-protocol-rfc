@@ -230,17 +230,30 @@ impl AuthorityStore {
         entity_ids: &[Id],
         sealed: bool,
     ) -> Result<OperationReceipt> {
+        self.declare_as(identity, id, scope, entity_ids, sealed, &Origin::External)
+    }
+    pub(super) fn declare_as(
+        &self,
+        identity: &SessionIdentity,
+        id: OperationId,
+        scope: Number,
+        entity_ids: &[Id],
+        sealed: bool,
+        origin: &Origin,
+    ) -> Result<OperationReceipt> {
         require(entity_ids.len() <= 256, "declaration batch exceeds 256 IDs")?;
         let mutation = Mutation::Declare {
             scope,
             entity_ids: entity_ids.to_vec(),
             seal: sealed,
         };
-        let digest = mutation.digest(identity, Producer(0), id)?;
+        let digest = mutation.digest(identity, origin.producer(), id)?;
         let mut connection = self.connect()?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let binding = self.authorize_session(&tx, identity, Permission::Declare)?;
-        if let Some(receipt) = operation(&tx, identity.generation, Producer(0), id)? {
+        let permission = origin.permission(Permission::Declare);
+        let binding = self.authorize_session(&tx, identity, permission)?;
+        origin.check(self, &tx, identity, scope)?;
+        if let Some(receipt) = operation(&tx, identity.generation, origin.producer(), id)? {
             if receipt.request_digest != digest {
                 return Err(protocol(
                     ErrorCode::Conflict,
@@ -250,10 +263,10 @@ impl AuthorityStore {
             return Ok(receipt);
         }
         let mut retained = load(&tx, identity.generation, scope)?;
-        if retained.producer != Producer(0) {
+        if retained.producer != origin.producer() {
             return Err(protocol(
                 ErrorCode::Unauthorized,
-                "external producer cannot declare authority work",
+                "declaration origin does not own scope membership",
             ));
         }
         unfenced(&tx, identity.generation, scope)?;
@@ -409,16 +422,17 @@ impl AuthorityStore {
             params![sql(identity.generation.0)?, sql(total)?],
         )?;
         tx.execute(
-            "INSERT INTO operations VALUES(?1,0,?2,?3,?4)",
+            "INSERT INTO operations VALUES(?1,?5,?2,?3,?4)",
             params![
                 sql(identity.generation.0)?,
                 id.0.as_slice(),
                 digest.0.as_slice(),
-                pack(&receipt)?
+                pack(&receipt)?,
+                sql(origin.producer().0)?
             ],
         )?;
         self.remember_clock(&tx, now)?;
-        self.authorize(&identity.owner, Permission::Declare)?;
+        self.authorize(&identity.owner, permission)?;
         commit(tx, "declare")?;
         Ok(receipt)
     }

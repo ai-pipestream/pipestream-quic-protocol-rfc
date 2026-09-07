@@ -1036,3 +1036,74 @@ this run. This is bounded safety evidence, not a liveness or storage proof.
 The final draft rebuild again passed with zero idnits errors, flaws or warnings.
 Network tests still concern historical profiles, not V2 interoperability. No
 main merge, deployment or Internet-Draft submission occurred.
+
+## Authority expansion and real child-output reassembly checkpoint, 2026-09-07
+
+Continued from `f5c56b3` without changing the full goal or touching the search
+fleet. Rust authority-mode applications now provide a real expansion callback.
+Its opaque producer grant binds local declarations and admissions to the parent,
+child scope, current attempt/worker lease, authorization and deadline. The shared
+admission pipeline preserves producer-1 immutable operations and ordinary quota,
+input-integrity and reservation checks; an external flag cannot grant this role.
+
+Expansion yields release the worker while preserving accepted children and
+terminal-transition credits. The pool backs off after a yield. Complete expansion
+commits a separate durable phase and WAITING_CHILDREN state. A regression first
+failed because the implementation mistook a sealed child scope for completed
+expansion, omitting still-missing child admissions. Authority format 8 now stores
+that phase explicitly; prior format 7 is refused without conversion. Payload
+format 4 and wire examples do not change. A second negative-first regression
+strengthened reopening checks: a valid record checksum cannot legitimize
+successful authority work whose expansion is still marked unfinished.
+
+Both branch modes page closed direct children and stream their retained output
+objects into reassembly. Verified child EOF is required before successful parent
+publication. A parent can use a child dependency after external output expiry,
+but its reads remain subject to its own authorization, deadline and fences.
+An extra reader slot is reserved before reassembly claim; it cannot be stolen
+by concurrent opens, and a live reader keeps its charge after the worker drops.
+Minimum permanent handle policies are checked before admission. Child staging
+and admission still acquire their own quotas: applications may yield on pressure,
+and parent admission does not promise unlimited descendant capacity.
+
+Nineteen branch tests (including the subprocess entry point) verify two-byte
+streaming of `abc` into two child transformations and actual `ABC` reassembly,
+both producers, single-worker progress, stale local preparation across retry,
+lease/deadline/cancel/revoke/auth changes, reader fencing/integrity and capacity.
+Six real process deaths bracket local declaration, admission and phase commits.
+Recovered discovery completes the original attempt with exactly three jobs and
+three local operations, preserving lost acknowledgments. Explicit retry keeps
+the same children and never repeats completed expansion; unpublished parent
+output is reclaimed before reassembly retry. This is not the external distributed
+workload or the equivalent streaming-gRPC benchmark.
+
+Pinned-WAL gates fill ordinary capacity, forbid work/job/clock SQL row replacement
+and verify unchanged database page counts for expansion completion and final
+publication. With a 4194304-byte cap, the focused run measured WAL lengths
+1112456 to 1120672 and 1821096 to 1829312 respectively. These are configured
+file-length bounds, not filesystem-block preallocation or RSS measurements.
+The full focused authority run passes 155 tests and strict workspace clippy
+passes. Section 12 now explicitly distinguishes sealing, admission and expansion
+completion and requires replayable local progress with parent commit fences.
+The draft rebuild passed with zero idnits errors, flaws or warnings and the
+existing informational FIPS-180-4 normative-downref comment.
+
+Logs: `/tmp/pipestream-expansion-final-authority.log`,
+`/tmp/pipestream-expansion-final-clippy.log`,
+`/tmp/pipestream-expansion-final-draft.log`,
+`/tmp/pipestream-expansion-verified-suite.log`.
+
+Next: authenticated RESULT lookup/read leases, dependency retention and crash-safe
+cleanup/retirement. Reservations still remain charged until that cleanup is built.
+Independent Java V2, real authenticated V2 endpoints, neutral cross-language
+failure scenarios and external workload/gRPC evidence remain required. The full
+goal is active and incomplete; no V2 profile is advertised by these library APIs.
+
+Final verification: `./conformance/run_all.sh` exited 0. Rust workspace tests
+passed 516/0, with another six passing Rust example tests. All 20 fresh Java
+Surefire reports total 193 tests, zero failures/errors/skips. C++ tests, frozen
+vectors, bounded lifecycle models, all nine black-box language pairs, all 32
+raw QUIC capability probes and recursive/external example scenarios passed.
+The network evidence still covers historical profiles, not V2 interoperability.
+`./build.sh core 05` exited 0; the rendered text includes the new expansion
+requirements. No main merge, deployment or Internet-Draft submission occurred.

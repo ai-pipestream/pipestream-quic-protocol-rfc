@@ -63,7 +63,7 @@ reclaims abandoned stages only under exclusive ownership; installed orphans
 remain charged until the authority's reference-safe collector removes them.
 Live installed/read handles remain pinned against collection. The database
 retains a local random store identity and a once-bound canonical payload path.
-Internal authority storage is now format 7; payload roots remain format 4.
+Internal authority storage is now format 8; payload roots remain format 4.
 Prior authority formats are refused, not silently converted or replaced.
 This changes no wire schema or frozen vector.
 
@@ -250,10 +250,45 @@ a pinned WAL reader after ordinary writes exhaust their allowance. These gates
 forbid SQL row replacement and check unchanged database page count. Input/output
 liveness and byte reservations stay charged; settlement does not yet retire them.
 
-Complete authority-expanded execution, child-output rehydration APIs,
-authenticated result read leases and retention cleanup remain unfinished.
-Authority expansion is explicitly refused by the executor;
-caller-branch execution requires a retained successful child closure.
+Authority-expanded applications now register an actual `Expansion` callback;
+registering mode 2 without one is APPLICATION_UNSUPPORTED. `ExpansionContext`
+supplies bounded input reads, stable local operation IDs, declaration and the
+same receive/prepare/admit pipeline used by external inputs. An opaque grant
+binds every committing mutation to the current parent identity, child scope,
+attempt and worker lease. Replayed local receipts use producer namespace 1;
+external callers still cannot supply producer-1 inputs or claim that namespace.
+
+Expansion can complete, yield, request explicit retry or fail. Yield preserves
+accepted children and the attempt, releases the worker and uses ordinary writes,
+not terminal-transition credits. Discovery backs off after a yield. The fixed
+job record now has 15 typed fields, including a durable expansion-complete flag:
+sealing membership alone cannot suppress missing child admissions after restart.
+An explicit retry preserves the child scope, operations and completed expansion;
+once expansion finished it reruns only reassembly, not child generation.
+
+Both branch modes require a retained successful child closure before reassembly.
+`WorkContext::children` pages direct children; `begin_child_output`,
+`read_child_output` and `finish_child_output` stream their exact retained outputs
+under the parent worker's authorization and fences. Verified EOF is mandatory
+before successful publication. These internal dependency reads may outlive
+external output expiry; they are not caller result-read leases or URI fetching.
+Before a reassembly claim the worker reserves a reusable child-reader slot.
+Unrelated readers cannot steal it, and a live reader retains its charge even
+after worker ownership drops. Policies that cannot support a branch's minimum
+handles are refused before admission. With outputs, caller branches need four
+handles and authority branches five; the zero-output minima are three and four.
+Child staging/admission still acquires its own capacity and may refuse under
+concurrent pressure. Applications can yield and replay; a parent admission does
+not promise unlimited future descendants or their execution slots.
+
+Nineteen branch tests include real `abc` -> two uppercase children -> `ABC`
+reassembly with two-byte buffers, both producer modes, one-worker progress,
+six subprocess commit crashes, explicit retries, stale grants, unverified reads,
+handle saturation/lifetime, minimum-policy execution, and pinned-WAL completion
+without SQL row replacement or database page growth. Reopen refuses format 7
+and semantically impossible successful work with unfinished expansion.
+Authenticated result read leases and reference-safe retention cleanup remain
+unfinished; all accepted input/output reservations still stay charged.
 
 Record expansion preserves exact typed contents and existing credits, reserves
 the larger future WAL write cost before allocating pages, and uses a savepoint

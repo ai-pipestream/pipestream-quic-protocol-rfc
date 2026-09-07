@@ -51,7 +51,7 @@ fn applications(application: Arc<dyn Application>) -> Arc<Applications> {
         ApplicationLabel("test/v1".into()),
         vec![Mode(0), Mode(1), Mode(2)],
         RestartSafety::Pure,
-        application,
+        fixture_application(application),
     )
     .unwrap();
     Arc::new(apps)
@@ -82,6 +82,27 @@ impl Fixture {
         physical: PhysicalLimits,
         members: u64,
     ) -> Self {
+        Self::setup(
+            application,
+            caps,
+            physical,
+            members,
+            Policy {
+                execution_limit_ms: Duration(10000),
+                output_retention_ms: Duration(20000),
+                receipt_retention_ms: Duration(30000),
+            },
+            payload_policy(),
+        )
+    }
+    fn setup(
+        application: Arc<dyn Application>,
+        caps: Capabilities,
+        physical: PhysicalLimits,
+        members: u64,
+        retention: Policy,
+        payload_policy: PayloadPolicy,
+    ) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let clock = Arc::new(TestClock(AtomicU64::new(1000)));
         let auth = Arc::new(Auth(AtomicBool::new(true)));
@@ -95,16 +116,7 @@ impl Fixture {
         )
         .unwrap();
         let binding = store
-            .create_session(
-                &IdentityLabel("alice".into()),
-                Id(1),
-                &Policy {
-                    execution_limit_ms: Duration(10000),
-                    output_retention_ms: Duration(20000),
-                    receipt_retention_ms: Duration(30000),
-                },
-                &caps,
-            )
+            .create_session(&IdentityLabel("alice".into()), Id(1), &retention, &caps)
             .unwrap();
         store
             .declare(
@@ -118,7 +130,7 @@ impl Fixture {
         let payloads = PayloadStore::initialize(
             &directory.path().join("objects"),
             store.payload_identity().unwrap(),
-            payload_policy(),
+            payload_policy,
         )
         .unwrap();
         store.bind_payloads(&payloads).unwrap();
@@ -1106,7 +1118,8 @@ fn worker_pool_makes_progress_past_unready_branches_and_reports_named_refusals()
     wait_until(|| pool.snapshot().completed == 1);
     let status = pool.shutdown().unwrap();
     assert!(!status.faulted);
-    assert!(status.refused >= 2);
+    assert!(status.refused >= 1);
+    assert_eq!(status.waiting_children, 1);
     assert_eq!(
         status.last_refusal.unwrap().code,
         DiagnosticCode(ErrorCode::NotReady as u64)
@@ -1127,7 +1140,7 @@ fn worker_pool_makes_progress_past_unready_branches_and_reports_named_refusals()
             .state,
         State::SUCCEEDED
     );
-    assert_eq!(fixture.view().state, State::ACTIVE);
+    assert_eq!(fixture.view().state, State::WAITING_CHILDREN);
 }
 
 #[test]
@@ -1439,3 +1452,5 @@ fn reopening_refuses_a_checksummed_manifest_rebound_to_another_owner() {
         Err(StoreError::Corrupt(_))
     ));
 }
+
+mod branch_tests;

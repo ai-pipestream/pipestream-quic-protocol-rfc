@@ -100,7 +100,7 @@ fn apps(application: Arc<dyn Application>) -> Arc<Applications> {
         ApplicationLabel("test/v1".into()),
         vec![Mode(0), Mode(1), Mode(2)],
         RestartSafety::Pure,
-        application,
+        fixture_application(application),
     )
     .unwrap();
     Arc::new(apps)

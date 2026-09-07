@@ -54,8 +54,12 @@ limits global/per-owner callback concurrency and reserves reusable output I/O
 capacity before claiming work. Durable cancel/skip receipts and revocation now
 fence unresolved work; independent bounded maintenance settles deadlines and
 descendants and commits nonempty scope seals, counts and status roots. Crash,
-publication-race and pinned-journal tests cover these transitions. Complete branch
-execution, result reads and retention cleanup remain unfinished. No V2 endpoint
+publication-race and pinned-journal tests cover these transitions. Registered
+authority expansion now creates actual children through the same admission path;
+both branch modes stream retained child outputs into application reassembly.
+Expansion completion is durable and separate from the membership seal. Process
+death, retry, stale producer grants and reserved child-reader capacity have
+focused tests. Authenticated result reads and retention cleanup remain unfinished. No V2 endpoint
 or profile is activated by these library APIs. The
 [V2 acceptance ledger](docs/standards/durable-work-v2-test-plan.md) keeps Java,
 authenticated transport, storage, execution and process-level evidence open.

@@ -451,6 +451,70 @@ commit separately; interrupted volatile hashes may be recomputed. Credit audits
 still scan retained records, so bounded batches do not imply constant transaction
 cost or fairness/latency guarantees for a large store.
 
+### Rust authority expansion and actual branch-output evidence, 2026-09-07
+
+Source: `src/v2/authority/execution/branch.rs`, `origin.rs`, and
+`payload/read_credit.rs`; 19 tests, including the subprocess entry point, in
+`execution/tests/branch_tests.rs`. Run
+`cargo test --locked -p pipestream-core branch_tests -- --nocapture`.
+The complete focused authority run now passes 155 tests; strict workspace
+clippy passes. These are local library tests, not V2 endpoint or Java evidence.
+
+- V2-SET/ADMIT/RESULT/CLOSE:
+  `authority_expansion_commits_real_children_and_reassembles_their_transformed_outputs`
+  streams `abc` into two actual admitted children and reconstructs `ABC` from
+  their transformed outputs using two-byte buffers. The caller-expanded variant
+  covers producer 0 and internal child reads after external output expiry.
+  The one-worker test discovers and executes the entire tree without a thread
+  parked per waiting branch. This is not the external workload/gRPC comparison.
+- V2-STORE/SET/OP:
+  `process_death_recovers_partial_expansion_and_lost_local_acknowledgments`
+  exits an actual process before and after local declaration, local admission
+  and expansion-complete commits. Reopened discovery finishes the original
+  attempt, preserves exactly three jobs and three producer-1 operations, and
+  verifies `ABC`. The seal-only regression failed before adding an independent
+  durable expansion-complete flag. Retry tests preserve child views/operations
+  and do not rerun completed expansion; an unpublished partial parent output
+  is discarded before retrying reassembly.
+- V2-AUTH/ATTEMPT/CANCEL/TIME: escaped prepared child admissions recheck current
+  parent attempt, lease, exact deadline, authorization, cancellation and
+  revocation. External producer-1 admission/declaration/operation lookup is
+  refused. An already open child reader cannot bypass these parent fences.
+  Immediate parent cancellation after child closure is ALREADY_TERMINAL to
+  stale workers; an unresolved scope fence is CANCELLED.
+- V2-RESULT/STORE: unverified child EOF prevents successful parent publication.
+  Reader capacity is reserved before reassembly claim and cannot be consumed by
+  other opens. A reader outliving its worker retains its charge under both
+  global and per-owner limits. Impossible handle policies refuse admission;
+  authority execution also passes at its five-handle minimum with outputs.
+  Child admission pressure can yield after sealing without creating a child job
+  or consuming terminal credits; replay after pressure clears completes `ABC`.
+- V2-STORE: `branch_completion_fits_reserved_wal_without_row_replacement_or_page_growth`
+  fills ordinary capacity behind a pinned WAL reader, forbids work/job/clock SQL
+  row replacement and checks unchanged DB page count. Under the 4194304-byte
+  WAL cap, the focused run measured expansion completion from 1112456 to
+  1120672 bytes and reassembly publication from 1821096 to 1829312 bytes.
+  These are configured file-length gates, not allocated disk blocks, RSS or
+  whole-workload throughput. Format 8 adds the durable phase and stronger
+  minimum handle promises; format 7 is refused with no conversion. Reopen also
+  rejects a checksummed successful branch whose expansion was never completed.
+
+Section 12 now explicitly distinguishes membership sealing, child admission and
+expansion completion, and requires recoverable local operations and parent
+commit fences. Frozen wire examples do not change. Child admission acquires its
+own quotas and staging capacity; unlimited expansion is not promised. Result
+read leases, reference-safe dependency/retention cleanup, Java V2, authenticated
+V2 endpoints, neutral cross-language failure scenarios and the equivalent
+streaming-gRPC workload remain open.
+
+Verification log: `/tmp/pipestream-expansion-verified-suite.log` (exit 0).
+The complete suite passed 516 Rust workspace tests, six Rust example tests,
+193 Java tests from 20 fresh reports, C++ tests, frozen vectors/models, nine
+basic language pairs, 32 raw QUIC capability probes and the recursive/external
+examples. The draft build also exited 0 with zero idnits errors/flaws/warnings
+and the existing informational FIPS downref comment. Historical network tests
+do not satisfy the open V2 endpoint/Java/neutral-driver gates.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

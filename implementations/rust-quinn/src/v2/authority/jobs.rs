@@ -30,11 +30,14 @@ pub(super) struct JobRecord {
     pub input_live: bool,
     pub outputs_live: bool,
     pub executor_live: bool,
+    // Membership can be sealed before any inputs are admitted. Only a separate
+    // completed expansion transition switches a mode-2 job to rehydration.
+    pub expansion_complete: bool,
 }
 
 impl Wire for JobRecord {
     fn read(d: &mut minicbor::Decoder<'_>) -> std::result::Result<Self, Error> {
-        codec::array(d, 14)?;
+        codec::array(d, 15)?;
         let value = Self {
             parameters: AdmitParameters::read(d)?,
             operation: OperationId::read(d)?,
@@ -50,12 +53,13 @@ impl Wire for JobRecord {
             input_live: bool::read(d)?,
             outputs_live: bool::read(d)?,
             executor_live: bool::read(d)?,
+            expansion_complete: bool::read(d)?,
         };
         value.check()?;
         Ok(value)
     }
     fn write(&self, w: &mut codec::Writer) {
-        w.array(14);
+        w.array(15);
         self.parameters.write(w);
         self.operation.write(w);
         self.originator.write(w);
@@ -70,6 +74,7 @@ impl Wire for JobRecord {
         self.input_live.write(w);
         self.outputs_live.write(w);
         self.executor_live.write(w);
+        self.expansion_complete.write(w);
     }
     fn check(&self) -> std::result::Result<(), Error> {
         self.parameters.check()?;
@@ -99,7 +104,9 @@ impl Wire for JobRecord {
             (self.stage.0 == 1) == self.lease_until.is_some()
                 && (self.stage.0 != 1 || self.lease.0 != 0)
                 && self.executor_live == (self.stage.0 != 4)
-                && (!self.executor_live || self.input_live && self.outputs_live),
+                && (!self.executor_live || self.input_live && self.outputs_live)
+                && (self.parameters.mode == Mode(2) || self.expansion_complete)
+                && (self.stage != Number(2) || self.expansion_complete),
             "job lease or resource liveness inconsistent",
         )
     }
@@ -208,6 +215,7 @@ pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
             || job.attempt.0 != view.attempt.0
             || (job.parameters.mode.0 != 0) != view.child.is_some()
             || job.executor_live == view.state.is_terminal()
+            || (view.state == State::SUCCEEDED && !job.expansion_complete)
             || view.deadline
                 != Some(add_duration(
                     view.admitted_at.unwrap(),
@@ -232,6 +240,16 @@ pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
             return Err(StoreError::Corrupt("job stage or lease differs from work"));
         }
         if let Some(child) = &view.child {
+            if job.parameters.mode == Mode(2)
+                && job.expansion_complete
+                && scopes::load(tx, Id(number(row, 1)?), Number(child.scope.0))?
+                    .seal
+                    .is_none()
+            {
+                return Err(StoreError::Corrupt(
+                    "completed expansion has no membership seal",
+                ));
+            }
             let retained: (u64, Vec<u8>) = tx.query_row(
                 "SELECT producer,parent FROM scopes WHERE generation=?1 AND scope=?2",
                 params![sql(number(row, 1)?)?, sql(child.scope.0)?],

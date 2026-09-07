@@ -9,12 +9,19 @@ use super::{
 };
 use std::time::Instant;
 
+mod branch;
 mod pool;
 mod retry;
+pub use branch::{ChildPage, Expansion, ExpansionContext, ExpansionOutcome};
 pub use pool::{PoolConfig, PoolSnapshot, WorkerPool};
 
 pub trait Application: Send + Sync {
     fn execute(&self, context: &mut WorkContext) -> Result<ApplicationOutcome>;
+    /// Mode 2 requires a real expansion callback. Leaf/caller-expanded contracts
+    /// can leave this absent and cannot register authority-expanded mode.
+    fn expansion(&self) -> Option<&dyn Expansion> {
+        None
+    }
 }
 
 pub enum ApplicationOutcome {
@@ -157,13 +164,8 @@ impl Executor {
                 "current worker lease is still live",
             ));
         }
-        if job.parameters.mode == Mode(2) {
-            return Err(protocol(
-                ErrorCode::NotReady,
-                "authority expansion executor is not implemented",
-            ));
-        }
-        if let Some(child) = &view.child {
+        let expanding = job.parameters.mode == Mode(2) && !job.expansion_complete;
+        if !expanding && let Some(child) = &view.child {
             let summary = scopes::closed(&tx, identity.generation, Number(child.scope.0))?
                 .ok_or_else(|| protocol(ErrorCode::NotReady, "child scope has not closed"))?;
             if summary.counts.success != summary.declared {
@@ -196,6 +198,11 @@ impl Executor {
             &job.parameters.outputs,
         )?;
         outputs.reserve_worker_io()?;
+        let child_reader = if !expanding && view.child.is_some() {
+            Some(self.payloads.reserve_reader(&identity.owner)?)
+        } else {
+            None
+        };
         job.lease = Number(increment(job.lease.0)?);
         job.lease_until = Some(add_duration(now, self.lease_ms)?.min(view.deadline.unwrap()));
         job.stage = Number(1);
@@ -211,6 +218,7 @@ impl Executor {
         caps.object_limit = job.object_limit.min(caps.object_limit);
         Ok(Execution {
             application,
+            expanding,
             context: WorkContext {
                 executor: self.clone(),
                 identity: identity.clone(),
@@ -218,12 +226,15 @@ impl Executor {
                 attempt: job.attempt,
                 lease: job.lease,
                 input_descriptor: job.parameters.input,
+                mode: job.parameters.mode,
                 input,
                 reservation: outputs,
                 caps,
                 pending: None,
                 produced: Vec::new(),
                 failure: None,
+                child_reader,
+                child_input: None,
             },
         })
     }
@@ -235,6 +246,7 @@ impl Executor {
 
 pub struct Execution {
     application: Arc<dyn Application>,
+    expanding: bool,
     context: WorkContext,
 }
 impl Execution {
@@ -247,6 +259,9 @@ impl Execution {
     pub fn run(mut self) -> Result<WorkView> {
         // Claims may be held by a host queue; check again before invoking code.
         self.context.check()?;
+        if self.expanding {
+            return branch::run(self);
+        }
         let outcome = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.application.execute(&mut self.context)
         })) {
@@ -268,12 +283,15 @@ pub struct WorkContext {
     attempt: Id,
     lease: Number,
     input_descriptor: Input,
+    mode: Mode,
     input: ObjectReader,
     reservation: OutputReservation,
     caps: Capabilities,
     pending: Option<OutputStaging>,
     produced: Vec<Output>,
     failure: Option<Diagnostic>,
+    child_reader: Option<Arc<payload::ReadCredit>>,
+    child_input: Option<ObjectReader>,
 }
 impl WorkContext {
     pub fn identity(&self) -> &SessionIdentity {
@@ -290,6 +308,9 @@ impl WorkContext {
     }
     pub fn input_descriptor(&self) -> &Input {
         &self.input_descriptor
+    }
+    pub fn mode(&self) -> Mode {
+        self.mode
     }
     pub fn buffer_limit(&self) -> usize {
         self.executor.payloads.chunk_limit()
@@ -391,6 +412,18 @@ impl WorkContext {
     }
 
     fn publish(mut self, mut outcome: ApplicationOutcome) -> Result<WorkView> {
+        if self
+            .child_input
+            .take()
+            .is_some_and(|reader| !reader.verified())
+        {
+            self.failure.get_or_insert_with(|| {
+                diag(
+                    ErrorCode::IntegrityError,
+                    "child output was not read through verified EOF",
+                )
+            });
+        }
         if self.pending.take().is_some() {
             self.failure.get_or_insert_with(|| {
                 diag(
@@ -578,3 +611,26 @@ fn checked(store: &AuthorityStore, tx: &Transaction<'_>, context: &WorkContext) 
 
 #[cfg(test)]
 mod tests;
+
+// Test fixtures that exercise incomplete descendants need a deliberate real
+// declaration without an input. Real expanding applications retain their own
+// callback; this wrapper is never compiled into the product.
+#[cfg(test)]
+pub(super) fn fixture_application(inner: Arc<dyn Application>) -> Arc<dyn Application> {
+    struct DeclaredChild(Arc<dyn Application>);
+    impl Application for DeclaredChild {
+        fn execute(&self, context: &mut WorkContext) -> Result<ApplicationOutcome> {
+            self.0.execute(context)
+        }
+        fn expansion(&self) -> Option<&dyn Expansion> {
+            self.0.expansion().or(Some(self))
+        }
+    }
+    impl Expansion for DeclaredChild {
+        fn expand(&self, context: &mut ExpansionContext<'_>) -> Result<ExpansionOutcome> {
+            context.declare(context.operation(Id(1))?, &[Id(1)], true)?;
+            Ok(ExpansionOutcome::Complete)
+        }
+    }
+    Arc::new(DeclaredChild(inner))
+}

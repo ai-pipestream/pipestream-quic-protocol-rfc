@@ -22,15 +22,15 @@ impl AuthorityStore {
         let mut tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some(receipt) = self.check_input(
             &tx,
-            identity,
-            header,
+            (identity, header, &input.origin),
             caps,
             input.payload.store(),
             applications,
         )? {
             return Ok(receipt);
         }
-        let binding = self.authorize_session(&tx, identity, Permission::Admit)?;
+        let permission = input.origin.permission(Permission::Admit);
+        let binding = self.authorize_session(&tx, identity, permission)?;
         if input.payload.owner() != &identity.owner
             || input.payload.descriptor() != &parameters.input
             || outputs.owner() != &identity.owner
@@ -41,10 +41,7 @@ impl AuthorityStore {
             return Err(StoreError::Corrupt("prepared admission evidence changed"));
         }
         input.payload.check_owned()?;
-        input
-            .payload
-            .store()
-            .check_execution_capacity(&parameters.outputs)?;
+        input.payload.store().check_execution_capacity(parameters)?;
         outputs.usage()?; // also rejects a quarantined or inherited reservation root
         jobs::capacity(&tx, &self.policy, &binding, parameters)?;
         let (operations, last_scope): (u64, u64) = tx.query_row(
@@ -122,7 +119,7 @@ impl AuthorityStore {
         let job = jobs::JobRecord {
             parameters: parameters.clone(),
             operation: header.operation,
-            originator: Producer(0),
+            originator: input.origin.producer(),
             restart_safety: applications.safety(&parameters.application, parameters.mode)?,
             attempt: Id(1),
             lease: Number(0),
@@ -134,6 +131,7 @@ impl AuthorityStore {
             input_live: true,
             outputs_live: true,
             executor_live: true,
+            expansion_complete: parameters.mode != Mode(2),
         };
         records::protect(&tx, jobs::CAPACITY, jobs::CREDITS)?;
         tx.execute(
@@ -185,7 +183,7 @@ impl AuthorityStore {
             operation: header.operation,
             request_digest: Mutation::Admit(parameters.clone()).digest(
                 identity,
-                Producer(0),
+                input.origin.producer(),
                 header.operation,
             )?,
             body: Outcome::Admitted {
@@ -204,12 +202,13 @@ impl AuthorityStore {
         })
         .encode(binding.control_limit.0.min(caps.control_limit.0) as usize)?;
         tx.execute(
-            "INSERT INTO operations VALUES(?1,0,?2,?3,?4)",
+            "INSERT INTO operations VALUES(?1,?5,?2,?3,?4)",
             params![
                 sql(identity.generation.0)?,
                 header.operation.0.as_slice(),
                 receipt.request_digest.0.as_slice(),
-                pack(&receipt)?
+                pack(&receipt)?,
+                sql(input.origin.producer().0)?
             ],
         )?;
         let required_object = parameters
@@ -220,7 +219,7 @@ impl AuthorityStore {
         tx.execute("UPDATE sessions SET operations=operations+1,last_scope=?2,required_control=max(required_control,?3),required_object=max(required_object,?4) WHERE generation=?1",
             params![sql(identity.generation.0)?, sql(child.map_or(last_scope, |c| c.scope.0))?, sql(response)?, sql(required_object)?])?;
         self.remember_clock(&tx, now)?;
-        self.authorize(&identity.owner, Permission::Admit)?;
+        self.authorize(&identity.owner, permission)?;
         commit(tx, "admit-input")?;
         Ok(receipt)
     }

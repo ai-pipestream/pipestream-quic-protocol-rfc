@@ -292,6 +292,16 @@ impl PayloadStore {
         owner: &IdentityLabel,
         descriptor: &Input,
     ) -> Result<ObjectReader> {
+        self.open_output_with(reservation, index, owner, descriptor, None)
+    }
+    pub(super) fn open_output_with(
+        &self,
+        reservation: &str,
+        index: OutputIndex,
+        owner: &IdentityLabel,
+        descriptor: &Input,
+        credit: Option<&Arc<ReadCredit>>,
+    ) -> Result<ObjectReader> {
         let entries = self.root.entries()?;
         let key = entries
             .iter()
@@ -304,7 +314,7 @@ impl PayloadStore {
             .map(|(key, _)| key.clone())
             .ok_or_else(|| protocol(ErrorCode::OutputUnavailable, "reserved output absent"))?;
         drop(entries);
-        self.open_object(&key, owner, descriptor)
+        self.open_object_with(&key, owner, descriptor, credit)
     }
     /// Caller holds the authority writer and has proved the job nonterminal and
     /// its prior lease absent/expired. None of this reservation's installed

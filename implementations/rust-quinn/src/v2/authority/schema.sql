@@ -68,4 +68,4 @@ CREATE TABLE payload_refs (
   FOREIGN KEY(generation,scope,entity) REFERENCES work(generation,scope,entity)
 ) STRICT;
 PRAGMA application_id = 1347637825;
-PRAGMA user_version = 7;
+PRAGMA user_version = 8;

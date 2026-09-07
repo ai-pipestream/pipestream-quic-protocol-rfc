@@ -51,6 +51,12 @@ impl Applications {
         implementation: Arc<dyn super::execution::Application>,
     ) -> Result<()> {
         name.check()?;
+        if modes.contains(&Mode(2)) && implementation.expansion().is_none() {
+            return Err(protocol(
+                ErrorCode::ApplicationUnsupported,
+                "authority-expanded mode requires an expansion callback",
+            ));
+        }
         require(
             !modes.is_empty()
                 && modes.len() <= 3
@@ -100,11 +106,13 @@ pub enum InputReception {
     Receiving(Box<ReceivingInput>),
 }
 pub struct ReceivingInput {
+    origin: Origin,
     header: InputHeader,
     identity: SessionIdentity,
     stage: StagedPayload,
 }
 pub struct ValidatedInput {
+    pub(super) origin: Origin,
     pub(super) header: InputHeader,
     pub(super) identity: SessionIdentity,
     pub(super) payload: InstalledPayload,
@@ -118,6 +126,7 @@ impl ReceivingInput {
     }
     pub fn finish(self, now: Instant) -> Result<ValidatedInput> {
         Ok(ValidatedInput {
+            origin: self.origin,
             header: self.header,
             identity: self.identity,
             payload: self.stage.finish(now)?,
@@ -180,11 +189,34 @@ impl AuthorityStore {
         applications: &Applications,
         now: Instant,
     ) -> Result<InputReception> {
+        self.receive_input_as(
+            (identity, Origin::External),
+            header,
+            caps,
+            payloads,
+            applications,
+            now,
+        )
+    }
+    pub(super) fn receive_input_as(
+        &self,
+        source: (&SessionIdentity, Origin),
+        header: &InputHeader,
+        caps: &Capabilities,
+        payloads: &PayloadStore,
+        applications: &Applications,
+        now: Instant,
+    ) -> Result<InputReception> {
+        let (identity, origin) = source;
         let mut connection = self.connect()?;
         let tx = connection.transaction()?;
-        if let Some(receipt) =
-            self.check_input(&tx, identity, header, caps, payloads, applications)?
-        {
+        if let Some(receipt) = self.check_input(
+            &tx,
+            (identity, header, &origin),
+            caps,
+            payloads,
+            applications,
+        )? {
             return Ok(InputReception::Replay(receipt));
         }
         // End this read snapshot before any filesystem write or network wait.
@@ -193,6 +225,7 @@ impl AuthorityStore {
         drop(connection);
         let stage = payloads.stage(&identity.owner, &header.parameters.input, caps, now)?;
         Ok(InputReception::Receiving(Box::new(ReceivingInput {
+            origin,
             identity: identity.clone(),
             header: header.clone(),
             stage,
@@ -214,8 +247,7 @@ impl AuthorityStore {
         let tx = connection.transaction()?;
         if let Some(receipt) = self.check_input(
             &tx,
-            &input.identity,
-            &input.header,
+            (&input.identity, &input.header, &input.origin),
             caps,
             payloads,
             applications,
@@ -230,8 +262,7 @@ impl AuthorityStore {
         let mut tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some(receipt) = self.check_input(
             &tx,
-            &input.identity,
-            &input.header,
+            (&input.identity, &input.header, &input.origin),
             caps,
             payloads,
             applications,
@@ -262,7 +293,10 @@ impl AuthorityStore {
                 .max(response_capacity(input.header.parameters.outputs.count)? as usize),
             retained.credits,
         )?;
-        self.authorize(&input.identity.owner, Permission::Admit)?;
+        self.authorize(
+            &input.identity.owner,
+            input.origin.permission(Permission::Admit),
+        )?;
         commit(tx, "prepare-input")?;
         Ok(InputPreparation::Ready(Box::new(PreparedInput {
             input,
@@ -273,21 +307,22 @@ impl AuthorityStore {
     pub(super) fn check_input(
         &self,
         tx: &Transaction<'_>,
-        identity: &SessionIdentity,
-        header: &InputHeader,
+        source: (&SessionIdentity, &InputHeader, &Origin),
         caps: &Capabilities,
         payloads: &PayloadStore,
         applications: &Applications,
     ) -> Result<Option<OperationReceipt>> {
+        let (identity, header, origin) = source;
         header.check()?;
         selected(caps)?;
-        let binding = self.authorize_session(tx, identity, Permission::Admit)?;
+        let binding = self.authorize_session(tx, identity, origin.permission(Permission::Admit))?;
         sessions::check_connection(tx, &binding, caps)?;
         let parameters = &header.parameters;
-        if parameters.work.producer != Producer(0) {
+        origin.check(self, tx, identity, parameters.work.scope)?;
+        if parameters.work.producer != origin.producer() {
             return Err(protocol(
                 ErrorCode::Unauthorized,
-                "external input cannot use authority producer",
+                "input origin does not own scope membership",
             ));
         }
         if header.generation != identity.generation {
@@ -296,10 +331,13 @@ impl AuthorityStore {
                 "input session generation changed",
             ));
         }
-        let digest =
-            Mutation::Admit(parameters.clone()).digest(identity, Producer(0), header.operation)?;
+        let digest = Mutation::Admit(parameters.clone()).digest(
+            identity,
+            origin.producer(),
+            header.operation,
+        )?;
         if let Some(receipt) =
-            scopes::operation(tx, identity.generation, Producer(0), header.operation)?
+            scopes::operation(tx, identity.generation, origin.producer(), header.operation)?
         {
             if receipt.request_digest != digest {
                 return Err(protocol(
@@ -416,7 +454,9 @@ mod tests {
                     ApplicationLabel("copy/v1".into()),
                     vec![Mode(0), Mode(1), Mode(2)],
                     RestartSafety::Pure,
-                    Arc::new(super::super::execution::CopyApplication),
+                    super::super::execution::fixture_application(Arc::new(
+                        super::super::execution::CopyApplication,
+                    )),
                 )
                 .unwrap();
             Self {

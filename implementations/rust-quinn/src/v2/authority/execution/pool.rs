@@ -25,6 +25,8 @@ pub struct PoolSnapshot {
     pub inspected: u64,
     pub completed: u64,
     pub awaiting_retry: u64,
+    pub waiting_children: u64,
+    pub yielded: u64,
     pub refused: u64,
     pub last_refusal: Option<Diagnostic>,
     pub stopping: bool,
@@ -276,10 +278,18 @@ fn worker(shared: Arc<Shared>) {
                     if view.state == State::AWAITING_RETRY {
                         state.snapshot.awaiting_retry =
                             state.snapshot.awaiting_retry.saturating_add(1);
-                    } else {
+                    } else if view.state == State::WAITING_CHILDREN {
+                        state.snapshot.waiting_children =
+                            state.snapshot.waiting_children.saturating_add(1);
+                    } else if view.state == State::ACTIVE {
+                        state.snapshot.yielded = state.snapshot.yielded.saturating_add(1);
+                    } else if view.state.is_terminal() {
                         state.snapshot.completed = state.snapshot.completed.saturating_add(1);
                     }
-                    backoff = false;
+                    // A voluntary yield can report temporary child-admission
+                    // pressure. Do not spin on the same durable candidate while
+                    // another worker or reader still holds the needed capacity.
+                    backoff = view.state == State::ACTIVE;
                 }
                 Err(error) => fault(&mut state, &error),
             }

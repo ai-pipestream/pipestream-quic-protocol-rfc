@@ -322,6 +322,22 @@ No child can precede admission of its parent. A leaf cannot acquire children
 later, and a branch cannot replace its child scope. This closes the ambiguity
 between an empty subtree and a subtree that has not yet been declared.
 
+A membership seal commits the set of child identities, not admission of their
+inputs or completion of authority expansion. An authority MUST preserve enough
+durable expansion progress to resume interrupted producer-1 declarations and
+input admissions without replacing the child scope, duplicating accepted work,
+or omitting declared obligations. In particular, it MUST NOT infer that
+expansion finished merely because the child scope is sealed. Replaying local
+mutations uses their original operation identities and immutable parameters,
+including when the parent has a replacement execution attempt.
+
+The local producer interface MUST fence each declaration and input admission
+against the current parent attempt, execution ownership, deadline, authorization
+and applicable cancellation fences at commitment. Local execution is not an
+exemption from admission or resource accounting. A resource refusal does not
+erase already accepted children or their declarations; an implementation MAY
+suspend expansion and retry without extending the original parent deadline.
+
 Content type and application labels are bounded printable ASCII without
 control characters. The application label identifies an explicitly configured
 versioned processing contract. Unknown application contracts are refused
