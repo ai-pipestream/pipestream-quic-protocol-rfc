@@ -385,11 +385,71 @@ one complete bounded frame; a transport must use `control_body_length` before
 allocating/receiving it. `object_header_length` supplies the equivalent check
 for object headers. `Control::validate_context` checks direction and selected profiles.
 `Correlation` tracks connection requests and stream responses, including
-known request fields; authenticated session binding and full receipt-digest
-validation remain required in the client. `PayloadReceiver` accepts borrowed
+known request fields. The client journal below adds durable creation/intent and
+receipt-digest checks; transport authentication and complete client integration
+remain required. `PayloadReceiver` accepts borrowed
 chunks but neither stores them nor runs callbacks. An endpoint must drive
 its deadline checks even when no bytes arrive, and invoke `finish` only for
 an actual successful FIN, never a stream reset.
+
+### Version-2 client intent journal
+
+`pipestream_core::v2::client::Journal` stores one immutable creation/session in
+a separate SQLite database. `initialize` is explicit new history; `open` refuses
+missing, empty, incompatible or changed history. Both require trusted expected
+authority, owner, creation sequence, exact policy, durable/result profile choice
+and local limits. These values are not discovered from a locator or guessed
+after losing a journal. No credentials or input/output payload bytes are stored.
+
+Initialize before sending creation. After TLS and wire correlation validation,
+`record_binding` checks and durably stores the exact binding, excluding the
+connection request number. Before transmitting any mutation, `prepare` commits
+its original operation ID and complete typed parameters. `intent` reconstructs
+the same declaration, admission, retry, cancellation, skip or scope cancellation
+under a fresh control request number or actual input stream. Changed parameters
+under an existing ID are refused; matching preparation is idempotent.
+
+`record_receipt` verifies the operation digest under the stored session, typed
+outcome and all known request constraints, then persists the exact receipt.
+This library does not authenticate a directly supplied record. Full scope seals,
+status coverage and manifests require their further client validators; a stored
+declaration receipt alone is not proof of complete scope coverage. An input
+producer must still receive the covering declaration receipt before transmission.
+
+`unresolved(after, limit)` returns at most 256 records with monotonic local
+cursors. A missing local receipt, NOT_FOUND, a refusal, stream reset or failed
+receipt commit never proves that the authority did not commit and never authorizes
+a replacement identity. Replaying the original intent or operation lookup resolves
+that uncertainty. No automatic eviction, expiration or identity regeneration is
+provided. A local disk-full error leaves earlier intent available for recovery;
+callers must not report the unsaved observation as durably recorded.
+
+Default inventory is 4096 operations, configurable from 1 through 1,000,000;
+individual images are bounded before reads/allocations. The existing guarded
+SQLite backend separately caps database, WAL, rollback-journal and shared-memory
+file lengths. FULL synchronous commits and checksummed, identity-bound records
+survive restart under that backend's durability assumptions. These are file-length
+and record-count bounds, not measured heap/RSS/native-memory guarantees. Opening
+audits retained operations one at a time; preparation checks the retained inventory.
+All journal calls are blocking and belong off the control reader/async executor.
+The directory must remain private to cooperating journal users; checksums do not
+authenticate hostile edits or repair rollback/loss of local history.
+
+Thirteen substantive journal tests plus one subprocess entry point cover exclusive
+reopen, profile/identity conflicts, all six mutation kinds, concurrent preparation,
+pagination/cursor exhaustion, corrupt images, failed receipt commits, actual
+64 KiB physical exhaustion and forced process termination after intent commit.
+Removing that commit deliberately makes the crash-recovery test fail. A regression
+also verifies that incompatible reopen refuses before changing SQLite journal mode.
+Two further
+real-QUIC tests reopen the journal after unrecorded creation/declaration/admission
+replies, replay the original identities and read the original attempt's output.
+Those tests use the existing Rust codec, not an independent oracle.
+
+The production V2 client event loop, CLI, bounded asynchronous journal ownership,
+durable work/coverage observations and retained output references still require
+integration. Independent Java V2, neutral cross-language failures and the original
+external workload/equivalent streaming-gRPC resource comparison remain open.
 
 `v2::authority::AuthorityStore` adds normalized SQLite session/creation history,
 declarations, immutable operation receipts, bounded pages/revision snapshots and

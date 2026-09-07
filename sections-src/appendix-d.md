@@ -117,9 +117,22 @@ Half-close testing exposed lost control replies in both Rust V2 listeners:
 immediate QUIC close could discard queued responses. Both now finish control
 and await its transport acknowledgment before graceful close. Section 12.8
 clarifies that this does not prove peer application validation or persistence.
-Independent Java V2, client/CLI uncertainty journals, neutral cross-language
+Independent Java V2, complete client/CLI recovery integration, neutral cross-language
 process failures, whole-process resource gates and the original external
 workload/equivalent streaming-gRPC comparison remain unfinished.
+
+The Rust client library now has a bounded SQLite creation/intent journal for
+the six mutation kinds. It validates immutable binding and receipt commitments,
+retains uncertainty after local failures and refuses changed history on reopen.
+Thirteen substantive storage tests and a subprocess entry point include forced
+termination after commit and actual physical exhaustion. A negative control
+removing the intent commit fails recovery. Incompatible reopen now refuses
+before changing SQLite journal mode, with a reproduced regression. Two real-QUIC
+tests replay replies
+not recorded by the client, retaining original session/work/attempt identities.
+These are not independent cross-language failure evidence or a completed V2
+client: asynchronous transport integration, durable coverage observations and
+retained result references remain required. No normative wire change was needed.
 
 ## Java/Netty Reference Implementation
 

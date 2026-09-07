@@ -1,0 +1,135 @@
+Rust V2 client creation/intent journal, 2026-09-07 UTC
+Base: a0929e70b0f48d8fcfc77750f912c3a5d2f01922
+Implementation and tests: the commit containing this result file.
+
+Scope
+  v2::client::Journal persists one configured creation/session and the six
+  immutable mutation kinds before transmission. It uses real SQLite FULL
+  synchronous transactions, the existing guarded physical backend, independent
+  client application/format identifiers and checksummed identity-bound images.
+  No normative wire/CDDL, authority storage format or dependency version changed.
+  No JSON, new language implementation or opaque serialized server snapshot.
+
+  The expected authority/owner, creation sequence, exact policy, selected durable
+  profile combination and quotas must match on reopen. Missing, empty, corrupt
+  or incompatible history fails closed. Matching prepare/receipt replay is
+  idempotent; changed immutable content is refused. Stored request numbers are
+  normalized and fresh wire numbers are supplied by the current connection.
+
+  The default operation ceiling is 4096, configurable through 1,000,000. Images
+  are length-checked before allocation and decoded with canonical typed codecs.
+  Unresolved pages contain at most 256 records; cursors never use SQLite's random
+  row-ID fallback at integer exhaustion. Inventory is never automatically evicted.
+  Opening audits retained records one at a time; preparation checks the retained
+  inventory. These blocking calls belong outside a transport control reader.
+  File-length limits do not imply measured heap/RSS/native-memory limits.
+
+  Receipt checks bind the operation digest and typed outcome to original intent.
+  They do not authenticate a caller-supplied record or verify full scope coverage.
+  Missing receipt, failed local write, NOT_FOUND, refusal or transport loss never
+  establishes non-commit or authorizes a replacement work/operation/attempt.
+
+Thirteen substantive journal tests and one subprocess entry point
+  creation_and_uncertain_intent_survive_exclusive_reopen_with_fresh_request_numbers
+  immutable_binding_and_required_profiles_are_checked_before_receipt_storage
+  every_mutation_round_trips_and_checks_its_typed_receipt
+  changed_intent_or_receipt_and_quota_exhaustion_never_evict_the_original
+  concurrent_preparations_serialize_exact_identity_and_enforce_one_shared_quota
+  reopen_refuses_missing_empty_changed_configuration_and_corrupt_records
+  journal_record_checksum_binds_operation_namespace_and_session_generation
+  recovery_pages_are_bounded_and_do_not_renumber_unresolved_operations
+  failed_local_receipt_commit_preserves_uncertainty_and_exact_replay
+  physical_exhaustion_refuses_new_intent_without_losing_old_unknown_work
+  exhausted_cursor_refuses_instead_of_sqlite_random_rowid_fallback
+  incompatible_reopen_does_not_change_the_existing_sqlite_journal_mode
+  forced_process_exit_after_commit_preserves_the_original_unknown_operation
+  client_journal_kill_child (subprocess entry; no assertion scenario when unset)
+
+  The forced-exit test starts another process, waits for its post-commit marker,
+  kills it, observes unsuccessful exit and exclusively reopens real history.
+  The exact unresolved operation remains. The physical-exhaustion test uses
+  actual 64 KiB database/WAL limits, verifies refusal without saving new intent,
+  checks measured file lengths and reopens the previously committed intent.
+  A failing SQLite receipt-write trigger tests atomic rollback and preserved
+  uncertainty; it does not change a production refusal or weaken a test oracle.
+
+Two real-QUIC tests with exclusive client journal reopen
+  journal_replays_unrecorded_creation_and_declaration_without_new_identities
+    Receive but do not save creation and declaration replies. Reopen, reconnect
+    with rotated owner credentials, replay the same creation and operation,
+    validate/store the identical binding and receipt, and confirm next sequence 2.
+  journal_recovers_unrecorded_input_admission_and_reads_the_original_attempt_output
+    Persist declaration receipt before input. Persist the exact input descriptor
+    and operation before sending 64 KiB. Do not save the admission reply; reopen
+    and attach with rotated credentials, recover via operation lookup, then read
+    the original attempt-1 output with verified bytes.
+  These tests share the Rust wire codec and authenticated listener. They do not
+  kill the authority or provide the independent cross-language failure oracle.
+
+Negative control and reproduced regression
+  Deliberately bypassing prepare's transaction commit made the forced-exit
+  recovery test fail, exit 101, with NOT_FOUND: no persisted client intent.
+  The actual commit was restored before the green runs.
+    /tmp/pipestream-v2-client-journal-commit-red.log
+    /tmp/pipestream-v2-client-journal-commit-green.log
+
+  Incompatible reopen initially changed a DELETE-mode SQLite file to WAL before
+  refusing its unknown format. Original handle 27177 exited 101: actual "wal",
+  expected "delete". Format/identity preflight now precedes persistent journal
+  configuration; the unchanged regression passes.
+    /tmp/pipestream-v2-client-journal-open-red.log
+    /tmp/pipestream-v2-client-journal-final-focused.log
+
+Focused and final Rust verification
+  From implementations/rust-quinn, set-e chain on original handle 52267 exited 0:
+    cargo fmt --all --check
+    cargo test --locked -p pipestream-core v2::client -- --nocapture
+    cargo test --locked -p pipestream-quinn v2_tls::tests::authority::server::journal -- --nocapture
+    cargo clippy --locked --workspace --all-targets -- -D warnings
+  At that snapshot: 13 core test entries, two wire tests, no failures.
+    /tmp/pipestream-v2-client-journal-commit-green.log
+    /tmp/pipestream-v2-client-journal-wire-green.log
+    /tmp/pipestream-v2-client-journal-verified-clippy.log
+
+  After the incompatible-reopen correction, set-e chain handle 57024 exited 0:
+    cargo fmt --all
+    cargo test --locked -p pipestream-core v2::client -- --nocapture
+    cargo clippy --locked --workspace --all-targets -- -D warnings
+    cargo test --locked --workspace
+  Final source: 14 journal test entries; 680 Rust workspace tests, zero failures
+  or ignored, including 387 core library and 190 Quinn library tests.
+    /tmp/pipestream-v2-client-journal-final-focused.log
+    /tmp/pipestream-v2-client-journal-final-clippy.log
+    /tmp/pipestream-v2-client-journal-final-rust.log
+
+Repository-wide regression
+  ./conformance/run_all.sh
+  Original handle 15283 exited 0, started 2026-09-07 12:46:00 UTC.
+    /tmp/pipestream-v2-client-journal-full-suite.log
+  Its Rust snapshot passed 679 tests before the final incompatible-reopen
+  regression/fix; the separate final Rust run above covers all 680. No Java,
+  C++, vector/model or dependency source changed after this full run began.
+  Six external Rust-example tests passed. Java: 193 tests from 20 fresh Surefire
+  XML reports, zero failures/errors/skips, verified with Ruby REXML. Timestamps:
+  oldest 2026-09-07T12:48:50Z, newest 2026-09-07T12:51:55Z.
+  Frozen vectors/CDDL and all three bounded models passed:
+    lifecycle: 311539 states, 8723092 edges, deepest 19;
+    scopes: 5776 states, 173280 edges, deepest 17;
+    composition: 620796 states, 29177412 edges, deepest 27.
+  Each had zero states at the depth boundary. Native/C++ CTest, nine existing
+  language pairs, 32 raw capability probes, recursive scenarios and all examples
+  passed. These complete language pairs remain V1 evidence, not V2 conformance.
+
+Draft verification
+  ./build.sh core 05
+  Original handle 36462 exited 0.
+    /tmp/pipestream-v2-client-journal-final-draft.log
+  Rendered Appendix D inspected at text lines 6570-6603. Idnits reports zero
+  errors/flaws/warnings and its one existing FIPS downref comment.
+
+Still required
+  Production V2 client event loop and CLI, bounded asynchronous journal ownership,
+  durable work/coverage observations, verified retained manifest/index references,
+  complete independent Java V2, neutral cross-language crash/failure/resource
+  evidence and the original external workload/equivalent streaming-gRPC baseline.
+  This is not completion of those gates. No main merge, deployment or submission.

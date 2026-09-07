@@ -1235,6 +1235,52 @@ checks, nine V1 interop pairs, 32 raw capability probes and all examples. The
 remaining source changes were Rust-only. Draft rebuild and inspection passed;
 idnits has zero errors/flaws/warnings and its existing FIPS comment.
 
+### Rust client creation/intent journal, 2026-09-07
+
+`v2::client::Journal` durably stores one configured creation/session and immutable
+mutation intent before transmission. The same guarded SQLite backend bounds file
+lengths; journal-specific operation and image ceilings bound retained inventory.
+Reopen audits each retained operation without a whole-history buffer. Original
+operation identity/parameters survive matching replay and reconnect with new
+connection request numbers. Receipt storage checks the session-bound digest,
+typed outcome and known request constraints; TLS authentication and full scope/
+result validation remain separate mandatory client responsibilities.
+
+Thirteen substantive storage tests plus a subprocess entry point cover V2-SESSION,
+V2-OP and V2-STORE: exclusive reopen, wrong owner/profile/binding, every mutation
+kind, changed intent/receipt, concurrent preparation, bounded unresolved pages,
+cursor exhaustion, corrupted images, failed receipt commits and a real 64 KiB
+database/WAL cap. A killed subprocess leaves committed intent without a receipt;
+recovery retrieves the same unresolved operation. Deliberately removing the
+intent commit makes that test fail with missing intent; the commit is restored.
+SQL write failure does not falsely mark a receipt as durably observed.
+An incompatible-format reopen regression reproduced an unintended journal-mode
+change before refusal; format and identity preflight now precede WAL configuration.
+
+Two additional actual QUIC tests use an exclusively reopened client journal:
+creation and declaration replies received but not durably recorded replay the
+same identities, and operation lookup recovers an unrecorded input admission
+before reading the original attempt's real output. Certificate rotation keeps
+the same mapped owner. These tests share Rust wire codecs; they are not the
+neutral, cross-language authority/client kill oracle required by the goal.
+
+This is creation/intent/receipt persistence, not complete client conformance.
+The production event loop and CLI must still own bounded asynchronous storage,
+correlation and stream I/O, enforce declaration coverage before input, validate
+and persist work/coverage observations, and retain authenticated manifest/index
+references. A journal does not infer terminal work from transport failure,
+NOT_FOUND or absence of a local receipt. Independent Java, measured process
+resource gates and the original external/equivalent gRPC workload remain open.
+Evidence: [`durable-work-v2-client-journal-2026-09-07.txt`](../../conformance/results/durable-work-v2-client-journal-2026-09-07.txt).
+
+Final checks pass: 680 Rust workspace tests and strict clippy. The full repository
+run passed its 679-test Rust snapshot before the last reopen regression, six
+external Rust-example tests, 193 Java tests in 20 fresh XML reports, all bounded
+models, frozen vectors/CDDL, native/C++ checks, nine V1 interop pairs, 32 raw
+capability probes and all examples. No non-Rust source changed afterward. Draft
+rebuild and rendered inspection pass with zero idnits errors/flaws/warnings and
+the existing FIPS comment.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

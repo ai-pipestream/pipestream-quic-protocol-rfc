@@ -1669,3 +1669,39 @@ probes and all examples. No non-Rust implementation or model/vector source
 changed afterward. The rebuilt draft was inspected and reports zero idnits
 errors/flaws/warnings with its existing FIPS comment. Evidence:
 `conformance/results/durable-work-v2-server-2026-09-07.txt`.
+
+### Client creation and immutable-operation journal, 2026-09-07
+
+The preceding goal turn was progress: authenticated durable listener `a0929e7`
+was tested, committed and published to Forgejo. The next client component stores
+creation policy/profile choice before transmission and immutable operation IDs/
+parameters before sending each mutation. Real SQLite commits, checksummed records,
+bounded inventory and physical file caps preserve replayable uncertainty through
+reopen, local write failure and forced process termination. Receipt acceptance
+checks its digest and typed outcome against retained intent; it cannot substitute
+for TLS authentication, full scope coverage or validated output references.
+
+Thirteen substantive storage tests and one subprocess entry point pass. Removing
+the intent commit deliberately makes crash recovery fail; the commit is restored.
+Two real-QUIC tests reopen after replies were not locally recorded, replay the
+same creation/declaration and recover admission without a replacement attempt.
+Focused checks and strict clippy pass. The wire, CDDL, authority storage format
+and dependency versions do not change; the client journal has its own format.
+Review also reproduced and fixed an incompatible reopen changing SQLite journal
+mode before refusing the file.
+
+The full goal remains active. Next: the production V2 client event loop/CLI with
+bounded asynchronous journal ownership, durable work/coverage observations and
+retained authenticated result references; independent complete Java V2; neutral
+cross-language failure/resource gates; and the original external workload with
+equivalent streaming-gRPC semantics and raw cost/failure evidence. The storage
+component and same-language tests are not a substitute for those deliverables.
+
+Final verification: 680 Rust workspace tests, strict clippy and formatting pass
+on the final source. Full repository conformance exited zero with 679 Rust tests
+before the final reopen regression, six external Rust-example tests, 193 Java
+tests in 20 fresh XML reports, all bounded models, frozen vectors/CDDL, native/
+C++ checks, nine V1 pairs, 32 capability probes and all examples. No non-Rust
+source changed afterward. The draft rebuild and rendered status inspection pass;
+idnits reports zero errors/flaws/warnings and its existing FIPS comment. Evidence:
+`conformance/results/durable-work-v2-client-journal-2026-09-07.txt`.
