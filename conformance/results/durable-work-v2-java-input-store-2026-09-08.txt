@@ -1,0 +1,233 @@
+Java V2 immutable input storage, 2026-09-08
+Base: df08c1e6a9a612c218755ad9cf11a020d82b22f3
+Implementation and tests: the commit containing this result file.
+Log filename timestamps use America/New_York (EDT, UTC-04:00).
+2026-09-08 01:40 local is 2026-09-08 05:40 UTC.
+
+Scope and limits
+  Independent Java InputStore receives immutable input payloads using Java file
+  channels, typed V2 headers and the V2 incremental object verifier. It reserves
+  two complete file lengths and two names before reception, verifies exact
+  length/hash/FIN, forces the file, installs by exclusive hard link and syncs
+  object and staging directories before returning and refunding staging space.
+  Duplicate installation verifies existing bytes without overwriting them.
+
+  The private policy and object envelopes retain an installation identity,
+  limits, owner-qualified context, exact header and checksums. Recovery validates
+  the whole layout and installed bodies before removing abandoned staging names.
+  Installed objects remain charged; this unit does not reclaim them. One process
+  owns the store, and readers/receivers share a bounded active-handle count.
+
+  Lookup now completes file force and directory synchronization even when the
+  object is already readable. Mere visibility following an interrupted force
+  does not prove durable installation. Readers verify the same descriptor with
+  an 8 KiB buffer before exposing payload-only bytes.
+
+  This is not authentication, work admission, operation replay or a job. Explicit
+  authority-store binding and atomic input/job/receipt/output/metadata funding
+  remain required. Java's endpoint still advertises Core only. No wire encoding
+  changed. Full Java execution/results/retirement, the neutral cross-language V2
+  failure driver and the original equivalent streaming-gRPC workload remain open.
+
+  File-length/name bounds are not filesystem-block preallocation or a promise
+  against device failure. Local POSIX permissions, hard links, cooperative locks
+  and file/directory sync are required. These tests ran as an unprivileged user;
+  the read-only-file durability regression requires enforced owner permissions.
+  Process interruption is not a power-loss test. The streaming resource case uses
+  synthetic monotonic progress for the file pipeline; separate tests drive idle
+  and absolute expiry. It is not a transport latency/throughput benchmark.
+
+Build environment
+  Repository: /work/main/pipestream-ai/dev-tools/pipestream-quic-protocol-rfc
+  Maven cache: /work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+  Maven 3.9.16, GraalVM Java 25.0.3, Java source release 21.
+  SQLite JDBC 3.53.4.0; native test engine 3.53.4.
+  Existing Netty transport artifacts: 4.2.17.Final-pipestream.3.
+  No dependency, native-source or upstream reference-checkout changes.
+
+Build corrections, not runtime RED evidence
+  Main compilation: session 83442, terminal exit 0.
+    mvn -f implementations/java-netty/pom.xml -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -DskipTests compile
+    /tmp/pipestream-input-store-main-compile-20260908T013038.log
+  Initial unit doclint reported missing enum/getter descriptions. Documentation
+  only was corrected; the pre-lookup-fix unit doclint then exited 0 (session 1609).
+    /tmp/pipestream-input-store-doclint-final-20260908T013121.log
+
+  Focused session 2471 and targeted session 16443 both exited 1 at test
+  compilation because three AutoCloseable resources were unused under -Werror.
+    /tmp/pipestream-input-store-focused-20260908T013251.log
+    /tmp/pipestream-input-store-durable-lookup-red-20260908T013339.log
+  Targeted session 17298 exited 1 at test compilation because Process is not
+  AutoCloseable in the project's Java 21 source API. Explicit try/finally with
+  bounded child termination replaced that syntax, retaining every assertion.
+    /tmp/pipestream-input-store-durable-lookup-red-final-20260908T013615.log
+  None of these compilation failures executed the regression test.
+
+Executed durability regression: RED -> production fix -> GREEN
+  From repository root:
+    mvn -f implementations/java-netty/pom.xml -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -Dtest=InputStoreTest#lookupMustCompleteDurableInstallationBeforeReturningObject test
+  RED: session 57143, terminal exit 1; 1 test, 1 failure, 0 errors/skips.
+    /tmp/pipestream-input-store-durable-lookup-red-executed-20260908T013743.log
+    InputStoreTest.lookupMustCompleteDurableInstallationBeforeReturningObject:302
+    Expected java.io.IOException to be thrown, but nothing was thrown.
+  The test installs exact valid bytes, makes the retained file readable but not
+  writable, and demands refusal until force can be completed. Restoring owner
+  write permission must restore lookup and preserve the exact payload.
+  Production fix: find fully verifies the body, forceFile(path), then syncs the
+  objects directory before constructing a returned Stored reference.
+  GREEN: session 89232, terminal exit 0; 1 test, 0 failures/errors/skips.
+    /tmp/pipestream-input-store-durable-lookup-green-20260908T014002.log
+  Native sqlite-file-growth passed 1/1 separately.
+
+Focused storage and memory gate
+  From repository root:
+    mvn -f implementations/java-netty/pom.xml -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -Dtest=InputStoreTest,InputStoreResourceTest test
+  Session 3981, terminal exit 0; 14 tests, 0 failures/errors/skips.
+  Native sqlite-file-growth passed 1/1 separately.
+    /tmp/pipestream-input-store-combined-focused-20260908T014013.log
+  Actual resource child report:
+    bytes=67108864
+    digest=eeeea29f19e99097aff081c75a85115c7732967d5824201ddba0d2d1f6202723
+    heapMax=33554432
+    observedRssKiB=302680
+  The child runs with -Xmx32m, generates and hashes 64 MiB in 8 KiB blocks,
+  writes, closes, reopens and reads the exact payload using the same buffer bound.
+  It asserts the complete length and SHA-256, not only a printed digest shape.
+  Parent asserts the positive heap maximum at or below 32 MiB and retains the
+  observed RSS report. RSS is a point observation, not a peak or 32 MiB bound.
+
+Actual subprocess and recovery oracles
+  InputStoreTest halts owned child processes via Runtime.halt after real I/O:
+    RECEIVED: exit 40, staging only; reopen retains zero objects/names/handles.
+    LINKED: exit 41, immutable name visible; reopen retains one verified object.
+    OBJECT_SYNCED: exit 42; reopen retains one verified object.
+    STAGING_REMOVED: exit 43; reopen retains one verified object.
+  Every reopened case demands zero pending names and zero active handles. A
+  separate child holds the lock, another opener refuses, and reopen succeeds
+  after the owning child is explicitly released and exits normally. Children
+  have bounded waits and owned-process cleanup; no live fleet is touched.
+
+  Focused additional recovery command, from repository root:
+    mvn -f implementations/java-netty/pom.xml -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -Dtest=InputStoreRecoveryTest test
+  Session 89751, terminal exit 0; 3 tests, 0 failures/errors/skips.
+  Native sqlite-file-growth passed 1/1 separately.
+    /tmp/pipestream-input-store-recovery-focused-20260908T014324.log
+  - A corrupt installed body refuses recovery before deleting an abandoned
+    canonical pending file; that pending file and its bytes remain intact.
+  - A valid object copied across independently initialized stores is rejected
+    by the target; the source store reopens and returns the original bytes.
+  - A canonical pending symlink refuses recovery without deleting the link or
+    changing its controlled outside target.
+
+Reviewed preliminary full gate and fixture correction
+  Preliminary full install: session 43497, terminal exit 0; 396 tests across
+  37 fresh XML reports, 0 failures/errors/skips; native sqlite-file-growth 1/1.
+    /tmp/pipestream-input-store-java-full-final-20260908T014343.log
+  Review found that the intended receiver-handle refusal had exhausted file
+  names too, so that passing assertion did not independently test the handle
+  cap. The fixture was corrected to preserve byte/name headroom and explicitly
+  exercise the reader-handle cap too. The production policy was not raised and
+  the independent byte, file-name and per-object refusal cases remain intact.
+  This preliminary full run is not the final corrected-source gate.
+
+  First fixture revision: session 91944, terminal exit 1; 13 tests, 1 failure,
+  0 errors/skips. This was a test-state mistake, not a production handle leak.
+    /tmp/pipestream-input-store-final-focused-20260908T014933.log
+    InputStoreTest.quotasAreReservedBeforeReceptionAndReleasedByAbort:114
+    expected: <0> but was: <2>
+  The assertion incorrectly expected zero file names after begin had already
+  reserved two. The failed assertion also bypassed an explicit receiver close,
+  causing the store's correct active-handle close refusal to be suppressed.
+  Final fixture asserts empty usage before begin, measures an empty receiver's
+  actual reservation, then uses try-with-resources for the active receiver.
+  It proves the remaining bytes/names can fund that empty reservation before
+  requiring the second receiver to refuse solely on the one-handle ceiling.
+  After abort it requires empty usage, and separately tests two attempted
+  readers of one installed empty object plus release and reopen.
+
+Final corrected-source gates
+  Focused command, from repository root:
+    mvn -f implementations/java-netty/pom.xml -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -Dtest=InputStoreTest test
+  Session 24258, terminal exit 0; 13 tests, 0 failures/errors/skips.
+  Native sqlite-file-growth passed 1/1 separately.
+    /tmp/pipestream-input-store-final-focused-approved-20260908T015245.log
+
+  Full Java command, from repository root, without filters or skip flags:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository install
+  Session 16736, terminal exit 0; 396 tests, 0 failures/errors/skips.
+  Native sqlite-file-growth passed 1/1 separately.
+    /tmp/pipestream-input-store-java-full-approved-20260908T015259.log
+  Maven finished 2026-09-08 01:56:29 EDT (05:56:29 UTC), elapsed 3:29.
+  Independent XML inspection: 37 reports, 396 testcase nodes, aggregate
+  tests/failures/errors/skips = [396, 0, 0, 0]. Fresh XML mtimes span
+  2026-09-08 05:55:04.398516537 through 05:56:28.098465867 UTC.
+  Final resource child report:
+    bytes=67108864
+    digest=eeeea29f19e99097aff081c75a85115c7732967d5824201ddba0d2d1f6202723
+    heapMax=33554432
+    observedRssKiB=268616
+  The RSS difference from the focused run is another reason not to present
+  either point sample as a peak or a guaranteed whole-process bound.
+  Existing shade-plugin module-info and overlapping-resource warnings remain
+  visible in the raw log; no test failures or compiler warnings were suppressed.
+
+  Strict package-level InputStore-only Javadoc: terminal exit 0, empty log.
+    /tmp/pipestream-input-store-doclint-current-20260908T014708.log
+  Command, cwd implementations/java-netty:
+    classpath="target/classes:$(cat target/v2-tls-classpath)"
+    javadoc -quiet -package -Xdoclint:all -Werror -d target/input-store-apidocs -classpath "$classpath" -sourcepath src/main/java src/main/java/ai/pipestream/quic/v2/InputStore.java
+  This is the newly added production type's -Xdoclint:all -Werror gate,
+  not a claim that all older package-private types have complete Javadoc.
+
+  Existing conformance examples, cwd implementations/rust-quinn:
+    target/release/pipestream-conformance examples
+  Session 84386, terminal exit 0.
+    /tmp/pipestream-input-store-conformance-examples-20260908T014714.log
+    PASS Java source -> Rust/Quinn server
+    PASS Rust source recovery -> C++/MsQuic server
+    PASS Rust source scatter -> Java, Rust, and C++ servers
+  These are existing examples, not the unfinished full V2 durable-work driver
+  or the original equivalent workload comparison. The Java JAR hashes match
+  after the final test-only correction; production and draft source were stable,
+  so these examples and doclint/draft were not needlessly repeated.
+
+  Draft command, from repository root:
+    ./build.sh core 05 draft
+  Session 38673, terminal exit 0.
+    /tmp/pipestream-input-store-draft-20260908T014724.log
+  idnits 2.17.1: 0 errors, 0 flaws, 0 warnings, 1 FIPS-180-4 downref comment.
+  kramdown also reports the existing explicit RFC9308 bibxml override warning.
+  This is local document validation, not IETF acceptance or draft submission.
+
+Final SHA-256
+  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/InputStore.java
+    b46ec2022e6a3fb44f18c3763121dcab286939b13518c7773ef876e701570059
+  implementations/java-netty/src/test/java/ai/pipestream/quic/v2/InputStoreTest.java
+    1cae3b1bedb47b83506b9ad8438531d0ef39600e096e29ad4dc069b395b902d7
+  implementations/java-netty/src/test/java/ai/pipestream/quic/v2/InputStoreRecoveryTest.java
+    f31c48befda25c8c7f370eae6577ebc3fa956beda5fc9f9cda3d6666d875ef7a
+  implementations/java-netty/src/test/java/ai/pipestream/quic/v2/InputStoreResourceTest.java
+    ac6d82ebea44b10f63ef28b6ef28ebbedf87af837e8fc327f1bdfc24f5d5c24e
+  implementations/java-netty/target/pipestream-quic-netty-0.1.0-SNAPSHOT.jar
+    90606541fe987b519694f0730a9576b435ce1682be39c84e489d32c469a6d373
+  implementations/java-netty/target/pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar
+    f4b227733b51dccb53a867178e7c9325518af1b3276baf8149246ef11f1aa2f0
+  implementations/rust-quinn/target/release/pipestream-quinn (unchanged)
+    7cff7d80f68adcc0e1badf09d0f0e145aa35791fd14e51ab19daa51f33c73810
+  implementations/rust-quinn/target/release/pipestream-conformance (unchanged)
+    73934f2119aba98eacecd7b632eb9f63c6e282e84483b2fc250f65a8507adba8
+  draft-krickert-pipestream-05.xml
+    07bd306d8eb4a4fc9c62e23d47f4aec4f436e381c1c7d218cf67074eca0bb86a
+  draft-krickert-pipestream-05.txt
+    ae36498d4241da20b6a1867ce587ed07be33cc2d378b240b11a6d73350936265
+  draft-krickert-pipestream-05.html
+    e7313462c55df6fd9462844f4b8abb87baf03318799f80511ca15252c7b6f116
+  The unchanged Rust suite and upstream transport bootstrap were not rerun.
+
+Remaining full-goal work
+  Bind input and authority stores durably; validate current membership,
+  application/producer authorization and fences; atomically commit the complete
+  funded admission/job/receipt write set. Then implement the complete independent
+  Java execution, results, cancellation, safe cleanup and durable endpoint/client
+  paths. Full neutral cross-language failure evidence and the external streaming
+  workload with an equivalent authenticated durable gRPC baseline remain required.

@@ -1978,6 +1978,54 @@ RSS, power-loss or throughput measurements. The Java listener remains Core
 only; complete Java admission/execution/results/retirement, cross-language V2
 failure testing and the external workload/gRPC comparison remain mandatory.
 
+### Java immutable input storage evidence, 2026-09-08
+
+The independent Java `InputStore` implements bounded immutable input reception
+and installation for Sections 12.5 and 12.9. This private file-store primitive
+does not authenticate, admit work or create a job. Its installation identity
+still needs an explicit durable authority-store binding before the authority
+can reference these files. No wire encoding or negotiated profile changed.
+
+- V2-ADMIT/STORE: exact length, SHA-256 and actual FIN precede file force and
+  no-overwrite hard-link installation. Empty objects retain their metadata
+  charge. Duplicate installation verifies the existing identity and bytes,
+  preserves accounting and does not replace the object. Context, complete
+  input header and installation identity are part of the retained commitment.
+- V2-STORE/resources: reception reserves two complete file lengths and two
+  names before allocation; readers and receivers share an active-handle cap.
+  Byte, file, handle and per-object refusals are exercised separately. Abort
+  refunds capacity only after synchronized staging deletion. Idle and absolute
+  lifetime expiration are driven even without further payload progress.
+- V2-STORE/recovery: owned subprocesses halt at four real installation
+  boundaries. Recovery distinguishes an abandoned staging file from an installed
+  object, retains installed charges and removes only abandoned staging names.
+  Same-JVM and separate-process ownership tests prove exclusive access and
+  reopen after the owner closes. Active receive/read handles prevent store close.
+- V2-STORE/integrity: damaged or shortened installed bodies refuse on lookup
+  and recovery. Corruption is checked before pending-file deletion; a copied
+  object from another installation and a canonical pending symlink also refuse
+  without deleting the source or outside target. Foreign/incomplete layouts
+  and changed retained limits are never adopted.
+- V2-STORE/durability: the lookup regression failed before the fix because
+  readable bytes were treated as sufficient installation evidence. Lookup now
+  repeats file force and object-directory synchronization before returning a
+  retained object. This proves the required local I/O path, not power-loss
+  behavior of the storage device.
+- V2-STORE/memory: a real 64 MiB payload is generated, hashed, written, reopened
+  and read in 8 KiB chunks in a child limited to a 32 MiB Java heap. The exact
+  length and digest are asserted in that child, and the observed whole-process
+  RSS is reported separately. This is a bounded-buffer storage measurement,
+  not a 32 MiB RSS claim, QUIC window test or throughput comparison.
+
+The [input storage contract](java-v2-input-store.md) describes local filesystem
+requirements, installation order and the remaining authority integration.
+Exact commands, the executed red/fix/green sequence, process-boundary coverage,
+resource output and source hashes are in
+`conformance/results/durable-work-v2-java-input-store-2026-09-08.txt`.
+Java's listener remains Core only. Atomic funded admission/jobs, execution,
+results, safe installed-object reclamation, full cross-language V2 failures
+and the original external workload/equivalent gRPC comparison remain required.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

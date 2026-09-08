@@ -157,7 +157,10 @@ capacity refusal and contradictory receipt/member recovery. Java V2 storage
 format 3 adds fixed-capacity scope, work, fence and shared-clock images with
 persistent rewrite credits and guarded WAL/shared-memory headroom. An image
 credit covers that image and one clock write, not arbitrary SQL or a whole job.
-Earlier local formats are refused without a wire change. This layer is not
+Earlier local formats are refused without a wire change. Independent Java V2
+input storage also implements bounded immutable reception, exact FIN/digest
+verification and crash-safe file installation. Those installed bytes are not
+admission receipts; atomic authority/job integration remains required. This layer is not
 yet a durable-profile listener; Java admission,
 execution, results, retirement and full cross-language failure/resource gates
 remain required.

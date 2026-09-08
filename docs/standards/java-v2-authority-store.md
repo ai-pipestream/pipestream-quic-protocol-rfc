@@ -156,6 +156,10 @@ they cannot simulate every power-loss or storage-device failure.
 
 ## Remaining full-goal gates
 
+The independent [input store](java-v2-input-store.md) now receives, verifies and
+durably installs bounded immutable bytes. It is not yet bound to this authority
+database and does not issue admission receipts or create jobs.
+
 Funded payload admission, worker leases and attempt fences, subtree settlement,
 results/read pins, retirement/reconciliation,
 durable client observations and authenticated endpoint integration remain

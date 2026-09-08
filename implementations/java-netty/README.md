@@ -345,6 +345,13 @@ credit funds one image and one clock update only; complete admission, execution
 and cleanup still require their own funded write sets before durable profiles
 can be activated. Prior local formats are refused, not converted.
 
+The independent V2 `InputStore` receives and verifies immutable input bytes with
+bounded file/name/handle reservations, exact FIN/digest checks, crash-safe
+installation and verified replay lookup. It uses Java file channels and V2 typed
+headers, not the V1 payload schema. This is not admission: binding it to the
+authority and atomically funding jobs, outputs and receipts remain required.
+See the [input storage contract](../../docs/standards/java-v2-input-store.md).
+
 ## Sealed-work library foundation
 
 The independent Java `SealedWork`, `SealedScope`, and `SealedSessionStore`
