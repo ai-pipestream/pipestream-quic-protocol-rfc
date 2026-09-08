@@ -1,7 +1,7 @@
 # Java V2 authority storage
 
 `v2.SessionStore`, `v2.DeclarationStore`, `v2.AdmissionStore`, `v2.ExecutionStore`,
-`v2.PublicationStore`, `v2.ClosureStore` and `v2.BranchStore` are the independent Java
+`v2.PublicationStore`, `v2.ClosureStore`, `v2.FenceStore` and `v2.BranchStore` are the independent Java
 session, declaration, admission, local execution, result-publication, closure and
 direct-child dependency layer for Sections 12.3 through 12.9. They are
 package-private and are not wired into a durable-profile listener. The shipped
@@ -80,7 +80,7 @@ including in the normative digest, local record checksum and recovery lookup.
 Only the fenced local producer interface below can declare producer-1 children;
 the caller declaration and operation-lookup APIs remain producer-0 only.
 
-The local database format is version 6. Earlier experimental V2 storage formats,
+The local database format is version 7. Earlier experimental V2 storage formats,
 like V1 and foreign databases, are refused without conversion. This is an internal
 format revision, not a wire-profile change or an authorized reset of an existing
 authority identity.
@@ -146,8 +146,9 @@ one 64-byte shared-clock image in the same transaction. Those credits are not
 an allowance for arbitrary SQL, payload files, jobs or the whole future lifecycle.
 Admission enlarges its work body to at least 4,096 bytes and to the conservative
 `2048 + 1280 * maximum_output_count` representation bound, with at least four
-future work writes. A 2,048-byte job image reserves six writes for expansion/
-settlement and input/output reclamation intent/completion. Branches atomically
+future work writes. A 2,048-byte job image reserves eight writes: a conservative
+four-write expansion/settlement envelope plus four input/output reclamation
+intent/completion writes. Branches atomically
 allocate their child scope and its existing four-credit image. Ordinary
 admission writes do not spend these future credits. The eventual lifecycle
 writers must implement and verify those funded transitions before activation.
@@ -311,7 +312,8 @@ future explicit retry operation. Terminal failure releases the logical executor
 charge but retains input/output charges. Neither operation grants permission to
 delete bytes held by a callback, reader or dependency. Each consumes one funded
 work-image and job-image write; deadline failure after AWAITING_RETRY consumes a
-second pair, leaving the job's four cleanup writes funded.
+second pair. The separate four-write cleanup allowance remains funded, including
+when expansion or cancellation has also consumed lifecycle writes.
 
 `expireExecution` is owner-independent authority maintenance, not a caller RPC.
 It can settle an admitted work item at its deadline even when the former caller
@@ -578,7 +580,8 @@ frontier retains at most 63 SHA-256 hashes (2,016 payload bytes), plus fixed cur
 and hash-engine state. No partial hash checkpoint or provisional summary is stored.
 Restart discards partial progress and recomputes it from immutable retained
 evidence. A cursor is bound to the database installation, not transferable to a
-different authority. Scope state changes invalidate its partial fold.
+different authority. Monotonic cancellation/revocation flags restart a partial
+fold; changes to its pinned membership or session are refused as inconsistent.
 
 A terminal branch also requires its exact child's committed summary and verified
 descendant evidence. Existing summary verification performs the session-wide
@@ -648,7 +651,7 @@ network endpoint.
 Results/read pins, retirement/reconciliation,
 durable client observations and authenticated endpoint integration remain
 mandatory. Fixed image credits now protect their specifically bounded writes;
-cancellation and remaining cleanup write sets still need their real funded transitions
+remaining cleanup write sets still need their real funded transitions
 and cost gates before activation. This increment does not prove full
 Java V2 behavior, live TLS-policy
 revocation settlement, cross-language V2 equivalence or the protocol-neutral
@@ -689,11 +692,60 @@ record credits/revisions and clock watermark. Exact receipt replay still checks
 current authorization but does not acquire a lease or sample time. It remains
 valid after the original deadline or a later terminal outcome; a new retry does not.
 
-Storage format 6 adds typed retry intent and indexed work/expected-attempt keys
+Storage format 6 introduced typed retry intent and indexed work/expected-attempt keys
 to the existing operation journal. Recovery checks each index against its typed
 request and receipt, the admitted work and retained clock. Unique expected-attempt
 keys plus count/high-water checks prove a gap-free sequence from admission attempt
 one to the current attempt. Receipt retention remains charged and bounded by the
-session operation limit. These are local transaction/recovery guarantees; explicit
-cancellation/skip reconciliation and the full durable Java wire/client path remain
-unfinished.
+session operation limit. These are local transaction/recovery guarantees; the
+full durable Java wire/client path remains unfinished.
+
+## Cancellation, skip and bounded reconciliation
+
+`SessionStore.cancel`, `skip` and `cancelScope` accept typed caller intents under
+current owner and operation-specific policy. Skip requires explicit permission.
+The first accepted own fence fixes CANCELLED or SKIPPED; a conflicting later
+fence is CANCELLED, while an exact operation replays authenticated evidence
+without a clock sample. Already terminal work yields disposition 1 and retains
+its original outcome. New cancellation can win after the execution deadline if
+terminal failure has not committed first. Deadline maintenance cannot overwrite
+an accepted own or ancestor fence.
+
+Work acceptance writes its prepaid typed fence, work/job state and operation
+receipt in one SQLite transaction. A leaf or branch with an already closed child
+can settle immediately; an unresolved branch remains CANCELLING. Its old lease
+is excluded immediately, and ancestor checks prevent new declaration, admission,
+retry and publication anywhere below it. An earlier own skip remains SKIPPED
+when a later ancestor cancellation covers the subtree. Descendants otherwise
+settle CANCELLED. Payloads and output funding remain charged; cancellation does
+not reclaim files or claim to undo external effects.
+
+Scope cancellation freezes the accepted membership at commit, without needing a
+live producer. `revoke` is a local, owner-independent administrative operation:
+its gate must authorize revocation of the target generation. It atomically denies
+caller access and installs the root cancellation fence, including for unadmitted
+declarations. It is not an authenticated peer RPC or a live TLS-policy integration.
+
+`reconcileCancellation` uses installation-bound volatile keyset cursors to inspect
+at most the requested number of direct work records and membership IDs per call
+(one through 256 of each). It incrementally computes one scope's actual full seal;
+until that commit, pages still report `sealed=false` and a null seal. Partial
+hashes are never stored as evidence. Restart uses fresh cursors and reconstructs
+progress from frozen records. Ancestor walks and existing funded-image reservation
+scans add work beyond the direct-record counts; those counts are not process-memory
+or latency measurements. The scheduler invokes this maintenance independently of
+occupied callbacks and invokes the separate closure fold afterward. Only actual
+child closure allows a branch's terminal cancellation.
+
+Each mutation rechecks final authorization and safe UTC. A forward jump exhausting
+a newly promised receipt interval rolls back all tentative writes and credits.
+Reconciliation discards a hash advanced inside a failed transaction. A later
+monotonic scope fence restarts a partial closure fold, but cannot change its pinned
+membership. This adds no placeholder seal or relaxed closure proof.
+
+Private format 7 adds typed cancellation journal entries, a scope-cancellation
+index checked against the immutable request, and the pending job state. Recovery
+requires accepting receipts for own fences, direct or inherited provenance for
+scope flags, matching root/session revocation, valid terminal intervals, and child
+closure before branch settlement. Earlier private schemas are refused without
+conversion. Wire values and Section 12's cancellation semantics are unchanged.

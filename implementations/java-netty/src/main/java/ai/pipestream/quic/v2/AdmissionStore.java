@@ -862,6 +862,7 @@ final class AdmissionStore {
           StoredJob stored = job(connection, binding, work);
           if ((stored == null) != (entity.view().input() == null))
             throw corrupt("admitted work/job coverage differs");
+          FenceStore.auditWork(connection, binding, entity);
           if (stored == null) continue;
           JobRecord record = stored.record();
           AdmitParameters parameters = record.input().parameters();

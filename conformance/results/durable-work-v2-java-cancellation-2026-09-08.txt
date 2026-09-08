@@ -1,0 +1,149 @@
+Java V2 cancellation, skip and bounded settlement, 2026-09-08
+
+Scope
+  Work cancellation/skip and scope cancellation now accept immutable receipts
+  in the same owner-authorized transaction as their exclusion fences. A prior
+  terminal outcome is unchanged. The first own fence fixes the promised outcome;
+  identical operations replay under current authorization without new time.
+  Unadmitted declarations can settle at attempt zero without invented input.
+
+  Ancestor checks immediately exclude new declaration, admission, retry and
+  publication. An unresolved branch remains CANCELLING until actual child
+  closure. Local administrative revocation denies the retained owner while
+  owner-independent maintenance settles declared and admitted obligations.
+  Previously terminal descendants and earlier own skip outcomes are preserved.
+
+  Descending keyset sweeps inspect at most limit direct work and limit direct
+  membership IDs per call, with one scope digest in progress. No partial seal is
+  advertised or retained. Restart recomputes from frozen rows. Closure is a
+  separate terminal-status fold; monotonic cancellation/revocation flags restart
+  partial folds without changing pinned membership. Ancestor validation and
+  reservation-header scans add work beyond these direct-record counters.
+
+  Private schema 7 retains typed own fences, pending jobs and cancellation
+  journal kinds. Scope-cancellation indexes are checked against typed requests.
+  Recovery requires direct/inherited fence provenance and valid terminal
+  intervals and child-closure ordering. Earlier private schemas are refused
+  without conversion. Wire grammar, commitments and normative cancellation
+  semantics are unchanged; Appendix D records implementation progress.
+
+  JOB_CREDITS is now eight: a conservative four-write lifecycle envelope plus
+  four cleanup intent/completion writes. WORK retains four admitted credits and
+  each own FENCE one. Input/output files and funding stay charged at cancellation;
+  this does not implement cleanup or claim to undo external effects.
+
+Reviewed test scope
+  FenceStoreTest covers attempt-zero cancel/skip, terminal disposition one,
+  pending mode-2 cancellation, same/conflicting later operations, old-publication
+  refusal, deadline precedence, distinct skip policy, final access/application
+  and clock rollback, replay without clock sampling, actual scope sealing and
+  settlement, and operation collisions. Missing accepting receipts with adjusted
+  operation counts and redirected cancellation indexes are refused on recovery.
+
+  CancellationReconciliationTest uses a real admitted mode-1 branch with skipped,
+  leased and unadmitted children. It checks immediate mutation refusals and exact
+  final count partitions/seals, reopening during an incomplete seal and resuming
+  with fresh limit-one cursors. Further cases cover closure interrupted by a
+  monotonic scope fence, revoked-owner maintenance, cursor installation binding
+  and invalid batch sizes. A mode-2 pending-to-terminal path retains at least
+  four job cleanup credits. These are transaction/reopen tests, not newly added
+  process-death or cross-language wire cancellation tests.
+
+  Static review corrected scope-cancellation tests that expected immediate
+  descendant settlement, and a pending-branch fixture that omitted the separate
+  closure pass. No placeholder seal or terminal-before-closure exemption was
+  added to production to satisfy those expectations.
+
+Verification commands and reviewed initial evidence
+  Maven prefix from repository root:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop
+      -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+
+  Production-only compile suffix: -Dmaven.test.skip=true compile
+    /tmp/pipestream-cancellation-credit8-main-compile-20260908T103628-0400.log
+    direct exit 0, finished 10:36:31 EDT; no test compilation/execution.
+  Strict package Javadoc for all ten changed production types:
+    -package -Xdoclint:all -Werror
+    /tmp/pipestream-cancellation-credit8-doclint-20260908T103650-0400.log
+    direct exit 0, no warnings/errors. An earlier doclint pass found three
+    missing comments; accurate comments/tags were added before the final pass.
+
+  Initial focused suffix:
+    -Dtest=FenceStoreTest,CancellationReconciliationTest,RetryStoreTest,RetryStoreFailureTest test
+    /tmp/pipestream-cancellation-focused-20260908T104144-0400.log
+    26 tests, zero failures/errors/skips, BUILD SUCCESS at 10:41:49 EDT;
+    native SQLite guard 1/1. The launch did not return a direct process code
+    or session identifier. Neither is inferred from the success banner.
+
+  Initial unfiltered install:
+    /tmp/pipestream-cancellation-full-install-20260908T104213-0400.log
+    session 81514, exit 1, finished 10:45:29 EDT; 563 tests, one failure,
+    zero errors/skips. PublicationStoreRecoveryTest still required the old
+    six-credit job image; the deliberate eight-credit reservation exposed that
+    obsolete constant. Its exact before/after assertions were corrected to the
+    configured reservation and reservation minus one. Array equality, process
+    exit boundaries, durable payload and outcome checks were not relaxed.
+
+  Corrected focused suffix (previous four classes plus PublicationStoreRecoveryTest):
+    -Dtest=FenceStoreTest,CancellationReconciliationTest,RetryStoreTest,RetryStoreFailureTest,PublicationStoreRecoveryTest test
+    /tmp/pipestream-cancellation-corrected-focused-20260908T105009-0400.log
+    direct exit 0; 27 tests, zero failures/errors/skips; native guard 1/1.
+    Both actual process-death publication phases pass with exact credit counts.
+
+  Final unfiltered install:
+    /tmp/pipestream-cancellation-final-full-install-20260908T105028-0400.log
+    session 22820, direct exit 0, finished 10:53:45 EDT.
+    Independently parsed 84 fresh JUnit XML reports: 563 tests, zero failures,
+    errors or skips. XML modification times span UTC 14:52:03.831814203 through
+    14:53:43.493347533, all within the final run. Native SQLite guard 1/1.
+    Existing shade/module-info resource-overlap warnings remain. This is not
+    a claim that Maven emitted no warnings. All production source hashes match
+    the final ten-type compile/doclint snapshot.
+
+  Final production SHA-256:
+    AdmissionStore.java d9e987e48f125381f2ee84a2481d7ac0c56d394efef5d6733ea6392a1ae288e7
+    ClosureStore.java ecc024b208b731c13574552da133fb8d8671e28740d71ba523434949e8035e5c
+    DeclarationStore.java f09ab2211817d9799dbf5090b06bd173e0eb666d7205430d72cadf43aae7930e
+    ExecutionScheduler.java 8f423af537c0170a8119e605b762d67a50b6202f327aee14e10cced50f878ffd
+    ExecutionStore.java 4800b905fb29e52fb3184ad27e9a7706f78158b83ec3927cddfb1d18b4a4da32
+    FixedRecords.java b98f223130e86670e636c994b16b19a519b8fcc52bd6c83b60f5ee3e18064104
+    JobRecord.java b86e2e112beca619dbf9fd57792838c98117a592de23f49999f8fabc5d2c51d1
+    SessionStore.java bfb713b5d71233fcc880c7f233069b107d9bc69bff3613fc9a88b9d172356d1e
+    FenceStore.java 4545e3a5789c589553c32fd9c42c8aa4c508d56aee197b8afc496bd3ca91357a
+    FenceReconciliation.java a5b61b0ff5a5b0fffd5b6940fb362ed8b2be390e01bde9abaac8f52f0769e4d8
+  Final changed test SHA-256:
+    FenceStoreTest.java 437cf2a39c21f9675eb22c3d302c78e9e129b7ef4d36ffe10ffbacde52cd9571
+    CancellationReconciliationTest.java 263b14c4a673cc8f5a0fc55644d7bcfbad83ecb4b05b2897ced2090a3e19b2ff
+    RetryStoreTest.java bd5ce8dacbd987dd45951f686678313f0ec8e185a20af4dbc7ae40891a5f20f3
+    PublicationStoreRecoveryTest.java 776466ae45f07730e2dab781088f04312edcb4e399e90ce04f5760d820c9843a
+  Fresh packaged SHA-256:
+    ordinary JAR 9abac0921bcc6a148b6107d559bc6d65c4b3c28ca0ab4cc0885213971e30f003
+    shaded JAR 5c7ebae56123bf378beeafc9ad7263baecde0885f0746e8f5e039d9155c51435
+
+  Existing external examples, from implementations/rust-quinn:
+    target/release/pipestream-conformance examples
+    /tmp/pipestream-cancellation-final-examples-20260908T105356-0400.log
+    session 37483, direct exit 0. PASS Java source to Rust/Quinn server,
+    Rust recovery source to C++/MsQuic server, and Rust scatter source to Java,
+    Rust and C++ servers, using freshly installed Java artifacts. These exercise
+    their existing profiles, not the Java V2 cancellation wire path. Rust sources
+    were unchanged in this checkpoint; the Rust workspace suite was not rerun.
+
+Draft verification
+  ./build.sh core 05 draft
+    /tmp/pipestream-cancellation-credit8-draft-20260908T103709-0400.log
+    direct exit 0. idnits: 0 errors, 0 flaws, 0 warnings, 1 FIPS-180-4 comment.
+    Existing RFC9308 kramdown reference warning retained. Generated TXT and HTML
+    cancellation/status text was inspected, including the explicit absence of
+    Java V2 endpoint/interoperability claims.
+  SHA-256:
+    XML 60484bdb7f3a4392650da562f21785884c72ecf353eb0cba11dfcc1fecc3c3fe
+    TXT a2ad8ea7a93c8e51e8d14b5cfc86758be93332053f4c7f270e3c9f35fe4b4769
+    HTML 134521839808ec45bac4ad5e0c84221a923c73caecea0a1880c31cc2c6e5c969
+
+Remaining scope
+  Whole-process resource/cost measurements, cancellation crash campaigns,
+  authenticated Java durable endpoint/client integration, result-read pins,
+  cleanup/retirement, the neutral both-direction failure driver and all original
+  workload/equivalent authenticated durable streaming-gRPC deliverables remain.
+  This local checkpoint does not complete the goal or establish IETF status.

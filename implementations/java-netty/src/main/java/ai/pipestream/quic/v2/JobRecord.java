@@ -50,7 +50,9 @@ record JobRecord(
     /** An explicit authorized retry is required. */
     AWAITING_RETRY,
     /** The logical job has an authoritative terminal outcome. */
-    SETTLED
+    SETTLED,
+    /** An accepted own fence excludes execution while descendants finish settlement. */
+    CANCELLING
   }
 
   /** Validate bounded identity and state; no generic object tree is retained. */

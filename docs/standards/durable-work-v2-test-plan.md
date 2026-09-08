@@ -2400,6 +2400,42 @@ and client, and the protocol-neutral failure/workload comparison remain required
 Exact commands, result counts and final hashes are recorded in
 `conformance/results/durable-work-v2-java-retry-2026-09-08.txt`.
 
+### Java cancellation and bounded settlement, 2026-09-08
+
+- V2-CANCEL: `FenceStoreTest` uses real declared/admitted work to distinguish
+  attempt-zero cancellation/skip, terminal disposition 1, and pending branch
+  fencing. Same-desired new operations preserve the first fence; conflicting
+  skip, stale publication and deadline settlement cannot override it.
+- Current owner and operation-specific policy are checked through commitment.
+  Final access/application denial, clock regression and forward exhaustion of a
+  newly promised receipt interval roll back work/job state and credits. Exact
+  replay still requires authorization but samples no clock.
+- V2-STORE: recovery rejects removal of the accepting fence operation despite
+  an adjusted operation count, and rejects a scope-cancellation index redirected
+  to another existing scope without changing its typed request.
+- `CancellationReconciliationTest` constructs an admitted mode-1 branch with a
+  previously skipped child, a leased child and an unadmitted child. An accepted
+  parent fence immediately excludes declaration, admission, retry and publication.
+  Limit-one batches compute the actual seal and exact terminal count partitions;
+  a reopen during the incomplete seal proves that no partial digest was advertised.
+- Revocation denies the caller while owner-independent maintenance seals and
+  settles unresolved declarations. Another test accepts a scope fence during a
+  partial closure fold: the same cursor restarts without fabricating closure or
+  treating the monotonic flag change as corruption. Foreign cursors and invalid
+  direct-record limits have named refusals.
+- V2-RESOURCE: pending branch cancellation and final settlement retain at least
+  four job-image cleanup credits. Format 7 reserves eight at admission/retry,
+  covering a conservative four-write lifecycle envelope and four cleanup writes.
+  Per-call direct work/member counters stay within the requested limit. Ancestor
+  validation and reservation scans have additional cost; these tests do not
+  replace whole-process memory/I/O measurements or the later failure campaign.
+
+These are local authority transaction/reopen tests. They do not establish a Java
+V2 network endpoint, whole-process crash coverage, cross-language cancellation
+interoperability or the equivalent authenticated durable streaming-gRPC baseline.
+The verification record is
+`conformance/results/durable-work-v2-java-cancellation-2026-09-08.txt`.
+
 ## V2-TIME: independent lifetimes and trusted clocks (12.9)
 
 - Exact integer UTC milliseconds, checked arithmetic, session maxima and

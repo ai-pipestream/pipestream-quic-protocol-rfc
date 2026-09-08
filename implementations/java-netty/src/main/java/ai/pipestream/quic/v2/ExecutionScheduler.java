@@ -71,6 +71,7 @@ final class ExecutionScheduler implements AutoCloseable {
   private boolean tailRefreshed;
   private ExecutionStore.ScanCursor maintenanceCursor;
   private final ClosureStore.Cursor closures = new ClosureStore.Cursor();
+  private final FenceStore.Cursor cancellations = new FenceStore.Cursor();
   private boolean started;
   private boolean stopping;
   private long completed;
@@ -166,6 +167,11 @@ final class ExecutionScheduler implements AutoCloseable {
     try {
       while (!stopped()) {
         try {
+          sessions.reconcileCancellation(cancellations, limits.pageSize(), clock);
+        } catch (SQLException | RuntimeException failure) {
+          record(null, failure, "cancellation reconciliation unavailable");
+        }
+        try {
           expirePage();
         } catch (SQLException | RuntimeException failure) {
           record(null, failure, "deadline discovery unavailable");
@@ -219,6 +225,7 @@ final class ExecutionScheduler implements AutoCloseable {
     for (ExecutionStore.Candidate candidate : page.entries()) {
       if (stopped()) return;
       if (candidate.stage() != JobRecord.Stage.SETTLED
+          && candidate.stage() != JobRecord.Stage.CANCELLING
           && candidate.stage() != JobRecord.Stage.AWAITING_RETRY
           && now < candidate.deadline()
           && (candidate.leaseUntil() == null || now >= candidate.leaseUntil())
@@ -249,7 +256,9 @@ final class ExecutionScheduler implements AutoCloseable {
     long now = AdmissionStore.checkedClock(clock).sample().utcMillis();
     for (ExecutionStore.Candidate candidate : page.entries()) {
       if (stopped()) return;
-      if (candidate.stage() == JobRecord.Stage.SETTLED || now < candidate.deadline()) continue;
+      if (candidate.stage() == JobRecord.Stage.SETTLED
+          || candidate.stage() == JobRecord.Stage.CANCELLING
+          || now < candidate.deadline()) continue;
       try {
         sessions.expireExecution(candidate.position().generation(), candidate.work(), clock);
       } catch (SQLException | RuntimeException failure) {

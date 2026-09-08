@@ -49,7 +49,7 @@ final class RetryStoreTest {
       assertEquals(20, first.request());
       assertReplacement(fixture, 2, leaseNumber, true);
       assertTrue(fixture.credits()[0] >= 4);
-      assertTrue(fixture.credits()[1] >= 6);
+      assertTrue(fixture.credits()[1] >= FixedRecords.JOB_CREDITS);
       assertTrue(fixture.credits()[0] >= before[0]);
       assertTrue(fixture.credits()[1] >= before[1]);
       assertCode(

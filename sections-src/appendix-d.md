@@ -222,9 +222,16 @@ commit together, fencing the previous local worker. Exact replay is authenticate
 retained evidence, not another attempt or a new clock promise. Recovery reconciles
 typed retry intent with indexed work/expected-attempt keys and requires a gap-free
 receipt sequence from admission to the current attempt. These local APIs do not
-activate a Java durable-profile endpoint. Explicit cancellation/skip,
-broader orphan/subtree reconciliation, result-read pins and transport,
-retirement and full cross-language failure/resource gates remain required.
+activate a Java durable-profile endpoint. Java now also accepts explicit work
+cancellation/skip and scope cancellation, with immediate ancestor exclusion and
+bounded descendant settlement. A local administrative revocation denies caller
+access while maintenance continues settling declared and admitted obligations.
+Frozen membership receives a real seal only after its complete bounded fold;
+restart reconstructs partial progress. Private format 7 validates typed own-fence
+receipts, scope-fence provenance, pending jobs and terminal child-closure ordering.
+Broader orphan reconciliation, result-read pins and transport, retirement and
+full cross-language failure/resource gates remain required. These remain local
+authority capabilities, not Java durable-profile wire interoperability.
 
 Rust now applies the same sealed/admitted-or-terminal coverage check before
 completing expansion and when auditing retained completed jobs. Incomplete

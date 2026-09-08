@@ -453,7 +453,15 @@ Phase-specific receiver and reassembly credits allow the three-handle fixture to
 produce children and publish their actual reassembled output. Independent deadline
 scanning continues when dispatch capacity is full.
 
-Explicit attempt retry, broader orphan and subtree reconciliation,
+Explicit work cancellation/skip, scope cancellation and local administrative
+revocation now use the same owner-bound metadata store. Acceptance immediately
+fences descendant mutations; bounded maintenance computes full frozen seals and
+terminal settlements, including unadmitted work and restart. Prior terminal
+outcomes and the first accepted own skip/cancel outcome remain authoritative.
+The private V2 format is now 7, with typed fence/journal provenance checks.
+See the [cancellation contract](../../docs/standards/java-v2-authority-store.md#cancellation-skip-and-bounded-reconciliation).
+
+Broader orphan reconciliation,
 results/read pins, retirement and durable-profile transport integration remain
 required. A returned local worker lease alone does not prove a callback ran.
 

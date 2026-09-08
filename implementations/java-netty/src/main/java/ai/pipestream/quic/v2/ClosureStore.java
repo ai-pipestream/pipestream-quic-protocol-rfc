@@ -182,8 +182,26 @@ final class ClosureStore {
     if (cursor.scan == null)
       cursor.scan = new Scan(binding, scope, parentTime == null ? 0 : parentTime);
     Scan scan = cursor.scan;
-    if (!scan.binding.equals(binding) || !scan.source.equals(scope.state()))
-      throw corrupt("partial closure membership or scope state changed");
+    if (!scan.binding.equals(binding)) throw corrupt("partial closure session changed");
+    if (!scan.source.equals(scope.state())) {
+      ScopeState source = scan.source, current = scope.state();
+      if (source.cancelled() && !current.cancelled()
+          || source.revoked() && !current.revoked()
+          || !new ScopeState(
+                  source.id(),
+                  source.producer(),
+                  source.parent(),
+                  source.declared(),
+                  source.last(),
+                  source.seal(),
+                  current.cancelled(),
+                  current.revoked(),
+                  source.summary())
+              .equals(current)) throw corrupt("partial closure membership changed");
+      // A later cancellation/revocation changes exclusion, not the immutable member outcomes.
+      cursor.scan = new Scan(binding, scope, parentTime == null ? 0 : parentTime);
+      scan = cursor.scan;
+    }
     boolean profiles = results(connection, binding);
     boolean descendantsAudited = false;
     int inspected = 0;

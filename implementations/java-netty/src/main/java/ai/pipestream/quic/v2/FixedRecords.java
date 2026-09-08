@@ -35,7 +35,7 @@ final class FixedRecords {
   static final int JOB_CAPACITY = 2048;
 
   /** Expansion/settlement plus input and output reclamation intent/completion writes. */
-  static final long JOB_CREDITS = 6;
+  static final long JOB_CREDITS = 8;
 
   /** Rewrite credits reserved for a scope image. */
   static final long SCOPE_CREDITS = 4;

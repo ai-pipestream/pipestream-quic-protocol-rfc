@@ -71,7 +71,8 @@ final class PublicationStoreRecoveryTest {
         if (phase.equals("before")) {
           assertEquals(Records.State.ACTIVE, view.state());
           assertNull(view.manifest());
-          assertArrayEquals(new long[] {4, 6}, credits);
+          assertArrayEquals(
+              new long[] {FixedRecords.ADMITTED_WORK_CREDITS, FixedRecords.JOB_CREDITS}, credits);
           Records.WorkView retried =
               sessions.succeedExecution(
                   execAccess(), lease, inputs, 1, ENDPOINT, clock(1200), ALLOW);
@@ -86,7 +87,9 @@ final class PublicationStoreRecoveryTest {
         assertEquals(digest(OUTPUT), manifest.outputs().get(0).sha256());
         assertEquals(1200, manifest.committedAt());
         assertEquals(21_200, manifest.availableUntil());
-        assertArrayEquals(new long[] {3, 5}, credits);
+        assertArrayEquals(
+            new long[] {FixedRecords.ADMITTED_WORK_CREDITS - 1, FixedRecords.JOB_CREDITS - 1},
+            credits);
         assertEquals(retained, inputs.usage());
       }
     }

@@ -629,7 +629,18 @@ final class ExecutionStore {
       throw error(ProtocolError.Code.NOT_READY, "child scope is not closed successfully");
   }
 
-  private static void replaceJob(
+  /**
+   * Replaces a stored job record using its retained fixed-record geometry.
+   *
+   * @param connection active storage transaction
+   * @param config installation configuration and physical limits
+   * @param binding retained authority binding
+   * @param stored current stored job geometry
+   * @param replacement replacement durable job record
+   * @param spend whether the replacement consumes its reserved credit
+   * @throws SQLException if storage replacement fails
+   */
+  static void replaceJob(
       Connection connection,
       SessionStore.Configuration config,
       Binding binding,
@@ -655,7 +666,18 @@ final class ExecutionStore {
         spend);
   }
 
-  private static void replaceWork(
+  /**
+   * Replaces a stored work view using its retained fixed-record geometry.
+   *
+   * @param connection active storage transaction
+   * @param config installation configuration and physical limits
+   * @param binding retained authority binding
+   * @param stored current stored work geometry
+   * @param replacement replacement durable work view
+   * @param spend whether the replacement consumes its reserved credit
+   * @throws SQLException if storage replacement fails
+   */
+  static void replaceWork(
       Connection connection,
       SessionStore.Configuration config,
       Binding binding,
@@ -707,6 +729,11 @@ final class ExecutionStore {
     // spends two settlement writes; terminal history does not retain the intermediate diagnostic.
     boolean expanded = job.input().parameters().mode() == 2 && job.expansionComplete();
     int spent = (failed ? 2 : settled || retry ? 1 : 0) + (expanded ? 1 : 0);
+    // Cancellation can follow a retryable diagnostic and a pending descendant fence in the
+    // same attempt. Those prior diagnostics are deliberately not retained in the terminal view.
+    if (view.state() == State.CANCELLING) spent = 2 + (expanded ? 1 : 0);
+    if (view.state() == State.CANCELLED || view.state() == State.SKIPPED)
+      spent = 3 + (expanded ? 1 : 0);
     RetryStore.audit(connection, binding, view);
     if (view.attempt() != job.attempt()
         || !job.inputLive()
@@ -733,8 +760,12 @@ final class ExecutionStore {
                   && (job.input().parameters().mode() == 1 || job.lease() > 0 && expanded);
           case EXECUTING -> job.lease() > 0 && view.state() == State.ACTIVE;
           case AWAITING_RETRY -> job.lease() > 0 && view.state() == State.AWAITING_RETRY;
+          case CANCELLING -> view.state() == State.CANCELLING && entity.fence() != null;
           case SETTLED ->
-              view.state() == State.FAILED || view.state() == State.SUCCEEDED && job.lease() > 0;
+              view.state() == State.FAILED
+                  || view.state() == State.SUCCEEDED && job.lease() > 0
+                  || view.state() == State.CANCELLED
+                  || view.state() == State.SKIPPED;
         };
     if (!valid) throw corrupt("unsupported execution lifecycle state");
     if (expanded) {

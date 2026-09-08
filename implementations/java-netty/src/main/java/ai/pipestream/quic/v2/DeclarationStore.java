@@ -103,13 +103,19 @@ final class DeclarationStore {
    * @param view decoded work view
    * @param declaration declaration operation identifier
    * @param geometry fixed-record geometry
+   * @param fenceSlot prepaid exclusion-fence image
+   * @param fenceGeometry checked fence image geometry
+   * @param fence first accepted own fence, or null
    */
   record Entity(
       long slot,
       long revision,
       WorkView view,
       OperationId declaration,
-      FixedRecords.Header geometry) {}
+      FixedRecords.Header geometry,
+      long fenceSlot,
+      FixedRecords.Header fenceGeometry,
+      FenceStore.Fence fence) {}
 
   /**
    * Decoded durable mutation evidence. Retry intent is validated while reading its receipt.
@@ -152,7 +158,7 @@ final class DeclarationStore {
             generation INTEGER NOT NULL REFERENCES ps_v2_sessions(generation),
             producer INTEGER NOT NULL CHECK(producer IN (0,1)),
             operation BLOB NOT NULL CHECK(length(operation)=16 AND operation!=zeroblob(16)),
-            request_kind INTEGER NOT NULL CHECK(request_kind IN (0,1,2)),
+            request_kind INTEGER NOT NULL CHECK(request_kind IN (0,1,2,3,4,5)),
             request BLOB NOT NULL CHECK(length(request) BETWEEN 1 AND 4101),
             request_digest BLOB NOT NULL CHECK(length(request_digest)=32),
             receipt BLOB NOT NULL CHECK(length(receipt) BETWEEN 1 AND 1024),
@@ -161,6 +167,9 @@ final class DeclarationStore {
             retry_producer INTEGER,
             retry_entity INTEGER,
             retry_attempt INTEGER,
+            cancel_scope INTEGER,
+            CHECK((request_kind=5 AND producer=0 AND cancel_scope IS NOT NULL AND cancel_scope>=0)
+              OR (request_kind!=5 AND cancel_scope IS NULL)),
             CHECK((request_kind=2 AND producer=0 AND retry_scope IS NOT NULL
                 AND retry_scope>=0 AND retry_producer IS NOT NULL AND retry_producer IN (0,1)
                 AND retry_entity IS NOT NULL AND retry_entity>0
@@ -169,6 +178,8 @@ final class DeclarationStore {
                 AND retry_entity IS NULL AND retry_attempt IS NULL)),
             PRIMARY KEY(generation,producer,operation),
             UNIQUE(generation,retry_scope,retry_producer,retry_entity,retry_attempt),
+            UNIQUE(generation,cancel_scope,operation),
+            FOREIGN KEY(generation,cancel_scope) REFERENCES ps_v2_scopes(generation,id),
             FOREIGN KEY(generation,retry_scope,retry_entity)
               REFERENCES ps_v2_entities(generation,scope,id)
           ) STRICT
@@ -598,15 +609,21 @@ final class DeclarationStore {
               FixedRecords.Kind.FENCE,
               FixedRecords.key(
                   binding, FixedRecords.Kind.FENCE, scope.id(), scope.producer(), id, declaration));
-      if (!Arrays.equals(fence.body(), new byte[] {(byte) 0xf6}))
-        throw corrupt("declaration-only store contains a lifecycle fence");
+      FenceStore.Fence accepted = FenceStore.decode(fence.body());
       WorkView view =
           (WorkView) Wire.decodeRecord(Wire.RecordKind.WORK_VIEW, image.body(), VIEW_BYTES);
       if (!view.work().equals(new WorkKey(scope.id(), scope.producer(), id)))
         throw corrupt("work identity differs from retained scope");
       new OperationId(declaration);
       return new Entity(
-          viewSlot, image.header().revision(), view, new OperationId(declaration), image.header());
+          viewSlot,
+          image.header().revision(),
+          view,
+          new OperationId(declaration),
+          image.header(),
+          fenceSlot,
+          fence.header(),
+          accepted);
     } catch (ProtocolError invalid) {
       throw corrupt("invalid retained work view", invalid);
     }
@@ -647,7 +664,7 @@ final class DeclarationStore {
               CASE WHEN length(request_digest)=32 THEN request_digest END,
               CASE WHEN length(receipt)<=1024 THEN receipt END,
               CASE WHEN length(record_hash)=32 THEN record_hash END,request_kind,
-              retry_scope,retry_producer,retry_entity,retry_attempt
+              retry_scope,retry_producer,retry_entity,retry_attempt,cancel_scope
             FROM ps_v2_operations WHERE generation=? AND producer=? AND operation=?
             """)) {
       query.setLong(1, binding.generation());
@@ -666,7 +683,7 @@ final class DeclarationStore {
             || hash == null
             || requestBytes.length > REQUEST_BYTES
             || kind < 0
-            || kind > 2
+            || kind > 5
             || !Arrays.equals(
                 hash, operationHash(binding, producer, kind, requestBytes, receiptBytes)))
           throw corrupt("operation record integrity failure");
@@ -677,6 +694,29 @@ final class DeclarationStore {
                 || row.getObject(9) != null))
           throw corrupt("non-retry operation has retry indexing");
         try {
+          if (kind != 5 && row.getObject(10) != null)
+            throw corrupt("non-scope-fence operation has cancellation indexing");
+          if (kind >= 3) {
+            Wire.Frame frame = Wire.decode(requestBytes, Wire.INITIAL_CONTROL_LIMIT);
+            if (producer != 0 || !(frame instanceof Wire.Known known))
+              throw corrupt("invalid retained fence namespace or request");
+            Messages.Message request = known.message();
+            FenceStore.validateRequest(kind, id, request);
+            if (request instanceof CancelScope scope
+                && (row.getObject(10) == null || scope.scope() != row.getLong(10)))
+              throw corrupt("scope cancellation request contradicts its index");
+            OperationReceipt receipt =
+                (OperationReceipt)
+                    Wire.decodeRecord(
+                        Wire.RecordKind.OPERATION_RECEIPT, receiptBytes, RECEIPT_BYTES);
+            Digest expected = Commitments.operation(context(binding), 0, request);
+            if (!id.equals(receipt.operation())
+                || !expected.equals(receipt.requestDigest())
+                || !Arrays.equals(digest, expected.bytes()))
+              throw corrupt("fence receipt differs from immutable intent");
+            FenceStore.validateReceipt(connection, binding, request, receipt);
+            return new Operation(null, null, receipt);
+          }
           if (kind == 2) {
             Wire.Frame frame = Wire.decode(requestBytes, Wire.INITIAL_CONTROL_LIMIT);
             if (producer != 0
@@ -892,6 +932,51 @@ final class DeclarationStore {
       update.setLong(1, usage.operations() + 1);
       update.setLong(2, binding.generation());
       if (update.executeUpdate() != 1) throw corrupt("session disappeared during retry");
+    }
+  }
+
+  /**
+   * Retain a typed caller cancellation/skip intent in its enclosing atomic transaction.
+   *
+   * @param connection writer snapshot
+   * @param binding retained owner
+   * @param request original immutable intent
+   * @param receipt proposed fence receipt
+   * @throws SQLException missing accounting or failed write
+   */
+  static void retainFence(
+      Connection connection, Binding binding, Messages.Message request, OperationReceipt receipt)
+      throws SQLException {
+    Usage usage = usage(connection, binding);
+    if (usage.operations() >= binding.limits().operations())
+      throw ProtocolError.limit("session operation capacity exhausted");
+    Messages.Message normalized = FenceStore.normalize(request);
+    int kind = FenceStore.kind(normalized);
+    byte[] requestBytes = Wire.encode(normalized, Wire.INITIAL_CONTROL_LIMIT);
+    byte[] receiptBytes = Wire.encodeRecord(receipt, RECEIPT_BYTES);
+    try (var insert =
+        connection.prepareStatement(
+            """
+            INSERT INTO ps_v2_operations(generation,producer,operation,request_kind,request,
+              request_digest,receipt,record_hash,cancel_scope) VALUES (?,0,?,?,?,?,?,?,?)
+            """)) {
+      insert.setLong(1, binding.generation());
+      insert.setBytes(2, receipt.operation().bytes());
+      insert.setInt(3, kind);
+      insert.setBytes(4, requestBytes);
+      insert.setBytes(5, receipt.requestDigest().bytes());
+      insert.setBytes(6, receiptBytes);
+      insert.setBytes(7, operationHash(binding, 0, kind, requestBytes, receiptBytes));
+      if (normalized instanceof CancelScope scope) insert.setLong(8, scope.scope());
+      else insert.setNull(8, java.sql.Types.BIGINT);
+      insert.executeUpdate();
+    }
+    try (var update =
+        connection.prepareStatement(
+            "UPDATE ps_v2_sessions SET operation_count=? WHERE generation=?")) {
+      update.setLong(1, usage.operations() + 1);
+      update.setLong(2, binding.generation());
+      if (update.executeUpdate() != 1) throw corrupt("session disappeared during fence");
     }
   }
 

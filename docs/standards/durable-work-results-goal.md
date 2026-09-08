@@ -2644,3 +2644,38 @@ settlement in bounded resumable batches. Results/read pins, cleanup/retirement,
 durable Java endpoint/client integration, the neutral cross-language failure
 driver and all original workload/equivalent authenticated durable streaming-gRPC
 deliverables remain required. The full goal remains active and incomplete.
+
+### Java cancellation and bounded settlement checkpoint, 2026-09-08
+
+Java now accepts explicit work cancellation/skip and scope cancellation as atomic
+owner-authorized mutations. The first own fence fixes the promised outcome;
+ancestor checks immediately exclude new descendant declaration, admission, retry
+and publication. Pending branches retain CANCELLING until actual child closure.
+Local administrative revocation denies caller access while maintenance still
+settles unadmitted as well as admitted obligations. Prior terminal outcomes and
+earlier own skip outcomes are preserved.
+
+Bounded keyset sweeps compute real full frozen seals and terminal settlements.
+Partial digests remain volatile and are never advertised. A reopen during a fold
+restarts from durable records, and a monotonic scope fence restarts a partial
+closure fold without relaxing its membership checks. Private schema 7 records
+typed fences, cancellation journal/index provenance and pending job state.
+The admission/retry job reservation is eight writes, preserving a separate
+four-write cleanup allowance beyond a conservative lifecycle envelope.
+
+The corrected focused 27-test gate and final unfiltered 563-test Java suite pass,
+with no failures/errors/skips. The final exit code is zero and all 84 XML reports
+were independently checked for counts and freshness. This includes the existing
+actual publication process-death test. The first full run exposed its old hardcoded
+six-credit expectation; exact before/after equality now uses the configured
+reservation and reservation minus one. Production was not weakened to satisfy
+that obsolete constant. Strict ten-type doclint and the updated draft build also
+pass; exact raw evidence and limitations are recorded in the
+[cancellation evidence](../../conformance/results/durable-work-v2-java-cancellation-2026-09-08.txt).
+
+Next implement external result-read lifetime pins and dependency-safe cleanup,
+then session retirement and the durable Java endpoint/client integration. Keep
+the neutral cross-language failure driver and all original external workload
+and equivalent authenticated durable streaming-gRPC comparison deliverables.
+These local authority APIs do not activate the Java V2 listener. The full goal
+remains active and incomplete.

@@ -31,7 +31,7 @@ import java.util.concurrent.Semaphore;
  * another implementation's database is accepted. Never call it on a transport event loop.
  */
 final class SessionStore {
-  private static final int VERSION = 6;
+  private static final int VERSION = 7;
   private static final int MAX_BINDING_BYTES = 1024;
   private static final Set<String> TABLES =
       Set.of(
@@ -627,6 +627,271 @@ final class SessionStore {
         }
         statement.execute("COMMIT");
         return response;
+      } catch (SQLException | RuntimeException | Error failure) {
+        rollback(connection, failure);
+        throw failure;
+      }
+    } catch (SQLException failure) {
+      if ((failure.getErrorCode() & 255) == 13) {
+        ProtocolError refusal = ProtocolError.limit("SQLite file capacity exhausted");
+        refusal.initCause(failure);
+        throw refusal;
+      }
+      throw failure;
+    } finally {
+      DATABASE_OPERATIONS.release();
+    }
+  }
+
+  /**
+   * Accept or replay an owner-authorized work cancellation.
+   *
+   * @param access current owner authorization
+   * @param selected compatible negotiated profiles
+   * @param generation retained session
+   * @param request immutable cancellation intent
+   * @param clock trusted UTC source
+   * @param authorization explicit application cancellation policy
+   * @return correlated committed receipt
+   * @throws SQLException failed transaction or corrupt state
+   */
+  CancelResponse cancel(
+      Access access,
+      Capabilities selected,
+      long generation,
+      Cancel request,
+      AdmissionStore.Clock clock,
+      FenceStore.Authorization authorization)
+      throws SQLException {
+    return (CancelResponse)
+        fenceTransaction(access, selected, generation, request, clock, authorization);
+  }
+
+  /**
+   * Accept or replay a skip under a policy explicitly authorizing skip.
+   *
+   * @param access current owner authorization
+   * @param selected compatible profiles
+   * @param generation retained session
+   * @param request immutable skip intent
+   * @param clock trusted UTC source
+   * @param authorization explicit skip policy
+   * @return correlated committed receipt
+   * @throws SQLException failed transaction or corrupt state
+   */
+  SkipResponse skip(
+      Access access,
+      Capabilities selected,
+      long generation,
+      Skip request,
+      AdmissionStore.Clock clock,
+      FenceStore.Authorization authorization)
+      throws SQLException {
+    return (SkipResponse)
+        fenceTransaction(access, selected, generation, request, clock, authorization);
+  }
+
+  /**
+   * Freeze membership now; bounded maintenance computes the seal and terminal outcomes.
+   *
+   * @param access current owner authorization
+   * @param selected compatible profiles
+   * @param generation retained session
+   * @param request immutable scope-cancellation intent
+   * @param clock trusted UTC source
+   * @param authorization explicit scope policy
+   * @return correlated fence receipt, not a closure acknowledgment
+   * @throws SQLException failed transaction or corrupt state
+   */
+  CancelScopeResponse cancelScope(
+      Access access,
+      Capabilities selected,
+      long generation,
+      CancelScope request,
+      AdmissionStore.Clock clock,
+      FenceStore.Authorization authorization)
+      throws SQLException {
+    return (CancelScopeResponse)
+        fenceTransaction(access, selected, generation, request, clock, authorization);
+  }
+
+  private Message fenceTransaction(
+      Access access,
+      Capabilities selected,
+      long generation,
+      Message request,
+      AdmissionStore.Clock clock,
+      FenceStore.Authorization authorization)
+      throws SQLException {
+    Objects.requireNonNull(access).check();
+    profiles(Objects.requireNonNull(selected));
+    Checks.id(generation);
+    Objects.requireNonNull(request);
+    Objects.requireNonNull(authorization);
+    AdmissionStore.Clock checkedClock = AdmissionStore.checkedClock(clock);
+    return maintenanceTransaction(
+        connection -> {
+          access.check();
+          Retained retained = visible(connection, generation, access.owner());
+          compatible(retained, selected);
+          Binding binding = retained.binding();
+          authorization.check(binding, request);
+          Digest digest =
+              Commitments.operation(
+                  new Commitments.Context(binding.authority(), binding.owner(), generation),
+                  0,
+                  request);
+          DeclarationStore.Operation prior =
+              DeclarationStore.operation(connection, binding, FenceStore.operation(request));
+          if (prior != null && !prior.receipt().requestDigest().equals(digest))
+            throw error(ProtocolError.Code.CONFLICT, "fence operation parameters differ");
+          FenceStore.Accepted accepted =
+              prior == null
+                  ? FenceStore.accept(
+                      connection,
+                      config,
+                      binding,
+                      request,
+                      digest,
+                      AdmissionStore.now(connection, binding.authority(), checkedClock))
+                  : new FenceStore.Accepted(prior.receipt(), null);
+          Message response =
+              switch (request) {
+                case Cancel m -> new CancelResponse(m.request(), accepted.receipt());
+                case Skip m -> new SkipResponse(m.request(), accepted.receipt());
+                case CancelScope m -> new CancelScopeResponse(m.request(), accepted.receipt());
+                default -> throw new IllegalArgumentException("not a fence request");
+              };
+          Wire.encode(response, selected.controlLimit());
+          access.check();
+          authorization.check(binding, request);
+          if (prior == null) {
+            long now = AdmissionStore.now(connection, binding.authority(), checkedClock);
+            if (accepted.terminal() != null) checkTerminalInterval(accepted.terminal(), now);
+            AdmissionStore.remember(connection, config, binding.authority(), now);
+          }
+          return response;
+        });
+  }
+
+  /**
+   * Revoke a retained session under a trusted local administrative gate, not a peer RPC. The gate
+   * must authorize this target generation independently of its now-revoked owner's grant.
+   *
+   * @param operatorAuthorization current administrative authorization
+   * @param generation retained target session
+   * @param clock trusted UTC source
+   * @throws SQLException failed transaction or contradictory root
+   */
+  void revoke(Access operatorAuthorization, long generation, AdmissionStore.Clock clock)
+      throws SQLException {
+    Objects.requireNonNull(operatorAuthorization).check();
+    Checks.id(generation);
+    AdmissionStore.Clock checkedClock = AdmissionStore.checkedClock(clock);
+    maintenanceTransaction(
+        connection -> {
+          operatorAuthorization.check();
+          Retained retained = retained(connection, generation);
+          if (retained == null) throw error(ProtocolError.Code.NOT_FOUND, "session unavailable");
+          if (retained.retiring())
+            throw error(ProtocolError.Code.EXPIRED, "session retirement committed");
+          Binding binding = retained.binding();
+          DeclarationStore.Scope root = DeclarationStore.scope(connection, binding, 0);
+          if (root.state().revoked() != retained.revoked())
+            throw corrupt("root revocation differs from session");
+          if (!retained.revoked()) {
+            AdmissionStore.now(connection, binding.authority(), checkedClock);
+            FenceStore.freeze(connection, config, binding, root, true);
+            try (var update =
+                connection.prepareStatement(
+                    "UPDATE ps_v2_sessions SET revoked=1 WHERE generation=?")) {
+              update.setLong(1, generation);
+              if (update.executeUpdate() != 1)
+                throw corrupt("session disappeared during revocation");
+            }
+          }
+          operatorAuthorization.check();
+          if (!retained.revoked())
+            AdmissionStore.remember(
+                connection,
+                config,
+                binding.authority(),
+                AdmissionStore.now(connection, binding.authority(), checkedClock));
+          return null;
+        });
+  }
+
+  /**
+   * Materialize accepted fences without a live caller. Closure folds run separately.
+   *
+   * @param cursor installation-bound volatile discovery state
+   * @param limit per-category direct work/member budget, one to 256
+   * @param clock trusted UTC source
+   * @return committed direct record accounting
+   * @throws SQLException inconsistent evidence or failed funded commit
+   */
+  FenceStore.Progress reconcileCancellation(
+      FenceStore.Cursor cursor, int limit, AdmissionStore.Clock clock) throws SQLException {
+    Objects.requireNonNull(cursor);
+    if (limit < 1 || limit > 256)
+      throw ProtocolError.limit("cancellation reconciliation batch capacity");
+    synchronized (cursor) {
+      if (cursor.installation != null && !cursor.installation.equals(identity))
+        throw error(
+            ProtocolError.Code.CONFLICT, "cancellation cursor belongs to another authority");
+      cursor.installation = identity;
+      AdmissionStore.Clock checkedClock = AdmissionStore.checkedClock(clock);
+      try {
+        FenceReconciliation.Batch batch =
+            maintenanceTransaction(
+                connection -> {
+                  long now = AdmissionStore.now(connection, config.authority(), checkedClock);
+                  FenceReconciliation.Batch result =
+                      FenceReconciliation.step(
+                          connection,
+                          config,
+                          cursor,
+                          limit,
+                          generation -> {
+                            Retained retained = retained(connection, generation);
+                            if (retained == null)
+                              throw corrupt("cancellation target lacks session");
+                            return retained.retiring() ? null : retained.binding();
+                          },
+                          now);
+                  if (result.wrote()) {
+                    long committedAt =
+                        AdmissionStore.now(connection, config.authority(), checkedClock);
+                    if (result.terminal() != null && committedAt >= result.terminal())
+                      throw error(
+                          ProtocolError.Code.CLOCK_UNSAFE,
+                          "UTC jump overtook cancellation receipt retention");
+                    AdmissionStore.remember(connection, config, config.authority(), committedAt);
+                  }
+                  return result;
+                });
+        cursor.beforeWork = batch.beforeWork();
+        cursor.beforeScope = batch.beforeScope();
+        cursor.scan = batch.scan();
+        return batch.progress();
+      } catch (SQLException | RuntimeException | Error failure) {
+        cursor.scan = null;
+        throw failure;
+      }
+    }
+  }
+
+  private <T> T maintenanceTransaction(Transaction<T> action) throws SQLException {
+    if (!DATABASE_OPERATIONS.tryAcquire())
+      throw ProtocolError.limit("V2 database operation capacity");
+    try (Connection connection = database.connect();
+        var statement = connection.createStatement()) {
+      statement.execute("BEGIN IMMEDIATE");
+      try {
+        meta(connection);
+        T result = action.run(connection);
+        statement.execute("COMMIT");
+        return result;
       } catch (SQLException | RuntimeException | Error failure) {
         rollback(connection, failure);
         throw failure;
@@ -1548,6 +1813,7 @@ final class SessionStore {
                     case QUEUED, EXECUTING -> view.state() == State.ACTIVE;
                     case WAITING_CHILDREN -> view.state() == State.WAITING_CHILDREN;
                     case AWAITING_RETRY -> view.state() == State.AWAITING_RETRY;
+                    case CANCELLING -> view.state() == State.CANCELLING;
                     case SETTLED -> view.state().terminal();
                   };
               if (!consistent || view.deadline() == null)
@@ -2062,7 +2328,7 @@ final class SessionStore {
           """
           CREATE TABLE ps_v2_meta (
             singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-            version INTEGER NOT NULL CHECK(version=6),
+            version INTEGER NOT NULL CHECK(version=7),
             config BLOB NOT NULL CHECK(length(config) BETWEEN 1 AND 8192),
             high_water INTEGER NOT NULL CHECK(high_water>=0),
             clock_slot INTEGER NOT NULL UNIQUE REFERENCES ps_v2_slots(id) CHECK(clock_slot=1),
@@ -2251,6 +2517,8 @@ final class SessionStore {
           Retained session = retained(connection, rows.getLong(1));
           if (!session.retiring()) DeclarationStore.audit(connection, session.binding());
           if (!session.retiring()) AdmissionStore.audit(connection, config, session.binding());
+          if (!session.retiring())
+            FenceStore.auditScopes(connection, session.binding(), session.revoked());
         }
       }
     }
