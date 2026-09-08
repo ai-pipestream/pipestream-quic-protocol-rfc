@@ -359,7 +359,6 @@ impl proto::transform_worker_server::TransformWorker for Arc<Worker> {
                 if wall_ms() > until as u64 {
                     return Err(Status::failed_precondition(EXPIRED));
                 }
-                let _ = len;
                 Ok(Response::new(proto::ManifestResponse {
                     manifest: Some(proto::OutputManifest {
                         id: Some(id),
