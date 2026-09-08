@@ -1105,6 +1105,38 @@ final class SessionStore {
   }
 
   /**
+   * Yield a current expanding worker or finish producing its complete admitted child set. A seal
+   * alone is insufficient for completion, and completion does not assert child or parent success.
+   *
+   * @param access current retained execution grant
+   * @param lease current mode-two worker ownership
+   * @param complete finish expansion, or yield for a later lease of the same attempt
+   * @param clock trusted UTC source
+   * @param authorization current application policy
+   * @return parent view after the atomic progress transition
+   * @throws SQLException contradictory metadata or failed atomic write
+   */
+  WorkView finishExpansion(
+      ExecutionStore.Access access,
+      ExecutionStore.Lease lease,
+      boolean complete,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization)
+      throws SQLException {
+    return executeOwned(
+            access,
+            lease,
+            0,
+            clock,
+            authorization,
+            complete
+                ? ExecutionStore.Change.EXPANSION_COMPLETE
+                : ExecutionStore.Change.EXPANSION_YIELD,
+            null)
+        .work();
+  }
+
+  /**
    * Atomically publish a fenced failure or retryable attempt outcome from prepaid image credits.
    * Byte reservations remain charged until separate reference-safe reclamation; failure is not
    * permission to delete an input or release a still-running physical callback's handles.
@@ -1341,6 +1373,22 @@ final class SessionStore {
    */
   ExecutionStore.Page scanExecutions(ExecutionStore.ScanCursor cursor, int limit)
       throws SQLException {
+    return scanExecutions(cursor, null, limit);
+  }
+
+  /**
+   * Discover a finite ordered suffix for round-robin dispatch. Maintenance uses its independent
+   * full sweep so occupied workers cannot postpone deadline settlement.
+   *
+   * @param cursor prior finite-sweep continuation, taking precedence over after
+   * @param after exclusive initial position, null to begin at the first job
+   * @param limit maximum examined jobs, between one and 64
+   * @return bounded advisory observations and continuation
+   * @throws SQLException contradictory records or database failure
+   */
+  ExecutionStore.Page scanExecutions(
+      ExecutionStore.ScanCursor cursor, ExecutionStore.Position after, int limit)
+      throws SQLException {
     if (limit < 1 || limit > 64) throw ProtocolError.limit("job discovery page capacity");
     if (!DATABASE_OPERATIONS.tryAcquire())
       throw ProtocolError.limit("V2 database operation capacity");
@@ -1363,7 +1411,8 @@ final class SessionStore {
           statement.execute("COMMIT");
           return new ExecutionStore.Page(List.of(), null);
         }
-        String lower = cursor == null ? "" : " AND (generation,scope,entity)>(?,?,?)";
+        ExecutionStore.Position lowerBound = cursor == null ? after : cursor.after();
+        String lower = lowerBound == null ? "" : " AND (generation,scope,entity)>(?,?,?)";
         List<ExecutionStore.Candidate> entries = new ArrayList<>(limit);
         ExecutionStore.Position last = null;
         boolean more = false;
@@ -1377,10 +1426,10 @@ final class SessionStore {
           query.setLong(2, through.scope());
           query.setLong(3, through.entity());
           int parameter = 4;
-          if (cursor != null) {
-            query.setLong(parameter++, cursor.after().generation());
-            query.setLong(parameter++, cursor.after().scope());
-            query.setLong(parameter++, cursor.after().entity());
+          if (lowerBound != null) {
+            query.setLong(parameter++, lowerBound.generation());
+            query.setLong(parameter++, lowerBound.scope());
+            query.setLong(parameter++, lowerBound.entity());
           }
           query.setInt(parameter, limit + 1);
           try (var rows = query.executeQuery()) {
@@ -1555,6 +1604,17 @@ final class SessionStore {
                   null,
                   ExecutionStore.succeed(
                       connection, config, binding, loaded, retained.profiles() == 3, outputs, now));
+        } else if (change == ExecutionStore.Change.EXPANSION_COMPLETE
+            || change == ExecutionStore.Change.EXPANSION_YIELD) {
+          result =
+              new ExecutionResult(
+                  null,
+                  ExecutionStore.finishExpansion(
+                      connection,
+                      config,
+                      binding,
+                      loaded,
+                      change == ExecutionStore.Change.EXPANSION_COMPLETE));
         } else {
           result =
               new ExecutionResult(
@@ -1582,7 +1642,11 @@ final class SessionStore {
         return new ExecutionResult(
             result.lease(),
             result.work(),
-            new ExecutionStore.Details(binding, loaded.stored().record()));
+            new ExecutionStore.Details(
+                binding,
+                loaded.stored().record(),
+                loaded.entity().view().child(),
+                retained.profiles() == 3));
       } catch (IOException | SQLException | RuntimeException failure) {
         rollback(connection, failure);
         throw failure;

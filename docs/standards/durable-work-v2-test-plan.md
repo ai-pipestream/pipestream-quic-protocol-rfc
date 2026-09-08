@@ -2310,6 +2310,42 @@ original external workload and equivalent durable streaming-gRPC comparison.
   automatic STRICT failure from a cancelled or failed child; descendant closure
   must not overwrite that promised settlement.
 
+### Java authority expansion and phase-specific resources, 2026-09-08
+
+- `InputReceiverCreditTest` exercises store-bound sequential receiver credits,
+  foreign/closed/borrowed refusals, physical handle accounting, byte/name limits
+  and a retryable staging-cleanup failure. A credit reserves capacity, not
+  authority, and incomplete cleanup cannot make its handle reusable.
+- `ExpansionTransitionTest` separates sealing from completing expansion, refuses
+  declared-but-unadmitted obligations with NOT_READY, pins final authorization,
+  deadline/lease equality and clock rollback, and verifies Complete/Yield record
+  credits and state after reopen. Yield retains the original wire attempt.
+- `AuthorityExpansionRuntimeTest` runs real mode-2 production, two admitted child
+  callbacks, child closure, exact reassembly bytes, parent publication and root closure
+  through one scheduler worker and a three-handle store. Missing expander or
+  explicit producer limits refuse before callback execution.
+- `AuthorityExpansionRuntimeFailureTest` pins stable declaration/admission replay,
+  unfinished receiver INTEGRITY_ERROR, sticky misuse, wrong-thread and closed
+  contexts, authorization revocation, and real child-job capacity pressure.
+  Capacity may yield, but a later CONFLICT cannot inherit that exemption. The
+  corrected precedence regression failed ACTIVE versus FAILED before the fix;
+  an earlier fixture-only null dereference was not production-defect evidence.
+- `AuthorityExpansionSchedulingTest` checks bounded eventual progress with page
+  sizes one and four when the first child must execute before the second can be
+  admitted. It is not a proof of every possible thread interleaving.
+- `ExecutionDiscoverySuffixTest` pins exclusive lower hints, fixed sweep ceilings,
+  concurrent tail admissions and beyond-tail empty results. The existing busy
+  callback/deadline-maintenance case also runs with page sizes one and four.
+  Dispatch preserves a capacity-blocked position while independent deadline
+  maintenance continues, with at most one fresh tail extension per dispatch sweep.
+
+These are local Java library tests, not a V2 authenticated endpoint, a new
+process-death campaign, measured large-tree performance or both-language wire
+conformance. Expansion completion streams unresolved membership with bounded
+application memory but can scan the whole child scope; recovery and STRICT
+closure retain their documented wider audits. The Rust completion guard still
+needs the same explicit sealed/admitted-or-terminal rule from Section 12.5.
+
 ## V2-TIME: independent lifetimes and trusted clocks (12.9)
 
 - Exact integer UTC milliseconds, checked arithmetic, session maxima and

@@ -94,9 +94,11 @@ final class ExecutionSchedulerTest {
     }
   }
 
-  @Test
-  void busyCallbackDoesNotBlockDeadlineSettlementAndCloseDoesNotInterruptIt() throws Exception {
-    try (Fixture fixture = new Fixture(directory.resolve("maintenance"))) {
+  @org.junit.jupiter.params.ParameterizedTest(name = "maintenance page size {0}")
+  @org.junit.jupiter.params.provider.ValueSource(ints = {1, 4})
+  void busyCallbackDoesNotBlockDeadlineSettlementAndCloseDoesNotInterruptIt(int pageSize)
+      throws Exception {
+    try (Fixture fixture = new Fixture(directory.resolve("maintenance-" + pageSize))) {
       Records.WorkKey busy = fixture.admit("alice", 1, new byte[0], 0, 0, 5000);
       Records.WorkKey expired = fixture.admit("alice", 2, new byte[0], 0, 0, 1000);
       CountDownLatch entered = new CountDownLatch(1);
@@ -118,7 +120,7 @@ final class ExecutionSchedulerTest {
               },
               clock(2000),
               owner -> execAccess(owner),
-              new ExecutionScheduler.Limits(1, 1, 4, 1));
+              new ExecutionScheduler.Limits(1, 1, pageSize, 1));
       scheduler.start();
       try {
         assertTrue(entered.await(5, TimeUnit.SECONDS));

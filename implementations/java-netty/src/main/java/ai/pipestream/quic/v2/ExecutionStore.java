@@ -79,7 +79,11 @@ final class ExecutionStore {
     /** Commit an attempt failure requiring explicit caller retry. */
     RETRYABLE,
     /** Publish verified immutable outputs and authoritative success together. */
-    SUCCEED
+    SUCCEED,
+    /** Release execution ownership while retaining an incomplete expansion obligation. */
+    EXPANSION_YIELD,
+    /** Finish producing admitted children, independently from their eventual closure. */
+    EXPANSION_COMPLETE
   }
 
   /**
@@ -95,8 +99,10 @@ final class ExecutionStore {
    *
    * @param binding retained owner/session policy
    * @param job admitted application, payload and output ceilings
+   * @param child exact admitted child scope, or null for a leaf
+   * @param results whether the retained session selected result delivery
    */
-  record Details(Binding binding, JobRecord job) {}
+  record Details(Binding binding, JobRecord job, ChildScope child, boolean results) {}
 
   /**
    * Indexed local discovery position; scopes have exactly one producer.
@@ -269,6 +275,117 @@ final class ExecutionStore {
       if (!job.expansionComplete())
         throw error(ProtocolError.Code.NOT_READY, "authority expansion is not complete");
       requireChildren(connection, binding, view);
+    }
+    if (change == Change.EXPANSION_YIELD || change == Change.EXPANSION_COMPLETE) {
+      if (job.input().parameters().mode() != 2 || job.expansionComplete())
+        throw error(ProtocolError.Code.CONFLICT, "job has no pending authority expansion");
+      DeclarationStore.Scope child = expansionScope(connection, binding, view);
+      AdmissionStore.ancestors(connection, binding, child.id());
+    }
+  }
+
+  /**
+   * Commit expansion progress without treating a membership seal as admitted child work. Yield uses
+   * ordinary write capacity; completion spends one prepaid work/job update and keeps all accepted
+   * input, output and executor promises live while waiting for child closure.
+   *
+   * @param connection checked writer transaction
+   * @param config retained storage policy
+   * @param binding retained owner/session
+   * @param loaded current worker before the transition
+   * @param complete whether the callback finished producing its child inputs
+   * @return retained parent work view, not a successful computation outcome
+   * @throws SQLException corrupt membership or failed atomic image writes
+   */
+  static WorkView finishExpansion(
+      Connection connection,
+      SessionStore.Configuration config,
+      Binding binding,
+      Loaded loaded,
+      boolean complete)
+      throws SQLException {
+    JobRecord job = loaded.stored().record();
+    WorkView view = loaded.entity().view();
+    if (complete)
+      requireProducedInputs(connection, binding, expansionScope(connection, binding, view));
+    WorkView result = view;
+    if (complete) {
+      result =
+          new WorkView(
+              view.work(),
+              State.WAITING_CHILDREN,
+              view.attempt(),
+              view.input(),
+              view.admittedAt(),
+              view.deadline(),
+              null,
+              null,
+              null,
+              view.child(),
+              null,
+              null);
+      replaceWork(connection, config, binding, loaded.entity(), result, true);
+    }
+    JobRecord replacement =
+        new JobRecord(
+            job.input(),
+            job.safety(),
+            job.attempt(),
+            job.lease(),
+            null,
+            complete ? JobRecord.Stage.WAITING_CHILDREN : JobRecord.Stage.QUEUED,
+            job.inputReference(),
+            job.outputReference(),
+            job.objectLimit(),
+            job.inputLive(),
+            job.outputsLive(),
+            job.executorLive(),
+            complete,
+            0);
+    replaceJob(connection, config, binding, loaded.stored(), replacement, complete);
+    return result;
+  }
+
+  private static DeclarationStore.Scope expansionScope(
+      Connection connection, Binding binding, WorkView view) throws SQLException {
+    ChildScope child = view.child();
+    if (child == null || child.producer() != 1)
+      throw corrupt("authority expansion lacks its producer-one child scope");
+    DeclarationStore.Scope scope = DeclarationStore.scope(connection, binding, child.scope());
+    if (scope.producer() != 1 || !view.work().equals(scope.parent()))
+      throw corrupt("authority expansion child scope contradicts its parent");
+    return scope;
+  }
+
+  private static void requireProducedInputs(
+      Connection connection, Binding binding, DeclarationStore.Scope scope) throws SQLException {
+    if (scope.seal() == null)
+      throw error(ProtocolError.Code.NOT_READY, "authority expansion membership is not sealed");
+    // Jobs are admission's durable index. Inspect only members without one; an unresolved
+    // declaration cannot receive producer-one input after expansion ownership is relinquished.
+    // This scan uses constant application memory, not a payload/member-sized collection.
+    try (var query =
+        connection.prepareStatement(
+            """
+            SELECT e.id FROM ps_v2_entities e
+            WHERE e.generation=? AND e.scope=? AND NOT EXISTS (
+              SELECT 1 FROM ps_v2_jobs j
+              WHERE j.generation=e.generation AND j.scope=e.scope AND j.entity=e.id)
+            ORDER BY e.id
+            """)) {
+      query.setLong(1, binding.generation());
+      query.setLong(2, scope.id());
+      try (var rows = query.executeQuery()) {
+        while (rows.next()) {
+          WorkView member =
+              DeclarationStore.member(
+                      connection, binding, new WorkKey(scope.id(), 1, rows.getLong(1)))
+                  .view();
+          if (member.input() != null) throw corrupt("admitted expansion member has no job");
+          if (!member.state().terminal())
+            throw error(ProtocolError.Code.NOT_READY, "declared child input is not admitted");
+        }
+      }
     }
   }
 
@@ -588,7 +705,8 @@ final class ExecutionStore {
     boolean retry = job.stage() == JobRecord.Stage.AWAITING_RETRY;
     // A terminal deadline failure can follow AWAITING_RETRY without a new attempt. That path
     // spends two settlement writes; terminal history does not retain the intermediate diagnostic.
-    int spent = failed ? 2 : settled || retry ? 1 : 0;
+    boolean expanded = job.input().parameters().mode() == 2 && job.expansionComplete();
+    int spent = (failed ? 2 : settled || retry ? 1 : 0) + (expanded ? 1 : 0);
     if (job.attempt() != 1
         || view.attempt() != job.attempt()
         || !job.inputLive()
@@ -596,7 +714,7 @@ final class ExecutionStore {
         || job.executorLive() == settled
         || job.releaseIntent() != 0
         || !view.input().equals(job.input().parameters().input())
-        || job.expansionComplete() != (job.input().parameters().mode() != 2)
+        || job.input().parameters().mode() != 2 && !job.expansionComplete()
         || entity.geometry().credits() < 4 - spent
         || stored.geometry().credits() < FixedRecords.JOB_CREDITS - spent
         || job.leaseUntil() != null
@@ -605,19 +723,26 @@ final class ExecutionStore {
     boolean valid =
         switch (job.stage()) {
           case QUEUED ->
-              job.lease() == 0
+              (job.lease() == 0 || job.input().parameters().mode() == 2 && !job.expansionComplete())
                   && view.state() == State.ACTIVE
                   && job.input().parameters().mode() != 1;
           case WAITING_CHILDREN ->
-              job.lease() == 0
-                  && view.state() == State.WAITING_CHILDREN
-                  && job.input().parameters().mode() == 1;
+              view.state() == State.WAITING_CHILDREN
+                  && (job.lease() == 0 && job.input().parameters().mode() == 1
+                      || job.lease() > 0 && expanded);
           case EXECUTING -> job.lease() > 0 && view.state() == State.ACTIVE;
           case AWAITING_RETRY -> job.lease() > 0 && view.state() == State.AWAITING_RETRY;
           case SETTLED ->
               view.state() == State.FAILED || view.state() == State.SUCCEEDED && job.lease() > 0;
         };
     if (!valid) throw corrupt("unsupported execution lifecycle state");
+    if (expanded) {
+      try {
+        requireProducedInputs(connection, binding, expansionScope(connection, binding, view));
+      } catch (ProtocolError invalid) {
+        throw new SQLException("V2 execution: completed expansion left unresolved input", invalid);
+      }
+    }
     if (job.stage() == JobRecord.Stage.EXECUTING
         && (job.input().parameters().mode() != 2 || job.expansionComplete())) {
       try {

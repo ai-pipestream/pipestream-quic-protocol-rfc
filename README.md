@@ -76,8 +76,10 @@ funded output allowances, a restartable job and immutable replay receipt. The bo
 Java runtime and scheduler execute leaf and caller-expanded branch callbacks,
 including protected child-output reassembly and actual child/root closure.
 Local producer-1 declaration and admission APIs now enforce the current parent
-lease and preserve separate operation namespaces across recovery. Automatic
-authority expansion and its durable completion transition remain unfinished.
+lease and preserve separate operation namespaces across recovery. Its mode-2
+expander now produces and admits real children, yields without changing the wire
+attempt, and commits expansion completion separately from membership sealing.
+Reassembly runs after verified child closure, with phase-specific handle credits.
 Independent Java durable execution/results/recovery, complete cross-language
 failure evidence and the workload comparison remain unfinished.
 The Rust `pipestream_core::v2` library now implements typed codecs for every

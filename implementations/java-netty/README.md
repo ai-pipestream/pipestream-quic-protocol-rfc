@@ -434,8 +434,15 @@ Their operation journal and recovery audit keep caller and authority producer
 namespaces separate. Sealing children does not complete expansion. See the
 [local producer contract](../../docs/standards/java-v2-authority-store.md#fenced-local-child-declarations-and-admission).
 
-Explicit attempt retry, producer callback scheduling and durable expansion
-completion, broader orphan and subtree reconciliation,
+The runtime now invokes a separate mode-2 `Expander`, preserving stable declaration
+and input-admission operations across local yields. Completion verifies sealed
+membership and admitted or already-terminal obligations before releasing the
+worker to await children. Reassembly runs under a fresh lease after STRICT closure.
+Phase-specific receiver and reassembly credits allow the three-handle fixture to
+produce children and publish their actual reassembled output. Independent deadline
+scanning continues when dispatch capacity is full.
+
+Explicit attempt retry, broader orphan and subtree reconciliation,
 results/read pins, retirement and durable-profile transport integration remain
 required. A returned local worker lease alone does not prove a callback ran.
 

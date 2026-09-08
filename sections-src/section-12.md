@@ -387,6 +387,15 @@ expansion finished merely because the child scope is sealed. Replaying local
 mutations uses their original operation identities and immutable parameters,
 including when the parent has a replacement execution attempt.
 
+Before recording authority expansion as complete, the authority MUST verify that
+the child scope is sealed and that every declared member has either been admitted
+or already reached a terminal outcome through a permitted transition. Otherwise
+it MUST leave expansion incomplete and refuse completion with NOT_READY. Sealed
+but unadmitted, nonterminal members cannot be stranded by ending the only producer
+phase permitted to admit them. This check does not require admitted children to
+have finished execution; their actual closure remains a separate prerequisite for
+parent reassembly.
+
 The local producer interface MUST fence each declaration and input admission
 against the current parent attempt, execution ownership, deadline, authorization
 and applicable cancellation fences at commitment. Local execution is not an

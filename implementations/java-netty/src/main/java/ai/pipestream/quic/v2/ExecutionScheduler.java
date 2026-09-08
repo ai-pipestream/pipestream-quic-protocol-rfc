@@ -15,7 +15,8 @@ import java.util.function.Function;
  * Authority-owned durable job discovery and bounded callback dispatch, independent of connections.
  * The database is the job source; a volatile cursor and bounded in-flight map are only scheduling
  * hints. Restart begins a new sweep and every callback still requires a committed current lease.
- * This does not activate a durable-profile endpoint or implement authority expansion/cancellation.
+ * Dispatch resumes after the last offered job; independent maintenance keeps moving when workers
+ * are full. This does not activate a durable-profile endpoint or implement cancellation.
  */
 final class ExecutionScheduler implements AutoCloseable {
   /**
@@ -66,6 +67,9 @@ final class ExecutionScheduler implements AutoCloseable {
   private final Map<ExecutionStore.Position, String> inFlight = new HashMap<>();
   private final Map<String, Integer> owners = new HashMap<>();
   private ExecutionStore.ScanCursor cursor;
+  private ExecutionStore.Position after;
+  private boolean tailRefreshed;
+  private ExecutionStore.ScanCursor maintenanceCursor;
   private final ClosureStore.Cursor closures = new ClosureStore.Cursor();
   private boolean started;
   private boolean stopping;
@@ -162,6 +166,11 @@ final class ExecutionScheduler implements AutoCloseable {
     try {
       while (!stopped()) {
         try {
+          expirePage();
+        } catch (SQLException | RuntimeException failure) {
+          record(null, failure, "deadline discovery unavailable");
+        }
+        try {
           page();
         } catch (SQLException | RuntimeException failure) {
           record(null, failure, "job discovery unavailable");
@@ -196,45 +205,71 @@ final class ExecutionScheduler implements AutoCloseable {
   }
 
   private void page() throws SQLException {
-    ExecutionStore.Page page = sessions.scanExecutions(cursor, limits.pageSize());
+    synchronized (this) {
+      if (inFlight.size() >= limits.workers()) return;
+    }
+    ExecutionStore.Page page = sessions.scanExecutions(cursor, after, limits.pageSize());
     // Discovery grants no time promise. The actual claim/expiry rechecks the durable watermark.
+    long now = AdmissionStore.checkedClock(clock).sample().utcMillis();
+    ExecutionStore.Position through =
+        page.next() == null
+            ? page.entries().isEmpty() ? null : page.entries().getLast().position()
+            : page.next().through();
+    boolean submitted = false;
+    for (ExecutionStore.Candidate candidate : page.entries()) {
+      if (stopped()) return;
+      if (candidate.stage() != JobRecord.Stage.SETTLED
+          && candidate.stage() != JobRecord.Stage.AWAITING_RETRY
+          && now < candidate.deadline()
+          && (candidate.leaseUntil() == null || now >= candidate.leaseUntil())
+          && candidate.dependenciesReady()) {
+        Dispatch result = dispatch(candidate);
+        // Do not advance over a ready job just because an earlier callback owns the worker.
+        // In particular, a yielding parent cannot continually jump ahead of its ready child.
+        if (result == Dispatch.FULL) return;
+        submitted |= result == Dispatch.STARTED;
+      }
+      after = candidate.position();
+      cursor = new ExecutionStore.ScanCursor(after, through);
+    }
+    cursor = page.next();
+    // A dispatched final job may admit new children beyond the old endpoint. Refresh that suffix
+    // at most once per sweep, so continuing admissions cannot indefinitely postpone earlier jobs.
+    if (cursor == null) {
+      if (submitted && !tailRefreshed) tailRefreshed = true;
+      else {
+        after = null;
+        tailRefreshed = false;
+      }
+    }
+  }
+
+  private void expirePage() throws SQLException {
+    ExecutionStore.Page page = sessions.scanExecutions(maintenanceCursor, limits.pageSize());
     long now = AdmissionStore.checkedClock(clock).sample().utcMillis();
     for (ExecutionStore.Candidate candidate : page.entries()) {
       if (stopped()) return;
-      if (candidate.stage() == JobRecord.Stage.SETTLED) continue;
-      if (now >= candidate.deadline()) {
-        try {
-          sessions.expireExecution(candidate.position().generation(), candidate.work(), clock);
-        } catch (SQLException | RuntimeException failure) {
-          record(candidate.position(), failure, "deadline settlement refused");
-        }
-        continue;
+      if (candidate.stage() == JobRecord.Stage.SETTLED || now < candidate.deadline()) continue;
+      try {
+        sessions.expireExecution(candidate.position().generation(), candidate.work(), clock);
+      } catch (SQLException | RuntimeException failure) {
+        record(candidate.position(), failure, "deadline settlement refused");
       }
-      if (candidate.stage() == JobRecord.Stage.AWAITING_RETRY) continue;
-      if (candidate.leaseUntil() != null && now < candidate.leaseUntil()) continue;
-      if (candidate.mode() == 2) {
-        record(
-            candidate.position(),
-            new ProtocolError(ProtocolError.Code.APPLICATION_UNSUPPORTED, "authority expansion"),
-            "authority expansion is not implemented");
-        continue;
-      }
-      // Waiting parents consume no physical worker. Otherwise a parent at the start of a
-      // one-worker sweep could repeatedly occupy the slot before its children are dispatched.
-      // This is advisory only: the claim still verifies actual STRICT closure and current fences.
-      if (!candidate.dependenciesReady()) continue;
-      dispatch(candidate);
     }
-    // Advance only after a complete page. A stopped or failed page can be safely rediscovered.
-    cursor = page.next();
+    maintenanceCursor = page.next();
   }
 
-  private synchronized void dispatch(ExecutionStore.Candidate candidate) {
+  private enum Dispatch {
+    STARTED,
+    SKIPPED,
+    FULL
+  }
+
+  private synchronized Dispatch dispatch(ExecutionStore.Candidate candidate) {
     String owner = candidate.owner();
-    if (stopping
-        || inFlight.containsKey(candidate.position())
-        || inFlight.size() >= limits.workers()
-        || owners.getOrDefault(owner, 0) >= limits.workersPerOwner()) return;
+    if (stopping || inFlight.containsKey(candidate.position())) return Dispatch.SKIPPED;
+    if (inFlight.size() >= limits.workers()) return Dispatch.FULL;
+    if (owners.getOrDefault(owner, 0) >= limits.workersPerOwner()) return Dispatch.SKIPPED;
     inFlight.put(candidate.position(), owner);
     owners.merge(owner, 1, Integer::sum);
     try {
@@ -247,10 +282,12 @@ final class ExecutionScheduler implements AutoCloseable {
           candidate.position(),
           new ProtocolError(ProtocolError.Code.LIMIT_EXCEEDED, "physical worker unavailable"),
           "physical dispatch capacity unavailable");
+      return Dispatch.FULL;
     } catch (RuntimeException | Error failure) {
       release(candidate);
       throw failure;
     }
+    return Dispatch.STARTED;
   }
 
   private void execute(ExecutionStore.Candidate candidate) {

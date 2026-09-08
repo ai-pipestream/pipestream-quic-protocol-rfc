@@ -96,6 +96,22 @@ authority must use its operation history. Readers verify the same file
 descriptor before exposing payload-only bytes and count against the handle
 limit. They must be opened only after current execution/read authorization.
 
+Authority expansion reserves one store-bound `ReceiverCredit` before invoking its
+expander. The credit charges one global handle without granting producer authority;
+the fenced authority layer must still validate each declaration and admission. A
+credited `begin` borrows that same handle, so unrelated reception cannot consume the
+capacity reserved for the running phase. One credit supports sequential receivers,
+but a foreign, closed or already borrowed credit is CONFLICT. Header and quota
+validation happen before borrowing, leaving the credit reusable after a refused begin.
+
+Finishing or abandoning reception returns the borrow only after the physical descriptor
+is closed and staging cleanup and accounting complete. Closing a borrowed credit refuses
+and retains its charge. If cleanup durability is uncertain, both the receiver and credit
+remain conservatively charged; bounded idempotent receiver-close retry completes cleanup
+before reuse or release. Protocol failure performs the same safe abandonment, while
+successful credit close returns the reserved handle. Payload bytes and file names remain
+charged by the ordinary reception rules and are never prepaid by the credit.
+
 ## Durable output funding
 
 `reserveOutputs(context, header)` installs an immutable checksummed record under
@@ -156,9 +172,11 @@ before output funding. Transient handle occupancy is checked at dispatch.
 The authority admission transaction now validates the exact pair, declared
 membership, application, producer and cancellation fences, and atomically commits
 input identity, timestamps, job, receipt and output/metadata funding. It rechecks
-authorization and trusted time at commitment. The remaining executor/result
-paths must preserve dependencies across retry/restart, consume the funded
-allowances and reconcile orphans with authoritative references. No durable profile
+authorization and trusted time at commitment. The local executor now preserves
+expansion and reassembly phases across replacement leases and consumes phase-specific
+handle credits. The remaining result delivery and retirement paths must preserve
+dependencies, enforce read authorization and reconcile orphans with authoritative
+references. No durable profile
 can be advertised until the full Java execution/results/retirement paths and
 their failure/resource acceptance gates are implemented and tested.
 

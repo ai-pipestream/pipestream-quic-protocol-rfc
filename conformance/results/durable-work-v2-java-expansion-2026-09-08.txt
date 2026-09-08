@@ -1,0 +1,131 @@
+Java authority expansion, resumable production and phase resources
+Date: 2026-09-08
+Repository: /work/main/pipestream-ai/dev-tools/pipestream-quic-protocol-rfc
+Branch: feat/durable-work-results-v2
+Base: fd01fb74db0e4db6f81653be77b766d41b792894
+
+Implemented boundary
+  Mode-2 registration requires an actual Expander plus a reassembly callback and
+  explicit local producer ceilings. The expander reads the real parent input,
+  declares stable producer-one operations, receives/verifies real child bytes and
+  admits them through the current-parent-fenced authority transactions. Existing
+  receipts and installed inputs are recovered without another child or deadline.
+  Local producer limits retain the session's exact durable/result profile choice.
+
+  Complete is a separate funded metadata transition, not a membership seal. It
+  requires sealed membership and admitted or already-terminal obligations, then
+  moves to WAITING_CHILDREN. Missing seal or unresolved input gives NOT_READY.
+  Yield clears the local lease without changing the wire attempt or spending
+  settlement credits. Reopen checks the completed expansion and remaining credits.
+  Final authorization, trusted UTC and original ownership/deadline still apply.
+
+  Expansion reserves a reusable input receiver credit and its own input reader;
+  reassembly reserves the child reader and optional output writer in its later
+  invocation. Foreign/closed/borrowed receiver credits refuse. Failed physical
+  cleanup retains accounting rather than inventing reusable capacity.
+  Unfinished child input cannot complete. Capacity may yield, but subsequent
+  thread/ownership/integrity misuse cannot be masked by that earlier refusal.
+
+  Dispatch preserves a ready position when the worker pool is full. Deadline
+  discovery has an independent finite cursor. At most one fresh tail extension
+  is allowed per dispatch sweep, preventing continuing admissions from indefinitely
+  postponing wrap. Per poll: at most one dispatch page, one maintenance page and
+  the existing closure batch. This is additional bounded metadata work, not free.
+
+Test meaning and corrections
+  New receiver, expansion-transition and runtime tests cover actual byte streams,
+  operation replay, named refusals, final-time fences, credits and paired reopen.
+  One worker with three storage handles executes two real children, closes their
+  scope and publishes the parent's exact reassembled output. Capacity tests admit
+  one child, yield on the next, execute the first and resume the same parent attempt.
+  Scheduling tests use page sizes 1 and 4; they prove bounded eventual progress in
+  those runs, not every possible interleaving. Suffix tests pin fixed upper bounds
+  with concurrent admission; occupied-worker deadline tests cross page boundaries.
+
+  The initial wrong-thread precedence regression incorrectly caught capacity only
+  at finishInput, although preflight can refuse earlier. Its null dereference was
+  a fixture error, not production-defect evidence:
+    session 18591, exit 1
+    /tmp/pipestream-runtime-wrong-thread-red-20260908T090304-0400.log
+  After capturing the whole receive/admit sequence, the test reached both named
+  errors and failed expected FAILED versus actual ACTIVE:
+    session 91427, exit 1
+    /tmp/pipestream-runtime-wrong-thread-corrected-red-20260908T090610-0400.log
+  The production fix prevents later non-capacity errors from inheriting Yield.
+  The corrected regression passed in focused and full runs without weakening it.
+  Static review also fixed an effectively-final test variable before execution.
+  Initial strict doclint found six missing main descriptions; documentation-only
+  corrections were made before the final warning-free run.
+
+Java verification
+  Commands run from repository root with:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop
+      -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+
+  Final focus adds -Dtest=AuthorityExpansionRuntimeFailureTest,AuthorityExpansionRuntimeTest,AuthorityExpansionSchedulingTest,BranchExecutionTest,ExecutionDiscoveryTest,ExecutionDiscoverySuffixTest,ExecutionRuntimeTest,ExecutionSchedulerTest,ExecutionStoreTest,ExpansionTransitionTest,InputReceiverCreditTest,InputStoreTest,ProducedAdmissionTest,ProducedDeclarationTest test
+    session 94274, exit 0
+    /tmp/pipestream-runtime-suffix-focused-20260908T091047-0400.log
+    14 actual suites, 73 tests, 0 failures/errors/skips
+
+  Strict package documentation, five changed production types:
+    javadoc -package -Xdoclint:all -Werror with the dependency classpath
+    ExecutionRuntime, ExecutionScheduler, ExecutionStore, InputStore, SessionStore
+    session 16872, exit 0, no warning/error lines
+    /tmp/pipestream-runtime-suffix-doclint-20260908T091106-0400.log
+
+  Full unfiltered command adds install, no test selector:
+    session 32868, exit 0
+    /tmp/pipestream-runtime-suffix-full-install-20260908T091122-0400.log
+    finished 2026-09-08 09:14:58 EDT
+    80 fresh JUnit XML reports, independently summed: 537 tests,
+    0 failures, 0 errors, 0 skips
+    report UTC range: 13:13:15.469045276Z through 13:14:56.791309822Z
+    native SQLite guard: 1/1 passed separately
+  The full Maven build retains existing shade overlap/module-info warnings;
+  warning-free doclint does not mean the packaging log contains no warnings.
+
+  Existing external examples, using the newly installed Java artifact:
+    working directory implementations/rust-quinn
+    target/release/pipestream-conformance examples
+    session 23648, exit 0
+    /tmp/pipestream-runtime-suffix-examples-20260908T091516-0400.log
+    PASS Java source -> Rust/Quinn server
+    PASS Rust source recovery -> C++/MsQuic server
+    PASS Rust source scatter -> Java, Rust, and C++ servers
+  These exercise the existing profiles, not the unimplemented Java V2 endpoint.
+
+Final production SHA-256
+  ExecutionRuntime.java 58174176d96c25e056208179897937fd846fd4ebb8b6693030e6c3a73262a34c
+  ExecutionScheduler.java 4718e9db31b5fb5cf315f4a0967f22227e30936e2170fcac7144c815fc725b8d
+  ExecutionStore.java 49711286ebf324824d79ded22286ad5014c0e3ba3d8b3c5680a98aaf4c817a86
+  InputStore.java 758f09efbf9be02706e6cfe6a8017fc6924b1d7595c03c6216325917bcc1eea9
+  SessionStore.java 44ab75517c2fcc6bf0d0199e4e60dc1c68e5543fcab5a86412bbb83f8acd2334
+  ordinary JAR b640b3b5d60dcb1753303a3b8df3f943ce60e168d4540fde5ef4fbb2968ba9ff
+  shaded JAR 57695b03a071f63d5249816bcd788f742dccbde29e68d5cafb438ffa0ec8197a
+
+Draft verification
+  ./build.sh core 05 draft
+    session 47363, exit 0
+    /tmp/pipestream-runtime-suffix-draft-20260908T091529-0400.log
+    idnits: 0 errors/flaws/warnings, existing FIPS-180-4 downref comment
+  Section 12.5 explicitly separates input coverage from child execution closure.
+  Appendix D states current Java behavior and the remaining Rust completion guard.
+  Both sections were inspected in generated TXT and HTML.
+    XML fd0f376e607f21c90a5feb00ea91019a6fb572176b0980fbffe27e820811ccff
+    TXT ced46fec7f3b81ddbf4816941f14801b02eeeb9306493b3e3a7875e6e70ed174
+    HTML efd5d2f5a855e9609cfb77df53beadad6d0229bf46d559a3d94b1d45764fd8e4
+
+Limitations and next required work
+  No Rust source or tests changed in this checkpoint; prior Rust results are not
+  relabeled fresh. Rust must implement and test the same Complete guard and its
+  recovery audit, correcting fixtures with real admitted-but-unexecuted children
+  rather than bypassing the rule. These Java tests add reopen coverage, not a new
+  process-death campaign or a machine-power-loss claim. Completion membership
+  scans and wider recovery/STRICT audits are not constant-time operations.
+
+  Full Java explicit retry/cancellation/results/dependency cleanup/retirement,
+  authenticated durable transport and client behavior remain required. The neutral
+  cross-language failure driver, full both-direction failure/resource evidence,
+  external workload and equivalent authenticated durable streaming-gRPC comparison
+  remain part of the original goal. This is verified local implementation progress,
+  not completion, full conformance, deployment, draft submission or IETF adoption.

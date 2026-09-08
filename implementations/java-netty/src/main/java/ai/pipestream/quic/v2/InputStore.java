@@ -419,6 +419,28 @@ final class InputStore implements AutoCloseable {
       Messages.Capabilities selected,
       long nowNanos)
       throws IOException {
+    return begin(context, header, selected, nowNanos, null);
+  }
+
+  /**
+   * Receive with one previously reserved callback handle. The credit grants capacity only; the
+   * authority must still validate the current producer fence before each operation.
+   *
+   * @param context already authenticated session context
+   * @param header structurally valid immutable input header
+   * @param selected negotiated connection limits
+   * @param nowNanos monotonic reception start
+   * @param credit this store's unborrowed credit, or null for ordinary reception
+   * @return single-use receiver which returns borrowed capacity only after safe cleanup
+   * @throws IOException filesystem failure or closed storage
+   */
+  synchronized Receiver begin(
+      Commitments.Context context,
+      InputHeader header,
+      Messages.Capabilities selected,
+      long nowNanos,
+      ReceiverCredit credit)
+      throws IOException {
     ensureOpen();
     Envelope envelope = envelope(context, header);
     if (header.parameters().input().length() > limits.objectBytes())
@@ -432,7 +454,7 @@ final class InputStore implements AutoCloseable {
     byte[] metadata = metadata(envelope);
     long size = add(add(PREFIX + CHECKSUM, metadata.length), header.parameters().input().length());
     long reservation = multiply(size, 2);
-    reserve(reservation, 2);
+    reserve(reservation, 2, credit);
     Path path = root.resolve("pending").resolve(UUID.randomUUID() + ".part");
     FileChannel output = null;
     try {
@@ -440,25 +462,22 @@ final class InputStore implements AutoCloseable {
       writeAll(output, ByteBuffer.allocate(PREFIX).put(MAGIC).putInt(metadata.length).flip());
       writeAll(output, ByteBuffer.wrap(metadata));
       writeAll(output, ByteBuffer.wrap(Commitments.sha256().digest(metadata)));
-      return new Receiver(path, output, envelope, verifier, size);
+      return new Receiver(path, output, envelope, verifier, size, credit);
     } catch (IOException | RuntimeException failure) {
-      if (output != null)
-        try {
-          output.close();
-        } catch (IOException cleanup) {
-          failure.addSuppressed(cleanup);
-        }
       try {
+        if (output != null) output.close();
         // CREATE_NEW failure does not grant ownership of an already existing temporary name.
         if (output != null) {
           Files.deleteIfExists(path);
           sync(root.resolve("pending"));
         }
         release(reservation, 2);
+        returnReceiver(credit);
       } catch (IOException cleanup) {
+        // Uncertain physical close or unsynchronized deletion retains both the
+        // namespace charge and its handle. Recovery must establish safe reuse.
         failure.addSuppressed(cleanup);
       }
-      handles--;
       throw failure;
     }
   }
@@ -645,6 +664,18 @@ final class InputStore implements AutoCloseable {
   }
 
   /**
+   * Reserve one sequential child-input receiver before invoking an expanding callback. Bytes and
+   * names are charged for each actual reception; this grants no producer or admission authority.
+   *
+   * @return store-bound handle capacity held until every borrowed receiver safely closes
+   * @throws IOException closed storage
+   */
+  synchronized ReceiverCredit reserveInputReceiver() throws IOException {
+    pin();
+    return new ReceiverCredit();
+  }
+
+  /**
    * Fully verify an installed output for the exact worker identity without publishing or rerunning.
    *
    * @param context expected retained session
@@ -776,6 +807,43 @@ final class InputStore implements AutoCloseable {
     }
   }
 
+  /** One store-bound receive handle, reusable by only one physical receiver at a time. */
+  final class ReceiverCredit implements AutoCloseable {
+    private final InputStore source = InputStore.this;
+    private boolean borrowed;
+    private boolean closed;
+
+    private ReceiverCredit() {}
+
+    private void borrow(InputStore expected) {
+      if (source != expected || closed || borrowed)
+        throw new ProtocolError(
+            ProtocolError.Code.CONFLICT, "input receiver credit is foreign, closed or borrowed");
+      borrowed = true;
+    }
+
+    private void returned() {
+      if (closed || !borrowed) throw new IllegalStateException("input receiver credit underflow");
+      borrowed = false;
+    }
+
+    /**
+     * Release reserved capacity after its receiver has safely closed. A borrowed credit remains
+     * charged and refuses release; repeated close after successful release is harmless.
+     *
+     * @throws IOException a physical receiver or uncertain cleanup still owns the credit
+     */
+    @Override
+    public void close() throws IOException {
+      synchronized (InputStore.this) {
+        if (closed) return;
+        if (borrowed) throw new IOException("input receiver credit is still borrowed");
+        returnReceiver(null);
+        closed = true;
+      }
+    }
+  }
+
   /** One bounded immutable reception; finish means actual transport FIN, not admission. */
   final class Receiver implements AutoCloseable {
     private final Path path;
@@ -783,6 +851,7 @@ final class InputStore implements AutoCloseable {
     private final Envelope envelope;
     private final ObjectStream.Payload verifier;
     private final long size;
+    private final ReceiverCredit credit;
     private boolean linked;
     private boolean ended;
 
@@ -791,12 +860,14 @@ final class InputStore implements AutoCloseable {
         FileChannel channel,
         Envelope envelope,
         ObjectStream.Payload verifier,
-        long size) {
+        long size,
+        ReceiverCredit credit) {
       this.path = path;
       this.channel = channel;
       this.envelope = envelope;
       this.verifier = verifier;
       this.size = size;
+      this.credit = credit;
     }
 
     /**
@@ -898,7 +969,7 @@ final class InputStore implements AutoCloseable {
       sync(root.resolve("pending"));
       synchronized (InputStore.this) {
         release(linked ? size : multiply(size, 2), linked ? 1 : 2);
-        handles--;
+        returnReceiver(credit);
       }
       ended = true;
     }
@@ -1324,11 +1395,24 @@ final class InputStore implements AutoCloseable {
   }
 
   private void reserve(long addedBytes, int addedFiles) throws IOException {
+    reserve(addedBytes, addedFiles, null);
+  }
+
+  private void reserve(long addedBytes, int addedFiles, ReceiverCredit credit) throws IOException {
+    ensureOpen();
     if (addedBytes > limits.bytes() - bytes || addedFiles > limits.files() - files)
       throw ProtocolError.limit("input storage capacity exhausted");
-    pin();
+    if (credit == null) pin();
+    else credit.borrow(this);
     bytes += addedBytes;
     files += addedFiles;
+  }
+
+  private void returnReceiver(ReceiverCredit credit) {
+    if (credit == null) {
+      if (handles == 0) throw new IllegalStateException("input handle accounting underflow");
+      handles--;
+    } else credit.returned();
   }
 
   private void chargeRetained(long addedBytes, int addedFiles) {

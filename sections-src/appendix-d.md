@@ -207,9 +207,21 @@ Local producer-1 declaration and input-admission APIs now recheck current parent
 ownership, deadline and authorization through commitment, even on replay. Their
 operation journal and recovery audit distinguish the caller and authority
 namespaces. Membership sealing still cannot complete authority expansion.
-Explicit retry, producer callback scheduling and durable expansion completion,
+Java now runs a separate authority-expansion callback, admits actual child inputs,
+and resumes original operations under replacement leases without changing the wire
+attempt. Expansion completion requires sealed membership and admitted or already
+terminal obligations; unfinished receivers and non-capacity interface failures
+prevent completion. Phase-specific credits release producer resources before
+waiting for child closure and reacquire reassembly resources under a new lease.
+Bounded dispatch cursors and independent deadline scanning prevent an occupied
+worker from holding up maintenance. This remains local authority behavior.
+Explicit retry,
 broader orphan/subtree reconciliation, result-read pins and transport,
 retirement and full cross-language failure/resource gates remain required.
+
+The Rust expansion-completion path still needs the same explicit check that sealed
+but unadmitted, nonterminal child obligations cannot be left behind. Existing Rust
+tests and implementation coverage do not establish that invariant yet.
 
 As of 2026-09-07, the Rust authority library also implements transactional
 admission and replay, fenced worker execution, both branch producers and real

@@ -2559,3 +2559,32 @@ Full Java retry/cancellation/results/cleanup/retirement/transport/client behavio
 the neutral cross-language failure driver and all original workload/equivalent
 authenticated durable streaming-gRPC deliverables remain required. This is
 verified progress; the complete goal remains active and incomplete.
+
+### Java authority-expansion checkpoint, 2026-09-08
+
+Java now invokes a real mode-2 expander with parent-fenced producer operations,
+stable declaration/admission replay and a phase-specific receiver credit. Complete
+requires sealed membership with admitted or already-terminal obligations; Yield
+releases local ownership while preserving the wire attempt and settlement funding.
+After actual child closure, a separate invocation reassembles committed child
+outputs. One-worker, three-handle tests produce and publish actual reassembled bytes.
+
+Review also corrected sticky refusal precedence and dispatch fairness. An earlier
+capacity refusal cannot hide later wrong-thread misuse behind a Yield. Capacity-
+blocked dispatch retains the ready child's place; independent finite deadline
+maintenance continues even with all workers occupied. A dispatch sweep can extend
+its tail only once before wrapping. Section 12.5 states the completion coverage rule.
+
+Reviewed raw evidence: 73 focused tests and the full unfiltered 537-test Java suite
+pass with no failures/errors/skips. Strict scoped Javadoc, the native guard, all
+three existing external examples and the updated draft build pass. The
+[expansion verification record](../../conformance/results/durable-work-v2-java-expansion-2026-09-08.txt)
+retains the corrected red/green evidence, final source/artifact hashes and costs.
+Those examples do not establish authenticated Java V2 wire behavior.
+
+Next align the Rust completion path and recovery audit with the same explicit
+sealed/admitted-or-terminal rule; current fixture declarations without input must
+not receive a test-only exemption. Complete Java retry/cancellation/results/
+cleanup/retirement/transport/client behavior, the neutral cross-language failure
+driver and every original workload/equivalent authenticated durable streaming-gRPC
+deliverable remain required. The full goal remains active and incomplete.

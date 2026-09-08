@@ -5,8 +5,10 @@
 session, declaration, admission, local execution, result-publication, closure and
 direct-child dependency layer for Sections 12.3 through 12.9. They are
 package-private and are not wired into a durable-profile listener. The shipped
-Java endpoint still advertises Core only. Authority-produced expansion, result delivery
-and retirement remain to be implemented; storage behavior is not endpoint interoperability.
+Java endpoint still advertises Core only. Local authority-produced expansion is
+implemented behind the host-owned runtime; result delivery, retirement and endpoint
+integration remain to be implemented. Storage and local execution behavior are not
+endpoint interoperability.
 
 ## Identity and transaction boundary
 
@@ -274,11 +276,14 @@ operation kind remain immutable. Scope seals and input commitments bind the
 actual producer, not an inferred caller identity. Existing record capacities,
 session-wide streaming audit costs and guarded file-length limits still apply.
 
-These are local storage APIs, not an expansion callback runtime or a durable
-endpoint. A child membership seal still leaves `expansionComplete=false` in its
-parent job. Durable expansion completion, phase-specific receiver credits and
-resumable producer callback scheduling remain required before mode 2 can run.
-No wire message, profile advertisement or storage-format revision changes here.
+These storage operations are consumed by the local mode-2 expansion runtime, not
+exposed as a durable endpoint. A child membership seal alone still leaves
+`expansionComplete=false` in its parent job. The expander must return Complete only
+after its stable producer operations have sealed the child scope and every declared
+member has been admitted or has already reached a permitted terminal outcome;
+the committing transition verifies those obligations.
+A Yield keeps the same wire attempt and durable expansion obligation for a replacement
+lease. No wire message, profile advertisement or storage-format revision changes here.
 
 ## Durable worker ownership and failure settlement
 
@@ -373,10 +378,24 @@ adapter remain separate required implementations.
 and outside metadata transactions. It is a synchronous runner for host-owned
 worker threads, not a durable-profile listener. `ExecutionScheduler` supplies its
 background discovery and physical worker pool.
-It accepts exact leaf (mode 0) and caller-expanded branch (mode 1) registrations
-matching the admission registry's label, mode and restart-safety contract. Missing
-callbacks, mismatched contracts and authority-expansion (mode 2) registrations
-are refused, not executed through a fallback.
+It accepts exact leaf (mode 0), caller-expanded branch (mode 1) and
+authority-expanded branch (mode 2) registrations matching the admission registry's
+label, mode and restart-safety contract. Mode 2 has a separate `Expander` phase and
+reassembly callback: expansion declares and admits producer-1 children, while the
+ordinary callback runs only after completed expansion and successful STRICT child
+closure. Missing phase callbacks and mismatched contracts are refused, not executed
+through a fallback.
+
+The host configures explicit local-producer capability ceilings. Expansion narrows
+those ceilings to the exact durable profile retained by the session; a retained
+durable-only session cannot silently acquire results. Replacement leases replay the
+original producer-1 operation identities and immutable receipts, inputs, deadlines
+and admitted jobs rather than duplicating them. Complete is refused while a produced
+receiver is unfinished or the sealed/admitted membership obligations are incomplete.
+Resource LIMIT_EXCEEDED may Yield without changing the wire attempt. Either Complete
+or Yield ends the expansion invocation and releases its physical worker slot and
+phase-specific receiver credit after safe cleanup; reassembly later acquires its own
+input, child-reader and optional output-writer resources.
 
 One runner bounds simultaneous physical invocations globally and per retained
 owner across sessions, with no waiting queue. The host must use that runner as its
@@ -506,7 +525,18 @@ never re-executed. Discovery observes whether an exact successful child summary
 is present and leaves waiting parents out of the worker pool, so a parent at the
 front of a one-worker sweep cannot starve its own children. This bounded readiness
 hint does not verify all descendants or authorize execution: the actual claim
-still audits STRICT closure. Authority-produced expansion remains unsupported.
+still audits STRICT closure. Authority-expanded parents are discoverable while their
+expansion obligation is pending; after Complete they wait for the same authoritative
+STRICT closure before reassembly.
+
+Dispatch preserves the first ready position blocked by global worker capacity,
+rather than repeatedly restarting at a yielding parent. At the end of a finite
+sweep it may inspect one fresh suffix for newly admitted children, then must wrap;
+continuous tail admissions cannot extend that sweep indefinitely. Deadline
+maintenance has a separate finite cursor, so it keeps progressing while dispatch
+is capacity-blocked. Each poll examines at most one configured page for dispatch
+and one for deadline maintenance, in addition to the existing closure batch. The
+extra bounded metadata scan is a real cost, not a zero-overhead fairness claim.
 
 Deadline settlement runs on the discovery thread, separately from the callback
 pool, including when every physical worker is busy or the owner grant is denied.
@@ -612,24 +642,24 @@ they cannot simulate every power-loss or storage-device failure.
 The independent [input store](java-v2-input-store.md) now receives, verifies and
 durably installs bounded immutable bytes, and exact input/database installations
 can be paired explicitly. Storage admission now commits its receipt and funded
-job atomically; the endpoint and executor are not activated by that fact.
+job atomically; admission itself neither invokes application code nor activates the
+network endpoint.
 
-Authority-produced branch expansion, explicit wire-attempt retry,
-local producer-1 ingress, subtree settlement,
-results/read pins, retirement/reconciliation,
+Explicit wire-attempt retry, results/read pins, retirement/reconciliation,
 durable client observations and authenticated endpoint integration remain
 mandatory. Fixed image credits now protect their specifically bounded writes;
-cancellation, expansion and cleanup write sets still need their real funded transitions and
-cost gates before activation. This increment does not prove full
+cancellation and remaining cleanup write sets still need their real funded transitions
+and cost gates before activation. This increment does not prove full
 Java V2 behavior, live TLS-policy
 revocation settlement, cross-language V2 equivalence or the protocol-neutral
 failure driver. The external chunk/distribute/transform/reassemble workload and
 equivalent authenticated durable streaming-gRPC comparison are still required.
 
-Enabling mode 2 is not just widening the registration check. Expansion needs
-its own fenced declaration/admission interface and a durable completion transition
-distinct from sealing. Replacement workers must reuse original producer operation
-identities. Resource admission must cover each execution phase: receiving a child
-must not compete with idle parent reassembly credits for the last available handle.
-The expansion phase must release its physical worker while awaiting children;
-rehydration then reacquires and verifies the completed expansion and STRICT closure.
+Local mode 2 uses its own fenced declaration/admission interface and a durable
+completion transition distinct from sealing. Replacement workers reuse original
+producer operation identities. Resource admission covers each execution phase:
+receiving a child does not compete with idle parent reassembly credits for the last
+available handle. The expansion phase releases its physical worker while awaiting
+children; rehydration then reacquires and verifies completed expansion and STRICT
+closure. These local guarantees do not activate the V2 network endpoint or establish
+full conformance or interoperability.
