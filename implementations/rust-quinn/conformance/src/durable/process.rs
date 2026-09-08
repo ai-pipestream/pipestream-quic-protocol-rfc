@@ -15,15 +15,57 @@ use std::{
     time::{Duration, Instant},
 };
 
-const READY_TIMEOUT: Duration = Duration::from_secs(15);
+// 30s so a cold JVM server can still become ready inside the window.
+const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const OP_TIMEOUT: Duration = Duration::from_secs(30);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Which subject implementation a side of the pair runs. Everything is
+/// still driven by spawning published binaries; the driver never links
+/// against a subject.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Subject {
+    Rust,
+    Java,
+}
+
+impl Subject {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Rust => "rust",
+            Self::Java => "java",
+        }
+    }
+
+    /// Marker printed on stdout by a successful authority initialization.
+    fn initialized_marker(self) -> &'static str {
+        // Rust prints "AUTHORITY_INITIALIZED <label>"; Java V2Main prints
+        // "INITIALIZED <root>" (api-plan.md section 1.5).
+        match self {
+            Self::Rust => "AUTHORITY_INITIALIZED",
+            Self::Java => "INITIALIZED",
+        }
+    }
+
+    /// Marker printed on stdout by a successful client journal initialization.
+    pub fn client_initialized_marker(self) -> &'static str {
+        // Rust prints "CLIENT_INITIALIZED"; Java ClientCommands.initClient
+        // prints "INITIALIZED <intent>" (ClientCommands.java:146).
+        match self {
+            Self::Rust => "CLIENT_INITIALIZED",
+            Self::Java => "INITIALIZED",
+        }
+    }
+}
+
 /// Everything one scenario needs to own a V2 authority: storage roots,
-/// credentials, and the subject binary. `init-authority` has been run against
-/// these roots before `start_server` is used.
+/// credentials, and the subject entry points. `init-authority` has been run
+/// against these roots before `start_server` is used.
 pub struct AuthorityFixture {
-    pub bin: PathBuf,
+    pub rust_bin: PathBuf,
+    pub java_jar: Option<PathBuf>,
+    pub server: Subject,
+    pub client: Subject,
     pub root: PathBuf,
     pub state_db: PathBuf,
     pub object_dir: PathBuf,
@@ -31,42 +73,91 @@ pub struct AuthorityFixture {
 }
 
 impl AuthorityFixture {
-    pub fn new(bin: &Path, root: &Path, certs: Material) -> Result<Self> {
+    pub fn new(
+        rust_bin: &Path,
+        java_jar: Option<&Path>,
+        root: &Path,
+        certs: Material,
+        server: Subject,
+        client: Subject,
+    ) -> Result<Self> {
         fs::create_dir_all(root)?;
         Ok(Self {
-            bin: bin.to_path_buf(),
+            rust_bin: rust_bin.to_path_buf(),
+            java_jar: java_jar.map(Path::to_path_buf),
             root: root.to_path_buf(),
             state_db: root.join("authority.sqlite"),
             object_dir: root.join("objects"),
             certs,
+            server,
+            client,
         })
     }
 
-    pub fn base(&self) -> Vec<String> {
-        vec![path(&self.bin), "v2".to_owned()]
+    fn subject_base(&self, subject: Subject) -> Result<Vec<String>> {
+        Ok(match subject {
+            Subject::Rust => vec![path(&self.rust_bin), "v2".to_owned()],
+            Subject::Java => vec![
+                "java".into(),
+                "--enable-native-access=ALL-UNNAMED".into(),
+                "-cp".into(),
+                path(
+                    self.java_jar
+                        .as_ref()
+                        .context("Java subject requested but no --java-jar was provided")?,
+                ),
+                "ai.pipestream.quic.v2.V2Main".into(),
+            ],
+        })
     }
 
+    /// Entry-point prefix for the fixture's server subject.
+    pub fn base(&self) -> Result<Vec<String>> {
+        self.subject_base(self.server)
+    }
+
+    /// Entry-point prefix for the fixture's client subject.
+    pub fn client_base(&self) -> Result<Vec<String>> {
+        self.subject_base(self.client)
+    }
+
+    /// Authority storage arguments. Rust takes the paired DB/object
+    /// directories explicitly; Java takes the root that contains both
+    /// (api-plan.md section 1.5: fixed layout root/authority.sqlite +
+    /// root/objects, byte-for-byte paired like Rust).
     pub fn storage_args(&self) -> Vec<String> {
-        vec![
-            "--state-db".into(),
-            path(&self.state_db),
-            "--object-dir".into(),
-            path(&self.object_dir),
+        let mut args = match self.server {
+            Subject::Rust => vec![
+                "--state-db".into(),
+                path(&self.state_db),
+                "--object-dir".into(),
+                path(&self.object_dir),
+            ],
+            Subject::Java => vec!["--root".into(), path(&self.root)],
+        };
+        args.extend([
             "--authority".into(),
             AUTHORITY.to_owned(),
             "--principal-map".into(),
             path(&self.certs.principal_map),
             "--trust-system-clock".into(),
-        ]
+        ]);
+        args
     }
 
     pub fn run_init_authority(&self) -> Result<()> {
-        let mut command = with_owned(&self.base(), &["init-authority".into()]);
+        let mut command = with_owned(&self.base()?, &["init-authority".into()]);
         command.extend(self.storage_args());
+        if self.server == Subject::Java {
+            // Java's init-authority validates the result-locator authority up
+            // front (V2Main.configuration requires --result-authority); the
+            // Rust clap definition has no such flag on init-authority.
+            command.extend(["--result-authority".into(), "localhost:7443".into()]);
+        }
         let output = run_output_owned(&self.root, &command, OP_TIMEOUT)?;
         ensure_success(&output, "v2 init-authority")?;
         ensure!(
-            String::from_utf8_lossy(&output.stdout).contains("AUTHORITY_INITIALIZED"),
+            String::from_utf8_lossy(&output.stdout).contains(self.server.initialized_marker()),
             "init-authority did not confirm initialization\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
@@ -112,7 +203,7 @@ impl AuthorityFixture {
         connection: &[String],
         operation: &[&str],
     ) -> Result<Output> {
-        let mut command = with_owned(&self.base(), &["client".into()]);
+        let mut command = with_owned(&self.client_base()?, &["client".into()]);
         command.extend(self.journal_args(journal, owner, creation_sequence));
         command.extend(connection.iter().cloned());
         command.extend(operation.iter().map(|value| (*value).to_owned()));
@@ -129,7 +220,7 @@ impl AuthorityFixture {
         connection: &[String],
         operation: &[&str],
     ) -> Result<Child> {
-        let mut command = with_owned(&self.base(), &["client".into()]);
+        let mut command = with_owned(&self.client_base()?, &["client".into()]);
         command.extend(self.journal_args(journal, owner, creation_sequence));
         command.extend(connection.iter().cloned());
         command.extend(operation.iter().map(|value| (*value).to_owned()));
@@ -151,7 +242,7 @@ impl AuthorityFixture {
     /// Authenticated readiness probe: `next-sequence` over mTLS.
     pub fn next_sequence(&self, server: &OwnedServer, principal: &str) -> Result<u64> {
         let connection = self.connection_args(server, principal)?;
-        let mut command = self.base();
+        let mut command = self.client_base()?;
         command.push("next-sequence".into());
         command.extend(connection);
         let output = run_output_owned(&self.root, &command, OP_TIMEOUT)?;
@@ -172,7 +263,7 @@ impl AuthorityFixture {
         let serial = unique_suffix();
         let ready = self.root.join(format!("ready-{serial:x}"));
         let log = self.root.join(format!("server-{serial:x}.log"));
-        let mut command = with_owned(&self.base(), &["serve".into()]);
+        let mut command = with_owned(&self.base()?, &["serve".into()]);
         command.extend(self.storage_args());
         command.extend([
             "--bind".into(),

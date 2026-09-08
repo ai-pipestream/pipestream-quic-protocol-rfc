@@ -113,6 +113,7 @@ pub fn run(args: DurableArgs) -> Result<()> {
         run_root: run_root.clone(),
         seed: args.seed,
         rust_bin: rust_bin.clone(),
+        java_jar: args.java_jar.clone(),
     };
     let mut outcomes: Vec<(&scenarios::Row, scenarios::DirectionOutcome)> = Vec::new();
     for row in &selected {
@@ -128,12 +129,12 @@ pub fn run(args: DurableArgs) -> Result<()> {
     let mut failed = false;
     for (row, outcome) in &outcomes {
         match outcome {
-            scenarios::DirectionOutcome::Pass if args.dev => println!(
-                "SCENARIO OK {} rust-client/rust-server (dev mode: labelled INCOMPLETE)",
+            scenarios::DirectionOutcome::Pass(directions) if args.dev => println!(
+                "SCENARIO OK {} {directions} (dev mode: labelled INCOMPLETE)",
                 row.id
             ),
-            scenarios::DirectionOutcome::Pass => {
-                println!("PASS {} rust-client/rust-server", row.id)
+            scenarios::DirectionOutcome::Pass(directions) => {
+                println!("PASS {} {directions}", row.id)
             }
             scenarios::DirectionOutcome::Incomplete(reason) => {
                 println!("INCOMPLETE {}: {reason}", row.id)

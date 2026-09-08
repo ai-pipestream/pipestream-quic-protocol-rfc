@@ -4,7 +4,7 @@
 use crate::durable::events::{ArtifactRef, EventWriter};
 use crate::durable::mtls;
 use crate::durable::oracle;
-use crate::durable::process::{AuthorityFixture, OwnedServer};
+use crate::durable::process::{AuthorityFixture, OwnedServer, Subject};
 use crate::durable::schedule;
 use crate::{hex, unique_suffix};
 use anyhow::{Context, Result, bail, ensure};
@@ -172,6 +172,7 @@ pub struct ScenarioContext {
     pub run_root: PathBuf,
     pub seed: u64,
     pub rust_bin: PathBuf,
+    pub java_jar: Option<PathBuf>,
 }
 
 impl ScenarioContext {
@@ -182,9 +183,18 @@ impl ScenarioContext {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum DirectionOutcome {
-    Pass,
+    Pass(String),
     Incomplete(String),
     Fail(String),
+}
+
+/// Directions a passing row actually executed, for the run summary line.
+fn direction_coverage(row: &Row, context: &ScenarioContext) -> String {
+    if row.id == "g1-leaf-copy" && context.java_jar.is_some() {
+        "rust-client/rust-server, rust-client/java-server, java-client/rust-server".to_owned()
+    } else {
+        "rust-client/rust-server".to_owned()
+    }
 }
 
 pub fn run_direction(row: &Row, context: &ScenarioContext, dev: bool) -> DirectionOutcome {
@@ -195,7 +205,7 @@ pub fn run_direction(row: &Row, context: &ScenarioContext, dev: bool) -> Directi
         ));
     }
     match run_rust_direction(row, context) {
-        Ok(()) => DirectionOutcome::Pass,
+        Ok(()) => DirectionOutcome::Pass(direction_coverage(row, context)),
         Err(error) => {
             let message = format!("{error:#}");
             if dev {
@@ -268,13 +278,18 @@ fn open_scenario(context: &ScenarioContext, id: &str) -> Result<(PathBuf, PathBu
     Ok((scenario_dir, artifacts))
 }
 
-fn open_events(context: &ScenarioContext, scenario_dir: &Path, id: &str) -> Result<EventWriter> {
+fn open_events(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    id: &str,
+    client: Subject,
+) -> Result<EventWriter> {
     let process_start_id = format!("{}-{:x}", std::process::id(), unique_suffix());
     EventWriter::open(
         &scenario_dir.join("events.tsv"),
         &context.run_id,
         id,
-        "rust",
+        client.name(),
         "client",
         &process_start_id,
     )
@@ -282,9 +297,21 @@ fn open_events(context: &ScenarioContext, scenario_dir: &Path, id: &str) -> Resu
 
 /// mTLS material, init-authority, serve with authenticated readiness, and a
 /// fresh client journal bound to NEXT_SEQUENCE 1.
-fn setup_session(context: &ScenarioContext, scenario_dir: &Path) -> Result<Session> {
+fn setup_session(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<Session> {
     let certs = mtls::generate(&scenario_dir.join("certs"), &[("alice", "alice")])?;
-    let fixture = AuthorityFixture::new(&context.rust_bin, &scenario_dir.join("subject"), certs)?;
+    let fixture = AuthorityFixture::new(
+        &context.rust_bin,
+        context.java_jar.as_deref(),
+        &scenario_dir.join("subject"),
+        certs,
+        server,
+        client,
+    )?;
     fixture.run_init_authority()?;
     let server = fixture.start_server()?;
     let sequence = fixture.next_sequence(&server, "alice")?;
@@ -294,11 +321,11 @@ fn setup_session(context: &ScenarioContext, scenario_dir: &Path) -> Result<Sessi
     );
     let journal = scenario_dir.join("client").join("session.sqlite");
     fs::create_dir_all(journal.parent().expect("journal has a parent directory"))?;
-    let mut command = fixture.base();
+    let mut command = fixture.client_base()?;
     command.push("init-client".into());
     command.extend(fixture.journal_args(&journal, "alice", sequence));
     let init = crate::run_output_owned(&fixture.root, &command, OP_WAIT)?;
-    require(&init, "CLIENT_INITIALIZED", "v2 init-client")?;
+    require(&init, client.client_initialized_marker(), "v2 init-client")?;
     let connection = fixture.connection_args(&server, "alice")?;
     Ok(Session {
         fixture,
@@ -595,19 +622,51 @@ fn hex_to_id(text: &str) -> Result<[u8; 16]> {
 /// g1-leaf-copy: declare one entity, admit a deterministic input to copy/v2,
 /// watch to terminal success, then select/read index 0 and verify the
 /// received bytes equal the independently computed input bytes.
+///
+/// The canonical rust-client/rust-server direction runs in the row directory.
+/// When a Java jar is provided, both mixed directions run too, each in its own
+/// subdirectory of the row directory; without --java-jar (dev mode only; the
+/// acceptance gate rejects it) the mixed directories get an INCOMPLETE marker.
 fn g1_leaf_copy(context: &ScenarioContext) -> Result<()> {
+    let scenario_dir = context.scenario_dir("g1-leaf-copy");
+    g1_leaf_copy_direction(context, &scenario_dir, Subject::Rust, Subject::Rust)?;
+    for (server, client, name) in [
+        (Subject::Java, Subject::Rust, "rust-client-java-server"),
+        (Subject::Rust, Subject::Java, "java-client-rust-server"),
+    ] {
+        let direction_dir = scenario_dir.join(name);
+        if context.java_jar.is_none() {
+            fs::create_dir_all(&direction_dir)?;
+            fs::write(
+                direction_dir.join("INCOMPLETE"),
+                b"no --java-jar provided; this direction was not run\n",
+            )?;
+            continue;
+        }
+        g1_leaf_copy_direction(context, &direction_dir, server, client)?;
+    }
+    Ok(())
+}
+
+fn g1_leaf_copy_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
     let scenario_id = "g1-leaf-copy";
-    let (scenario_dir, artifacts) = open_scenario(context, scenario_id)?;
-    let mut events = open_events(context, &scenario_dir, scenario_id)?;
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, client)?;
     enforce_no_fault_schedule(context, scenario_id)?;
 
-    let session = setup_session(context, &scenario_dir)?;
+    let session = setup_session(context, scenario_dir, server, client)?;
 
     // Expected values come from the oracle, stored separately from observed.
     let input = oracle::dataset(context.seed, INPUT_LEN);
     let expected_output_sha256 = oracle::sha256_hex(&input);
     write_kv(
-        &scenario_dir,
+        scenario_dir,
         "expected.tsv",
         &[
             ("input_len", INPUT_LEN.to_string()),
@@ -679,24 +738,30 @@ fn g1_leaf_copy(context: &ScenarioContext) -> Result<()> {
     )?;
     detach(&session)?;
 
-    write_kv(
-        &scenario_dir,
-        "observed.tsv",
-        &[
-            ("alpn", "pipestream/2".into()),
-            ("object_limit_client", "16777216".into()),
-            ("object_limit_server", "16777216".into()),
-            ("application", "copy/v2".into()),
-            ("mode", "0".into()),
-            ("terminal_state", "5".into()),
-            (
-                "watch_terminal",
-                terminal.trim().replace(['\t', '\n', '\r'], " "),
-            ),
-        ],
-    )?;
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("alpn", "pipestream/2".into()),
+        ("object_limit_client", "16777216".into()),
+        ("object_limit_server", "16777216".into()),
+        ("application", "copy/v2".into()),
+        ("mode", "0".into()),
+        ("terminal_state", "5".into()),
+        (
+            "watch_terminal",
+            terminal.trim().replace(['\t', '\n', '\r'], " "),
+        ),
+    ];
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
 
-    stop_and_seal(context, &scenario_dir, scenario_id, session.server, events)
+    stop_and_seal(context, scenario_dir, scenario_id, session.server, events)
 }
 
 // ---------------------------------------------------------------------------
@@ -741,10 +806,10 @@ fn parse_scope_page(stdout: &str) -> Result<(u64, u64)> {
 fn g2_duplicate_op_changed_params(context: &ScenarioContext) -> Result<()> {
     let scenario_id = "g2-duplicate-op-changed-params";
     let (scenario_dir, artifacts) = open_scenario(context, scenario_id)?;
-    let mut events = open_events(context, &scenario_dir, scenario_id)?;
+    let mut events = open_events(context, &scenario_dir, scenario_id, Subject::Rust)?;
     enforce_no_fault_schedule(context, scenario_id)?;
 
-    let session = setup_session(context, &scenario_dir)?;
+    let session = setup_session(context, &scenario_dir, Subject::Rust, Subject::Rust)?;
 
     let first = oracle::dataset(context.seed, INPUT_LEN);
     let changed = oracle::dataset(context.seed ^ 0x5a5a_5a5a_5a5a_5a5a, INPUT_LEN / 2);
@@ -884,10 +949,10 @@ fn g2_duplicate_op_changed_params(context: &ScenarioContext) -> Result<()> {
 fn g2_simultaneous_duplicate(context: &ScenarioContext) -> Result<()> {
     let scenario_id = "g2-simultaneous-duplicate";
     let (scenario_dir, artifacts) = open_scenario(context, scenario_id)?;
-    let mut events = open_events(context, &scenario_dir, scenario_id)?;
+    let mut events = open_events(context, &scenario_dir, scenario_id, Subject::Rust)?;
     enforce_no_fault_schedule(context, scenario_id)?;
 
-    let session = setup_session(context, &scenario_dir)?;
+    let session = setup_session(context, &scenario_dir, Subject::Rust, Subject::Rust)?;
 
     let input = oracle::dataset(context.seed, RACE_INPUT_LEN);
     let input_sha256 = oracle::sha256_hex(&input);
@@ -912,7 +977,7 @@ fn g2_simultaneous_duplicate(context: &ScenarioContext) -> Result<()> {
     let declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
     let second_journal = scenario_dir.join("client").join("session-b.sqlite");
     {
-        let mut command = session.fixture.base();
+        let mut command = session.fixture.base()?;
         command.push("init-client".into());
         command.extend(session.fixture.journal_args(&second_journal, "alice", 1));
         let init = crate::run_output_owned(&session.fixture.root, &command, OP_WAIT)?;
@@ -1090,10 +1155,10 @@ fn g2_simultaneous_duplicate(context: &ScenarioContext) -> Result<()> {
 fn g2_kill_server_after_admission_recovery(context: &ScenarioContext) -> Result<()> {
     let scenario_id = "g2-kill-server-after-admission-recovery";
     let (scenario_dir, artifacts) = open_scenario(context, scenario_id)?;
-    let mut events = open_events(context, &scenario_dir, scenario_id)?;
+    let mut events = open_events(context, &scenario_dir, scenario_id, Subject::Rust)?;
     enforce_no_fault_schedule(context, scenario_id)?;
 
-    let session = setup_session(context, &scenario_dir)?;
+    let session = setup_session(context, &scenario_dir, Subject::Rust, Subject::Rust)?;
 
     let input = oracle::dataset(context.seed, RACE_INPUT_LEN);
     let input_sha256 = oracle::sha256_hex(&input);
