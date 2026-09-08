@@ -1,0 +1,152 @@
+Java V2 paired input and authority storage, 2026-09-08
+Base: 9ee0a908f361c0a3233e8ada311584cb65907f59
+Implementation and tests: the commit containing this result file.
+Log filename timestamps use America/New_York (EDT, UTC-04:00).
+
+Scope
+  Java database format 4 retains an installation UUID, exact local configuration
+  and nullable input-store UUID under a bounded checksum. Every transaction
+  verifies that record against the handle's immutable database identity.
+  Input policy format 2 names its intended database UUID at initialization.
+  SessionStore.bindInputs atomically records that root UUID in the database,
+  preserving existing fixed-record completion-write reservations. A matching
+  replay succeeds; another empty root cannot replace an already bound root.
+
+  Setup holds the input owner's monitor through the writer transaction,
+  verifies its live immutable policy, completes file/directory synchronization
+  and commits the reverse binding. verifyInputs requires the already committed
+  exact pair and never adopts an unbound database. Standalone input roots,
+  wrong database identities and closed handles refuse before database access.
+  There is no rebind, conversion or automatic identity reset.
+
+  No wire format changed. This is neither authentication nor admission, and
+  creates no protocol operation, session, member, input object or job. Future
+  admission must check the pair again inside its committing writer transaction
+  and atomically fund the full job/receipt/output/metadata write set. Java's
+  endpoint remains Core only. Full Java execution/results/retirement, neutral
+  cross-language V2 failures and the original equivalent workload/gRPC baseline
+  remain required. Installation UUIDs do not prove backup freshness or defeat
+  an operator able to replace both stores and their checksums.
+
+Environment and commands
+  Repository: /work/main/pipestream-ai/dev-tools/pipestream-quic-protocol-rfc
+  Maven cache: /work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+  Maven 3.9.16, GraalVM Java 25.0.3, Java source release 21.
+  SQLite JDBC 3.53.4.0, native SQLite 3.53.4.
+  Existing Netty transport artifacts: 4.2.17.Final-pipestream.3.
+  No dependency, upstream reference-checkout or native-source changes.
+
+  Main compilation, repository root:
+    mvn -f implementations/java-netty/pom.xml -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -DskipTests compile
+  Session 49649, terminal exit 0.
+    /tmp/pipestream-store-binding-main-compile-20260908T021048.log
+
+  First focused gate, repository root:
+    mvn -f implementations/java-netty/pom.xml -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -Dtest=StoreBindingTest,SessionStoreTest,DeclarationStoreTest,InputStoreTest,InputStoreRecoveryTest test
+  Session 21091, terminal exit 0; 46 tests, 0 failures/errors/skips.
+  Native sqlite-file-growth passed 1/1 separately.
+    /tmp/pipestream-store-binding-focused-20260908T021104.log
+  StoreBindingTest contributes six tests. Existing physical SQLite saturation
+  fixtures still initialize at 21 pages/86,016 bytes and refuse at 11 declaration
+  commits or 33 creation commits while preserving earlier history. They are
+  unchanged fixture bounds, not evidence of a newly promised admission write set.
+
+  Recovery-focused gate, repository root:
+    mvn -f implementations/java-netty/pom.xml -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -Dtest=StoreBindingRecoveryTest test
+  Session 16345, terminal exit 0; 3 tests, 0 failures/errors/skips.
+    /tmp/pipestream-store-binding-recovery-focused-20260908T021431.log
+  The damaged-policy test was put inside try-with-resources before execution,
+  so even an unexpected assertion failure releases its input-owner lock. No
+  production semantics or refusal assertions were changed by that cleanup.
+
+Actual recovery and corruption oracles
+  Owned child processes retain the open input owner and use Runtime.halt:
+    exit 41: database and input root initialized; binding not committed.
+    exit 42: bindInputs has returned after its database commit.
+  After reopen, exit 41 must produce SQLException from verifyInputs until
+  bindInputs completes explicitly. Exit 42 must verify immediately. Both then
+  replay bindInputs, verify matching identities and require zero protocol rows
+  and zero input-file/handle usage. Child waits and forced cleanup are bounded;
+  no live cluster process is stopped. These are process crashes at completed
+  I/O boundaries, not storage-device power-loss measurements.
+
+  Real SQL mutation replaces ps_v2_meta.input_id with another nonzero 16-byte
+  value without updating identity_hash. Current verification and SessionStore
+  recovery must both refuse SQLException, while original payload bytes remain
+  available from the independently held input store.
+  A changed policy.cbor checksum must cause IOException on both current pair
+  verification and input-root recovery. Neither corruption case deletes or
+  silently resets retained data.
+
+  Ordinary matching/mismatch tests also cover exact input bytes across both
+  store reopens, verify-before-bind refusal and resumable prepared setup,
+  standalone/foreign/closed IOException ordering, same-database second-root
+  SQLException refusal, cross-independent pair refusals in both directions,
+  original-pair usability and absence of invented protocol state.
+
+Final verification
+  Full Java command, repository root, without filters or skip flags:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository install
+  Session 74268, terminal exit 0; 405 tests, 0 failures/errors/skips.
+  Native sqlite-file-growth passed 1/1 separately.
+    /tmp/pipestream-store-binding-java-full-20260908T021454.log
+  Maven finished 2026-09-08 02:18:05 EDT (06:18:05 UTC), elapsed 3:10.
+  Independent XML inspection: 39 reports, 405 testcase nodes, aggregate
+  tests/failures/errors/skips = [405, 0, 0, 0]. Fresh report mtimes span
+  2026-09-08 06:16:47.233844266 through 06:18:03.566142510 UTC.
+  Existing shade-plugin module-info and overlapping-resource warnings remain
+  visible in the raw log; no failed assertions or compiler warnings were hidden.
+  The existing input resource test still performs an actual 64 MiB write/read/
+  reopen under a 32 MiB heap cap. This run reported:
+    bytes=67108864
+    digest=eeeea29f19e99097aff081c75a85115c7732967d5824201ddba0d2d1f6202723
+    heapMax=33554432
+    observedRssKiB=269980
+  RSS is a point observation, not a peak or a 32 MiB whole-process guarantee.
+
+  Strict package-level Javadoc for both changed main types, cwd java-netty:
+    classpath="target/classes:$(cat target/v2-tls-classpath)"
+    javadoc -quiet -package -Xdoclint:all -Werror -d target/store-binding-apidocs -classpath "$classpath" -sourcepath src/main/java src/main/java/ai/pipestream/quic/v2/SessionStore.java src/main/java/ai/pipestream/quic/v2/InputStore.java
+  Terminal exit 0, empty log:
+    /tmp/pipestream-store-binding-doclint-20260908T021118.log
+  Both production source hashes remained unchanged through final verification.
+
+  Existing conformance examples, cwd implementations/rust-quinn:
+    target/release/pipestream-conformance examples
+  Session 30788, terminal exit 0, against the freshly repackaged Java artifact:
+    /tmp/pipestream-store-binding-conformance-examples-20260908T021810.log
+    PASS Java source -> Rust/Quinn server
+    PASS Rust source recovery -> C++/MsQuic server
+    PASS Rust source scatter -> Java, Rust, and C++ servers
+  These examples do not substitute for the full V2 durable-profile failure
+  driver or the original external equivalent-workload comparison.
+
+  Draft command, repository root:
+    ./build.sh core 05 draft
+  Session 18212, terminal exit 0:
+    /tmp/pipestream-store-binding-draft-20260908T021822.log
+  idnits 2.17.1: 0 errors, 0 flaws, 0 warnings, 1 FIPS-180-4 downref comment.
+  kramdown reports its existing explicit RFC9308 bibxml override warning.
+  This is local validation, not IETF acceptance or submission of a new draft.
+
+Final SHA-256
+  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/SessionStore.java
+    ca10f9cea78a0f9b964597b138bfbed29c26057d19d61be0d39c394dbd65d2e0
+  implementations/java-netty/src/main/java/ai/pipestream/quic/v2/InputStore.java
+    4c1cb9dbb015feffdf986a7d704b4b2f163c7bd95f36a0d80dfe5195ef475128
+  implementations/java-netty/src/test/java/ai/pipestream/quic/v2/StoreBindingTest.java
+    938fce977f0a75614a0546e4cfee02ee161d9b2d60b038cda12e9bd80ce83f92
+  implementations/java-netty/src/test/java/ai/pipestream/quic/v2/StoreBindingRecoveryTest.java
+    87c7acf55010161797c71312d29647b33c61c525314c41279d4e3146f285d0d6
+  implementations/java-netty/target/pipestream-quic-netty-0.1.0-SNAPSHOT.jar
+    3e8bb8df93a65d8a2422a1d706b8f4a31058f680ca5a8fb03d313b41d6f3676c
+  implementations/java-netty/target/pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar
+    bd5e1f6afb41052d5d998a96a3e07447528f687690775a73ed96486025114f63
+  draft-krickert-pipestream-05.xml
+    b732abed0ac451ca1b8651dd404f4d2c495758cabba16bad59b014f43e907457
+  draft-krickert-pipestream-05.txt
+    c7da001daab9c4d9c0e80e39b8ad4a5aef48e2066476615ce4a3ad181ffc7f30
+  draft-krickert-pipestream-05.html
+    d1c8c381897426f4effa5fb8e6dac9a8045ac0690d4f43d0bc30a664c50d1dbd
+  Unchanged Rust binaries remain pinned by the preceding input-store result
+  file; the unchanged Rust suite and upstream bootstrap were not rerun.

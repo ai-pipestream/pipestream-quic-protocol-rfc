@@ -2026,6 +2026,44 @@ Java's listener remains Core only. Atomic funded admission/jobs, execution,
 results, safe installed-object reclamation, full cross-language V2 failures
 and the original external workload/equivalent gRPC comparison remain required.
 
+### Java paired input/authority storage evidence, 2026-09-08
+
+Java database format 4 retains a fresh database-installation UUID and a
+checksummed immutable input-store binding. Input policy format 2 optionally
+names the exact database UUID at initialization. Standalone storage remains
+usable independently, but has no later adoption path. This is local setup for
+the admission path, not a new protocol message or an admission receipt.
+
+- V2-STORE/ownership: matching pairs survive reopen with exact input bytes;
+  independent databases with the same protocol authority name cannot cross
+  their roots. Another empty root created for the original database also
+  cannot replace its already bound input-store UUID. The original pair stays
+  usable after every mismatch refusal.
+- V2-STORE/recovery: actual owned subprocesses halt after input initialization
+  but before binding, and after binding returns. The first case must still
+  refuse verification until explicit setup completes. The second must verify
+  immediately. Both support exact idempotent setup replay and preserve their
+  matching identities without creating sessions, operations, members or inputs.
+- V2-STORE/integrity: changing the database input UUID without updating the
+  metadata checksum refuses both current verification and database recovery,
+  without changing installed input bytes. Damaging the input-policy checksum
+  refuses current verification and input-root recovery. Closed, unbound and
+  wrong-database input handles refuse before database inspection.
+
+Setup and verification hold the input owner's monitor through the SQLite
+transaction, recheck/synchronize its retained policy, and preserve the ordinary
+WAL headroom required by existing image-write promises. The
+[paired-store contract](java-v2-authority-store.md#paired-input-store-ownership)
+defines ordering, local refusal types and the limits of UUID-based ownership.
+Commands, fresh reports, subprocess exit boundaries and source hashes are in
+`conformance/results/durable-work-v2-java-store-binding-2026-09-08.txt`.
+
+The future admission transaction must recheck this exact pair within its own
+writer transaction and atomically fund the complete job, receipt, output and
+metadata promises. Pairing alone does not satisfy that gate or activate Java's
+durable profiles. Full execution/results/retirement, neutral cross-language
+failure testing and the external equivalent-workload comparison remain required.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

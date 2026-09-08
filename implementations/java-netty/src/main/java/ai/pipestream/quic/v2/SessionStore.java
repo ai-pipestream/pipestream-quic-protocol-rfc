@@ -5,6 +5,7 @@ import static ai.pipestream.quic.v2.Records.*;
 
 import ai.pipestream.quic.BoundedSqlite;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -18,6 +19,7 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.UUID;
 import java.util.concurrent.Semaphore;
 
 /**
@@ -26,7 +28,7 @@ import java.util.concurrent.Semaphore;
  * another implementation's database is accepted. Never call it on a transport event loop.
  */
 final class SessionStore {
-  private static final int VERSION = 3;
+  private static final int VERSION = 4;
   private static final int MAX_BINDING_BYTES = 1024;
   private static final Set<String> TABLES =
       Set.of(
@@ -114,14 +116,18 @@ final class SessionStore {
   private record Retained(
       Binding binding, int profiles, int controlLimit, boolean revoked, boolean retiring) {}
 
+  private record Metadata(long highWater, UUID identity, UUID inputs) {}
+
   private final BoundedSqlite database;
   private final Configuration config;
   private final byte[] configBytes;
+  private final UUID identity;
 
-  private SessionStore(BoundedSqlite database, Configuration config) {
+  private SessionStore(BoundedSqlite database, Configuration config, UUID identity) {
     this.database = database;
     this.config = config;
     configBytes = config.encode();
+    this.identity = identity;
   }
 
   /**
@@ -185,11 +191,99 @@ final class SessionStore {
     if (!DATABASE_OPERATIONS.tryAcquire())
       throw ProtocolError.limit("V2 database operation capacity");
     try {
-      SessionStore store = new SessionStore(BoundedSqlite.open(path, config.files()), config);
+      BoundedSqlite database = BoundedSqlite.open(path, config.files());
+      UUID identity;
+      if (initialize) identity = UUID.randomUUID();
+      else {
+        try (Connection connection = database.connect()) {
+          identity = readMetadata(connection, config.encode()).identity();
+        }
+      }
+      SessionStore store = new SessionStore(database, config, identity);
       store.bootstrap(initialize);
       return store;
     } finally {
       DATABASE_OPERATIONS.release();
+    }
+  }
+
+  /**
+   * Return this database installation's persistent identity, not a protocol authority name.
+   *
+   * @return immutable local database identity
+   */
+  UUID identity() {
+    return identity;
+  }
+
+  /**
+   * Commit an immutable two-way binding to input storage created for this database. This local
+   * setup operation neither authenticates a caller nor admits work. Repeating the exact binding is
+   * safe after an interrupted setup; another input installation cannot replace it.
+   *
+   * @param inputs exclusively held input store created for this database identity
+   * @throws IOException closed input storage, foreign ownership, changed policy or failed sync
+   * @throws SQLException conflicting retained binding or database failure
+   */
+  void bindInputs(InputStore inputs) throws IOException, SQLException {
+    inputBinding(inputs, true);
+  }
+
+  /**
+   * Require an already committed exact input-store binding without adopting an unbound database.
+   * The future admission transaction must repeat this check inside its own writer transaction.
+   *
+   * @param inputs expected live input-store owner
+   * @throws IOException closed input storage, foreign ownership, changed policy or failed sync
+   * @throws SQLException missing or conflicting binding, corrupt metadata or database failure
+   */
+  void verifyInputs(InputStore inputs) throws IOException, SQLException {
+    inputBinding(inputs, false);
+  }
+
+  private void inputBinding(InputStore inputs, boolean bind) throws IOException, SQLException {
+    Objects.requireNonNull(inputs);
+    synchronized (inputs) {
+      inputs.verifyAuthority(identity);
+      if (!DATABASE_OPERATIONS.tryAcquire())
+        throw ProtocolError.limit("V2 database operation capacity");
+      try (Connection connection = database.connect();
+          var statement = connection.createStatement()) {
+        if (!bind) statement.execute("PRAGMA query_only=ON");
+        statement.execute(bind ? "BEGIN IMMEDIATE" : "BEGIN");
+        try {
+          Metadata metadata = metadata(connection);
+          if (metadata.inputs() == null) {
+            if (!bind) throw corrupt("input storage has not been bound");
+            FixedRecords.protect(connection, config.files());
+            try (var update =
+                connection.prepareStatement(
+                    "UPDATE ps_v2_meta SET input_id=?,identity_hash=? WHERE singleton=1 AND"
+                        + " input_id IS NULL")) {
+              update.setBytes(1, uuid(inputs.identity()));
+              update.setBytes(2, identityHash(configBytes, identity, inputs.identity()));
+              if (update.executeUpdate() != 1) throw corrupt("input binding changed during setup");
+            }
+          } else if (!metadata.inputs().equals(inputs.identity())) {
+            throw corrupt("database belongs to a different input installation");
+          }
+          // Keep the input-owner monitor until commit so close cannot invalidate the checked pair.
+          inputs.verifyAuthority(identity);
+          statement.execute("COMMIT");
+        } catch (IOException | SQLException | RuntimeException failure) {
+          rollback(connection, failure);
+          throw failure;
+        }
+      } catch (SQLException failure) {
+        if ((failure.getErrorCode() & 255) == 13) {
+          ProtocolError refusal = ProtocolError.limit("SQLite file capacity exhausted");
+          refusal.initCause(failure);
+          throw refusal;
+        }
+        throw failure;
+      } finally {
+        DATABASE_OPERATIONS.release();
+      }
     }
   }
 
@@ -507,10 +601,13 @@ final class SessionStore {
           """
           CREATE TABLE ps_v2_meta (
             singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-            version INTEGER NOT NULL CHECK(version=3),
+            version INTEGER NOT NULL CHECK(version=4),
             config BLOB NOT NULL CHECK(length(config) BETWEEN 1 AND 1024),
             high_water INTEGER NOT NULL CHECK(high_water>=0),
-            clock_slot INTEGER NOT NULL UNIQUE REFERENCES ps_v2_slots(id) CHECK(clock_slot=1)
+            clock_slot INTEGER NOT NULL UNIQUE REFERENCES ps_v2_slots(id) CHECK(clock_slot=1),
+            store_id BLOB NOT NULL CHECK(length(store_id)=16 AND store_id!=zeroblob(16)),
+            input_id BLOB CHECK(input_id IS NULL OR (length(input_id)=16 AND input_id!=zeroblob(16))),
+            identity_hash BLOB NOT NULL CHECK(length(identity_hash)=32)
           ) STRICT
           """);
       sql.execute(
@@ -554,28 +651,78 @@ final class SessionStore {
           """);
     }
     DeclarationStore.createSchema(connection);
-    try (var insert = connection.prepareStatement("INSERT INTO ps_v2_meta VALUES(1,?,?,0,1)")) {
+    try (var insert =
+        connection.prepareStatement("INSERT INTO ps_v2_meta VALUES(1,?,?,0,1,?,NULL,?)")) {
       insert.setInt(1, VERSION);
       insert.setBytes(2, configBytes);
+      insert.setBytes(3, uuid(identity));
+      insert.setBytes(4, identityHash(configBytes, identity, null));
       insert.executeUpdate();
     }
   }
 
   private long meta(Connection connection) throws SQLException {
+    return metadata(connection).highWater();
+  }
+
+  private Metadata metadata(Connection connection) throws SQLException {
+    Metadata metadata = readMetadata(connection, configBytes);
+    if (!identity.equals(metadata.identity()))
+      throw corrupt("database installation identity changed");
+    return metadata;
+  }
+
+  private static Metadata readMetadata(Connection connection, byte[] configBytes)
+      throws SQLException {
     try (var statement = connection.createStatement();
         var row =
             statement.executeQuery(
                 """
-                SELECT version,CASE WHEN length(config)<=1024 THEN config END,high_water
+                SELECT version,CASE WHEN length(config)<=1024 THEN config END,high_water,
+                  CASE WHEN length(store_id)=16 THEN store_id END,
+                  CASE WHEN length(input_id)=16 THEN input_id END,input_id IS NOT NULL,
+                  CASE WHEN length(identity_hash)=32 THEN identity_hash END
                 FROM ps_v2_meta WHERE singleton=1
                 """)) {
       if (!row.next() || row.getInt(1) != VERSION || !Arrays.equals(configBytes, row.getBytes(2)))
         throw corrupt("authority, configuration or version differs");
       long highWater = row.getLong(3);
-      if (row.wasNull() || highWater < 0 || row.next())
-        throw corrupt("invalid authority high-water mark");
-      return highWater;
+      if (row.wasNull() || highWater < 0) throw corrupt("invalid authority high-water mark");
+      UUID identity = uuid(row.getBytes(4));
+      UUID inputs = row.getBoolean(6) ? uuid(row.getBytes(5)) : null;
+      byte[] hash = row.getBytes(7);
+      if (hash == null || !MessageDigest.isEqual(hash, identityHash(configBytes, identity, inputs)))
+        throw corrupt("database installation binding integrity failure");
+      if (row.next()) throw corrupt("duplicate authority metadata");
+      return new Metadata(highWater, identity, inputs);
     }
+  }
+
+  private static byte[] identityHash(byte[] configBytes, UUID identity, UUID inputs) {
+    MessageDigest digest = Commitments.sha256();
+    Cbor.Writer out = new Cbor.Writer(digest);
+    out.array(4);
+    out.text("pipestream-java-v2-installation", 128);
+    out.bytes(configBytes);
+    out.bytes(uuid(identity));
+    if (inputs == null) out.nil();
+    else out.bytes(uuid(inputs));
+    return digest.digest();
+  }
+
+  private static byte[] uuid(UUID value) {
+    return ByteBuffer.allocate(16)
+        .putLong(value.getMostSignificantBits())
+        .putLong(value.getLeastSignificantBits())
+        .array();
+  }
+
+  private static UUID uuid(byte[] bytes) throws SQLException {
+    if (bytes == null || bytes.length != 16) throw corrupt("invalid installation identity length");
+    ByteBuffer value = ByteBuffer.wrap(bytes);
+    UUID identity = new UUID(value.getLong(), value.getLong());
+    if (identity.equals(new UUID(0, 0))) throw corrupt("zero installation identity");
+    return identity;
   }
 
   private void audit(Connection connection) throws SQLException {

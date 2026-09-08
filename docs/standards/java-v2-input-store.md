@@ -22,12 +22,25 @@ channel: closing that channel could otherwise affect the first handle's POSIX
 lock. Closing the store refuses while any receiver or reader remains active.
 The store is not a multi-host shared-filesystem authority.
 
-`policy.cbor` retains a fresh local installation identity, immutable file-byte,
-file-name, per-object and active-handle limits, and a checksum. This identity
-does not replace the protocol's durable non-reuse rules or confer authorization.
-An authority database still needs an explicit durable binding to that identity
-before referencing these objects. That binding is part of the remaining
-admission integration, not silently inferred from a pathname.
+`policy.cbor` format 2 retains a fresh local installation identity, an optional
+immutable database-installation identity, file-byte, file-name, per-object and
+active-handle limits, and a checksum. These identities do not replace protocol
+non-reuse rules or confer authorization. Earlier private policies are refused,
+not converted; the object envelope and wire format are unchanged.
+
+`initializeForAuthority` creates a root for one already initialized database
+UUID. `SessionStore.bindInputs` then commits its exact input-store UUID as the
+reverse binding. `verifyInputs` requires the committed pair and never binds
+implicitly. Both operations hold the input owner's monitor through the database
+transaction and verify/synchronize the retained policy. Setup may resume after
+input-root initialization or replay after the database commit, but cannot adopt
+another empty root or an independently initialized database with the same
+protocol authority name. See the [paired-store contract](java-v2-authority-store.md#paired-input-store-ownership).
+
+The ordinary `initialize` API creates standalone, unbound storage for independent
+file-store use and tests. Its immutable policy cannot later be adopted by an
+authority. Pairing creates no protocol operation or job; admission must recheck
+the pair in the committing writer transaction, not cache a prior setup check.
 
 Recovery streams directory entries and input bytes with bounded buffers. It
 checks the complete layout, policy, object identities, checksums, lengths and
@@ -84,7 +97,7 @@ limit. They must be opened only after current execution/read authorization.
 
 ## Remaining gates
 
-The authority must still bind the input store, validate declared membership,
+The authority must still validate the exact pair in admission, declared membership,
 application contracts, producer ownership and cancellation fences, and commit
 input identity, timestamps, job, receipt and all output/metadata/publication
 reservations together. It must recheck authorization and trusted time at that

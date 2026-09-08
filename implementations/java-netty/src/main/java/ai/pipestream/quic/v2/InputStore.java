@@ -36,7 +36,7 @@ final class InputStore implements AutoCloseable {
   private static final int PREFIX = 12;
   private static final int CHECKSUM = 32;
   private static final int BLOCK = 8192;
-  private static final String FORMAT = "pipestream-java-v2-input-store-1";
+  private static final String FORMAT = "pipestream-java-v2-input-store-2";
   private static final Set<String> ROOT_NAMES =
       Set.of("writer.lock", "policy.cbor", "pending", "objects");
   private static final Set<Path> OPEN_ROOTS = new HashSet<>();
@@ -103,6 +103,7 @@ final class InputStore implements AutoCloseable {
   private final Path root;
   private final Limits limits;
   private final UUID identity;
+  private final UUID authorityIdentity;
   private final FileChannel lockChannel;
   private final FileLock lock;
   private final Probe probe;
@@ -112,10 +113,17 @@ final class InputStore implements AutoCloseable {
   private boolean closed;
 
   private InputStore(
-      Path root, Limits limits, UUID identity, FileChannel channel, FileLock lock, Probe probe) {
+      Path root,
+      Limits limits,
+      UUID identity,
+      UUID authorityIdentity,
+      FileChannel channel,
+      FileLock lock,
+      Probe probe) {
     this.root = root;
     this.limits = limits;
     this.identity = identity;
+    this.authorityIdentity = authorityIdentity;
     this.lockChannel = channel;
     this.lock = lock;
     this.probe = probe;
@@ -143,13 +151,36 @@ final class InputStore implements AutoCloseable {
    * @throws IOException installation failure
    */
   static InputStore initialize(Path directory, Limits limits, Probe probe) throws IOException {
+    return initialize(directory, limits, null, probe);
+  }
+
+  /**
+   * Install immutable storage for exactly one database installation. The database must separately
+   * commit this input store's identity before it may reference an object. Neither step admits work.
+   *
+   * @param directory new input-store directory
+   * @param limits immutable file policy
+   * @param authorityIdentity persistent database installation identity, not a protocol issuer name
+   * @return exclusively owned input store
+   * @throws IOException installation failure
+   */
+  static InputStore initializeForAuthority(Path directory, Limits limits, UUID authorityIdentity)
+      throws IOException {
+    Objects.requireNonNull(authorityIdentity);
+    if (authorityIdentity.equals(new UUID(0, 0)))
+      throw new IllegalArgumentException("zero authority installation identity");
+    return initialize(directory, limits, authorityIdentity, null);
+  }
+
+  private static InputStore initialize(
+      Path directory, Limits limits, UUID authorityIdentity, Probe probe) throws IOException {
     Objects.requireNonNull(limits);
     Path requested = directory.toAbsolutePath().normalize();
     Files.createDirectory(
         requested,
         PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
     sync(requested.getParent());
-    return acquire(requested, limits, true, probe);
+    return acquire(requested, limits, true, authorityIdentity, probe);
   }
 
   /**
@@ -176,10 +207,11 @@ final class InputStore implements AutoCloseable {
    */
   static InputStore open(Path directory, Limits limits, Probe probe) throws IOException {
     Objects.requireNonNull(limits);
-    return acquire(directory.toAbsolutePath().normalize(), limits, false, probe);
+    return acquire(directory.toAbsolutePath().normalize(), limits, false, null, probe);
   }
 
-  private static InputStore acquire(Path requested, Limits limits, boolean initialize, Probe probe)
+  private static InputStore acquire(
+      Path requested, Limits limits, boolean initialize, UUID configuredAuthority, Probe probe)
       throws IOException {
     if (!Files.isDirectory(requested, LinkOption.NOFOLLOW_LINKS))
       throw new IOException("V2 input store requires a real existing directory");
@@ -203,10 +235,12 @@ final class InputStore implements AutoCloseable {
       }
       if (lock == null) throw new IOException("V2 input store is already locked");
       UUID identity;
+      UUID authorityIdentity;
       if (initialize) {
         identity = UUID.randomUUID();
+        authorityIdentity = configuredAuthority;
         try (FileChannel policy = create(root.resolve("policy.cbor"))) {
-          writeAll(policy, ByteBuffer.wrap(policy(limits, identity)));
+          writeAll(policy, ByteBuffer.wrap(policy(limits, identity, authorityIdentity)));
           policy.force(true);
         }
         Files.createDirectory(root.resolve("pending"));
@@ -216,23 +250,31 @@ final class InputStore implements AutoCloseable {
         byte[] retained = bounded(root.resolve("policy.cbor"), 4096);
         try {
           Cbor.Reader in = new Cbor.Reader(retained, 4096);
-          in.exact(7);
+          in.exact(8);
           if (!FORMAT.equals(in.text(128))) throw corrupt("unsupported input store format");
           ByteBuffer id = ByteBuffer.wrap(in.bytes(16));
           identity = new UUID(id.getLong(), id.getLong());
+          if (in.nullable()) authorityIdentity = null;
+          else {
+            ByteBuffer authority = ByteBuffer.wrap(in.bytes(16));
+            authorityIdentity = new UUID(authority.getLong(), authority.getLong());
+            if (authorityIdentity.equals(new UUID(0, 0)))
+              throw corrupt("zero authority installation identity");
+          }
           in.number();
           in.number();
           in.number();
           in.number();
           in.bytes(32);
           in.end();
-          if (!Arrays.equals(retained, policy(limits, identity)))
+          if (!Arrays.equals(retained, policy(limits, identity, authorityIdentity)))
             throw corrupt("input store identity, policy or checksum differs");
         } catch (ProtocolError failure) {
           throw corrupt("invalid input store policy", failure);
         }
       }
-      InputStore store = new InputStore(root, limits, identity, channel, lock, probe);
+      InputStore store =
+          new InputStore(root, limits, identity, authorityIdentity, channel, lock, probe);
       store.recover();
       return store;
     } catch (IOException | RuntimeException failure) {
@@ -272,6 +314,34 @@ final class InputStore implements AutoCloseable {
    */
   UUID identity() {
     return identity;
+  }
+
+  /**
+   * Get the immutable database installation this root was created for.
+   *
+   * @return database identity, or empty for standalone storage which cannot later be adopted
+   */
+  Optional<UUID> authorityIdentity() {
+    return Optional.ofNullable(authorityIdentity);
+  }
+
+  /**
+   * Verify and synchronize the retained ownership claim before an authority transaction uses it.
+   * The caller must keep this store's monitor through that transaction to exclude concurrent close.
+   *
+   * @param expected exact database installation identity
+   * @throws IOException closed storage, unbound or mismatched ownership, changed policy or failed
+   *     sync
+   */
+  synchronized void verifyAuthority(UUID expected) throws IOException {
+    ensureOpen();
+    if (authorityIdentity == null || !authorityIdentity.equals(expected))
+      throw corrupt("input store belongs to a different or no authority installation");
+    if (!Arrays.equals(
+        bounded(root.resolve("policy.cbor"), 4096), policy(limits, identity, authorityIdentity)))
+      throw corrupt("retained input policy changed");
+    forceFile(root.resolve("policy.cbor"));
+    sync(root);
   }
 
   /**
@@ -766,19 +836,22 @@ final class InputStore implements AutoCloseable {
     }
   }
 
-  private static byte[] policy(Limits limits, UUID identity) {
+  private static byte[] policy(Limits limits, UUID identity, UUID authorityIdentity) {
     Cbor.Writer committed = new Cbor.Writer(1024);
-    policyFields(committed, limits, identity, 6);
+    policyFields(committed, limits, identity, authorityIdentity, 7);
     Cbor.Writer out = new Cbor.Writer(1024);
-    policyFields(out, limits, identity, 7);
+    policyFields(out, limits, identity, authorityIdentity, 8);
     out.bytes(Commitments.sha256().digest(committed.finish()));
     return out.finish();
   }
 
-  private static void policyFields(Cbor.Writer out, Limits limits, UUID identity, int count) {
+  private static void policyFields(
+      Cbor.Writer out, Limits limits, UUID identity, UUID authorityIdentity, int count) {
     out.array(count);
     out.text(FORMAT, 128);
     out.bytes(uuid(identity));
+    if (authorityIdentity == null) out.nil();
+    else out.bytes(uuid(authorityIdentity));
     out.number(limits.bytes());
     out.number(limits.files());
     out.number(limits.objectBytes());

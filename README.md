@@ -66,12 +66,13 @@ Its independent [authority storage](docs/standards/java-v2-authority-store.md)
 now commits sessions and caller declarations with immutable operation replay,
 streamed seals and bounded membership/work reads. Recovery checks receipt/member
 consistency, including real crash, capacity and contradictory-storage cases.
-Java V2 format 3 additionally preallocates mutable scope/work/fence/clock images
+Java V2 storage additionally preallocates mutable scope/work/fence/clock images
 and retains credits for their bounded rewrites; ordinary mutations preserve
 the promised WAL headroom. Those image credits do not yet fund entire jobs.
 Its independent [immutable input store](docs/standards/java-v2-input-store.md)
-now verifies and installs bounded payload files; it is not yet integrated with
-the authority's required atomic job/admission transaction.
+now verifies and installs bounded payload files, with immutable two-way
+database/input installation binding. It is not yet integrated with the
+authority's required atomic job/admission transaction.
 Independent Java durable execution/results/recovery, complete cross-language
 failure evidence and the workload comparison remain unfinished.
 The Rust `pipestream_core::v2` library now implements typed codecs for every

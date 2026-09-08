@@ -73,10 +73,53 @@ valid. These checks use bounded records and point lookups, not a whole-session
 membership map. Producer-1 declarations are not exposed through an unfenced local
 shortcut; they require the future parent-attempt/lease/deadline checks.
 
-The local database format is version 3. Earlier experimental V2 storage formats,
+The local database format is version 4. Earlier experimental V2 storage formats,
 like V1 and foreign databases, are refused without conversion. This is an internal
 format revision, not a wire-profile change or an authorized reset of an existing
 authority identity.
+
+## Paired input-store ownership
+
+The database now retains a fresh installation UUID separate from its protocol
+authority name and generation allocator. A bounded checksummed metadata record
+binds that UUID, the exact database configuration and either no input-store UUID
+or the one permanently selected input installation. Every transaction checks
+the retained record against the handle's immutable database identity.
+
+Setup proceeds in durable order:
+
+1. Initialize the database and retain its installation UUID.
+2. Initialize an input root with `InputStore.initializeForAuthority` for that
+   exact UUID. This claim is part of its immutable policy, not a mutable label.
+3. Call `SessionStore.bindInputs` to commit the reverse input-root UUID in the
+   database. Ordinary-write funding protects existing promised image writes.
+
+An interruption after step 2 can resume the same setup after reopen. Replaying
+step 3 is idempotent; an empty replacement root does not qualify as the same
+installation. A root created for another database, standalone unbound storage,
+or a closed input handle refuses before database inspection. The database also
+refuses a different root created for its own UUID after the original binding
+commits. There is no rebind, conversion or identity-reset API.
+
+These local APIs use `IOException` for input ownership, policy and handle
+refusals, and `SQLException` for absent/conflicting database bindings or corrupt
+database metadata. Guarded SQLite capacity exhaustion remains LIMIT_EXCEEDED.
+They do not manufacture a peer-facing operation receipt for setup.
+
+`verifyInputs` requires an already committed exact pair. It never adopts an
+unbound database. Both setup and verification keep the input owner's monitor
+through the SQLite transaction, verify the retained input policy and complete
+its file/directory synchronization before commit. This excludes a concurrent
+cooperative input close; it does not defend against privileged filesystem or
+database replacement outside the owning process.
+
+Pairing is local storage setup, not caller authentication or work admission. It
+does not create sessions, declarations, operations, jobs or input objects. The
+future admission transaction must check the exact pair again inside its own
+writer transaction and retain a live input owner until that commit. A prior
+successful `verifyInputs` call is not a transferable permission or durable job
+promise. Cloned or stale backups still require the operator's external
+anti-rollback and non-reuse discipline; UUIDs cannot prove backup freshness.
 
 ## Fixed records and promised writes
 
@@ -157,8 +200,8 @@ they cannot simulate every power-loss or storage-device failure.
 ## Remaining full-goal gates
 
 The independent [input store](java-v2-input-store.md) now receives, verifies and
-durably installs bounded immutable bytes. It is not yet bound to this authority
-database and does not issue admission receipts or create jobs.
+durably installs bounded immutable bytes, and exact input/database installations
+can be paired explicitly. This does not issue admission receipts or create jobs.
 
 Funded payload admission, worker leases and attempt fences, subtree settlement,
 results/read pins, retirement/reconciliation,

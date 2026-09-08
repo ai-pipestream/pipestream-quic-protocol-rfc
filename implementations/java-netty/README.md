@@ -336,7 +336,7 @@ exercise concurrent duplicates, commit interruption, corruption and exhaustion.
 This is declaration, not input admission, producer-1 expansion, a wait timer,
 checkpoint closure or reserved capacity for all later terminal transitions.
 
-Java V2 storage format 3 now puts mutable scopes, work views, first-fence storage
+Java V2 storage puts mutable scopes, work views, first-fence storage
 and the shared clock in preallocated checksummed images. `FixedRecords` retains
 write credits and guards their WAL/shared-memory headroom before ordinary
 mutations. Ordinary declarations preserve those credits; replay spends none.
@@ -349,7 +349,11 @@ The independent V2 `InputStore` receives and verifies immutable input bytes with
 bounded file/name/handle reservations, exact FIN/digest checks, crash-safe
 installation and verified replay lookup. It uses Java file channels and V2 typed
 headers, not the V1 payload schema. This is not admission: binding it to the
-authority and atomically funding jobs, outputs and receipts remain required.
+authority's exact installation and atomically funding jobs, outputs and receipts
+remain required in the admission transaction. Local setup now supports an
+immutable two-way binding between database format 4 and input policy format 2;
+standalone roots cannot be adopted and another empty root cannot replace the
+bound one. Pairing itself creates no work or admission receipt.
 See the [input storage contract](../../docs/standards/java-v2-input-store.md).
 
 ## Sealed-work library foundation
