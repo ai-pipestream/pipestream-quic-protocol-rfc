@@ -7,6 +7,7 @@ use grpc_baseline::{
     COMMITTED, hex_id, open_durable, operation_id, params_digest, proto,
     sync_file, wall_ms,
 };
+use rusqlite::OptionalExtension;
 use sha2::{Digest as _, Sha256};
 use std::{
     fs::OpenOptions,
