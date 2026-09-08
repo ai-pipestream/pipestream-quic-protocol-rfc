@@ -84,11 +84,23 @@ async fn connect(tls: &Tls, endpoint: &str) -> Result<Client> {
             std::fs::read(&tls.cert)?,
             std::fs::read(&tls.key)?,
         ));
-    let channel = Endpoint::from_shared(endpoint.to_string())?
-        .tls_config(tls_config)?
-        .connect()
-        .await?;
-    Ok(Client::new(channel))
+    // Startup race: the ready-file precedes accept(). Retry briefly rather
+    // than failing a healthy run on a transient refusal.
+    let mut last = String::from("no attempts");
+    for _ in 0..60 {
+        match Endpoint::from_shared(endpoint.to_string())?
+            .tls_config(tls_config.clone())?
+            .connect()
+            .await
+        {
+            Ok(channel) => return Ok(Client::new(channel)),
+            Err(e) => {
+                last = e.to_string();
+                sleep(Duration::from_millis(500)).await;
+            }
+        }
+    }
+    bail!("coordinator connect timed out: {last}")
 }
 
 fn chunk_path(staging: &Path, ordinal: u64) -> PathBuf {

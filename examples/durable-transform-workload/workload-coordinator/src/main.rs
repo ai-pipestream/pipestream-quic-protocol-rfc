@@ -216,12 +216,19 @@ async fn open_session(
         )
         .await?
     };
-    let client = Client::connect(
-        endpoint(&run.tls, connect)?,
-        journal,
-        session::Options::default(),
-    )
-    .await?;
+    // Startup race: the ready-file precedes accept(). Retry briefly rather
+    // than failing a healthy run on a transient refusal.
+    let mut client = None;
+    for _ in 0..60 {
+        match Client::connect(endpoint(&run.tls, connect)?, journal.clone(), session::Options::default()).await {
+            Ok(c) => {
+                client = Some(c);
+                break;
+            }
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(500)).await,
+        }
+    }
+    let client = client.context("coordinator connect timed out")?;
     Ok(Session {
         worker,
         client,
