@@ -12,7 +12,7 @@ java -jar target/pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar --help
 
 The reference library and Java example pin the Netty `4.2.17.Final` BOM. QUIC
 classes/native artifacts use the source-built `ai.pipestream.transport` extension
-at `4.2.17.Final-pipestream.2`; other Netty modules remain official `io.netty`
+at `4.2.17.Final-pipestream.3`; other Netty modules remain official `io.netty`
 dependencies. The bootstrap above verifies and installs the pinned extension in
 a fresh isolated Maven repository under reference-code, then prints only that
 repository path to stdout. Build progress goes to stderr. Reuse the captured
@@ -207,8 +207,11 @@ refuses new stream admission; control and existing requests remain available.
 The receive configuration fixes initial, replenishment and maximum windows. Its
 connection window is `2*(N+1)*W` for N data streams and per-stream window W,
 including Core's N=0. This includes the pinned transport's 1.5W stream-driven
-lower bound. The configured geometry is not proof against every independent
-credit-update ordering or a measured memory bound. The five gates in the
+lower bound. The owner enables paired receive-credit updates so stream credit
+and replacement-stream grants carry sufficient connection credit in the same
+packet. Native packet tests cover the reproduced independent-delivery gap and
+lost replacement credit; these are not a measured memory bound or complete
+durable-object acceptance. The five gates in the
 [transport review](../../docs/standards/java-v2-transport-credit.md) still apply.
 The object transport fixture is not a durable-profile endpoint. Core uses the
 owner with zero data slots and continues to refuse both unimplemented profiles.

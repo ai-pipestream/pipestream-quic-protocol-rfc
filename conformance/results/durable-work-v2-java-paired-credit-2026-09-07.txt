@@ -1,0 +1,220 @@
+PipeStream Java V2 paired receive credit, 2026-09-07
+==================================================
+
+Status
+------
+The standalone native suite passes 949 tests, including all eight new credit
+and recovery cases. The fresh source-pinned Java/native build passes 295 tests;
+the full RFC conformance run also passes, including 347 Java reference tests.
+Strict scoped Java doclint and the regenerated draft also pass. This is not a
+complete Java durable-work/results endpoint.
+
+Product base: 4475c179302cac23ab8deaa778121796d279df8e
+Product branch: feat/durable-work-results-v2
+Retained source repositories (not upstream publication targets):
+  /work/reference-code/quiche-pipestream
+    local commit 4850d6af4bd9375e429a31b5e796e71941dd8bbb
+  /work/reference-code/netty-quic-pipestream
+    local commit e282f135ea79c023b8227336c1f7853ad7d458f7
+Both are clean on pipestream-transport-credit-v1. Re-exporting their committed
+diffs against the pinned baselines reproduces the checked-in patch hashes below.
+Rebuilding requires the bundled patches, not access to unpublished local commits.
+
+Packet-boundary counterexample
+------------------------------
+The default-off diagnostic uses N=1 data stream, W=128 and fixed R=512 initial,
+replenishment and maximum connection windows. A 39-byte native caller send
+buffer separates stream and connection credit. Original ACK/stream-credit
+packets are delivered; original MAX_DATA packets are withheld. Copies alone are
+decrypted for inspection. No frames are repacketized and no fake ACKs are used.
+
+The sender consumes all 512 initial connection-credit bytes with one control
+byte plus 511 data bytes. Stream 0 still has 127 bytes of its own stream credit,
+but its next byte cannot be accepted. Withheld MAX_DATA values are
+641, 769, 897 and 1024.
+
+Auditable diagnostic run:
+  /tmp/quiche-delayed-max-data-geometry-nocapture-20260907T221134.log
+  session 14362, exit 0, 1 passed
+  cargo test --locked -p quiche --lib --features 'ffi qlog custom-client-dcid' \
+    delayed_max_data_diagnostic_exhausts_connection_before_control_stream_credit -- --nocapture
+
+The positive regression inspects every actual emitted credit-bearing packet in
+the constrained output sequence before allowing a larger buffer. It requires
+sufficient MAX_DATA in that same packet, then actual data/control write capacity.
+
+Required RED before packet behavior:
+  /tmp/quiche-paired-receive-credit-nonvacuous-red-20260907T222053.log
+  session 92311, exit 101, 0 passed / 1 failed
+  Actual MAX_STREAM_DATA packet lacked its paired MAX_DATA.
+Focused GREEN after implementation:
+  /tmp/quiche-paired-receive-credit-green-20260907T222215.log
+  session 88372, exit 0, 1 passed
+
+Earlier exploratory fixtures are not evidence for the defect: one helper could
+discard already-emitted packets on a later small-buffer error; another sent just
+one tight-buffer ACK before using a larger buffer and passed without the fix.
+The final regression drains the constrained sequence packet by packet and does
+not silently ignore unexpected protocol errors.
+
+Replacement credit under actual loss
+------------------------------------
+The native MAX_STREAMS loss dispatch did not reschedule its current limit.
+The regression drops the original paired replacement-credit packet, exchanges
+native probe/ACK packets until the loss counter increases, and requires repeated
+MAX_STREAMS plus the identical MAX_DATA, followed by a replacement-stream write.
+A lone probe timeout is not proof of packet loss.
+
+Required actual-loss RED:
+  /tmp/quiche-paired-max-streams-loss-red-20260907T222900.log
+  session 35105, exit 101, 0 passed / 1 failed
+  Loss was established; the replacement-credit assertion failed.
+After recovery correction, both unidirectional and bidirectional targeted loss
+tests passed in:
+  /tmp/quiche-paired-credit-recovery-focused-20260907T223013.log
+  session 9367, exit 101 overall: 4 passed / 1 failed
+The separate remaining failure was a fixture missing its Stream 0 allowance;
+this mixed run is not a green suite. The FIN/reset replacement case also passed.
+
+Changes and boundaries
+----------------------
+- Opt-in Config::set_pair_receive_credit / QuicCodecBuilder.pairReceiveCredit.
+  Default false; enabled by Java V2 StreamTransport.
+- MAX_DATA is paired with MAX_STREAM_DATA and MAX_STREAMS in each packet.
+  Insufficient packet space leaves stream credit pending. One sufficient
+  MAX_DATA can cover several updates in that packet; previously advertised
+  connection limits are not reduced.
+- Connection autotuning and stream-driven lower bounds remain applicable.
+- Per-direction MAX_STREAMS loss state persists until emission. Superseded
+  lost limits do not reschedule older credit. This recovery correction is
+  independent of the optional pairing policy.
+- Modified transport coordinates advance to 4.2.17.Final-pipestream.3.
+- Section 12.1 explicitly covers peer-observable packet loss/reordering and
+  retransmitted/replacement credit. It permits equivalent reservation policies,
+  not only this implementation's packetization strategy.
+
+Final standalone native verification
+------------------------------------
+Command:
+  cargo test --locked -p quiche --lib --features 'ffi qlog custom-client-dcid'
+Session 42894, actual exit 0:
+  /tmp/quiche-paired-credit-final-full-rerun-20260907T223844.log
+Result: 949 passed, zero failed/ignored/measured/filtered.
+The preceding session 76848 exited 101 on an unavailable fixture constant;
+the only compile repair replaced DEFAULT_STREAM_WINDOW with the existing
+stream::MAX_STREAM_WINDOW. It did not change production behavior or an oracle.
+
+The eight new passing cases are:
+  delayed_max_data_diagnostic_exhausts_connection_before_control_stream_credit
+  paired_receive_credit_keeps_stream_and_connection_updates_in_one_packet
+  paired_max_streams_uni_after_fin_and_reset_carries_connection_credit
+  paired_max_streams_uni_and_max_data_are_retransmitted_after_loss
+  paired_credit_preserves_larger_advertised_max_data_and_stream_lower_bound
+  max_streams_loss_pending_tracks_current_limit_for_both_types
+  paired_receive_credit_autotunes_connection_window_once_per_update
+  paired_max_streams_bidi_retransmission_keeps_control_stream_live
+
+The autotune case receives both streams first, then uses the native packet
+builder's explicit time parameter for two updates at one instant. Both packets
+are encrypted and registered with native recovery. It requires exact MAX_DATA
+values 320 then 640 and a final window of 384, without depending on host scheduling
+to place the updates inside two RTTs. The floor case separately keeps an initial
+1024-byte advertised limit despite a smaller replenishment window. The pending
+state case covers both directions, repeated loss, superseded limits and emission.
+
+Raw evidence copied byte for byte into conformance/results:
+  quiche-delayed-max-data-2026-09-07.log
+    SHA256 1a035015c7f3309dd50bfef2adf804b72d25aca65685bf3430354cc190a9882f
+  quiche-unpaired-credit-red-2026-09-07.log
+    SHA256 c5d62f90e9fce387946beffe5dbd05229ca27b764174274f80326996816d0055
+  quiche-max-streams-loss-red-2026-09-07.log
+    SHA256 ddf7a6b7d7f88cd0cf1357b7acaa77136dafd88e24e0638a4035cd81bdc20241
+  quiche-paired-credit-fixed-2026-09-07.log
+    SHA256 513f437668eccb95d91c164f91bfd1dec4de0aaa33674d5337c8bcf10f3c3859
+File-specific whitespace attributes preserve captured final blank lines; source
+whitespace checks remain unchanged.
+
+Source bundle
+-------------
+Transport coordinates use 4.2.17.Final-pipestream.3.
+Whole patches, including Netty's root POM, are exported from the exact baselines:
+  Netty e0789d32c72f46fd2e7c99b6fdbbf7e2f4409e44
+  quiche 4f347477006bf7f928335d28f05056013f70b87e
+SHA256:
+  netty.patch
+    10083fd41f9cd51605bd5d2b841f1fc92b70960dec73594bfaeaa32ff2ae4d99
+  quiche.patch
+    9f250667399cff529bacf5a0e7f3a85b74ed8d382f106cc3a92f77ab80813a27
+  quiche-Cargo.lock
+    c5039e79db6949df057e185ef182003a891fdcb2820fb09c9886f8c546f8cc34
+The runtime provenance test expects these exact new patch identities, not .2.
+The standalone quiche TLS submodule remains
+f1c75347daa2ea81a941e953f2263e0a4d970c8d; the Netty native build instead uses
+its own pinned BoringSSL 0226f30467f540a3f62ef48d453f93927da199b6. The standalone
+949-test result is not substituted for that fresh native-library build.
+
+Fresh native artifacts
+----------------------
+The full conformance command bootstrapped a new owned source build at:
+  /work/reference-code/pipestream-quic-build.XCGt5KR9
+Isolated Maven repository:
+  /work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+Native reactor log:
+  /work/reference-code/pipestream-quic-build.XCGt5KR9/verify.log
+31 fresh native Java XML reports: 295 tests, zero failures/errors/skips.
+This includes the new builder true/false fluent/copy test. Both classes and
+native artifacts use .3. The linux-x86_64 classifier manifest identifies the
+exact new patch hashes and native BoringSSL revision above, and the distinct
+libnetty_quiche42_pipestream_linux_x86_64.so library.
+
+SHA256 for this fresh build (not bit-identical binary reproducibility claims):
+  netty-codec-classes-quic-4.2.17.Final-pipestream.3.jar
+    cba2d7ceb4ba16f9d63b6890604cf5fb27ef5d1bd83614654cbb79ce4e2b7d17
+  netty-codec-native-quic-4.2.17.Final-pipestream.3-linux-x86_64.jar
+    68b74049153b9900ebef570254a87876c001796c4ee8e966ad4b61a784d80c3e
+
+Full reference regression
+-------------------------
+Command: ./conformance/run_all.sh
+Retained session 2656, actual exit 0.
+Log: /tmp/pipestream-rfc-paired-credit-conformance-full-20260907T224015.log
+The command built the fresh source bundle above and reused only its isolated
+Maven repository for the reference and external Java example. Independent XML
+review found 31 fresh reference reports, 347 tests and zero failures/errors/skips.
+The dependency provenance test's actual runtime classpath names XCGt5KR9 and .3
+for both classes and native artifacts; its exact patch/duplicate-resource
+assertions passed. Report timestamps span 22:47:44 through 22:49:02 UTC.
+
+Rust: 788 workspace tests and 6 external-example tests passed. Frozen vectors,
+CDDL and all three bounded models passed. The work/scope/composed models checked
+311539 / 5776 / 620796 states and 8723092 / 173280 / 29177412 edges, respectively,
+with no remaining depth frontier. These are bounded models, not unbounded proofs.
+Native SQLite/C++ checks, all 9 existing black-box language pairings, all 32 raw
+capability probes, recursive/recovery checks and all 3 external examples passed.
+The existing pairings are V1 regression evidence, not full V2 durable parity.
+
+Documentation verification
+--------------------------
+Classpath regeneration using the same XCGt5KR9 Maven repository:
+  session 40173, exit 0
+  /tmp/pipestream-rfc-paired-credit-javadoc-classpath-20260907T225017.log
+Strict V2 plus shared-identity Javadoc (-quiet -Xdoclint:all -Werror):
+  session 88890, exit 0; quiet log is empty
+  /tmp/pipestream-rfc-paired-credit-v2-doclint-20260907T225029.log
+This is scoped documentation verification, not a whole legacy-package lint claim.
+
+Draft command: ./build.sh core 05 draft
+  session 23340, exit 0
+  /tmp/pipestream-rfc-paired-credit-draft-core05-20260907T225046.log
+idnits reports zero errors/flaws/warnings and the existing FIPS-180-4 downref
+comment. The new Section 12.1 reservation text and Appendix D implementation
+limitations were inspected in the generated TXT and HTML. No Internet-Draft
+was submitted. Source whitespace checks pass; captured logs retain original bytes.
+
+Remaining acceptance
+--------------------
+These packet tests do not establish
+whole-process memory bounds, Java durable-profile parity, arbitrary network
+delivery, or the corresponding selective-loss invariant for Rust/Quinn. All
+original durable work/results, failure-driver and equivalent streaming-gRPC
+workload deliverables remain mandatory.

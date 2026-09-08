@@ -1,0 +1,22 @@
+   Compiling quiche v0.25.0 (/work/reference-code/quiche-pipestream/quiche)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.56s
+     Running unittests src/lib.rs (target/debug/deps/quiche-1cf166e39ffda5f0)
+
+running 1 test
+test tests::paired_max_streams_uni_and_max_data_are_retransmitted_after_loss ... FAILED
+
+failures:
+
+---- tests::paired_max_streams_uni_and_max_data_are_retransmitted_after_loss stdout ----
+
+thread 'tests::paired_max_streams_uni_and_max_data_are_retransmitted_after_loss' (3452103) panicked at quiche/src/tests.rs:1719:5:
+assertion failed: saw_replacement
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::paired_max_streams_uni_and_max_data_are_retransmitted_after_loss
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 946 filtered out; finished in 0.04s
+
+error: test failed, to rerun pass `-p quiche --lib`

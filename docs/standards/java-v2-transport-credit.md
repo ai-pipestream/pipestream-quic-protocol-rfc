@@ -85,6 +85,43 @@ checking initial/replenishment geometry and update batching. Section 12.1 now
 makes the autotuning requirement explicit without prescribing a particular QUIC
 implementation or numerical window.
 
+### Packet-preserving counterexample and paired updates
+
+A native regression now demonstrates the independent-delivery gap with N=1,
+W=128 and a fixed connection window R=512. It opens Stream 0 with one byte,
+then sends and consumes 511 data bytes while withholding original packets
+containing MAX_DATA. ACK and MAX_STREAM_DATA packets are forwarded unchanged;
+decryption is performed only on inspection copies. A 39-byte caller send buffer
+produces the split credit packets. The sender exhausts its 512-byte connection
+credit while Stream 0 still has 127 bytes of stream credit, so its next control
+byte cannot be accepted. No frame is forged or repacketized.
+
+The `.3` extension adds opt-in `pairReceiveCredit(true)`. It places sufficient
+MAX_DATA before MAX_STREAM_DATA and MAX_STREAMS in the same packet, including
+repeated credit values. One connection-credit frame can cover several stream
+updates in that packet. If both cannot fit, stream credit remains pending for a
+later packet; an earlier send does not establish receipt. The connection limit
+never decreases when the configured replenishment window is smaller than initial
+credit. Autotuning and stream-window lower bounds remain part of the calculation.
+The Java V2 owner enables the policy with the fixed geometry above. This is a
+local packetization policy using existing QUIC frames, not a new wire extension.
+
+The positive regression first failed on an actually emitted stream-credit packet
+without its required MAX_DATA. It now checks the constrained packet sequence and
+requires later data/control progress with adequate packet space. Packet-level
+credit tests remain distinct from the five durable-object acceptance gates below
+and do not establish the same invariant for the independent Quinn implementation.
+
+Actual-loss tests then found that quiche did not reschedule MAX_STREAMS after
+loss. The corrected dispatch retains a pending update for each stream direction,
+including when it cannot fit yet, and does not reschedule superseded limits.
+The tests drop an original credit packet, exchange real probe/ACK packets until
+the native loss count increases, then require the repeated paired credit and a
+successful replacement-stream write. The bidirectional case keeps Stream 0
+live. A lone probe timeout is not used as proof of packet loss. This recovery
+correction follows [RFC 9000 Section 13.3](https://www.rfc-editor.org/rfc/rfc9000.html#section-13.3)
+and is distinct from the optional receive-credit packetization policy.
+
 ## Local send completion is not buffer release
 
 The same quiche connection implementation tracks buffered and unacknowledged
@@ -189,9 +226,10 @@ the next read and hold any asynchronous consumer's buffer ownership until releas
 
 The initial/replenishment/maximum connection window is `2*(N+1)*W`, and every
 receive stream's initial and maximum window is W. The stream-driven 1.5W lower
-bound fits this geometry, including N=0 Core connections. This explicit geometry
-still needs adversarial credit-frame ordering, repeated replacement and measured
-resource tests; it is not an end-to-end proof. `ControlWrites` has a timer-driven
+bound fits this geometry, including N=0 Core connections. The owner also enables
+paired receive-credit updates; geometry alone did not survive the counterexample
+above. Repeated replacement and measured resource tests remain necessary beyond
+the targeted packet tests; this is not an end-to-end proof. `ControlWrites` has a timer-driven
 native retry using the same reserved classification, independent of data reads.
 The stream owner bounds each open/write/FIN wait separately; these local admission
 deadlines do not replace negotiated payload or correlated-response deadlines.

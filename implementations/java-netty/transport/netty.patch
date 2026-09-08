@@ -1,5 +1,5 @@
 diff --git a/codec-classes-quic/pom.xml b/codec-classes-quic/pom.xml
-index f5cab0a..00619b2 100644
+index f5cab0a..9d52f2a 100644
 --- a/codec-classes-quic/pom.xml
 +++ b/codec-classes-quic/pom.xml
 @@ -22,10 +22,18 @@
@@ -8,7 +8,7 @@ index f5cab0a..00619b2 100644
  
 +  <groupId>ai.pipestream.transport</groupId>
    <artifactId>netty-codec-classes-quic</artifactId>
-+  <version>4.2.17.Final-pipestream.2</version>
++  <version>4.2.17.Final-pipestream.3</version>
    <packaging>jar</packaging>
  
 -  <name>Netty/Codec/Classes/Quic</name>
@@ -116,30 +116,32 @@ index 41ebe4d..fca7f26 100644
       * If set to {@code true} the {@link QuicStreamChannel} will read {@link QuicStreamFrame}s and fire it through
       * the pipeline, if {@code false} it will read {@link io.netty.buffer.ByteBuf} and translate the FIN flag to
 diff --git a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicCodecBuilder.java b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicCodecBuilder.java
-index c787d4f..e0b7edb 100644
+index c787d4f..80296d4 100644
 --- a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicCodecBuilder.java
 +++ b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicCodecBuilder.java
-@@ -38,6 +38,9 @@ public abstract class QuicCodecBuilder<B extends QuicCodecBuilder<B>> {
+@@ -38,6 +38,10 @@ public abstract class QuicCodecBuilder<B extends QuicCodecBuilder<B>> {
      private Long maxRecvUdpPayloadSize;
      private Long maxSendUdpPayloadSize;
      private Long initialMaxData;
 +    private Long initialConnectionWindow;
++    private Boolean pairReceiveCredit;
 +    private Long maxConnectionWindow;
 +    private Long maxStreamWindow;
      private Long initialMaxStreamDataBidiLocal;
      private Long initialMaxStreamDataBidiRemote;
      private Long initialMaxStreamDataUni;
-@@ -78,6 +81,9 @@ public abstract class QuicCodecBuilder<B extends QuicCodecBuilder<B>> {
+@@ -78,6 +82,10 @@ public abstract class QuicCodecBuilder<B extends QuicCodecBuilder<B>> {
          this.maxRecvUdpPayloadSize = builder.maxRecvUdpPayloadSize;
          this.maxSendUdpPayloadSize = builder.maxSendUdpPayloadSize;
          this.initialMaxData = builder.initialMaxData;
 +        this.initialConnectionWindow = builder.initialConnectionWindow;
++        this.pairReceiveCredit = builder.pairReceiveCredit;
 +        this.maxConnectionWindow = builder.maxConnectionWindow;
 +        this.maxStreamWindow = builder.maxStreamWindow;
          this.initialMaxStreamDataBidiLocal = builder.initialMaxStreamDataBidiLocal;
          this.initialMaxStreamDataBidiRemote = builder.initialMaxStreamDataBidiRemote;
          this.initialMaxStreamDataUni = builder.initialMaxStreamDataUni;
-@@ -142,7 +148,7 @@ public abstract class QuicCodecBuilder<B extends QuicCodecBuilder<B>> {
+@@ -142,7 +150,7 @@ public abstract class QuicCodecBuilder<B extends QuicCodecBuilder<B>> {
       * The default value is 10.
       *
       * @param numPackets number of packets for the initial congestion window
@@ -148,7 +150,7 @@ index c787d4f..e0b7edb 100644
       */
      public final B initialCongestionWindowPackets(int numPackets) {
          this.initialCongestionWindowPackets = numPackets;
-@@ -220,6 +226,45 @@ public abstract class QuicCodecBuilder<B extends QuicCodecBuilder<B>> {
+@@ -220,6 +228,60 @@ public abstract class QuicCodecBuilder<B extends QuicCodecBuilder<B>> {
          return self();
      }
  
@@ -163,6 +165,21 @@ index c787d4f..e0b7edb 100644
 +     */
 +    public final B initialConnectionWindow(long value) {
 +        initialConnectionWindow = checkPositiveOrZero(value, "value");
++        return self();
++    }
++
++    /**
++     * Pairs each stream-credit or stream-count update with current connection credit in
++     * the same QUIC packet, including retransmitted updates. A pair that cannot fit remains
++     * pending. This prevents delivery of new stream credit without its connection credit;
++     * applications must still budget receive windows and bound waiting for network delivery.
++     * Disabled by default.
++     *
++     * @param enabled whether to pair receive-credit updates.
++     * @return this builder.
++     */
++    public final B pairReceiveCredit(boolean enabled) {
++        pairReceiveCredit = enabled;
 +        return self();
 +    }
 +
@@ -194,11 +211,11 @@ index c787d4f..e0b7edb 100644
      /**
       * See
       * <a href="https://docs.rs/quiche/0.6.0/quiche/struct.Config.html#method.set_initial_max_stream_data_bidi_local">
-@@ -484,6 +529,7 @@ public abstract class QuicCodecBuilder<B extends QuicCodecBuilder<B>> {
+@@ -484,6 +546,7 @@ public abstract class QuicCodecBuilder<B extends QuicCodecBuilder<B>> {
      private QuicheConfig createConfig() {
          return new QuicheConfig(version, grease,
                  maxIdleTimeout, maxSendUdpPayloadSize, maxRecvUdpPayloadSize, initialMaxData,
-+                initialConnectionWindow, maxConnectionWindow, maxStreamWindow,
++                initialConnectionWindow, pairReceiveCredit, maxConnectionWindow, maxStreamWindow,
                  initialMaxStreamDataBidiLocal, initialMaxStreamDataBidiRemote,
                  initialMaxStreamDataUni, initialMaxStreamsBidi, initialMaxStreamsUni,
                  ackDelayExponent, maxAckDelay, disableActiveMigration, enableHystart, discoverPmtu,
@@ -284,7 +301,7 @@ index 0000000..fd6b862
 +    }
 +}
 diff --git a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/Quiche.java b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/Quiche.java
-index e42725c..c0d951f 100644
+index e42725c..d90a5fd 100644
 --- a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/Quiche.java
 +++ b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/Quiche.java
 @@ -70,7 +70,7 @@ final class Quiche {
@@ -306,11 +323,13 @@ index e42725c..c0d951f 100644
      /**
       * See
       * <a href="https://github.com/cloudflare/quiche/blob/0.6.0/include/quiche.h#L277">quiche_conn_stream_finished</a>.
-@@ -636,6 +639,12 @@ final class Quiche {
+@@ -636,6 +639,14 @@ final class Quiche {
       */
      static native void quiche_config_set_initial_max_data(long configAddr, long value);
  
 +    static native void quiche_config_set_initial_connection_window(long configAddr, long value);
++
++    static native void quiche_config_set_pair_receive_credit(long configAddr, boolean enabled);
 +
 +    static native void quiche_config_set_max_connection_window(long configAddr, long value);
 +
@@ -320,25 +339,29 @@ index e42725c..c0d951f 100644
       * See
       * <a href="https://github.com/cloudflare/quiche/blob/0.6.0/include/quiche.h#152">
 diff --git a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheConfig.java b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheConfig.java
-index c3da950..2e7ca7f 100644
+index c3da950..ab155ae 100644
 --- a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheConfig.java
 +++ b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheConfig.java
-@@ -27,6 +27,9 @@ final class QuicheConfig {
+@@ -27,6 +27,10 @@ final class QuicheConfig {
                   @Nullable Long maxSendUdpPayloadSize,
                   @Nullable Long maxRecvUdpPayloadSize,
                   @Nullable Long initialMaxData,
 +                 @Nullable Long initialConnectionWindow,
++                 @Nullable Boolean pairReceiveCredit,
 +                 @Nullable Long maxConnectionWindow,
 +                 @Nullable Long maxStreamWindow,
                   @Nullable Long initialMaxStreamDataBidiLocal,
                   @Nullable Long initialMaxStreamDataBidiRemote,
                   @Nullable Long initialMaxStreamDataUni,
-@@ -60,6 +63,15 @@ final class QuicheConfig {
+@@ -60,6 +64,18 @@ final class QuicheConfig {
              if (initialMaxData != null) {
                  Quiche.quiche_config_set_initial_max_data(config, initialMaxData);
              }
 +            if (initialConnectionWindow != null) {
 +                Quiche.quiche_config_set_initial_connection_window(config, initialConnectionWindow);
++            }
++            if (pairReceiveCredit != null) {
++                Quiche.quiche_config_set_pair_receive_credit(config, pairReceiveCredit);
 +            }
 +            if (maxConnectionWindow != null) {
 +                Quiche.quiche_config_set_max_connection_window(config, maxConnectionWindow);
@@ -600,7 +623,7 @@ index 917a730..6b2ee53 100644
      public boolean isReadFrames() {
          return readFrames;
 diff --git a/codec-native-quic/pom.xml b/codec-native-quic/pom.xml
-index e498164..9a68cf8 100644
+index e498164..f6abb9a 100644
 --- a/codec-native-quic/pom.xml
 +++ b/codec-native-quic/pom.xml
 @@ -22,17 +22,25 @@
@@ -609,7 +632,7 @@ index e498164..9a68cf8 100644
  
 +  <groupId>ai.pipestream.transport</groupId>
    <artifactId>netty-codec-native-quic</artifactId>
-+  <version>4.2.17.Final-pipestream.2</version>
++  <version>4.2.17.Final-pipestream.3</version>
    <packaging>${packaging.type}</packaging>
  
 -  <name>Netty/Codec/Native/Quic</name>
@@ -734,7 +757,7 @@ index e498164..9a68cf8 100644
      </dependency>
      <!-- Also include bouncycastle so we can use SelfSignedCertificate even on more recent JDKs during testing -->
 diff --git a/codec-native-quic/src/main/c/netty_quic_quiche.c b/codec-native-quic/src/main/c/netty_quic_quiche.c
-index cf97050..ba7434a 100644
+index cf97050..e5409ef 100644
 --- a/codec-native-quic/src/main/c/netty_quic_quiche.c
 +++ b/codec-native-quic/src/main/c/netty_quic_quiche.c
 @@ -48,7 +48,7 @@
@@ -759,12 +782,16 @@ index cf97050..ba7434a 100644
  static jboolean netty_quiche_conn_stream_finished(JNIEnv* env, jclass clazz, jlong conn, jlong stream_id) {
      return quiche_conn_stream_finished((quiche_conn *) conn, (uint64_t) stream_id) == true ? JNI_TRUE : JNI_FALSE;
  }
-@@ -986,6 +992,18 @@ static void netty_quiche_config_set_initial_max_data(JNIEnv* env, jclass clazz,
+@@ -986,6 +992,22 @@ static void netty_quiche_config_set_initial_max_data(JNIEnv* env, jclass clazz,
      quiche_config_set_initial_max_data((quiche_config*) config, (uint64_t) value);
  }
  
 +static void netty_quiche_config_set_initial_connection_window(JNIEnv* env, jclass clazz, jlong config, jlong value) {
 +    quiche_config_set_initial_connection_window((quiche_config*) config, (uint64_t) value);
++}
++
++static void netty_quiche_config_set_pair_receive_credit(JNIEnv* env, jclass clazz, jlong config, jboolean enabled) {
++    quiche_config_set_pair_receive_credit((quiche_config*) config, enabled == JNI_TRUE);
 +}
 +
 +static void netty_quiche_config_set_max_connection_window(JNIEnv* env, jclass clazz, jlong config, jlong value) {
@@ -778,7 +805,7 @@ index cf97050..ba7434a 100644
  static void netty_quiche_config_set_initial_max_stream_data_bidi_local(JNIEnv* env, jclass clazz, jlong config, jlong value) {
      quiche_config_set_initial_max_stream_data_bidi_local((quiche_config*) config, (uint64_t) value);
  }
-@@ -1213,6 +1231,7 @@ static const JNINativeMethod fixed_method_table[] = {
+@@ -1213,6 +1235,7 @@ static const JNINativeMethod fixed_method_table[] = {
    { "quiche_conn_stream_send", "(JJJIZ)I", (void *) netty_quiche_conn_stream_send },
    { "quiche_conn_stream_shutdown", "(JJIJ)I", (void *) netty_quiche_conn_stream_shutdown },
    { "quiche_conn_stream_capacity", "(JJ)J", (void *) netty_quiche_conn_stream_capacity },
@@ -786,18 +813,19 @@ index cf97050..ba7434a 100644
    { "quiche_conn_stream_finished", "(JJ)Z", (void *) netty_quiche_conn_stream_finished },
    { "quiche_conn_close", "(JZJJI)I", (void *) netty_quiche_conn_close },
    { "quiche_conn_is_established", "(J)Z", (void *) netty_quiche_conn_is_established },
-@@ -1243,6 +1262,9 @@ static const JNINativeMethod fixed_method_table[] = {
+@@ -1243,6 +1266,10 @@ static const JNINativeMethod fixed_method_table[] = {
    { "quiche_config_set_max_recv_udp_payload_size", "(JJ)V", (void *) netty_quiche_config_set_max_recv_udp_payload_size },
    { "quiche_config_set_max_send_udp_payload_size", "(JJ)V", (void *) netty_quiche_config_set_max_send_udp_payload_size },
    { "quiche_config_set_initial_max_data", "(JJ)V", (void *) netty_quiche_config_set_initial_max_data },
 +  { "quiche_config_set_initial_connection_window", "(JJ)V", (void *) netty_quiche_config_set_initial_connection_window },
++  { "quiche_config_set_pair_receive_credit", "(JZ)V", (void *) netty_quiche_config_set_pair_receive_credit },
 +  { "quiche_config_set_max_connection_window", "(JJ)V", (void *) netty_quiche_config_set_max_connection_window },
 +  { "quiche_config_set_max_stream_window", "(JJ)V", (void *) netty_quiche_config_set_max_stream_window },
    { "quiche_config_set_initial_max_stream_data_bidi_local", "(JJ)V", (void *) netty_quiche_config_set_initial_max_stream_data_bidi_local },
    { "quiche_config_set_initial_max_stream_data_bidi_remote", "(JJ)V", (void *) netty_quiche_config_set_initial_max_stream_data_bidi_remote },
    { "quiche_config_set_initial_max_stream_data_uni", "(JJ)V", (void *) netty_quiche_config_set_initial_max_stream_data_uni },
 diff --git a/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicCodecBuilderTest.java b/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicCodecBuilderTest.java
-index 35863f7..078a158 100644
+index 35863f7..2bd604d 100644
 --- a/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicCodecBuilderTest.java
 +++ b/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicCodecBuilderTest.java
 @@ -24,6 +24,7 @@ import java.util.concurrent.Executor;
@@ -808,7 +836,7 @@ index 35863f7..078a158 100644
  
  class QuicCodecBuilderTest {
  
-@@ -35,6 +36,18 @@ class QuicCodecBuilderTest {
+@@ -35,6 +36,33 @@ class QuicCodecBuilderTest {
          assertThat(copy).usingRecursiveComparison().isEqualTo(original);
      }
  
@@ -822,6 +850,21 @@ index 35863f7..078a158 100644
 +        assertThatThrownBy(() -> builder.initialConnectionWindow(-1)).isInstanceOf(IllegalArgumentException.class);
 +        assertThatThrownBy(() -> builder.maxConnectionWindow(-1)).isInstanceOf(IllegalArgumentException.class);
 +        assertThatThrownBy(() -> builder.maxStreamWindow(-1)).isInstanceOf(IllegalArgumentException.class);
++    }
++
++    @Test
++    void testPairReceiveCreditFluentAndCopied() throws Exception {
++        Field field = QuicCodecBuilder.class.getDeclaredField("pairReceiveCredit");
++        field.setAccessible(true);
++        TestQuicCodecBuilder builder = new TestQuicCodecBuilder();
++
++        assertThat(builder.pairReceiveCredit(true)).isSameAs(builder);
++        assertThat(field.get(new TestQuicCodecBuilder(builder)))
++                .isEqualTo(Boolean.TRUE);
++
++        assertThat(builder.pairReceiveCredit(false)).isSameAs(builder);
++        assertThat(field.get(new TestQuicCodecBuilder(builder)))
++                .isEqualTo(Boolean.FALSE);
 +    }
 +
      private static void init(TestQuicCodecBuilder builder) throws IllegalAccessException {

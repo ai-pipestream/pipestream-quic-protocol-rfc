@@ -87,6 +87,7 @@ final class StreamTransport {
       return builder
           .initialMaxData(receiveWindowBytes())
           .initialConnectionWindow(receiveWindowBytes())
+          .pairReceiveCredit(true)
           .maxConnectionWindow(receiveWindowBytes())
           .maxStreamWindow(streamWindowBytes)
           .initialMaxStreamDataBidirectionalLocal(server ? 0 : streamWindowBytes)

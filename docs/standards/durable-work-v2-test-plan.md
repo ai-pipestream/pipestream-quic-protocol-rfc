@@ -1852,6 +1852,23 @@ These gates are still outstanding; migrated Core/TLS and V1 tests do not replace
 them. The full Java durable contract, neutral failure driver and original workload
 comparison remain required.
 
+### Packet-level receive-credit and recovery evidence
+
+The source-pinned Java transport `.3` revision adds paired MAX_DATA with every
+MAX_STREAM_DATA/MAX_STREAMS packet and repairs rescheduling of lost MAX_STREAMS.
+The native default-off counterexample exhausts connection credit while Stream 0
+still has stream credit; the positive test checks actual packet boundaries rather
+than treating a send batch as atomic delivery. Actual-loss replacement tests cover
+both stream directions, with a live control stream in the bidirectional case.
+Further tests cover FIN/reset replacement, the advertised connection-credit
+floor, explicit-time autotuning and pending/superseded stream-count credit.
+The 949-test native suite and fresh 295-test Java/native suite pass separately;
+exact red-to-green commands, logs and source identities are in the
+[paired-credit evidence](../../conformance/results/durable-work-v2-java-paired-credit-2026-09-07.txt).
+These cases cover the reproduced packet schedules. They do not replace measured
+object-owner memory/admission gates, independent Quinn selective-loss evidence,
+complete Java durable profiles or either neutral-driver language direction.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

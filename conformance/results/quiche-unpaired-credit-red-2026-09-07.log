@@ -1,0 +1,38 @@
+   Compiling quiche v0.25.0 (/work/reference-code/quiche-pipestream/quiche)
+warning: field `pair_receive_credit` is never read
+    --> quiche/src/lib.rs:1368:5
+     |
+1279 | pub struct Connection<F = DefaultBufFactory>
+     |            ---------- field in this struct
+...
+1368 |     pair_receive_credit: bool,
+     |     ^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `quiche` (lib test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.37s
+     Running unittests src/lib.rs (target/debug/deps/quiche-1cf166e39ffda5f0)
+
+running 1 test
+test tests::paired_receive_credit_keeps_stream_and_connection_updates_in_one_packet ... FAILED
+
+failures:
+
+---- tests::paired_receive_credit_keeps_stream_and_connection_updates_in_one_packet stdout ----
+
+thread 'tests::paired_receive_credit_keeps_stream_and_connection_updates_in_one_packet' (3412173) panicked at quiche/src/tests.rs:1593:9:
+assertion failed: frames.iter().any(|frame|
+        {
+            matches!(frame, frame::Frame::MaxData { max } if *max >=
+                minimum_max_data)
+        })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::paired_receive_credit_keeps_stream_and_connection_updates_in_one_packet
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 942 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p quiche --lib`

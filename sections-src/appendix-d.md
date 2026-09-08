@@ -132,6 +132,19 @@ underlying QUIC correction, not a PipeStream wire change. Independent Java durab
 storage, execution, results, recovery and the original cross-language failure and
 workload-comparison deliverables remain open.
 
+A subsequent packet-level test exposed another gap: independently delivered
+MAX_STREAM_DATA could exhaust connection credit while Stream 0 retained stream
+credit. The Java transport extension now has an opt-in policy pairing each
+stream-credit or stream-count update with sufficient MAX_DATA in the same packet,
+deferring an update that cannot fit as a pair. The Java V2 owner enables it.
+The regression checks actual protected packets with a constrained send buffer,
+then requires progress with adequate packet space. Actual-loss tests also found
+that MAX_STREAMS updates were not rescheduled after loss. The correction retains
+per-direction pending credit; tests require repeated paired limits and usable
+replacement streams for both stream directions. This does not establish the
+corresponding packet-loss and reordering guarantees for the independent Rust
+transport or complete either endpoint's durable-profile acceptance gates.
+
 As of 2026-09-07, the Rust authority library also implements transactional
 admission and replay, fenced worker execution, both branch producers and real
 child-output reassembly, cancellation/closure, retained result reads,
@@ -192,6 +205,9 @@ ownership refusal. Testing exposed a deadlock when stream credit was replenished
 before connection credit; the implementation now budgets update headroom and
 Section 12.1 explicitly requires preserving the reservation across updates.
 This is adapter evidence, not complete durable-endpoint interoperability.
+These tests also do not establish the reservation under selectively lost or
+reordered connection-credit packets; that transport-level evidence remains
+required independently of the Java transport correction above.
 
 The Rust authority runtime now independently drives execution, read expiry,
 retention and retirement. Three integration tests cover discovery of prior

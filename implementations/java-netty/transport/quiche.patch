@@ -1,8 +1,8 @@
 diff --git a/quiche/include/quiche.h b/quiche/include/quiche.h
-index 45f1c71..261837c 100644
+index 45f1c71..1eb4a60 100644
 --- a/quiche/include/quiche.h
 +++ b/quiche/include/quiche.h
-@@ -257,6 +257,11 @@ void quiche_config_enable_dgram(quiche_config *config, bool enabled,
+@@ -257,6 +257,15 @@ void quiche_config_enable_dgram(quiche_config *config, bool enabled,
                                  size_t recv_queue_len,
                                  size_t send_queue_len);
  
@@ -11,10 +11,14 @@ index 45f1c71..261837c 100644
 +// connection creation. Autotuning and stream-driven lower bounds still apply.
 +void quiche_config_set_initial_connection_window(quiche_config *config, uint64_t v);
 +
++// Pair stream/count credit updates with current MAX_DATA in the same packet.
++// Disabled by default; receive-window geometry must still reserve control space.
++void quiche_config_set_pair_receive_credit(quiche_config *config, bool enabled);
++
  // Sets the maximum connection window.
  void quiche_config_set_max_connection_window(quiche_config *config, uint64_t v);
  
-@@ -431,6 +436,12 @@ int quiche_conn_stream_shutdown(quiche_conn *conn, uint64_t stream_id,
+@@ -431,6 +440,12 @@ int quiche_conn_stream_shutdown(quiche_conn *conn, uint64_t stream_id,
  // Returns the stream's send capacity in bytes.
  ssize_t quiche_conn_stream_capacity(quiche_conn *conn, uint64_t stream_id);
  
@@ -28,10 +32,10 @@ index 45f1c71..261837c 100644
  bool quiche_conn_stream_readable(const quiche_conn *conn, uint64_t stream_id);
  
 diff --git a/quiche/src/ffi.rs b/quiche/src/ffi.rs
-index e812993..4afaeab 100644
+index e812993..e27bac4 100644
 --- a/quiche/src/ffi.rs
 +++ b/quiche/src/ffi.rs
-@@ -385,6 +385,13 @@ pub extern "C" fn quiche_config_set_max_send_udp_payload_size(
+@@ -385,6 +385,20 @@ pub extern "C" fn quiche_config_set_max_send_udp_payload_size(
      config.set_max_send_udp_payload_size(v);
  }
  
@@ -42,10 +46,17 @@ index e812993..4afaeab 100644
 +    config.set_initial_connection_window(v);
 +}
 +
++#[no_mangle]
++pub extern "C" fn quiche_config_set_pair_receive_credit(
++    config: &mut Config, enabled: bool,
++) {
++    config.set_pair_receive_credit(enabled);
++}
++
  #[no_mangle]
  pub extern "C" fn quiche_config_set_max_connection_window(
      config: &mut Config, v: u64,
-@@ -994,6 +1001,11 @@ pub extern "C" fn quiche_conn_stream_capacity(
+@@ -994,6 +1008,11 @@ pub extern "C" fn quiche_conn_stream_capacity(
      }
  }
  
@@ -58,26 +69,28 @@ index e812993..4afaeab 100644
  pub extern "C" fn quiche_conn_stream_readable(
      conn: &Connection, stream_id: u64,
 diff --git a/quiche/src/lib.rs b/quiche/src/lib.rs
-index a93bfb5..ce129fe 100644
+index a93bfb5..b48bc4f 100644
 --- a/quiche/src/lib.rs
 +++ b/quiche/src/lib.rs
-@@ -595,6 +595,7 @@ pub struct Config {
+@@ -595,6 +595,8 @@ pub struct Config {
  
      max_send_udp_payload_size: usize,
  
 +    initial_connection_window: Option<u64>,
++    pair_receive_credit: bool,
      max_connection_window: u64,
      max_stream_window: u64,
  
-@@ -672,6 +673,7 @@ impl Config {
+@@ -672,6 +674,8 @@ impl Config {
  
              max_send_udp_payload_size: MAX_SEND_UDP_PAYLOAD_SIZE,
  
 +            initial_connection_window: None,
++            pair_receive_credit: false,
              max_connection_window: MAX_CONNECTION_WINDOW,
              max_stream_window: stream::MAX_STREAM_WINDOW,
  
-@@ -1171,6 +1173,27 @@ impl Config {
+@@ -1171,6 +1175,43 @@ impl Config {
          self.path_challenge_recv_max_queue_len = queue_len;
      }
  
@@ -102,10 +115,69 @@ index a93bfb5..ce129fe 100644
 +        self.initial_connection_window = Some(v);
 +    }
 +
++    /// Pairs every MAX_STREAM_DATA and MAX_STREAMS update with MAX_DATA in
++    /// the same packet. Disabled by default.
++    ///
++    /// This prevents loss or reordering from delivering stream credit or
++    /// replacement-stream grants without the paired connection-credit update.
++    /// Each packet carrying such an update repeats at least the current
++    /// connection credit, including its consumed-byte replenishment. If the
++    /// pair cannot fit, stream credit remains pending for another packet.
++    ///
++    /// Applications must still configure receive windows that cover all
++    /// permitted unread streams, control and credit-update headroom. This
++    /// does not reserve send buffers or guarantee network delivery.
++    pub fn set_pair_receive_credit(&mut self, enabled: bool) {
++        self.pair_receive_credit = enabled;
++    }
++
      /// Sets the maximum size of the connection window.
      ///
      /// The default value is MAX_CONNECTION_WINDOW (24MBytes).
-@@ -2008,7 +2031,10 @@ impl<F: BufFactory> Connection<F> {
+@@ -1323,6 +1364,9 @@ where
+     /// Receiver flow controller.
+     flow_control: flowcontrol::FlowControl,
+ 
++    /// Couple stream/count credit updates to connection credit per packet.
++    pair_receive_credit: bool,
++
+     /// Whether we send MAX_DATA frame.
+     almost_full: bool,
+ 
+@@ -1806,6 +1850,32 @@ macro_rules! push_frame_to_pkt {
+     }};
+ }
+ 
++/// Pairs receive credit in one packet, or leaves both frames pending.
++/// A previously emitted packet is not proof that the peer received MAX_DATA.
++macro_rules! push_receive_credit_to_pkt {
++    ($out:expr, $frames:expr, $frame:expr, $left:expr, $flow:expr,
++     $now:expr, $enabled:expr, $paired_max:expr) => {{
++        let max = cmp::max($flow.max_data(), $flow.max_data_next());
++        if !$enabled || $paired_max.is_some_and(|sent| sent >= max) {
++            push_frame_to_pkt!($out, $frames, $frame, $left)
++        } else {
++            let connection_credit = frame::Frame::MaxData { max };
++            if connection_credit.wire_len() + $frame.wire_len() <= $left {
++                push_frame_to_pkt!($out, $frames, connection_credit, $left);
++
++                if $flow.max_data_next() > $flow.max_data() {
++                    $flow.update_max_data($now);
++                }
++                $paired_max = Some(max);
++
++                push_frame_to_pkt!($out, $frames, $frame, $left)
++            } else {
++                false
++            }
++        }
++    }};
++}
++
+ /// Executes the provided body if the qlog feature is enabled, quiche has been
+ /// configured with a log writer, the event's importance is within the
+ /// configured level.
+@@ -2008,10 +2078,14 @@ impl<F: BufFactory> Connection<F> {
              rx_data: 0,
              flow_control: flowcontrol::FlowControl::new(
                  max_rx_data,
@@ -117,7 +189,11 @@ index a93bfb5..ce129fe 100644
                  config.max_connection_window,
              ),
              almost_full: false,
-@@ -3447,7 +3473,7 @@ impl<F: BufFactory> Connection<F> {
++            pair_receive_credit: config.pair_receive_credit,
+ 
+             tx_cap: 0,
+             tx_cap_factor: config.tx_cap_factor,
+@@ -3447,7 +3521,7 @@ impl<F: BufFactory> Connection<F> {
                          stream_id,
                          offset,
                          length,
@@ -126,7 +202,7 @@ index a93bfb5..ce129fe 100644
                      } => {
                          // Update tx_buffered and emit qlog before checking if the
                          // stream still exists.  The client does need to ACK
-@@ -3478,6 +3504,9 @@ impl<F: BufFactory> Connection<F> {
+@@ -3478,6 +3552,9 @@ impl<F: BufFactory> Connection<F> {
                          };
  
                          stream.send.ack_and_drop(offset, length);
@@ -136,7 +212,118 @@ index a93bfb5..ce129fe 100644
  
                          let priority_key = Arc::clone(&stream.priority_key);
  
-@@ -5936,6 +5965,26 @@ impl<F: BufFactory> Connection<F> {
+@@ -4083,6 +4160,14 @@ impl<F: BufFactory> Connection<F> {
+                         self.almost_full = true;
+                     },
+ 
++                    frame::Frame::MaxStreamsBidi { max } => {
++                        self.streams.max_streams_bidi_lost(max);
++                    },
++
++                    frame::Frame::MaxStreamsUni { max } => {
++                        self.streams.max_streams_uni_lost(max);
++                    },
++
+                     frame::Frame::NewConnectionId { seq_num, .. } => {
+                         self.ids.mark_advertise_new_scid_seq(seq_num, true);
+                     },
+@@ -4456,13 +4541,29 @@ impl<F: BufFactory> Connection<F> {
+                 }
+             }
+ 
++            let mut paired_max_data: Option<u64> = None;
++            let paired_window_tuned = self.pair_receive_credit &&
++                (self.almost_full ||
++                    self.streams.has_almost_full() ||
++                    self.streams.should_update_max_streams_bidi() ||
++                    self.streams.should_update_max_streams_uni()) &&
++                flow_control.max_data() < flow_control.max_data_next();
++            if paired_window_tuned {
++                // Tune once per packet, before applying stream-window lower
++                // bounds and advertising any paired connection credit.
++                flow_control.autotune_window(now, path.recovery.rtt());
++            }
++
+             // Create MAX_STREAMS_BIDI frame.
+             if self.streams.should_update_max_streams_bidi() {
+                 let frame = frame::Frame::MaxStreamsBidi {
+                     max: self.streams.max_streams_bidi_next(),
+                 };
+ 
+-                if push_frame_to_pkt!(b, frames, frame, left) {
++                if push_receive_credit_to_pkt!(
++                    b, frames, frame, left, flow_control, now,
++                    self.pair_receive_credit, paired_max_data
++                ) {
+                     self.streams.update_max_streams_bidi();
+ 
+                     ack_eliciting = true;
+@@ -4476,7 +4577,10 @@ impl<F: BufFactory> Connection<F> {
+                     max: self.streams.max_streams_uni_next(),
+                 };
+ 
+-                if push_frame_to_pkt!(b, frames, frame, left) {
++                if push_receive_credit_to_pkt!(
++                    b, frames, frame, left, flow_control, now,
++                    self.pair_receive_credit, paired_max_data
++                ) {
+                     self.streams.update_max_streams_uni();
+ 
+                     ack_eliciting = true;
+@@ -4514,12 +4618,22 @@ impl<F: BufFactory> Connection<F> {
+                 // Autotune the stream window size.
+                 stream.recv.autotune_window(now, path.recovery.rtt());
+ 
++                if self.pair_receive_credit {
++                    flow_control.ensure_window_lower_bound(
++                        (stream.recv.window() as f64 * CONNECTION_WINDOW_FACTOR)
++                            as u64,
++                    );
++                }
++
+                 let frame = frame::Frame::MaxStreamData {
+                     stream_id,
+                     max: stream.recv.max_data_next(),
+                 };
+ 
+-                if push_frame_to_pkt!(b, frames, frame, left) {
++                if push_receive_credit_to_pkt!(
++                    b, frames, frame, left, flow_control, now,
++                    self.pair_receive_credit, paired_max_data
++                ) {
+                     let recv_win = stream.recv.window();
+ 
+                     stream.recv.update_max_data(now);
+@@ -4537,16 +4651,26 @@ impl<F: BufFactory> Connection<F> {
+ 
+                     // Also send MAX_DATA when MAX_STREAM_DATA is sent, to avoid a
+                     // potential race condition.
+-                    self.almost_full = true;
++                    if !self.pair_receive_credit {
++                        self.almost_full = true;
++                    }
+                 }
+             }
+ 
++            if paired_max_data.is_some() &&
++                flow_control.max_data() >= flow_control.max_data_next()
++            {
++                self.almost_full = false;
++            }
++
+             // Create MAX_DATA frame as needed.
+             if self.almost_full &&
+                 flow_control.max_data() < flow_control.max_data_next()
+             {
+                 // Autotune the connection window size.
+-                flow_control.autotune_window(now, path.recovery.rtt());
++                if !paired_window_tuned {
++                    flow_control.autotune_window(now, path.recovery.rtt());
++                }
+ 
+                 let frame = frame::Frame::MaxData {
+                     max: flow_control.max_data_next(),
+@@ -5936,6 +6060,26 @@ impl<F: BufFactory> Connection<F> {
          Err(Error::InvalidStreamState(stream_id))
      }
  
@@ -164,13 +351,84 @@ index a93bfb5..ce129fe 100644
      ///
      /// Note that once returned by this method, a stream ID will not be returned
 diff --git a/quiche/src/stream/mod.rs b/quiche/src/stream/mod.rs
-index 6355285..be3f1b2 100644
+index 6355285..e48e59f 100644
 --- a/quiche/src/stream/mod.rs
 +++ b/quiche/src/stream/mod.rs
-@@ -676,6 +676,15 @@ impl<F: BufFactory> StreamMap<F> {
-                 self.local_max_streams_uni - self.peer_opened_streams_uni
+@@ -142,10 +142,12 @@ pub struct StreamMap<F: BufFactory = DefaultBufFactory> {
+     /// Local maximum bidirectional stream count limit.
+     local_max_streams_bidi: u64,
+     local_max_streams_bidi_next: u64,
++    local_max_streams_bidi_lost: bool,
+ 
+     /// Local maximum unidirectional stream count limit.
+     local_max_streams_uni: u64,
+     local_max_streams_uni_next: u64,
++    local_max_streams_uni_lost: bool,
+ 
+     /// The total number of bidirectional streams opened by the local endpoint.
+     local_opened_streams_bidi: u64,
+@@ -520,12 +522,21 @@ impl<F: BufFactory> StreamMap<F> {
+     /// Commits the new max_streams_bidi limit.
+     pub fn update_max_streams_bidi(&mut self) {
+         self.local_max_streams_bidi = self.local_max_streams_bidi_next;
++        self.local_max_streams_bidi_lost = false;
++    }
++
++    /// Schedules the current stream limit again when its packet is lost.
++    pub fn max_streams_bidi_lost(&mut self, max: u64) {
++        if max == self.local_max_streams_bidi {
++            self.local_max_streams_bidi_lost = true;
++        }
      }
  
+     /// Sets the max_streams_bidi limit to the given value.
+     pub fn set_max_streams_bidi(&mut self, max: u64) {
+         self.local_max_streams_bidi = max;
+         self.local_max_streams_bidi_next = max;
++        self.local_max_streams_bidi_lost = false;
+     }
+ 
+     /// Returns the current max_streams_bidi limit.
+@@ -541,6 +552,14 @@ impl<F: BufFactory> StreamMap<F> {
+     /// Commits the new max_streams_uni limit.
+     pub fn update_max_streams_uni(&mut self) {
+         self.local_max_streams_uni = self.local_max_streams_uni_next;
++        self.local_max_streams_uni_lost = false;
++    }
++
++    /// Schedules the current stream limit again when its packet is lost.
++    pub fn max_streams_uni_lost(&mut self, max: u64) {
++        if max == self.local_max_streams_uni {
++            self.local_max_streams_uni_lost = true;
++        }
+     }
+ 
+     /// Returns the new max_streams_uni limit.
+@@ -663,17 +682,28 @@ impl<F: BufFactory> StreamMap<F> {
+     /// Returns true if the max bidirectional streams count needs to be updated
+     /// by sending a MAX_STREAMS frame to the peer.
+     pub fn should_update_max_streams_bidi(&self) -> bool {
+-        self.local_max_streams_bidi_next != self.local_max_streams_bidi &&
+-            self.local_max_streams_bidi_next / 2 >
+-                self.local_max_streams_bidi - self.peer_opened_streams_bidi
++        self.local_max_streams_bidi_lost ||
++            (self.local_max_streams_bidi_next != self.local_max_streams_bidi &&
++                self.local_max_streams_bidi_next / 2 >
++                    self.local_max_streams_bidi - self.peer_opened_streams_bidi)
+     }
+ 
+     /// Returns true if the max unidirectional streams count needs to be updated
+     /// by sending a MAX_STREAMS frame to the peer.
+     pub fn should_update_max_streams_uni(&self) -> bool {
+-        self.local_max_streams_uni_next != self.local_max_streams_uni &&
+-            self.local_max_streams_uni_next / 2 >
+-                self.local_max_streams_uni - self.peer_opened_streams_uni
++        self.local_max_streams_uni_lost ||
++            (self.local_max_streams_uni_next != self.local_max_streams_uni &&
++                self.local_max_streams_uni_next / 2 >
++                    self.local_max_streams_uni - self.peer_opened_streams_uni)
++    }
++
 +    /// Counts stream bytes after each stream's contiguous ACK frontier.
 +    pub fn send_retained(&self) -> u64 {
 +        self.streams.values().fold(0, |total, stream| {
@@ -178,12 +436,10 @@ index 6355285..be3f1b2 100644
 +                stream.send.off_back().saturating_sub(stream.send.ack_off()),
 +            )
 +        })
-+    }
-+
+     }
+ 
      /// Returns the number of active streams in the map.
-     #[cfg(test)]
-     pub fn len(&self) -> usize {
-@@ -1377,6 +1386,8 @@ mod tests {
+@@ -1377,6 +1407,8 @@ mod tests {
          assert!(!stream.send.is_complete());
  
          stream.send.ack(0, 1);
@@ -350,10 +606,10 @@ index fb1008b..600a0df 100644
 +    }
  }
 diff --git a/quiche/src/tests.rs b/quiche/src/tests.rs
-index 0944993..ea79012 100644
+index 0944993..82500cd 100644
 --- a/quiche/src/tests.rs
 +++ b/quiche/src/tests.rs
-@@ -991,6 +991,387 @@ fn streamio(#[values("cubic", "bbr2_gcongestion")] cc_algorithm_name: &str) {
+@@ -991,6 +991,939 @@ fn streamio(#[values("cubic", "bbr2_gcongestion")] cc_algorithm_name: &str) {
      assert!(pipe.server.stream_finished(4));
  }
  
@@ -736,6 +992,558 @@ index 0944993..ea79012 100644
 +    assert_eq!(pipe.handshake(), Ok(()));
 +    assert_eq!(pipe.server.local_transport_params.initial_max_data, 30);
 +    assert_eq!(pipe.server.flow_control.window(), 0);
++}
++
++#[test]
++fn delayed_max_data_diagnostic_exhausts_connection_before_control_stream_credit(
++) {
++    delayed_max_data_exhaustion_at_packet_size(39);
++}
++
++fn delayed_max_data_exhaustion_at_packet_size(packet_size: usize) {
++    const N: u64 = 1;
++    const W: u64 = 128;
++    const R: u64 = 2 * (N + 1) * W;
++
++    let mut config = Config::new(PROTOCOL_VERSION).unwrap();
++    config
++        .load_cert_chain_from_pem_file("examples/cert.crt")
++        .unwrap();
++    config
++        .load_priv_key_from_pem_file("examples/cert.key")
++        .unwrap();
++    config.set_application_protos(&[b"proto1"]).unwrap();
++    config.set_initial_max_data(R);
++    config.set_initial_connection_window(R);
++    config.set_max_connection_window(R);
++    config.set_max_stream_window(W);
++    config.set_initial_max_stream_data_bidi_local(W);
++    config.set_initial_max_stream_data_bidi_remote(W);
++    config.set_initial_max_stream_data_uni(W);
++    config.set_initial_max_streams_bidi(1);
++    config.set_initial_max_streams_uni(N);
++    config.verify_peer(false);
++
++    let mut pipe = test_utils::Pipe::with_config(&mut config).unwrap();
++    assert_eq!(pipe.handshake(), Ok(()));
++    let mut buf = [0; 65535];
++
++    // Open control stream 0 and leave its per-stream credit almost untouched.
++    assert_eq!(pipe.client.stream_send(0, b"c", false), Ok(1));
++    let (written, _) = pipe.client.send(&mut buf).unwrap();
++    assert_eq!(pipe.server_recv(&mut buf[..written]), Ok(written));
++    let mut control = [0; 1];
++    assert_eq!(pipe.server.stream_recv(0, &mut control), Ok((1, false)));
++
++    let mut sent = 0;
++    let mut observed_max_data = Vec::new();
++    let mut forwarded_ack = false;
++    let mut forwarded_stream_credit = false;
++    while sent < R - 1 {
++        let requested = cmp::min(W, R - 1 - sent) as usize;
++        assert_eq!(
++            pipe.client.stream_send(2, &vec![0x5a; requested], false),
++            Ok(requested)
++        );
++        let (written, _) = pipe.client.send(&mut buf).unwrap();
++        assert_eq!(pipe.server_recv(&mut buf[..written]), Ok(written));
++        let mut data = vec![0; requested];
++        assert_eq!(
++            pipe.server.stream_recv(2, &mut data),
++            Ok((requested, false))
++        );
++        assert!(data.iter().all(|byte| *byte == 0x5a));
++        sent += requested as u64;
++
++        let flight = test_utils::emit_flight_with_max_buffer(
++            &mut pipe.server,
++            packet_size,
++            None,
++            None,
++        )
++        .unwrap();
++        for (mut packet, info) in flight {
++            let mut inspection = packet.clone();
++            let frames = test_utils::decode_pkt(
++                &mut pipe.client,
++                &mut inspection,
++            )
++            .unwrap();
++            let has_max_data = frames.iter().any(|frame| {
++                if let frame::Frame::MaxData { max } = frame {
++                    observed_max_data.push(*max);
++                    true
++                } else {
++                    false
++                }
++            });
++            if has_max_data {
++                continue;
++            }
++            forwarded_ack |= frames
++                .iter()
++                .any(|frame| matches!(frame, frame::Frame::ACK { .. }));
++            forwarded_stream_credit |= frames.iter().any(|frame| {
++                matches!(frame, frame::Frame::MaxStreamData { stream_id: 2, .. })
++            });
++            test_utils::process_flight(
++                &mut pipe.client,
++                vec![(std::mem::take(&mut packet), info)],
++            )
++            .unwrap();
++        }
++    }
++
++    let control_stream_credit =
++        pipe.client.streams.get(0).unwrap().send.cap().unwrap();
++    assert_eq!(sent, R - 1);
++    assert!(!observed_max_data.is_empty());
++    assert!(forwarded_ack);
++    assert!(forwarded_stream_credit);
++    assert!(control_stream_credit >= (W - 1) as usize);
++    assert_eq!(pipe.client.stream_capacity(0), Ok(0));
++    assert_eq!(pipe.client.stream_send(0, b"x", false), Err(Error::Done));
++    println!(
++        "delayed MAX_DATA exhaustion packet_size={packet_size} sent={sent} \
++         initial_max_data={R} peer_max_data={} \
++         control_stream_credit={control_stream_credit} \
++         withheld_max_data={observed_max_data:?}",
++        pipe.client.max_tx_data,
++    );
++}
++
++#[test]
++fn paired_receive_credit_keeps_stream_and_connection_updates_in_one_packet() {
++    const W: u64 = 128;
++    const R: u64 = 512;
++
++    let mut config = Config::new(PROTOCOL_VERSION).unwrap();
++    config
++        .load_cert_chain_from_pem_file("examples/cert.crt")
++        .unwrap();
++    config
++        .load_priv_key_from_pem_file("examples/cert.key")
++        .unwrap();
++    config.set_application_protos(&[b"proto1"]).unwrap();
++    config.set_initial_max_data(R);
++    config.set_initial_connection_window(R);
++    config.set_max_connection_window(R);
++    config.set_max_stream_window(W);
++    config.set_initial_max_stream_data_bidi_local(W);
++    config.set_initial_max_stream_data_bidi_remote(W);
++    config.set_initial_max_stream_data_uni(W);
++    config.set_initial_max_streams_bidi(1);
++    config.set_initial_max_streams_uni(1);
++    config.set_pair_receive_credit(true);
++    config.verify_peer(false);
++
++    let mut pipe = test_utils::Pipe::with_config(&mut config).unwrap();
++    assert_eq!(pipe.handshake(), Ok(()));
++    assert_eq!(pipe.client.stream_send(0, b"c", false), Ok(1));
++    assert_eq!(pipe.client.stream_send(2, &[0x5a; 128], false), Ok(128));
++    let flight = test_utils::emit_flight(&mut pipe.client).unwrap();
++    test_utils::process_flight(&mut pipe.server, flight).unwrap();
++    let mut control = [0; 1];
++    assert_eq!(pipe.server.stream_recv(0, &mut control), Ok((1, false)));
++    let mut data = [0; 128];
++    assert_eq!(pipe.server.stream_recv(2, &mut data), Ok((128, false)));
++    assert_eq!(data, [0x5a; 128]);
++
++    let mut saw_stream_credit = false;
++    for _ in 0..16 {
++        let mut tight = [0; 39];
++        match pipe.server.send(&mut tight) {
++            Ok((written, info)) => {
++                saw_stream_credit |= process_paired_receive_credit_packet(
++                    &mut pipe,
++                    tight[..written].to_vec(),
++                    info,
++                    129 + R,
++                );
++            },
++
++            Err(Error::Done | Error::BufferTooShort) => break,
++
++            Err(e) => panic!("unexpected tight-buffer send error: {e:?}"),
++        }
++    }
++    if !saw_stream_credit {
++        loop {
++            let mut packet = [0; 128];
++            match pipe.server.send(&mut packet) {
++                Ok((written, info)) => {
++                    saw_stream_credit |= process_paired_receive_credit_packet(
++                        &mut pipe,
++                        packet[..written].to_vec(),
++                        info,
++                        129 + R,
++                    );
++                },
++
++                Err(Error::Done) => break,
++
++                Err(e) => {
++                    panic!("unexpected larger-buffer send error: {e:?}")
++                },
++            }
++        }
++    }
++    assert!(saw_stream_credit);
++
++    assert_eq!(pipe.client.stream_send(2, &[0x6b; 128], false), Ok(128));
++    assert_eq!(pipe.client.stream_send(0, b"x", false), Ok(1));
++}
++
++fn process_paired_receive_credit_packet(
++    pipe: &mut test_utils::Pipe, packet: Vec<u8>, info: SendInfo,
++    minimum_max_data: u64,
++) -> bool {
++    let mut saw_stream_credit = false;
++    let mut inspection = packet.clone();
++    let frames =
++        test_utils::decode_pkt(&mut pipe.client, &mut inspection).unwrap();
++    let has_stream_credit = frames.iter().any(|frame| {
++        matches!(
++            frame,
++            frame::Frame::MaxStreamData { .. } |
++                frame::Frame::MaxStreamsBidi { .. } |
++                frame::Frame::MaxStreamsUni { .. }
++        )
++    });
++    if has_stream_credit {
++        saw_stream_credit = true;
++        assert!(frames.iter().any(|frame| {
++            matches!(frame, frame::Frame::MaxData { max } if *max >= minimum_max_data)
++        }));
++    }
++    test_utils::process_flight(&mut pipe.client, vec![(packet, info)]).unwrap();
++    saw_stream_credit
++}
++
++#[test]
++fn paired_max_streams_uni_after_fin_and_reset_carries_connection_credit() {
++    for reset in [false, true] {
++        let mut config = paired_receive_credit_config();
++        let mut pipe = test_utils::Pipe::with_config(&mut config).unwrap();
++        assert_eq!(pipe.handshake(), Ok(()));
++
++        if reset {
++            assert_eq!(pipe.client.stream_send(2, b"x", false), Ok(1));
++            let data_flight =
++                test_utils::emit_flight(&mut pipe.client).unwrap();
++            test_utils::process_flight(&mut pipe.server, data_flight).unwrap();
++            pipe.client
++                .stream_shutdown(2, Shutdown::Write, 17)
++                .unwrap();
++            let reset_flight =
++                test_utils::emit_flight(&mut pipe.client).unwrap();
++            test_utils::process_flight(&mut pipe.server, reset_flight)
++                .unwrap();
++        } else {
++            assert_eq!(pipe.client.stream_send(2, b"x", true), Ok(1));
++            let flight = test_utils::emit_flight(&mut pipe.client).unwrap();
++            test_utils::process_flight(&mut pipe.server, flight).unwrap();
++        }
++        let mut data = [0; 1];
++        if reset {
++            assert_eq!(
++                pipe.server.stream_recv(2, &mut data),
++                Err(Error::StreamReset(17))
++            );
++        } else {
++            assert_eq!(pipe.server.stream_recv(2, &mut data), Ok((1, true)));
++            assert_eq!(data, *b"x");
++        }
++
++        let flight = test_utils::emit_flight(&mut pipe.server).unwrap();
++        let mut saw_replacement = false;
++        for (packet, info) in flight {
++            let mut inspection = packet.clone();
++            let frames =
++                test_utils::decode_pkt(&mut pipe.client, &mut inspection)
++                    .unwrap();
++            if frames
++                .iter()
++                .any(|frame| matches!(frame, frame::Frame::MaxStreamsUni { .. }))
++            {
++                saw_replacement = true;
++                assert!(frames.iter().any(|frame| {
++                    matches!(frame, frame::Frame::MaxData { max } if *max >= 513)
++                }));
++            }
++            test_utils::process_flight(&mut pipe.client, vec![(packet, info)])
++                .unwrap();
++        }
++        assert!(saw_replacement);
++        assert_eq!(pipe.client.peer_streams_left_uni(), 1);
++    }
++}
++
++#[test]
++fn paired_max_streams_uni_and_max_data_are_retransmitted_after_loss() {
++    let mut config = paired_receive_credit_config();
++    let mut pipe = test_utils::Pipe::with_config(&mut config).unwrap();
++    assert_eq!(pipe.handshake(), Ok(()));
++    assert_eq!(pipe.client.stream_send(2, b"x", true), Ok(1));
++    let flight = test_utils::emit_flight(&mut pipe.client).unwrap();
++    test_utils::process_flight(&mut pipe.server, flight).unwrap();
++    let mut data = [0; 1];
++    assert_eq!(pipe.server.stream_recv(2, &mut data), Ok((1, true)));
++
++    let dropped = test_utils::emit_flight(&mut pipe.server).unwrap();
++    let mut advertised_max_data = None;
++    for (mut packet, _) in dropped {
++        let frames =
++            test_utils::decode_pkt(&mut pipe.client, &mut packet).unwrap();
++        if frames
++            .iter()
++            .any(|frame| matches!(frame, frame::Frame::MaxStreamsUni { .. }))
++        {
++            advertised_max_data = frames.iter().find_map(|frame| match frame {
++                frame::Frame::MaxData { max } => Some(*max),
++                _ => None,
++            });
++        }
++    }
++    let advertised_max_data = advertised_max_data
++        .expect("dropped MAX_STREAMS_UNI lacked paired MAX_DATA");
++
++    let lost_before = pipe.server.stats().lost;
++    for _ in 0..4 {
++        pipe.server.send_ack_eliciting().unwrap();
++        let probe = test_utils::emit_flight(&mut pipe.server).unwrap();
++        test_utils::process_flight(&mut pipe.client, probe).unwrap();
++        let ack = test_utils::emit_flight(&mut pipe.client).unwrap();
++        test_utils::process_flight(&mut pipe.server, ack).unwrap();
++        if pipe.server.stats().lost > lost_before {
++            break;
++        }
++    }
++    assert!(pipe.server.stats().lost > lost_before);
++    let retransmission = test_utils::emit_flight(&mut pipe.server).unwrap();
++    let mut saw_replacement = false;
++    for (packet, info) in retransmission {
++        let mut inspection = packet.clone();
++        let frames =
++            test_utils::decode_pkt(&mut pipe.client, &mut inspection).unwrap();
++        if frames
++            .iter()
++            .any(|frame| matches!(frame, frame::Frame::MaxStreamsUni { .. }))
++        {
++            saw_replacement = true;
++            assert!(frames.iter().any(|frame| {
++                matches!(frame, frame::Frame::MaxData { max } if *max == advertised_max_data)
++            }));
++        }
++        test_utils::process_flight(&mut pipe.client, vec![(packet, info)])
++            .unwrap();
++    }
++    assert!(saw_replacement);
++    assert_eq!(pipe.client.peer_streams_left_uni(), 1);
++    assert_eq!(pipe.client.stream_send(6, b"r", false), Ok(1));
++}
++
++#[test]
++fn paired_credit_preserves_larger_advertised_max_data_and_stream_lower_bound() {
++    let mut config = paired_receive_credit_config();
++    config.set_initial_max_data(1024);
++    config.set_initial_connection_window(128);
++    config.set_initial_max_stream_data_bidi_local(128);
++    config.set_initial_max_stream_data_bidi_remote(128);
++    config.set_initial_max_streams_bidi(1);
++    let mut pipe = test_utils::Pipe::with_config(&mut config).unwrap();
++    assert_eq!(pipe.handshake(), Ok(()));
++    assert_eq!(pipe.client.stream_send(2, &[0x5a; 128], false), Ok(128));
++    let flight = test_utils::emit_flight(&mut pipe.client).unwrap();
++    test_utils::process_flight(&mut pipe.server, flight).unwrap();
++    let mut data = [0; 128];
++    assert_eq!(pipe.server.stream_recv(2, &mut data), Ok((128, false)));
++
++    let flight = test_utils::emit_flight(&mut pipe.server).unwrap();
++    let mut saw_stream_credit = false;
++    for (packet, info) in flight {
++        let mut inspection = packet.clone();
++        let frames =
++            test_utils::decode_pkt(&mut pipe.client, &mut inspection).unwrap();
++        if frames
++            .iter()
++            .any(|frame| matches!(frame, frame::Frame::MaxStreamData { .. }))
++        {
++            saw_stream_credit = true;
++            assert!(frames.iter().any(|frame| {
++                matches!(frame, frame::Frame::MaxData { max: 1024 })
++            }));
++        }
++        test_utils::process_flight(&mut pipe.client, vec![(packet, info)])
++            .unwrap();
++    }
++    assert!(saw_stream_credit);
++    assert!(pipe.server.flow_control.window() >= 192);
++    assert_eq!(pipe.client.stream_send(0, b"c", false), Ok(1));
++}
++
++#[test]
++fn max_streams_loss_pending_tracks_current_limit_for_both_types() {
++    let mut streams: stream::StreamMap =
++        stream::StreamMap::new(3, 4, stream::MAX_STREAM_WINDOW);
++
++    streams.max_streams_bidi_lost(2);
++    streams.max_streams_uni_lost(3);
++    assert!(!streams.should_update_max_streams_bidi());
++    assert!(!streams.should_update_max_streams_uni());
++
++    streams.max_streams_bidi_lost(3);
++    streams.max_streams_bidi_lost(3);
++    streams.max_streams_uni_lost(4);
++    streams.max_streams_uni_lost(4);
++    assert!(streams.should_update_max_streams_bidi());
++    assert!(streams.should_update_max_streams_uni());
++
++    streams.update_max_streams_bidi();
++    streams.update_max_streams_uni();
++    assert!(!streams.should_update_max_streams_bidi());
++    assert!(!streams.should_update_max_streams_uni());
++}
++
++#[test]
++fn paired_receive_credit_autotunes_connection_window_once_per_update() {
++    let mut config = paired_receive_credit_config();
++    config.set_initial_max_data(256);
++    config.set_initial_connection_window(128);
++    config.set_max_connection_window(1024);
++    config.set_initial_max_streams_uni(2);
++    let mut pipe = test_utils::Pipe::with_config(&mut config).unwrap();
++    assert_eq!(pipe.handshake(), Ok(()));
++
++    // Receive both streams before either update. The native packet builder's
++    // explicit time input then fixes the two updates inside one RTT without
++    // relying on host scheduling or injecting an unregistered packet.
++    assert_eq!(pipe.client.stream_send(2, &[0x5a; 128], false), Ok(128));
++    assert_eq!(pipe.client.stream_send(6, &[0x5a; 128], false), Ok(128));
++    let flight = test_utils::emit_flight(&mut pipe.client).unwrap();
++    test_utils::process_flight(&mut pipe.server, flight).unwrap();
++    let packet_time = Instant::now();
++    let active_pid = pipe.server.paths.get_active_path_id().unwrap();
++
++    for (stream_id, expected_max_data) in [(2, 320), (6, 640)] {
++        let mut data = [0; 128];
++        assert_eq!(pipe.server.stream_recv(stream_id, &mut data), Ok((128, false)));
++        assert_eq!(data, [0x5a; 128]);
++
++        let mut packet = [0; 1200];
++        let (ty, len) = pipe.server
++            .send_single(&mut packet, active_pid, false, packet_time)
++            .unwrap();
++        assert_eq!(ty, Type::Short);
++        let mut inspection = packet[..len].to_vec();
++        let frames = test_utils::decode_pkt(&mut pipe.client, &mut inspection).unwrap();
++        assert!(frames.iter().any(|frame| {
++            matches!(frame, frame::Frame::MaxStreamData { stream_id: id, .. } if *id == stream_id)
++        }));
++        assert!(frames.iter().any(|frame| {
++            matches!(frame, frame::Frame::MaxData { max } if *max == expected_max_data)
++        }));
++        assert_eq!(pipe.client_recv(&mut packet[..len]), Ok(len));
++    }
++    assert_eq!(pipe.server.flow_control.window(), 384);
++}
++
++#[test]
++fn paired_max_streams_bidi_retransmission_keeps_control_stream_live() {
++    let mut config = paired_receive_credit_config();
++    config.set_initial_max_stream_data_bidi_local(128);
++    config.set_initial_max_stream_data_bidi_remote(128);
++    config.set_initial_max_streams_bidi(2);
++    let mut pipe = test_utils::Pipe::with_config(&mut config).unwrap();
++    assert_eq!(pipe.handshake(), Ok(()));
++
++    assert_eq!(pipe.client.stream_send(0, b"c", false), Ok(1));
++    assert_eq!(pipe.client.stream_send(4, b"x", true), Ok(1));
++    let flight = test_utils::emit_flight(&mut pipe.client).unwrap();
++    test_utils::process_flight(&mut pipe.server, flight).unwrap();
++    let mut control = [0; 1];
++    assert_eq!(pipe.server.stream_recv(0, &mut control), Ok((1, false)));
++    let mut data = [0; 1];
++    assert_eq!(pipe.server.stream_recv(4, &mut data), Ok((1, true)));
++
++    assert_eq!(pipe.server.stream_send(4, b"", true), Ok(0));
++    let response = test_utils::emit_flight(&mut pipe.server).unwrap();
++    test_utils::process_flight(&mut pipe.client, response).unwrap();
++    assert_eq!(pipe.client.stream_recv(4, &mut []), Ok((0, true)));
++    let ack = test_utils::emit_flight(&mut pipe.client).unwrap();
++    test_utils::process_flight(&mut pipe.server, ack).unwrap();
++
++    let dropped = test_utils::emit_flight(&mut pipe.server).unwrap();
++    let mut advertised_max_data = None;
++    for (mut packet, _) in dropped {
++        let frames =
++            test_utils::decode_pkt(&mut pipe.client, &mut packet).unwrap();
++        if frames
++            .iter()
++            .any(|frame| matches!(frame, frame::Frame::MaxStreamsBidi { .. }))
++        {
++            advertised_max_data = frames.iter().find_map(|frame| match frame {
++                frame::Frame::MaxData { max } => Some(*max),
++                _ => None,
++            });
++        }
++    }
++    let advertised_max_data = advertised_max_data
++        .expect("dropped MAX_STREAMS_BIDI lacked paired MAX_DATA");
++
++    let lost_before = pipe.server.stats().lost;
++    for _ in 0..4 {
++        pipe.server.send_ack_eliciting().unwrap();
++        let probe = test_utils::emit_flight(&mut pipe.server).unwrap();
++        test_utils::process_flight(&mut pipe.client, probe).unwrap();
++        let ack = test_utils::emit_flight(&mut pipe.client).unwrap();
++        test_utils::process_flight(&mut pipe.server, ack).unwrap();
++        if pipe.server.stats().lost > lost_before {
++            break;
++        }
++    }
++    assert!(pipe.server.stats().lost > lost_before);
++    let retransmission = test_utils::emit_flight(&mut pipe.server).unwrap();
++    let mut saw_replacement = false;
++    for (packet, info) in retransmission {
++        let mut inspection = packet.clone();
++        let frames =
++            test_utils::decode_pkt(&mut pipe.client, &mut inspection).unwrap();
++        if frames
++            .iter()
++            .any(|frame| matches!(frame, frame::Frame::MaxStreamsBidi { .. }))
++        {
++            saw_replacement = true;
++            assert!(frames.iter().any(|frame| {
++                matches!(frame, frame::Frame::MaxData { max } if *max == advertised_max_data)
++            }));
++        }
++        test_utils::process_flight(&mut pipe.client, vec![(packet, info)])
++            .unwrap();
++    }
++    assert!(saw_replacement);
++    assert_eq!(pipe.client.stream_send(0, b"d", false), Ok(1));
++    assert_eq!(pipe.client.stream_send(8, b"r", false), Ok(1));
++}
++
++fn paired_receive_credit_config() -> Config {
++    let mut config = Config::new(PROTOCOL_VERSION).unwrap();
++    config
++        .load_cert_chain_from_pem_file("examples/cert.crt")
++        .unwrap();
++    config
++        .load_priv_key_from_pem_file("examples/cert.key")
++        .unwrap();
++    config.set_application_protos(&[b"proto1"]).unwrap();
++    config.set_initial_max_data(512);
++    config.set_initial_connection_window(512);
++    config.set_max_connection_window(512);
++    config.set_max_stream_window(128);
++    config.set_initial_max_stream_data_uni(128);
++    config.set_initial_max_streams_uni(1);
++    config.set_pair_receive_credit(true);
++    config.verify_peer(false);
++    config
 +}
 +
  #[rstest]

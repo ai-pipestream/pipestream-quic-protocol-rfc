@@ -96,6 +96,15 @@ credit update has not yet been advertised. The necessary headroom depends on
 the transport's credit-update policy; initial stream counts alone are not a
 proof of continued control progress.
 
+The reservation MUST hold for peer-observable credit updates under packet loss
+and reordering, including retransmitted updates and replacement streams after
+FIN or reset. Emitting connection credit earlier, or batching it with stream
+credit in one send operation, does not establish that the peer received both.
+One implementation strategy is to carry the necessary connection credit in
+every QUIC packet that grants additional stream credit or replacement streams;
+other strategies are permitted if they preserve the same reservation. Any
+such strategy MUST also account for the initially permitted streams and windows.
+
 Receive bounds MUST account for any window autotuning, including the limits
 used for later credit replenishment, not only the initial transport parameters.
 Send admission accounting MUST include transport-owned data still charged

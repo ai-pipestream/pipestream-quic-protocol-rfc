@@ -17,7 +17,7 @@ advertises V2 Core only.
   `f1c75347daa2ea81a941e953f2263e0a4d970c8d`; tests using the latter are not
   tests of the exact Netty native TLS build.
 - Modified classes/native artifacts use the group `ai.pipestream.transport`
-  and version `4.2.17.Final-pipestream.2`. Other Netty modules remain official
+  and version `4.2.17.Final-pipestream.3`. Other Netty modules remain official
   `io.netty` 4.2.17.Final dependencies. The native library name uses
   `netty_quiche42_pipestream`, not the official library's name.
 
@@ -60,6 +60,22 @@ send side; the FIN must be acknowledged. Reset abandons that FIN wait and retain
 the connection's existing RESET_STREAM recovery behavior. This is QUIC stream
 correctness, not a change to PipeStream's durable completion semantics.
 
+The `.3` revision adds opt-in `pairReceiveCredit(true)`. Every packet granting
+MAX_STREAM_DATA or MAX_STREAMS credit also carries MAX_DATA covering the current
+consumed-byte replenishment, never less than the already advertised connection
+limit. A packet without enough space for both defers the stream update; a prior
+packet or send batch is not proof of delivery. Multiple stream updates may share
+one sufficient MAX_DATA within the same packet. Connection autotuning and the
+stream-window lower bound still apply. The Java V2 stream owner enables this
+policy with fixed receive windows; it is disabled by default for other callers.
+This complements the send-buffer reservation below. It does not replace the
+initial stream/window bounds or establish durable-object conformance.
+Loss testing also found that the underlying MAX_STREAMS loss dispatch did not
+reschedule its current limit. The extension now retains a per-direction pending
+update until it can be emitted, ignores superseded lost limits, and pairs the
+replacement update when pairing is enabled. This recovery correction applies
+with either setting of the option.
+
 `STREAM_SEND_BUFFER_LIMITS` is a connection option installed before registration.
 Ordinary streams use the aggregate ceiling `total - reserved`; locally selected
 `USE_RESERVED_SEND_BUFFER` streams may use `total`. The current stream setting
@@ -67,8 +83,9 @@ applies at each native write, including automatic queued-write retries. No
 temporary global allowance is exposed to unrelated stream flushes. Java's signed
 counter boundary fails closed on saturation.
 
-The extension does not reserve congestion-window capacity or peer credit, prove
-network delivery, bound application queues, or provide control deadlines. Those
+The extension does not reserve congestion-window capacity, control the remote
+endpoint's receive policy, prove network delivery, bound application queues, or
+provide control deadlines. Those
 remain explicit responsibilities of the Java object/control owner and its
 end-to-end acceptance tests.
 
@@ -116,3 +133,6 @@ stream owner is now implemented and used by Core with zero data slots; all five
 object/control acceptance gates and its complete durable-profile integration
 remain open. The `.2` FIN correction and stream-owner verification are recorded
 in the [subsequent milestone evidence](../../../conformance/results/durable-work-v2-java-stream-owner-2026-09-07.txt).
+The `.3` paired-credit and MAX_STREAMS recovery changes have separate
+[verification evidence](../../../conformance/results/durable-work-v2-java-paired-credit-2026-09-07.txt);
+the older `.2` build is not evidence for the new revision.

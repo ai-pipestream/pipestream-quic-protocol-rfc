@@ -1,2 +1,6 @@
 # Preserve captured Cargo output byte for byte, including its final blank line.
 quiche-fin-ack-fixed-2026-09-07.log whitespace=-blank-at-eof
+quiche-delayed-max-data-2026-09-07.log whitespace=-blank-at-eof
+quiche-unpaired-credit-red-2026-09-07.log whitespace=-blank-at-eof
+quiche-max-streams-loss-red-2026-09-07.log whitespace=-blank-at-eof
+quiche-paired-credit-fixed-2026-09-07.log whitespace=-blank-at-eof
