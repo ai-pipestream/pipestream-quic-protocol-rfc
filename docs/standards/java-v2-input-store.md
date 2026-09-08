@@ -1,4 +1,4 @@
-# Java V2 immutable input storage
+# Java V2 immutable input and output storage
 
 `v2.InputStore` implements bounded, immutable reception for Sections 12.5 and
 12.9 using Java file channels and the independent V2 object verifier. It does
@@ -22,11 +22,12 @@ channel: closing that channel could otherwise affect the first handle's POSIX
 lock. Closing the store refuses while any receiver or reader remains active.
 The store is not a multi-host shared-filesystem authority.
 
-`policy.cbor` format 3 retains a fresh local installation identity, an optional
+`policy.cbor` format 4 retains a fresh local installation identity, an optional
 immutable database-installation identity, file-byte, file-name, per-object and
 active-handle limits, and a checksum. These identities do not replace protocol
 non-reuse rules or confer authorization. Earlier private policies are refused,
-not converted; the object envelope and wire format are unchanged.
+not converted; the input envelope and wire format are unchanged. The layout also
+includes `outputs` and `output-pending` namespaces for prepaid result objects.
 
 `initializeForAuthority` creates a root for one already initialized database
 UUID. `SessionStore.bindInputs` then commits its exact input-store UUID as the
@@ -117,9 +118,25 @@ restart. Recovery validates all funding records and reconstructs future charges
 before removing abandoned staging files. A funding record linked before a crash
 remains charged even when no database job references it. A failed installation
 sync cannot refund its future allowances; exact replay re-establishes durability.
-No funding release or output writer is implemented here yet. The future result
-writer must consume these prepaid allowances and enforce their descriptor bounds,
-not add an independent quota or pretend that absent output bytes are free capacity.
+`OutputStore` now consumes these prepaid allowances through `beginOutput`, without
+adding another quota or treating absent output bytes as free capacity. The writer
+streams an exact declared length and computes SHA-256 before immutable installation.
+It checks per-object, aggregate-byte and count bounds and shares the input store's
+handle pool. A slot is qualified by its funding identity and output index, with
+the exact store, authority, owner, input, attempt and local lease committed in its
+private metadata. Renewing a lease's timestamp does not change that identity.
+
+Installed objects remain immutable and charged. Pending and installed names fit
+inside the same funded allowance. Recovery audits installed bodies and funding
+before removing exclusively abandoned staging, and does not turn an orphan into
+a successful result. Another lease cannot recycle an installed slot without a
+future authoritative reclamation proof. No funding release is implemented yet.
+
+The authority's separate `succeedExecution` transaction verifies the exact output
+set before publishing a manifest and terminal success. A local verified file
+reader is not a protocol result-read lease: current owner authorization, retention,
+revocation, dependency pins and bounded transport delivery must be enforced by the
+still-required result service.
 
 ## Remaining gates
 

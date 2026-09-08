@@ -6,6 +6,7 @@ import static ai.pipestream.quic.v2.Records.*;
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -76,7 +77,9 @@ final class ExecutionStore {
     /** Commit a non-retryable application failure. */
     FAIL,
     /** Commit an attempt failure requiring explicit caller retry. */
-    RETRYABLE
+    RETRYABLE,
+    /** Publish verified immutable outputs and authoritative success together. */
+    SUCCEED
   }
 
   /**
@@ -179,6 +182,11 @@ final class ExecutionStore {
         || job.leaseUntil() == null
         || now >= job.leaseUntil()) {
       throw error(ProtocolError.Code.CONFLICT, "worker lease is stale or expired");
+    }
+    if (change == Change.SUCCEED) {
+      if (!job.expansionComplete())
+        throw error(ProtocolError.Code.NOT_READY, "authority expansion is not complete");
+      requireChildren(connection, binding, view);
     }
   }
 
@@ -316,6 +324,80 @@ final class ExecutionStore {
   }
 
   /**
+   * Publish verified descriptors and success from one prepaid work/job image pair. The enclosing
+   * transaction checks current ownership again after these writes and returns only after commit.
+   *
+   * @param connection writer transaction
+   * @param config exact file policy
+   * @param binding retained session
+   * @param loaded current fenced work/job pair
+   * @param results retained result-delivery profile selection
+   * @param outputs exact verified output descriptors
+   * @param now trusted publication timestamp
+   * @return proposed terminal view, not authoritative until the enclosing commit
+   * @throws SQLException failed atomic image writes
+   */
+  static WorkView succeed(
+      Connection connection,
+      SessionStore.Configuration config,
+      Binding binding,
+      Loaded loaded,
+      boolean results,
+      List<Output> outputs,
+      long now)
+      throws SQLException {
+    WorkView view = loaded.entity().view();
+    JobRecord job = loaded.stored().record();
+    Manifest manifest =
+        results
+            ? new Manifest(
+                binding.authority(),
+                binding.owner(),
+                binding.generation(),
+                view.work(),
+                job.attempt(),
+                view.input().sha256(),
+                now,
+                add(now, binding.policy().outputRetention()),
+                outputs)
+            : null;
+    WorkView succeeded =
+        new WorkView(
+            view.work(),
+            State.SUCCEEDED,
+            view.attempt(),
+            view.input(),
+            view.admittedAt(),
+            view.deadline(),
+            now,
+            add(now, binding.policy().receiptRetention()),
+            manifest == null ? null : manifest.availableUntil(),
+            view.child(),
+            manifest,
+            null);
+    succeeded.validateProfiles(results);
+    JobRecord settled =
+        new JobRecord(
+            job.input(),
+            job.safety(),
+            job.attempt(),
+            job.lease(),
+            null,
+            JobRecord.Stage.SETTLED,
+            job.inputReference(),
+            job.outputReference(),
+            job.objectLimit(),
+            job.inputLive(),
+            job.outputsLive(),
+            false,
+            job.expansionComplete(),
+            0);
+    replaceWork(connection, config, binding, loaded.entity(), succeeded, true);
+    replaceJob(connection, config, binding, loaded.stored(), settled, true);
+    return succeeded;
+  }
+
+  /**
    * Check terminal and cancellation precedence without treating parent failure as cancellation.
    *
    * @param connection metadata transaction
@@ -342,6 +424,8 @@ final class ExecutionStore {
     if (summary == null)
       throw error(ProtocolError.Code.NOT_READY, "child scope is not closed successfully");
     ClosureStore.verify(connection, binding, child.id());
+    if (view.state() == State.SUCCEEDED && summary.closedAt() > view.terminalAt())
+      throw corrupt("parent success precedes its child's authoritative closure");
     if (summary.counts().success() != summary.declared())
       throw error(ProtocolError.Code.NOT_READY, "child scope is not closed successfully");
   }
@@ -417,16 +501,17 @@ final class ExecutionStore {
       throws SQLException {
     WorkView view = entity.view();
     JobRecord job = stored.record();
-    boolean failed = job.stage() == JobRecord.Stage.SETTLED;
+    boolean settled = job.stage() == JobRecord.Stage.SETTLED;
+    boolean failed = view.state() == State.FAILED;
     boolean retry = job.stage() == JobRecord.Stage.AWAITING_RETRY;
     // A terminal deadline failure can follow AWAITING_RETRY without a new attempt. That path
     // spends two settlement writes; terminal history does not retain the intermediate diagnostic.
-    int spent = failed ? 2 : retry ? 1 : 0;
+    int spent = failed ? 2 : settled || retry ? 1 : 0;
     if (job.attempt() != 1
         || view.attempt() != job.attempt()
         || !job.inputLive()
         || !job.outputsLive()
-        || job.executorLive() == failed
+        || job.executorLive() == settled
         || job.releaseIntent() != 0
         || !view.input().equals(job.input().parameters().input())
         || job.expansionComplete() != (job.input().parameters().mode() != 2)
@@ -447,7 +532,8 @@ final class ExecutionStore {
                   && job.input().parameters().mode() == 1;
           case EXECUTING -> job.lease() > 0 && view.state() == State.ACTIVE;
           case AWAITING_RETRY -> job.lease() > 0 && view.state() == State.AWAITING_RETRY;
-          case SETTLED -> view.state() == State.FAILED;
+          case SETTLED ->
+              view.state() == State.FAILED || view.state() == State.SUCCEEDED && job.lease() > 0;
         };
     if (!valid) throw corrupt("unsupported execution lifecycle state");
     if (job.stage() == JobRecord.Stage.EXECUTING
@@ -458,7 +544,16 @@ final class ExecutionStore {
         throw new SQLException("V2 execution: worker lacks closed successful children", invalid);
       }
     }
-    if (failed
+    if (view.state() == State.SUCCEEDED) {
+      if (!job.expansionComplete()) throw corrupt("success precedes completed authority expansion");
+      PublicationStore.audit(connection, binding, view, job);
+      try {
+        requireChildren(connection, binding, view);
+      } catch (ProtocolError invalid) {
+        throw new SQLException("V2 execution: success lacks closed successful children", invalid);
+      }
+    }
+    if (settled
         && (view.terminalAt() > watermark
             || view.receiptUntil() != add(view.terminalAt(), binding.policy().receiptRetention())))
       throw corrupt("terminal receipt interval contradicts clock or policy");

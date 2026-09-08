@@ -350,7 +350,7 @@ bounded file/name/handle reservations, exact FIN/digest checks, crash-safe
 installation and verified replay lookup. It uses Java file channels and V2 typed
 headers, not the V1 payload schema. Installing bytes is not admission. Local
 setup supports an immutable two-way installation binding; current private
-database format 5 and input policy format 3 also retain funded admissions and
+database format 5 and input policy format 4 also retain funded admissions and
 output allowances. Earlier private formats are refused without conversion;
 standalone roots cannot be adopted and another empty root cannot replace the
 bound one. Pairing itself creates no work or admission receipt.
@@ -382,8 +382,16 @@ failure can consume two settlement writes, and recovery checks the resulting
 remaining promises. Parent rehydration requires verified actual child closure,
 not a seal or a success counter alone.
 
+`v2.OutputStore` streams immutable output bytes using the admission's prepaid
+allowances and shared file-handle pool. `v2.PublicationStore` verifies the exact
+completed object set before committing a fenced SUCCEEDED view, result manifest
+and settled job together. Separate output/receipt intervals, current ownership,
+authorization and original deadlines are checked at commitment. Paired recovery
+checks published bytes against their retained descriptors. Installed but
+unpublished files remain charged orphans, not results or permission to reuse slots.
+
 This remains storage-library behavior. The callback runtime, explicit attempt
-retry, producer-1 expansion, successful result publication, subtree reconciliation,
+retry, producer-1 expansion, orphan and subtree reconciliation,
 results/read pins, retirement and durable-profile transport integration remain
 required. A returned local worker lease does not prove a callback ran.
 

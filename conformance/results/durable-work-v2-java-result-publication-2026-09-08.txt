@@ -1,0 +1,203 @@
+Java V2 funded output storage and fenced publication, 2026-09-08
+Base: 73603d41f5e279d252844020e1fc6c240dbce5ae
+Implementation and tests: the commit containing this result file.
+Log filenames are labels; actual completion times are reported separately.
+
+Implemented scope
+  InputStore/OutputStore share one cooperative store lock, handle pool and
+  admission-funded byte/name allowance. Output installation does not add another
+  quota or refund unused promises. The policy advances from private format 3 to
+  4 with outputs/output-pending namespaces; older private roots are refused, not
+  converted. Authority database format 5 and the protocol wire grammar do not
+  change. No dependency, native, Rust or upstream checkout is changed.
+
+  A writer validates declared length, object ceiling, aggregate bytes and count
+  before creating its bounded staging file. It hashes incrementally, verifies
+  exact completed bytes, forces the file, links a non-overwriting installed name,
+  synchronizes that directory, then removes and synchronizes staging. Its private
+  identity binds store/authority installations, protocol context, complete input,
+  producing attempt, local lease number and output index. Renewable lease expiry
+  is an observation, not a physical object identity.
+
+  Writers and readers share the input handle ceiling. A still-open descriptor
+  prevents release of its handle; installed files and the original funding stay
+  charged after close. A bounded namespace-dirty flag makes subsequent slot use
+  and exact-set publication re-establish pending-directory synchronization after
+  failed cleanup. Recovery synchronizes that namespace even when visibly empty.
+  It validates all headers, identities, funding and aggregate geometry before
+  hashing any installed output body, and validates all bodies before removing
+  abandoned output staging. It never deletes an installed output on inference.
+
+  SessionStore.succeedExecution holds the paired-store monitor through its writer
+  transaction. It requires the exact finished output set, not an installed prefix
+  or a set with live writers, and independently checks every descriptor and byte
+  budget. Locators come from validated deployment endpoint configuration. One
+  funded WORK/JOB image pair commits SUCCEEDED, the exact result manifest and the
+  settled job together. Result-enabled success includes an empty manifest for
+  zero outputs; durable-only success has no manifest or output availability.
+
+  Current owner/application permission, original deadline, attempt/local lease and
+  ancestor exclusion fences are checked again after metadata writes. A final UTC
+  sample overtaking the proposed receipt OR output interval refuses CLOCK_UNSAFE
+  with rollback. A branch requires verified prior STRICT child success and
+  completed authority expansion. Paired recovery checks published files against
+  their manifest instead of rerunning work to replace missing evidence.
+
+  Existing installed slots cannot be silently reused by another lease. Safe
+  metadata-authorized orphan reclamation and callback resource lifecycle remain
+  required. The Java listener still advertises Core only. This increment is not
+  a callback runtime, explicit retry, producer-1 expansion, closure writer,
+  cancellation/revocation reconciliation, result-read lease/transport adapter,
+  retirement or full cross-language V2 conformance. The protocol-neutral failure
+  driver and external workload/equivalent authenticated durable streaming-gRPC
+  baseline remain original goal deliverables. This checkpoint is not completion.
+
+Environment and commands
+  Repository: /work/main/pipestream-ai/dev-tools/pipestream-quic-protocol-rfc
+  Maven cache: /work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+  Maven 3.9.16, GraalVM Java 25.0.3, Java source release 21.
+  SQLite JDBC 3.53.4.0/native SQLite 3.53.4; Netty transport artifacts
+  4.2.17.Final-pipestream.3. Existing Linux bounded SQLite native facility reused.
+
+Focused verification
+  First focused session 79600 exited 1, 9 tests/2 failures/0 errors:
+    /tmp/pipestream-publication-output-focused-20260908T040552.log
+  Actual Maven finish: 2026-09-08 04:24:01 EDT. Output streaming and metadata-crash
+  cases passed. The two failures expected IOException where the local completion
+  API deliberately returns named NOT_READY for incomplete output and CONFLICT
+  for a surplus suffix. Assertions were corrected to those exact codes, not
+  broadened or removed. These were fixture expectations, not production regressions.
+
+  Session 96774 exited 0 with 51/0/0/0 plus native sqlite-file-growth 1/1:
+    /tmp/pipestream-publication-combined-focused-20260908T042720.log
+  Actual Maven finish 2026-09-08 04:28:56 EDT. A further focused session 94869
+  exited 0 with 52/0/0/0 plus native guard 1/1 after the success-capacity case:
+    /tmp/pipestream-publication-final-focused-20260908T043015.log
+  Actual Maven finish 2026-09-08 04:32:30 EDT, elapsed 7.946 seconds.
+  The focused selectors cover PublicationStore*, OutputStore*, ExecutionStore*,
+  AdmissionStore* and InputStore*. They do not include ExecutionClosureTest or
+  AdmissionPolicyTest/AdmissionCapacityTest; the unfiltered gate covers those.
+
+  The tests were reviewed against the intended boundary, not only pass counts.
+  Before the relevant runs, fixtures were corrected to keep a replacement lease
+  live at the missing-output/publication sample, pass the admitted per-object
+  ceiling, check actual output-pending cleanup, and account for one live reader
+  handle rather than incorrectly expecting zero. Output length/identity/handle
+  refusals assert their exact named codes where applicable. The writer handle
+  test uses a different funded slot to reach handle capacity, not just a duplicate
+  slot conflict. Callback code is not claimed by these storage tests.
+
+Crash and resource oracles
+  PublicationStoreRecoveryTest uses two owned child JVMs: exit 81 at the third
+  application authorization check after proposed WORK/JOB writes but before
+  commit; exit 82 after succeedExecution returns. Precommit recovery is ACTIVE
+  with no manifest and WORK/JOB credits [4,6], despite exact installed output.
+  Reusing that still-live lease can commit success. Postcommit recovery retains
+  exact SUCCEEDED/manifest/timestamps and credits [3,5]. Both paths preserve
+  installed bytes, digest, input/funding identity and conservative charges.
+
+  OutputStoreRecoveryTest exits at OUTPUT_RECEIVED, OUTPUT_LINKED, OUTPUT_SYNCED
+  and OUTPUT_STAGING_REMOVED. Before the link, recovery has no installed output;
+  after it, exact bytes/digest remain. Every case verifies zero entries in
+  output-pending, original funding usage and zero active handles after recovery.
+  The process wait and cleanup are bounded. These are process-death tests, not
+  power-loss/device guarantees or authoritative publication from a file link.
+
+  OutputStoreResourceTest streams and re-verifies 67108864 bytes in a child JVM
+  with -Xmx32m and a reused 8192-byte buffer. It never reads the whole payload
+  into a single array. The 52-test run observed:
+    SHA-256 = eeeea29f19e99097aff081c75a85115c7732967d5824201ddba0d2d1f6202723
+    heapMax = 33554432 bytes
+    observedRssKiB = 286884
+    fundedBytes = 134234404; fundedFiles = 3
+    managedBytes = 67109345; managedFiles = 2
+  Actual managed file lengths/names are checked after installation and reopen
+  against the retained allowance. Fixed root policy/lock files are outside that
+  managed-namespace measurement. File lengths are not allocated blocks. RSS is
+  an observed process sample, not a 32 MiB total-memory or peak-RSS guarantee.
+
+  PublicationStoreCapacityTest holds a real SQLite reader snapshot while ordinary
+  renewals exhaust native WAL capacity. It requires LIMIT_EXCEEDED with retained
+  SQLException native code 13, then commits 16 one-byte outputs and their manifest
+  under the still-live lease without dropping the reader. The 52-test run observed:
+    WAL limit = 2097152 bytes
+    successful ordinary renewals = 50
+    WAL before = 90672; saturated = 712816; after funded success = 741632 bytes
+  One WORK/JOB credit pair is spent; input/output funding remains charged and
+  exact success/objects survive paired-store reopen. That run's printed metric
+  named manifestBytes=16 was actually aggregate payload bytes, not CBOR size.
+  Reporting was corrected afterward to distinct payloadBytes and
+  manifestEncodedBytes fields; behavior and assertions were not weakened.
+
+  Strict package-level Javadoc for all six changed production types initially
+  rejected nine OutputStore getter comments lacking main descriptions. The final
+  descriptions were reviewed signature by signature, retaining their return tags.
+  Final strict -Xdoclint:all -Werror gate exited 0:
+    /tmp/pipestream-publication-doclint-final-20260908T043500.log
+  Output directory: implementations/java-netty/target/publication-apidocs.
+
+Final unfiltered verification
+  Command from repository root:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository install
+  No test-skip flags. Session 63371 exited 0:
+    /tmp/pipestream-publication-full-install-20260908T043536.log
+  Maven finished 2026-09-08 04:39:44 EDT, elapsed 3:17.
+  Independently summed fresh JUnit XML: 56 suites, 455 tests, 0 failures,
+  0 errors, 0 skipped. Report mtimes span 04:38:21.098 through 04:39:42.659 EDT.
+  This includes ExecutionClosureTest and AdmissionPolicyTest/AdmissionCapacityTest,
+  not just the focused selectors. Native sqlite-file-growth: 1/1 passed.
+
+  Output resource result from this unfiltered run:
+    bytes=67108864
+    digest=eeeea29f19e99097aff081c75a85115c7732967d5824201ddba0d2d1f6202723
+    buffer=8192 heapMax=33554432 observedRssKiB=332564
+    fundedBytes=134234404 fundedFiles=3 managedBytes=67109345 managedFiles=2
+  Again, observed RSS is not a peak bound and exceeds the managed Java heap.
+  Publication capacity result, now with distinct encoded-manifest measurement:
+    renewals=50 before=90672 saturated=712816 after=741632
+    payloadBytes=16 manifestEncodedBytes=2710
+
+  Fresh-JAR examples command from implementations/rust-quinn:
+    target/release/pipestream-conformance examples
+  Session 44420 exited 0:
+    /tmp/pipestream-publication-examples-20260908T043853.log
+  Literal results:
+    PASS Java source -> Rust/Quinn server
+    PASS Rust source recovery -> C++/MsQuic server
+    PASS Rust source scatter -> Java, Rust, and C++ servers
+  These existing examples are regression coverage, not full V2 result transport
+  interoperability or the original goal's unfinished comparative workload.
+
+  Draft command from repository root:
+    ./build.sh core 05 draft
+  Session 72419 exited 0:
+    /tmp/pipestream-publication-draft-final-20260908T043943.log
+  idnits 2.17.1: 0 errors, 0 flaws, 0 warnings, 1 possible FIPS-180-4 downref
+  comment. The XML generation also reports the explicit RFC9308 reference
+  settings overriding canned bibxml. The draft was built locally, not submitted.
+
+Final source and artifact SHA-256
+  Production types under implementations/java-netty/src/main/java/ai/pipestream/quic/v2:
+    AdmissionStore.java e0027ecf150a5ac495686e398fe3b643df3aa23f1eb6481ba70ce6048da66f0f
+    ExecutionStore.java 27a831d41546a1480fbbea6373682fb57551d604b16d9cc18b12b0868b929ac9
+    SessionStore.java 7a726270ed1c7b7d5d72a13bd4280ff35b9d1c513fa878a1c0760daebdc8706a
+    InputStore.java f73e069544d0bea87b3555e742620b7c3cde0d617ededf54e4b61b3294b4a583
+    OutputStore.java 28eb42f545ca91c72d088af5e4bdaf044511b86849fe9e9a27d2b5b5c808d9df
+    PublicationStore.java 4d56d1d934749e46fc43add8047fcf1177f7e93606a246fe581b3e77588ecb70
+  Tests under implementations/java-netty/src/test/java/ai/pipestream/quic/v2:
+    OutputStoreRecoveryTest.java d756d7d38c395e1118973fb5cdb09985dafea92d71502c31fe8b9c10088dd094
+    OutputStoreResourceTest.java 8e2c31b3c46547e6123ad4124479288f816cbf04f5bf4c067b0d419f388909ad
+    OutputStoreTest.java ed9f7a609e74c98088bfb71d7c1b82083fe702b6fc09d60162f92f0916a0a8ec
+    PublicationStoreCapacityTest.java 0b7969fd566d3a565acb2035fc4456176413b566234482794e982e9583489b80
+    PublicationStoreRecoveryTest.java f43ca17cc7756e2b47e56c0d6b09d4d2df09070f18466dda0435b25149b6af82
+    PublicationStoreTest.java 3d7036b732572b06622dfde4adfa70a9e7c97572b787eea1f51e948a2ed33db8
+  Fresh Java target artifacts:
+    pipestream-quic-netty-0.1.0-SNAPSHOT.jar ca74152bd0959d3cf95d1ab1a431a05d40d4c78f212cc232471ee290b0a40435
+    pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar d2dbff0d43204a0c099542820112844fd2424379adc5b19983e2a74ad01ce450
+  Unchanged Rust target/release binaries used by the examples:
+    pipestream-quinn 7cff7d80f68adcc0e1badf09d0f0e145aa35791fd14e51ab19daa51f33c73810
+    pipestream-conformance 73934f2119aba98eacecd7b632eb9f63c6e282e84483b2fc250f65a8507adba8
+  Generated draft-krickert-pipestream-05 artifacts:
+    XML ec0d353a917ff39e90b3a23587767b8f34c8d99bf48508f0f170f0436a04df74
+    TXT 0fea74614d273d3781c6f95494cd5c28b69c99a7ff5eb232871a7347603e676b
+    HTML 72d99cf9f3ef3368a5f56876a47b1f2dc0dbf2bd83df79965a70e42d6bf18f0a

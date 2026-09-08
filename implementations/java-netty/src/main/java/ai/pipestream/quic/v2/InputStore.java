@@ -39,9 +39,16 @@ final class InputStore implements AutoCloseable {
   private static final int CHECKSUM = 32;
   private static final int BLOCK = 8192;
   private static final int OUTPUT_OVERHEAD = PREFIX + METADATA_LIMIT + CHECKSUM;
-  private static final String FORMAT = "pipestream-java-v2-input-store-3";
+  private static final String FORMAT = "pipestream-java-v2-input-store-4";
   private static final Set<String> ROOT_NAMES =
-      Set.of("writer.lock", "policy.cbor", "pending", "objects", "reservations");
+      Set.of(
+          "writer.lock",
+          "policy.cbor",
+          "pending",
+          "objects",
+          "reservations",
+          "outputs",
+          "output-pending");
   private static final Set<Path> OPEN_ROOTS = new HashSet<>();
 
   /**
@@ -92,6 +99,14 @@ final class InputStore implements AutoCloseable {
     FUNDING_SYNCED,
     /** The output funding staging name was removed. */
     FUNDING_STAGING_REMOVED,
+    /** A complete output and its final digest were synchronized before installation. */
+    OUTPUT_RECEIVED,
+    /** The immutable output name was linked. */
+    OUTPUT_LINKED,
+    /** The output namespace was synchronized. */
+    OUTPUT_SYNCED,
+    /** The output staging name was removed. */
+    OUTPUT_STAGING_REMOVED,
     /** Recovery completed its retained-file audit. */
     RECOVERY_AUDITED
   }
@@ -121,6 +136,7 @@ final class InputStore implements AutoCloseable {
   private final FileChannel lockChannel;
   private final FileLock lock;
   private final Probe probe;
+  private final OutputStore outputs;
   private long bytes;
   private int files;
   private int handles;
@@ -141,6 +157,7 @@ final class InputStore implements AutoCloseable {
     this.lockChannel = channel;
     this.lock = lock;
     this.probe = probe;
+    this.outputs = new OutputStore(this, root);
   }
 
   /**
@@ -260,6 +277,8 @@ final class InputStore implements AutoCloseable {
         Files.createDirectory(root.resolve("pending"));
         Files.createDirectory(root.resolve("objects"));
         Files.createDirectory(root.resolve("reservations"));
+        Files.createDirectory(root.resolve("outputs"));
+        Files.createDirectory(root.resolve("output-pending"));
         sync(root);
       } else {
         byte[] retained = bounded(root.resolve("policy.cbor"), 4096);
@@ -450,8 +469,8 @@ final class InputStore implements AutoCloseable {
    *
    * <p>Each possible output funds two payload copies and two bounded private headers/names, enough
    * for pending and installed files concurrently. This reserves file-length/name capacity, not
-   * filesystem blocks or device free space. A future output writer must consume these allowances
-   * and enforce the private header bound; this class does not yet implement output publication.
+   * filesystem blocks or device free space. Output writers consume these prepaid allowances and
+   * enforce the private header bound; immutable files alone do not publish a successful result.
    *
    * @param context already authenticated session context
    * @param header immutable input admission parameters, including the output budget
@@ -538,6 +557,108 @@ final class InputStore implements AutoCloseable {
     forceFile(path);
     sync(root.resolve("reservations"));
     return Optional.of(new Reservation(expected, path));
+  }
+
+  /**
+   * Start one output using the admission's prepaid byte/name allowance and shared handle pool. The
+   * authority must check current execution ownership before calling this storage primitive.
+   * Existing slots and live physical writers are never recycled for a replacement worker here.
+   *
+   * @param context authenticated retained session
+   * @param header exact admitted input intent
+   * @param lease current worker identity; its observation timestamp is not a file identity
+   * @param index output index within the admitted count ceiling
+   * @param length exact number of bytes to produce
+   * @param contentType bounded printable content type
+   * @param objectLimit retained per-object execution ceiling
+   * @return bounded streaming writer, not a successful publication
+   * @throws IOException storage corruption or installation failure
+   */
+  synchronized OutputStore.Writer beginOutput(
+      Commitments.Context context,
+      InputHeader header,
+      ExecutionStore.Lease lease,
+      int index,
+      long length,
+      String contentType,
+      long objectLimit)
+      throws IOException {
+    ensureOpen();
+    return outputs.begin(context, header, lease, index, length, contentType, objectLimit);
+  }
+
+  /**
+   * Fully verify an installed output for the exact worker identity without publishing or rerunning.
+   *
+   * @param context expected retained session
+   * @param header exact input intent
+   * @param lease producing worker identity, ignoring its renewable observation timestamp
+   * @param index expected output index
+   * @return verified immutable output when present
+   * @throws IOException missing funding, corruption or synchronization failure
+   */
+  synchronized Optional<OutputStore.Stored> findOutput(
+      Commitments.Context context, InputHeader header, ExecutionStore.Lease lease, int index)
+      throws IOException {
+    ensureOpen();
+    return outputs.find(context, header, lease, index);
+  }
+
+  /**
+   * Require the exact finished output set, never a silently truncated prefix or a live writer.
+   *
+   * @param context expected retained session
+   * @param header exact admitted input
+   * @param lease producing worker identity
+   * @param count complete contiguous result count
+   * @throws IOException malformed storage or inconsistent retained output set
+   */
+  synchronized void verifyOutputCount(
+      Commitments.Context context, InputHeader header, ExecutionStore.Lease lease, int count)
+      throws IOException {
+    ensureOpen();
+    outputs.verifyCount(context, header, lease, count);
+  }
+
+  /**
+   * Read one checked funding record by an internally derived bounded reference during recovery.
+   *
+   * @param reference opaque funding filename, not an arbitrary path
+   * @return exact immutable funding identity
+   * @throws IOException missing or corrupt funding
+   */
+  synchronized Reservation outputFunding(String reference) throws IOException {
+    ensureOpen();
+    if (reference == null || !reference.matches("[0-9a-f]{64}\\.funding"))
+      throw corrupt("invalid output funding reference");
+    Path path = root.resolve("reservations").resolve(reference);
+    Funding retained = inspectFunding(path, null);
+    return new Reservation(retained.envelope(), path);
+  }
+
+  /**
+   * Pin an output descriptor in the same pool as input reception and reads.
+   *
+   * @throws IOException closed storage
+   */
+  synchronized void pinOutput() throws IOException {
+    pin();
+  }
+
+  /** Release one closed output descriptor without refunding its durable byte allowance. */
+  synchronized void unpinOutput() {
+    if (handles == 0) throw new IllegalStateException("output handle accounting underflow");
+    handles--;
+  }
+
+  /**
+   * Observe an output installation boundary for actual interruption tests.
+   *
+   * @param phase completed filesystem boundary
+   * @throws IOException injected failure
+   */
+  void outputPhase(Phase phase) throws IOException {
+    reached(phase);
   }
 
   /** Durable funding identity, not a bearer credential or a release capability. */
@@ -851,7 +972,11 @@ final class InputStore implements AutoCloseable {
     for (String name : ROOT_NAMES) {
       Path path = root.resolve(name);
       boolean directory =
-          name.equals("pending") || name.equals("objects") || name.equals("reservations");
+          name.equals("pending")
+              || name.equals("objects")
+              || name.equals("reservations")
+              || name.equals("outputs")
+              || name.equals("output-pending");
       if (directory
           ? !Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)
           : !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
@@ -889,6 +1014,7 @@ final class InputStore implements AutoCloseable {
         }
       }
     }
+    outputs.audit();
     reached(Phase.RECOVERY_AUDITED);
     // A complete policy may have survived a failed initial force; re-establish it before use.
     forceFile(root.resolve("policy.cbor"));
@@ -901,6 +1027,7 @@ final class InputStore implements AutoCloseable {
         release(size, 1);
       }
     }
+    outputs.cleanupPending();
   }
 
   private Envelope envelope(Commitments.Context context, InputHeader header) {

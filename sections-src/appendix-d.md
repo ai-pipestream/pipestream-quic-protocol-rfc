@@ -160,7 +160,7 @@ credit covers that image and one clock write, not arbitrary SQL or a whole job.
 Earlier local formats are refused without a wire change. Independent Java V2
 input storage also implements bounded immutable reception, exact FIN/digest
 verification and crash-safe file installation. Current database format 5 and
-input policy format 3 retain immutable two-way installation binding and atomic
+input policy format 4 retain immutable two-way installation binding and atomic
 storage admission: verified input, attempt 1, branch child identity, restartable
 job, replay receipt, funded output allowances and metadata, and the UTC watermark.
 Ordinary input reception cannot consume the retained output allowances. Tests
@@ -174,10 +174,13 @@ wire attempt. Failure and retryable outcomes commit with their job charges;
 owner-independent deadline maintenance does not require the caller to reconnect.
 Claims preserve funded settlement writes, and failure retains payload allowances
 for later dependency-safe reclamation. Parent rehydration cannot rely on unchecked
-closure counters. This layer is not yet a durable-profile listener. Java callback
-execution, explicit retry, producer-1 ingress, successful result publication,
-subtree reconciliation, retirement and full cross-language failure/resource gates
-remain required.
+closure counters. Output bytes now stream into immutable storage under the funded
+allowances. Fenced success publication verifies the exact object set and atomically
+commits its manifest and terminal work/job state; paired recovery verifies actual
+published bytes. Unpublished installed files remain charged orphans. This layer is
+not yet a durable-profile listener. Java callback execution, explicit retry,
+producer-1 ingress, orphan/subtree reconciliation, result-read pins and transport,
+retirement and full cross-language failure/resource gates remain required.
 
 As of 2026-09-07, the Rust authority library also implements transactional
 admission and replay, fenced worker execution, both branch producers and real

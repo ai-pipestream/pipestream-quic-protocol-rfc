@@ -1,11 +1,12 @@
 # Java V2 authority storage
 
-`v2.SessionStore`, `v2.DeclarationStore` and `v2.AdmissionStore` are the independent
-Java session, declaration, admission and local execution transaction layer for Sections 12.3
-through 12.5. They are
+`v2.SessionStore`, `v2.DeclarationStore`, `v2.AdmissionStore`, `v2.ExecutionStore`
+and `v2.PublicationStore` are the independent Java session, declaration, admission,
+local execution and result-publication transaction layer for Sections 12.3
+through 12.7. They are
 package-private and are not wired into a durable-profile listener. The shipped
-Java endpoint still advertises Core only. Worker execution, results and retirement
-remain to be implemented; storage admission is not endpoint interoperability.
+Java endpoint still advertises Core only. The callback runtime, result delivery
+and retirement remain to be implemented; storage behavior is not endpoint interoperability.
 
 ## Identity and transaction boundary
 
@@ -279,8 +280,43 @@ does not establish the deployment clock's trust or undo external callback effect
 A branch cannot be claimed for rehydration from a membership seal alone: it needs
 a committed successful child closure, verified against actual terminal members,
 descendant commitments and status counts. Closure verification streams retained
-state; it is not constant-time scheduling. The separate closure writer, successful
-result publication and the callback scheduler still need their full implementations.
+state; it is not constant-time scheduling. The separate closure writer and
+callback scheduler still need their full implementations.
+
+## Fenced result publication
+
+`succeedExecution` requires the current durable worker lease and the exact paired
+input/output store. It verifies the complete installed output set, including
+contiguous indexes, lengths, digests, content types, admitted count/byte budget and
+individual object ceiling. A caller cannot publish only a prefix of installed
+outputs or treat an unfinished writer as a completed object. These checks stream
+the payloads with bounded buffers; a descriptor array is bounded by the admitted
+maximum of 256 outputs, not their byte lengths.
+
+The authority constructs locators from a validated deployment endpoint, never a
+callback-supplied redirect or credential. It samples publication time after file
+verification and atomically writes SUCCEEDED, the immutable manifest and the
+settled job using one prepaid work/job image pair. Result-enabled success includes
+a manifest even for zero objects. Durable-work-only success has no manifest and
+permits no output budget. Original input, attempt, child identity and execution
+deadline remain unchanged. Receipt and output deadlines use their separate
+retained durations.
+
+Current owner/application authorization, ancestor exclusion fences, the old lease
+and the original execution deadline are checked again after metadata writes.
+If the final trusted UTC sample overtakes either newly proposed retention interval,
+the transaction rolls back with CLOCK_UNSAFE. A branch still needs verified prior
+STRICT child success and completed authority expansion. A stale worker cannot
+publish files simply because it managed to install them before losing ownership.
+
+Recovery validates successful manifests against profiles, identity, budgets and
+time promises, and paired-store recovery checks every published descriptor against
+the actual immutable files. It does not re-execute work to repair missing storage.
+Failure before publication leaves charged orphan files, not a visible result.
+The output store currently refuses to recycle an installed slot for another lease
+without authoritative reclamation; it does not silently overwrite that evidence.
+Callback execution, orphan reconciliation, result-read authorization/pins and the
+QUIC delivery adapter remain separate required implementations.
 
 ## Persistence and resource scope
 
@@ -318,7 +354,7 @@ The callback runtime, explicit wire-attempt retry, local producer-1 ingress, sub
 results/read pins, retirement/reconciliation,
 durable client observations and authenticated endpoint integration remain
 mandatory. Fixed image credits now protect their specifically bounded writes;
-terminal and cleanup write sets still need their real funded transitions and
+cancellation, expansion and cleanup write sets still need their real funded transitions and
 cost gates before activation. This increment does not prove full
 Java V2 behavior, live TLS-policy
 revocation settlement, cross-language V2 equivalence or the protocol-neutral

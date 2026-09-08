@@ -16,6 +16,7 @@ import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -728,6 +729,7 @@ final class SessionStore {
               clock,
               authorization,
               ExecutionStore.Change.CLAIM,
+              null,
               null)
           .lease();
     }
@@ -807,6 +809,50 @@ final class SessionStore {
         .work();
   }
 
+  /**
+   * Verify already installed outputs and atomically publish a fenced successful outcome. The
+   * application must have completed outside this transaction; this method never runs it or infers
+   * successful processing from a file's existence. A rejected commit leaves bounded orphan files
+   * charged, not a visible success or permission to reclaim their storage.
+   *
+   * @param access current retained execution grant
+   * @param lease current worker fence
+   * @param inputs exclusively held paired input/output store
+   * @param outputCount exact completed output count, not a prefix selection
+   * @param endpoint trusted deployment endpoint for result locators
+   * @param clock trusted publication UTC source
+   * @param authorization current application execution policy
+   * @return committed terminal success and its manifest when results are selected
+   * @throws IOException missing, unfinished or corrupt output storage
+   * @throws SQLException contradictory metadata or failed atomic commit
+   */
+  WorkView succeedExecution(
+      ExecutionStore.Access access,
+      ExecutionStore.Lease lease,
+      InputStore inputs,
+      int outputCount,
+      PublicationStore.Endpoint endpoint,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization)
+      throws IOException, SQLException {
+    Objects.requireNonNull(lease);
+    synchronized (Objects.requireNonNull(inputs)) {
+      return executionTransaction(
+              access,
+              lease.generation(),
+              lease.work(),
+              lease,
+              inputs,
+              0,
+              clock,
+              authorization,
+              ExecutionStore.Change.SUCCEED,
+              null,
+              new PublicationStore.Request(outputCount, endpoint))
+          .work();
+    }
+  }
+
   private record ExecutionResult(ExecutionStore.Lease lease, WorkView work) {}
 
   private ExecutionResult executeOwned(
@@ -830,7 +876,8 @@ final class SessionStore {
           clock,
           authorization,
           change,
-          diagnostic);
+          diagnostic,
+          null);
     } catch (IOException impossible) {
       throw new SQLException(
           "unexpected filesystem access in metadata-only worker transition", impossible);
@@ -847,7 +894,8 @@ final class SessionStore {
       AdmissionStore.Clock clock,
       AdmissionStore.Authorization authorization,
       ExecutionStore.Change change,
-      Diagnostic diagnostic)
+      Diagnostic diagnostic,
+      PublicationStore.Request publication)
       throws IOException, SQLException {
     Objects.requireNonNull(access).check();
     Objects.requireNonNull(authorization);
@@ -883,6 +931,16 @@ final class SessionStore {
           ExecutionStore.verifyInput(inputs, binding, loaded);
           inputs.verifyAuthority(identity);
         }
+        List<Output> outputs =
+            change == ExecutionStore.Change.SUCCEED
+                ? PublicationStore.prepare(
+                    inputs,
+                    binding,
+                    loaded,
+                    lease,
+                    retained.profiles() == 3,
+                    Objects.requireNonNull(publication))
+                : List.of();
         // Processing never runs in this transaction. Refresh policy and time after input I/O.
         authorization.check(binding, loaded.stored().record().input().parameters());
         now = AdmissionStore.now(connection, binding.authority(), checkedClock);
@@ -896,6 +954,12 @@ final class SessionStore {
                   null);
         } else if (change == ExecutionStore.Change.CHECK) {
           result = new ExecutionResult(null, loaded.entity().view());
+        } else if (change == ExecutionStore.Change.SUCCEED) {
+          result =
+              new ExecutionResult(
+                  null,
+                  ExecutionStore.succeed(
+                      connection, config, binding, loaded, retained.profiles() == 3, outputs, now));
         } else {
           result =
               new ExecutionResult(
@@ -1010,10 +1074,11 @@ final class SessionStore {
   }
 
   private static void checkTerminalInterval(WorkView view, long now) {
-    if (view.state().terminal() && now >= view.receiptUntil())
+    if (view.state().terminal()
+        && (now >= view.receiptUntil() || view.outputUntil() != null && now >= view.outputUntil()))
       throw error(
           ProtocolError.Code.CLOCK_UNSAFE,
-          "UTC jump overtook the proposed terminal receipt interval");
+          "UTC jump overtook the proposed terminal retention interval");
   }
 
   private record InputResult<T>(T value, boolean fresh) {}

@@ -873,6 +873,11 @@ final class AdmissionStore {
                   .reference()
                   .equals(record.outputReference()))
             throw corrupt("admitted output funding reference differs");
+          WorkView view =
+              DeclarationStore.member(connection, binding, record.input().parameters().work())
+                  .view();
+          if (view.state() == State.SUCCEEDED)
+            PublicationStore.verifyStorage(binding, inputs, view, record);
         }
       }
     }
