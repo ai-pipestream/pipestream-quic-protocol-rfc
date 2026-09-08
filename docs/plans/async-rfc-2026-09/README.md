@@ -1,5 +1,26 @@
 # Asynchronous RFC implementation handoff
 
+## Current launch plan: Claude, Kimi and Meta
+
+The user selected three concurrent agents. Give each its named file:
+[CLAUDE.md](CLAUDE.md) owns both Java tickets,
+[KIMI.md](KIMI.md) owns the neutral failure/resource driver, and
+[META.md](META.md) owns the workload/gRPC comparison.
+[TEAM.md](TEAM.md) defines shared-board locking, ownership and provisional peer
+integration before the final coordinating review. It supersedes the older
+four-assignee scheduling below; all A/B/C technical requirements remain intact.
+The live board is `/work/worktrees/pipestream-rfc-coordination/TEAM-STATUS.md`,
+outside their separate worktrees. Preparing these files has not launched agents.
+
+Each launch prompt can be: "Read and obey your named assignment file in full,
+including TEAM.md and the linked technical specification. Work in your assigned
+worktree/branch, update your section of the shared board, and return the complete
+tested handoff for final review. Do not merge the shared feature branch or main."
+Add push authorization explicitly if desired; local committed checkpoints can
+be exchanged between these same-host worktrees without pushing.
+
+## Original scope and technical ticket breakdown
+
 Prepared 2026-09-08. These assignments preserve the original three-part goal;
 they do not replace it with a smaller acceptance target. Plan day-scale working
 increments; an assignment may need more than one day or reviewed increment.

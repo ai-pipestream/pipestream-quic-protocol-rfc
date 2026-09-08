@@ -14,6 +14,12 @@ goal while separating Java endpoint/client integration, neutral failure/resource
 certification, and the external workload/gRPC comparison. It includes independent
 worktree ownership, dependencies, acceptance gates and review handoffs. The user
 will assign those tasks; writing the pack does not launch them or finish the goal.
+The current named arrangement assigns both Java tickets to Claude, neutral
+failure/resource certification to Kimi, and the external workload/gRPC comparison
+to Meta. Their [team agreement](../plans/async-rfc-2026-09/TEAM.md) allows provisional
+peer integration at pinned commits before the final coordinating review, with
+one shared live status board outside their separate worktrees. This changes
+ownership/scheduling only, not any original acceptance requirement.
 
 ## Required order and acceptance evidence
 
