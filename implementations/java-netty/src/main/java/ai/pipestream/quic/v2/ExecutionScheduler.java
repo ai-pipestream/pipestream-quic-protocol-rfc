@@ -66,6 +66,7 @@ final class ExecutionScheduler implements AutoCloseable {
   private final Map<ExecutionStore.Position, String> inFlight = new HashMap<>();
   private final Map<String, Integer> owners = new HashMap<>();
   private ExecutionStore.ScanCursor cursor;
+  private final ClosureStore.Cursor closures = new ClosureStore.Cursor();
   private boolean started;
   private boolean stopping;
   private long completed;
@@ -164,6 +165,13 @@ final class ExecutionScheduler implements AutoCloseable {
           page();
         } catch (SQLException | RuntimeException failure) {
           record(null, failure, "job discovery unavailable");
+        }
+        if (!stopped()) {
+          try {
+            sessions.reconcileClosures(closures, limits.pageSize(), clock);
+          } catch (SQLException | RuntimeException failure) {
+            record(null, failure, "closure reconciliation unavailable");
+          }
         }
         synchronized (this) {
           if (!stopping) wait(limits.pollMillis());

@@ -1,0 +1,155 @@
+Java V2 incremental closure and STRICT parent settlement, 2026-09-08
+Base: 4c90192b9d657e40762ff41601621de0a0364a73
+Implementation and tests: the commit containing this evidence file.
+
+Implemented contract
+  Section 12.8 requires exact sealed membership, all terminal members and closed
+  descendants before scope closure. A non-success child prevents STRICT parent
+  success and settles an unresolved parent FAILED, except for an earlier terminal
+  outcome or accepted cancellation/skip fence. This increment implements that
+  writer in the Java authority library without changing wire or storage format.
+
+  Descending generation/scope discovery selects one scope per step. A volatile
+  cursor folds at most 256 ordered direct members plus one continuation key.
+  Full membership and terminal status commitments are separate. No partial
+  summary or encoded partial hash state is persisted. Recovery refolds retained
+  immutable evidence, and another authority installation cannot use the cursor.
+  Status-tree payload is bounded by 63 SHA-256 hashes (2016 bytes), excluding
+  fixed object, hasher and cursor overhead. Existing descendant-summary audits
+  still scan session evidence, at most once per direct-member batch using child
+  evidence; the direct-page bound is not a total-work or transaction-time bound.
+  Funded image writes retain the installation-wide reservation-header scans.
+
+  A new summary consumes one prepaid scope-image write. Required STRICT parent
+  failure consumes one prepaid parent work/job image pair in the same SQLite
+  transaction. One shared clock write records final safe UTC. Root receipt
+  retention overflow and a final clock jump overtaking a promised interval
+  refuse and roll back the images together. No payload allowance is refunded.
+  Existing summaries and terminal parent outcomes remain immutable. Lost return
+  values do not authorize spending another completion credit.
+
+  The scheduler runs closure maintenance separately from leaf callbacks and
+  their owner grants. Local scopeSummary authorization precedes retained-state
+  inspection; the caller must supply the exact complete seal. This snapshot API
+  is not the wire checkpoint wait or completed-session DRAIN implementation.
+
+Review corrections
+  A successful parent cannot acquire a previously missing child summary after
+  the fact. STRICT failure reloads the admitted parent/job contract rather than
+  using an unchecked job record. Transaction error handling accepts Throwable
+  so injected fatal failures still release local guards and roll back before
+  commit; an AFTER_COMMIT observation failure never claims rollback.
+
+  Review corrected test-fixture UTC regressions, actual binding/generation use,
+  Java assertion API and local variable scope. The three-job capacity fixture
+  needs more than the inherited single-job 2 MiB WAL to fund admission, so it
+  uses an 8 MiB WAL and still genuinely saturates ordinary capacity under a
+  pinned reader; the configured SHM ceiling remains 64 KiB. Crash checks use real process
+  exits and actual authoritative writes, not fabricated successful summaries.
+  These pre-run fixture corrections are not failing production regressions.
+
+Production-only gates
+  Initial compile session 73456 exited 1 because the new multi-catch could pass
+  Throwable to the existing Exception-only rollback helper:
+    /tmp/pipestream-closure-main-compile-20260908T061249-0400.log
+  The helper now accepts Throwable and preserves rollback failures as suppressed
+  exceptions. Rerun session 87105 exited 0:
+    /tmp/pipestream-closure-main-compile-rerun-20260908T061510-0400.log
+  Review then caught a doclint visibility edit that made cursor state private
+  despite SessionStore using it. Required package access was restored with
+  accurate Javadocs. Compilation after those edits, session 78528, exited 0:
+    /tmp/pipestream-closure-main-compile-final-20260908T061928-0400.log
+  Actual Maven finish 2026-09-08 06:19:31 EDT, elapsed 2.077s, 57 main sources.
+  This was production compilation, not test compilation or execution.
+  Strict package doclint then exited 0 with an empty log:
+    /tmp/pipestream-closure-doclint-postcompile-20260908T061939-0400.log
+  A later class-description edit is included in the final verification below.
+
+Draft gate
+  Session 23298 exited 0:
+    /tmp/pipestream-closure-draft-20260908T062317-0400.log
+    ./build.sh core 05 draft
+  idnits: 0 errors, 0 flaws, 0 warnings; one FIPS-180-4 possible downref comment.
+  The changed appendix reports implementation boundaries; no wire grammar change.
+  Artifact SHA-256:
+    XML 73a66d375c8b2cc86daa81aebca8627c4b413431791d00f74b122b45b395e230
+    TXT ec925cf26af8adbf5919cabdf303d5160baf50df38f31c3aea262c37860e5ce7
+    HTML 02adc3e41b52242cc1b04c73f7f1a8444991ca216159572be23c5732deed0426
+  Local generation only, not submission or IETF acceptance.
+
+Focused verification
+  First focused command, session 95346, exited 1 during test compilation:
+    /tmp/pipestream-closure-focused-20260908T062500-0400.log
+  Actual finish 06:29:36 EDT. A missing test-only seal helper prevented any test
+  execution. The correction uses the actual binding, requested scope identity
+  and ordered IDs with Commitments.Seal; no stored summary is fabricated.
+
+  Rerun session 30531 exited 0:
+    /tmp/pipestream-closure-focused-rerun-20260908T063000-0400.log
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -Dtest=ClosureReconciliationTest,ClosureReconciliationRecoveryTest,ClosureReconciliationCapacityTest,ExecutionSchedulerTest test
+  Actual finish 06:30:36 EDT, elapsed 6.289s. Fresh JUnit XML and raw output
+  agree: Reconciliation 7/0/0/0, Recovery 2/0/0/0, Capacity 1/0/0/0 and Scheduler
+  5/0/0/0, totaling 15 tests without failures, errors or skips. Native SQLite
+  file-growth guard passed 1/1. Four real child-process exits cover BEFORE and
+  AFTER commit for both a mixed-result root and child-summary/parent-failure pair.
+  Partial-fold reopen recomputes exact membership; the scheduler test closes its
+  sealed root after a real payload callback, without manual reconciliation.
+
+  Raw capacity output, configured WAL ceiling 8388608 bytes:
+    closure WAL cap=8388608 renewals=343 before=374952 saturated=4620288 after=4635032 rootCredits=4->3 childCredits=4->3 parentWork=4->3 parentJob=6->5
+  Ordinary renewal received LIMIT_EXCEEDED with SQLite primary code 13. The
+  reserved child/root closures and parent failure then added 14744 WAL bytes
+  without changing input/output funding. The completion reserve explains why
+  ordinary exhaustion happens below the physical WAL ceiling. Reopen validates
+  exact summaries, remaining credits and paired storage. This is a pinned-reader
+  file-length/funding check, not an allocated-block or process-memory measure.
+
+Full verification
+  Unfiltered Maven install, session 95148, exited 0:
+    /tmp/pipestream-closure-full-install-20260908T063100-0400.log
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository install
+  No test selectors or skip flags. Actual finish 06:35:30 EDT, elapsed 3m37s.
+  All 67 fresh JUnit XML reports total 494 tests, 0 failures, 0 errors, 0 skips;
+  report modification times span 06:33:50.009 to 06:35:28.609 EDT. Native SQLite
+  file-growth guard passed 1/1. Maven's existing shaded-resource/module metadata
+  overlap warnings remain in the raw log; this is not a warning-free build claim.
+
+  Final strict production-package doclint (-Xdoclint:all -Werror) passed with an
+  empty log, including the final class-description edit:
+    /tmp/pipestream-closure-doclint-focused-20260908T062500-0400.log
+  It covered ClosureStore, SessionStore and ExecutionScheduler. The earlier
+  path-only invocation failure is not used as pass evidence.
+
+  External examples, session 63397, exited 0 using the freshly built Java JAR:
+    /tmp/pipestream-closure-examples-20260908T063500-0400.log
+    cd implementations/rust-quinn
+    target/release/pipestream-conformance examples
+  Raw output:
+    PASS Java source -> Rust/Quinn server
+    PASS Rust source recovery -> C++/MsQuic server
+    PASS Rust source scatter -> Java, Rust, and C++ servers
+  These remain Core example regressions, not full V2 durable interoperability.
+
+  Frozen source SHA-256, under implementations/java-netty/src:
+    main/java/ai/pipestream/quic/v2/ClosureStore.java d94da55e66a0d10ff73222524ac8ed822f17d3510e7144726891de2a4609b130
+    main/java/ai/pipestream/quic/v2/SessionStore.java 58e7e4a6f8d5e9ad9694ccf4de1c8c1be185ec7b58b3948ee9470edbc19c871d
+    main/java/ai/pipestream/quic/v2/ExecutionScheduler.java 5bab178727767aadbd719140d2b281b68d3e0737fccf11f770d28e7a588edbb2
+    test/java/ai/pipestream/quic/v2/ClosureReconciliationTest.java a6ca97d91e2b60e624ab7b8878454adb8d7330c1fa9549755e98c9e95fceaf13
+    test/java/ai/pipestream/quic/v2/ClosureReconciliationRecoveryTest.java 88372e7d94c9798b99e82b84781621ad3dc86c32553864bf699e94568e660c7f
+    test/java/ai/pipestream/quic/v2/ClosureReconciliationCapacityTest.java 536349fa17171f5250218c6fdc6f805fe100c7b60d430ddd15f6a3eb78823be5
+    test/java/ai/pipestream/quic/v2/ExecutionSchedulerTest.java 635e23035b1fbc94bc323d9ba8b8854418601dd64f692d9b1fd8944ed17ba1d3
+  Built artifact SHA-256, under implementations/java-netty/target:
+    pipestream-quic-netty-0.1.0-SNAPSHOT.jar 8400eb85f8f7f75f5c520e1c51e7a85d192cc2449962eb2c892bf55c3d2ee186
+    pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar 1247288125d7173e8e0ef1930cbf9d42a71399557f8b3faa3f2ee1e746f5c81a
+    native/sqlite_guard_test 3dc46f85b2fbf31018a0dd18277bd14604b83a66c3be22decadf3e33f9dfc3bd
+
+Remaining full-goal boundary
+  Branch callbacks and producer-1 ingress, explicit wire retry, cancellation and
+  revocation reconciliation, retained result/read pins, dependency-safe cleanup,
+  retirement and authenticated durable transport/client integration remain
+  required. Java still advertises Core only. Full independent cross-language V2
+  failure/resource coverage, the external distributed transformation workload
+  and equivalent authenticated durable streaming-gRPC baseline remain required.
+  Bounded hash payload and guarded file lengths are not peak RSS, allocated disk
+  blocks, power-loss coverage or large-scope throughput evidence. This checkpoint
+  does not complete the active goal or claim full durable-profile conformance.

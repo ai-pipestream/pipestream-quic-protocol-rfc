@@ -406,6 +406,16 @@ stops dispatch without cancelling work or interrupting callbacks; the host must
 await physical stop before closing storage. See the
 [discovery bounds and lifecycle contract](../../docs/standards/java-v2-authority-store.md#background-discovery-and-deadline-maintenance).
 
+`v2.ClosureStore` now produces exact immutable child/root summaries from sealed
+membership and actual terminal views. The scheduler drives direct-member batches;
+partial folds are volatile and restart from durable evidence. Closure and any
+required STRICT parent failure commit together using prepaid image writes, without
+overwriting prior terminal outcomes or cancellation fences. Snapshot observation
+checks caller authorization and the expected seal. Existing descendant audits
+still scan session evidence, so a bounded direct page is not a constant-time
+closure claim. See the
+[closure contract and costs](../../docs/standards/java-v2-authority-store.md#incremental-closure-and-strict-settlement).
+
 This remains authority-library behavior, not an activated durable listener.
 Branch callbacks, explicit attempt retry, producer-1
 expansion, broader orphan and subtree reconciliation,

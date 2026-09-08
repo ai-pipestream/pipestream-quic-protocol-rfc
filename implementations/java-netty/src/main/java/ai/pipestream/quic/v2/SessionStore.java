@@ -593,6 +593,182 @@ final class SessionStore {
   }
 
   /**
+   * Observe an exact committed closure under current caller authorization. This is a snapshot, not
+   * a checkpoint wait implementation; the eventual dispatcher must bound waiting separately.
+   * Retained immutable evidence is observable without issuing a new clock-based promise.
+   *
+   * @param access current authenticated owner gate
+   * @param selected retained compatible profile selection
+   * @param generation attached session
+   * @param scope requested scope
+   * @param expectedSeal caller's verified membership commitment
+   * @return complete immutable summary, never partial progress
+   * @throws SQLException inconsistent retained evidence or database failure
+   */
+  ScopeSummary scopeSummary(
+      Access access, Capabilities selected, long generation, long scope, Digest expectedSeal)
+      throws SQLException {
+    Objects.requireNonNull(expectedSeal);
+    Checks.number(scope);
+    return sessionTransaction(
+        access,
+        selected,
+        generation,
+        false,
+        (connection, binding) -> {
+          DeclarationStore.Scope retained = DeclarationStore.scope(connection, binding, scope);
+          if (retained.seal() == null)
+            throw error(ProtocolError.Code.NOT_READY, "scope membership is not sealed");
+          if (!retained.seal().equals(expectedSeal))
+            throw error(ProtocolError.Code.INTEGRITY_ERROR, "checkpoint membership seal differs");
+          if (retained.state().summary() == null)
+            throw error(ProtocolError.Code.NOT_READY, "scope has no committed closure");
+          ClosureStore.verify(connection, binding, scope);
+          return retained.state().summary();
+        });
+  }
+
+  /**
+   * Perform one bounded background closure step, independently of a caller or execution grant.
+   * Partial folds are volatile; immutable terminal rows and the sealed membership remain durable.
+   * Existing descendant-summary audits retain their documented session-wide streaming cost.
+   *
+   * @param cursor local discovery/fold progress, not a durable receipt
+   * @param limit maximum directly examined members, between one and 256
+   * @param clock trusted UTC for a newly committed closure or parent failure
+   * @return directly examined records and newly committed outcomes
+   * @throws SQLException corrupt evidence or failed storage operation
+   */
+  ClosureStore.Progress reconcileClosures(
+      ClosureStore.Cursor cursor, int limit, AdmissionStore.Clock clock) throws SQLException {
+    return reconcileClosures(cursor, limit, clock, phase -> {});
+  }
+
+  /**
+   * Reconcile closure with trusted local commit-boundary instrumentation.
+   *
+   * @param cursor local discovery/fold progress
+   * @param limit maximum directly examined members
+   * @param clock trusted deployment UTC source
+   * @param probe bounded local durability instrumentation, not a peer or application callback
+   * @return committed progress; an after-commit observation failure can lose this return value
+   * @throws SQLException storage or instrumentation failure
+   */
+  ClosureStore.Progress reconcileClosures(
+      ClosureStore.Cursor cursor, int limit, AdmissionStore.Clock clock, ClosureStore.Probe probe)
+      throws SQLException {
+    Objects.requireNonNull(cursor);
+    Objects.requireNonNull(clock);
+    Objects.requireNonNull(probe);
+    if (limit < 1 || limit > 256)
+      throw ProtocolError.limit("closure reconciliation batch capacity");
+    synchronized (cursor) {
+      if (cursor.installation != null && !cursor.installation.equals(identity))
+        throw error(ProtocolError.Code.CONFLICT, "closure cursor belongs to another authority");
+      cursor.installation = identity;
+      if (!DATABASE_OPERATIONS.tryAcquire())
+        throw ProtocolError.limit("V2 database operation capacity");
+      try (Connection connection = database.connect();
+          var statement = connection.createStatement()) {
+        statement.execute("BEGIN IMMEDIATE");
+        boolean committed = false;
+        try {
+          metadata(connection);
+          ClosureStore.Position position = ClosureStore.next(connection, cursor);
+          if (position == null) {
+            statement.execute("COMMIT");
+            committed = true;
+            ClosureStore.advance(cursor, null);
+            return new ClosureStore.Progress(0, 0, 0, 0);
+          }
+          Retained retained = retained(connection, position.generation());
+          if (retained == null) throw corrupt("scope has no retained session");
+          if (retained.retiring()) {
+            statement.execute("COMMIT");
+            committed = true;
+            ClosureStore.advance(cursor, position);
+            return new ClosureStore.Progress(1, 0, 0, 0);
+          }
+          Binding binding = retained.binding();
+          DeclarationStore.Scope scope =
+              DeclarationStore.scope(connection, binding, position.scope());
+          ClosureStore.Batch batch = ClosureStore.fold(connection, binding, scope, cursor, limit);
+          if (batch.status() == null) {
+            statement.execute("COMMIT");
+            committed = true;
+            return new ClosureStore.Progress(1, batch.inspected(), 0, 0);
+          }
+          AdmissionStore.Clock checkedClock = AdmissionStore.checkedClock(clock);
+          long now = AdmissionStore.now(connection, binding.authority(), checkedClock);
+          ScopeSummary summary =
+              ClosureStore.publish(
+                  connection, config, binding, scope, cursor.scan, batch.status(), now);
+          WorkView failed = strictChildFailure(connection, retained, scope, summary, now);
+          long committedAt = AdmissionStore.now(connection, binding.authority(), checkedClock);
+          if (scope.id() == 0
+              && committedAt >= ClosureStore.rootReceiptUntil(binding, summary.closedAt()))
+            throw error(
+                ProtocolError.Code.CLOCK_UNSAFE, "UTC jump overtook root closure retention");
+          if (failed != null) checkTerminalInterval(failed, committedAt);
+          AdmissionStore.remember(connection, config, binding.authority(), committedAt);
+          probe.at(ClosureStore.Phase.BEFORE_COMMIT);
+          statement.execute("COMMIT");
+          committed = true;
+          ClosureStore.advance(cursor, position);
+          probe.at(ClosureStore.Phase.AFTER_COMMIT);
+          return new ClosureStore.Progress(1, batch.inspected(), 1, failed == null ? 0 : 1);
+        } catch (SQLException | RuntimeException | Error failure) {
+          cursor.scan = null;
+          if (!committed) rollback(connection, failure);
+          throw failure;
+        }
+      } catch (SQLException failure) {
+        cursor.scan = null;
+        if ((failure.getErrorCode() & 255) == 13) {
+          ProtocolError refusal = ProtocolError.limit("SQLite file capacity exhausted");
+          refusal.initCause(failure);
+          throw refusal;
+        }
+        throw failure;
+      } finally {
+        DATABASE_OPERATIONS.release();
+      }
+    }
+  }
+
+  private WorkView strictChildFailure(
+      Connection connection,
+      Retained retained,
+      DeclarationStore.Scope child,
+      ScopeSummary summary,
+      long now)
+      throws SQLException {
+    if (child.parent() == null
+        || summary.counts().success() == summary.declared()
+        || retained.revoked()) return null;
+    Binding binding = retained.binding();
+    DeclarationStore.Entity parent = DeclarationStore.member(connection, binding, child.parent());
+    if (parent.view().state().terminal()) return null;
+    try {
+      ExecutionStore.eligible(connection, binding, parent.view());
+    } catch (ProtocolError refusal) {
+      if (refusal.code() == ProtocolError.Code.CANCELLED) return null;
+      throw refusal;
+    }
+    ExecutionStore.Loaded loaded =
+        ExecutionStore.load(connection, config, binding, child.parent(), (owner, parameters) -> {});
+    return ExecutionStore.fail(
+        connection,
+        config,
+        binding,
+        loaded,
+        new Diagnostic(
+            ProtocolError.Code.CONFLICT.value(), "STRICT child scope contains non-successful work"),
+        false,
+        now);
+  }
+
+  /**
    * Validate a new input header before accepting payload, or replay its retained admission. This
    * does not reserve capacity or authorize a later commit; admission repeats all current checks.
    *
@@ -1759,7 +1935,7 @@ final class SessionStore {
     }
   }
 
-  private static void rollback(Connection connection, Exception failure) {
+  private static void rollback(Connection connection, Throwable failure) {
     try (var statement = connection.createStatement()) {
       statement.execute("ROLLBACK");
     } catch (SQLException rollback) {

@@ -186,6 +186,14 @@ their funding. Background discovery now revisits committed jobs in finite bounde
 pages and dispatches leaf callbacks without a connection or volatile job queue.
 Global/per-owner physical limits and independent deadline maintenance apply;
 shutdown does not claim logical cancellation or forced callback termination.
+The Java scheduler also drives incremental closure folds over actual sealed
+membership and terminal outcomes. Complete child/root summaries and any required
+STRICT parent failure commit using reserved image writes; prior outcomes and
+cancellation fences retain precedence. Partial folds are volatile, not durable
+completion evidence. Direct-member pages are bounded, but verification of existing
+descendant summaries still performs a session-wide streaming audit. The local
+snapshot API checks authorization and the expected seal; it does not implement
+wire checkpoint waits or completed-session shutdown.
 Branch callbacks, explicit retry, producer-1
 ingress, broader orphan/subtree reconciliation, result-read pins and transport,
 retirement and full cross-language failure/resource gates remain required.

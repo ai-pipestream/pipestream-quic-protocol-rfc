@@ -46,6 +46,8 @@ final class ExecutionSchedulerTest {
     byte[] payload = {1, 2, 3, 4, 5, 6};
     try (Fixture fixture = new Fixture(directory.resolve("automatic"))) {
       Records.WorkKey work = fixture.admit("alice", 1, payload, 1, payload.length, 5000);
+      fixture.sealRoot("alice");
+      Records.Digest rootSeal = fixture.rootSeal("alice", List.of(1L));
       AtomicInteger invocations = new AtomicInteger();
       ExecutionScheduler scheduler =
           fixture.scheduler(
@@ -70,11 +72,20 @@ final class ExecutionSchedulerTest {
         assertEquals(1, invocations.get());
         Records.WorkView view = fixture.view("alice", work);
         assertEquals(digest(payload), view.manifest().outputs().get(0).sha256());
+        await(() -> fixture.summaryIfReady("alice", 0, rootSeal) != null);
+        Records.ScopeSummary summary = fixture.summaryIfReady("alice", 0, rootSeal);
+        assertNotNull(summary);
+        Commitments.StatusTree statuses = new Commitments.StatusTree(0, 0, 1);
+        statuses.add(view, null);
+        Commitments.Status expected = statuses.finish();
+        assertEquals(new Records.Counts(1, 0, 0, 0), summary.counts());
+        assertEquals(expected.root(), summary.statusRoot());
         scheduler.close();
         assertTrue(scheduler.awaitStopped(5000));
         assertEquals(1, scheduler.status().completed());
         fixture.reopen();
         assertEquals(view, fixture.view("alice", work));
+        assertEquals(summary, fixture.summaryIfReady("alice", 0, rootSeal));
         fixture.sessions.verifyInputs(fixture.inputs);
       } finally {
         scheduler.close();
@@ -419,6 +430,38 @@ final class ExecutionSchedulerTest {
           .snapshot(
               sessionAccess(owner), SELECTED, generation(owner), new Messages.Watch(91, work, 0, 0))
           .work();
+    }
+
+    void sealRoot(String owner) throws Exception {
+      sessions.declare(
+          sessionAccess(owner),
+          SELECTED,
+          generation(owner),
+          new Messages.Declare(operation++, operation(operation++), 0, List.of(), true));
+    }
+
+    Records.Digest rootSeal(String owner, List<Long> members) {
+      Commitments.Seal seal =
+          new Commitments.Seal(
+              new Commitments.Context("issuer-a", owner, generation(owner)),
+              0,
+              0,
+              null,
+              members.size());
+      for (long member : members) seal.add(member);
+      return seal.finish();
+    }
+
+    Records.ScopeSummary summaryIfReady(String owner, long scope, Records.Digest seal) {
+      try {
+        return sessions.scopeSummary(
+            sessionAccess(owner), SELECTED, generation(owner), scope, seal);
+      } catch (ProtocolError refusal) {
+        if (refusal.code() == ProtocolError.Code.NOT_READY) return null;
+        throw refusal;
+      } catch (Exception failure) {
+        throw new AssertionError(failure);
+      }
     }
 
     long generation(String owner) {

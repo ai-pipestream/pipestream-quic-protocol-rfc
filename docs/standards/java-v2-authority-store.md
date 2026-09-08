@@ -1,9 +1,9 @@
 # Java V2 authority storage
 
-`v2.SessionStore`, `v2.DeclarationStore`, `v2.AdmissionStore`, `v2.ExecutionStore`
-and `v2.PublicationStore` are the independent Java session, declaration, admission,
-local execution and result-publication transaction layer for Sections 12.3
-through 12.7. They are
+`v2.SessionStore`, `v2.DeclarationStore`, `v2.AdmissionStore`, `v2.ExecutionStore`,
+`v2.PublicationStore` and `v2.ClosureStore` are the independent Java session,
+declaration, admission, local execution, result-publication and closure transaction
+layer for Sections 12.3 through 12.8. They are
 package-private and are not wired into a durable-profile listener. The shipped
 Java endpoint still advertises Core only. Branch execution, result delivery
 and retirement remain to be implemented; storage behavior is not endpoint interoperability.
@@ -280,9 +280,9 @@ does not establish the deployment clock's trust or undo external callback effect
 A branch cannot be claimed for rehydration from a membership seal alone: it needs
 a committed successful child closure, verified against actual terminal members,
 descendant commitments and status counts. Closure verification streams retained
-state; it is not constant-time scheduling. The separate closure writer and branch
-callback interface still need their full implementations. The leaf scheduler
-described below does not substitute a seal for a successful closure.
+state; it is not constant-time scheduling. The closure writer described below
+now produces that evidence; the branch callback interface remains required.
+The leaf scheduler does not substitute a seal for a successful closure.
 
 ## Fenced result publication
 
@@ -434,6 +434,56 @@ revisit latency. Each action still performs its normal metadata/file checks.
 This is not an indexed deadline queue or a many-job throughput claim. Future
 indexing must preserve funded writes and restart consistency rather than moving
 accepted jobs into a volatile queue.
+
+## Incremental closure and STRICT settlement
+
+`reconcileClosures` discovers scopes in a descending `(generation, scope)` sweep,
+so a child's larger identity is normally visited before its parent. Each step
+selects at most one scope and reads at most 256 direct members plus a continuation
+key. Unsealed scopes and members that are not yet terminal leave no summary;
+other scopes remain eligible on that sweep. Newly added scopes are revisited on
+the next sweep. The scheduler performs one closure step between discovery pages,
+independently of callback grants or busy physical workers.
+
+For a sealed scope, a volatile cursor folds the actual ordered member IDs and
+terminal views into the separate membership and status commitments. Its status
+frontier retains at most 63 SHA-256 hashes (2,016 payload bytes), plus fixed cursor
+and hash-engine state. No partial hash checkpoint or provisional summary is stored.
+Restart discards partial progress and recomputes it from immutable retained
+evidence. A cursor is bound to the database installation, not transferable to a
+different authority. Scope state changes invalidate its partial fold.
+
+A terminal branch also requires its exact child's committed summary and verified
+descendant evidence. Existing summary verification performs the session-wide
+streaming audit described above, at most once per direct-member batch that uses
+child evidence. The direct-page bound does not bound that audit's total work or
+transaction duration. Funded image writes also retain the existing
+installation-wide reservation-header scans. This is bounded retained memory,
+not constant-time closure or a demonstrated many-scope latency result.
+
+Only a complete exact seal, terminal count partition and status root permit a
+summary write. Closure time cannot precede member outcomes or descendant closure.
+The writer spends one prepaid scope-image credit. A child's non-success summary
+also settles an unresolved STRICT parent FAILED in the same transaction, spending
+one prepaid parent work/job image pair. A previous terminal outcome is unchanged;
+revocation and accepted cancellation/skip fences keep precedence. Failure of a
+parent does not remove its independent child obligations. Successful parent
+evidence cannot be repaired retroactively by manufacturing a missing child summary.
+
+The transaction advances the durable UTC watermark once and checks root receipt
+retention for overflow and a final clock jump that would exhaust the promised
+interval before commit. Unsafe time refuses a new summary without changing its
+scope or parent. No input/output funding is refunded or bytes reclaimed by closure.
+The scope summary and any parent failure are one SQLite commit, including across
+lost observations; re-observing an existing summary spends no additional credit.
+
+`scopeSummary` checks current caller authorization before retained state, then
+requires the expected complete membership seal and audits the committed summary.
+Unsealed or unfinished scopes return NOT_READY; a changed seal is INTEGRITY_ERROR.
+It returns immutable evidence without making a new clock promise. It is a snapshot
+API, not the wire checkpoint's bounded wait implementation or a DRAIN handler.
+Cancellation reconciliation must still supply its frozen seals and terminal
+settlements before this writer can close those scopes.
 
 ## Persistence and resource scope
 
