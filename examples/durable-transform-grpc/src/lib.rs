@@ -64,6 +64,8 @@ pub fn wall_ms() -> u64 {
 }
 
 /// Length-prefixed params digest binding every immutable submission field.
+/// Wall-clock deadlines are deliberately excluded: identity must reproduce
+/// across resume. The ceiling is policy, constant per run configuration.
 pub fn params_digest(
     authority: &str,
     owner: &str,
@@ -72,14 +74,14 @@ pub fn params_digest(
     operation_id: &[u8; 16],
     total_length: u64,
     input_sha256: &[u8; 32],
-    execution_deadline_ms: u64,
+    execution_ceiling_ms: u64,
 ) -> [u8; 32] {
     let mut h = Sha256::new();
     for part in [authority.as_bytes(), owner.as_bytes()] {
         h.update((part.len() as u64).to_le_bytes());
         h.update(part);
     }
-    for v in [generation, ordinal, total_length, execution_deadline_ms] {
+    for v in [generation, ordinal, total_length, execution_ceiling_ms] {
         h.update(v.to_le_bytes());
     }
     h.update([16u8]);

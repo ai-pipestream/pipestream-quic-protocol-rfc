@@ -7,13 +7,14 @@ use grpc_baseline::{
     COMMITTED, hex_id, open_durable, operation_id, params_digest, proto,
     sync_file, wall_ms,
 };
-use rusqlite::OptionalExtension;
+use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest as _, Sha256};
 use std::{
     fs::OpenOptions,
     io::{Read, Write},
     os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tokio::time::sleep;
@@ -150,17 +151,16 @@ async fn submit_chunk(
 ) -> Result<proto::SubmitResponse> {
     let mut input_sha = [0u8; 32];
     input_sha.copy_from_slice(&Sha256::digest(input));
-    let deadline = wall_ms() + execution_ms;
     let digest = params_digest(
         authority, owner, generation, ordinal, &op,
-        input.len() as u64, &input_sha, deadline,
+        input.len() as u64, &input_sha, execution_ms,
     );
     let mut messages = vec![proto::SubmitRequest {
         payload: Some(proto::submit_request::Payload::Header(proto::SubmitHeader {
             id: Some(identity(authority, owner, generation, ordinal, &op)),
             total_length: input.len() as u64,
             input_sha256: input_sha.to_vec(),
-            execution_deadline_ms: deadline,
+            execution_ceiling_ms: execution_ms,
             params_digest: digest.to_vec(),
         })),
     }];
@@ -265,6 +265,7 @@ async fn fetch_output(
 #[allow(clippy::too_many_arguments)]
 async fn run_worker(
     run: &Run,
+    db: Arc<Mutex<Connection>>,
     worker: u64,
     authority: &str,
     endpoint: &str,
@@ -273,7 +274,6 @@ async fn run_worker(
     staging: &Path,
     started: Instant,
 ) -> Result<()> {
-    let db = open_durable(&run.db)?;
     let mut client = connect(&run.tls, endpoint).await?;
     log(&run.events, started, worker as i64, -1, "session-open", authority);
     let ordinals: Vec<u64> = (0..chunk_count(total))
@@ -292,6 +292,8 @@ async fn run_worker(
             }
         }
         let known: Option<String> = db
+            .lock()
+            .unwrap()
             .query_row(
                 "SELECT state FROM operations WHERE op_id = ?1",
                 [op.as_slice()],
@@ -319,7 +321,7 @@ async fn run_worker(
                     bail!("chunk {ordinal} not committed: {}", looked.outcome);
                 }
             }
-            db.execute(
+            db.lock().unwrap().execute(
                 "INSERT OR REPLACE INTO operations(op_id, params_digest, kind, state, attempt, committed_at_ms, detail)
                  VALUES(?1, ?2, 'submit', ?3, 1, ?4, '')",
                 rusqlite::params![op.as_slice(), reply.params_digest, COMMITTED, wall_ms() as i64],
@@ -382,12 +384,16 @@ async fn main() -> Result<()> {
         (1u64, run.authority_b.clone(), run.endpoint_b.clone()),
         (2u64, run.authority_c.clone(), run.endpoint_c.clone()),
     ];
+    // One shared connection: concurrent WAL-mode initialization ignores the
+    // busy handler on the journal_mode pragma, so initialization happens
+    // exactly once and all tasks share the handle behind a mutex.
+    let db = Arc::new(Mutex::new(open_durable(&run.db)?));
     let mut handles = Vec::new();
     for (worker, authority, endpoint) in workers {
         let staging = run.staging.clone();
         let events = run.events.clone();
         let owner = run.owner.clone();
-        let db = run.db.clone();
+        let db = db.clone();
         let tls = Tls {
             ca: run.tls.ca.clone(),
             cert: run.tls.cert.clone(),
@@ -400,7 +406,7 @@ async fn main() -> Result<()> {
             let run = Run {
                 tls,
                 owner,
-                db,
+                db: PathBuf::new(),
                 endpoint_a: String::new(),
                 endpoint_b: String::new(),
                 endpoint_c: String::new(),
@@ -416,7 +422,7 @@ async fn main() -> Result<()> {
                 execution_ms,
                 resume,
             };
-            run_worker(&run, worker, &authority, &endpoint, seed, size, &staging, started).await
+            run_worker(&run, db, worker, &authority, &endpoint, seed, size, &staging, started).await
         }));
     }
     for handle in handles {
@@ -454,5 +460,15 @@ async fn main() -> Result<()> {
     }
     std::fs::rename(&tmp, &run.output)?;
     sync_file(&run.output)?;
+    let line = format!(
+        "0\t{}\t-\t-\tfinal-verified\t{} bytes\n",
+        wall_ms(),
+        run.size
+    );
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&run.events)?
+        .write_all(line.as_bytes())?;
     Ok(())
 }

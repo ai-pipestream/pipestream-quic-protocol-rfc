@@ -17,6 +17,9 @@ for b in "$PS_AUTH" "$PS_COORD" "$GRPC_WORKER" "$GRPC_COORD"; do
 done
 
 mkdir -p "$WORK"
+PIDS=""
+cleanup() { [ -n "$PIDS" ] && kill $PIDS 2>/dev/null || true; }
+trap cleanup EXIT
 ART="$WORK/artifacts"
 mkdir -p "$ART"
 {
@@ -56,7 +59,7 @@ done
 for i in 0 1 2; do
   w=$(printf '%s' abc | cut -c $((i + 1)))
   for _ in $(seq 1 100); do [ -f "$WORK/ps-$w.ready" ] && break; sleep 0.1; done
-  [ -f "$WORK/ps-$w.ready" ] || { echo "ps worker $w did not start"; kill $PIDS; exit 1; }
+  [ -f "$WORK/ps-$w.ready" ] || { echo "ps worker $w did not start"; kill $PIDS 2>/dev/null || true; exit 1; }
 done
 "$PS_COORD" run --ca "$WORK/pki/ps-ca.pem" --cert "$WORK/pki/ps-client.pem" \
   --key "$WORK/pki/ps-client.key" --owner workload \
@@ -64,7 +67,7 @@ done
   --connect-a 127.0.0.1:17443 --connect-b 127.0.0.1:17444 --connect-c 127.0.0.1:17445 \
   --seed "$SEED" --size "$SIZE" --staging "$WORK/ps-staging" \
   --output "$ART/ps-final.bin" --events "$ART/ps-events.tsv"
-kill $PIDS
+kill $PIDS 2>/dev/null || true
 wait 2>/dev/null || true
 
 # ---------------- gRPC arm ----------------
@@ -81,7 +84,7 @@ done
 for i in 0 1 2; do
   w=$(printf '%s' abc | cut -c $((i + 1)))
   for _ in $(seq 1 100); do [ -f "$WORK/grpc-$w.ready" ] && break; sleep 0.1; done
-  [ -f "$WORK/grpc-$w.ready" ] || { echo "grpc worker $w did not start"; kill $PIDS; exit 1; }
+  [ -f "$WORK/grpc-$w.ready" ] || { echo "grpc worker $w did not start"; kill $PIDS 2>/dev/null || true; exit 1; }
 done
 "$GRPC_COORD" run --ca "$WORK/pki/grpc-ca.pem" --cert "$WORK/pki/grpc-client.pem" \
   --key "$WORK/pki/grpc-client.key" --owner workload --db "$WORK/grpc-coord.sqlite" \
@@ -89,7 +92,7 @@ done
   --endpoint-c https://127.0.0.1:18445 \
   --seed "$SEED" --size "$SIZE" --staging "$WORK/grpc-staging" \
   --output "$ART/grpc-final.bin" --events "$ART/grpc-events.tsv"
-kill $PIDS
+kill $PIDS 2>/dev/null || true
 wait 2>/dev/null || true
 
 # ---------------- gates ----------------

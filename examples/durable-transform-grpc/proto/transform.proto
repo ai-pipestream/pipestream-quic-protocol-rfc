@@ -36,9 +36,12 @@ message SubmitHeader {
   uint64 total_length = 2;
   // 32-byte SHA-256 of the exact input bytes.
   bytes input_sha256 = 3;
-  uint64 execution_deadline_ms = 4;
+  // Constant execution ceiling (not a wall-clock deadline: absolute times
+  // would break operation identity across resume). The worker admits at
+  // `admitted_at` and enforces completion within admitted_at + ceiling.
+  uint64 execution_ceiling_ms = 4;
   // SHA-256 over (authority, owner, generation, ordinal, operation_id,
-  // total_length, input_sha256, execution_deadline_ms) as length-prefixed
+  // total_length, input_sha256, execution_ceiling_ms) as length-prefixed
   // fields; changed parameters under a reused operation ID are CONFLICT.
   bytes params_digest = 5;
 }

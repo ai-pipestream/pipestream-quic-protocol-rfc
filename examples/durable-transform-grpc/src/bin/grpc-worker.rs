@@ -155,15 +155,15 @@ impl proto::transform_worker_server::TransformWorker for Svc {
             return Err(Status::invalid_argument("chunk exceeds 16 MiB object limit"));
         }
         let now = wall_ms();
-        if header.execution_deadline_ms <= now {
-            return Err(Status::failed_precondition(EXPIRED));
-        }
-        if header.execution_deadline_ms > now + self.execution_ceiling_ms {
+        if header.execution_ceiling_ms == 0
+            || header.execution_ceiling_ms > self.execution_ceiling_ms
+        {
             return Err(Status::resource_exhausted("execution exceeds ceiling"));
         }
+        let admitted_at = now;
         let digest = params_digest(
             &id.authority, &id.owner, id.generation, id.ordinal, &op,
-            header.total_length, &input_sha, header.execution_deadline_ms,
+            header.total_length, &input_sha, header.execution_ceiling_ms,
         );
         if header.params_digest != digest {
             return Err(Status::invalid_argument("params_digest mismatch"));
@@ -222,6 +222,12 @@ impl proto::transform_worker_server::TransformWorker for Svc {
         let out_path = self.object_dir.join(format!("out-{:06}-{}", id.ordinal, hex_id(&op)));
         std::fs::write(&out_path, &output).map_err(|e| Status::internal(e.to_string()))?;
         sync_file(&out_path).map_err(|e| Status::internal(e.to_string()))?;
+        // Original-deadline enforcement: the attempt must complete within
+        // admitted_at + ceiling or it expires instead of committing.
+        if wall_ms() > admitted_at + header.execution_ceiling_ms {
+            let _ = std::fs::remove_file(&out_path);
+            return Err(Status::failed_precondition(EXPIRED));
+        }
         let _ = std::fs::remove_file(&staging_path);
         // Single durable commit BEFORE the ACK: receipt, outcome, manifest.
         let available_until = now + self.output_retention_ms;
