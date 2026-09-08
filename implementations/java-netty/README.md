@@ -350,7 +350,7 @@ bounded file/name/handle reservations, exact FIN/digest checks, crash-safe
 installation and verified replay lookup. It uses Java file channels and V2 typed
 headers, not the V1 payload schema. Installing bytes is not admission. Local
 setup supports an immutable two-way installation binding; current private
-database format 5 and input policy format 4 also retain funded admissions and
+database format 6 and input policy format 4 also retain funded admissions and
 output allowances. Earlier private formats are refused without conversion;
 standalone roots cannot be adopted and another empty root cannot replace the
 bound one. Pairing itself creates no work or admission receipt.
@@ -381,6 +381,17 @@ the image credits reserved for settlement. A terminal failure after a retryable
 failure can consume two settlement writes, and recovery checks the resulting
 remaining promises. Parent rehydration requires verified actual child closure,
 not a seal or a success counter alone.
+
+`SessionStore.retry` now accepts an explicit owner-authorized replacement of an
+admitted nonterminal attempt. It restores WORK/JOB settlement credits, fences the
+old local lease and retains exactly one replay receipt in the same transaction.
+Input, admission time, original deadline and child/expansion identity remain
+unchanged. Completed expansion returns to waiting for children, not to a second
+production phase. Current credentials and application retry policy are checked
+again before the final deadline/clock check. Exact receipt replay creates no new
+attempt or clock promise, including after the deadline or a later terminal result.
+Recovery checks indexed retry receipts against their typed intent and verifies a
+gap-free attempt sequence. This is a local authority API, not a durable endpoint.
 
 `v2.OutputStore` streams immutable output bytes using the admission's prepaid
 allowances and shared file-handle pool. `v2.PublicationStore` verifies the exact

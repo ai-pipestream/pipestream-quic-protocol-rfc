@@ -2614,3 +2614,33 @@ failure driver, both-language failure/resource evidence and every original
 external workload/equivalent authenticated durable streaming-gRPC deliverable
 remain mandatory. The full goal stays active and incomplete; this checkpoint
 does not shrink the original objective.
+
+### Java explicit retry checkpoint, 2026-09-08
+
+Java now accepts an owner-authorized replacement attempt as one atomic metadata
+transaction. It replenishes settlement credits, fences the previous local worker
+and retains the immutable receipt without changing input, child scope, completed
+expansion or original deadline. Exact replay remains authenticated evidence after
+deadline or terminal settlement. Current authorization and time are rechecked
+before a new mutation commits. Storage format 6 indexes typed retry intent and
+audits a complete receipt sequence from admission to the current attempt.
+
+Reviewed raw evidence: 13 focused tests and the full unfiltered 550-test Java suite
+pass with no failures/errors/skips. The full run has a retained exit code of zero
+and 82 fresh XML reports; the focused launch lacked a returned process code, so
+its BUILD SUCCESS/report evidence is recorded without inventing one. Strict
+six-type Javadoc, the native guard, three existing external examples and draft
+build pass. The
+[retry verification record](../../conformance/results/durable-work-v2-java-retry-2026-09-08.txt)
+contains exact hashes, commands and limitations. These are local authority tests,
+not new authenticated Java V2 wire or process-death evidence.
+
+Next implement explicit cancellation/skip acceptance and bounded subtree
+reconciliation. The current declaration reader still requires an empty work-fence
+image; replace that with checked typed fence state and recovery invariants, not
+an exemption. Freeze membership at acceptance, preserve the first promised target
+outcome, fence all descendant mutations immediately, and materialize seals and
+settlement in bounded resumable batches. Results/read pins, cleanup/retirement,
+durable Java endpoint/client integration, the neutral cross-language failure
+driver and all original workload/equivalent authenticated durable streaming-gRPC
+deliverables remain required. The full goal remains active and incomplete.

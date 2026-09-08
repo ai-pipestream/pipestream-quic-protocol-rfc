@@ -159,7 +159,7 @@ persistent rewrite credits and guarded WAL/shared-memory headroom. An image
 credit covers that image and one clock write, not arbitrary SQL or a whole job.
 Earlier local formats are refused without a wire change. Independent Java V2
 input storage also implements bounded immutable reception, exact FIN/digest
-verification and crash-safe file installation. Current database format 5 and
+verification and crash-safe file installation. Current database format 6 and
 input policy format 4 retain immutable two-way installation binding and atomic
 storage admission: verified input, attempt 1, branch child identity, restartable
 job, replay receipt, funded output allowances and metadata, and the UTC watermark.
@@ -215,7 +215,14 @@ prevent completion. Phase-specific credits release producer resources before
 waiting for child closure and reacquire reassembly resources under a new lease.
 Bounded dispatch cursors and independent deadline scanning prevent an occupied
 worker from holding up maintenance. This remains local authority behavior.
-Explicit retry,
+Java also accepts explicit caller-authorized attempt replacement, with the
+original input, child scope, completed expansion and deadline retained. The
+replacement, replenished WORK/JOB settlement credits and caller-namespace receipt
+commit together, fencing the previous local worker. Exact replay is authenticated
+retained evidence, not another attempt or a new clock promise. Recovery reconciles
+typed retry intent with indexed work/expected-attempt keys and requires a gap-free
+receipt sequence from admission to the current attempt. These local APIs do not
+activate a Java durable-profile endpoint. Explicit cancellation/skip,
 broader orphan/subtree reconciliation, result-read pins and transport,
 retirement and full cross-language failure/resource gates remain required.
 

@@ -707,15 +707,15 @@ final class ExecutionStore {
     // spends two settlement writes; terminal history does not retain the intermediate diagnostic.
     boolean expanded = job.input().parameters().mode() == 2 && job.expansionComplete();
     int spent = (failed ? 2 : settled || retry ? 1 : 0) + (expanded ? 1 : 0);
-    if (job.attempt() != 1
-        || view.attempt() != job.attempt()
+    RetryStore.audit(connection, binding, view);
+    if (view.attempt() != job.attempt()
         || !job.inputLive()
         || !job.outputsLive()
         || job.executorLive() == settled
         || job.releaseIntent() != 0
         || !view.input().equals(job.input().parameters().input())
         || job.input().parameters().mode() != 2 && !job.expansionComplete()
-        || entity.geometry().credits() < 4 - spent
+        || entity.geometry().credits() < FixedRecords.ADMITTED_WORK_CREDITS - spent
         || stored.geometry().credits() < FixedRecords.JOB_CREDITS - spent
         || job.leaseUntil() != null
             && (job.leaseUntil() > view.deadline() || job.leaseUntil() <= view.admittedAt()))
@@ -723,13 +723,14 @@ final class ExecutionStore {
     boolean valid =
         switch (job.stage()) {
           case QUEUED ->
-              (job.lease() == 0 || job.input().parameters().mode() == 2 && !job.expansionComplete())
+              (job.lease() == 0
+                      || job.attempt() > 1
+                      || job.input().parameters().mode() == 2 && !job.expansionComplete())
                   && view.state() == State.ACTIVE
                   && job.input().parameters().mode() != 1;
           case WAITING_CHILDREN ->
               view.state() == State.WAITING_CHILDREN
-                  && (job.lease() == 0 && job.input().parameters().mode() == 1
-                      || job.lease() > 0 && expanded);
+                  && (job.input().parameters().mode() == 1 || job.lease() > 0 && expanded);
           case EXECUTING -> job.lease() > 0 && view.state() == State.ACTIVE;
           case AWAITING_RETRY -> job.lease() > 0 && view.state() == State.AWAITING_RETRY;
           case SETTLED ->

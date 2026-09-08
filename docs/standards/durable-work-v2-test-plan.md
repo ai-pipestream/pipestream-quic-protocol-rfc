@@ -2370,6 +2370,36 @@ or a new process-death/resource measurement. Commands, initial regression failur
 the corrected DECLARED-view assertion and final gates are recorded in
 `conformance/results/durable-work-v2-expansion-completion-2026-09-08.txt`.
 
+### Java explicit retry and retained attempt sequence, 2026-09-08
+
+- `RetryStoreTest` uses real input admission to pin replacement from active and
+  AWAITING_RETRY states, original deadlines, settlement-credit replenishment and
+  old-lease refusal. A replacement attempt can publish a real durable-only success
+  with no output objects; this is not alternate-attempt payload-stream evidence.
+- Caller-expanded and completed authority-expanded parents retain their child
+  scope and WAITING_CHILDREN phase. Caller retry of a real producer-1 child uses
+  operation namespace zero, even when reusing its producer-1 admission operation
+  identifier; the original admission receipt remains valid.
+- Two distinct simultaneous retry operations with the same expected attempt
+  yield exactly one replacement and one CONFLICT. Exact operation replay retains
+  the original receipt across reopen, deadline expiry and later terminal state.
+- `RetryStoreFailureTest` pins current owner/application authorization, missing
+  admission, terminal/stale attempt, operation quota and final deadline/clock
+  refusals. Rollback checks compare work/job values, record geometry and the
+  durable clock, and require the proposed operation receipt to remain absent.
+- Recovery accepts a multi-retry chain but rejects missing retry evidence even
+  when operation counts are adjusted to conceal its removal. A changed indexed
+  expected attempt cannot override the original typed request or receipt.
+
+These are local library transaction/reopen tests, not a new process-death campaign
+or both-direction V2 wire evidence. Schema 6 changes private storage only. Indexed
+attempt coverage has bounded application memory but may scan every retained retry
+for one work item; operation counts remain policy-bounded. Resource benchmarking,
+cancellation/skip reconciliation, result-read retention, the durable Java endpoint
+and client, and the protocol-neutral failure/workload comparison remain required.
+Exact commands, result counts and final hashes are recorded in
+`conformance/results/durable-work-v2-java-retry-2026-09-08.txt`.
+
 ## V2-TIME: independent lifetimes and trusted clocks (12.9)
 
 - Exact integer UTC milliseconds, checked arithmetic, session maxima and

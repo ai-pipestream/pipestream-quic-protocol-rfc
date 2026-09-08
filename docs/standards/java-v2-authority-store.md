@@ -80,7 +80,7 @@ including in the normative digest, local record checksum and recovery lookup.
 Only the fenced local producer interface below can declare producer-1 children;
 the caller declaration and operation-lookup APIs remain producer-0 only.
 
-The local database format is version 5. Earlier experimental V2 storage formats,
+The local database format is version 6. Earlier experimental V2 storage formats,
 like V1 and foreign databases, are refused without conversion. This is an internal
 format revision, not a wire-profile change or an authorized reset of an existing
 authority identity.
@@ -645,7 +645,7 @@ can be paired explicitly. Storage admission now commits its receipt and funded
 job atomically; admission itself neither invokes application code nor activates the
 network endpoint.
 
-Explicit wire-attempt retry, results/read pins, retirement/reconciliation,
+Results/read pins, retirement/reconciliation,
 durable client observations and authenticated endpoint integration remain
 mandatory. Fixed image credits now protect their specifically bounded writes;
 cancellation and remaining cleanup write sets still need their real funded transitions
@@ -663,3 +663,37 @@ available handle. The expansion phase releases its physical worker while awaitin
 children; rehydration then reacquires and verifies completed expansion and STRICT
 closure. These local guarantees do not activate the V2 network endpoint or establish
 full conformance or interoperability.
+
+## Explicit attempt replacement
+
+`SessionStore.retry` accepts WORK operation 6 through the local owner-authorized
+API. Its access and application gates must authorize retry, not merely read
+access. A fresh operation checks the expected attempt, all applicable fences,
+original deadline, configured restart contract and remaining operation capacity.
+WORK/JOB image credits are replenished under the same bounded WAL policy used at
+admission. Their rewrites and the immutable caller-namespace receipt commit together.
+The local lease counter is not reused; its expiry is cleared and the next claim
+advances the counter. The wire attempt advances by exactly one.
+
+Input and output funding stay charged, and the original input, admission time,
+deadline, child scope and completed-expansion flag are retained. Caller-expanded
+work and already-completed authority expansion return to WAITING_CHILDREN.
+Incomplete authority expansion remains resumable with its prior producer receipts.
+The runtime's existing replacement-claim rules govern stale unpublished output;
+retry itself neither deletes bytes nor runs a callback.
+
+Before commitment the authority rechecks current owner/application permission,
+the pre-transition work fences and original deadline, and the operation-local
+clock bound. Any refusal rolls back the replacement, receipt, accounting, fixed
+record credits/revisions and clock watermark. Exact receipt replay still checks
+current authorization but does not acquire a lease or sample time. It remains
+valid after the original deadline or a later terminal outcome; a new retry does not.
+
+Storage format 6 adds typed retry intent and indexed work/expected-attempt keys
+to the existing operation journal. Recovery checks each index against its typed
+request and receipt, the admitted work and retained clock. Unique expected-attempt
+keys plus count/high-water checks prove a gap-free sequence from admission attempt
+one to the current attempt. Receipt retention remains charged and bounded by the
+session operation limit. These are local transaction/recovery guarantees; explicit
+cancellation/skip reconciliation and the full durable Java wire/client path remain
+unfinished.

@@ -112,10 +112,10 @@ final class DeclarationStore {
       FixedRecords.Header geometry) {}
 
   /**
-   * Decoded durable declaration request, admitted input header, and replay receipt.
+   * Decoded durable mutation evidence. Retry intent is validated while reading its receipt.
    *
-   * @param request decoded declaration request
-   * @param input admitted input header
+   * @param request decoded declaration request, or null for another operation kind
+   * @param input admitted input header, or null for another operation kind
    * @param receipt replay receipt
    */
   record Operation(Declare request, InputHeader input, OperationReceipt receipt) {}
@@ -152,12 +152,25 @@ final class DeclarationStore {
             generation INTEGER NOT NULL REFERENCES ps_v2_sessions(generation),
             producer INTEGER NOT NULL CHECK(producer IN (0,1)),
             operation BLOB NOT NULL CHECK(length(operation)=16 AND operation!=zeroblob(16)),
-            request_kind INTEGER NOT NULL CHECK(request_kind IN (0,1)),
+            request_kind INTEGER NOT NULL CHECK(request_kind IN (0,1,2)),
             request BLOB NOT NULL CHECK(length(request) BETWEEN 1 AND 4101),
             request_digest BLOB NOT NULL CHECK(length(request_digest)=32),
             receipt BLOB NOT NULL CHECK(length(receipt) BETWEEN 1 AND 1024),
             record_hash BLOB NOT NULL CHECK(length(record_hash)=32),
-            PRIMARY KEY(generation,producer,operation)
+            retry_scope INTEGER,
+            retry_producer INTEGER,
+            retry_entity INTEGER,
+            retry_attempt INTEGER,
+            CHECK((request_kind=2 AND producer=0 AND retry_scope IS NOT NULL
+                AND retry_scope>=0 AND retry_producer IS NOT NULL AND retry_producer IN (0,1)
+                AND retry_entity IS NOT NULL AND retry_entity>0
+                AND retry_attempt IS NOT NULL AND retry_attempt>0)
+              OR (request_kind!=2 AND retry_scope IS NULL AND retry_producer IS NULL
+                AND retry_entity IS NULL AND retry_attempt IS NULL)),
+            PRIMARY KEY(generation,producer,operation),
+            UNIQUE(generation,retry_scope,retry_producer,retry_entity,retry_attempt),
+            FOREIGN KEY(generation,retry_scope,retry_entity)
+              REFERENCES ps_v2_entities(generation,scope,id)
           ) STRICT
           """);
     }
@@ -633,7 +646,8 @@ final class DeclarationStore {
             SELECT CASE WHEN length(request)<=4101 THEN request END,
               CASE WHEN length(request_digest)=32 THEN request_digest END,
               CASE WHEN length(receipt)<=1024 THEN receipt END,
-              CASE WHEN length(record_hash)=32 THEN record_hash END,request_kind
+              CASE WHEN length(record_hash)=32 THEN record_hash END,request_kind,
+              retry_scope,retry_producer,retry_entity,retry_attempt
             FROM ps_v2_operations WHERE generation=? AND producer=? AND operation=?
             """)) {
       query.setLong(1, binding.generation());
@@ -652,11 +666,55 @@ final class DeclarationStore {
             || hash == null
             || requestBytes.length > REQUEST_BYTES
             || kind < 0
-            || kind > 1
+            || kind > 2
             || !Arrays.equals(
                 hash, operationHash(binding, producer, kind, requestBytes, receiptBytes)))
           throw corrupt("operation record integrity failure");
+        if (kind != 2
+            && (row.getObject(6) != null
+                || row.getObject(7) != null
+                || row.getObject(8) != null
+                || row.getObject(9) != null))
+          throw corrupt("non-retry operation has retry indexing");
         try {
+          if (kind == 2) {
+            Wire.Frame frame = Wire.decode(requestBytes, Wire.INITIAL_CONTROL_LIMIT);
+            if (producer != 0
+                || !(frame instanceof Wire.Known known)
+                || !(known.message() instanceof Retry request)
+                || request.request() != 1
+                || !request.operation().equals(id)
+                || row.getObject(6) == null
+                || row.getObject(7) == null
+                || row.getObject(8) == null
+                || row.getObject(9) == null
+                || request.work().scope() != row.getLong(6)
+                || request.work().producer() != row.getInt(7)
+                || request.work().entity() != row.getLong(8)
+                || request.expectedAttempt() != row.getLong(9))
+              throw corrupt("invalid retained retry request or index");
+            OperationReceipt receipt =
+                (OperationReceipt)
+                    Wire.decodeRecord(
+                        Wire.RecordKind.OPERATION_RECEIPT, receiptBytes, RECEIPT_BYTES);
+            Digest expected = Commitments.operation(context(binding), 0, request);
+            if (!receipt.operation().equals(id)
+                || !expected.equals(receipt.requestDigest())
+                || !Arrays.equals(digest, expected.bytes())
+                || !(receipt.outcome() instanceof Retried retried)
+                || !retried.work().equals(request.work())
+                || retried.expectedAttempt() != request.expectedAttempt())
+              throw corrupt("retry receipt differs from immutable intent");
+            WorkView current = member(connection, binding, request.work()).view();
+            if (current.input() == null
+                || current.attempt() < retried.replacementAttempt()
+                || retried.acceptedAt() < current.admittedAt()
+                || retried.acceptedAt() >= current.deadline()
+                || retried.acceptedAt() > AdmissionStore.watermark(connection, binding.authority())
+                || current.terminalAt() != null && retried.acceptedAt() > current.terminalAt())
+              throw corrupt("retry receipt contradicts admitted work");
+            return new Operation(null, null, receipt);
+          }
           if (kind == 1) {
             InputHeader input =
                 (InputHeader) Wire.decodeRecord(Wire.RecordKind.INPUT_HEADER, requestBytes, 4096);
@@ -786,6 +844,54 @@ final class DeclarationStore {
       insert.setBytes(6, receiptBytes);
       insert.setBytes(7, operationHash(binding, producer, 1, requestBytes, receiptBytes));
       insert.executeUpdate();
+    }
+  }
+
+  /**
+   * Retain an indexed caller retry receipt while charging the same operation quota as admission.
+   *
+   * @param connection enclosing writer transaction
+   * @param binding retained owner and limits
+   * @param request exact retry intent
+   * @param receipt replacement outcome
+   * @throws SQLException duplicate attempt, inconsistent accounting or storage failure
+   */
+  static void retainRetry(
+      Connection connection, Binding binding, Retry request, OperationReceipt receipt)
+      throws SQLException {
+    Usage usage = usage(connection, binding);
+    if (usage.operations() >= binding.limits().operations())
+      throw ProtocolError.limit("session operation capacity exhausted");
+    byte[] requestBytes =
+        Wire.encode(
+            new Retry(1, request.operation(), request.work(), request.expectedAttempt()),
+            Wire.INITIAL_CONTROL_LIMIT);
+    byte[] receiptBytes = Wire.encodeRecord(receipt, RECEIPT_BYTES);
+    try (var insert =
+        connection.prepareStatement(
+            """
+            INSERT INTO ps_v2_operations(generation,producer,operation,request_kind,request,
+              request_digest,receipt,record_hash,retry_scope,retry_producer,retry_entity,retry_attempt)
+              VALUES (?,0,?,2,?,?,?,?,?,?,?,?)
+            """)) {
+      insert.setLong(1, binding.generation());
+      insert.setBytes(2, request.operation().bytes());
+      insert.setBytes(3, requestBytes);
+      insert.setBytes(4, receipt.requestDigest().bytes());
+      insert.setBytes(5, receiptBytes);
+      insert.setBytes(6, operationHash(binding, 0, 2, requestBytes, receiptBytes));
+      insert.setLong(7, request.work().scope());
+      insert.setInt(8, request.work().producer());
+      insert.setLong(9, request.work().entity());
+      insert.setLong(10, request.expectedAttempt());
+      insert.executeUpdate();
+    }
+    try (var update =
+        connection.prepareStatement(
+            "UPDATE ps_v2_sessions SET operation_count=? WHERE generation=?")) {
+      update.setLong(1, usage.operations() + 1);
+      update.setLong(2, binding.generation());
+      if (update.executeUpdate() != 1) throw corrupt("session disappeared during retry");
     }
   }
 

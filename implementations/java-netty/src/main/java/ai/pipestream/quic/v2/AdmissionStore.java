@@ -409,7 +409,7 @@ final class AdmissionStore {
         workKey,
         entity.revision(),
         Math.max(4096, responseCapacity(parameters.outputs().count())),
-        Math.max(4, entity.geometry().credits()));
+        Math.max(FixedRecords.ADMITTED_WORK_CREDITS, entity.geometry().credits()));
     ChildScope child =
         parameters.mode() == 0 ? null : allocateChild(connection, config, binding, parameters);
     WorkView view =
@@ -1018,7 +1018,15 @@ final class AdmissionStore {
     return sample.utcMillis();
   }
 
-  private static long watermark(Connection connection, String authority) throws SQLException {
+  /**
+   * Read the checked durable UTC watermark without obtaining a new clock sample.
+   *
+   * @param connection consistent metadata snapshot
+   * @param authority retained issuer
+   * @return greatest committed safe observation
+   * @throws SQLException corrupt clock image or failed read
+   */
+  static long watermark(Connection connection, String authority) throws SQLException {
     Cbor.Reader in =
         new Cbor.Reader(clockImage(connection, authority).body(), FixedRecords.CLOCK_CAPACITY);
     long remembered;

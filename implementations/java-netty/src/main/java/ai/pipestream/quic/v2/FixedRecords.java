@@ -43,6 +43,9 @@ final class FixedRecords {
   /** Rewrite credits reserved for a work image. */
   static final long WORK_CREDITS = 2;
 
+  /** Work-image settlement credits funded when admitting or explicitly replacing an attempt. */
+  static final long ADMITTED_WORK_CREDITS = 4;
+
   /** Rewrite credits reserved for a fence image. */
   static final long FENCE_CREDITS = 1;
 

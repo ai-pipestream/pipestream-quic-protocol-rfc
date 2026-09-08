@@ -1,0 +1,135 @@
+Java explicit attempt replacement, 2026-09-08
+Base: 511f55fd0620031dfee49b352b4e93cbb46620bf
+Implementation and tests: the commit containing this evidence file.
+
+Contract and implementation
+  SessionStore.retry implements the existing Section 12.6 WORK retry contract
+  as an owner-authorized local authority API. Current access and application
+  gates must authorize retry. It accepts an exact expected attempt for any
+  eligible admitted nonterminal work; no AWAITING_RETRY-only restriction is added.
+  Existing fences, terminal outcomes, original deadline and physical/operation
+  capacity retain their named refusals.
+
+  One SQLite writer transaction replenishes WORK/JOB rewrite credits, advances
+  the wire attempt once, clears the prior local lease expiry and commits the
+  immutable receipt/accounting. Input, output funding, admission time, original
+  deadline, child scope and completed expansion remain intact. The local lease
+  counter is not reset; a replacement claim advances it. Mode 1 and completed
+  mode 2 remain WAITING_CHILDREN. Retry does not run an application or delete
+  old output bytes; existing replacement-claim cleanup rules remain in force.
+
+  Final current authorization precedes the final clock/deadline check. Refusal
+  rolls back all tentative writes, restored credits and the clock watermark.
+  Exact operation replay remains authenticated evidence with no clock sampling,
+  new attempt or extended promise, even after deadline/terminal settlement.
+  Caller retry of producer-one work uses the independent producer-zero operation
+  namespace, not the child's admission-operation namespace.
+
+  Private Java database format 6 adds bounded typed retry intent plus indexed
+  target/expected-attempt fields to the existing operation journal. Unique
+  per-work expected-attempt keys and count/high-water checking require a complete
+  sequence from admission attempt one to the current attempt. Each index is
+  compared with its checksummed typed intent/receipt and admitted work/time.
+  Earlier private layouts are refused without conversion. Wire schemas,
+  commitments, negotiation profiles and input policy format are unchanged.
+
+Reviewed regression scope
+  RetryStoreTest covers active and AWAITING_RETRY replacement, original receipt
+  replay/reopen, stale lease refusal, terminal/deadline fresh refusal, both branch
+  modes and real producer-one input admission followed by caller retry. The
+  caller retry deliberately reuses the child's admission operation identifier
+  in its separate namespace; the original admission still replays.
+
+  A replacement lease commits actual durable-only success with zero output
+  objects; the old lease cannot publish. This is not alternate-attempt payload
+  delivery or result-stream evidence. Two distinct concurrent operations with
+  expected attempt one yield one attempt-two receipt and one CONFLICT. Both
+  threads enter through real SessionStore handles, not an in-memory oracle.
+
+  RetryStoreFailureTest compares exact work/job values, primitive fixed-record
+  geometry and durable clock value/revision across final authorization, deadline,
+  clock-regression and operation-capacity refusal. It requires the proposed
+  receipt to remain absent. Recovery rejects a removed receipt even when the
+  operation count is changed to conceal removal, and rejects an indexed expected
+  attempt that contradicts its typed request. A legal multi-retry chain reopens.
+
+  Static review corrected two test oracles before execution: non-expanding work
+  retains expansionComplete=true, and fixed-record byte-array identities cannot
+  serve as value-equality rollback assertions. Concurrent test cleanup releases
+  its start latch even if readiness fails. No production exemption was added.
+
+Verification
+  Maven command prefix, from repository root:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop
+      -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+  Initial production-only compile used -Dmaven.test.skip=true, session 15041,
+  exit 0; no tests or test compilation:
+    /tmp/pipestream-explicit-retry-main-compile-20260908T094742-0400.log
+
+  Focused suffix: -Dtest=RetryStoreTest,RetryStoreFailureTest test
+    /tmp/pipestream-explicit-retry-focused-20260908T095525-0400.log
+  13 tests: RetryStoreFailureTest 5, RetryStoreTest 8; no failures/errors/skips.
+  The log ends BUILD SUCCESS at 09:55:31 EDT and the reports agree. The launch
+  did not return a process exit code or session identifier; neither is inferred.
+  All 13 tests also passed in the subsequent full run with retained exit status.
+
+  Full unfiltered suffix: install
+    session 10419, exit 0, finished 09:59:05 EDT:
+    /tmp/pipestream-explicit-retry-full-install-20260908T095545-0400.log
+  Independently parsed 82 fresh JUnit XML reports: 550 tests, 0 failures,
+  0 errors, 0 skipped. XML modification times span UTC
+  13:57:22.773509418 through 13:59:03.765296088, all within this run.
+  Native SQLite guard: 1/1 passed. Existing shade resource/module-info overlap
+  warnings remain; this is not a claim that Maven emitted no warnings.
+
+  Strict package Javadoc for all six changed production types:
+    -package -Xdoclint:all -Werror, session 92845, exit 0, no warnings/errors:
+    /tmp/pipestream-explicit-retry-refined-doclint-20260908T095210-0400.log
+  Scoped Google Java Format and git diff --check pass. No compile/test-driven
+  production or oracle corrections were needed after static review.
+
+  Existing examples, from implementations/rust-quinn:
+    target/release/pipestream-conformance examples
+    session 71417, exit 0:
+    /tmp/pipestream-explicit-retry-examples-20260908T095940-0400.log
+  PASS Java source -> Rust server, Rust recovery -> C++ server, and Rust scatter
+  -> Java/Rust/C++ servers. These exercise their existing profiles, not Java V2.
+  Rust sources were unchanged; the Rust workspace suite was not rerun.
+
+  Final production source SHA-256, checked after the full run:
+    AdmissionStore.java 91b0d0b453dcbda2ef781433ca8d1db6c6e4d2cda05a9b02226a05a45f1fd97e
+    DeclarationStore.java 48e091425949f4b479d618d28e63e309a368040be743a3b0121a3dbe3e48b01e
+    ExecutionStore.java c1a7d1a4f1bcccdb198a395559fd6f064789a1084dfa6ccca36ba742b9965e00
+    FixedRecords.java 148332c208bd9a22ca4048d40765a97eb7db15a9bb9030305fbd37ba1d66b43e
+    RetryStore.java 57aaa0d304facae8ef0a6e7a3bce60e3e975bec22f4ed57ea4bf41bd42d0744c
+    SessionStore.java e5e9ce4b9149bf5d1b95e2e60404337487f6ac863f0e0a71048b7c2f514aa1b2
+  Final test source SHA-256:
+    RetryStoreTest.java 90f461bda69ddffb99d686f15a298d61a4476de1876a8aa5078000fa15681355
+    RetryStoreFailureTest.java a25dcb4bf5283cb6218b840338eb6cfaa5228642def7ed45181e0131266c9a22
+  Fresh packaged artifact SHA-256:
+    ordinary JAR e0696009bb20f8c45e837decb5012c0b802fc76df27f171e114024b70fbf714e
+    shaded JAR 4c1fc85792cb91bb60b2414163d42eb0b17819ff49d56432704bfbdcc42f321b
+
+Draft verification
+  ./build.sh core 05 draft, direct exit 0:
+    /tmp/pipestream-explicit-retry-refined-draft-20260908T095222-0400.log
+  idnits: 0 errors/flaws/warnings and the existing FIPS-180-4 downref comment.
+  The generator also retained its RFC9308 bibxml override warning. Updated
+  Appendix D was inspected in TXT/HTML; no normative wire change was required.
+  Final generated artifact SHA-256:
+    XML 263958f9baf815b4f3992ca97ce55a90bca27de9b0b44af4ecb9a4bf841567f7
+    TXT 7b1efeb183985bc3396095eadfa8a5c4cd63be89891005879aa8198986ebba8e
+    HTML 30384f5d30fafb0e79038e18f565724cbc2dd332255ec4af5575bc0cf659b55c
+
+Limits and remaining work
+  Indexed attempt coverage can scan every retained retry of one work item;
+  bounded application memory is not constant-time or whole-process memory proof.
+  Operation history remains charged against the session limit. No new large
+  payload, physical exhaustion or process-death campaign was added here; reopen
+  is not process death. Existing broad storage/crash tests are separate evidence.
+  Explicit cancellation/skip acceptance and bounded subtree reconciliation,
+  result reads/cleanup/retirement, durable Java endpoint/client integration, the
+  neutral cross-language failure driver and every original external workload/
+  equivalent authenticated durable streaming-gRPC deliverable remain required.
+  This checkpoint is local authority progress, not full Java V2 conformance,
+  independent both-language wire evidence or completion of the active goal.

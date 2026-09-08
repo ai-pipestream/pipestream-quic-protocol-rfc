@@ -31,7 +31,7 @@ import java.util.concurrent.Semaphore;
  * another implementation's database is accepted. Never call it on a transport event loop.
  */
 final class SessionStore {
-  private static final int VERSION = 5;
+  private static final int VERSION = 6;
   private static final int MAX_BINDING_BYTES = 1024;
   private static final Set<String> TABLES =
       Set.of(
@@ -548,6 +548,99 @@ final class SessionStore {
         generation,
         false,
         (connection, binding) -> DeclarationStore.lookup(connection, binding, request));
+  }
+
+  /**
+   * Replace an admitted attempt and retain its immutable receipt in one owner-authorized commit.
+   * Replay returns the original receipt without advancing the attempt or extending any lifetime.
+   * The access and application gates must authorize retry, not merely permission to read work.
+   *
+   * @param access current owner authorization for retry
+   * @param selected completed compatible capability selection
+   * @param generation retained session generation
+   * @param request immutable retry intent
+   * @param clock trusted UTC source for a new mutation
+   * @param authorization current application retry policy
+   * @return correlated committed or replayed receipt
+   * @throws SQLException failed storage transaction or corrupt retained evidence
+   */
+  RetryResponse retry(
+      Access access,
+      Capabilities selected,
+      long generation,
+      Retry request,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization)
+      throws SQLException {
+    Objects.requireNonNull(access).check();
+    profiles(Objects.requireNonNull(selected));
+    Checks.id(generation);
+    Objects.requireNonNull(request);
+    Objects.requireNonNull(authorization);
+    AdmissionStore.Clock checkedClock = AdmissionStore.checkedClock(clock);
+    if (!DATABASE_OPERATIONS.tryAcquire())
+      throw ProtocolError.limit("V2 database operation capacity");
+    try (Connection connection = database.connect();
+        var statement = connection.createStatement()) {
+      statement.execute("BEGIN IMMEDIATE");
+      try {
+        access.check();
+        meta(connection);
+        Retained retained = visible(connection, generation, access.owner());
+        compatible(retained, selected);
+        Binding binding = retained.binding();
+        Digest digest =
+            Commitments.operation(
+                new Commitments.Context(binding.authority(), binding.owner(), generation),
+                0,
+                request);
+        DeclarationStore.Operation prior =
+            DeclarationStore.operation(connection, binding, request.operation());
+        if (prior != null
+            && (!(prior.receipt().outcome() instanceof Retried)
+                || !prior.receipt().requestDigest().equals(digest)))
+          throw error(ProtocolError.Code.CONFLICT, "retry operation parameters differ");
+        if (prior == null)
+          ExecutionStore.eligible(
+              connection,
+              binding,
+              DeclarationStore.member(connection, binding, request.work()).view());
+        ExecutionStore.Loaded loaded =
+            ExecutionStore.load(connection, config, binding, request.work(), authorization);
+        OperationReceipt receipt;
+        if (prior == null) {
+          long now = AdmissionStore.now(connection, binding.authority(), checkedClock);
+          RetryStore.eligible(connection, binding, loaded, request, now);
+          receipt = RetryStore.replace(connection, config, binding, loaded, request, digest, now);
+        } else {
+          RetryStore.audit(connection, binding, loaded.entity().view());
+          receipt = prior.receipt();
+        }
+        RetryResponse response = new RetryResponse(request.request(), receipt);
+        Wire.encode(response, selected.controlLimit());
+        access.check();
+        authorization.check(binding, loaded.stored().record().input().parameters());
+        if (prior == null) {
+          long committedAt = AdmissionStore.now(connection, binding.authority(), checkedClock);
+          RetryStore.eligible(connection, binding, loaded, request, committedAt);
+          AdmissionStore.remember(connection, config, binding.authority(), committedAt);
+        }
+        statement.execute("COMMIT");
+        return response;
+      } catch (SQLException | RuntimeException | Error failure) {
+        rollback(connection, failure);
+        throw failure;
+      }
+    } catch (SQLException failure) {
+      if ((failure.getErrorCode() & 255) == 13) {
+        ProtocolError refusal = ProtocolError.limit("SQLite file capacity exhausted");
+        refusal.initCause(failure);
+        throw refusal;
+      }
+      throw failure;
+    } finally {
+      DATABASE_OPERATIONS.release();
+    }
   }
 
   /**
@@ -1969,7 +2062,7 @@ final class SessionStore {
           """
           CREATE TABLE ps_v2_meta (
             singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-            version INTEGER NOT NULL CHECK(version=5),
+            version INTEGER NOT NULL CHECK(version=6),
             config BLOB NOT NULL CHECK(length(config) BETWEEN 1 AND 8192),
             high_water INTEGER NOT NULL CHECK(high_water>=0),
             clock_slot INTEGER NOT NULL UNIQUE REFERENCES ps_v2_slots(id) CHECK(clock_slot=1),
