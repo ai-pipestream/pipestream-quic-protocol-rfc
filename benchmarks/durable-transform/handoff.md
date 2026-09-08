@@ -71,9 +71,27 @@ used 1.97.1 against that closure. `cargo build` on the host will confirm.
 4. No performance numbers exist; no comparison claim is made. Performance
    deltas, when measured, are findings, not grounds to weaken guarantees.
 
-## 6. Safe next actions
+## 6. Execution evidence (2026-09-08, unblocked host)
 
-1. On an unblocked host: run §3 commands in order; paste results here.
+- `cargo test --locked -p workload-core`: 10/10 pass (vectors, boundaries,
+  determinism, alphabet, swap/wrong rejection, pinned digests, oracle match).
+- All four release binaries compile warning-free (rustc 1.97.1).
+- `run-quick.sh` (seed 7, 200,000-byte binary corpus, 4 chunks over 3
+  workers per arm): **QUICK PASS**. Both finals SHA-256
+  `e74beab6d449bef00d75890d49988673cf7a53b66ec53ddd94c5ab0c25bd362e`
+  (200,000 bytes, byte-identical across arms). First-usable milestones on
+  all workers both arms; per-worker COMMIT markers; final-verified both.
+  Binary pins: authority `ea7cf584…`, ps-coord `fd1bbe9e…`, grpc-worker
+  `e48b226d…`, grpc-coord `03321977…` (full hashes in run artifacts).
+- Bugs found and fixed by real runs (not review): `receipt()` unknown-op
+  semantics, manifest column location, shared-DB WAL contention, ceiling
+  (not deadline) op identity, connect-retry, EXIT-trap cleanup.
+- Host was shared (another agent building concurrently); these are
+  correctness results, no performance claim.
+
+## 7. Safe next actions
+
+1. Remaining: `run-full.sh` repeats + fault demonstrations on a quiet host.
 2. When Claude publishes Java transform availability: add one mixed worker
    to the quick gate, labelled separately.
 3. When Kimi publishes driver checkpoints: run full comparative labels.
