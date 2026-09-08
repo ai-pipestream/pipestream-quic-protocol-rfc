@@ -112,6 +112,16 @@ requires a committed authority release record; it retains an exact same-process
 physical charge across unlink/sync failures until synchronized removal succeeds.
 Only then may the authority commit its logical input-quota refund.
 
+Terminal output cleanup uses a separate authority eligibility record. Exact
+funding pins cover output readers, writers and writer credits; an unborrowed
+reader credit has no object identity. The collector verifies the admitted slots
+and remaining published descriptors before unlink, synchronizes output/staging
+names, and removes funding last. Prepaid output bytes/files remain fully charged
+until funding removal is synchronized, including same-process interruption and
+retry. Recovery permits missing terminal output bytes only after the authority
+validates durable eligibility; every remaining output still requires funding.
+See the retention plan for the current verification status and remaining sweeps.
+
 Authority expansion reserves one store-bound `ReceiverCredit` before invoking its
 expander. The credit charges one global handle without granting producer authority;
 the fenced authority layer must still validate each declaration and admission. A

@@ -955,14 +955,20 @@ final class AdmissionStore {
             throw new IOException("admitted input is missing without release evidence");
           if (input.isPresent() && !record.inputLive())
             throw corrupt("refunded input still has an installed name");
-          if (record.outputsLive()
+          if (!inputs
+              .outputReference(context(binding), record.input())
+              .equals(record.outputReference()))
+            throw corrupt("admitted output reference contradicts retained identity");
+          if (record.outputReleaseAt() != null) {
+            inputs.verifyRetainedOutputs(context(binding), record, view);
+          } else if (record.outputsLive()
               && !inputs
                   .findReservation(context(binding), record.input())
                   .orElseThrow(() -> new IOException("admitted output funding is missing"))
                   .reference()
                   .equals(record.outputReference()))
             throw corrupt("admitted output funding reference differs");
-          if (view.state() == State.SUCCEEDED)
+          if (view.state() == State.SUCCEEDED && record.outputReleaseAt() == null)
             PublicationStore.verifyStorage(binding, inputs, view, record);
         }
       }

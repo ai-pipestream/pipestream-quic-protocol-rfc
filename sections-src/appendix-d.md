@@ -241,8 +241,15 @@ removal. Exact-object readers and active receivers block removal; a delayed
 duplicate upload cannot install across that physical-liveness gate. Release
 evidence survives refund and restart, while manifests and output funding remain
 retained. This local operation still uses the existing session-wide streaming
-closure audit and is not a constant-time maintenance claim. Broader orphan
-reconciliation, output reclamation, fair bounded cleanup scheduling,
+closure audit and is not a constant-time maintenance claim. Java's terminal
+output collector also checks external expiry and dependent parent settlement.
+Exact output readers, writers and callback credits block release; staging and
+installed names are removed and synchronized before their prepaid funding is
+removed. Durable output eligibility survives logical refunds, and remaining
+objects still require manifest and identity verification during recovery.
+Startup synchronizes object and funding namespaces before exposing reconstructed
+capacity, including empty directories after interrupted removal. Broader orphan
+reconciliation, fair bounded cleanup scheduling,
 result-stream transport, retirement and full cross-language failure/resource gates
 remain required. These remain local authority capabilities, not Java
 durable-profile wire interoperability.

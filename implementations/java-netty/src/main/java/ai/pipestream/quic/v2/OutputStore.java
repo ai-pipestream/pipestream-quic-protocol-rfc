@@ -479,6 +479,123 @@ final class OutputStore {
     owner.outputPhase(InputStore.Phase.OUTPUT_RECLAIM_SYNCED);
   }
 
+  /**
+   * Observe exact funding pins under the owning installation's monitor.
+   *
+   * @param reference derived funding name
+   * @return whether a physical reader, writer or callback credit remains
+   */
+  boolean inUse(String reference) {
+    return pins.containsKey(reference);
+  }
+
+  /**
+   * Audit at most the admitted output slots against terminal metadata. Missing names require
+   * previously checked durable release evidence; every remaining name still requires its funding,
+   * exact admitted identity, producing fence and, for success, manifest descriptor.
+   *
+   * @param context retained session
+   * @param job checked terminal job
+   * @param view immutable outcome
+   * @return fully verified bounded deletion candidates
+   * @throws IOException missing live objects or contradictory retained storage
+   */
+  List<ReclaimTarget> retentionTargets(Commitments.Context context, JobRecord job, WorkView view)
+      throws IOException {
+    String reference = owner.outputReference(context, job.input());
+    if (!reference.equals(job.outputReference()))
+      throw corrupt("output funding reference contradicts retained identity");
+    Optional<InputStore.Reservation> retained = owner.findReservation(context, job.input());
+    if (retained.isEmpty() && job.outputReleaseAt() == null)
+      throw corrupt("output funding missing without release evidence");
+    if (retained.isPresent() && !job.outputsLive())
+      throw corrupt("refunded output funding still has an installed name");
+    List<ReclaimTarget> targets = new ArrayList<>();
+    List<Output> manifest = view.manifest() == null ? null : view.manifest().outputs();
+    long payloads = 0;
+    Identity producer = null;
+    for (int index = 0; index < job.input().parameters().outputs().count(); index++) {
+      String slot = name(reference, index);
+      Path target = installed(slot), staging = pending(slot);
+      boolean installed = Files.exists(target, LinkOption.NOFOLLOW_LINKS);
+      if (!installed
+          && manifest != null
+          && index < manifest.size()
+          && job.outputReleaseAt() == null)
+        throw corrupt("published output missing before release intent");
+      for (Path path : new Path[] {target, staging}) {
+        if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) continue;
+        if (retained.isEmpty() || !job.outputsLive())
+          throw corrupt("output name remains without live funding");
+        boolean complete = path.equals(target);
+        Metadata value = (complete ? inspect(path, null, false) : inspectPending(path)).metadata();
+        validateFunding(value, retained.get());
+        Identity identity = value.identity();
+        if (identity.index() != index
+            || value.objectLimit() > job.objectLimit()
+            || identity.attempt() > job.attempt()
+            || identity.lease() > job.lease())
+          throw corrupt("output identity exceeds retained terminal fence or budget");
+        if (producer != null && !sameWorker(producer, identity))
+          throw corrupt("terminal outputs mix worker identities");
+        producer = identity;
+        if (manifest != null) {
+          if (index >= manifest.size()
+              || identity.attempt() != job.attempt()
+              || identity.lease() != job.lease())
+            throw corrupt("terminal output contradicts successful producer or result count");
+          Output expected = manifest.get(index);
+          if (expected.index() != index
+              || value.length() != expected.length()
+              || !value.sha256().equals(expected.sha256())
+              || !value.contentType().equals(expected.contentType()))
+            throw corrupt("terminal output contradicts retained manifest");
+        }
+        if (!complete && installed && !Files.isSameFile(target, path))
+          throw corrupt("terminal staging alias differs from installed output");
+        if (complete || !installed) payloads = add(payloads, value.length());
+        if (payloads > job.input().parameters().outputs().totalBytes())
+          throw corrupt("terminal output payloads exceed funded allowance");
+        targets.add(new ReclaimTarget(path, value, complete));
+      }
+    }
+    // Verify bounded aggregate geometry before hashing any retained body.
+    if (retained.isPresent()) auditFunding(retained.get());
+    for (ReclaimTarget target : targets)
+      if (target.installed()) inspect(target.path(), target.metadata(), true);
+    return targets;
+  }
+
+  /**
+   * Remove verified terminal names before the owner removes their funding. The caller has already
+   * committed release eligibility and excluded every funding pin under the owner monitor.
+   *
+   * @param context retained session
+   * @param job checked settled job with durable eligibility
+   * @param view immutable outcome
+   * @throws IOException corruption or incomplete synchronized removal
+   */
+  void reclaimTerminal(Commitments.Context context, JobRecord job, WorkView view)
+      throws IOException {
+    if (inUse(job.outputReference())) throw corrupt("terminal output funding is physically pinned");
+    List<ReclaimTarget> targets = retentionTargets(context, job, view);
+    pendingSyncRequired = true;
+    outputsSyncRequired = true;
+    for (ReclaimTarget target : targets) {
+      if (target.installed()) continue;
+      Files.delete(target.path());
+      owner.outputPhase(InputStore.Phase.OUTPUT_RETENTION_PENDING_REMOVED);
+    }
+    syncPending();
+    for (ReclaimTarget target : targets) {
+      if (!target.installed()) continue;
+      Files.delete(target.path());
+      owner.outputPhase(InputStore.Phase.OUTPUT_RETENTION_INSTALLED_REMOVED);
+    }
+    syncOutputs();
+    owner.outputPhase(InputStore.Phase.OUTPUT_RETENTION_NAMES_SYNCED);
+  }
+
   /** One streaming output. Close releases its handle or returns its borrowed callback credit. */
   final class Writer implements AutoCloseable {
     private final String reference;

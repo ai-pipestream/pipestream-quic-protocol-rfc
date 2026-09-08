@@ -386,7 +386,10 @@ final class RetentionStoreTest {
 
   @Test
   void committedIntentAndReleaseProbeFailuresRecoverWithoutLosingEvidence() throws Exception {
-    for (RetentionStore.Phase phase : RetentionStore.Phase.values()) {
+    for (RetentionStore.Phase phase :
+        List.of(
+            RetentionStore.Phase.INPUT_INTENT_COMMITTED,
+            RetentionStore.Phase.INPUT_RELEASE_COMMITTED)) {
       try (ResultFixture fixture =
           new ResultFixture(directory, "probe-" + phase.name(), INPUT, OUTPUT)) {
         AtomicInteger reached = new AtomicInteger();

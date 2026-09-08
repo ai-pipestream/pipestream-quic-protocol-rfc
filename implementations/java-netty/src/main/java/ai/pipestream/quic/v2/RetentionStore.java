@@ -8,15 +8,15 @@ import java.sql.SQLException;
 
 /** Checked durable release evidence, separate from physical deletion and quota completion. */
 final class RetentionStore {
-  /** Outcome of one bounded local input-reclamation operation. */
+  /** Outcome of one local resource-reclamation operation. */
   enum Result {
-    /** Work or its descendants still require input retention. */
+    /** External availability or accepted work still requires retention. */
     NOT_READY,
-    /** Eligibility is durable but an actual reader or receiver is still live. */
+    /** A physical reader, receiver, writer or callback credit is still live. */
     PINNED,
-    /** Physical removal is synchronized and its logical input charge was released. */
+    /** Physical removal is synchronized and its logical resource charge was released. */
     RELEASED,
-    /** A prior invocation already completed this input release. */
+    /** A prior invocation already completed this resource release. */
     ALREADY_RELEASED
   }
 
@@ -25,7 +25,11 @@ final class RetentionStore {
     /** Input eligibility and its trusted-clock sample are committed before deletion. */
     INPUT_INTENT_COMMITTED,
     /** Input quota completion is committed after synchronized deletion. */
-    INPUT_RELEASE_COMMITTED
+    INPUT_RELEASE_COMMITTED,
+    /** Output eligibility is committed before any physical removal. */
+    OUTPUT_INTENT_COMMITTED,
+    /** Output funding and logical quota have both been released. */
+    OUTPUT_RELEASE_COMMITTED
   }
 
   /** Trusted local failure instrumentation. */
@@ -67,6 +71,30 @@ final class RetentionStore {
   }
 
   /**
+   * Check external availability and accepted parent dependencies in addition to child closure.
+   *
+   * @param connection retained snapshot
+   * @param binding exact session
+   * @param view exact terminal work
+   * @param at proposed eligibility time
+   * @return whether all logical output dependencies ended by that time
+   * @throws SQLException contradictory scope or parent identity
+   */
+  static boolean outputEligible(
+      Connection connection, Messages.Binding binding, WorkView view, long at) throws SQLException {
+    if (!inputEligible(connection, binding, view, at)
+        || view.outputUntil() != null && at < view.outputUntil()) return false;
+    DeclarationStore.Scope scope = DeclarationStore.scope(connection, binding, view.work().scope());
+    if (scope.parent() == null) return true;
+    WorkView parent = DeclarationStore.member(connection, binding, scope.parent()).view();
+    if (parent.child() == null
+        || parent.child().scope() != scope.id()
+        || parent.child().producer() != scope.producer())
+      throw corrupt("output dependency contradicts parent admission");
+    return parent.state().terminal() && parent.terminalAt() != null && parent.terminalAt() <= at;
+  }
+
+  /**
    * Verify retained release evidence even after a logical charge has been refunded.
    *
    * @param connection retained snapshot
@@ -87,21 +115,8 @@ final class RetentionStore {
       verifyTime(connection, binding, view, job.inputReleaseAt(), watermark);
     if (job.outputReleaseAt() != null) {
       long at = job.outputReleaseAt();
-      verifyTime(connection, binding, view, at, watermark);
-      if (view.outputUntil() != null && at < view.outputUntil())
-        throw corrupt("output release precedes external retention");
-      DeclarationStore.Scope scope =
-          DeclarationStore.scope(connection, binding, view.work().scope());
-      if (scope.parent() != null) {
-        WorkView parent = DeclarationStore.member(connection, binding, scope.parent()).view();
-        if (parent.child() == null
-            || parent.child().scope() != scope.id()
-            || parent.child().producer() != scope.producer()
-            || !parent.state().terminal()
-            || parent.terminalAt() == null
-            || parent.terminalAt() > at)
-          throw corrupt("output release precedes dependent parent settlement");
-      }
+      if (at > watermark || !outputEligible(connection, binding, view, at))
+        throw corrupt("output release precedes external retention or dependent parent settlement");
     }
   }
 
@@ -137,6 +152,33 @@ final class RetentionStore {
         job.expansionComplete(),
         job.inputReleaseAt() == null ? at : job.inputReleaseAt(),
         job.outputReleaseAt());
+  }
+
+  /**
+   * Preserve release evidence while changing only the output retention phase.
+   *
+   * @param job original settled job
+   * @param at first eligibility time
+   * @param live whether output funding remains logically charged
+   * @return replacement job image
+   */
+  static JobRecord output(JobRecord job, long at, boolean live) {
+    return new JobRecord(
+        job.input(),
+        job.safety(),
+        job.attempt(),
+        job.lease(),
+        job.leaseUntil(),
+        job.stage(),
+        job.inputReference(),
+        job.outputReference(),
+        job.objectLimit(),
+        job.inputLive(),
+        live,
+        job.executorLive(),
+        job.expansionComplete(),
+        job.inputReleaseAt(),
+        job.outputReleaseAt() == null ? at : job.outputReleaseAt());
   }
 
   private static SQLException corrupt(String detail) {

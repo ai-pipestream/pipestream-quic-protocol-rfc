@@ -2773,3 +2773,34 @@ check retains its existing session-wide streaming audit cost. Java's durable
 endpoint/client integration, the neutral two-direction failure/resource driver,
 and the full original external workload/equivalent streaming-gRPC comparison
 remain mandatory. The overall goal stays active and incomplete.
+
+### Java terminal output reclamation checkpoint, 2026-09-08
+
+Java now reclaims one terminal job's output funding after external expiry,
+verified child closure and dependent parent settlement. Real output readers,
+writers and callback credits block cleanup. Eligibility commits before deletion;
+staging and installed output names are synchronized before funding removal and
+logical refund. Recovery validates remaining manifests/identities and permits
+missing bytes only under checked release evidence. Input and output cleanup work
+in either order, preserve their independent timestamps and retain immutable
+outcomes. Startup synchronizes object/funding namespaces before exposing recovered
+free capacity, including empty directories after an interrupted unlink.
+
+The focused 85-test gate and unfiltered 616-test Java suite pass with zero
+failures/errors/skips. All 95 fresh XML reports were independently counted. Tests
+include six real JVM crash boundaries, a partially removed two-output result,
+actual parent settlement with an open child-output reader, exact prepaid funding
+refunds, corrupted surviving bytes and startup-barrier refusal. Strict five-type
+doclint, the native guard, all three existing examples and draft/idnits pass.
+Initial input-only phase-enumeration and unused-resource test fixes are recorded
+with raw logs and final hashes in the
+[output-reclamation evidence](../../conformance/results/durable-work-v2-output-reclamation-2026-09-08.txt).
+
+Next implement bounded orphan reconciliation and fair cleanup scheduling, then
+checked durable session retirement. The existing execution scan has a finite
+keyset cursor, but its scheduler currently performs deadline settlement, not
+payload cleanup. File-orphan collection still needs its own bounded enumeration
+and paired metadata/liveness proof. Java durable endpoint/client integration,
+the neutral two-direction failure/resource driver, and the original external
+workload/equivalent streaming-gRPC comparison remain required. This checkpoint
+does not complete task 2 or the overall goal.

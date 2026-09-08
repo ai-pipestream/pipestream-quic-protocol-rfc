@@ -83,10 +83,13 @@ Reassembly runs after verified child closure, with phase-specific handle credits
 Local cancellation and administrative revocation now drive bounded fenced
 settlement. Java's local result service also pins exact published objects under
 current authorization and bounded pending/active delivery lifetimes; its Netty
-result-stream integration and dependency-safe cleanup remain unfinished.
+result-stream integration and complete cleanup scheduling remain unfinished.
 The local input collector now records durable eligibility before deletion and
 waits for exact-object readers and receivers before synchronized removal and quota
-refund. Output cleanup, orphan sweeping and session retirement remain unfinished.
+refund. The output collector separately checks external expiry, parent settlement
+and physical output pins, removes synchronized output names before funding, and
+retains release evidence through refund and restart. Orphan sweeping, fair cleanup
+scheduling and session retirement remain unfinished.
 Independent Java durable execution/results/recovery, complete cross-language
 failure evidence and the workload comparison remain unfinished.
 The Rust `pipestream_core::v2` library now implements typed codecs for every

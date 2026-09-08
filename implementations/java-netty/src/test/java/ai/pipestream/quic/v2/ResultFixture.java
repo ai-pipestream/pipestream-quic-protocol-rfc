@@ -41,19 +41,34 @@ final class ResultFixture implements AutoCloseable {
   InputStore inputs;
 
   ResultFixture(Path directory, String name, byte[] payload) throws Exception {
-    this(directory, name, new byte[0], payload, true);
+    this(directory, name, new byte[0], payload, true, 1);
   }
 
   ResultFixture(Path directory, String name, byte[] payload, boolean publish) throws Exception {
-    this(directory, name, new byte[0], payload, publish);
+    this(directory, name, new byte[0], payload, publish, 1);
   }
 
   ResultFixture(Path directory, String name, byte[] inputPayload, byte[] payload) throws Exception {
-    this(directory, name, inputPayload, payload, true);
+    this(directory, name, inputPayload, payload, true, 1);
   }
 
-  ResultFixture(
-      Path directory, String name, byte[] inputPayload, byte[] payload, boolean publish)
+  ResultFixture(Path directory, String name, byte[] inputPayload, byte[] payload, boolean publish)
+      throws Exception {
+    this(directory, name, inputPayload, payload, publish, 1);
+  }
+
+  ResultFixture(Path directory, String name, byte[] inputPayload, byte[] payload, int outputCount)
+      throws Exception {
+    this(directory, name, inputPayload, payload, true, outputCount);
+  }
+
+  private ResultFixture(
+      Path directory,
+      String name,
+      byte[] inputPayload,
+      byte[] payload,
+      boolean publish,
+      int outputCount)
       throws Exception {
     database = directory.resolve(name + ".sqlite");
     inputsPath = directory.resolve(name + "-inputs");
@@ -83,7 +98,7 @@ final class ResultFixture implements AutoCloseable {
                 "copy",
                 0,
                 1000,
-                new Records.OutputBudget(1, payload.length)));
+                new Records.OutputBudget(outputCount, payload.length)));
     try (InputStore.Receiver receiver = inputs.begin(context(), inputHeader, SELECTED, 1)) {
       receiver.write(ByteBuffer.wrap(inputPayload), 2);
       receiver.finish(3);
@@ -106,7 +121,7 @@ final class ResultFixture implements AutoCloseable {
             500,
             clock(1100),
             ALLOW_EXECUTION);
-    if (publish) {
+    if (publish && outputCount > 0) {
       try (OutputStore.Writer writer =
           inputs.beginOutput(
               context(),
@@ -119,9 +134,17 @@ final class ResultFixture implements AutoCloseable {
         writer.write(ByteBuffer.wrap(payload));
         writer.finish();
       }
+    }
+    if (publish) {
       published =
           sessions.succeedExecution(
-              executionAccess("alice"), lease, inputs, 1, ENDPOINT, clock(1200), ALLOW_EXECUTION);
+              executionAccess("alice"),
+              lease,
+              inputs,
+              outputCount,
+              ENDPOINT,
+              clock(1200),
+              ALLOW_EXECUTION);
     } else {
       published =
           sessions

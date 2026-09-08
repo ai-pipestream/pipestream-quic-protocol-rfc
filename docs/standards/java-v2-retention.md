@@ -1,8 +1,9 @@
 # Java V2 retention and retirement implementation plan
 
 This records implementation and remaining work for Section 12.9. Java now has a
-single-job input reclamation operation; output reclamation, orphan sweeping and
-session retirement remain unimplemented. The normative contract remains
+single-job input and terminal output reclamation operations. Orphan sweeping
+and session retirement remain
+unimplemented. The normative contract remains
 in `sections-src/section-12.md`. The local result-read service and per-input
 physical reader pins supply part of the liveness machinery. Java's durable
 endpoint/client and the independent failure driver remain separate obligations.
@@ -100,9 +101,10 @@ It does not exempt all settled jobs from validation. Job decoding rejects refund
 charges without eligibility evidence and release evidence on unsettled jobs.
 
 `AdmissionStore.verifyStorage` distinguishes a live input promise, an authorized
-interrupted input release and a completed release. Output funding and
-`PublicationStore.verifyStorage` still require their retained physical objects;
-extend those paths when implementing output reclamation. Continue checking every
+interrupted input release and a completed release. For outputs without release
+evidence, funding and published objects remain mandatory. The new terminal
+output audit permits interrupted deletion only after relational release evidence
+has passed validation. It continues checking every
 remaining object's exact identity and contents. Allowing missing bytes merely
 because a work is terminal would conceal data loss before output expiry or
 parent settlement. Retained publication metadata remains audited after bytes
@@ -116,6 +118,50 @@ reports already-released state. Revocation does not prevent local maintenance.
 Child-closure validation currently uses the existing session-wide streaming audit;
 the single target bound is not a constant-time or hard wall-clock bound. A fair
 bounded sweep/scheduler integration remains required.
+
+### Terminal output collector
+
+`SessionStore.reclaimOutput` uses the same paired-store writer/clock discipline
+as input cleanup. It checks terminal and child-closure evidence, external output
+expiry and dependent parent settlement before beginning cleanup. Exact output
+reader/writer/credit pins delay even the first intent: a fenced callback can
+still own a mutable staging header, which must not be inspected concurrently
+as if it were immutable retained storage. Input and output release timestamps
+and logical charges remain independent.
+
+Before the first output intent, all promised published bytes must exist and
+match the retained manifest. After intent commit, missing output names are
+allowed, but every remaining name must still have funding and match the admitted
+identity, output budget and producing fence. Successful outputs must match the
+exact published producer and descriptor; failed work can retain unpublished
+outputs from an older execution fence, never a future one. The collector visits
+the admitted slots directly, at most 256, rather than scanning unrelated output
+names. Existing child-closure auditing remains session-wide.
+
+Cleanup removes staging aliases first and synchronizes their directory, then
+installed names and their directory. Only then does it unlink and synchronize
+funding. Output byte/file usage is a prepaid reservation, not the physical size
+of each installed output: deleting an output name does not refund any of that
+allowance. Interrupted funding unlink/sync retains the exact same-process charge.
+After restart, an absent funding record contributes no physical reservation;
+the logical charge remains until checked reconciliation commits its completion.
+No output name is permitted to remain after its funding disappears.
+
+Startup also synchronizes the input-object and funding directories, including
+empty ones, before exposing reconstructed capacity. Seeing a name absent after
+process death does not prove that the previous process synchronized its unlink.
+The recovery barrier applies even when no retained file remains to trigger an
+individual lookup/synchronization. Failure at that barrier refuses opening the
+installation; it does not return an apparently usable empty store.
+
+The focused 85-test gate and full 616-test Java suite pass, including six real
+JVM output-release crash boundaries, a two-output interrupted deletion, actual
+parent settlement with a live output reader, exact prepaid quota/refund checks,
+and recovery-barrier refusal. Strict doclint, the native guard, existing examples
+and draft checks pass. See the
+[output reclamation evidence](../../conformance/results/durable-work-v2-output-reclamation-2026-09-08.txt).
+This local collector does not supply orphan reclamation, fair scheduling, session
+retirement, durable Java wire integration or two-language failure-driver evidence.
 
 ## Retirement is a different durable transition
 

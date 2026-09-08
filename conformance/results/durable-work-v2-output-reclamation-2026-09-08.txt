@@ -1,0 +1,139 @@
+Java V2 terminal output reclamation, 2026-09-08
+
+Implemented scope
+  SessionStore.reclaimOutput checks terminal work, verified child closure,
+  external output expiry and dependent parent settlement. It uses the same
+  paired-store, two-transaction release protocol as input reclamation. Exact
+  reader/writer/callback-credit pins block before initial inspection/intent;
+  an unborrowed reader credit has no funding identity. The first transaction
+  verifies every promised published output before persisting eligibility.
+
+  OutputStore visits the admitted slots, at most 256, and verifies all remaining
+  names, admitted identity, producing fences, funded geometry and published
+  descriptors. After checked release intent, missing names may represent an
+  interrupted removal; remaining names are never exempt from validation.
+  Staging aliases are removed and synchronized before installed names. Funding
+  is removed and synchronized only after all output names disappear.
+
+  Physical quota tracks prepaid funding, not individual output file sizes.
+  Unlinking outputs does not refund that funding. Same-process interrupted
+  funding removal retains the exact reserved charge until synchronization.
+  Restart reconstructs physical funding, while logical completion still requires
+  retained release evidence. Output release preserves input, manifests, receipts
+  and immutable eligibility timestamps. No schema or wire grammar change.
+
+Static review corrections before test execution
+  Crash-test accounting initially treated output file unlink as a quota refund.
+  Corrected the oracle to retain the entire prepaid reservation until funding
+  disappears; physical namespaces are checked separately.
+  A stored output lookup requires funding and cannot report Optional.empty after
+  that funding is gone. Post-release tests inspect reservation/name absence.
+  Unborrowed reader capacity has no output identity; only a borrowed reader pins
+  a particular funding. Writer credits retain their funding identity.
+  Production's initial exact per-object-cap comparison was too strict for an
+  output written with a smaller local cap. Retention accepts the stricter cap.
+  Recovery now synchronizes both input-object and funding directories before
+  exposing reconstructed free capacity, including empty namespaces following
+  an interrupted unlink. Missing names alone do not establish synchronized
+  deletion. An instrumented failure at this startup barrier refuses opening.
+
+Initial focused gate
+  /tmp/pipestream-output-reclaim-focused-20260908T124457-0400.log
+  Session 51449, direct exit 1, finished 2026-09-08 12:45:08 EDT.
+  80 tests: 79 passed, 1 assertion failure, 0 errors/skips. Both new output
+  suites passed (9 local tests and one six-boundary process-crash loop).
+  The existing input commit-probe test iterated every RetentionStore.Phase;
+  adding output phases made it expect input cleanup to emit an output event.
+  Its phase selection was corrected to remain explicitly input-only, with
+  assertions intact.
+
+Expanded-focus compile correction
+  /tmp/pipestream-output-reclaim-final-focus-20260908T124829-0400.log
+  Direct exit 1, finished 2026-09-08 12:48:33 EDT, before test execution.
+  The startup-barrier test's intentionally unexpected successful-open branch had
+  an unused AutoCloseable resource; javac -Werror refused it. The mechanical fix
+  observes its usage before the existing unconditional failure. Assertions and
+  production behavior are unchanged, and the resource remains automatically closed.
+
+Production-only preliminary gates (before final cap correction)
+  Maven test-skipping package, direct exit 0, 2026-09-08 12:39:34 EDT:
+    /tmp/pipestream-output-reclaim-main-package-20260908T123930-0400.log
+  Strict package-visible five-type Javadoc, -Xdoclint:all -Werror, direct exit 0:
+    /tmp/pipestream-output-reclaim-doclint-20260908T123947-0400.log
+  These gates alone do not verify the final implementation or any tests.
+
+Final verification
+  Repository cwd: /work/main/pipestream-ai/dev-tools/pipestream-quic-protocol-rfc
+  Maven prefix:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop
+      -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+  Expanded focus suffix:
+    -Dtest=OutputRetentionStoreTest,OutputRetentionStoreRecoveryTest,OutputRetentionGeometryTest,OutputRetentionDependencyTest,InputStoreRecoverySyncTest,RetentionStoreTest,RetentionStoreRecoveryTest,InputStoreReceiverPinsTest,InputStoreReaderPinsTest,InputStoreTest,OutputStoreTest,ResultStoreTest,ResultServiceTest,BranchExecutionTest,PublicationStoreRecoveryTest,FenceStoreTest test
+  Expanded focused gate, direct exit 0, finished 2026-09-08 12:50:00 EDT:
+    /tmp/pipestream-output-reclaim-final-focus-rerun-20260908T124949-0400.log
+  85 tests, 0 failures/errors/skips; native guard 1/1. Root independently read
+  all 16 selected XML reports, timestamped 16:49:54 through 16:50:00 UTC.
+  New suites: OutputRetentionStoreTest 9, OutputRetentionStoreRecoveryTest 1,
+  OutputRetentionGeometryTest 3, OutputRetentionDependencyTest 1,
+  InputStoreRecoverySyncTest 1. The process test checks six actual JVM exits.
+  Geometry tests include a two-output interrupted deletion/reopen and corrupt
+  surviving bytes after release intent. The dependency test uses real admitted
+  and published child work, actual parent execution/settlement and an open reader.
+  Both cleanup orders preserve timestamps/outcomes and spend exactly four job
+  rewrite credits. Startup barrier failure refuses open and releases ownership.
+
+  Same Maven prefix, unfiltered suffix: install
+  Direct exit 0 (session 85862), finished 2026-09-08 12:53:24 EDT:
+    /tmp/pipestream-output-reclaim-final-full-20260908T125006-0400.log
+  616 tests, 0 failures/errors/skips; native guard 1/1. Root independently
+  counted all 95 fresh XML reports:
+    first UTC mtime 2026-09-08 16:51:39.661117700
+    last UTC mtime 2026-09-08 16:53:22.543918680
+  Existing shaded-JAR module/resource overlap warnings remain.
+
+  Final strict Javadoc for AdmissionStore, InputStore, OutputStore, RetentionStore,
+  SessionStore: -package -Xdoclint:all -Werror, direct exit 0.
+    /tmp/pipestream-output-reclaim-final-doclint-20260908T125333-0400.log
+  From implementations/rust-quinn: target/release/pipestream-conformance examples
+  Direct exit 0; all three existing-profile examples PASS.
+    /tmp/pipestream-output-reclaim-final-examples-20260908T125340-0400.log
+  No new Rust workspace run is claimed; Rust source did not change.
+  These examples are not Java durable-profile wire-parity evidence.
+
+  Repository root: ./build.sh core 05 draft
+  Direct exit 0 (session 98839), idnits zero errors/flaws/warnings and the existing
+  FIPS-180-4 downref comment. Root inspected new Appendix D text in generated TXT
+  and HTML. No draft submission, main merge or deployment was performed.
+    /tmp/pipestream-output-reclaim-final-draft-20260908T125351-0400.log
+
+Final source SHA-256
+  AdmissionStore.java 43c0bd3876913038977bb785a4192ae9d5b60948cbb671e51b1effd0fc133565
+  InputStore.java b4b7fd884c3b71a61d41955fb83f67e9c02da99f128beaafc93fd2e607e3baf8
+  OutputStore.java f0014bede185e5731c58a023700540c49218a6464d95603ebdfe80375ac334f5
+  RetentionStore.java 32bb16b5bfd826225b3ce3ede3d5145783e0f25babe5163ca28601c8388ab037
+  SessionStore.java 82f02eecdd6c547e3ea41b3c1571e55f4266399094cd0dc733b355c359d9003e
+  ResultFixture.java ae38cb290718540a7671f14cd90eba1381ba30b47a31e434c0ea8bb19a91d24d
+  RetentionStoreTest.java ab52eed21353ef06322dbc566bd166d3643f4ff1d471648ddd7588cec4dbf14f
+  InputStoreRecoverySyncTest.java 2bf16907310ff5e875016010a2b73bfe5ba2b1be87efaeb72ca9e00171a786a3
+  OutputRetentionDependencyTest.java fda5fb9cfc944530e8db83d99bba05300294290935c86888c217440f4b7e9d6f
+  OutputRetentionGeometryTest.java 074bd30b66583181b83491437e1ba6ebbf35c1d37eb5b9b63deff0d59a97623f
+  OutputRetentionStoreRecoveryTest.java 8f8d70325a27b83bb235c21e6a679baa00571dbbd5212864124cb32cf1751e27
+  OutputRetentionStoreTest.java f46f110907d617906b4b7f2056260e8b9adda27d4e5e90cab09b7f03c963b9ec
+
+Artifact SHA-256
+  Ordinary JAR acb52fc872155528599108f9f1fc5a333fd63ff088df2745a260b98d709985f6
+  All JAR 1f6194865ad38cd2e63c0afd6cf5997ffa8a0a5ee8db58060830d9524a5b0fd1
+  sqlite_guard_test 3dc46f85b2fbf31018a0dd18277bd14604b83a66c3be22decadf3e33f9dfc3bd
+  Draft XML c5ca37a9fd2514f0366260834e6025ac81bcb8f9f800769f340f5655730c2d3a
+  Draft TXT 4c40dec5dbf4871c5e0b43309dc4a6b70fe9799d5b090ac39c1b34258cd62278
+  Draft HTML 3b514ad9b0c35c5b00bd8b61548afa7fb9ce0f562cd6197375040d357ed5a4ba
+
+Limitations
+  One explicitly addressed job, not fair cleanup scheduling or orphan sweeping.
+  Existing child-closure verification remains a session-wide streaming audit;
+  bounded slot visits do not establish constant-time cleanup or a measured
+  whole-process memory/latency guarantee. Process-death tests are not power-loss
+  tests. Instrumented boundary failures are not failing-fsync syscall evidence.
+  Java durable endpoint/client integration, neutral two-direction failure/resource
+  evidence, durable session retirement and the original external workload with
+  equivalent authenticated durable streaming-gRPC baseline remain mandatory.

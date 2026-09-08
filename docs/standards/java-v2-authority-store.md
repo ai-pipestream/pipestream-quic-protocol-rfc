@@ -757,8 +757,13 @@ The local `reclaimInput` operation commits validated terminal/child-closure
 evidence before unlink and commits the logical refund after synchronized absence.
 Real readers and active receivers keep physical storage pinned. Recovery permits
 missing input only with checked durable eligibility and continues checking the
-immutable output funding and publication. This does not yet reclaim outputs,
-sweep orphans or retire sessions. See the
+immutable output funding and publication. The corresponding `reclaimOutput`
+operation additionally requires external expiry and dependent parent settlement;
+it waits for exact funding pins, synchronizes all output names before removing
+funding, and preserves the output eligibility timestamp after its logical refund.
+Recovery accepts missing output names only with validated release evidence and
+checks every remaining descriptor. Orphan sweeping, fair cleanup scheduling and
+session retirement remain unfinished. See the
 [retention implementation and remaining work](java-v2-retention.md).
 
 ## Result evidence and bounded delivery leases

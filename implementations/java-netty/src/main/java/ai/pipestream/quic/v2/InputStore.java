@@ -121,8 +121,20 @@ final class InputStore implements AutoCloseable {
     INPUT_RECLAIM_REMOVED,
     /** Eligible input removal is synchronized, before physical accounting is refunded. */
     INPUT_RECLAIM_SYNCED,
+    /** One terminal output staging alias was removed. */
+    OUTPUT_RETENTION_PENDING_REMOVED,
+    /** One terminal installed output was removed. */
+    OUTPUT_RETENTION_INSTALLED_REMOVED,
+    /** Both terminal output namespaces are synchronized before funding removal. */
+    OUTPUT_RETENTION_NAMES_SYNCED,
+    /** Terminal output funding was unlinked before directory synchronization. */
+    OUTPUT_FUNDING_REMOVED,
+    /** Funding removal is synchronized, before physical quota refund. */
+    OUTPUT_FUNDING_SYNCED,
     /** Recovery completed its retained-file audit. */
-    RECOVERY_AUDITED
+    RECOVERY_AUDITED,
+    /** Recovered input and funding absence is synchronized before capacity becomes usable. */
+    RECOVERY_RELEASES_SYNCED
   }
 
   /** Fault observation only; never a processing callback or authorization policy. */
@@ -157,6 +169,8 @@ final class InputStore implements AutoCloseable {
   private final Map<Path, Integer> inputReaders = new HashMap<>();
   private final Map<Path, Integer> inputReceivers = new HashMap<>();
   private final Map<Path, Long> inputRemovals = new HashMap<>();
+  // Preserve prepaid output charges across a same-process interrupted funding removal.
+  private final Map<Path, Funding> outputRemovals = new HashMap<>();
   private boolean closed;
   private Object resultService;
 
@@ -802,6 +816,83 @@ final class InputStore implements AutoCloseable {
   }
 
   /**
+   * Derive an output funding name even after an authorized removal.
+   *
+   * @param context exact session
+   * @param header admitted input
+   * @return immutable funding filename
+   * @throws IOException closed installation
+   */
+  synchronized String outputReference(Commitments.Context context, InputHeader header)
+      throws IOException {
+    ensureOpen();
+    return fundingPath(envelope(context, header)).getFileName().toString();
+  }
+
+  /**
+   * Check physical output liveness while the caller holds this monitor through its decision.
+   *
+   * @param context exact session
+   * @param header admitted input
+   * @return whether a reader, writer or borrowed callback credit pins the funding
+   * @throws IOException closed installation
+   */
+  synchronized boolean outputInUse(Commitments.Context context, InputHeader header)
+      throws IOException {
+    ensureOpen();
+    return outputs.inUse(outputReference(context, header));
+  }
+
+  /**
+   * Audit remaining terminal outputs against durable metadata, including interrupted removal. The
+   * paired authority must validate release eligibility before permitting missing bytes.
+   *
+   * @param context exact session
+   * @param job retained job and release evidence
+   * @param view retained terminal outcome
+   * @throws IOException missing promised bytes, contradictory identity or manifest
+   */
+  synchronized void verifyRetainedOutputs(Commitments.Context context, JobRecord job, WorkView view)
+      throws IOException {
+    ensureOpen();
+    outputs.retentionTargets(context, job, view);
+  }
+
+  /**
+   * Remove terminal output names and funding under committed, revalidated release evidence. The
+   * caller holds this monitor and the paired metadata writer transaction throughout.
+   *
+   * @param context exact session
+   * @param job settled job with committed output eligibility
+   * @param view immutable terminal outcome
+   * @return false while physical dependencies remain, true after synchronized funding removal
+   * @throws IOException corruption or incomplete physical deletion
+   */
+  synchronized boolean reclaimOutput(Commitments.Context context, JobRecord job, WorkView view)
+      throws IOException {
+    ensureOpen();
+    if (job.outputReleaseAt() == null || !job.outputsLive())
+      throw corrupt("output removal lacks live committed eligibility");
+    if (outputInUse(context, job.input())) return false;
+    outputs.reclaimTerminal(context, job, view);
+    Envelope expected = envelope(context, job.input());
+    Path target = fundingPath(expected);
+    if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+      Funding retained = inspectFunding(target, expected);
+      Funding charged = outputRemovals.putIfAbsent(target, retained);
+      if (charged != null && !charged.equals(retained))
+        throw corrupt("pending output funding removal changed identity or charge");
+      Files.delete(target);
+      reached(Phase.OUTPUT_FUNDING_REMOVED);
+    }
+    sync(root.resolve("reservations"));
+    reached(Phase.OUTPUT_FUNDING_SYNCED);
+    Funding charged = outputRemovals.remove(target);
+    if (charged != null) release(charged.chargedBytes(), charged.chargedFiles());
+    return true;
+  }
+
+  /**
    * Pin an output descriptor in the same pool as input reception and reads.
    *
    * @throws IOException closed storage
@@ -1335,6 +1426,11 @@ final class InputStore implements AutoCloseable {
       }
     }
     outputs.cleanupPending();
+    // Reconstructed absence can follow an interrupted unlink in the previous process. Force
+    // both namespaces even when empty before returning any reusable physical capacity.
+    sync(root.resolve("objects"));
+    sync(root.resolve("reservations"));
+    reached(Phase.RECOVERY_RELEASES_SYNCED);
   }
 
   private Envelope envelope(Commitments.Context context, InputHeader header) {

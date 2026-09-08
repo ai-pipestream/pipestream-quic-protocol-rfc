@@ -2497,6 +2497,59 @@ final class SessionStore {
       AdmissionStore.Clock clock,
       RetentionStore.Probe probe)
       throws IOException, SQLException {
+    return reclaimResource(generation, work, inputs, clock, probe, true);
+  }
+
+  /**
+   * Reclaim a terminal job's outputs after external expiry and dependent parent settlement.
+   * Receipt, input and manifest retention are independent. Physical result readers and callback
+   * credits must close before output funding can be removed or its capacity reused.
+   *
+   * @param generation retained session
+   * @param work exact admitted work
+   * @param inputs exclusively paired payload installation
+   * @param clock trusted UTC source
+   * @return committed outcome or outstanding logical/physical dependency
+   * @throws IOException file or synchronization failure
+   * @throws SQLException contradictory evidence or database failure
+   */
+  RetentionStore.Result reclaimOutput(
+      long generation, WorkKey work, InputStore inputs, AdmissionStore.Clock clock)
+      throws IOException, SQLException {
+    return reclaimOutput(generation, work, inputs, clock, phase -> {});
+  }
+
+  /**
+   * Reclaim terminal outputs with trusted local durability instrumentation. Commits eligibility
+   * before deletion, then removes and synchronizes output names before funding and quota release.
+   *
+   * @param generation retained session
+   * @param work exact admitted work
+   * @param inputs exclusively paired payload installation
+   * @param clock trusted UTC source
+   * @param probe bounded local commit observer
+   * @return committed outcome or outstanding dependency
+   * @throws IOException file, synchronization or instrumentation failure
+   * @throws SQLException contradictory evidence or database failure
+   */
+  RetentionStore.Result reclaimOutput(
+      long generation,
+      WorkKey work,
+      InputStore inputs,
+      AdmissionStore.Clock clock,
+      RetentionStore.Probe probe)
+      throws IOException, SQLException {
+    return reclaimResource(generation, work, inputs, clock, probe, false);
+  }
+
+  private RetentionStore.Result reclaimResource(
+      long generation,
+      WorkKey work,
+      InputStore inputs,
+      AdmissionStore.Clock clock,
+      RetentionStore.Probe probe,
+      boolean inputResource)
+      throws IOException, SQLException {
     Checks.id(generation);
     Objects.requireNonNull(work);
     Objects.requireNonNull(inputs);
@@ -2534,52 +2587,79 @@ final class SessionStore {
               long watermark = AdmissionStore.watermark(connection, binding.authority());
               ExecutionStore.audit(
                   connection, binding, loaded.entity(), loaded.stored(), watermark);
-              if (!job.inputLive()) {
+              if (!inputs.outputReference(context, job.input()).equals(job.outputReference()))
+                throw corrupt("output release reference contradicts retained identity");
+              if (!(inputResource ? job.inputLive() : job.outputsLive())) {
                 statement.execute("COMMIT");
                 committed = true;
                 return RetentionStore.Result.ALREADY_RELEASED;
               }
               long now = AdmissionStore.now(connection, binding.authority(), checkedClock);
-              if (!RetentionStore.inputEligible(connection, binding, view, now)) {
+              if (!(inputResource
+                  ? RetentionStore.inputEligible(connection, binding, view, now)
+                  : RetentionStore.outputEligible(connection, binding, view, now))) {
                 statement.execute("COMMIT");
                 committed = true;
                 return RetentionStore.Result.NOT_READY;
               }
-              if (job.inputReleaseAt() == null) {
-                InputStore.Stored original =
-                    inputs
-                        .find(context, job.input())
-                        .orElseThrow(
-                            () -> new IOException("live input missing before release intent"));
-                if (!original.reference().equals(job.inputReference()))
-                  throw corrupt("input release reference differs");
+              // A failed/cancelled callback can still hold a physical writer after settlement.
+              // Do not audit its mutating staging header or commit release while it remains live.
+              if (!inputResource && inputs.outputInUse(context, job.input())) {
+                statement.execute("COMMIT");
+                committed = true;
+                return RetentionStore.Result.PINNED;
+              }
+              if ((inputResource ? job.inputReleaseAt() : job.outputReleaseAt()) == null) {
+                if (inputResource) {
+                  InputStore.Stored original =
+                      inputs
+                          .find(context, job.input())
+                          .orElseThrow(
+                              () -> new IOException("live input missing before release intent"));
+                  if (!original.reference().equals(job.inputReference()))
+                    throw corrupt("input release reference differs");
+                } else inputs.verifyRetainedOutputs(context, job, view);
                 inputs.verifyAuthority(identity);
                 long at = AdmissionStore.now(connection, binding.authority(), checkedClock);
-                JobRecord intent = RetentionStore.input(job, at, true);
+                JobRecord intent =
+                    inputResource
+                        ? RetentionStore.input(job, at, true)
+                        : RetentionStore.output(job, at, true);
                 ExecutionStore.replaceJob(
                     connection, config, binding, loaded.stored(), intent, true);
                 AdmissionStore.remember(connection, config, binding.authority(), at);
                 RetentionStore.audit(connection, binding, view, intent, at);
                 statement.execute("COMMIT");
                 committed = true;
-                probe.at(RetentionStore.Phase.INPUT_INTENT_COMMITTED);
+                probe.at(
+                    inputResource
+                        ? RetentionStore.Phase.INPUT_INTENT_COMMITTED
+                        : RetentionStore.Phase.OUTPUT_INTENT_COMMITTED);
               } else {
                 inputs.verifyAuthority(identity);
                 AdmissionStore.now(connection, binding.authority(), checkedClock);
-                if (!inputs.reclaimInput(context, job.input())) {
+                if (!(inputResource
+                    ? inputs.reclaimInput(context, job.input())
+                    : inputs.reclaimOutput(context, job, view))) {
                   statement.execute("COMMIT");
                   committed = true;
                   return RetentionStore.Result.PINNED;
                 }
                 inputs.verifyAuthority(identity);
                 long at = AdmissionStore.now(connection, binding.authority(), checkedClock);
-                JobRecord completed = RetentionStore.input(job, at, false);
+                JobRecord completed =
+                    inputResource
+                        ? RetentionStore.input(job, at, false)
+                        : RetentionStore.output(job, at, false);
                 ExecutionStore.replaceJob(
                     connection, config, binding, loaded.stored(), completed, true);
                 AdmissionStore.remember(connection, config, binding.authority(), at);
                 statement.execute("COMMIT");
                 committed = true;
-                probe.at(RetentionStore.Phase.INPUT_RELEASE_COMMITTED);
+                probe.at(
+                    inputResource
+                        ? RetentionStore.Phase.INPUT_RELEASE_COMMITTED
+                        : RetentionStore.Phase.OUTPUT_RELEASE_COMMITTED);
                 return RetentionStore.Result.RELEASED;
               }
             } catch (IOException | SQLException | RuntimeException | Error failure) {
@@ -2588,7 +2668,7 @@ final class SessionStore {
             }
           }
         }
-        throw corrupt("input release failed to advance its committed intent");
+        throw corrupt("resource release failed to advance its committed intent");
       } catch (SQLException failure) {
         if ((failure.getErrorCode() & 255) == 13) {
           ProtocolError refusal = ProtocolError.limit("SQLite file capacity exhausted");
