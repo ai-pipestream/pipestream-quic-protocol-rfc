@@ -286,6 +286,10 @@ the same issuing identity is forbidden unless external durable anti-reuse
 state proves no generation can be reissued; otherwise use a new explicitly
 configured authority identity. This protocol does not repair lost durable
 storage or authenticate an operator's incorrect backup restoration.
+When recovering an existing issuing identity, missing or uninitialized storage
+MUST NOT be treated as a new empty authority. Creating fresh state under that
+identity requires the same external durable anti-reuse proof; a missing file
+alone is not such proof.
 
 ## Immutable Operations and Replay
 

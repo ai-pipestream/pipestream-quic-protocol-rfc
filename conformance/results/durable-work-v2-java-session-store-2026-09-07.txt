@@ -1,0 +1,160 @@
+Java V2 authority creation transactions, 2026-09-07
+=================================================
+
+Scope
+-----
+Independent Java SQLite session creation, immutable attachment/replay and
+owner-sequence queries. The receipt, two non-reusable high-water marks and
+empty root scope commit together. This is not a durable-profile endpoint,
+work admission/execution, retirement implementation or V2 interop claim.
+
+Source and test review were separate from command execution. The review checked
+the tests, raw focused XML and rendered draft, not only successful exit reports.
+
+Source checkpoint hashes
+------------------------
+implementations/java-netty/src/main/java/ai/pipestream/quic/BoundedSqlite.java
+  cda3f79ae13a62b6af252fe049b4fc267e2c13216cdadefb8f2505a297c9b77d
+implementations/java-netty/src/main/java/ai/pipestream/quic/v2/SessionStore.java
+  d63a24b1f2099151e8244027c49638338620bb9f98e58caae4a14524b53249f8
+implementations/java-netty/src/test/java/ai/pipestream/quic/v2/SessionStoreTest.java
+  351777f3ac5b258eb457455094aa1f43ecfc5b6f6cd854d9bff00af03aeb0c14
+
+All Java runs use the previously verified unchanged transport revision .3:
+  /work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+No native transport patch, lock, artifact coordinate or V1 schema changed.
+The new BoundedSqlite facade shares the existing Java bounded SQLite VFS;
+SessionStore uses separate ps_v2_* tables and refuses V1/foreign formats.
+
+Focused verification
+--------------------
+Initial compile-only session 51241: exit 0, no tests invoked.
+  /tmp/pipestream-sessionstore-compile-20260907T231004.log
+
+Initial focused session 68024: exit 1; 10 tests, one failure, no errors.
+  /tmp/pipestream-sessionstore-focused-20260907T231550.log
+The bare truncated fixture lacked the mandatory native file-policy sidecar.
+It correctly failed with IOException before SQLite parsed it; the initial
+test wrongly expected SQLException. This was not a production crash-recovery
+failure. The corrected tests distinguish absent/empty storage, bare nonempty
+storage without policy, and a genuinely initialized database corrupted while
+its policy sidecars remain. Only the latter expects SQLite's SQLException.
+
+Intermediate session 53362: exit 0; initial ten tests passed.
+  /tmp/pipestream-sessionstore-focused-rerun-20260907T231649.log
+This is not the final expanded suite's evidence.
+
+Final focused session 45345: exit 0; 12 tests, zero failures/errors/skips.
+  /tmp/pipestream-sessionstore-final-focused-20260907T231930.log
+Preserved XML, inspected separately from execution:
+  /tmp/pipestream-sessionstore-final-focused-20260907T231930.xml
+  SHA256 1db380b8072b6d79de7a5defc8bbdf53d86b9286b99cb6c83fbe34512ba14f01
+  Fresh report mtime: 2026-09-07 23:19:35 America/New_York
+  (2026-09-08 03:19:35 UTC); suite time 1.32 seconds.
+  Log filenames use the host's local date/time, not UTC.
+
+Command form from implementations/java-netty:
+  mvn -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -Dtest=SessionStoreTest test
+
+V2-SESSION/V2-AUTH/V2-STORE cases
+-------------------------------
+replayAndAttachRetainImmutableBindingWithFreshCorrelation
+  Exact binding/policy/limits, fresh request correlation, both profile-change
+  directions, changed policy/future sequence and smaller control ceiling.
+authorizationPrecedesExistenceAndConfigurationDisclosure
+  Denied owner precedes retained-state/profile lookup; exact named refusals.
+policyAndCapacityRefusalsDoNotAdvanceEitherAllocator
+  Policy maximum, global session, per-owner session and permanent-owner quotas.
+concurrentDuplicateCreationCommitsOneGenerationAndOneSequence
+  Two independent handles/connections race the same immutable creation.
+authorizationFailureImmediatelyBeforeCommitRollsBack
+  Current authorization denial after writes but before COMMIT undoes both
+  allocators and all creation records; identical retry succeeds.
+rootInsertionFailureRollsBackSessionAndBothHighWaterMarks
+  Real guarded SQLite trigger aborts root insertion; no partial creation
+  survives. Removing the test trigger allows identical retry and recovery.
+reopenRequiresExactConfigurationAndRefusesForeignOrV1Schema
+  Changed configuration and actual V1 store are refused; V1 remains usable.
+initializationIsExclusiveAndRecoveryNeverCreatesMissingOrTruncatedState
+  Explicit new installation is distinct from recovery; no empty reset.
+exhaustedOwnerAndAuthorityAllocatorsRefuseWithoutWraparound
+  Synthetic retained Long.MAX_VALUE high-water values refuse increments.
+  This is exact-integer/exhaustion evidence, not retirement implementation.
+corruptReceiptIsHiddenFromAnotherOwnerAndRejectedForItsOwner
+  Other-owner denial precedes receipt decoding, including corrupt storage.
+processDeathBeforeAndAfterCommitPreservesAtomicRecovery
+  Owned child JVMs halt without Java/SQLite destructors: exact exit 23 before
+  COMMIT, 24 after it. Recovery proves absence before and replay after commit.
+  This is real process/storage recovery, not a network ACK-loss scenario or
+  exhaustive storage-device/power-loss simulation. Timed-out children fail
+  the test and are explicitly terminated; a timeout never counts as a refusal.
+physicalDatabaseLimitRefusesAtomicallyWithoutEvictingCommittedHistory
+  64 KiB main database, 1 MiB WAL, 64 KiB journal/shared-memory caps.
+  Actual SQL capacity failure is LIMIT_EXCEEDED with SQLException cause.
+  Prior replay/attachment and reopen remain possible, allocators do not
+  advance for the refused creation, main file length stays <= 65,536 bytes.
+  These are file-length/logical-state assertions, not allocated blocks/RSS.
+
+Documentation gates
+-------------------
+Established full V2/shared-identity doclint session 10168: exit 0, empty log.
+  /tmp/pipestream-sessionstore-v2-doclint-20260907T231734.log
+Additional new-type gate uses -package -Xdoclint:all -Werror to actually
+include SessionStore's package-private API and BoundedSqlite: exit 0.
+  /tmp/pipestream-sessionstore-package-doclint-20260907T231748.log
+Both commands use target/classes plus the exact resolved classpath in
+implementations/java-netty/target/v2-tls-classpath, with sourcepath set to
+target/classes so unrelated source packages are not silently traversed.
+The new-type command from repository root is:
+  javadoc -quiet -package -Xdoclint:all -Werror -d implementations/java-netty/target/sessionstore-apidocs -classpath "implementations/java-netty/target/classes:$(tr -d '\n' < implementations/java-netty/target/v2-tls-classpath)" -sourcepath implementations/java-netty/target/classes implementations/java-netty/src/main/java/ai/pipestream/quic/v2/SessionStore.java implementations/java-netty/src/main/java/ai/pipestream/quic/BoundedSqlite.java
+Draft build session 61481: exit 0.
+  /tmp/pipestream-sessionstore-draft-core05-20260907T231755.log
+  ./build.sh core 05 draft
+  idnits: zero errors/flaws/warnings; existing FIPS-180-4 downref comment.
+Review inspected the new recovery anti-reuse clause and implementation-status
+text in generated draft -05 TXT/HTML. No Internet-Draft was submitted.
+
+Full Java and external integration verification
+----------------------------------------------
+Java reference session 88256: exit 0.
+  /tmp/pipestream-sessionstore-java-reference-full-20260907T231959.log
+  mvn install -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -f implementations/java-netty/pom.xml
+  32 fresh Surefire XML reports: 359 tests, zero failures/errors/skips.
+  Explicit UTC report mtimes: 2026-09-08 03:21:47 through 03:23:09.
+  Independent XML review confirms SessionStore's twelve cases and the existing
+  javaCoreClientNegotiatesAndDetachesFromRustAuthorityWithBothIdentityModes.
+  The latter proves Core interoperability, not Java durable sessions over QUIC.
+  Maven also ran native CTest sqlite-file-growth: 1/1 passed.
+
+Java external example session 83387: exit 0.
+  /tmp/pipestream-sessionstore-java-to-rust-verify-20260907T232339.log
+  From examples/java-to-rust:
+  mvn verify -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+  Compiled/shaded successfully; there are no test sources in this Maven module.
+
+Existing runtime examples session 51831: exit 0.
+  /tmp/pipestream-sessionstore-retained-rust-examples-20260907T232437.log
+  implementations/rust-quinn/target/release/pipestream-conformance examples
+  PASS Java source -> Rust/Quinn server
+  PASS Rust source recovery -> C++/MsQuic server
+  PASS Rust source scatter -> Java, Rust, and C++ servers
+
+No full conformance/run_all.sh, Rust workspace suite or native QUIC bootstrap
+was rerun for this Java-only storage increment. The unchanged pinned .3 cache
+was reused. This evidence must not be relabeled full V2 interoperability.
+Source/test hashes above were checked unchanged after these terminal runs.
+Forgejo ff-only pull was already current before the checkpoint commit.
+
+Remaining scope
+---------------
+Java declaration/operation journals, funded payload admission, leases/attempt
+fences, subtree settlement, publication/results, read pins, retirement and
+reconciliation, durable client observations and full authenticated endpoint
+integration remain required. Reserved lifecycle columns are not implementations
+of revocation/retirement transitions. The store's local Access callback is not
+a TLS handshake or proof of live credential-revocation settlement.
+
+The independent Rust failure driver, both-language exact outcomes/refusals and
+full resource/restart gates remain open, as do the external streaming workload
+and equivalent authenticated durable streaming-gRPC baseline with pinned raw
+measurements. The full goal remains active and incomplete.

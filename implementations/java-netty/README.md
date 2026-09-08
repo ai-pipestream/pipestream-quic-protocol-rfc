@@ -317,6 +317,17 @@ It requires a clean shutdown of the owned test process. Build that Rust binary
 first, or use the repository's full `conformance/run_all.sh` runner. The tagged
 test proves this Core direction only; it is not durable-profile interoperability.
 
+## Version 2 authority storage
+
+The package-private `v2.SessionStore` adds actual SQLite creation/attachment
+transactions: non-reusable generations and owner sequences, exact policy/profile
+replay, atomic empty root creation and current authorization gates. First
+installation and recovery are distinct; missing recovery storage cannot silently
+become a new authority. It shares only the existing bounded native SQLite file
+facility with V1, not the V1 schema. See the
+[storage boundary and remaining gates](../../docs/standards/java-v2-authority-store.md).
+This is not yet a durable-profile endpoint; the Java CLI still advertises Core only.
+
 ## Sealed-work library foundation
 
 The independent Java `SealedWork`, `SealedScope`, and `SealedSessionStore`

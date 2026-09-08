@@ -1869,6 +1869,25 @@ These cases cover the reproduced packet schedules. They do not replace measured
 object-owner memory/admission gates, independent Quinn selective-loss evidence,
 complete Java durable profiles or either neutral-driver language direction.
 
+## Java V2 session storage evidence, 2026-09-07
+
+`v2.SessionStoreTest` adds 12 real-SQLite cases for V2-SESSION, V2-AUTH and
+V2-STORE: atomic creation/root/high-water commits, exact policy/profile replay,
+authorization precedence and pre-commit withdrawal, two-handle concurrency,
+SQL-trigger rollback, physical capacity refusal, process death on both sides
+of commit, exclusive initialization and refusal to reset missing recovery
+storage. The V1 refusal case uses the actual Java V1 store, not a guessed schema.
+Exact tests, commands, initial fixture failure and results are recorded in
+`conformance/results/durable-work-v2-java-session-store-2026-09-07.txt`.
+
+This layer does not advertise either durable profile. The [storage boundary](java-v2-authority-store.md)
+distinguishes current creation/attachment behavior from still-required
+declarations, funded admission, execution/results, lifecycle settlement and
+cleanup, full endpoints, the independent Rust failure driver and both-language
+resource evidence. The original workload/equivalent durable streaming-gRPC
+comparison remains mandatory. No acceptance family below is closed by this
+creation-only increment.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

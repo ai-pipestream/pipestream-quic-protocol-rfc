@@ -145,6 +145,15 @@ replacement streams for both stream directions. This does not establish the
 corresponding packet-loss and reordering guarantees for the independent Rust
 transport or complete either endpoint's durable-profile acceptance gates.
 
+The independent Java V2 storage layer now implements atomic session creation,
+owner-sequence queries and immutable attachment/replay, including allocation of
+the empty root scope. It distinguishes first installation from recovery and
+refuses missing recovery storage instead of resetting the authority's counters.
+It uses the Java bounded SQLite file facility without converting V1 session
+schemas. This layer is not yet a durable-profile listener; Java admission,
+execution, results, retirement and full cross-language failure/resource gates
+remain required.
+
 As of 2026-09-07, the Rust authority library also implements transactional
 admission and replay, fenced worker execution, both branch producers and real
 child-output reassembly, cancellation/closure, retained result reads,
