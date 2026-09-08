@@ -1,0 +1,1291 @@
+diff --git a/codec-classes-quic/pom.xml b/codec-classes-quic/pom.xml
+index f5cab0a..b2ae9af 100644
+--- a/codec-classes-quic/pom.xml
++++ b/codec-classes-quic/pom.xml
+@@ -22,10 +22,18 @@
+     <version>4.2.17.Final</version>
+   </parent>
+ 
++  <groupId>ai.pipestream.transport</groupId>
+   <artifactId>netty-codec-classes-quic</artifactId>
++  <version>4.2.17.Final-pipestream.1</version>
+   <packaging>jar</packaging>
+ 
+-  <name>Netty/Codec/Classes/Quic</name>
++  <name>PipeStream transport extension / Netty QUIC classes</name>
++  <description>PipeStream's source-pinned transport extension to Netty QUIC.</description>
++  <url>https://github.com/ai-pipestream/pipestream-quic-protocol-rfc</url>
++  <organization>
++    <name>PipeStream</name>
++    <url>https://github.com/ai-pipestream</url>
++  </organization>
+ 
+   <properties>
+     <javaModuleName>io.netty.codec.classes.quic</javaModuleName>
+@@ -33,34 +41,34 @@
+ 
+   <dependencies>
+     <dependency>
+-      <groupId>${project.groupId}</groupId>
++      <groupId>io.netty</groupId>
+       <artifactId>netty-common</artifactId>
+-      <version>${project.version}</version>
++      <version>${project.parent.version}</version>
+     </dependency>
+     <dependency>
+-      <groupId>${project.groupId}</groupId>
++      <groupId>io.netty</groupId>
+       <artifactId>netty-buffer</artifactId>
+-      <version>${project.version}</version>
++      <version>${project.parent.version}</version>
+     </dependency>
+     <dependency>
+-      <groupId>${project.groupId}</groupId>
++      <groupId>io.netty</groupId>
+       <artifactId>netty-transport</artifactId>
+-      <version>${project.version}</version>
++      <version>${project.parent.version}</version>
+     </dependency>
+     <dependency>
+-      <groupId>${project.groupId}</groupId>
++      <groupId>io.netty</groupId>
+       <artifactId>netty-codec-base</artifactId>
+-      <version>${project.version}</version>
++      <version>${project.parent.version}</version>
+     </dependency>
+     <dependency>
+-      <groupId>${project.groupId}</groupId>
++      <groupId>io.netty</groupId>
+       <artifactId>netty-handler</artifactId>
+-      <version>${project.version}</version>
++      <version>${project.parent.version}</version>
+     </dependency>
+     <dependency>
+-      <groupId>${project.groupId}</groupId>
++      <groupId>io.netty</groupId>
+       <artifactId>netty-transport-classes-epoll</artifactId>
+-      <version>${project.version}</version>
++      <version>${project.parent.version}</version>
+       <!-- Let's mark as optional as it is not strictly needed -->
+       <optional>true</optional>
+     </dependency>
+@@ -72,6 +80,13 @@
+ 
+   <build>
+     <plugins>
++      <plugin>
++        <groupId>org.apache.felix</groupId>
++        <artifactId>maven-bundle-plugin</artifactId>
++        <configuration>
++          <instructions><Export-Package>io.netty.*</Export-Package></instructions>
++        </configuration>
++      </plugin>
+       <plugin>
+         <groupId>io.github.dmlloyd.module-info</groupId>
+         <artifactId>module-info</artifactId>
+diff --git a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicChannelOption.java b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicChannelOption.java
+index 41ebe4d..fca7f26 100644
+--- a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicChannelOption.java
++++ b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicChannelOption.java
+@@ -19,9 +19,27 @@ import io.netty.channel.ChannelOption;
+ 
+ /**
+  * {@link ChannelOption}s specific to QUIC.
++ *
++ * @param <T> the option value type.
+  */
+ public final class QuicChannelOption<T> extends ChannelOption<T> {
+ 
++    /**
++     * Connection-wide native stream-data send admission limits. Set before connection
++     * channel registration. If absent, no additional admission limit is imposed.
++     */
++    public static final ChannelOption<QuicStreamSendBufferLimits> STREAM_SEND_BUFFER_LIMITS =
++            valueOf(QuicChannelOption.class, "STREAM_SEND_BUFFER_LIMITS");
++
++    /**
++     * Allows this stream to use the connection's reserved stream-data send allowance.
++     * Defaults to {@code false}. Only trusted local application code should select these
++     * streams. Changes after registration must run on the stream's event loop. This setting
++     * applies to queued writes as well as subsequent writes and does not release retained data.
++     */
++    public static final ChannelOption<Boolean> USE_RESERVED_SEND_BUFFER =
++            valueOf(QuicChannelOption.class, "USE_RESERVED_SEND_BUFFER");
++
+     /**
+      * If set to {@code true} the {@link QuicStreamChannel} will read {@link QuicStreamFrame}s and fire it through
+      * the pipeline, if {@code false} it will read {@link io.netty.buffer.ByteBuf} and translate the FIN flag to
+diff --git a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicCodecBuilder.java b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicCodecBuilder.java
+index c787d4f..e0b7edb 100644
+--- a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicCodecBuilder.java
++++ b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicCodecBuilder.java
+@@ -38,6 +38,9 @@ public abstract class QuicCodecBuilder<B extends QuicCodecBuilder<B>> {
+     private Long maxRecvUdpPayloadSize;
+     private Long maxSendUdpPayloadSize;
+     private Long initialMaxData;
++    private Long initialConnectionWindow;
++    private Long maxConnectionWindow;
++    private Long maxStreamWindow;
+     private Long initialMaxStreamDataBidiLocal;
+     private Long initialMaxStreamDataBidiRemote;
+     private Long initialMaxStreamDataUni;
+@@ -78,6 +81,9 @@ public abstract class QuicCodecBuilder<B extends QuicCodecBuilder<B>> {
+         this.maxRecvUdpPayloadSize = builder.maxRecvUdpPayloadSize;
+         this.maxSendUdpPayloadSize = builder.maxSendUdpPayloadSize;
+         this.initialMaxData = builder.initialMaxData;
++        this.initialConnectionWindow = builder.initialConnectionWindow;
++        this.maxConnectionWindow = builder.maxConnectionWindow;
++        this.maxStreamWindow = builder.maxStreamWindow;
+         this.initialMaxStreamDataBidiLocal = builder.initialMaxStreamDataBidiLocal;
+         this.initialMaxStreamDataBidiRemote = builder.initialMaxStreamDataBidiRemote;
+         this.initialMaxStreamDataUni = builder.initialMaxStreamDataUni;
+@@ -142,7 +148,7 @@ public abstract class QuicCodecBuilder<B extends QuicCodecBuilder<B>> {
+      * The default value is 10.
+      *
+      * @param numPackets number of packets for the initial congestion window
+-     * @return
++     * @return this builder.
+      */
+     public final B initialCongestionWindowPackets(int numPackets) {
+         this.initialCongestionWindowPackets = numPackets;
+@@ -220,6 +226,45 @@ public abstract class QuicCodecBuilder<B extends QuicCodecBuilder<B>> {
+         return self();
+     }
+ 
++    /**
++     * Sets the initial connection receive-credit replenishment window, independently of
++     * {@link #initialMaxData(long)}. An explicit value is clamped to the maximum connection
++     * window at connection creation. If unset, the native default remains unchanged.
++     * Autotuning and stream-driven lower bounds still apply.
++     *
++     * @param value the initial replenishment window in bytes.
++     * @return this builder.
++     */
++    public final B initialConnectionWindow(long value) {
++        initialConnectionWindow = checkPositiveOrZero(value, "value");
++        return self();
++    }
++
++    /**
++     * Sets the connection receive-window autotuning cap. This does not revoke initial
++     * advertised credit or prevent a stream-window update from raising the connection
++     * window's lower bound. It is not an absolute process-memory limit.
++     *
++     * @param value the autotuning cap in bytes.
++     * @return this builder.
++     */
++    public final B maxConnectionWindow(long value) {
++        maxConnectionWindow = checkPositiveOrZero(value, "value");
++        return self();
++    }
++
++    /**
++     * Sets the stream receive-window autotuning cap. Previously advertised initial stream
++     * credit is not revoked by this setting.
++     *
++     * @param value the autotuning cap in bytes.
++     * @return this builder.
++     */
++    public final B maxStreamWindow(long value) {
++        maxStreamWindow = checkPositiveOrZero(value, "value");
++        return self();
++    }
++
+     /**
+      * See
+      * <a href="https://docs.rs/quiche/0.6.0/quiche/struct.Config.html#method.set_initial_max_stream_data_bidi_local">
+@@ -484,6 +529,7 @@ public abstract class QuicCodecBuilder<B extends QuicCodecBuilder<B>> {
+     private QuicheConfig createConfig() {
+         return new QuicheConfig(version, grease,
+                 maxIdleTimeout, maxSendUdpPayloadSize, maxRecvUdpPayloadSize, initialMaxData,
++                initialConnectionWindow, maxConnectionWindow, maxStreamWindow,
+                 initialMaxStreamDataBidiLocal, initialMaxStreamDataBidiRemote,
+                 initialMaxStreamDataUni, initialMaxStreamsBidi, initialMaxStreamsUni,
+                 ackDelayExponent, maxAckDelay, disableActiveMigration, enableHystart, discoverPmtu,
+diff --git a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicStreamSendBufferLimits.java b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicStreamSendBufferLimits.java
+new file mode 100644
+index 0000000..fd6b862
+--- /dev/null
++++ b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicStreamSendBufferLimits.java
+@@ -0,0 +1,75 @@
++/*
++ * Copyright 2026 The Netty Project
++ *
++ * The Netty Project licenses this file to you under the Apache License,
++ * version 2.0 (the "License"); you may not use this file except in compliance
++ * with the License. You may obtain a copy of the License at:
++ *
++ *   https://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++ * License for the specific language governing permissions and limitations
++ * under the License.
++ */
++package io.netty.handler.codec.quic;
++
++import static io.netty.util.internal.ObjectUtil.checkPositiveOrZero;
++
++/**
++ * Immutable connection-wide limits on native stream-data send admission.
++ * Ordinary streams can admit data while the aggregate retained stream-data span is below
++ * {@code total - reserved}. Streams explicitly marked with
++ * {@link QuicChannelOption#USE_RESERVED_SEND_BUFFER} can use the full total.
++ *
++ * <p>The charge is bytes written after each live stream's highest contiguous ACK offset.
++ * ACKed data behind an earlier gap remains charged; local write completion does not release it.
++ * Reset releases cleared send buffers. This is not an allocation or process-memory bound:
++ * application queues, QUIC metadata, TLS, datagrams and partially ACKed backing-buffer
++ * prefixes must be bounded separately. The native copying path can retain one such prefix
++ * of up to 4095 bytes per live send stream.</p>
++ *
++ * <p>These limits reserve local stream-data admission only, not network delivery, congestion
++ * capacity or peer flow-control credit. Applications still need control deadlines and bounded
++ * queues. Configure this option before registering the connection channel.</p>
++ */
++public final class QuicStreamSendBufferLimits {
++    private final long total;
++    private final long reserved;
++
++    /**
++     * Creates send admission limits.
++     *
++     * @param total total retained stream-data span allowed, in bytes.
++     * @param reserved portion inaccessible to ordinary streams, in bytes.
++     */
++    public QuicStreamSendBufferLimits(long total, long reserved) {
++        this.total = checkPositiveOrZero(total, "total");
++        this.reserved = checkPositiveOrZero(reserved, "reserved");
++        if (reserved > total) {
++            throw new IllegalArgumentException("reserved exceeds total");
++        }
++    }
++
++    /**
++     * Returns the total retained stream-data limit.
++     * @return the total in bytes.
++     */
++    public long total() {
++        return total;
++    }
++
++    /**
++     * Returns the portion reserved for explicitly selected streams.
++     * @return the reserved portion in bytes.
++     */
++    public long reserved() {
++        return reserved;
++    }
++
++    long available(long retained, boolean useReserved) {
++        long limit = useReserved ? total : total - reserved;
++        return retained < 0 || retained >= limit ? 0 : limit - retained;
++    }
++}
+diff --git a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/Quiche.java b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/Quiche.java
+index e42725c..c0d951f 100644
+--- a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/Quiche.java
++++ b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/Quiche.java
+@@ -70,7 +70,7 @@ final class Quiche {
+     private static void loadNativeLibrary() {
+         // This needs to be kept in sync with what is defined in netty_quic_quiche.c
+         // and pom.xml as jniLibPrefix.
+-        String libName = "netty_quiche42";
++        String libName = "netty_quiche42_pipestream";
+         ClassLoader cl = PlatformDependent.getClassLoader(Quiche.class);
+ 
+         if (!PlatformDependent.isAndroid()) {
+@@ -434,6 +434,9 @@ final class Quiche {
+      */
+     static native long quiche_conn_stream_capacity(long connAddr, long streamId);
+ 
++    // Contiguous-ACK retained stream-data span, saturated at Long.MAX_VALUE.
++    static native long quiche_conn_stream_send_retained(long connAddr);
++
+     /**
+      * See
+      * <a href="https://github.com/cloudflare/quiche/blob/0.6.0/include/quiche.h#L277">quiche_conn_stream_finished</a>.
+@@ -636,6 +639,12 @@ final class Quiche {
+      */
+     static native void quiche_config_set_initial_max_data(long configAddr, long value);
+ 
++    static native void quiche_config_set_initial_connection_window(long configAddr, long value);
++
++    static native void quiche_config_set_max_connection_window(long configAddr, long value);
++
++    static native void quiche_config_set_max_stream_window(long configAddr, long value);
++
+     /**
+      * See
+      * <a href="https://github.com/cloudflare/quiche/blob/0.6.0/include/quiche.h#152">
+diff --git a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheConfig.java b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheConfig.java
+index c3da950..2e7ca7f 100644
+--- a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheConfig.java
++++ b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheConfig.java
+@@ -27,6 +27,9 @@ final class QuicheConfig {
+                  @Nullable Long maxSendUdpPayloadSize,
+                  @Nullable Long maxRecvUdpPayloadSize,
+                  @Nullable Long initialMaxData,
++                 @Nullable Long initialConnectionWindow,
++                 @Nullable Long maxConnectionWindow,
++                 @Nullable Long maxStreamWindow,
+                  @Nullable Long initialMaxStreamDataBidiLocal,
+                  @Nullable Long initialMaxStreamDataBidiRemote,
+                  @Nullable Long initialMaxStreamDataUni,
+@@ -60,6 +63,15 @@ final class QuicheConfig {
+             if (initialMaxData != null) {
+                 Quiche.quiche_config_set_initial_max_data(config, initialMaxData);
+             }
++            if (initialConnectionWindow != null) {
++                Quiche.quiche_config_set_initial_connection_window(config, initialConnectionWindow);
++            }
++            if (maxConnectionWindow != null) {
++                Quiche.quiche_config_set_max_connection_window(config, maxConnectionWindow);
++            }
++            if (maxStreamWindow != null) {
++                Quiche.quiche_config_set_max_stream_window(config, maxStreamWindow);
++            }
+             if (initialMaxStreamDataBidiLocal != null) {
+                 Quiche.quiche_config_set_initial_max_stream_data_bidi_local(config, initialMaxStreamDataBidiLocal);
+             }
+diff --git a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicChannel.java b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicChannel.java
+index f17547d..a7b282d 100644
+--- a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicChannel.java
++++ b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicChannel.java
+@@ -882,6 +882,11 @@ final class QuicheQuicChannel extends AbstractChannel implements QuicChannel {
+         }
+         if (write) {
+             res |= Quiche.quiche_conn_stream_shutdown(connectionAddress, streamId, Quiche.QUICHE_SHUTDOWN_WRITE, err);
++            if (config.getStreamSendBufferLimits() != null) {
++                // Clearing native send buffers can unblock another stream even before
++                // the peer acknowledges the reset. Retry outside the shutdown stack.
++                eventLoop().execute(this::writable);
++            }
+         }
+ 
+         // As we called quiche_conn_stream_shutdown(...) we need to ensure we will call quiche_conn_send(...) either
+@@ -956,14 +961,33 @@ final class QuicheQuicChannel extends AbstractChannel implements QuicChannel {
+ 
+     private int streamSend0(QuicheQuicConnection conn, long streamId, ByteBuf buffer, boolean fin)
+             throws ClosedChannelException {
+-        return Quiche.quiche_conn_stream_send(connectionAddressChecked(conn), streamId,
+-                Quiche.readerMemoryAddress(buffer), buffer.readableBytes(), fin);
++        return streamSendLimited(conn, streamId, Quiche.readerMemoryAddress(buffer), buffer.readableBytes(), fin);
+     }
+ 
+     private int streamSend(QuicheQuicConnection conn, long streamId, ByteBuffer buffer, boolean fin)
+             throws ClosedChannelException {
+-        return Quiche.quiche_conn_stream_send(connectionAddressChecked(conn), streamId,
+-                Quiche.memoryAddressWithPosition(buffer), buffer.remaining(), fin);
++        return streamSendLimited(conn, streamId, Quiche.memoryAddressWithPosition(buffer), buffer.remaining(), fin);
++    }
++
++    private int streamSendLimited(QuicheQuicConnection conn, long streamId, long address, int length, boolean fin)
++            throws ClosedChannelException {
++        assert eventLoop().inEventLoop();
++        long connAddr = connectionAddressChecked(conn);
++        int allowed = (int) Math.min(length, streamSendAllowance(connAddr, streamId));
++        // A zero-length native call still surfaces stream-state errors without admitting data.
++        // Do not attach FIN to a prefix of the caller's buffer.
++        return Quiche.quiche_conn_stream_send(connAddr, streamId, address, allowed, fin && allowed == length);
++    }
++
++    private long streamSendAllowance(long connAddr, long streamId) {
++        QuicStreamSendBufferLimits limits = config.getStreamSendBufferLimits();
++        if (limits == null) {
++            return Long.MAX_VALUE;
++        }
++        QuicheQuicStreamChannel stream = streams.get(streamId);
++        boolean useReserved = stream != null &&
++                ((QuicheQuicStreamChannelConfig) stream.config()).useReservedSendBuffer();
++        return limits.available(Quiche.quiche_conn_stream_send_retained(connAddr), useReserved);
+     }
+ 
+     StreamRecvResult streamRecv(long streamId, ByteBuf buffer) throws Exception {
+@@ -1099,7 +1123,8 @@ final class QuicheQuicChannel extends AbstractChannel implements QuicChannel {
+         if (conn.isClosed()) {
+             return 0;
+         }
+-        return Quiche.quiche_conn_stream_capacity(conn.address(), streamId);
++        long capacity = Quiche.quiche_conn_stream_capacity(conn.address(), streamId);
++        return capacity < 0 ? capacity : Math.min(capacity, streamSendAllowance(conn.address(), streamId));
+     }
+ 
+     private boolean handleWritableStreams(QuicheQuicConnection conn) {
+@@ -1125,7 +1150,7 @@ final class QuicheQuicChannel extends AbstractChannel implements QuicChannel {
+                             long streamId = writableStreams[i];
+                             QuicheQuicStreamChannel streamChannel = streams.get(streamId);
+                             if (streamChannel != null) {
+-                                long capacity = Quiche.quiche_conn_stream_capacity(connAddr, streamId);
++                                long capacity = streamCapacity(streamId);
+                                 if (streamChannel.writable(capacity)) {
+                                     mayNeedWrite = true;
+                                 }
+diff --git a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicChannelConfig.java b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicChannelConfig.java
+index 03f301f..8345c87 100644
+--- a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicChannelConfig.java
++++ b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicChannelConfig.java
+@@ -32,6 +32,7 @@ import java.util.Map;
+ final class QuicheQuicChannelConfig extends DefaultChannelConfig implements QuicChannelConfig {
+ 
+     private volatile QLogConfiguration qLogConfiguration;
++    private volatile QuicStreamSendBufferLimits streamSendBufferLimits;
+     private volatile SegmentedDatagramPacketAllocator segmentedDatagramPacketAllocator =
+             SegmentedDatagramPacketAllocator.NONE;
+ 
+@@ -42,12 +43,16 @@ final class QuicheQuicChannelConfig extends DefaultChannelConfig implements Quic
+     @Override
+     public Map<ChannelOption<?>, Object> getOptions() {
+         return getOptions(super.getOptions(),
+-                QuicChannelOption.QLOG, QuicChannelOption.SEGMENTED_DATAGRAM_PACKET_ALLOCATOR);
++                QuicChannelOption.QLOG, QuicChannelOption.SEGMENTED_DATAGRAM_PACKET_ALLOCATOR,
++                QuicChannelOption.STREAM_SEND_BUFFER_LIMITS);
+     }
+ 
+     @SuppressWarnings("unchecked")
+     @Override
+     public <T> T getOption(ChannelOption<T> option) {
++        if (option == QuicChannelOption.STREAM_SEND_BUFFER_LIMITS) {
++            return (T) streamSendBufferLimits;
++        }
+         if (option == QuicChannelOption.QLOG) {
+             return (T) getQLogConfiguration();
+         }
+@@ -59,6 +64,14 @@ final class QuicheQuicChannelConfig extends DefaultChannelConfig implements Quic
+ 
+     @Override
+     public <T> boolean setOption(ChannelOption<T> option, T value) {
++        if (option == QuicChannelOption.STREAM_SEND_BUFFER_LIMITS) {
++            validate(option, value);
++            if (channel.isRegistered()) {
++                throw new IllegalStateException("Send buffer limits must be configured before registration");
++            }
++            streamSendBufferLimits = (QuicStreamSendBufferLimits) value;
++            return true;
++        }
+         if (option == QuicChannelOption.QLOG) {
+             setQLogConfiguration((QLogConfiguration) value);
+             return true;
+@@ -137,6 +150,11 @@ final class QuicheQuicChannelConfig extends DefaultChannelConfig implements Quic
+         return this;
+     }
+ 
++    @Nullable
++    QuicStreamSendBufferLimits getStreamSendBufferLimits() {
++        return streamSendBufferLimits;
++    }
++
+     @Nullable
+     QLogConfiguration getQLogConfiguration() {
+         return qLogConfiguration;
+diff --git a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicStreamChannel.java b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicStreamChannel.java
+index 062f357..d5fe00a 100644
+--- a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicStreamChannel.java
++++ b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicStreamChannel.java
+@@ -68,6 +68,7 @@ final class QuicheQuicStreamChannel extends DefaultAttributeMap implements QuicS
+     private boolean inWriteQueued;
+     private boolean finReceived;
+     private boolean finSent;
++    private boolean outputReset;
+ 
+     private volatile boolean registered;
+     private volatile boolean writable = true;
+@@ -171,7 +172,9 @@ final class QuicheQuicStreamChannel extends DefaultAttributeMap implements QuicS
+             return;
+         }
+         outputShutdown = true;
+-        unsafe.writeWithoutCheckChannelState(QuicStreamFrame.EMPTY_FIN, promise);
++        // FIN must follow already queued stream data, including data waiting
++        // for native admission or peer flow-control credit.
++        unsafe.write(QuicStreamFrame.EMPTY_FIN, promise);
+         unsafe.flush();
+     }
+ 
+@@ -220,8 +223,12 @@ final class QuicheQuicStreamChannel extends DefaultAttributeMap implements QuicS
+         if (!channelPromise.setUncancellable()) {
+             return;
+         }
+-        parent().streamShutdown(streamId(), false, true, error, channelPromise);
++        outputReset = true;
+         outputShutdown = true;
++        capacity = 0;
++        queue.removeAndFailAll(new ChannelOutputShutdownException("Output reset locally"));
++        updateWritabilityIfNeeded(false);
++        parent().streamShutdown(streamId(), false, true, error, channelPromise);
+         closeIfDone();
+     }
+ 
+@@ -414,6 +421,9 @@ final class QuicheQuicStreamChannel extends DefaultAttributeMap implements QuicS
+      */
+     boolean writable(long capacity) {
+         assert eventLoop().inEventLoop();
++        if (outputReset) {
++            return false;
++        }
+         if (capacity < 0) {
+             // If the value is negative its a quiche error.
+             if (capacity != Quiche.QUICHE_ERR_DONE) {
+@@ -730,6 +740,8 @@ final class QuicheQuicStreamChannel extends DefaultAttributeMap implements QuicS
+             // with the right exception
+             if (!isOpen()) {
+                 queueAndFailAll(msg, promise, new ClosedChannelException());
++            } else if (outputReset) {
++                queueAndFailAll(msg, promise, new ChannelOutputShutdownException("Output reset locally"));
+             } else if (finSent) {
+                 queueAndFailAll(msg, promise, new ChannelOutputShutdownException("Fin was sent already"));
+             } else if (!queue.isEmpty()) {
+diff --git a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicStreamChannelConfig.java b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicStreamChannelConfig.java
+index 917a730..6b2ee53 100644
+--- a/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicStreamChannelConfig.java
++++ b/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicStreamChannelConfig.java
+@@ -29,6 +29,7 @@ final class QuicheQuicStreamChannelConfig extends DefaultChannelConfig implement
+     // If you receive a FIN you should still keep the stream open until you write a FIN as well.
+     private volatile boolean allowHalfClosure = true;
+     private volatile boolean readFrames;
++    private volatile boolean useReservedSendBuffer;
+     volatile DirectIoByteBufAllocator allocator;
+ 
+     QuicheQuicStreamChannelConfig(QuicStreamChannel channel) {
+@@ -39,14 +40,19 @@ final class QuicheQuicStreamChannelConfig extends DefaultChannelConfig implement
+     @Override
+     public Map<ChannelOption<?>, Object> getOptions() {
+         if (isHalfClosureSupported()) {
+-            return getOptions(super.getOptions(), ChannelOption.ALLOW_HALF_CLOSURE, QuicChannelOption.READ_FRAMES);
++            return getOptions(super.getOptions(), ChannelOption.ALLOW_HALF_CLOSURE, QuicChannelOption.READ_FRAMES,
++                    QuicChannelOption.USE_RESERVED_SEND_BUFFER);
+         }
+-        return super.getOptions();
++        return getOptions(super.getOptions(), QuicChannelOption.READ_FRAMES,
++                QuicChannelOption.USE_RESERVED_SEND_BUFFER);
+     }
+ 
+     @SuppressWarnings("unchecked")
+     @Override
+     public <T> T getOption(ChannelOption<T> option) {
++        if (option == QuicChannelOption.USE_RESERVED_SEND_BUFFER) {
++            return (T) Boolean.valueOf(useReservedSendBuffer);
++        }
+         if (option == ChannelOption.ALLOW_HALF_CLOSURE) {
+             return (T) Boolean.valueOf(isAllowHalfClosure());
+         }
+@@ -60,6 +66,18 @@ final class QuicheQuicStreamChannelConfig extends DefaultChannelConfig implement
+     public <T> boolean setOption(ChannelOption<T> option, T value) {
+         validate(option, value);
+ 
++        if (option == QuicChannelOption.USE_RESERVED_SEND_BUFFER) {
++            if (channel.isRegistered() && !channel.eventLoop().inEventLoop()) {
++                throw new IllegalStateException("Reserved send allowance must be changed on the stream event loop");
++            }
++            useReservedSendBuffer = (Boolean) value;
++            if (channel.isRegistered()) {
++                QuicheQuicChannel parent = ((QuicheQuicStreamChannel) channel).parent();
++                channel.eventLoop().execute(parent::writable);
++            }
++            return true;
++        }
++
+         if (option == ChannelOption.ALLOW_HALF_CLOSURE) {
+             if (isHalfClosureSupported()) {
+                 setAllowHalfClosure((Boolean) value);
+@@ -79,6 +97,10 @@ final class QuicheQuicStreamChannelConfig extends DefaultChannelConfig implement
+         return this;
+     }
+ 
++    boolean useReservedSendBuffer() {
++        return useReservedSendBuffer;
++    }
++
+     @Override
+     public boolean isReadFrames() {
+         return readFrames;
+diff --git a/codec-native-quic/pom.xml b/codec-native-quic/pom.xml
+index e498164..d292ba8 100644
+--- a/codec-native-quic/pom.xml
++++ b/codec-native-quic/pom.xml
+@@ -22,17 +22,25 @@
+     <version>4.2.17.Final</version>
+   </parent>
+ 
++  <groupId>ai.pipestream.transport</groupId>
+   <artifactId>netty-codec-native-quic</artifactId>
++  <version>4.2.17.Final-pipestream.1</version>
+   <packaging>${packaging.type}</packaging>
+ 
+-  <name>Netty/Codec/Native/Quic</name>
++  <name>PipeStream transport extension / Netty QUIC native</name>
++  <description>PipeStream's source-pinned transport extension to Netty QUIC.</description>
++  <url>https://github.com/ai-pipestream/pipestream-quic-protocol-rfc</url>
++  <organization>
++    <name>PipeStream</name>
++    <url>https://github.com/ai-pipestream</url>
++  </organization>
+ 
+   <properties>
+     <javaModuleNameClassifier>${os.detected.name}.${os.detected.arch}</javaModuleNameClassifier>
+     <javaModuleNameWithClassifier>${javaModuleName}.${javaModuleNameClassifier}</javaModuleNameWithClassifier>
+     <fallbackModuleName>io.netty.codec.quic</fallbackModuleName>
+     <javaModuleName>${fallbackModuleName}.${javaModuleNameClassifier}</javaModuleName>
+-    <fragmentHost>io.netty.codec-classes-quic</fragmentHost>
++    <fragmentHost>ai.pipestream.transport.netty-codec-classes-quic</fragmentHost>
+     <logging.config>${project.basedir}/../codec-native-quic/src/test/resources/logback-test.xml</logging.config>
+     <nativeSourceDirectory>${project.basedir}/src/main/c</nativeSourceDirectory>
+     <fallbackOutputDirectory>${project.build.directory}/fallback-classes</fallbackOutputDirectory>
+@@ -40,7 +48,7 @@
+     <skipTests>false</skipTests>
+     <packaging.type>jar</packaging.type>
+     <jni.classifier>${os.detected.name}-${os.detected.arch}</jni.classifier>
+-    <jniLibPrefix>netty_quiche42</jniLibPrefix>
++    <jniLibPrefix>netty_quiche42_pipestream</jniLibPrefix>
+     <jniLibName>${jniLibPrefix}_${os.detected.name}_${os.detected.arch}</jniLibName>
+     <jniUtilIncludeDir>${project.build.directory}/netty-jni-util/</jniUtilIncludeDir>
+     <boringsslSourceDir>${project.build.directory}/boringssl-source</boringsslSourceDir>
+@@ -216,9 +224,9 @@
+       </properties>
+       <dependencies>
+         <dependency>
+-          <groupId>${project.groupId}</groupId>
++          <groupId>io.netty</groupId>
+           <artifactId>netty-transport-native-epoll</artifactId>
+-          <version>${project.version}</version>
++          <version>${project.parent.version}</version>
+           <classifier>${jni.classifier}</classifier>
+           <scope>test</scope>
+         </dependency>
+@@ -820,7 +828,7 @@
+                       <equals arg1="${platform}" arg2="android" />
+                       <then>
+                         <exec executable="cargo" failonerror="true" dir="${quicheSourceDir}" resolveexecutable="true">
+-                          <arg line="ndk ${cargoTarget} --platform ${androidNdkVersion} -- build -p quiche --features &quot;ffi qlog custom-client-dcid&quot; --release" />
++                          <arg line="ndk ${cargoTarget} --platform ${androidNdkVersion} -- build --locked -p quiche --features &quot;ffi qlog custom-client-dcid&quot; --release" />
+                           <env key="CFLAGS" value="${extraCflags}" />
+                           <env key="CXXFLAGS" value="${extraCxxflags}" />
+                           <env key="QUICHE_BSSL_PATH" value="${boringsslHomeDir}/" />
+@@ -831,7 +839,7 @@
+                           <equals arg1="${os.detected.name}" arg2="windows" />
+                           <then>
+                             <exec executable="cargo" failonerror="true" dir="${quicheSourceDir}" resolveexecutable="true">
+-                              <arg line="build -p quiche --features &quot;ffi qlog custom-client-dcid&quot; --release" />
++                              <arg line="build --locked -p quiche --features &quot;ffi qlog custom-client-dcid&quot; --release" />
+                               <arg value="${cargoTarget}" />
+                               <!-- See https://github.com/cloudflare/quiche/blob/0.7.0/src/build.rs#L73 -->
+                               <env key="DEBUG" value="true" />
+@@ -843,7 +851,7 @@
+                             <equals arg1="${crossCompile}" arg2="linux" />
+                             <then>
+                               <exec executable="cargo" failonerror="true" dir="${quicheSourceDir}" resolveexecutable="true">
+-                                <arg line="build -p quiche --features &quot;ffi qlog custom-client-dcid&quot; --release" />
++                                <arg line="build --locked -p quiche --features &quot;ffi qlog custom-client-dcid&quot; --release" />
+                                 <arg value="${cargoTarget}" />
+                                 <env key="QUICHE_BSSL_PATH" value="${boringsslHomeDir}/" />
+                                 <!-- Lets enable frame-pointers so we can profile better -->
+@@ -856,7 +864,7 @@
+                             <equals arg1="${crossCompile}" arg2="mac" />
+                             <then>
+                               <exec executable="cargo" failonerror="true" dir="${quicheSourceDir}" resolveexecutable="true">
+-                                <arg line="build -p quiche --features &quot;ffi qlog custom-client-dcid&quot; --release" />
++                                <arg line="build --locked -p quiche --features &quot;ffi qlog custom-client-dcid&quot; --release" />
+                                 <env key="CFLAGS" value="${extraCflags}" />
+                                 <env key="CXXFLAGS" value="${extraCxxflags}" />
+                                 <arg value="${cargoTarget}" />
+@@ -869,7 +877,7 @@
+                           </elseif>
+                           <else>
+                             <exec executable="cargo" failonerror="true" dir="${quicheSourceDir}" resolveexecutable="true">
+-                              <arg line="build -p quiche --features &quot;ffi qlog custom-client-dcid&quot; --release" />
++                              <arg line="build --locked -p quiche --features &quot;ffi qlog custom-client-dcid&quot; --release" />
+                               <env key="CFLAGS" value="${extraCflags}" />
+                               <env key="CXXFLAGS" value="${extraCxxflags}" />
+                               <env key="QUICHE_BSSL_PATH" value="${boringsslHomeDir}/" />
+@@ -1045,11 +1053,13 @@
+                 <supportedProjectType>bundle</supportedProjectType>
+               </supportedProjectTypes>
+               <instructions>
+-                <Export-Package>${project.groupId}.*</Export-Package>
++                <Export-Package>io.netty.*</Export-Package>
+                 <BoringSSL-Revision>${boringsslCommitSha}</BoringSSL-Revision>
+                 <BoringSSL-Branch>${boringsslBranch}</BoringSSL-Branch>
+                 <Quiche-Revision>${quicheCommitSha}</Quiche-Revision>
+                 <Quiche-Branch>${quicheBranch}</Quiche-Branch>
++                <PipeStream-Quiche-Patch-SHA256>${pipestreamQuichePatchSha256}</PipeStream-Quiche-Patch-SHA256>
++                <PipeStream-Netty-Patch-SHA256>${pipestreamNettyPatchSha256}</PipeStream-Netty-Patch-SHA256>
+               </instructions>
+             </configuration>
+           </execution>
+@@ -1072,6 +1082,8 @@
+                 <BoringSSL-Branch>${boringsslBranch}</BoringSSL-Branch>
+                 <Quiche-Revision>${quicheCommitSha}</Quiche-Revision>
+                 <Quiche-Branch>${quicheBranch}</Quiche-Branch>
++                <PipeStream-Quiche-Patch-SHA256>${pipestreamQuichePatchSha256}</PipeStream-Quiche-Patch-SHA256>
++                <PipeStream-Netty-Patch-SHA256>${pipestreamNettyPatchSha256}</PipeStream-Netty-Patch-SHA256>
+               </instructions>
+               <manifestLocation>${project.build.directory}/${jni.classifier}</manifestLocation>
+             </configuration>
+@@ -1257,9 +1269,9 @@
+       <scope>compile</scope>
+     </dependency>
+     <dependency>
+-      <groupId>${project.groupId}</groupId>
++      <groupId>io.netty</groupId>
+       <artifactId>netty-transport-classes-epoll</artifactId>
+-      <version>${project.version}</version>
++      <version>${project.parent.version}</version>
+       <scope>test</scope>
+     </dependency>
+     <!-- Also include bouncycastle so we can use SelfSignedCertificate even on more recent JDKs during testing -->
+diff --git a/codec-native-quic/src/main/c/netty_quic_quiche.c b/codec-native-quic/src/main/c/netty_quic_quiche.c
+index cf97050..ba7434a 100644
+--- a/codec-native-quic/src/main/c/netty_quic_quiche.c
++++ b/codec-native-quic/src/main/c/netty_quic_quiche.c
+@@ -48,7 +48,7 @@
+ 
+ // This needs to be kept in sync with what is defined in Quiche.java
+ // and pom.xml as jniLibPrefix.
+-#define LIBRARYNAME "netty_quiche42"
++#define LIBRARYNAME "netty_quiche42_pipestream"
+ 
+ static jweak    quiche_logger_class_weak = NULL;
+ static jmethodID quiche_logger_class_log = NULL;
+@@ -529,6 +529,12 @@ static jlong netty_quiche_conn_stream_capacity(JNIEnv* env, jclass clazz, jlong
+     return (jlong) quiche_conn_stream_capacity((quiche_conn *) conn, (uint64_t) stream_id);
+ }
+ 
++static jlong netty_quiche_conn_stream_send_retained(JNIEnv* env, jclass clazz, jlong conn) {
++    uint64_t retained = quiche_conn_stream_send_retained((quiche_conn *) conn);
++    // Never turn an unsigned saturated count into negative admission usage.
++    return retained > INT64_MAX ? INT64_MAX : (jlong) retained;
++}
++
+ static jboolean netty_quiche_conn_stream_finished(JNIEnv* env, jclass clazz, jlong conn, jlong stream_id) {
+     return quiche_conn_stream_finished((quiche_conn *) conn, (uint64_t) stream_id) == true ? JNI_TRUE : JNI_FALSE;
+ }
+@@ -986,6 +992,18 @@ static void netty_quiche_config_set_initial_max_data(JNIEnv* env, jclass clazz,
+     quiche_config_set_initial_max_data((quiche_config*) config, (uint64_t) value);
+ }
+ 
++static void netty_quiche_config_set_initial_connection_window(JNIEnv* env, jclass clazz, jlong config, jlong value) {
++    quiche_config_set_initial_connection_window((quiche_config*) config, (uint64_t) value);
++}
++
++static void netty_quiche_config_set_max_connection_window(JNIEnv* env, jclass clazz, jlong config, jlong value) {
++    quiche_config_set_max_connection_window((quiche_config*) config, (uint64_t) value);
++}
++
++static void netty_quiche_config_set_max_stream_window(JNIEnv* env, jclass clazz, jlong config, jlong value) {
++    quiche_config_set_max_stream_window((quiche_config*) config, (uint64_t) value);
++}
++
+ static void netty_quiche_config_set_initial_max_stream_data_bidi_local(JNIEnv* env, jclass clazz, jlong config, jlong value) {
+     quiche_config_set_initial_max_stream_data_bidi_local((quiche_config*) config, (uint64_t) value);
+ }
+@@ -1213,6 +1231,7 @@ static const JNINativeMethod fixed_method_table[] = {
+   { "quiche_conn_stream_send", "(JJJIZ)I", (void *) netty_quiche_conn_stream_send },
+   { "quiche_conn_stream_shutdown", "(JJIJ)I", (void *) netty_quiche_conn_stream_shutdown },
+   { "quiche_conn_stream_capacity", "(JJ)J", (void *) netty_quiche_conn_stream_capacity },
++  { "quiche_conn_stream_send_retained", "(J)J", (void *) netty_quiche_conn_stream_send_retained },
+   { "quiche_conn_stream_finished", "(JJ)Z", (void *) netty_quiche_conn_stream_finished },
+   { "quiche_conn_close", "(JZJJI)I", (void *) netty_quiche_conn_close },
+   { "quiche_conn_is_established", "(J)Z", (void *) netty_quiche_conn_is_established },
+@@ -1243,6 +1262,9 @@ static const JNINativeMethod fixed_method_table[] = {
+   { "quiche_config_set_max_recv_udp_payload_size", "(JJ)V", (void *) netty_quiche_config_set_max_recv_udp_payload_size },
+   { "quiche_config_set_max_send_udp_payload_size", "(JJ)V", (void *) netty_quiche_config_set_max_send_udp_payload_size },
+   { "quiche_config_set_initial_max_data", "(JJ)V", (void *) netty_quiche_config_set_initial_max_data },
++  { "quiche_config_set_initial_connection_window", "(JJ)V", (void *) netty_quiche_config_set_initial_connection_window },
++  { "quiche_config_set_max_connection_window", "(JJ)V", (void *) netty_quiche_config_set_max_connection_window },
++  { "quiche_config_set_max_stream_window", "(JJ)V", (void *) netty_quiche_config_set_max_stream_window },
+   { "quiche_config_set_initial_max_stream_data_bidi_local", "(JJ)V", (void *) netty_quiche_config_set_initial_max_stream_data_bidi_local },
+   { "quiche_config_set_initial_max_stream_data_bidi_remote", "(JJ)V", (void *) netty_quiche_config_set_initial_max_stream_data_bidi_remote },
+   { "quiche_config_set_initial_max_stream_data_uni", "(JJ)V", (void *) netty_quiche_config_set_initial_max_stream_data_uni },
+diff --git a/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicCodecBuilderTest.java b/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicCodecBuilderTest.java
+index 35863f7..078a158 100644
+--- a/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicCodecBuilderTest.java
++++ b/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicCodecBuilderTest.java
+@@ -24,6 +24,7 @@ import java.util.concurrent.Executor;
+ import java.util.function.Function;
+ 
+ import static org.assertj.core.api.Assertions.assertThat;
++import static org.assertj.core.api.Assertions.assertThatThrownBy;
+ 
+ class QuicCodecBuilderTest {
+ 
+@@ -35,6 +36,18 @@ class QuicCodecBuilderTest {
+         assertThat(copy).usingRecursiveComparison().isEqualTo(original);
+     }
+ 
++    @Test
++    void testReceiveWindowValidation() {
++        TestQuicCodecBuilder builder = new TestQuicCodecBuilder();
++
++        assertThat(builder.initialConnectionWindow(0)).isSameAs(builder);
++        assertThat(builder.maxConnectionWindow(0)).isSameAs(builder);
++        assertThat(builder.maxStreamWindow(0)).isSameAs(builder);
++        assertThatThrownBy(() -> builder.initialConnectionWindow(-1)).isInstanceOf(IllegalArgumentException.class);
++        assertThatThrownBy(() -> builder.maxConnectionWindow(-1)).isInstanceOf(IllegalArgumentException.class);
++        assertThatThrownBy(() -> builder.maxStreamWindow(-1)).isInstanceOf(IllegalArgumentException.class);
++    }
++
+     private static void init(TestQuicCodecBuilder builder) throws IllegalAccessException {
+         Field[] fields = builder.getClass().getSuperclass().getDeclaredFields();
+         for (Field field : fields) {
+diff --git a/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicStreamSendBufferLimitsTest.java b/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicStreamSendBufferLimitsTest.java
+new file mode 100644
+index 0000000..95fde09
+--- /dev/null
++++ b/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicStreamSendBufferLimitsTest.java
+@@ -0,0 +1,58 @@
++/*
++ * Copyright 2026 The Netty Project
++ *
++ * The Netty Project licenses this file to you under the Apache License,
++ * version 2.0 (the "License"); you may not use this file except in compliance
++ * with the License. You may obtain a copy of the License at:
++ *
++ * https://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++ * License for the specific language governing permissions and limitations
++ * under the License.
++ */
++package io.netty.handler.codec.quic;
++
++import org.junit.jupiter.api.Test;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.assertj.core.api.Assertions.assertThatThrownBy;
++
++class QuicStreamSendBufferLimitsTest {
++
++    @Test
++    void validatesAndExposesLimits() {
++        QuicStreamSendBufferLimits limits = new QuicStreamSendBufferLimits(17, 5);
++
++        assertThat(limits.total()).isEqualTo(17);
++        assertThat(limits.reserved()).isEqualTo(5);
++        assertThatThrownBy(() -> new QuicStreamSendBufferLimits(-1, 0))
++                .isInstanceOf(IllegalArgumentException.class);
++        assertThatThrownBy(() -> new QuicStreamSendBufferLimits(1, -1))
++                .isInstanceOf(IllegalArgumentException.class);
++        assertThatThrownBy(() -> new QuicStreamSendBufferLimits(1, 2))
++                .isInstanceOf(IllegalArgumentException.class);
++    }
++
++    @Test
++    void computesOrdinaryAndReservedAllowancesWithoutOverflow() {
++        QuicStreamSendBufferLimits limits = new QuicStreamSendBufferLimits(17, 5);
++
++        assertThat(limits.available(0, false)).isEqualTo(12);
++        assertThat(limits.available(0, true)).isEqualTo(17);
++        assertThat(limits.available(12, false)).isZero();
++        assertThat(limits.available(12, true)).isEqualTo(5);
++        assertThat(limits.available(17, true)).isZero();
++        assertThat(limits.available(18, false)).isZero();
++        assertThat(limits.available(Long.MAX_VALUE, true)).isZero();
++
++        QuicStreamSendBufferLimits zero = new QuicStreamSendBufferLimits(0, 0);
++        assertThat(zero.available(0, false)).isZero();
++        assertThat(zero.available(0, true)).isZero();
++
++        QuicStreamSendBufferLimits maximum = new QuicStreamSendBufferLimits(Long.MAX_VALUE, 0);
++        assertThat(maximum.available(Long.MAX_VALUE - 1, false)).isEqualTo(1);
++    }
++}
+diff --git a/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicStreamSendBufferTest.java b/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicStreamSendBufferTest.java
+new file mode 100644
+index 0000000..c221a1b
+--- /dev/null
++++ b/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicStreamSendBufferTest.java
+@@ -0,0 +1,370 @@
++/*
++ * Copyright 2026 The Netty Project
++ *
++ * The Netty Project licenses this file to you under the Apache License,
++ * version 2.0 (the "License"); you may not use this file except in compliance
++ * with the License. You may obtain a copy of the License at:
++ *
++ * https://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++ * License for the specific language governing permissions and limitations
++ * under the License.
++ */
++package io.netty.handler.codec.quic;
++
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.CompositeByteBuf;
++import io.netty.buffer.Unpooled;
++import io.netty.channel.Channel;
++import io.netty.channel.ChannelDuplexHandler;
++import io.netty.channel.ChannelFuture;
++import io.netty.channel.ChannelHandlerContext;
++import io.netty.channel.ChannelInboundHandlerAdapter;
++import io.netty.channel.ChannelPromise;
++import io.netty.channel.socket.ChannelInputShutdownEvent;
++import io.netty.channel.socket.ChannelOutputShutdownException;
++import io.netty.util.ReferenceCountUtil;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.MethodSource;
++
++import java.util.concurrent.BlockingQueue;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.ConcurrentMap;
++import java.util.concurrent.CountDownLatch;
++import java.util.concurrent.CopyOnWriteArrayList;
++import java.util.concurrent.Executor;
++import java.util.concurrent.LinkedBlockingQueue;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.concurrent.atomic.AtomicInteger;
++import java.util.concurrent.atomic.AtomicLong;
++import java.util.concurrent.atomic.AtomicReference;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertInstanceOf;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++public class QuicStreamSendBufferTest extends AbstractQuicTest {
++
++    @ParameterizedTest
++    @MethodSource("newSslTaskExecutors")
++    public void reservedAllowanceSurvivesOrdinarySaturationAndResetReleasesIt(Executor executor) throws Throwable {
++        try (Fixture fixture = new Fixture(executor, new QuicStreamSendBufferLimits(32, 8))) {
++            QuicStreamChannel ordinary = fixture.newStream(false);
++            fixture.dropServerPackets.set(true);
++
++            ChannelFuture admitted = ordinary.writeAndFlush(Unpooled.buffer().writeZero(24)).sync();
++            assertTrue(admitted.isSuccess());
++            fixture.awaitBytes(24);
++
++            ChannelFuture blocked = ordinary.writeAndFlush(Unpooled.buffer().writeByte(1));
++            assertFalse(blocked.await(200, TimeUnit.MILLISECONDS));
++
++            QuicStreamChannel reserved = fixture.newStream(true);
++            ChannelFuture reservedWrite = reserved.writeAndFlush(Unpooled.buffer().writeZero(8)).sync();
++            assertTrue(reservedWrite.isSuccess());
++            fixture.awaitBytes(32);
++
++            fixture.expectReset(ordinary, 1);
++            ordinary.shutdownOutput(1).sync();
++            assertTrue(blocked.await(2, TimeUnit.SECONDS));
++            assertFalse(blocked.isSuccess());
++            assertInstanceOf(ChannelOutputShutdownException.class, blocked.cause());
++            assertFalse(ordinary.eventLoop().submit(ordinary::isWritable).get());
++
++            ChannelFuture afterResetFailure = ordinary.writeAndFlush(Unpooled.buffer().writeByte(2));
++            assertTrue(afterResetFailure.await(2, TimeUnit.SECONDS));
++            assertFalse(afterResetFailure.isSuccess());
++            assertInstanceOf(ChannelOutputShutdownException.class, afterResetFailure.cause());
++            ordinary.eventLoop().submit(() -> { }).sync();
++            assertFalse(ordinary.eventLoop().submit(ordinary::isWritable).get());
++            fixture.awaitExpectedReset();
++            QuicStreamChannel afterReset = fixture.newStream(false);
++            ChannelFuture afterResetWrite = afterReset.writeAndFlush(Unpooled.buffer().writeByte(1));
++            assertTrue(afterResetWrite.await(2, TimeUnit.SECONDS));
++            assertTrue(afterResetWrite.isSuccess());
++            fixture.awaitBytes(33);
++        } finally {
++            shutdown(executor);
++        }
++    }
++
++    @ParameterizedTest
++    @MethodSource("newSslTaskExecutors")
++    public void compositeWriteCannotBypassLimitAndFinWaitsForFullBuffer(Executor executor) throws Throwable {
++        testCompositeFin(executor, false);
++    }
++
++    @ParameterizedTest
++    @MethodSource("newSslTaskExecutors")
++    public void dataBearingFinFrameWaitsForFullCompositeBuffer(Executor executor) throws Throwable {
++        testCompositeFin(executor, true);
++    }
++
++    private static void testCompositeFin(Executor executor, boolean dataBearingFinFrame) throws Throwable {
++        try (Fixture fixture = new Fixture(executor, new QuicStreamSendBufferLimits(8, 0))) {
++            QuicStreamChannel stream = fixture.newStream(false);
++            fixture.dropServerPackets.set(true);
++            CompositeByteBuf composite = Unpooled.compositeBuffer()
++                    .addComponents(true, Unpooled.directBuffer().writeBytes(new byte[] { 0, 1, 2, 3, 4 }),
++                            Unpooled.directBuffer().writeBytes(new byte[] { 5, 6, 7, 8, 9 }));
++
++            ChannelFuture write = stream.writeAndFlush(dataBearingFinFrame ?
++                    new DefaultQuicStreamFrame(composite, true) : composite);
++            ChannelFuture fin = dataBearingFinFrame ? write : stream.shutdownOutput();
++            fixture.awaitBytes(8);
++
++            assertFalse(write.await(200, TimeUnit.MILLISECONDS));
++            assertFalse(fin.await(200, TimeUnit.MILLISECONDS));
++            assertEquals(0, fixture.inputShutdowns.get());
++            fixture.awaitStreamBytes(stream, new byte[] { 0, 1, 2, 3, 4, 5, 6, 7 });
++
++            fixture.dropServerPackets.set(false);
++            QuicStreamChannel peer = fixture.serverStreams.poll(2, TimeUnit.SECONDS);
++            assertTrue(peer != null);
++            ChannelFuture peerWrite = peer.writeAndFlush(Unpooled.buffer().writeByte(1));
++            assertTrue(peerWrite.await(2, TimeUnit.SECONDS));
++            assertTrue(peerWrite.isSuccess());
++            assertTrue(write.await(2, TimeUnit.SECONDS));
++            assertTrue(write.isSuccess());
++            assertTrue(fin.await(2, TimeUnit.SECONDS));
++            assertTrue(fin.isSuccess());
++            fixture.awaitBytes(10);
++            fixture.awaitStreamBytes(stream, new byte[] { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
++            fixture.awaitInputShutdowns(1);
++        } finally {
++            shutdown(executor);
++        }
++    }
++
++    @ParameterizedTest
++    @MethodSource("newSslTaskExecutors")
++    public void acknowledgmentsReleaseAllowance(Executor executor) throws Throwable {
++        try (Fixture fixture = new Fixture(executor, new QuicStreamSendBufferLimits(8, 0))) {
++            QuicStreamChannel first = fixture.newStream(false);
++            fixture.dropServerPackets.set(true);
++            first.writeAndFlush(Unpooled.buffer().writeZero(8)).sync();
++            fixture.awaitBytes(8);
++
++            QuicStreamChannel second = fixture.newStream(false);
++            ChannelFuture blocked = second.writeAndFlush(Unpooled.buffer().writeByte(1));
++            assertFalse(blocked.await(200, TimeUnit.MILLISECONDS));
++
++            fixture.dropServerPackets.set(false);
++            QuicStreamChannel peer = fixture.serverStreams.poll(2, TimeUnit.SECONDS);
++            assertTrue(peer != null);
++            ChannelFuture peerWrite = peer.writeAndFlush(Unpooled.buffer().writeByte(1));
++            assertTrue(peerWrite.await(2, TimeUnit.SECONDS));
++            assertTrue(peerWrite.isSuccess());
++            assertTrue(blocked.await(2, TimeUnit.SECONDS));
++            assertTrue(blocked.isSuccess());
++        } finally {
++            shutdown(executor);
++        }
++    }
++
++    @ParameterizedTest
++    @MethodSource("newSslTaskExecutors")
++    public void zeroReservationDoesNotProtectReservedStream(Executor executor) throws Throwable {
++        try (Fixture fixture = new Fixture(executor, new QuicStreamSendBufferLimits(8, 0))) {
++            QuicStreamChannel ordinary = fixture.newStream(false);
++            fixture.dropServerPackets.set(true);
++            ordinary.writeAndFlush(Unpooled.buffer().writeZero(8)).sync();
++            fixture.awaitBytes(8);
++
++            QuicStreamChannel markedReserved = fixture.newStream(true);
++            ChannelFuture blocked = markedReserved.writeAndFlush(Unpooled.buffer().writeByte(1));
++            assertFalse(blocked.await(300, TimeUnit.MILLISECONDS));
++        } finally {
++            shutdown(executor);
++        }
++    }
++
++    @ParameterizedTest
++    @MethodSource("newSslTaskExecutors")
++    public void eventLoopClassificationAppliesToQueuedAndFutureWrites(Executor executor) throws Throwable {
++        try (Fixture fixture = new Fixture(executor, new QuicStreamSendBufferLimits(8, 4))) {
++            QuicStreamChannel stream = fixture.newStream(false);
++            assertFalse(stream.config().getOption(QuicChannelOption.USE_RESERVED_SEND_BUFFER));
++            assertThrows(IllegalStateException.class,
++                    () -> stream.config().setOption(QuicChannelOption.USE_RESERVED_SEND_BUFFER, true));
++            fixture.dropServerPackets.set(true);
++            stream.writeAndFlush(Unpooled.buffer().writeZero(4)).sync();
++            fixture.awaitBytes(4);
++
++            ChannelFuture queued = stream.writeAndFlush(Unpooled.buffer().writeZero(2));
++            assertFalse(queued.await(200, TimeUnit.MILLISECONDS));
++            stream.eventLoop().submit(() ->
++                    stream.config().setOption(QuicChannelOption.USE_RESERVED_SEND_BUFFER, true)).sync();
++            assertTrue(queued.await(2, TimeUnit.SECONDS));
++            assertTrue(queued.isSuccess());
++            fixture.awaitBytes(6);
++
++            stream.eventLoop().submit(() ->
++                    stream.config().setOption(QuicChannelOption.USE_RESERVED_SEND_BUFFER, false)).sync();
++            ChannelFuture ordinarySuffix = stream.writeAndFlush(Unpooled.buffer().writeZero(3));
++            assertFalse(ordinarySuffix.await(300, TimeUnit.MILLISECONDS));
++            assertEquals(6, fixture.receivedBytes.get());
++        } finally {
++            shutdown(executor);
++        }
++    }
++
++    private static final class Fixture implements AutoCloseable {
++        final AtomicBoolean dropServerPackets = new AtomicBoolean();
++        final AtomicInteger receivedBytes = new AtomicInteger();
++        final AtomicInteger inputShutdowns = new AtomicInteger();
++        final AtomicReference<Throwable> failure = new AtomicReference<>();
++        final AtomicLong expectedResetStream = new AtomicLong(-1);
++        final AtomicLong expectedResetCode = new AtomicLong(-1);
++        final CountDownLatch expectedResetObserved = new CountDownLatch(1);
++        final BlockingQueue<QuicStreamChannel> serverStreams = new LinkedBlockingQueue<>();
++        final ConcurrentMap<Long, CopyOnWriteArrayList<Byte>> receivedByStream = new ConcurrentHashMap<>();
++        final Channel server;
++        final Channel clientDatagram;
++        final QuicChannel client;
++
++        Fixture(Executor executor, QuicStreamSendBufferLimits limits) throws Exception {
++            ChannelInboundHandlerAdapter streamHandler = new ChannelInboundHandlerAdapter() {
++                @Override
++                public boolean isSharable() {
++                    return true;
++                }
++
++                @Override
++                public void channelActive(ChannelHandlerContext ctx) {
++                    serverStreams.add((QuicStreamChannel) ctx.channel());
++                    ctx.fireChannelActive();
++                }
++
++                @Override
++                public void channelRead(ChannelHandlerContext ctx, Object msg) {
++                    ByteBuf buffer = (ByteBuf) msg;
++                    receivedBytes.addAndGet(buffer.readableBytes());
++                    CopyOnWriteArrayList<Byte> bytes = receivedByStream.computeIfAbsent(
++                            ((QuicStreamChannel) ctx.channel()).streamId(), key -> new CopyOnWriteArrayList<>());
++                    while (buffer.isReadable()) {
++                        bytes.add(buffer.readByte());
++                    }
++                    buffer.release();
++                }
++
++                @Override
++                public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
++                    if (cause instanceof QuicStreamResetException &&
++                            ((QuicStreamChannel) ctx.channel()).streamId() == expectedResetStream.get() &&
++                            ((QuicStreamResetException) cause).applicationProtocolCode() == expectedResetCode.get()) {
++                        expectedResetObserved.countDown();
++                        return;
++                    }
++                    failure.compareAndSet(null, cause);
++                    ctx.close();
++                }
++
++                @Override
++                public void userEventTriggered(ChannelHandlerContext ctx, Object evt) {
++                    if (evt instanceof ChannelInputShutdownEvent) {
++                        inputShutdowns.incrementAndGet();
++                    }
++                    ctx.fireUserEventTriggered(evt);
++                }
++            };
++            server = QuicTestUtils.newServer(executor, new ChannelInboundHandlerAdapter(), streamHandler);
++            server.pipeline().addFirst(new ChannelDuplexHandler() {
++                @Override
++                public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
++                    if (dropServerPackets.get()) {
++                        ReferenceCountUtil.release(msg);
++                        promise.setSuccess();
++                    } else {
++                        ctx.write(msg, promise);
++                    }
++                }
++
++                @Override
++                public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
++                    failure.compareAndSet(null, cause);
++                    ctx.close();
++                }
++            });
++            clientDatagram = QuicTestUtils.newClient(executor);
++            client = QuicTestUtils.newQuicChannelBootstrap(clientDatagram)
++                    .option(QuicChannelOption.STREAM_SEND_BUFFER_LIMITS, limits)
++                    .handler(new ChannelInboundHandlerAdapter())
++                    .streamHandler(new ChannelInboundHandlerAdapter())
++                    .remoteAddress(server.localAddress())
++                    .connect().get();
++
++            assertEquals(limits, client.config().getOption(QuicChannelOption.STREAM_SEND_BUFFER_LIMITS));
++            assertThrows(IllegalStateException.class,
++                    () -> client.config().setOption(QuicChannelOption.STREAM_SEND_BUFFER_LIMITS, limits));
++        }
++
++        QuicStreamChannel newStream(boolean reserved) throws Exception {
++            return client.newStreamBootstrap()
++                    .type(QuicStreamType.BIDIRECTIONAL)
++                    .option(QuicChannelOption.USE_RESERVED_SEND_BUFFER, reserved)
++                    .handler(new ChannelInboundHandlerAdapter())
++                    .create().get();
++        }
++
++        void awaitBytes(int expected) throws InterruptedException {
++            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
++            while (receivedBytes.get() < expected && System.nanoTime() < deadline) {
++                Thread.sleep(10);
++            }
++            assertNull(failure.get());
++            assertEquals(expected, receivedBytes.get());
++        }
++
++        void awaitStreamBytes(QuicStreamChannel stream, byte[] expected) throws InterruptedException {
++            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
++            CopyOnWriteArrayList<Byte> bytes;
++            do {
++                bytes = receivedByStream.get(stream.streamId());
++                if (bytes != null && bytes.size() >= expected.length) {
++                    break;
++                }
++                Thread.sleep(10);
++            } while (System.nanoTime() < deadline);
++            assertNull(failure.get());
++            assertTrue(bytes != null);
++            assertEquals(expected.length, bytes.size());
++            for (int i = 0; i < expected.length; ++i) {
++                assertEquals(expected[i], bytes.get(i).byteValue());
++            }
++        }
++
++        void awaitInputShutdowns(int expected) throws InterruptedException {
++            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
++            while (inputShutdowns.get() < expected && System.nanoTime() < deadline) {
++                Thread.sleep(10);
++            }
++            assertNull(failure.get());
++            assertEquals(expected, inputShutdowns.get());
++        }
++
++        void expectReset(QuicStreamChannel stream, long code) {
++            expectedResetStream.set(stream.streamId());
++            expectedResetCode.set(code);
++        }
++
++        void awaitExpectedReset() throws InterruptedException {
++            assertTrue(expectedResetObserved.await(2, TimeUnit.SECONDS));
++            assertNull(failure.get());
++        }
++
++        @Override
++        public void close() throws Exception {
++            client.close().syncUninterruptibly();
++            clientDatagram.close().syncUninterruptibly();
++            server.close().syncUninterruptibly();
++        }
++    }
++}
+diff --git a/pom.xml b/pom.xml
+index 7a93adf..09a6d2c 100644
+--- a/pom.xml
++++ b/pom.xml
+@@ -1126,7 +1126,7 @@
+         <scope>test</scope>
+       </dependency>
+       <dependency>
+-        <groupId>${project.groupId}</groupId>
++        <groupId>io.netty</groupId>
+         <artifactId>netty-build-common</artifactId>
+         <version>${netty.build.version}</version>
+         <scope>test</scope>
+@@ -1618,7 +1618,7 @@
+             <version>8.29</version>
+           </dependency>
+           <dependency>
+-            <groupId>${project.groupId}</groupId>
++            <groupId>io.netty</groupId>
+             <artifactId>netty-build-common</artifactId>
+             <version>${netty.build.version}</version>
+           </dependency>

@@ -22,6 +22,10 @@ supported backend, and sanitizer command. No Rust protocol or storage code is
 linked into the Java library.
 Dependency provenance and the remaining V2 shared-credit requirement are recorded
 in the [Java transport review](../../docs/standards/java-v2-transport-credit.md).
+The [source-pinned transport extension](transport/README.md) supplies native
+credit/accounting APIs and transport regression tests for the forthcoming V2
+object owner. It is a separate dependency build, not yet selected by this POM
+and not evidence of Java durable-work/results parity.
 The client
 requires a CA certificate and the server requires an end-entity certificate and
 private key. Both public clients verify the certificate chain and the configured

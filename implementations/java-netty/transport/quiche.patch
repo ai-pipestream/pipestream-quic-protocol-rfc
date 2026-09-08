@@ -1,0 +1,507 @@
+diff --git a/quiche/include/quiche.h b/quiche/include/quiche.h
+index 45f1c71..261837c 100644
+--- a/quiche/include/quiche.h
++++ b/quiche/include/quiche.h
+@@ -257,6 +257,11 @@ void quiche_config_enable_dgram(quiche_config *config, bool enabled,
+                                 size_t recv_queue_len,
+                                 size_t send_queue_len);
+ 
++// Sets the initial receive-credit replenishment window, independently of
++// initial_max_data. Explicit values are clamped to max_connection_window at
++// connection creation. Autotuning and stream-driven lower bounds still apply.
++void quiche_config_set_initial_connection_window(quiche_config *config, uint64_t v);
++
+ // Sets the maximum connection window.
+ void quiche_config_set_max_connection_window(quiche_config *config, uint64_t v);
+ 
+@@ -431,6 +436,12 @@ int quiche_conn_stream_shutdown(quiche_conn *conn, uint64_t stream_id,
+ // Returns the stream's send capacity in bytes.
+ ssize_t quiche_conn_stream_capacity(quiche_conn *conn, uint64_t stream_id);
+ 
++// Returns the saturating sum of bytes written after each live stream's
++// contiguous ACK frontier. This includes ACKed data behind a gap, but excludes
++// metadata, TLS, datagrams and ACKed prefixes of retained backing buffers.
++// This scans all live streams; it is not an allocation/memory measurement.
++uint64_t quiche_conn_stream_send_retained(const quiche_conn *conn);
++
+ // Returns true if the stream has data that can be read.
+ bool quiche_conn_stream_readable(const quiche_conn *conn, uint64_t stream_id);
+ 
+diff --git a/quiche/src/ffi.rs b/quiche/src/ffi.rs
+index e812993..4afaeab 100644
+--- a/quiche/src/ffi.rs
++++ b/quiche/src/ffi.rs
+@@ -385,6 +385,13 @@ pub extern "C" fn quiche_config_set_max_send_udp_payload_size(
+     config.set_max_send_udp_payload_size(v);
+ }
+ 
++#[no_mangle]
++pub extern "C" fn quiche_config_set_initial_connection_window(
++    config: &mut Config, v: u64,
++) {
++    config.set_initial_connection_window(v);
++}
++
+ #[no_mangle]
+ pub extern "C" fn quiche_config_set_max_connection_window(
+     config: &mut Config, v: u64,
+@@ -994,6 +1001,11 @@ pub extern "C" fn quiche_conn_stream_capacity(
+     }
+ }
+ 
++#[no_mangle]
++pub extern "C" fn quiche_conn_stream_send_retained(conn: &Connection) -> u64 {
++    conn.stream_send_retained()
++}
++
+ #[no_mangle]
+ pub extern "C" fn quiche_conn_stream_readable(
+     conn: &Connection, stream_id: u64,
+diff --git a/quiche/src/lib.rs b/quiche/src/lib.rs
+index a93bfb5..5f5002a 100644
+--- a/quiche/src/lib.rs
++++ b/quiche/src/lib.rs
+@@ -595,6 +595,7 @@ pub struct Config {
+ 
+     max_send_udp_payload_size: usize,
+ 
++    initial_connection_window: Option<u64>,
+     max_connection_window: u64,
+     max_stream_window: u64,
+ 
+@@ -672,6 +673,7 @@ impl Config {
+ 
+             max_send_udp_payload_size: MAX_SEND_UDP_PAYLOAD_SIZE,
+ 
++            initial_connection_window: None,
+             max_connection_window: MAX_CONNECTION_WINDOW,
+             max_stream_window: stream::MAX_STREAM_WINDOW,
+ 
+@@ -1171,6 +1173,27 @@ impl Config {
+         self.path_challenge_recv_max_queue_len = queue_len;
+     }
+ 
++    /// Sets the initial connection receive-credit replenishment window.
++    ///
++    /// This is independent of the initial advertised connection credit set by
++    /// [`set_initial_max_data()`]. When explicitly configured, this window is
++    /// clamped to the configured maximum connection window when a connection
++    /// is created, regardless of the order in which the setters are called.
++    ///
++    /// If unset, the existing default is preserved: the smaller of 1.5 times
++    /// the initial connection credit (rounded down before multiplication) and
++    /// 48 KiB. The default is not clamped to the maximum connection window.
++    ///
++    /// This does not establish an absolute receive-memory limit. Autotuning
++    /// and stream-driven connection-window lower bounds still apply. In
++    /// particular, a stream window can raise the connection window above its
++    /// configured maximum, and previously advertised credit is not revoked.
++    ///
++    /// [`set_initial_max_data()`]: Self::set_initial_max_data
++    pub fn set_initial_connection_window(&mut self, v: u64) {
++        self.initial_connection_window = Some(v);
++    }
++
+     /// Sets the maximum size of the connection window.
+     ///
+     /// The default value is MAX_CONNECTION_WINDOW (24MBytes).
+@@ -2008,7 +2031,10 @@ impl<F: BufFactory> Connection<F> {
+             rx_data: 0,
+             flow_control: flowcontrol::FlowControl::new(
+                 max_rx_data,
+-                cmp::min(max_rx_data / 2 * 3, DEFAULT_CONNECTION_WINDOW),
++                config.initial_connection_window.map_or_else(
++                    || cmp::min(max_rx_data / 2 * 3, DEFAULT_CONNECTION_WINDOW),
++                    |window| cmp::min(window, config.max_connection_window),
++                ),
+                 config.max_connection_window,
+             ),
+             almost_full: false,
+@@ -5936,6 +5962,26 @@ impl<F: BufFactory> Connection<F> {
+         Err(Error::InvalidStreamState(stream_id))
+     }
+ 
++    /// Returns the stream-data offset span retained pending contiguous ACKs.
++    ///
++    /// For each live stream, this counts bytes written after the highest
++    /// contiguously acknowledged offset. Acknowledged data behind an earlier
++    /// gap remains charged, because its send buffers cannot yet be dropped.
++    /// Packet emission and application write completion do not release this
++    /// charge. Resetting a send stream releases its cleared buffers.
++    ///
++    /// This is not an allocation or process-memory measurement: it excludes
++    /// QUIC metadata, TLS, datagrams and acknowledged prefixes of partially
++    /// retained backing buffers. Custom zero-copy buffers can also retain
++    /// storage outside the charged span. Applications using this for send
++    /// admission must separately bound those resources and serialize checking
++    /// this value with subsequent writes.
++    ///
++    /// This operation scans all live streams and saturates at [`u64::MAX`].
++    pub fn stream_send_retained(&self) -> u64 {
++        self.streams.send_retained()
++    }
++
+     /// Returns the next stream that has data to read.
+     ///
+     /// Note that once returned by this method, a stream ID will not be returned
+diff --git a/quiche/src/stream/mod.rs b/quiche/src/stream/mod.rs
+index 6355285..c046c13 100644
+--- a/quiche/src/stream/mod.rs
++++ b/quiche/src/stream/mod.rs
+@@ -676,6 +676,15 @@ impl<F: BufFactory> StreamMap<F> {
+                 self.local_max_streams_uni - self.peer_opened_streams_uni
+     }
+ 
++    /// Counts stream bytes after each stream's contiguous ACK frontier.
++    pub fn send_retained(&self) -> u64 {
++        self.streams.values().fold(0, |total, stream| {
++            total.saturating_add(
++                stream.send.off_back().saturating_sub(stream.send.ack_off()),
++            )
++        })
++    }
++
+     /// Returns the number of active streams in the map.
+     #[cfg(test)]
+     pub fn len(&self) -> usize {
+diff --git a/quiche/src/tests.rs b/quiche/src/tests.rs
+index 0944993..b223709 100644
+--- a/quiche/src/tests.rs
++++ b/quiche/src/tests.rs
+@@ -991,6 +991,336 @@ fn streamio(#[values("cubic", "bbr2_gcongestion")] cc_algorithm_name: &str) {
+     assert!(pipe.server.stream_finished(4));
+ }
+ 
++#[test]
++fn stream_send_retained_counts_live_stream_offset_spans_until_ack() {
++    let mut pipe = retained_stream_pipe();
++
++    assert_eq!(pipe.client.stream_send(4, b"hello", false), Ok(5));
++    assert_eq!(pipe.client.stream_send(8, b"goodbye", true), Ok(7));
++    assert_eq!(pipe.client.stream_send_retained(), 12);
++
++    let mut buf = [0; 65535];
++    let first = pipe.client.next_pkt_num;
++    let flight = test_utils::emit_flight(&mut pipe.client).unwrap();
++    assert!(!flight.is_empty());
++    assert_eq!(pipe.client.stream_send_retained(), 12);
++
++    let mut ranges = ranges::RangeSet::default();
++    ranges.insert(first..pipe.client.next_pkt_num);
++    let frames = [frame::Frame::ACK {
++        ack_delay: 0,
++        ranges,
++        ecn_counts: None,
++    }];
++    let written =
++        test_utils::encode_pkt(&mut pipe.server, Type::Short, &frames, &mut buf)
++            .unwrap();
++    assert_eq!(pipe.client_recv(&mut buf[..written]), Ok(written));
++    assert_eq!(pipe.client.stream_send_retained(), 0);
++}
++
++#[test]
++fn stream_send_retained_keeps_out_of_order_ack_holes_and_retransmissions() {
++    let mut pipe = retained_stream_pipe();
++    let mut buf = [0; 65535];
++    let first = pipe.client.next_pkt_num;
++
++    for data in [b"aaaa", b"bbbb", b"cccc", b"dddd"] {
++        assert_eq!(pipe.client.stream_send(4, data, false), Ok(4));
++        let (written, _) = pipe.client.send(&mut buf).unwrap();
++        assert!(written > 0);
++    }
++    let last = pipe.client.next_pkt_num - 1;
++    assert_eq!(pipe.client.stream_send_retained(), 16);
++
++    let mut ranges = ranges::RangeSet::default();
++    ranges.insert(last..last + 1);
++    let ack = frame::Frame::ACK {
++        ack_delay: 0,
++        ranges: ranges.clone(),
++        ecn_counts: None,
++    };
++    let written =
++        test_utils::encode_pkt(&mut pipe.server, Type::Short, &[ack], &mut buf)
++            .unwrap();
++    assert_eq!(pipe.client_recv(&mut buf[..written]), Ok(written));
++    assert_eq!(pipe.client.stream_send_retained(), 16);
++
++    // Packet-threshold loss makes earlier data eligible for retransmission,
++    // but retransmitting an existing offset span cannot charge it twice.
++    let (written, _) = pipe.client.send(&mut buf).unwrap();
++    assert!(written > 0);
++    let retransmitted =
++        test_utils::decode_pkt(&mut pipe.server, &mut buf[..written]).unwrap();
++    assert!(retransmitted.iter().any(|frame| matches!(
++        frame,
++        frame::Frame::Stream { stream_id: 4, data }
++            if data.off() == 0 && !data.is_empty()
++    )));
++    assert_eq!(pipe.client.stream_send_retained(), 16);
++
++    let duplicate = frame::Frame::ACK {
++        ack_delay: 0,
++        ranges,
++        ecn_counts: None,
++    };
++    let written = test_utils::encode_pkt(
++        &mut pipe.server,
++        Type::Short,
++        &[duplicate],
++        &mut buf,
++    )
++    .unwrap();
++    assert_eq!(pipe.client_recv(&mut buf[..written]), Ok(written));
++    assert_eq!(pipe.client.stream_send_retained(), 16);
++
++    let mut all = ranges::RangeSet::default();
++    all.insert(first..pipe.client.next_pkt_num);
++    let written = test_utils::encode_pkt(
++        &mut pipe.server,
++        Type::Short,
++        &[frame::Frame::ACK {
++            ack_delay: 0,
++            ranges: all,
++            ecn_counts: None,
++        }],
++        &mut buf,
++    )
++    .unwrap();
++    assert_eq!(pipe.client_recv(&mut buf[..written]), Ok(written));
++    assert_eq!(pipe.client.stream_send_retained(), 0);
++}
++
++#[test]
++fn stream_send_retained_reset_clears_data_and_fin_adds_no_offset() {
++    let mut pipe = retained_stream_pipe();
++    let mut buf = [0; 65535];
++
++    assert_eq!(pipe.client.stream_send(4, b"reset-me", false), Ok(8));
++    let (written, _) = pipe.client.send(&mut buf).unwrap();
++    assert!(written > 0);
++    assert_eq!(pipe.client.stream_send_retained(), 8);
++    assert_eq!(pipe.client.stream_shutdown(4, Shutdown::Write, 42), Ok(()));
++    assert_eq!(pipe.client.stream_send_retained(), 0);
++
++    assert_eq!(pipe.client.stream_send(8, b"fin", true), Ok(3));
++    assert_eq!(pipe.client.stream_send_retained(), 3);
++    let first = pipe.client.next_pkt_num;
++    let (written, _) = pipe.client.send(&mut buf).unwrap();
++    assert!(written > 0);
++    assert_eq!(pipe.client.stream_send_retained(), 3);
++
++    let mut ranges = ranges::RangeSet::default();
++    ranges.insert(first..pipe.client.next_pkt_num);
++    let written = test_utils::encode_pkt(
++        &mut pipe.server,
++        Type::Short,
++        &[frame::Frame::ACK {
++            ack_delay: 0,
++            ranges,
++            ecn_counts: None,
++        }],
++        &mut buf,
++    )
++    .unwrap();
++    assert_eq!(pipe.client_recv(&mut buf[..written]), Ok(written));
++    assert_eq!(pipe.client.stream_send_retained(), 0);
++
++    assert_eq!(pipe.client.stream_send(12, b"", true), Ok(0));
++    assert_eq!(pipe.client.stream_send_retained(), 0);
++}
++
++#[test]
++fn stream_send_retained_releases_only_contiguous_acknowledged_prefixes() {
++    let mut pipe = retained_stream_pipe();
++    let mut buf = [0; 65535];
++
++    assert_eq!(pipe.client.stream_send(4, b"first", false), Ok(5));
++    let first = pipe.client.next_pkt_num;
++    let (written, _) = pipe.client.send(&mut buf).unwrap();
++    assert!(written > 0);
++    assert_eq!(pipe.client.stream_send(4, b"later", false), Ok(5));
++    let (written, _) = pipe.client.send(&mut buf).unwrap();
++    assert!(written > 0);
++    assert_eq!(pipe.client.stream_send_retained(), 10);
++
++    let mut ranges = ranges::RangeSet::default();
++    ranges.insert(first..first + 1);
++    let written = test_utils::encode_pkt(
++        &mut pipe.server,
++        Type::Short,
++        &[frame::Frame::ACK {
++            ack_delay: 0,
++            ranges,
++            ecn_counts: None,
++        }],
++        &mut buf,
++    )
++    .unwrap();
++    assert_eq!(pipe.client_recv(&mut buf[..written]), Ok(written));
++    assert_eq!(pipe.client.stream_send_retained(), 5);
++}
++
++#[test]
++fn stream_send_retained_peer_stop_sending_releases_reset_data() {
++    let mut pipe = retained_stream_pipe();
++    let mut buf = [0; 65535];
++
++    assert_eq!(pipe.client.stream_send(4, b"retained", false), Ok(8));
++    let (written, _) = pipe.client.send(&mut buf).unwrap();
++    assert!(written > 0);
++    assert_eq!(pipe.client.stream_send_retained(), 8);
++
++    let written = test_utils::encode_pkt(
++        &mut pipe.server,
++        Type::Short,
++        &[frame::Frame::StopSending {
++            stream_id: 4,
++            error_code: 42,
++        }],
++        &mut buf,
++    )
++    .unwrap();
++    assert_eq!(pipe.client_recv(&mut buf[..written]), Ok(written));
++    assert_eq!(pipe.client.stream_send_retained(), 0);
++}
++
++fn retained_stream_pipe() -> test_utils::Pipe {
++    let mut config = Config::new(PROTOCOL_VERSION).unwrap();
++    config
++        .load_cert_chain_from_pem_file("examples/cert.crt")
++        .unwrap();
++    config
++        .load_priv_key_from_pem_file("examples/cert.key")
++        .unwrap();
++    config.set_application_protos(&[b"proto1"]).unwrap();
++    config.set_initial_max_data(100_000);
++    config.set_initial_max_stream_data_bidi_local(100_000);
++    config.set_initial_max_stream_data_bidi_remote(100_000);
++    config.set_initial_max_streams_bidi(8);
++    config.verify_peer(false);
++    let mut pipe = test_utils::Pipe::with_config(&mut config).unwrap();
++    assert_eq!(pipe.handshake(), Ok(()));
++    pipe
++}
++
++#[test]
++fn configured_connection_window_replenishes_without_increasing_initial_max_data()
++{
++    let mut config = Config::new(PROTOCOL_VERSION).unwrap();
++    config
++        .load_cert_chain_from_pem_file("examples/cert.crt")
++        .unwrap();
++    config
++        .load_priv_key_from_pem_file("examples/cert.key")
++        .unwrap();
++    config.set_application_protos(&[b"proto1"]).unwrap();
++    config.set_initial_max_data(30);
++    config.set_initial_connection_window(100);
++    config.set_max_connection_window(100);
++    config.set_initial_max_stream_data_bidi_local(200);
++    config.set_initial_max_stream_data_bidi_remote(200);
++    config.set_initial_max_streams_bidi(1);
++    config.verify_peer(false);
++
++    let mut pipe = test_utils::Pipe::with_config(&mut config).unwrap();
++    assert_eq!(pipe.handshake(), Ok(()));
++    assert_eq!(pipe.server.local_transport_params.initial_max_data, 30);
++    assert_eq!(pipe.server.flow_control.max_data(), 30);
++    assert_eq!(pipe.server.flow_control.window(), 100);
++
++    assert_eq!(pipe.client.stream_send(0, &[1; 30], false), Ok(30));
++    assert_eq!(pipe.advance(), Ok(()));
++    let mut read = [0; 20];
++    assert_eq!(pipe.server.stream_recv(0, &mut read), Ok((20, false)));
++
++    let flight = test_utils::emit_flight(&mut pipe.server).unwrap();
++    test_utils::process_flight(&mut pipe.client, flight).unwrap();
++    assert_eq!(pipe.client.max_tx_data, 120);
++    assert_eq!(pipe.server.flow_control.window(), 100);
++
++    // A second prompt update cannot autotune past the configured maximum.
++    assert_eq!(pipe.client.stream_send(0, &[2; 60], false), Ok(60));
++    assert_eq!(pipe.advance(), Ok(()));
++    let mut read = [0; 60];
++    assert_eq!(pipe.server.stream_recv(0, &mut read), Ok((60, false)));
++    let flight = test_utils::emit_flight(&mut pipe.server).unwrap();
++    test_utils::process_flight(&mut pipe.client, flight).unwrap();
++    assert_eq!(pipe.server.flow_control.window(), 100);
++    assert_eq!(pipe.client.max_tx_data, 180);
++}
++
++#[test]
++fn default_connection_replenishment_window_and_48kib_cap_are_preserved() {
++    let mut config = Config::new(PROTOCOL_VERSION).unwrap();
++    config
++        .load_cert_chain_from_pem_file("examples/cert.crt")
++        .unwrap();
++    config
++        .load_priv_key_from_pem_file("examples/cert.key")
++        .unwrap();
++    config.set_application_protos(&[b"proto1"]).unwrap();
++    config.set_initial_max_data(30);
++    config.set_max_connection_window(10);
++    config.set_initial_max_stream_data_bidi_local(100);
++    config.set_initial_max_stream_data_bidi_remote(100);
++    config.set_initial_max_streams_bidi(1);
++    config.verify_peer(false);
++
++    let mut pipe = test_utils::Pipe::with_config(&mut config).unwrap();
++    assert_eq!(pipe.handshake(), Ok(()));
++    assert_eq!(pipe.server.local_transport_params.initial_max_data, 30);
++    assert_eq!(pipe.server.flow_control.window(), 45);
++
++    assert_eq!(pipe.client.stream_send(0, &[1; 30], false), Ok(30));
++    assert_eq!(pipe.advance(), Ok(()));
++    let mut read = [0; 20];
++    assert_eq!(pipe.server.stream_recv(0, &mut read), Ok((20, false)));
++    let flight = test_utils::emit_flight(&mut pipe.server).unwrap();
++    test_utils::process_flight(&mut pipe.client, flight).unwrap();
++    assert_eq!(pipe.client.max_tx_data, 65);
++
++    config.set_initial_max_data(100_000);
++    let mut pipe = test_utils::Pipe::with_config(&mut config).unwrap();
++    assert_eq!(pipe.handshake(), Ok(()));
++    assert_eq!(pipe.server.local_transport_params.initial_max_data, 100_000);
++    assert_eq!(pipe.server.flow_control.window(), 48 * 1024);
++}
++
++#[test]
++fn explicit_connection_window_clamp_is_setter_order_independent_and_zero_is_preserved(
++) {
++    let mut config = Config::new(PROTOCOL_VERSION).unwrap();
++    config
++        .load_cert_chain_from_pem_file("examples/cert.crt")
++        .unwrap();
++    config
++        .load_priv_key_from_pem_file("examples/cert.key")
++        .unwrap();
++    config.set_application_protos(&[b"proto1"]).unwrap();
++    config.set_initial_max_data(30);
++    config.set_initial_connection_window(100);
++    config.set_max_connection_window(40);
++    config.verify_peer(false);
++    let mut pipe = test_utils::Pipe::with_config(&mut config).unwrap();
++    assert_eq!(pipe.handshake(), Ok(()));
++    assert_eq!(pipe.server.local_transport_params.initial_max_data, 30);
++    assert_eq!(pipe.server.flow_control.window(), 40);
++
++    config.set_max_connection_window(25);
++    config.set_initial_connection_window(35);
++    let mut pipe = test_utils::Pipe::with_config(&mut config).unwrap();
++    assert_eq!(pipe.handshake(), Ok(()));
++    assert_eq!(pipe.server.flow_control.window(), 25);
++
++    config.set_initial_connection_window(0);
++    config.set_max_connection_window(100);
++    let mut pipe = test_utils::Pipe::with_config(&mut config).unwrap();
++    assert_eq!(pipe.handshake(), Ok(()));
++    assert_eq!(pipe.server.local_transport_params.initial_max_data, 30);
++    assert_eq!(pipe.server.flow_control.window(), 0);
++}
++
+ #[rstest]
+ fn streamio_mixed_actions(
+     #[values("cubic", "bbr2_gcongestion")] cc_algorithm_name: &str,

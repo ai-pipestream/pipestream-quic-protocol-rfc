@@ -1,0 +1,4 @@
+# Unified diffs need a single-space prefix for empty context lines. Check
+# source whitespace in the patched repositories, not that required prefix.
+netty.patch whitespace=-blank-at-eol
+quiche.patch whitespace=-blank-at-eol

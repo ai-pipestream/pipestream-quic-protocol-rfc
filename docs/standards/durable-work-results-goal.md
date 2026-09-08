@@ -4,7 +4,8 @@ Status: active, not accepted. Baseline: `68b02ea55169187da123b7efa0f6045718fbb64
 The user approved all three tasks in the goal objective attached on 2026-09-06.
 This record preserves the complete scope; an intermediate commit is not completion.
 Task 1's contract/design acceptance is recorded below. Tasks 2 and 3 are open;
-no version-2 durable endpoint, interoperability claim or workload comparison exists yet.
+Rust now has a version-2 durable endpoint and client. Complete independent Java
+parity, cross-language failure evidence and the workload comparison remain open.
 
 ## Required order and acceptance evidence
 
@@ -2413,3 +2414,36 @@ durable streaming-gRPC comparison remain mandatory. No requirement was removed
 or replaced by this migration checkpoint. Forgejo was current on ff-only pull;
 no main merge, deployment or draft submission occurred. The full goal is active
 and incomplete.
+
+### Java native transport-credit foundation, 2026-09-07
+
+The source-pinned quiche/Netty extension now exposes explicit replenishment-window
+configuration and saturating retained-send-span accounting. A connection-wide
+send limit protects allowance for locally classified control streams, including
+automatic queued-write retries. Native transport tests also caught and fixed FIN
+overtaking queued payload and local reset leaving write promises pending.
+
+The final exported patches and exact Cargo lock passed a fresh isolated build
+from the upstream commit pins, not a retained checkout: handle 41099 exited zero,
+with 294 native Java tests in 31 fresh XML reports and no failures, errors or skips.
+Artifact manifests and hashes identify both patches and the separately named
+native library. Standalone quiche tests passed (934 with native feature flags;
+930 plus 43 doc tests in the normal package), with eight added cases rerun after
+the final formatting-only changes. Existing upstream clippy/whole-file formatter
+failures are explicitly recorded, not suppressed or reported green. Evidence:
+`conformance/results/durable-work-v2-java-native-credit-2026-09-07.txt`.
+
+The RFC contains only source patches, lock, notices and a repeatable build command;
+all upstream repositories and generated build trees remain under reference-code.
+The extension uses its own artifact coordinates and native-library name. The
+Java reference POM still uses the official dependency and advertises Core only.
+This checkpoint is not a published Maven package, Java durable implementation,
+end-to-end control reservation, or measured whole-process bound.
+
+Next integrate the pinned dependency and implement the Java object/control owner
+against the five transport acceptance gates, then complete independent Java
+durable admission/execution/fences, publication/results, retention/retirement and
+client recovery. The neutral Rust failure driver, both-language exact outcome/
+refusal/restart/resource evidence, original external workload and equivalent
+authenticated durable streaming-gRPC baseline remain mandatory. The full goal
+remains active and incomplete; no main merge, deployment or draft submission.

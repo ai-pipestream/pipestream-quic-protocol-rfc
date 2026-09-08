@@ -97,6 +97,46 @@ accounting rule. A dependency extension must be reproducibly built and pinned;
 reflection into native connection pointers or an unpublished local dependency
 override is not an implementation plan.
 
+## Source-pinned transport extension
+
+The [transport patch bundle](../../implementations/java-netty/transport/README.md)
+now implements the missing APIs against the exact source revisions above. It is
+a separately identified dependency build, not an upstream release. The Java
+reference POM still uses the official artifacts; no V2 durable endpoint or
+end-to-end resource claim follows from the extension's native transport tests.
+
+The receive setters expose the initial replenishment window and maximum
+connection/stream windows. An explicitly configured initial window is clamped
+at connection creation, independent of setter order; unset configuration keeps
+the upstream default. Stream-driven lower bounds and already advertised credit
+still apply. The setters do not themselves prove a receive-memory ceiling.
+
+The send extension counts each live stream's written offset beyond its
+contiguous ACK frontier. ACKed tails behind a hole remain charged. Saturation
+fails closed across JNI. Ordinary streams cannot consume the reserved slice of
+the connection-wide send allowance, including on automatic queued-write retries;
+only locally classified control streams may use it. Application write completion
+does not release native charge. Reset releases cleared buffers, not another
+stream's allowance. This is a logical span, not exact allocated bytes: partial
+backing-buffer prefixes, QUIC metadata, TLS and application queues need separate
+limits. Scanning all live streams is acceptable only with an explicit bound on
+their count.
+
+Native loopback tests found two additional owner defects under backpressure:
+graceful output shutdown could send FIN ahead of queued payload, and local reset
+could leave queued write promises pending. The extension queues FIN in order and
+fails locally reset writes with a named output-shutdown exception. Tests require
+exact composite-buffer bytes, FIN only after all bytes, failed pending and future
+reset writes, and reopened allowance for another stream. A zero-reservation
+negative control distinguishes protected allowance from ordinary native progress.
+
+These are transport admission/cleanup tests, not the complete five gates below.
+Actual PipeStream control messages, deadline scheduling under withheld peer
+credit, repeated receive-window growth/replacement, durable ownership and measured
+whole-process bounds still need the Java object/control owner. The dependency
+must be integrated through its reproducible pinned build with no co-loaded
+official QUIC classes or hidden local override.
+
 ## Required acceptance before durable object integration
 
 1. Actual QUIC control requests/responses cross while every allowed data stream

@@ -1,0 +1,202 @@
+PipeStream Java native transport-credit extension, 2026-09-07
+============================================================
+
+RFC repository: /work/main/pipestream-ai/dev-tools/pipestream-quic-protocol-rfc
+Branch: feat/durable-work-results-v2
+RFC base: 1756162e7b54d55c87ebfbca875c57da05ded536
+
+Scope and boundaries
+--------------------
+Source-pinned quiche and Netty transport extensions, their regression tests,
+and a fresh isolated native rebuild. This is not an upstream release or a
+published Maven package. The RFC Java POM still selects the official Netty
+artifacts and advertises V2 Core only. No V2 durable-object endpoint, complete
+control/data reservation, total-memory bound or cross-language parity is claimed.
+
+Only patches, the exact Cargo lock, accompanying upstream notices and build
+instructions are stored in the RFC repo. Reference repositories/build sources
+remain under /work/reference-code. No source repository is embedded in research
+notes, no global Maven override is installed, and no upstream branch is pushed.
+
+Exact source inputs
+-------------------
+Netty tag netty-4.2.17.Final, peeled commit:
+  e0789d32c72f46fd2e7c99b6fdbbf7e2f4409e44
+quiche commit:
+  4f347477006bf7f928335d28f05056013f70b87e
+Netty native BoringSSL commit:
+  0226f30467f540a3f62ef48d453f93927da199b6
+quiche standalone BoringSSL submodule commit:
+  f1c75347daa2ea81a941e953f2263e0a4d970c8d
+The two BoringSSL pins differ. Standalone Rust tests and the actual Netty
+native TLS build are separately reported, not treated as identical artifacts.
+
+SHA-256 (also enforced by transport/SHA256SUMS):
+  netty.patch
+    a6f0cbd615abce2d572763b8d14299f92e9af45fb77e71e55676794d29a771c7
+  quiche.patch
+    209c4752825bde71527d27fdaaa12f54a7a13c8a6477225d7d5e2d2fefab7881
+  quiche-Cargo.lock
+    c5039e79db6949df057e185ef182003a891fdcb2820fb09c9886f8c546f8cc34
+
+Behavior and regression oracles
+-------------------------------
+- Explicit initial connection replenishment window, independent of initial
+  advertised MAX_DATA, clamped to the configured maximum at connection creation.
+  Setter order does not matter; unset preserves upstream default behavior.
+  Autotuning/stream lower bounds still apply. Zero is not a general disable flag.
+- Saturating native retained-span counter: sum of written stream offsets beyond
+  each contiguous ACK frontier. ACKed tails behind a hole stay charged. Packet
+  emission/retransmission and completed Java writes do not release it. Local
+  reset and peer STOP_SENDING clear their send-buffer charge. FIN adds no bytes.
+- Connection-wide send cap and protected slice, with trusted per-stream control
+  classification. Both direct and composite native writes, plus automatic queue
+  retries, use the same current aggregate limit. JNI saturation fails closed.
+- Real loopback tests withhold ACKs, fill ordinary admission, deliver reserved
+  bytes and exercise a zero-reservation negative control. Classification applies
+  to queued and future writes; off-event-loop changes after registration refuse.
+- FIN must follow all queued payload. ByteBuf plus shutdownOutput and data-bearing
+  FIN-frame tests require exact composite bytes, withheld FIN during saturation,
+  and complete bytes plus FIN after acknowledgments restore capacity.
+- Local output reset fails pending/future writes with ChannelOutputShutdownException,
+  remains nonwritable across an event-loop barrier, and releases only native
+  buffers it owns so another stream can progress. Peer reset ID/code are exact.
+
+The counter is not exact memory: partial backing-buffer prefixes, metadata,
+TLS, datagrams and Java queues are outside it. Native copying can retain one
+ACKed prefix up to 4095 bytes per send stream. Custom zero-copy backing storage
+can retain more. Scanning live streams also requires a stream-count bound.
+No congestion-window reservation, peer-credit guarantee or delivery deadline
+is supplied by this native admission API.
+
+Red-to-green history
+--------------------
+First valid focused native run: session 5596, exit 1, 14 cases / 4 failures.
+  /tmp/netty-quic-pipestream-focused-sendbuffer-rerun-20260907T1944.log
+Two failures exposed FIN overtaking queued payload, one per executor. Two were
+an incorrect test oracle classifying its deliberately injected peer reset as
+unexpected; the oracle now names the exact stream and reset code.
+
+After ordered FIN and strengthened tests: session 61312, exit 1, 16 cases / 2 failures.
+  /tmp/netty-quic-pipestream-focused-sendbuffer-green-20260907T1950.log
+Both failures exposed local reset leaving the existing pending write unresolved.
+The fix settles owned promises and prevents subsequent native writability from
+reopening locally reset output. No timeout is accepted as a successful refusal.
+
+Post-fix focused run: session 37399, exit 0, 16 cases / 0 failures/errors/skips.
+  /tmp/netty-quic-pipestream-focused-sendbuffer-final-20260907T1952.log
+Final strengthened focused run: session 38010, exit 0, 16 / 0 / 0 / 0.
+  /tmp/netty-quic-pipestream-focused-sendbuffer-strengthened-20260907T1955.log
+Final retained-source full native package/tests: session 28351, exit 0,
+294 tests / 0 failures/errors/skips.
+  /tmp/netty-quic-pipestream-final-native-package-and-tests-20260907T1958.log
+
+Earlier setup failures were not protocol regression evidence: an unresolved
+plugin group after changing artifact coordinates, a 121-character checkstyle
+line, and a Maven -am invocation expanding to unrelated unbuilt modules. The
+coordinate/line repairs and exact two-module reactor fix those setup defects.
+No checks were disabled to repair a test failure.
+
+Standalone quiche verification
+------------------------------
+Directory: /work/reference-code/quiche-pipestream
+  cargo test -p quiche --lib --features 'ffi qlog custom-client-dcid'
+Session 15110, exit 0: 934 unit tests, zero failures/ignored.
+  /tmp/quiche-pipestream-netty-feature-lib-20260907T1934.log
+  cargo test -p quiche
+Session 2130, exit 0: 930 unit + 43 doc tests, zero failures/ignored.
+  /tmp/quiche-pipestream-package-and-doc-20260907T1935.log
+
+After four formatting-only changes to the added tests, all eight new cases
+were rerun against the final quiche patch, each with captured exit 0:
+  stream_send_retained: 5 tests, session 90701
+    /tmp/quiche-pipestream-stream-send-retained-finalfmt-20260907T1959.log
+  connection_window: 2 tests
+    /tmp/quiche-pipestream-connection-window-finalfmt-20260907T1959.log
+  connection_replenishment: 1 test
+    /tmp/quiche-pipestream-connection-replenishment-finalfmt-20260907T1959.log
+Earlier test fixture failures used insufficient connection/stream credit or
+stream 4 despite a one-stream limit; repaired fixtures exercise actual packets,
+prefix ACKs, out-of-order ACK holes, retransmitted STREAM data and reset release.
+
+Scoped lint limitations, not reported as green
+---------------------------------------------
+Strict upstream clippy command with -D warnings exited 101, session 70615:
+  /tmp/quiche-pipestream-clippy-netty-features-20260907T1946.log
+Two diagnostics were confirmed present in the unmodified pinned source:
+useless_borrows_in_formatting on trace_id in lib.rs, and manual_checked_ops
+in recovery/bandwidth.rs. They were not suppressed or fixed as unrelated work.
+
+Stable cargo fmt --all -- --check exited 1 because the upstream configuration
+requires nightly features and proposes broad changes. Nightly touched-file
+checking still exits 1 after the four new-test formatting fixes because of
+existing whole-file drift:
+  /tmp/quiche-pipestream-nightly-touched-rustfmt-fourhunks-20260907T2000.log
+No whole-tree formatting pass is claimed. git diff --check passed.
+The exported patch files contain required single-space empty-context prefixes.
+Their narrowly scoped Git attributes permit those prefixes; the actual staged
+source diffs pass whitespace checking in both reference repositories. Exported
+bytes and patch hashes are unchanged. This does not waive source whitespace checks.
+
+Strict Javadoc (-Xdoclint:all -Werror) for changed public Java types passed,
+captured exit 0, after two missing upstream API documentation tags were repaired:
+  /tmp/netty-quic-pipestream-strict-javadoc-fixed-20260907T1957.log
+This is not full upstream package doclint. Maven's upstream build emits existing
+compiler/bundle/plugin warnings and skips its configured API-comparison gate.
+The Surefire dumpstream warning contains JVM GC stdout, not evidence of native
+memory corruption. The original warning/dump files are retained, not discarded.
+
+Fresh source-pinned build: final acceptance for this bundle
+----------------------------------------------------------
+Command, from the RFC root:
+  bash implementations/java-netty/transport/build.sh
+Retained session 41099, actual terminal exit 0. No production edits during run.
+Outer log: /tmp/pipestream-rfc-cleanroom-build-20260907T2002.log
+New isolated directory: /work/reference-code/pipestream-quic-build.fVkIxslw
+Complete Maven log: <directory>/verify.log
+The script checks patch/lock SHA-256, fetches both exact upstream commits, applies
+the patches, and uses only its own generated source directories and Maven cache.
+It forces skipTests=false and maven.test.skip=false. No -am or global install.
+Native upstream cleanup deletes only its disposable target source directories.
+
+Actual Linux native path:
+  cargo build --locked -p quiche --features 'ffi qlog custom-client-dcid' --release
+  QUICHE_BSSL_PATH=<fresh pinned BoringSSL>/
+  RUSTFLAGS=-Cforce-frame-pointers=yes
+Toolchain: Java/GraalVM CE 25.0.3+9-jvmci-25.1-b19; Maven 3.9.16;
+cargo/rustc 1.97.1; GNU C compiler 15.2.0. Linux x86_64 only for this entry point.
+This is repeatable source-pinned construction, not a bit-identical binary claim
+across toolchains, build directories or timestamps.
+
+31 fresh native Surefire XML files, independently aggregated: 294 tests,
+zero failures/errors/skips. Timestamps 20:04:34.606 through 20:05:15.619 EDT.
+Maven BUILD SUCCESS at 2026-09-07T20:05:18-04:00. bash -n also passed.
+
+Fresh artifact SHA-256:
+  netty-codec-classes-quic-4.2.17.Final-pipestream.1.jar
+    7431dc311f68bd57adfa8a05e88a4c5b5531561822d6f3119967da01fab77388
+  netty-codec-native-quic-4.2.17.Final-pipestream.1-linux-x86_64.jar
+    ba3ef55bd8d96f50621f94871b0c4cc683a9d0b6875ccbfbfa8b3fa97970988d
+Group: ai.pipestream.transport; version: 4.2.17.Final-pipestream.1.
+Other Netty modules remain official io.netty 4.2.17.Final dependencies.
+Native JAR manifest contains the two exact patch hashes, upstream quiche and
+BoringSSL revisions above, and the unique library:
+  META-INF/native/libnetty_quiche42_pipestream_linux_x86_64.so
+Its Fragment-Host names the modified classes bundle, not the official one.
+Java QUIC package names are unchanged; do not co-load official and modified QUIC
+classes/native dependencies. Distinct coordinates do not prevent class collisions.
+
+Remaining goal scope
+--------------------
+Next integrate this dependency reproducibly into the Java reference, implement
+the actual object/control owner and satisfy all five acceptance gates in
+docs/standards/java-v2-transport-credit.md. Then complete independent Java durable
+admission/execution/fences, publication/results, retention/retirement and client
+recovery. This bundle does not rerun or replace the RFC's full regression suite;
+its existing Java dependency remains unchanged at this checkpoint.
+
+The neutral Rust process/failure driver, full both-language outcomes/refusals/
+restart/resource evidence, and original external chunk/distribute/transform/
+reassemble workload plus equivalent authenticated durable streaming-gRPC baseline
+remain mandatory. No goal completion, main merge, deployment, package publication
+or IETF submission is claimed.
