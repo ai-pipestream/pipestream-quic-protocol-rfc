@@ -219,9 +219,14 @@ Explicit retry,
 broader orphan/subtree reconciliation, result-read pins and transport,
 retirement and full cross-language failure/resource gates remain required.
 
-The Rust expansion-completion path still needs the same explicit check that sealed
-but unadmitted, nonterminal child obligations cannot be left behind. Existing Rust
-tests and implementation coverage do not establish that invariant yet.
+Rust now applies the same sealed/admitted-or-terminal coverage check before
+completing expansion and when auditing retained completed jobs. Incomplete
+production returns NOT_READY without completing expansion or releasing its
+current local lease; contradictory retained completion is refused as corrupt
+storage. Tests cover both refusals, real admitted-but-unexecuted children,
+terminal children without input, and reopen. The check streams missing-job
+members with bounded application memory but may scan the whole child scope;
+it is not a constant-time or cross-language wire-performance claim.
 
 As of 2026-09-07, the Rust authority library also implements transactional
 admission and replay, fenced worker execution, both branch producers and real

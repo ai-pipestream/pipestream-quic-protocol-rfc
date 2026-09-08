@@ -1,0 +1,123 @@
+Rust expansion-completion coverage, 2026-09-08
+Base: de800fc5ffc19b42d663070d968e1e7be5e61079
+Implementation and tests: the commit containing this evidence file.
+
+Contract and implementation
+  Section 12.5 already requires sealed membership and admitted-or-terminal child
+  obligations before completing authority expansion. The Rust completion path
+  now checks that rule in the same transaction as the proposed transition.
+  NOT_READY leaves production incomplete with the current attempt/local lease;
+  it does not publish FAILED or incorrectly enter WAITING_CHILDREN. Committed
+  declarations/admissions from the callback are not rolled back by this refusal.
+
+  The same check audits jobs claiming completed expansion during integrity
+  checking and reopen. Unresolved obligations become corrupt-storage refusals;
+  unrelated SQL/storage/resource errors retain their original classification.
+  The scan streams missing-job members and verifies their typed work records.
+  Admission is distinct from execution: admitted children may be unfinished,
+  and a legitimate terminal inputless child has no missing admission obligation.
+  There is no wire, profile, schema or private storage-format revision.
+
+Reviewed tests and fixtures
+  Five focused regressions cover unsealed completion, sealed/unadmitted
+  completion, real admitted-but-unexecuted input, a real SKIPPED inputless child,
+  and checksummed contradictory completed WORK/JOB records on integrity/reopen.
+  Refusals retain ACTIVE, wire attempt 1, local lease 1, incomplete production,
+  and unchanged parent WORK/JOB settlement credits and capacities. Claiming the
+  lease can advance record revisions, so unchanged revisions are not asserted.
+  Legal completion controls also pass integrity checking after reopen.
+
+  Existing test registries now use actual empty input receive/prepare/admit
+  operations before their default completion. A pool fixture that deliberately
+  leaves child input unadmitted explicitly yields; independent leaf work still
+  progresses and caller-expanded work still refuses NOT_READY. No production
+  guard exemption or fabricated successful child job was introduced.
+
+Initial failures and corrections
+  Baseline three-test filter before the guard, session 25185, exit 101:
+    /tmp/pipestream-expansion-completion-baseline-20260908T092155-0400.log
+  1 passed, 2 failed, 453 unrelated tests filtered. Both invalid Complete calls
+  returned success instead of the required NOT_READY. The old unsealed path
+  published terminal failure; the sealed/unadmitted path completed expansion.
+  The real admitted-child control passed.
+
+  Initial production cargo check exited 0:
+    /tmp/pipestream-expansion-completion-check-20260908T092543-0400.log
+  Extended five-test filter, session 32903, exit 101:
+    /tmp/pipestream-expansion-completion-green-20260908T092550-0400.log
+  4 passed, 1 failed, 453 filtered. Despite the filename, this run was not green.
+  The remaining failure was a test-oracle error: work_view legitimately returns
+  DECLARED before admission. The corrected assertion checks DECLARED, no input,
+  no admitted_at and no execution job. The separate NOT_READY assertion for
+  invalid completion remains. No production change was made to hide that error.
+
+Verification scope
+  Static test review preceded build/test execution. Final review independently
+  checked the source and raw evidence rather than accepting summary counts.
+  Reopen tests are not new process-death tests. The full existing workspace suite
+  also runs its established crash/integration families.
+
+Rust verification (working directory: implementations/rust-quinn)
+  cargo test --locked -p pipestream-core v2::authority -- --nocapture
+    /tmp/pipestream-expansion-authority-focused-20260908T093115-0400.log
+  226 passed, 0 failed/ignored; 232 unrelated library tests filtered.
+
+  cargo test --locked --workspace, session 79156, exit 0:
+    /tmp/pipestream-expansion-authority-full-workspace-20260908T093147-0400.log
+  Raw result-group counts: 30,458,1,1,1,1,235,69,1,1,1,1,4,8,0,0.
+  Independently summed: 812 passed, 0 failed/ignored, 16 groups.
+  This run preceded the import-only correction below and emitted two warnings.
+
+  cargo clippy --locked -p pipestream-core --all-targets -- -D warnings
+    First run, session 22611, exit 101:
+      /tmp/pipestream-expansion-authority-core-clippy-20260908T093338-0400.log
+    Initial remediation, session 60925, exit 101:
+      /tmp/pipestream-expansion-authority-core-clippy-remediated-20260908T093453-0400.log
+  A new test-only parent-module Digest trait import reached child modules through
+  super::* and made their normal imports redundant in tests. Removing the child
+  imports then broke the non-test branch target (E0599). The final correction
+  restores the original child imports and moves the new import inside the
+  test-only fixture function, without conditional production imports or semantic
+  changes. No test assertions changed after the full workspace run.
+
+  Final all-target Clippy, direct command exit 0, no warnings:
+    /tmp/pipestream-expansion-authority-core-clippy-final-20260908T093723-0400.log
+  Final authority filter (same command above), session 68302, exit 0:
+    /tmp/pipestream-expansion-authority-focused-final-20260908T093742-0400.log
+  226 passed, 0 failed/ignored; 232 unrelated library tests filtered. Zero-test
+  filtered integration binaries are not additional coverage. The full 812-test
+  suite was not rerun after the reviewed import-only change. Scoped rustfmt
+  used edition 2024 and skip_children=true; whitespace checks pass.
+
+  Final source SHA-256, verified against the working files:
+    execution.rs 3675549e35acc12f1a90ac023f0a05da267eb55d749d7a73b5e7715c80206dae
+    execution/branch.rs 632a74907127cad6d4bb93b626b09770e873cf4d51e5476496dd84e372eab211
+    execution/tests.rs 1d7e2c9734831b204af4ca6fb630c0e85a5196915cf54b956fd612054db98968
+    execution/tests/expansion_completion_tests.rs 125a9bd71236e20d3615af3226d0176b536e01d97e5bf3ad2030ea538d664b82
+    jobs.rs 343fe51eabff976d556b03f1bcda702a8585852bf23ae7b94e2c1b8f2c5ad800
+    admission/tests.rs 41b29c0b9ff3ddc1e25371419a62174cb2645f2fc6234dc71bc6dfdc43a65fe6
+    ingress.rs 3b571cebe9d8f34629c0256be037da3d832eb604ff398a3e182b6e0ff45598fa
+    settlement/tests.rs f3027b290158ad14c5a1acaa5f494cde4dac303ba9d5011bf4aaf54b5653649e
+
+Draft verification
+  ./build.sh core 05 draft, session 93269, exit 0:
+    /tmp/pipestream-expansion-completion-draft-20260908T093624-0400.log
+  idnits: 0 errors/flaws/warnings; existing FIPS-180-4 downref comment.
+  The generator retained its existing RFC9308 bibxml override warning.
+  The updated Appendix D coverage and limitations were inspected in TXT/HTML.
+  Final generated artifact SHA-256:
+    XML 2ddb96497739af3521d7222de8daf2663d66900fe3e9491609634537132c92d2
+    TXT ba52b3f831fab0609453cf673c579ca3f6f1932470aa51cf3000a33f2e8c71fb
+    HTML 2e75ceeb0c3d7530f6521533869ef0a0aed227f3aa7858aadc4603686dac6232
+
+Limits and remaining work
+  The coverage scan has bounded application memory but can visit the whole child
+  scope; no new large-tree performance or whole-process resource measurement was
+  made. SQL storage corruption outside this invariant remains subject to the
+  existing broader integrity audits. No Java source, dependencies, or external
+  examples changed, and their earlier evidence was not relabeled as fresh.
+  This is local authority verification, not both-direction authenticated Java V2
+  wire conformance. Full Java retry/cancellation/results/cleanup/retirement/
+  transport/client behavior, the neutral cross-language failure driver and every
+  original external workload/equivalent authenticated durable streaming-gRPC
+  deliverable remain required. The full goal is active and incomplete.

@@ -2,6 +2,8 @@
 //! tasks. A host runs these on its bounded worker pool. Every worker owns bounded
 //! payload handles; a lease is not an exactly-once external-effect guarantee.
 
+#[cfg(test)]
+use super::ingress::{InputPreparation, InputReception};
 use super::{
     ingress::Applications,
     payload::{ObjectReader, OutputReservation, OutputStaging, PayloadStore},
@@ -715,25 +717,64 @@ fn checked(store: &AuthorityStore, tx: &Transaction<'_>, context: &WorkContext) 
 #[cfg(test)]
 mod tests;
 
-// Test fixtures that exercise incomplete descendants need a deliberate real
-// declaration without an input. Real expanding applications retain their own
-// callback; this wrapper is never compiled into the product.
+// Broad test registries need a valid default mode-2 callback. Real expanding
+// applications retain their own callback; this wrapper is never compiled into
+// the product.
 #[cfg(test)]
-pub(super) fn fixture_application(inner: Arc<dyn Application>) -> Arc<dyn Application> {
-    struct DeclaredChild(Arc<dyn Application>);
-    impl Application for DeclaredChild {
+pub(super) fn fixture_application(
+    label: ApplicationLabel,
+    inner: Arc<dyn Application>,
+) -> Arc<dyn Application> {
+    use sha2::{Digest as _, Sha256};
+
+    struct AdmittedChild {
+        label: ApplicationLabel,
+        inner: Arc<dyn Application>,
+    }
+    impl Application for AdmittedChild {
         fn execute(&self, context: &mut WorkContext) -> Result<ApplicationOutcome> {
-            self.0.execute(context)
+            self.inner.execute(context)
         }
         fn expansion(&self) -> Option<&dyn Expansion> {
-            self.0.expansion().or(Some(self))
+            self.inner.expansion().or(Some(self))
         }
     }
-    impl Expansion for DeclaredChild {
+    impl Expansion for AdmittedChild {
         fn expand(&self, context: &mut ExpansionContext<'_>) -> Result<ExpansionOutcome> {
             context.declare(context.operation(Id(1))?, &[Id(1)], true)?;
+            let parameters = AdmitParameters {
+                work: WorkKey {
+                    scope: Number(context.child_scope().0),
+                    producer: Producer(1),
+                    entity: Id(1),
+                },
+                input: Input {
+                    length: Number(0),
+                    sha256: Digest(Sha256::digest(b"").into()),
+                    content_type: ApplicationLabel("application/octet-stream".into()),
+                },
+                application: self.label.clone(),
+                mode: Mode(0),
+                execution_ms: Duration(1000),
+                outputs: OutputBudget {
+                    count: BatchCount(1),
+                    total_bytes: Number(0),
+                },
+            };
+            let now = Instant::now();
+            match context.receive_input(context.operation(Id(2))?, parameters, now)? {
+                InputReception::Replay(_) => {}
+                InputReception::Receiving(receiving) => {
+                    match context.prepare_input(receiving.finish(now)?)? {
+                        InputPreparation::Replay(_) => {}
+                        InputPreparation::Ready(prepared) => {
+                            context.admit_input(*prepared)?;
+                        }
+                    }
+                }
+            }
             Ok(ExpansionOutcome::Complete)
         }
     }
-    Arc::new(DeclaredChild(inner))
+    Arc::new(AdmittedChild { label, inner })
 }

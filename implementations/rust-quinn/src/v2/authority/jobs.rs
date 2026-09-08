@@ -216,6 +216,62 @@ pub(super) fn capacity(
     Ok(())
 }
 
+/// Ending production must not strand an immutable child obligation. Admission
+/// is distinct from execution: admitted, unfinished children may still run after
+/// this check succeeds. Stream missing-job members without collecting the scope.
+pub(super) fn require_expansion_inputs(
+    tx: &Transaction<'_>,
+    generation: Id,
+    parent: &WorkView,
+) -> Result<()> {
+    let child = parent
+        .child
+        .as_ref()
+        .ok_or(StoreError::Corrupt("expansion child scope missing"))?;
+    let scope = scopes::load(tx, generation, Number(child.scope.0))?;
+    if child.producer != Producer(1)
+        || scope.producer != child.producer
+        || scope.parent.as_ref() != Some(&parent.work)
+    {
+        return Err(StoreError::Corrupt("expansion child scope binding changed"));
+    }
+    if scope.seal.is_none() {
+        return Err(protocol(
+            ErrorCode::NotReady,
+            "authority expansion membership is not sealed",
+        ));
+    }
+    let mut statement = tx.prepare(
+        "SELECT w.row_id,w.entity,w.producer FROM work w LEFT JOIN jobs j ON j.work_row=w.row_id
+         WHERE w.generation=?1 AND w.scope=?2 AND j.work_row IS NULL ORDER BY w.entity",
+    )?;
+    let mut rows = statement.query(params![sql(generation.0)?, sql(child.scope.0)?])?;
+    while let Some(row) = rows.next()? {
+        let (_, member): (_, WorkView) = records::read(
+            tx,
+            records::Target {
+                table: records::Table::Work,
+                row: row.get(0)?,
+            },
+        )?;
+        if member.work.scope != Number(child.scope.0)
+            || member.work.entity != Id(number(row, 1)?)
+            || member.work.producer != child.producer
+            || number(row, 2)? != child.producer.0
+            || member.admitted_at.is_some()
+        {
+            return Err(StoreError::Corrupt("expansion member admission differs"));
+        }
+        if !member.state.is_terminal() {
+            return Err(protocol(
+                ErrorCode::NotReady,
+                "declared child input is not admitted",
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
     let mut statement = tx.prepare("SELECT w.row_id,w.generation,s.owner,j.work_row,s.results FROM work w JOIN sessions s ON s.generation=w.generation LEFT JOIN jobs j ON j.work_row=w.row_id ORDER BY w.row_id")?;
     let mut rows = statement.query([])?;
@@ -276,15 +332,15 @@ pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
             return Err(StoreError::Corrupt("job stage or lease differs from work"));
         }
         if let Some(child) = &view.child {
-            if job.parameters.mode == Mode(2)
-                && job.expansion_complete
-                && scopes::load(tx, Id(number(row, 1)?), Number(child.scope.0))?
-                    .seal
-                    .is_none()
-            {
-                return Err(StoreError::Corrupt(
-                    "completed expansion has no membership seal",
-                ));
+            if job.parameters.mode == Mode(2) && job.expansion_complete {
+                match require_expansion_inputs(tx, Id(number(row, 1)?), &view) {
+                    Err(StoreError::Protocol(error)) if error.code == ErrorCode::NotReady => {
+                        return Err(StoreError::Corrupt(
+                            "completed expansion has unresolved input obligations",
+                        ));
+                    }
+                    result => result?,
+                }
             }
             let retained: (u64, Vec<u8>) = tx.query_row(
                 "SELECT producer,parent FROM scopes WHERE generation=?1 AND scope=?2",

@@ -2343,8 +2343,32 @@ These are local Java library tests, not a V2 authenticated endpoint, a new
 process-death campaign, measured large-tree performance or both-language wire
 conformance. Expansion completion streams unresolved membership with bounded
 application memory but can scan the whole child scope; recovery and STRICT
-closure retain their documented wider audits. The Rust completion guard still
-needs the same explicit sealed/admitted-or-terminal rule from Section 12.5.
+closure retain their documented wider audits.
+
+### Rust expansion-completion and recovery coverage, 2026-09-08
+
+`execution/tests/expansion_completion_tests.rs` covers the same Section 12.5
+rule in the independent Rust authority:
+
+- Unsealed membership and a sealed but unadmitted nonterminal child both refuse
+  completion with NOT_READY. The parent remains ACTIVE with its current attempt,
+  local lease, incomplete phase and unchanged WORK/JOB settlement credits/capacity.
+  Declared work remains inspectable as DECLARED without an input or job.
+- Real admitted but unexecuted children permit WAITING_CHILDREN. Completion ends
+  production, not execution; it does not require child closure.
+- A real SKIPPED child that never had input also permits completion. Both legal
+  controls pass integrity checks after reopening the store.
+- Checksummed WORK/JOB records that falsely claim completion while leaving an
+  unadmitted obligation are rejected by both integrity checking and reopen.
+
+The live transition and recovery audit share a streaming missing-job membership
+check. Existing test registries now admit real empty child inputs; tests needing
+unfinished production explicitly yield instead. There is no test-only completion
+exemption. The scan is bounded in application memory, not constant in scope size.
+This is local authority evidence, not both-direction authenticated wire conformance
+or a new process-death/resource measurement. Commands, initial regression failures,
+the corrected DECLARED-view assertion and final gates are recorded in
+`conformance/results/durable-work-v2-expansion-completion-2026-09-08.txt`.
 
 ## V2-TIME: independent lifetimes and trusted clocks (12.9)
 

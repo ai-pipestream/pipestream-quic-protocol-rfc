@@ -2588,3 +2588,29 @@ not receive a test-only exemption. Complete Java retry/cancellation/results/
 cleanup/retirement/transport/client behavior, the neutral cross-language failure
 driver and every original workload/equivalent authenticated durable streaming-gRPC
 deliverable remain required. The full goal remains active and incomplete.
+
+### Rust expansion-completion checkpoint, 2026-09-08
+
+Rust now applies Section 12.5's sealed/admitted-or-terminal rule both at live
+expansion completion and in the recovery audit. Invalid completion returns
+NOT_READY without settling the parent, releasing its lease or spending its
+remaining WORK/JOB settlement credits. Real admitted-but-unexecuted children
+and real terminal inputless children permit completion. Contradictory stored
+completion is refused on integrity checking and reopen. Existing default test
+expanders now admit actual child input; deliberately unfinished production yields.
+
+Reviewed raw evidence establishes 812 full Rust workspace tests passing, followed
+by 226 authority tests and warnings-denied Clippy after an import-only correction.
+The updated draft builds with zero idnits errors/flaws/warnings and its existing
+FIPS comment. The
+[completion verification record](../../conformance/results/durable-work-v2-expansion-completion-2026-09-08.txt)
+retains exact source hashes, raw logs, the initial regression failures, the
+corrected DECLARED-view test assertion and both intermediate import diagnostics.
+This is not a new wire interoperability, process-death or resource benchmark.
+
+Next complete Java explicit retry and cancellation, followed by the remaining
+results/cleanup/retirement/transport/client behavior. The neutral cross-language
+failure driver, both-language failure/resource evidence and every original
+external workload/equivalent authenticated durable streaming-gRPC deliverable
+remain mandatory. The full goal stays active and incomplete; this checkpoint
+does not shrink the original objective.

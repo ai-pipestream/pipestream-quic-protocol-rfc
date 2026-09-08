@@ -321,15 +321,11 @@ fn finish(context: WorkContext, child: Id, outcome: ExpansionOutcome) -> Result<
     let (row, mut job, job_revision, _, mut view, work_revision, now) =
         checked(&context.executor.store, &tx, &context)?;
     let interval = CommitInterval::new(&view, now, job.lease_until)?;
-    let sealed = scopes::load(&tx, context.identity.generation, Number(child.0))?
-        .seal
-        .is_some();
-    if complete && !sealed {
-        drop(tx);
-        return context.publish(ApplicationOutcome::Failed(diag(
-            ErrorCode::Conflict,
-            "expansion completed without sealing membership",
-        )));
+    if view.child.as_ref().map(|scope| scope.scope) != Some(child) {
+        return Err(StoreError::Corrupt("expansion child scope changed"));
+    }
+    if complete {
+        jobs::require_expansion_inputs(&tx, context.identity.generation, &view)?;
     }
     job.stage = Number(if complete { 2 } else { 0 });
     job.expansion_complete = complete;

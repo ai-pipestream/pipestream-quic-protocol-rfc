@@ -66,7 +66,7 @@ fn applications(application: Arc<dyn Application>) -> Arc<Applications> {
         ApplicationLabel("test/v1".into()),
         vec![Mode(0), Mode(1), Mode(2)],
         RestartSafety::Pure,
-        fixture_application(application),
+        fixture_application(ApplicationLabel("test/v1".into()), application),
     )
     .unwrap();
     Arc::new(apps)
@@ -1389,10 +1389,26 @@ fn worker_pool_bounds_running_callbacks_and_keeps_control_reads_independent() {
     }
 }
 
+struct DeclarationOnlyYield;
+impl Application for DeclarationOnlyYield {
+    fn execute(&self, context: &mut WorkContext) -> Result<ApplicationOutcome> {
+        CopyApplication.execute(context)
+    }
+    fn expansion(&self) -> Option<&dyn Expansion> {
+        Some(self)
+    }
+}
+impl Expansion for DeclarationOnlyYield {
+    fn expand(&self, context: &mut ExpansionContext<'_>) -> Result<ExpansionOutcome> {
+        context.declare(context.operation(Id(1))?, &[Id(1)], true)?;
+        Ok(ExpansionOutcome::Yield)
+    }
+}
+
 #[test]
 fn worker_pool_makes_progress_past_unready_branches_and_reports_named_refusals() {
     let fixture = Fixture::with_members(
-        Arc::new(CopyApplication),
+        Arc::new(DeclarationOnlyYield),
         caps(),
         PhysicalLimits::default(),
         3,
@@ -1413,7 +1429,8 @@ fn worker_pool_makes_progress_past_unready_branches_and_reports_named_refusals()
     let status = pool.shutdown().unwrap();
     assert!(!status.faulted);
     assert!(status.refused >= 1);
-    assert_eq!(status.waiting_children, 1);
+    assert!(status.yielded >= 1);
+    assert_eq!(status.waiting_children, 0);
     assert_eq!(
         status.last_refusal.unwrap().code,
         DiagnosticCode(ErrorCode::NotReady as u64)
@@ -1434,7 +1451,34 @@ fn worker_pool_makes_progress_past_unready_branches_and_reports_named_refusals()
             .state,
         State::SUCCEEDED
     );
-    assert_eq!(fixture.view().state, State::WAITING_CHILDREN);
+    assert_eq!(fixture.view().state, State::ACTIVE);
+    assert!(!fixture.job().expansion_complete);
+    assert_eq!(
+        fixture
+            .store
+            .work_view(
+                &fixture.binding.identity,
+                &WorkKey {
+                    entity: Id(2),
+                    ..fixture.key()
+                },
+                Number(0),
+            )
+            .unwrap()
+            .1
+            .state,
+        State::WAITING_CHILDREN
+    );
+    refuse(
+        fixture.executor.run(
+            &fixture.binding.identity,
+            &WorkKey {
+                entity: Id(2),
+                ..fixture.key()
+            },
+        ),
+        ErrorCode::NotReady,
+    );
 }
 
 #[test]
@@ -1845,6 +1889,7 @@ fn reopening_refuses_a_checksummed_manifest_rebound_to_another_owner() {
 }
 
 mod branch_tests;
+mod expansion_completion_tests;
 mod result_tests;
 mod retention_tests;
 mod retirement_tests;
