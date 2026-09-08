@@ -182,6 +182,7 @@ async fn open_session(
     connect: SocketAddr,
     journal_path: &Path,
     creation_sequence: u64,
+    fresh: bool,
     events: &Path,
     started: Instant,
 ) -> Result<Session> {
@@ -197,8 +198,14 @@ async fn open_session(
         results: true,
     };
     creation.request(Id(1))?;
-    let journal = if journal_path.exists() {
-        Journal::open(
+    if fresh && journal_path.exists() {
+        bail!("journal {} exists; rerun with --resume or a fresh directory", journal_path.display());
+    }
+    if !fresh && !journal_path.exists() {
+        bail!("journal {} missing; nothing to resume", journal_path.display());
+    }
+    let journal = if fresh {
+        Journal::initialize(
             journal_path.to_path_buf(),
             creation,
             journal::JournalLimits::default(),
@@ -207,7 +214,7 @@ async fn open_session(
         )
         .await?
     } else {
-        Journal::initialize(
+        Journal::open(
             journal_path.to_path_buf(),
             creation,
             journal::JournalLimits::default(),
@@ -239,13 +246,19 @@ async fn open_session(
 
 /// Replay journaled-but-unconfirmed intents with their ORIGINAL identities.
 /// Admission replay resends the same chunk file under the recomputed
-/// declaration; nothing invents a new operation or work identity.
-async fn replay_unresolved(session: &Session, seed: u64, staging: &Path, declaration: OperationId) -> Result<()> {
+/// declaration; nothing invents a new operation or work identity. Returns
+/// the set of replayed operation IDs so the admit loop never resubmits
+/// them (and never probes receipts for operations the journal never saw:
+// `receipt()` reports unknown operations as an error, not `None`).
+async fn replay_unresolved(
+    session: &Session,
+    staging: &Path,
+    declaration: OperationId,
+) -> Result<std::collections::HashSet<[u8; 16]>> {
+    let mut replayed = std::collections::HashSet::new();
     let pending = session.client.unresolved(Number(0), PageLimit(256)).await?;
     for (_, intent) in pending {
-        if session.client.receipt(intent.operation).await?.is_some() {
-            continue;
-        }
+        replayed.insert(intent.operation.0);
         match &intent.mutation {
             Mutation::Admit(params) => {
                 let ordinal = (params.work.entity.0 - 1) as u64;
@@ -262,8 +275,7 @@ async fn replay_unresolved(session: &Session, seed: u64, staging: &Path, declara
             }
         }
     }
-    let _ = seed;
-    Ok(())
+    Ok(replayed)
 }
 
 fn chunk_path(staging: &Path, ordinal: u64) -> PathBuf {
@@ -362,16 +374,17 @@ async fn run_session(
     let ordinals: Vec<u64> = (0..chunk_count(total))
         .filter(|o| o % WORKERS as u64 == worker)
         .collect();
+    let fresh = !run.resume;
     let session = open_session(
         run, worker, authority, connect, journal_path, creation_sequence,
-        events, started,
+        fresh, events, started,
     )
     .await?;
     session.log("session-open", -1, authority);
     let declaration = operation_id(seed, worker, "declare", 0);
-    // Declare (idempotent under the frozen identity) then replay anything
-    // the journal still holds as uncertain.
-    if !run.resume {
+    // Declare (fresh runs only) then replay anything the journal still
+    // holds as uncertain.
+    if fresh {
         let ids: Vec<Id> = ordinals.iter().map(|o| Id(o + 1)).collect();
         session
             .client
@@ -386,8 +399,9 @@ async fn run_session(
             .await?;
         session.log("declared", -1, &format!("{} entities", ordinals.len()));
     }
-    replay_unresolved(&session, seed, staging, declaration).await?;
-    // Admit every chunk of this shard under its frozen identity.
+    let replayed = replay_unresolved(&session, staging, declaration).await?;
+    // Admit every chunk of this shard under its frozen identity, except
+    // terminal work and just-replayed operations.
     for &ordinal in &ordinals {
         let admitted = session.client.observed_work(work_key(ordinal)).await?;
         let terminal = admitted.map(|o| (5..=8).contains(&o.view.state.0)).unwrap_or(false);
@@ -395,7 +409,7 @@ async fn run_session(
             continue;
         }
         let operation = operation_id(seed, worker, "admit", ordinal);
-        if session.client.receipt(operation).await?.is_some() {
+        if replayed.contains(&operation.0) {
             continue;
         }
         let len = chunk_len(total, ordinal);
