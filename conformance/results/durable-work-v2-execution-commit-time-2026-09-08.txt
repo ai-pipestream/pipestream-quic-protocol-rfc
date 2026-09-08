@@ -1,0 +1,100 @@
+Rust worker commit-time fences, 2026-09-08
+Base: d217b5d7ab8f53616cafb49d8adf05faa078a6e6
+Implementation and tests: the commit containing this evidence file.
+
+Contract and implementation
+  Section 12.6 now explicitly requires the final time check after storage and
+  authorization for acquisition, renewal, publication, expansion yield/complete
+  and explicit retry. A proposed renewal cannot validate expired prior ownership.
+  Newly issued output/receipt intervals must not already have elapsed at commit.
+  There is no wire, profile or private storage-format revision.
+
+  Rust captures the original deadline, initial observation and pre-transition
+  worker lease before rewriting records. After final authorization it checks
+  that interval and persists the final UTC watermark in the same transaction.
+  Acquisition checks its proposed lease; renewal checks both old and proposed
+  leases; explicit retry checks the original deadline without requiring the
+  superseded worker lease. Publication also checks both new retention intervals.
+  Existing operation-replay behavior and funded write ordering remain intact.
+
+Reviewed test coverage
+  Four new execution/tests.rs tests use exact authorization-call clock hooks.
+  Claim refuses equality at its proposed lease expiry; its positive control
+  advances final time from 1000 to 1050, persists 1050 and keeps lease end 1100.
+  Renewal refuses expiry of the old lease even when the replacement would be
+  live; it also refuses an expired shorter replacement while the old lease is
+  live. Regression 1070 -> 1060 refuses despite durable watermark 1050.
+  Publication covers SUCCEEDED, FAILED and AWAITING_RETRY, exact original
+  deadline equality, old lease expiry and exhausted output/receipt intervals.
+  Explicit retry refuses a final time at the original deadline without retaining
+  its operation or changing the attempt, then accepts the original request once.
+
+  Refusal assertions compare WORK/JOB/CLOCK revision, credits and capacity plus
+  durable UTC. Work/job bodies, immutable payload charges and absent receipts
+  are checked where relevant. Positive controls prove the ordinary transitions
+  still commit. These checks are outside the application callback.
+
+  Two new branch_tests.rs tests each exercise Complete and Yield. Final
+  authorization advances to lease equality or the original deadline; refusal
+  preserves ACTIVE, the old lease and expansion_complete=false, including on
+  AuthorityStore reopen. Within-lease advancement commits the correct distinct
+  WAITING_CHILDREN or yielded state without extending the original deadline.
+  Reopen here is not a process crash; existing process-death tests ran in the
+  full execution family and workspace suite.
+
+  Static review corrected a five-field tuple fixture and strengthened exact
+  clock/credit rollback assertions before any test execution. No run-driven
+  assertion weakening, build remediation or production change was needed.
+
+Rust verification (working directory: implementations/rust-quinn)
+  cargo check --locked -p pipestream-core, exit 0:
+    /tmp/pipestream-execution-fence-rust-check-20260908T081945-0400.log
+  cargo test --locked -p pipestream-core v2::authority::execution::tests -- --nocapture
+    session 33574, exit 0:
+    /tmp/pipestream-execution-fence-rust-focused-20260908T082736-0400.log
+  100 real execution-family tests passed, 0 failed/ignored; 353 unrelated library
+  tests filtered. Zero-test filtered integration binaries are not coverage.
+
+  cargo test --locked --workspace, session 99878, exit 0:
+    /tmp/pipestream-execution-fence-rust-full-workspace-20260908T082805-0400.log
+  Raw result-group passed counts: 30,453,1,1,1,1,235,69,1,1,1,1,4,8,0,0.
+  Independently summed: 807 passed, 0 failed/ignored/measured/filtered, 16 groups.
+
+  cargo clippy --locked -p pipestream-core --all-targets -- -D warnings
+    session 84545, exit 0, no warnings:
+    /tmp/pipestream-execution-fence-rust-core-clippy-20260908T082957-0400.log
+  Scoped rustfmt --edition 2024 --config skip_children=true and subsequent
+  --check passed; no child modules or unrelated files were reformatted.
+  The first attempted --skip-children spelling was unsupported and changed
+  nothing. It was corrected before the production compile and all tests.
+
+  Verified source SHA-256 before and after the runs:
+    execution.rs ff36f1cd2af4d69768c473fe8df07904fe5bb135c760fbd3fba8c939a40c832b
+    execution/branch.rs 63ad056b40e5bec7d09282c3b03c57591ab28891df5e9bc8397617d07de8dbbc
+    execution/retry.rs 8afed60e6e71012754e5446528d4de34c24bfd626cecd9296a911bdd15bae387
+    execution/tests.rs ceab2bfc01e3ae580edbfb120700cd0587e1a3371dce3dbf6872af510dc38537
+    execution/tests/branch_tests.rs 2e482bc638a2cbc4cd060537341f8c43d492c365e3daceaeb1a9cdc93f347593
+
+Draft verification
+  ./build.sh core 05 draft, session 26028, exit 0:
+    /tmp/pipestream-execution-fence-draft-20260908T082011-0400.log
+  idnits: 0 errors/flaws/warnings; existing FIPS-180-4 downref comment.
+  The generator also emitted its existing RFC9308 bibxml override warning;
+  this is not a claim that every build tool emitted no warnings.
+  Generated Section 12.6 was inspected in TXT/HTML. Final SHA-256:
+    XML d3ccbdc9f5aa2954836aca94b356f1cced14a117467fae0fbb762d32bbbfcc3b
+    TXT a8cdb57b0bb04e19254eea9706aa217a38257a55b8e64a7ac175e033076680a2
+    HTML 16ed3da0285c7c2052e8a8d0ab4bf71835ec4a8cf06185e21a2c2afdd6d82fb2
+
+Limits and remaining work
+  No Java code, dependencies, schemas or existing external examples changed;
+  their previous checkpoint evidence was not rerun or relabeled as fresh.
+  This is local worker/storage verification, not independent Java V2 wire
+  interoperability, a new resource benchmark or a machine-power-loss claim.
+  Java phase-specific receiver credits, expansion callbacks and durable
+  expansion completion remain next. Full Java retry/cancellation/results/
+  cleanup/retirement/transport/client behavior, the neutral cross-language
+  failure driver, original external workload and equivalent authenticated
+  durable streaming-gRPC comparison remain required. The full goal is active
+  and incomplete; this checkpoint does not establish all authority transitions
+  or every mandatory requirement as conformant.

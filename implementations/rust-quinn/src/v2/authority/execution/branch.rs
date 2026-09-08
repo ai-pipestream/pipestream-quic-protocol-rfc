@@ -320,6 +320,7 @@ fn finish(context: WorkContext, child: Id, outcome: ExpansionOutcome) -> Result<
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let (row, mut job, job_revision, _, mut view, work_revision, now) =
         checked(&context.executor.store, &tx, &context)?;
+    let interval = CommitInterval::new(&view, now, job.lease_until)?;
     let sealed = scopes::load(&tx, context.identity.generation, Number(child.0))?
         .seal
         .is_some();
@@ -340,11 +341,13 @@ fn finish(context: WorkContext, child: Id, outcome: ExpansionOutcome) -> Result<
     // Repeated voluntary yields are ordinary writes and cannot spend the last
     // credits reserved for terminal/deadline settlement.
     records::replace(&tx, job_target(row), job_revision, &job, complete)?;
-    context.executor.store.remember_clock(&tx, now)?;
-    context
-        .executor
-        .store
-        .authorize(&context.identity.owner, Permission::Execute)?;
+    let committed_at = interval.before_commit(
+        &context.executor.store,
+        &tx,
+        &context.identity,
+        Permission::Execute,
+    )?;
+    context.executor.store.remember_clock(&tx, committed_at)?;
     commit(tx, "worker-expansion")?;
     Ok(view)
 }

@@ -473,6 +473,19 @@ invocations are possible: this protocol does not promise exactly-once external
 effects. Callbacks run outside metadata transactions and cannot occupy the
 control reader while waiting for I/O or computation.
 
+The authority MUST recheck the original execution deadline and the worker's
+pre-transition lease after storage work and final authorization, immediately
+before committing a worker transition. This includes publication, renewal,
+and an expanding callback's yield or completion. A renewal MUST NOT use its
+proposed replacement lease to justify ownership after the previous lease
+expired. Acquisition and renewal MUST NOT commit a replacement lease that is
+already expired at the final time observation. Explicit retry MUST likewise
+recheck the original execution deadline before commitment. A final time
+observation earlier than the transaction's initial observation is CLOCK_UNSAFE.
+No transition may commit a newly issued output or receipt interval that has
+already elapsed at that final observation; the authority refuses CLOCK_UNSAFE
+instead of returning an already-expired promise.
+
 WORK operation 8 requests cancellation and operation 10 requests an explicit
 skip. Their receipts are returned as operation 9 and 11. Disposition 0 means
 an authoritative cancellation/skip fence was accepted, not that every worker

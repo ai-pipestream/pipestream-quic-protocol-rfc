@@ -2314,6 +2314,14 @@ original external workload and equivalent durable streaming-gRPC comparison.
 
 - Exact integer UTC milliseconds, checked arithmetic, session maxima and
   original execution deadlines; retry/replay/reconnect/read never extends them.
+- Final authorization may consume time: claim must still have a live proposed
+  lease, renewal must satisfy both the old and proposed lease, and publication
+  and expansion yield/completion must satisfy the pre-transition lease. Retry
+  must remain before the original deadline. Refusal rolls back tentative state,
+  record credits, operation receipts and the clock watermark.
+- A backwards final sample above the persisted watermark must still refuse
+  CLOCK_UNSAFE. Successful forward samples must persist the new watermark;
+  newly issued receipt/output intervals must not have elapsed before commit.
 - Active input/identity cannot be evicted at a receipt age. Deadline/revocation
   drives authoritative fenced settlement, including after restart.
 - Post-terminal output and receipt deadlines are independent; parent-dependency

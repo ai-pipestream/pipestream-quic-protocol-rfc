@@ -2535,3 +2535,27 @@ fence. The declaration/admission fixes do not establish safety for every transit
 Full Java retry/cancellation/results/retirement/transport/client behavior, the
 neutral cross-language driver and every original workload/gRPC deliverable remain
 required. This checkpoint is verified progress, not completion of the full goal.
+
+### Rust execution commit-time checkpoint, 2026-09-08
+
+The remaining worker transitions identified above now check time after final
+authorization. Claim validates its proposed lease; renewal validates the old
+lease as well as its replacement; publication and expansion yield/completion
+validate pre-transition ownership. Explicit retry rechecks the original deadline.
+New receipt/output intervals cannot already have elapsed before publication
+commits. Section 12.6 states these requirements without changing the wire format.
+
+Reviewed raw evidence establishes 100 focused execution tests and 807 full Rust
+workspace tests passing, with no failures or ignored tests. Warnings-denied core
+Clippy and the updated draft build pass. Tests pin named refusals, rollback of
+record revisions/credits/clock, valid forward-time transitions and expansion
+state on reopen. The
+[execution commit-time record](../../conformance/results/durable-work-v2-execution-commit-time-2026-09-08.txt)
+retains exact commands, result counts, source hashes and scope limitations.
+
+Next complete Java's phase-specific receiver credit, producer callback scheduling
+and durable expansion transition, including declared-but-unadmitted obligations.
+Full Java retry/cancellation/results/cleanup/retirement/transport/client behavior,
+the neutral cross-language failure driver and all original workload/equivalent
+authenticated durable streaming-gRPC deliverables remain required. This is
+verified progress; the complete goal remains active and incomplete.

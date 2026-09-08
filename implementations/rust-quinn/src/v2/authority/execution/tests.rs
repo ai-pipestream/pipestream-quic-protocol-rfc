@@ -18,6 +18,21 @@ impl Authorization for Auth {
         owner.0 == "alice" && self.0.load(Ordering::SeqCst)
     }
 }
+struct AdvanceOnAuthorization {
+    calls: AtomicUsize,
+    advance_on: usize,
+    clock: Arc<TestClock>,
+    utc: u64,
+}
+impl Authorization for AdvanceOnAuthorization {
+    fn permits(&self, owner: &IdentityLabel, _: Permission) -> bool {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if call == self.advance_on {
+            self.clock.0.store(self.utc, Ordering::SeqCst);
+        }
+        owner.0 == "alice"
+    }
+}
 fn caps() -> Capabilities {
     Capabilities {
         response: ResponseFlag(1),
@@ -64,6 +79,12 @@ struct Fixture {
     clock: Arc<TestClock>,
     auth: Arc<Auth>,
     executor: Executor,
+}
+#[derive(Debug, PartialEq, Eq)]
+struct DurableSnapshot {
+    work: (Id, u64, usize),
+    job: (Id, u64, usize),
+    clock: (Id, u64, usize, Number),
 }
 impl Fixture {
     fn new(application: Arc<dyn Application>) -> Self {
@@ -242,6 +263,39 @@ impl Fixture {
             self.auth.clone(),
         )
         .unwrap()
+    }
+
+    fn advance_on_authorization(&mut self, call: usize, utc: u64) -> Arc<AdvanceOnAuthorization> {
+        let authorization = Arc::new(AdvanceOnAuthorization {
+            calls: AtomicUsize::new(0),
+            advance_on: call,
+            clock: self.clock.clone(),
+            utc,
+        });
+        self.store.authorization = authorization.clone();
+        self.executor.store.authorization = authorization.clone();
+        authorization
+    }
+
+    fn allow(&mut self) -> Arc<Auth> {
+        let authorization = Arc::new(Auth(AtomicBool::new(true)));
+        self.store.authorization = authorization.clone();
+        self.executor.store.authorization = authorization.clone();
+        authorization
+    }
+
+    fn durable_snapshot(&self) -> DurableSnapshot {
+        let mut connection = self.store.connect().unwrap();
+        let tx = connection.transaction().unwrap();
+        let (row, _, _, _, _) = load(&tx, &self.binding.identity, &self.key()).unwrap();
+        let work = records::header(&tx, work_target(row)).unwrap();
+        let job = records::header(&tx, job_target(row)).unwrap();
+        let (clock, greatest): (_, Number) = records::read(&tx, records::CLOCK).unwrap();
+        DurableSnapshot {
+            work: (work.revision, work.credits, work.capacity),
+            job: (job.revision, job.credits, job.capacity),
+            clock: (clock.revision, clock.credits, clock.capacity, greatest),
+        }
     }
 }
 fn refuse<T>(result: Result<T>, code: ErrorCode) {
@@ -656,6 +710,246 @@ fn renewal_preserves_lease_identity_and_cannot_resurrect_an_expired_lease() {
     fixture.clock.0.store(1150, Ordering::SeqCst);
     refuse(execution.context.renew(), ErrorCode::Conflict);
     assert_eq!(fixture.job().lease, Number(1));
+}
+
+#[test]
+fn claim_final_authorization_cannot_commit_an_already_expired_proposed_lease() {
+    let mut fixture = Fixture::new(Arc::new(CopyApplication));
+    fixture.admit(0, 1, 3);
+    let before_job = fixture.job();
+    let before_view = fixture.view();
+    let before_records = fixture.durable_snapshot();
+    let before_payloads = fixture.payloads.usage(None).unwrap();
+    let authorization = fixture.advance_on_authorization(2, 1100);
+
+    refuse(
+        fixture
+            .executor
+            .claim(&fixture.binding.identity, &fixture.key()),
+        ErrorCode::Conflict,
+    );
+    assert_eq!(authorization.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(fixture.job(), before_job);
+    assert_eq!(fixture.view(), before_view);
+    assert_eq!(fixture.durable_snapshot(), before_records);
+    let after_payloads = fixture.payloads.usage(None).unwrap();
+    assert_eq!(
+        (
+            after_payloads.objects,
+            after_payloads.charged_bytes,
+            after_payloads.incomplete_objects,
+        ),
+        (
+            before_payloads.objects,
+            before_payloads.charged_bytes,
+            before_payloads.incomplete_objects,
+        )
+    );
+
+    fixture.clock.0.store(1000, Ordering::SeqCst);
+    let authorization = fixture.advance_on_authorization(2, 1050);
+    let execution = fixture
+        .executor
+        .claim(&fixture.binding.identity, &fixture.key())
+        .unwrap();
+    assert_eq!(execution.lease(), Number(1));
+    assert_eq!(fixture.job().lease_until, Some(Number(1100)));
+    assert_eq!(authorization.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(fixture.durable_snapshot().clock.3, Number(1050));
+}
+
+#[test]
+fn renewal_final_authorization_checks_old_and_new_lease_and_transaction_clock_order() {
+    let mut fixture = Fixture::new(Arc::new(CopyApplication));
+    fixture.admit(0, 1, 3);
+    let mut execution = fixture
+        .executor
+        .claim(&fixture.binding.identity, &fixture.key())
+        .unwrap();
+    fixture.clock.0.store(1050, Ordering::SeqCst);
+    let before = fixture.job();
+    let before_records = fixture.durable_snapshot();
+    let authorization = fixture.advance_on_authorization(2, 1100);
+    execution.context.executor.store.authorization = authorization.clone();
+    refuse(execution.context.renew(), ErrorCode::Conflict);
+    assert_eq!(authorization.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(fixture.job(), before);
+    assert_eq!(fixture.durable_snapshot(), before_records);
+
+    fixture.clock.0.store(1050, Ordering::SeqCst);
+    let allowed = fixture.allow();
+    execution.context.executor.store.authorization = allowed;
+    execution.context.renew().unwrap();
+    assert_eq!(fixture.job().lease_until, Some(Number(1150)));
+
+    fixture.clock.0.store(1070, Ordering::SeqCst);
+    execution.context.executor.lease_ms = Duration(10);
+    let before_short = fixture.durable_snapshot();
+    let authorization = fixture.advance_on_authorization(2, 1080);
+    execution.context.executor.store.authorization = authorization.clone();
+    refuse(execution.context.renew(), ErrorCode::Conflict);
+    assert_eq!(authorization.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(fixture.durable_snapshot(), before_short);
+
+    fixture.clock.0.store(1070, Ordering::SeqCst);
+    execution.context.executor.lease_ms = Duration(100);
+    let before_regression = fixture.job();
+    let before_regression_records = fixture.durable_snapshot();
+    let authorization = fixture.advance_on_authorization(2, 1060);
+    execution.context.executor.store.authorization = authorization.clone();
+    refuse(execution.context.renew(), ErrorCode::ClockUnsafe);
+    assert_eq!(authorization.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(fixture.job(), before_regression);
+    assert_eq!(fixture.durable_snapshot(), before_regression_records);
+    // The final 1060 sample stayed above the durable 1050 floor. The refusal
+    // therefore proves an intra-transaction regression from the initial 1070.
+    fixture.clock.0.store(1070, Ordering::SeqCst);
+    let allowed = fixture.allow();
+    execution.context.executor.store.authorization = allowed;
+    execution.context.renew().unwrap();
+    assert_eq!(fixture.job().lease_until, Some(Number(1170)));
+}
+
+#[test]
+fn publication_final_authorization_cannot_exhaust_promised_or_execution_intervals() {
+    for case in [
+        "success-retention",
+        "failed-retention",
+        "retryable-lease",
+        "success-deadline",
+        "failed-deadline",
+        "retryable-deadline",
+    ] {
+        let mut fixture = Fixture::setup(
+            Arc::new(CopyApplication),
+            caps(),
+            PhysicalLimits::default(),
+            1,
+            Policy {
+                execution_limit_ms: Duration(10000),
+                output_retention_ms: Duration(10),
+                receipt_retention_ms: Duration(20),
+            },
+            payload_policy(),
+        );
+        fixture.admit(0, 1, 3);
+        let mut execution = fixture
+            .executor
+            .claim(&fixture.binding.identity, &fixture.key())
+            .unwrap();
+        let outcome = match case.split_once('-').unwrap().0 {
+            "success" => CopyApplication.execute(&mut execution.context).unwrap(),
+            "failed" => ApplicationOutcome::Failed(diag(ErrorCode::InternalError, "failed")),
+            _ => ApplicationOutcome::Retryable(diag(ErrorCode::InternalError, "retryable")),
+        };
+        let before_job = fixture.job();
+        let before_view = fixture.view();
+        let before_records = fixture.durable_snapshot();
+        let before_payloads = fixture.payloads.usage(None).unwrap();
+        let final_utc = match case {
+            "success-retention" => 1010,
+            "failed-retention" => 1020,
+            "retryable-lease" => 1100,
+            _ => 2000,
+        };
+        let expected = match case {
+            "success-retention" | "failed-retention" => ErrorCode::ClockUnsafe,
+            "retryable-lease" => ErrorCode::Conflict,
+            _ => ErrorCode::DeadlineExceeded,
+        };
+        let authorization = fixture.advance_on_authorization(2, final_utc);
+        execution.context.executor.store.authorization = authorization.clone();
+        refuse(execution.context.publish(outcome), expected);
+        assert_eq!(authorization.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(fixture.job(), before_job);
+        assert_eq!(fixture.view(), before_view);
+        assert_eq!(fixture.durable_snapshot(), before_records);
+        let after_payloads = fixture.payloads.usage(None).unwrap();
+        assert_eq!(
+            (
+                after_payloads.objects,
+                after_payloads.charged_bytes,
+                after_payloads.incomplete_objects,
+            ),
+            (
+                before_payloads.objects,
+                before_payloads.charged_bytes,
+                before_payloads.incomplete_objects,
+            )
+        );
+        assert_eq!(fixture.view().state, State::ACTIVE);
+        assert!(fixture.view().manifest.is_none() && fixture.view().diagnostic.is_none());
+
+        fixture.clock.0.store(1100, Ordering::SeqCst);
+        fixture.allow();
+        let mut replacement = fixture
+            .executor
+            .claim(&fixture.binding.identity, &fixture.key())
+            .unwrap();
+        let (outcome, expected_state) = match case.split_once('-').unwrap().0 {
+            "success" => (
+                CopyApplication.execute(&mut replacement.context).unwrap(),
+                State::SUCCEEDED,
+            ),
+            "failed" => (
+                ApplicationOutcome::Failed(diag(ErrorCode::InternalError, "failed")),
+                State::FAILED,
+            ),
+            _ => (
+                ApplicationOutcome::Retryable(diag(ErrorCode::InternalError, "retryable")),
+                State::AWAITING_RETRY,
+            ),
+        };
+        assert_eq!(
+            replacement.context.publish(outcome).unwrap().state,
+            expected_state
+        );
+    }
+}
+
+#[test]
+fn retry_final_authorization_cannot_cross_original_execution_deadline() {
+    let mut fixture = Fixture::new(Arc::new(Retryable));
+    fixture.admit(0, 0, 0);
+    assert_eq!(fixture.run().unwrap().state, State::AWAITING_RETRY);
+    let before_job = fixture.job();
+    let before_view = fixture.view();
+    let before_records = fixture.durable_snapshot();
+    let operation = OperationId([33; 16]);
+    let authorization = fixture.advance_on_authorization(2, 2000);
+    refuse(
+        fixture
+            .store
+            .retry_work(&fixture.binding.identity, operation, &fixture.key(), Id(1)),
+        ErrorCode::DeadlineExceeded,
+    );
+    assert_eq!(authorization.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(fixture.job(), before_job);
+    assert_eq!(fixture.view(), before_view);
+    assert_eq!(fixture.durable_snapshot(), before_records);
+    refuse(
+        fixture
+            .store
+            .operation(&fixture.binding.identity, operation),
+        ErrorCode::NotFound,
+    );
+
+    fixture.clock.0.store(1001, Ordering::SeqCst);
+    fixture.allow();
+    let receipt = fixture
+        .store
+        .retry_work(&fixture.binding.identity, operation, &fixture.key(), Id(1))
+        .unwrap();
+    assert!(matches!(
+        receipt.body,
+        Outcome::Retried {
+            expected_attempt: Id(1),
+            replacement_attempt: Id(2),
+            accepted_at: Number(1001),
+            ..
+        }
+    ));
+    assert_eq!(fixture.view().attempt, Number(2));
 }
 
 struct WithdrawAtPublication;

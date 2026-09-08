@@ -612,6 +612,147 @@ impl LateFixture {
             entity: Id(1),
         }
     }
+    fn view(&self) -> WorkView {
+        self.store
+            .work_view(&self.binding.identity, &self.key(), Number(0))
+            .unwrap()
+            .1
+    }
+    fn job(&self) -> jobs::JobRecord {
+        let mut connection = self.store.connect().unwrap();
+        let tx = connection.transaction().unwrap();
+        load(&tx, &self.binding.identity, &self.key()).unwrap().1
+    }
+    fn reopen(&self) -> AuthorityStore {
+        AuthorityStore::open(
+            &self._directory.path().join("authority.sqlite"),
+            self.store.authority.clone(),
+            self.store.policy.clone(),
+            self.store.physical.limits,
+            self.clock.clone(),
+            self.authorization.clone(),
+        )
+        .unwrap()
+    }
+}
+
+#[derive(Clone, Copy)]
+enum LateExpansionOutcome {
+    Complete,
+    Yield,
+}
+struct FinishAtFinalAuthorization {
+    authorization: Arc<std::sync::Mutex<Option<Arc<LateAuthorization>>>>,
+    outcome: LateExpansionOutcome,
+    advance_to: u64,
+}
+impl Application for FinishAtFinalAuthorization {
+    fn expansion(&self) -> Option<&dyn Expansion> {
+        Some(self)
+    }
+    fn execute(&self, context: &mut WorkContext) -> Result<ApplicationOutcome> {
+        UppercaseScatter.execute(context)
+    }
+}
+impl Expansion for FinishAtFinalAuthorization {
+    fn expand(&self, context: &mut ExpansionContext<'_>) -> Result<ExpansionOutcome> {
+        if matches!(self.outcome, LateExpansionOutcome::Complete) {
+            context.declare(context.operation(Id(1))?, &[], true)?;
+        }
+        self.authorization
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .arm(2, self.advance_to, false);
+        Ok(match self.outcome {
+            LateExpansionOutcome::Complete => ExpansionOutcome::Complete,
+            LateExpansionOutcome::Yield => ExpansionOutcome::Yield,
+        })
+    }
+}
+
+#[test]
+fn expansion_complete_and_yield_recheck_lease_and_deadline_after_final_authorization() {
+    for outcome in [LateExpansionOutcome::Complete, LateExpansionOutcome::Yield] {
+        for (advance_to, expected) in [
+            (1100, ErrorCode::Conflict),
+            (2000, ErrorCode::DeadlineExceeded),
+        ] {
+            let slot = Arc::new(std::sync::Mutex::new(None));
+            let fixture = LateFixture::new(Arc::new(FinishAtFinalAuthorization {
+                authorization: slot.clone(),
+                outcome,
+                advance_to,
+            }));
+            *slot.lock().unwrap() = Some(fixture.authorization.clone());
+            refuse(
+                fixture
+                    .executor
+                    .run(&fixture.binding.identity, &fixture.key()),
+                expected,
+            );
+            assert_eq!(fixture.authorization.calls.load(Ordering::SeqCst), 2);
+            let view = fixture.view();
+            assert_eq!(view.state, State::ACTIVE);
+            assert_eq!(view.deadline, Some(Number(2000)));
+            assert!(view.manifest.is_none());
+            let job = fixture.job();
+            assert_eq!(job.stage, Number(1));
+            assert!(!job.expansion_complete);
+            assert_eq!(job.lease, Number(1));
+            assert_eq!(job.lease_until, Some(Number(1100)));
+            let reopened = fixture.reopen();
+            assert_eq!(
+                reopened
+                    .work_view(&fixture.binding.identity, &fixture.key(), Number(0))
+                    .unwrap()
+                    .1,
+                view
+            );
+            let mut connection = reopened.connect().unwrap();
+            let tx = connection.transaction().unwrap();
+            let (_, retained, _, _, _) =
+                load(&tx, &fixture.binding.identity, &fixture.key()).unwrap();
+            assert_eq!(retained.stage, Number(1));
+            assert!(!retained.expansion_complete);
+            assert_eq!(retained.lease_until, Some(Number(1100)));
+        }
+    }
+}
+
+#[test]
+fn expansion_final_time_within_lease_commits_without_extending_original_deadline() {
+    for outcome in [LateExpansionOutcome::Complete, LateExpansionOutcome::Yield] {
+        let slot = Arc::new(std::sync::Mutex::new(None));
+        let fixture = LateFixture::new(Arc::new(FinishAtFinalAuthorization {
+            authorization: slot.clone(),
+            outcome,
+            advance_to: 1050,
+        }));
+        *slot.lock().unwrap() = Some(fixture.authorization.clone());
+        let view = fixture
+            .executor
+            .run(&fixture.binding.identity, &fixture.key())
+            .unwrap();
+        assert_eq!(fixture.authorization.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(view.deadline, Some(Number(2000)));
+        assert!(view.manifest.is_none());
+        let job = fixture.job();
+        assert_eq!(job.lease_until, None);
+        match outcome {
+            LateExpansionOutcome::Complete => {
+                assert_eq!(view.state, State::WAITING_CHILDREN);
+                assert_eq!(job.stage, Number(2));
+                assert!(job.expansion_complete);
+            }
+            LateExpansionOutcome::Yield => {
+                assert_eq!(view.state, State::ACTIVE);
+                assert_eq!(job.stage, Number(0));
+                assert!(!job.expansion_complete);
+            }
+        }
+    }
 }
 
 struct CaptureLatePreparation {

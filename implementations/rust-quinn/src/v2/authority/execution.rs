@@ -222,8 +222,13 @@ impl Executor {
             records::replace(&tx, work_target(row), work_revision, &view, true)?;
         }
         records::replace(&tx, job_target(row), job_revision, &job, false)?;
-        self.store.remember_clock(&tx, now)?;
-        self.store.authorize(&identity.owner, Permission::Execute)?;
+        let committed_at = CommitInterval::new(&view, now, job.lease_until)?.before_commit(
+            &self.store,
+            &tx,
+            identity,
+            Permission::Execute,
+        )?;
+        self.store.remember_clock(&tx, committed_at)?;
         commit(tx, "worker-claim")?;
         caps.object_limit = job.object_limit.min(caps.object_limit);
         Ok(Execution {
@@ -416,13 +421,20 @@ impl WorkContext {
             let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let (row, mut job, revision, _, view, _, now) =
                 checked(&self.executor.store, &tx, self)?;
+            let interval = CommitInterval::new(&view, now, job.lease_until)?;
             job.lease_until =
                 Some(add_duration(now, self.executor.lease_ms)?.min(view.deadline.unwrap()));
             records::replace(&tx, job_target(row), revision, &job, false)?;
-            self.executor.store.remember_clock(&tx, now)?;
-            self.executor
-                .store
-                .authorize(&self.identity.owner, Permission::Execute)?;
+            let committed_at = interval.before_commit(
+                &self.executor.store,
+                &tx,
+                &self.identity,
+                Permission::Execute,
+            )?;
+            // A shorter deployment lease policy must not return an already
+            // expired replacement, even while the previous lease is live.
+            CommitInterval::new(&view, now, job.lease_until)?.check(committed_at)?;
+            self.executor.store.remember_clock(&tx, committed_at)?;
             commit(tx, "worker-renew")
         })();
         self.record(result)
@@ -464,6 +476,7 @@ impl WorkContext {
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let (row, mut job, job_revision, binding, mut view, work_revision, now) =
             checked(&self.executor.store, &tx, &self)?;
+        let interval = CommitInterval::new(&view, now, job.lease_until)?;
         self.reservation.usage()?; // fail closed if the payload namespace is quarantined
         for output in &self.produced {
             // The reservation pins these already-fsynced immutable objects.
@@ -530,10 +543,23 @@ impl WorkContext {
         // observes all callback/read/dependency handles drained.
         records::replace(&tx, work_target(row), work_revision, &view, true)?;
         records::replace(&tx, job_target(row), job_revision, &job, true)?;
-        self.executor.store.remember_clock(&tx, now)?;
-        self.executor
-            .store
-            .authorize(&self.identity.owner, Permission::Execute)?;
+        let committed_at = interval.before_commit(
+            &self.executor.store,
+            &tx,
+            &self.identity,
+            Permission::Execute,
+        )?;
+        if [view.receipt_until, view.output_until]
+            .into_iter()
+            .flatten()
+            .any(|until| committed_at >= until)
+        {
+            return Err(protocol(
+                ErrorCode::ClockUnsafe,
+                "publication retention interval elapsed before commitment",
+            ));
+        }
+        self.executor.store.remember_clock(&tx, committed_at)?;
         commit(tx, "worker-publish")?;
         Ok(view)
     }
@@ -601,6 +627,62 @@ pub(super) fn load(
     Ok((row, job, record.revision, view, work_revision))
 }
 type Checked = (i64, jobs::JobRecord, Id, Binding, WorkView, Id, Number);
+
+/// The writer transaction excludes competing state mutations, but not clock
+/// movement during I/O or authorization. Preserve the pre-transition interval:
+/// renewing or clearing a lease must not make its expired owner current again.
+struct CommitInterval {
+    observed_at: Number,
+    deadline: Number,
+    lease_until: Option<Number>,
+}
+impl CommitInterval {
+    fn new(view: &WorkView, observed_at: Number, lease_until: Option<Number>) -> Result<Self> {
+        Ok(Self {
+            observed_at,
+            deadline: view
+                .deadline
+                .ok_or(StoreError::Corrupt("job deadline missing"))?,
+            lease_until,
+        })
+    }
+
+    fn check(&self, now: Number) -> Result<()> {
+        if now < self.observed_at {
+            return Err(protocol(
+                ErrorCode::ClockUnsafe,
+                "clock regressed during execution transaction",
+            ));
+        }
+        if now >= self.deadline {
+            return Err(protocol(
+                ErrorCode::DeadlineExceeded,
+                "execution deadline reached",
+            ));
+        }
+        if self.lease_until.is_some_and(|until| now >= until) {
+            return Err(protocol(
+                ErrorCode::Conflict,
+                "worker lease expired before commitment",
+            ));
+        }
+        Ok(())
+    }
+
+    fn before_commit(
+        &self,
+        store: &AuthorityStore,
+        tx: &Transaction<'_>,
+        identity: &SessionIdentity,
+        permission: Permission,
+    ) -> Result<Number> {
+        store.authorize(&identity.owner, permission)?;
+        let now = store.check_clock(tx)?;
+        self.check(now)?;
+        Ok(now)
+    }
+}
+
 fn checked(store: &AuthorityStore, tx: &Transaction<'_>, context: &WorkContext) -> Result<Checked> {
     let binding = store.authorize_session(tx, &context.identity, Permission::Execute)?;
     let (row, job, job_revision, view, work_revision) = load(tx, &context.identity, &context.key)?;

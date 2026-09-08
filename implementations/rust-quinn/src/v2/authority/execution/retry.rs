@@ -32,6 +32,7 @@ impl AuthorityStore {
             return Err(protocol(ErrorCode::Conflict, "retry attempt changed"));
         }
         let now = self.check_clock(&tx)?;
+        let interval = CommitInterval::new(&view, now, None)?;
         if now
             >= view
                 .deadline
@@ -99,8 +100,8 @@ impl AuthorityStore {
             "UPDATE sessions SET operations=operations+1 WHERE generation=?1",
             [sql(identity.generation.0)?],
         )?;
-        self.remember_clock(&tx, now)?;
-        self.authorize(&identity.owner, Permission::Retry)?;
+        let committed_at = interval.before_commit(self, &tx, identity, Permission::Retry)?;
+        self.remember_clock(&tx, committed_at)?;
         commit(tx, "worker-retry")?;
         Ok(receipt)
     }
