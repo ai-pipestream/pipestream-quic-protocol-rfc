@@ -41,10 +41,20 @@ final class ResultFixture implements AutoCloseable {
   InputStore inputs;
 
   ResultFixture(Path directory, String name, byte[] payload) throws Exception {
-    this(directory, name, payload, true);
+    this(directory, name, new byte[0], payload, true);
   }
 
   ResultFixture(Path directory, String name, byte[] payload, boolean publish) throws Exception {
+    this(directory, name, new byte[0], payload, publish);
+  }
+
+  ResultFixture(Path directory, String name, byte[] inputPayload, byte[] payload) throws Exception {
+    this(directory, name, inputPayload, payload, true);
+  }
+
+  ResultFixture(
+      Path directory, String name, byte[] inputPayload, byte[] payload, boolean publish)
+      throws Exception {
     database = directory.resolve(name + ".sqlite");
     inputsPath = directory.resolve(name + "-inputs");
     this.payload = payload.clone();
@@ -68,13 +78,14 @@ final class ResultFixture implements AutoCloseable {
             operation(2),
             new Records.AdmitParameters(
                 WORK,
-                new Records.Input(0, digest(new byte[0]), "application/octet-stream"),
+                new Records.Input(
+                    inputPayload.length, digest(inputPayload), "application/octet-stream"),
                 "copy",
                 0,
                 1000,
                 new Records.OutputBudget(1, payload.length)));
     try (InputStore.Receiver receiver = inputs.begin(context(), inputHeader, SELECTED, 1)) {
-      receiver.write(ByteBuffer.allocate(0), 2);
+      receiver.write(ByteBuffer.wrap(inputPayload), 2);
       receiver.finish(3);
     }
     sessions.admit(
@@ -155,7 +166,7 @@ final class ResultFixture implements AutoCloseable {
         new AdmissionStore.ExecutionPolicy(
             List.of(
                 new AdmissionStore.Application(
-                    "copy", Set.of(0), AdmissionStore.RestartSafety.IDEMPOTENT)),
+                    "copy", Set.of(0, 1), AdmissionStore.RestartSafety.IDEMPOTENT)),
             4,
             4));
   }

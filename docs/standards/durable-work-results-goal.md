@@ -2742,3 +2742,34 @@ release records, active-receiver installation gate, bounded collector and real
 crash/recovery tests, followed by retirement and durable Java transport/client
 integration. The full failure matrix and original external workload/equivalent
 streaming-gRPC baseline remain required. The goal stays active and incomplete.
+
+### Java durable input reclamation checkpoint, 2026-09-08
+
+Java now reclaims one explicitly named terminal job's input after verified child
+closure. Private format 8 keeps independent input/output eligibility timestamps
+after logical refunds. Input cleanup first verifies live storage and commits its
+eligibility, then waits for exact-object readers and receivers, synchronizes
+physical removal and commits the logical refund. Unsafe time refuses destructive
+work; interruption leaves replayable evidence and conservative accounting.
+Recovery rejects missing live input without valid evidence and checks the exact
+metadata-derived input name even after deletion. Output funding, immutable work
+views, manifests and scope commitments remain retained and unchanged.
+
+All 67 focused tests pass, including four real JVM process-death boundaries and
+the terminal-parent-versus-child-closure gate. One initial corruption-fixture
+error was fixed by using the WAL guard's required BEGIN IMMEDIATE transaction;
+the production guard and refusal assertions were unchanged. The final unfiltered
+601-test Java suite passes with zero failures/errors/skips, confirmed against all
+90 fresh XML reports. Strict nine-type doclint, the native guard, three existing
+external examples and the rendered draft/idnits pass. Exact commands, raw paths,
+exits, source/artifact hashes and limitations are in the
+[input-reclamation evidence](../../conformance/results/durable-work-v2-input-reclamation-2026-09-08.txt).
+
+This is a real local input collector, not complete reclamation or task-2 parity.
+Next implement output release under external deadlines, dependent parent state
+and physical output pins, followed by bounded orphan reconciliation and fair
+cleanup scheduling, then durable session retirement. The current child-closure
+check retains its existing session-wide streaming audit cost. Java's durable
+endpoint/client integration, the neutral two-direction failure/resource driver,
+and the full original external workload/equivalent streaming-gRPC comparison
+remain mandatory. The overall goal stays active and incomplete.

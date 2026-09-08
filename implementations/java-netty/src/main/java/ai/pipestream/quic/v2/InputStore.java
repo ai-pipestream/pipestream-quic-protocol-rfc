@@ -117,6 +117,10 @@ final class InputStore implements AutoCloseable {
     OUTPUT_RECLAIM_INSTALLED_REMOVED,
     /** Both orphan namespaces were synchronized before their slots became reusable. */
     OUTPUT_RECLAIM_SYNCED,
+    /** One eligible input name was removed, before directory synchronization. */
+    INPUT_RECLAIM_REMOVED,
+    /** Eligible input removal is synchronized, before physical accounting is refunded. */
+    INPUT_RECLAIM_SYNCED,
     /** Recovery completed its retained-file audit. */
     RECOVERY_AUDITED
   }
@@ -151,6 +155,8 @@ final class InputStore implements AutoCloseable {
   private int files;
   private int handles;
   private final Map<Path, Integer> inputReaders = new HashMap<>();
+  private final Map<Path, Integer> inputReceivers = new HashMap<>();
+  private final Map<Path, Long> inputRemovals = new HashMap<>();
   private boolean closed;
   private Object resultService;
 
@@ -459,6 +465,8 @@ final class InputStore implements AutoCloseable {
     long size = add(add(PREFIX + CHECKSUM, metadata.length), header.parameters().input().length());
     long reservation = multiply(size, 2);
     reserve(reservation, 2, credit);
+    Path target = objectPath(envelope);
+    inputReceivers.merge(target, 1, Integer::sum);
     Path path = root.resolve("pending").resolve(UUID.randomUUID() + ".part");
     FileChannel output = null;
     try {
@@ -477,6 +485,7 @@ final class InputStore implements AutoCloseable {
         }
         release(reservation, 2);
         returnReceiver(credit);
+        unpinReceiver(target);
       } catch (IOException cleanup) {
         // Uncertain physical close or unsynchronized deletion retains both the
         // namespace charge and its handle. Recovery must establish safe reuse.
@@ -825,6 +834,70 @@ final class InputStore implements AutoCloseable {
   }
 
   /**
+   * Observe descriptors and active installations for one exact input. A receiver remains live
+   * through synchronized staging cleanup, so a delayed duplicate FIN cannot recreate an object
+   * while a collector holds this monitor and acts on an unused result. Unborrowed receive credits
+   * have no object identity and are not included. Durable eligibility is still required separately.
+   *
+   * @param context exact owner-qualified session
+   * @param header immutable input identity
+   * @return whether a reader or receiver still owns this object's physical lifecycle
+   * @throws IOException closed storage
+   */
+  synchronized boolean inputInUse(Commitments.Context context, InputHeader header)
+      throws IOException {
+    ensureOpen();
+    Path target = objectPath(envelope(context, header));
+    return inputReaders.containsKey(target) || inputReceivers.containsKey(target);
+  }
+
+  /**
+   * Derive the immutable input name without assuming its physical object remains retained.
+   *
+   * @param context exact owner-qualified session
+   * @param header immutable input identity
+   * @return bounded installation-qualified filename, not an arbitrary caller path
+   * @throws IOException closed storage
+   */
+  synchronized String inputReference(Commitments.Context context, InputHeader header)
+      throws IOException {
+    ensureOpen();
+    return objectPath(envelope(context, header)).getFileName().toString();
+  }
+
+  /**
+   * Remove one input only under the authority's already committed, revalidated release evidence.
+   * The caller must hold this monitor and its paired metadata writer transaction throughout. A
+   * missing name is acceptable only because that durable evidence permits interrupted deletion.
+   * Same-process unlink/sync failures keep their exact charge until synchronization succeeds.
+   *
+   * @param context checked owner-qualified session
+   * @param header exact admitted input
+   * @return false while a reader or receiver still owns the object, true after synchronized absence
+   * @throws IOException corrupt retained object or incomplete deletion/synchronization
+   */
+  synchronized boolean reclaimInput(Commitments.Context context, InputHeader header)
+      throws IOException {
+    ensureOpen();
+    Envelope expected = envelope(context, header);
+    Path target = objectPath(expected);
+    if (inputInUse(context, header)) return false;
+    if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+      Inspected retained = inspect(target, expected, true);
+      Long charged = inputRemovals.putIfAbsent(target, retained.size());
+      if (charged != null && charged.longValue() != retained.size())
+        throw corrupt("pending input removal changed physical size");
+      Files.delete(target);
+      reached(Phase.INPUT_RECLAIM_REMOVED);
+    }
+    sync(root.resolve("objects"));
+    reached(Phase.INPUT_RECLAIM_SYNCED);
+    Long charged = inputRemovals.remove(target);
+    if (charged != null) release(charged, 1);
+    return true;
+  }
+
+  /**
    * Observe an output installation boundary for actual interruption tests.
    *
    * @param phase completed filesystem boundary
@@ -1035,6 +1108,7 @@ final class InputStore implements AutoCloseable {
       synchronized (InputStore.this) {
         release(linked ? size : multiply(size, 2), linked ? 1 : 2);
         returnReceiver(credit);
+        unpinReceiver(objectPath(envelope));
       }
       ended = true;
     }
@@ -1486,6 +1560,14 @@ final class InputStore implements AutoCloseable {
     if (readers == 1) inputReaders.remove(path);
     else inputReaders.put(path, readers - 1);
     handles--;
+  }
+
+  private void unpinReceiver(Path path) {
+    Integer receivers = inputReceivers.get(path);
+    if (receivers == null || receivers == 0)
+      throw new IllegalStateException("input receiver identity accounting underflow");
+    if (receivers == 1) inputReceivers.remove(path);
+    else inputReceivers.put(path, receivers - 1);
   }
 
   private void reserve(long addedBytes, int addedFiles) throws IOException {

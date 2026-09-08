@@ -134,7 +134,7 @@ final class ResultStore {
     AdmissionStore.StoredJob stored = AdmissionStore.job(connection, binding, request.work());
     if (stored == null) throw new SQLException("V2 result: published job missing");
     JobRecord job = stored.record();
-    if (!job.outputsLive() || job.releaseIntent() == 2)
+    if (!job.outputsLive() || job.outputReleaseAt() != null)
       throw error(ProtocolError.Code.OUTPUT_UNAVAILABLE, "promised output has been reclaimed");
     ExecutionStore.Lease producer =
         new ExecutionStore.Lease(

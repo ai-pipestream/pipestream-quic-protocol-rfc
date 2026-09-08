@@ -22,7 +22,8 @@ import java.util.Objects;
  * @param outputsLive output funding remains charged
  * @param executorLive executor capacity remains charged
  * @param expansionComplete authority expansion finished, independently of its membership seal
- * @param releaseIntent zero, input reclamation, or output reclamation
+ * @param inputReleaseAt durable input-deletion eligibility time, retained after refund
+ * @param outputReleaseAt durable output-deletion eligibility time, retained after refund
  */
 record JobRecord(
     InputHeader input,
@@ -38,7 +39,8 @@ record JobRecord(
     boolean outputsLive,
     boolean executorLive,
     boolean expansionComplete,
-    int releaseIntent) {
+    Long inputReleaseAt,
+    Long outputReleaseAt) {
   /** Durable scheduling states, independent of client observation and stream lifetime. */
   enum Stage {
     /** Admitted and eligible for lease acquisition. */
@@ -66,7 +68,8 @@ record JobRecord(
     ProtocolError.require(
         objectLimit <= input.parameters().outputs().totalBytes(),
         "individual output ceiling exceeds its funded total");
-    Checks.range(releaseIntent, 0, 2);
+    if (inputReleaseAt != null) Checks.number(inputReleaseAt);
+    if (outputReleaseAt != null) Checks.number(outputReleaseAt);
     ProtocolError.require(
         inputReference != null && inputReference.matches("[0-9a-f]{64}\\.input"),
         "invalid retained input reference");
@@ -89,10 +92,10 @@ record JobRecord(
         input.parameters().mode() == 2 || expansionComplete,
         "non-expanding job has expansion obligation");
     ProtocolError.require(
-        releaseIntent == 0 || stage == Stage.SETTLED, "unsettled job has reclamation intent");
-    ProtocolError.require(releaseIntent != 1 || inputLive, "input release intent without charge");
-    ProtocolError.require(
-        releaseIntent != 2 || outputsLive, "output release intent without charge");
+        inputReleaseAt == null && outputReleaseAt == null || stage == Stage.SETTLED,
+        "unsettled job has reclamation evidence");
+    ProtocolError.require(inputLive || inputReleaseAt != null, "input refund without evidence");
+    ProtocolError.require(outputsLive || outputReleaseAt != null, "output refund without evidence");
   }
 
   /**
@@ -102,7 +105,7 @@ record JobRecord(
    */
   byte[] encode() {
     Cbor.Writer out = new Cbor.Writer(FixedRecords.JOB_CAPACITY);
-    out.array(14);
+    out.array(15);
     RecordCodec.write(out, input);
     out.number(safety.ordinal());
     out.number(attempt);
@@ -117,7 +120,10 @@ record JobRecord(
     out.bool(outputsLive);
     out.bool(executorLive);
     out.bool(expansionComplete);
-    out.number(releaseIntent);
+    if (inputReleaseAt == null) out.nil();
+    else out.number(inputReleaseAt);
+    if (outputReleaseAt == null) out.nil();
+    else out.number(outputReleaseAt);
     return out.finish();
   }
 
@@ -131,7 +137,7 @@ record JobRecord(
   static JobRecord decode(byte[] bytes) throws SQLException {
     try {
       Cbor.Reader in = new Cbor.Reader(bytes, FixedRecords.JOB_CAPACITY);
-      in.exact(14);
+      in.exact(15);
       InputHeader input = RecordCodec.inputHeader(in);
       int safety =
           (int) Checks.range(in.number(), 0, AdmissionStore.RestartSafety.values().length - 1);
@@ -153,7 +159,8 @@ record JobRecord(
               in.bool(),
               in.bool(),
               in.bool(),
-              (int) Checks.range(in.number(), 0, 2));
+              in.nullable() ? null : in.number(),
+              in.nullable() ? null : in.number());
       in.end();
       return result;
     } catch (ProtocolError invalid) {

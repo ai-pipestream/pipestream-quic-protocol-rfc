@@ -387,7 +387,8 @@ final class FenceStore {
               job.outputsLive(),
               !terminal,
               job.expansionComplete(),
-              0);
+              null,
+              null);
       ExecutionStore.replaceJob(connection, config, binding, stored, replacementJob, true);
     }
     ExecutionStore.replaceWork(connection, config, binding, entity, replacement, true);

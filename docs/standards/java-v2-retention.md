@@ -1,25 +1,26 @@
 # Java V2 retention and retirement implementation plan
 
-This is the remaining implementation work for Section 12.9, not a claim that
-Java reclamation or retirement is implemented. The normative contract remains
+This records implementation and remaining work for Section 12.9. Java now has a
+single-job input reclamation operation; output reclamation, orphan sweeping and
+session retirement remain unimplemented. The normative contract remains
 in `sections-src/section-12.md`. The local result-read service and per-input
 physical reader pins supply part of the liveness machinery. Java's durable
 endpoint/client and the independent failure driver remain separate obligations.
 
 ## Durable eligibility must outlive deletion
 
-The current private `JobRecord.releaseIntent` discriminator is not sufficient
-for reclamation. It records neither when retention conditions were satisfied
+The former format-7 `JobRecord.releaseIntent` discriminator was not sufficient
+for reclamation. It recorded neither when retention conditions were satisfied
 nor proof that a completed release was authorized. Clearing an intent after
 refunding capacity would lose the distinction between intentional deletion and
 unexplained missing bytes on the next restart.
 
-Replace that unused discriminator in the next private storage version with
-separate nullable input-release and output-release timestamps. Keep each
+Private format 8 replaces that unused discriminator with separate nullable
+input-release and output-release timestamps. It keeps each
 timestamp after its corresponding `inputLive` or `outputsLive` charge becomes
 false. These are authoritative eligibility records, not inferred file-deletion
 times, user-supplied clocks or new wire fields. No old private format conversion
-is required. Each resource requires at most one intent write and one completion
+is provided. Each resource requires at most one intent write and one completion
 write, within the four cleanup writes already reserved by `JOB_CREDITS`.
 
 Before committing or accepting a retained release record, verify:
@@ -61,12 +62,12 @@ Unrelated input readers or unborrowed reception credits must not block an
 eligible object. Output readers, writers and borrowed callback credits already
 pin the exact output-funding identity; fresh result reads share those pins.
 
-Active input reception needs a separate identity gate before cleanup is enabled.
+Active input reception now has a separate identity gate used by input cleanup.
 `Receiver.finish` can install the immutable name after an earlier authorization
 check, including a duplicate reception started before the work settled. A reader
-pin alone does not prevent that late installation. Track each receiving input's
-exact identity through synchronized staging cleanup, and exclude or fence it
-before authorizing deletion. An unborrowed receiver credit has no object identity
+pin alone does not prevent that late installation. The store tracks each receiving
+input's exact identity through synchronized staging cleanup and refuses physical
+removal while it remains active. An unborrowed receiver credit has no object identity
 and is not such a dependency. Test a delayed duplicate FIN racing with retention,
 not just a reader held after EOF.
 
@@ -93,18 +94,28 @@ store even when all accepted jobs have settled.
 
 ## Recovery audits are part of the implementation
 
-`ExecutionStore.audit` currently requires every job's input/output charges to
-remain live and requires a zero release discriminator. Replace those conditions
-with checked release evidence and the correct remaining rewrite-credit floor.
-Do not simply exempt all settled jobs from validation.
+`ExecutionStore.audit` checks retained release times against terminal dependencies
+and the trusted clock watermark, with the adjusted remaining rewrite-credit floor.
+It does not exempt all settled jobs from validation. Job decoding rejects refunded
+charges without eligibility evidence and release evidence on unsettled jobs.
 
-`AdmissionStore.verifyStorage` and `PublicationStore.verifyStorage` currently
-expect charged objects to exist. They must distinguish a live promise, an
-authorized interrupted release and a completed release. Continue checking every
+`AdmissionStore.verifyStorage` distinguishes a live input promise, an authorized
+interrupted input release and a completed release. Output funding and
+`PublicationStore.verifyStorage` still require their retained physical objects;
+extend those paths when implementing output reclamation. Continue checking every
 remaining object's exact identity and contents. Allowing missing bytes merely
 because a work is terminal would conceal data loss before output expiry or
 parent settlement. Retained publication metadata remains audited after bytes
 are gone.
+
+`SessionStore.reclaimInput` performs at most two writer transactions for one
+explicitly named admitted job, holding paired-store ownership throughout. It
+checks an existing input before creating the first intent, so missing live bytes
+cannot manufacture deletion authority. A repeat completes an earlier intent or
+reports already-released state. Revocation does not prevent local maintenance.
+Child-closure validation currently uses the existing session-wide streaming audit;
+the single target bound is not a constant-time or hard wall-clock bound. A fair
+bounded sweep/scheduler integration remains required.
 
 ## Retirement is a different durable transition
 

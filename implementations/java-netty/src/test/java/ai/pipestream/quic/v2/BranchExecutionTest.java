@@ -296,7 +296,10 @@ final class BranchExecutionTest {
                 false,
                 source.executorLive(),
                 source.expansionComplete(),
-                source.releaseIntent());
+                source.inputReleaseAt(),
+                // Structurally valid refund evidence; retained parent/interval audit must reject
+                // it.
+                0L);
         Records.WorkKey work = source.input().parameters().work();
         FixedRecords.replace(
             connection,

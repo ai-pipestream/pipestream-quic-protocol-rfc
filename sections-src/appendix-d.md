@@ -234,7 +234,15 @@ current authorization and fresh availability checks, including a final safe-UTC
 sample after file verification. Its bounded registry charges pending stream-slot
 time, distinguishes transport progress from disk reads, and independently checks
 idle/lifetime expiry and revocation. Physical readers retain shared handle charges
-until close. Broader orphan reconciliation, dependency-safe reclamation,
+until close. Private format 8 retains independent release-eligibility timestamps.
+Java can now reclaim one terminal job's input after verified child closure,
+committing eligibility before unlink and logical quota release after synchronized
+removal. Exact-object readers and active receivers block removal; a delayed
+duplicate upload cannot install across that physical-liveness gate. Release
+evidence survives refund and restart, while manifests and output funding remain
+retained. This local operation still uses the existing session-wide streaming
+closure audit and is not a constant-time maintenance claim. Broader orphan
+reconciliation, output reclamation, fair bounded cleanup scheduling,
 result-stream transport, retirement and full cross-language failure/resource gates
 remain required. These remain local authority capabilities, not Java
 durable-profile wire interoperability.

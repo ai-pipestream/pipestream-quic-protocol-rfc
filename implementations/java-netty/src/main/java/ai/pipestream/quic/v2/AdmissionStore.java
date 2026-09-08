@@ -441,7 +441,8 @@ final class AdmissionStore {
             true,
             true,
             parameters.mode() != 2,
-            0);
+            null,
+            null);
     long slot =
         FixedRecords.allocate(
             connection,
@@ -938,13 +939,22 @@ final class AdmissionStore {
       try (var rows = query.executeQuery()) {
         while (rows.next()) {
           JobRecord record = readRow(connection, context(binding), rows, 1).record();
-          if (record.inputLive()
-              && !inputs
-                  .find(context(binding), record.input())
-                  .orElseThrow(() -> new IOException("admitted input is missing"))
-                  .reference()
-                  .equals(record.inputReference()))
+          WorkView view =
+              DeclarationStore.member(connection, binding, record.input().parameters().work())
+                  .view();
+          RetentionStore.audit(
+              connection, binding, view, record, watermark(connection, binding.authority()));
+          var input = inputs.find(context(binding), record.input());
+          if (!inputs
+              .inputReference(context(binding), record.input())
+              .equals(record.inputReference()))
+            throw corrupt("admitted input reference contradicts retained identity");
+          if (input.isPresent() && !input.get().reference().equals(record.inputReference()))
             throw corrupt("admitted input reference differs");
+          if (input.isEmpty() && record.inputReleaseAt() == null)
+            throw new IOException("admitted input is missing without release evidence");
+          if (input.isPresent() && !record.inputLive())
+            throw corrupt("refunded input still has an installed name");
           if (record.outputsLive()
               && !inputs
                   .findReservation(context(binding), record.input())
@@ -952,9 +962,6 @@ final class AdmissionStore {
                   .reference()
                   .equals(record.outputReference()))
             throw corrupt("admitted output funding reference differs");
-          WorkView view =
-              DeclarationStore.member(connection, binding, record.input().parameters().work())
-                  .view();
           if (view.state() == State.SUCCEEDED)
             PublicationStore.verifyStorage(binding, inputs, view, record);
         }

@@ -1,0 +1,137 @@
+Java V2 durable input reclamation, 2026-09-08
+
+Implemented scope
+  Private format 8 replaces the unused release discriminator with independent
+  nullable input/output eligibility timestamps. Refunded charges require retained
+  evidence; unsettled jobs cannot carry it. Recovery checks work/attempt/input,
+  terminal time, trusted UTC watermark and actual child closure. Output eligibility
+  additionally checks external retention and dependent parent settlement, although
+  this checkpoint supplies no output-deletion operation.
+
+  SessionStore.reclaimInput addresses one admitted job under exclusive paired-store
+  ownership. It verifies live input before committing its first release timestamp,
+  so missing live bytes cannot manufacture eligibility. A second writer transaction
+  revalidates the retained evidence before synchronized physical removal and quota
+  completion. Input eligibility survives both commit boundaries and logical refund.
+  Current UTC is checked before destructive work; an unsafe final sample leaves
+  the prior intent and conservative logical charge for a later safe invocation.
+
+  Active input receivers retain exact-object identity through synchronized staging
+  cleanup, including delayed duplicate FIN. Reader and receiver pins are separate
+  from unborrowed receive credits and block physical removal. Same-process pending
+  unlink/sync accounting retains exact physical charges until synchronization
+  succeeds. Recovery reconstructs physical usage, then requires valid metadata
+  evidence for a missing input. Metadata-only reference derivation still validates
+  the exact input name after its bytes have been released. Output funding, terminal
+  work views, manifests and closure commitments are unchanged by input reclamation.
+
+Reviewed tests
+  InputStoreReceiverPinsTest (4): duplicate FIN with independent EOF reader;
+  unrelated objects; unborrowed/borrowed/sequential receiver credit including empty
+  input; abort/protocol failure/timeout; uncertain staging cleanup and retry close.
+  RetentionStoreTest (12): exact physical bytes/files and logical credit/refund
+  accounting; retained eligibility and reopen; zero-byte input; reader and delayed
+  duplicate receiver; live-job refusal; real branch terminality versus child
+  closure; unchanged work/scope commitments; revoked local maintenance; initial and
+  intra-operation clock refusal; unsafe time after intent; both metadata and file
+  interruption boundaries; same-process sync retry; missing live bytes; and a
+  checksummed but semantically invalid eligibility record rejected on recovery.
+  BranchExecutionTest keeps its prior corrupt-child-output-accounting refusal.
+  Its format-8 fixture supplies an intentionally invalid zero eligibility time;
+  production's new refund-without-evidence constructor guard is not weakened.
+
+  RetentionStoreRecoveryTest uses four real child JVMs with Runtime.halt:
+    exit 131 after input-intent commit;
+    exit 132 after unlink and before directory synchronization;
+    exit 133 after directory synchronization and before refund;
+    exit 134 after logical release commit.
+  Parent assertions require each exact exit, reconstruct exact physical byte/name
+  accounting, inspect inputLive/inputReleaseAt directly in SQLite, verify actual
+  output bytes and manifest, resume to the phase-specific result, and reopen again.
+  This proves process-death behavior under the test filesystem, not power-loss
+  behavior or a network interoperability/failure matrix.
+  In-process I/O errors are injected at synchronization boundaries; these tests
+  do not intercept a failing operating-system fsync syscall or emulate hardware.
+
+Focused verification
+  Maven prefix from repository root:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop
+      -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+  Suffix:
+    -Dtest=RetentionStoreTest,RetentionStoreRecoveryTest,InputStoreReceiverPinsTest,InputStoreReaderPinsTest,InputStoreTest,ResultStoreTest,ResultServiceTest,BranchExecutionTest,PublicationStoreRecoveryTest,FenceStoreTest test
+
+  Initial focus direct exit 1 (session 28100), finished 12:20:13 EDT:
+    66 passed, 0 assertion failures, 1 fixture error.
+  The deliberate invalid-record fixture used a deferred JDBC transaction; the
+  native guard refused its write before the corruption test could run. It now
+  uses explicit BEGIN IMMEDIATE and COMMIT. Invalid data and refusal assertions
+  remain unchanged; production was not modified for this error.
+  Log: /tmp/pipestream-input-reclaim-focused-20260908T122004-0400.log
+
+  Corrected focus direct exit 0 (session 42243), finished 12:22:22 EDT:
+    67 passed, zero failures/errors/skips; native guard 1/1.
+  Root independently checked all ten focused XML reports with UTC mtimes
+  16:22:18 through 16:22:21 and the exact same aggregate counts.
+  Log: /tmp/pipestream-input-reclaim-focused-guarded-20260908T122213-0400.log
+
+Final verification
+  Same Maven prefix, unfiltered suffix: install
+  Direct exit 0 (session 40780), finished 12:26:00 EDT:
+    601 passed, zero failures/errors/skips; native guard 1/1.
+  Root independently counted all 90 fresh XML reports:
+    first UTC mtime 2026-09-08 16:24:10.981707483
+    last UTC mtime 2026-09-08 16:25:58.737318809
+  Log: /tmp/pipestream-input-reclaim-full-20260908T122232-0400.log
+  Existing shaded-JAR resource overlap warnings remain.
+  Final strict nine-type Javadoc: -package -Xdoclint:all -Werror, direct exit 0.
+  Log: /tmp/pipestream-input-reclaim-final-doclint-20260908T122642-0400.log
+  The earlier production-only compile/doclint preceded final reference-name and
+  ownership checks; final focused/full compilation and this doclint cover them.
+
+  From implementations/rust-quinn:
+    target/release/pipestream-conformance examples
+  Direct exit 0; all three existing-profile examples PASS.
+  Log: /tmp/pipestream-input-reclaim-examples-20260908T122649-0400.log
+  These remain regression examples, not Java durable-profile wire evidence.
+
+  From repository root:
+    ./build.sh core 05 draft
+  Direct exit 0 (session 39066), idnits zero errors/flaws/warnings with the existing
+  FIPS-180-4 downref comment. Root inspected the new Appendix D text in generated
+  TXT and HTML. No draft submission or IETF acceptance is claimed.
+  Log: /tmp/pipestream-input-reclaim-draft-20260908T122659-0400.log
+  Generated SHA-256:
+    XML 20070ec9693678657ce40a1d14540513d5a339e22344c9c15bb27eccfb2f33ea
+    TXT ddf9fbba07911ddc3f68a969957ca315dc6b6fd1ac957ae5f9b8c8dda08340ca
+    HTML 9c3df716959504165c8b58b4d6836098bcd86c9ec436cf5f0c54bb61494e73c3
+
+Final principal source SHA-256
+  RetentionStore.java 7ca9d51916fdf73bd2278c75ddb5609da3c9b31299f0af2bf6a61c7ec2c35399
+  InputStore.java 125838c59140bf5b6b8eeb19da945ad170994fafef9a7c3ddbf7dec5020f18d0
+  JobRecord.java 8ce5022e6c439bc6330ace9b41857b3e2ba3d5a4ce1b66a772f436e4717d96c2
+  SessionStore.java 29e6e96b9b0a9e08c6ac573b7b92317130c1f58d9e55bb18950b26a2fa9e0104
+  AdmissionStore.java 359c55abe4a753f197ab970c64f15b34a0d6824bd39d9071132beab94b3e17ac
+  ExecutionStore.java 27d98f793adfc8990406b4a29d9990b679026a64e32866ae91eaebb86b50a5d2
+  FenceStore.java 6764ee5aadc150c579d00c266878d7e2d594d8ee88f275d8abc140875b3297d6
+  RetryStore.java e1d4b89083c066702019e3bae25bf57dd804251f5d0deaf0766520469c39aa3c
+  ResultStore.java c19a16861f07971afef00dec280754a8f2bf469ecde3e32c552dd8abb9099ea7
+  RetentionStoreTest.java 10fd5e6efd8963e8f5402889b299081a49fe0132defdb3898d1b36d9987f7028
+  RetentionStoreRecoveryTest.java 797a40413b6563c56d2637b46b3a9f2fa5e0b51fbfe921170310b62aaa2284af
+  InputStoreReceiverPinsTest.java e0a94a1e8ceb28e9cf9cf340af0d7187208668ed6b96bc259a88d78006c1ef6b
+  ResultFixture.java c9d19e949c8bd55dd62fa63a351e7f594dc4f32fb70fe0ffef54802e62d5411b
+  BranchExecutionTest.java cf1cc1565b68465265f3742e8a5834eeff2292dc52a520aaaaaa142dd6ac4a09
+
+Java artifact SHA-256
+  Ordinary JAR 880ac340a9546ee5a3fbfbbb82e4eb8ff89bef22d6a87e0c9777ff84211fe5ed
+  All JAR dd1c03c37f90281119f74164d8df69c52d2dab23fc96f560dc35c19b865fb259
+  sqlite_guard_test 3dc46f85b2fbf31018a0dd18277bd14604b83a66c3be22decadf3e33f9dfc3bd
+
+Remaining boundaries
+  This is one-target input reclamation, not a complete fair cleanup scheduler.
+  Existing child-closure verification performs a session-wide streaming audit;
+  its cost is not hidden by the target count or advertised as constant time.
+  Output reclamation, bounded orphan reconciliation, fair sweeps and session
+  retirement remain required. So do Java's durable endpoint/client, both-direction
+  neutral failure/resource evidence, and the original external workload with an
+  equivalent authenticated durable streaming-gRPC baseline. The full goal remains
+  active. Rust code and wire grammar did not change in this checkpoint.

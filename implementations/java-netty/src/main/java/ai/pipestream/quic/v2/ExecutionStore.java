@@ -341,7 +341,8 @@ final class ExecutionStore {
             job.outputsLive(),
             job.executorLive(),
             complete,
-            0);
+            null,
+            null);
     replaceJob(connection, config, binding, loaded.stored(), replacement, complete);
     return result;
   }
@@ -434,7 +435,8 @@ final class ExecutionStore {
             job.outputsLive(),
             job.executorLive(),
             job.expansionComplete(),
-            0);
+            null,
+            null);
     if (view.state() == State.WAITING_CHILDREN) {
       WorkView active =
           new WorkView(
@@ -516,7 +518,8 @@ final class ExecutionStore {
             job.outputsLive(),
             retryable,
             job.expansionComplete(),
-            0);
+            null,
+            null);
     replaceWork(connection, config, binding, loaded.entity(), failed, true);
     replaceJob(connection, config, binding, loaded.stored(), settled, true);
     return failed;
@@ -590,7 +593,8 @@ final class ExecutionStore {
             job.outputsLive(),
             false,
             job.expansionComplete(),
-            0);
+            null,
+            null);
     replaceWork(connection, config, binding, loaded.entity(), succeeded, true);
     replaceJob(connection, config, binding, loaded.stored(), settled, true);
     return succeeded;
@@ -735,15 +739,18 @@ final class ExecutionStore {
     if (view.state() == State.CANCELLED || view.state() == State.SKIPPED)
       spent = 3 + (expanded ? 1 : 0);
     RetryStore.audit(connection, binding, view);
+    RetentionStore.audit(connection, binding, view, job, watermark);
+    int cleanupSpent =
+        (job.inputReleaseAt() == null ? 0 : 1)
+            + (job.inputLive() ? 0 : 1)
+            + (job.outputReleaseAt() == null ? 0 : 1)
+            + (job.outputsLive() ? 0 : 1);
     if (view.attempt() != job.attempt()
-        || !job.inputLive()
-        || !job.outputsLive()
         || job.executorLive() == settled
-        || job.releaseIntent() != 0
         || !view.input().equals(job.input().parameters().input())
         || job.input().parameters().mode() != 2 && !job.expansionComplete()
         || entity.geometry().credits() < FixedRecords.ADMITTED_WORK_CREDITS - spent
-        || stored.geometry().credits() < FixedRecords.JOB_CREDITS - spent
+        || stored.geometry().credits() < FixedRecords.JOB_CREDITS - spent - cleanupSpent
         || job.leaseUntil() != null
             && (job.leaseUntil() > view.deadline() || job.leaseUntil() <= view.admittedAt()))
       throw corrupt("job lifecycle identity, interval or funding differs");

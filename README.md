@@ -84,6 +84,9 @@ Local cancellation and administrative revocation now drive bounded fenced
 settlement. Java's local result service also pins exact published objects under
 current authorization and bounded pending/active delivery lifetimes; its Netty
 result-stream integration and dependency-safe cleanup remain unfinished.
+The local input collector now records durable eligibility before deletion and
+waits for exact-object readers and receivers before synchronized removal and quota
+refund. Output cleanup, orphan sweeping and session retirement remain unfinished.
 Independent Java durable execution/results/recovery, complete cross-language
 failure evidence and the workload comparison remain unfinished.
 The Rust `pipestream_core::v2` library now implements typed codecs for every

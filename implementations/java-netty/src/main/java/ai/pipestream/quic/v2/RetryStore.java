@@ -128,7 +128,8 @@ final class RetryStore {
             job.outputsLive(),
             job.executorLive(),
             job.expansionComplete(),
-            job.releaseIntent());
+            job.inputReleaseAt(),
+            job.outputReleaseAt());
     FixedRecords.replace(
         connection,
         config.files(),

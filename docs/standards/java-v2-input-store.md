@@ -48,7 +48,7 @@ checks the complete layout, policy, object identities, checksums, lengths and
 accounting before removing abandoned `pending` names. Installed objects remain
 charged, including objects left unreferenced by an interrupted future admission.
 No object is reclaimed merely because its age or filename suggests it is stale.
-Reclamation of installed objects requires the future authority's transactional
+Reclamation of installed objects requires the paired authority's transactional
 liveness proof, read/dependency pins and replayable deletion accounting.
 
 ## Incremental reception and immutable installation
@@ -104,6 +104,13 @@ file names. The local `inputPinned` observation is not deletion authority:
 cleanup must hold the store monitor through its physical action and separately
 prove durable eligibility. See the remaining
 [retention and retirement implementation plan](java-v2-retention.md).
+
+The stronger `inputInUse` gate also tracks active receivers through synchronized
+staging cleanup, including duplicate uploads that could otherwise recreate a
+reclaimed name. Unborrowed receiver credits remain identity-free. Input reclamation
+requires a committed authority release record; it retains an exact same-process
+physical charge across unlink/sync failures until synchronized removal succeeds.
+Only then may the authority commit its logical input-quota refund.
 
 Authority expansion reserves one store-bound `ReceiverCredit` before invoking its
 expander. The credit charges one global handle without granting producer authority;

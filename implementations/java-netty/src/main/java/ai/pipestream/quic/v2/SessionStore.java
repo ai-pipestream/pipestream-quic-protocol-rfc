@@ -31,7 +31,7 @@ import java.util.concurrent.Semaphore;
  * another implementation's database is accepted. Never call it on a transport event loop.
  */
 final class SessionStore {
-  private static final int VERSION = 7;
+  private static final int VERSION = 8;
   private static final int MAX_BINDING_BYTES = 1024;
   private static final Set<String> TABLES =
       Set.of(
@@ -2457,6 +2457,151 @@ final class SessionStore {
         });
   }
 
+  /**
+   * Reclaim one terminal job's input independently of the caller's current permission. The target
+   * count is one; existing child-closure verification retains its session-wide streaming audit
+   * cost. Output retention and session retirement are separate operations.
+   *
+   * @param generation retained session identity
+   * @param work exact admitted work
+   * @param inputs exclusively paired payload installation
+   * @param clock trusted UTC source
+   * @return committed outcome or a live physical dependency
+   * @throws IOException file or synchronization failure
+   * @throws SQLException contradictory evidence or database failure
+   */
+  RetentionStore.Result reclaimInput(
+      long generation, WorkKey work, InputStore inputs, AdmissionStore.Clock clock)
+      throws IOException, SQLException {
+    return reclaimInput(generation, work, inputs, clock, phase -> {});
+  }
+
+  /**
+   * Reclaim one input with trusted local commit-boundary instrumentation. Eligibility commits
+   * before physical deletion; logical quota commits only after synchronized absence. A failure
+   * after either commit can lose this method's return value, never its evidence.
+   *
+   * @param generation retained session identity
+   * @param work exact admitted work
+   * @param inputs exclusively paired payload installation
+   * @param clock trusted UTC source
+   * @param probe bounded local durability instrumentation
+   * @return committed outcome or live physical dependency
+   * @throws IOException file, synchronization or instrumentation failure
+   * @throws SQLException contradictory evidence or database failure
+   */
+  RetentionStore.Result reclaimInput(
+      long generation,
+      WorkKey work,
+      InputStore inputs,
+      AdmissionStore.Clock clock,
+      RetentionStore.Probe probe)
+      throws IOException, SQLException {
+    Checks.id(generation);
+    Objects.requireNonNull(work);
+    Objects.requireNonNull(inputs);
+    Objects.requireNonNull(probe);
+    AdmissionStore.Clock checkedClock = AdmissionStore.checkedClock(clock);
+    synchronized (inputs) {
+      inputs.verifyAuthority(identity);
+      if (!DATABASE_OPERATIONS.tryAcquire())
+        throw ProtocolError.limit("V2 database operation capacity");
+      try {
+        // At most an eligibility transaction followed by one removal/completion transaction.
+        for (int phase = 0; phase < 2; phase++) {
+          try (Connection connection = database.connect();
+              var statement = connection.createStatement()) {
+            statement.execute("BEGIN IMMEDIATE");
+            boolean committed = false;
+            try {
+              Metadata metadata = metadata(connection);
+              if (!inputs.identity().equals(metadata.inputs()))
+                throw corrupt("retention input storage pairing differs");
+              Retained retained = retained(connection, generation);
+              if (retained == null)
+                throw error(ProtocolError.Code.NOT_FOUND, "session unavailable");
+              if (retained.retiring())
+                throw error(ProtocolError.Code.EXPIRED, "session retirement committed");
+              Binding binding = retained.binding();
+              ExecutionStore.Loaded loaded =
+                  ExecutionStore.load(connection, config, binding, work, (owner, input) -> {});
+              JobRecord job = loaded.stored().record();
+              WorkView view = loaded.entity().view();
+              Commitments.Context context =
+                  new Commitments.Context(binding.authority(), binding.owner(), generation);
+              if (!inputs.inputReference(context, job.input()).equals(job.inputReference()))
+                throw corrupt("input release reference contradicts retained identity");
+              long watermark = AdmissionStore.watermark(connection, binding.authority());
+              ExecutionStore.audit(
+                  connection, binding, loaded.entity(), loaded.stored(), watermark);
+              if (!job.inputLive()) {
+                statement.execute("COMMIT");
+                committed = true;
+                return RetentionStore.Result.ALREADY_RELEASED;
+              }
+              long now = AdmissionStore.now(connection, binding.authority(), checkedClock);
+              if (!RetentionStore.inputEligible(connection, binding, view, now)) {
+                statement.execute("COMMIT");
+                committed = true;
+                return RetentionStore.Result.NOT_READY;
+              }
+              if (job.inputReleaseAt() == null) {
+                InputStore.Stored original =
+                    inputs
+                        .find(context, job.input())
+                        .orElseThrow(
+                            () -> new IOException("live input missing before release intent"));
+                if (!original.reference().equals(job.inputReference()))
+                  throw corrupt("input release reference differs");
+                inputs.verifyAuthority(identity);
+                long at = AdmissionStore.now(connection, binding.authority(), checkedClock);
+                JobRecord intent = RetentionStore.input(job, at, true);
+                ExecutionStore.replaceJob(
+                    connection, config, binding, loaded.stored(), intent, true);
+                AdmissionStore.remember(connection, config, binding.authority(), at);
+                RetentionStore.audit(connection, binding, view, intent, at);
+                statement.execute("COMMIT");
+                committed = true;
+                probe.at(RetentionStore.Phase.INPUT_INTENT_COMMITTED);
+              } else {
+                inputs.verifyAuthority(identity);
+                AdmissionStore.now(connection, binding.authority(), checkedClock);
+                if (!inputs.reclaimInput(context, job.input())) {
+                  statement.execute("COMMIT");
+                  committed = true;
+                  return RetentionStore.Result.PINNED;
+                }
+                inputs.verifyAuthority(identity);
+                long at = AdmissionStore.now(connection, binding.authority(), checkedClock);
+                JobRecord completed = RetentionStore.input(job, at, false);
+                ExecutionStore.replaceJob(
+                    connection, config, binding, loaded.stored(), completed, true);
+                AdmissionStore.remember(connection, config, binding.authority(), at);
+                statement.execute("COMMIT");
+                committed = true;
+                probe.at(RetentionStore.Phase.INPUT_RELEASE_COMMITTED);
+                return RetentionStore.Result.RELEASED;
+              }
+            } catch (IOException | SQLException | RuntimeException | Error failure) {
+              if (!committed) rollback(connection, failure);
+              throw failure;
+            }
+          }
+        }
+        throw corrupt("input release failed to advance its committed intent");
+      } catch (SQLException failure) {
+        if ((failure.getErrorCode() & 255) == 13) {
+          ProtocolError refusal = ProtocolError.limit("SQLite file capacity exhausted");
+          refusal.initCause(failure);
+          throw refusal;
+        }
+        throw failure;
+      } finally {
+        DATABASE_OPERATIONS.release();
+      }
+    }
+  }
+
   private void bootstrap(boolean initialize) throws SQLException {
     try (Connection connection = database.connect();
         var statement = connection.createStatement()) {
@@ -2497,7 +2642,7 @@ final class SessionStore {
           """
           CREATE TABLE ps_v2_meta (
             singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-            version INTEGER NOT NULL CHECK(version=7),
+            version INTEGER NOT NULL CHECK(version=8),
             config BLOB NOT NULL CHECK(length(config) BETWEEN 1 AND 8192),
             high_water INTEGER NOT NULL CHECK(high_water>=0),
             clock_slot INTEGER NOT NULL UNIQUE REFERENCES ps_v2_slots(id) CHECK(clock_slot=1),

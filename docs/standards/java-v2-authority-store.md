@@ -744,12 +744,22 @@ Reconciliation discards a hash advanced inside a failed transaction. A later
 monotonic scope fence restarts a partial closure fold, but cannot change its pinned
 membership. This adds no placeholder seal or relaxed closure proof.
 
-Private format 7 adds typed cancellation journal entries, a scope-cancellation
+Private format 7 introduced typed cancellation journal entries, a scope-cancellation
 index checked against the immutable request, and the pending job state. Recovery
 requires accepting receipts for own fences, direct or inherited provenance for
 scope flags, matching root/session revocation, valid terminal intervals, and child
 closure before branch settlement. Earlier private schemas are refused without
 conversion. Wire values and Section 12's cancellation semantics are unchanged.
+
+Private format 8 replaces the unused reclamation discriminator with independent
+input/output eligibility timestamps, retained after their charges are refunded.
+The local `reclaimInput` operation commits validated terminal/child-closure
+evidence before unlink and commits the logical refund after synchronized absence.
+Real readers and active receivers keep physical storage pinned. Recovery permits
+missing input only with checked durable eligibility and continues checking the
+immutable output funding and publication. This does not yet reclaim outputs,
+sweep orphans or retire sessions. See the
+[retention implementation and remaining work](java-v2-retention.md).
 
 ## Result evidence and bounded delivery leases
 
