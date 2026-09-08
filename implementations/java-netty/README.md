@@ -479,6 +479,16 @@ read stays charged until it physically returns. The transport must still own
 request correlation, connection-local pending limits, response delivery and
 drain accounting. This library does not activate Java's durable profiles.
 
+`DurableRequests` now supplies the connection-owned portion of that accounting:
+decode-order request IDs, one session binding, input/result pending slots and
+exclusive completed-session cuts. Worker and response owners retain independent
+tickets; cancellation or connection loss does not release still-running owners.
+Detach waits for those owners without asserting durable work completion.
+`SessionStore.completed` independently verifies the exact authorized root and
+generation without expiring outputs. A structurally valid child-scope cut is
+decoded and refused with `CONFLICT`, as required by Section 12, not mistaken for
+malformed framing. These components still require durable listener integration.
+
 ## Sealed-work library foundation
 
 The independent Java `SealedWork`, `SealedScope`, and `SealedSessionStore`

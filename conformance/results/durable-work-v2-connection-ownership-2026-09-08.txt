@@ -1,0 +1,113 @@
+Java durable connection ownership and completed-root verification, 2026-09-08
+
+Repository: pipestream-quic-protocol-rfc
+Branch: feat/durable-work-results-v2
+Parent checkpoint: 9372f0892f73550cf6d5ea9cdcb6c7dfae5a40d1
+
+Implementation scope
+  DurableRequests owns one connection's decode-order correlation, immutable
+  binding, input/result pending counts and drain exclusion. Independent ticket
+  copies retain capacity for real worker/response/transfer ownership; only the
+  final close releases it. Closing the connection does not erase those owners.
+  Detach waits for other accepted owners without asserting work completion.
+  Completed-session requests exclude competing requests/transfers until every
+  owner of the completed response has released its ticket.
+  SessionStore.completed authorizes the attached session, compares generation
+  and exact root summary, verifies retained closure, and bounds the response.
+  It does not expire outputs or itself prove that a connection drained.
+  Messages.Complete now accepts a structurally valid child-scope summary for
+  authorized CONFLICT refusal, matching Section 12 and the existing CDDL.
+  Such a request previously failed as FRAME_ERROR before authority dispatch.
+
+Review and verification corrections
+  Static review corrected test-only invented SessionStore.close calls; the
+  store owns per-operation JDBC connections, not a persistent handle.
+  Static review corrected GetManifest being treated as an output transfer and
+  tests expecting thrown exceptions instead of correlated acceptance refusals.
+  First compile attempt found a missing AtomicBoolean test import:
+    /tmp/pipestream-completed-observation-focus-20260908T152955-0400.log
+    Direct exit 1.
+  Second focused run reached 88 tests, with one fixture error:
+    /tmp/pipestream-completed-observation-focus2-20260908T153024-0400.log
+    Direct exit 1; empty unsealed Declare was correctly rejected before the
+    target operation. The fixture now uses the actual unsealed empty root
+    already created with the session. Refusal assertions were not weakened.
+
+Focused verification
+  CompletedSessionObservationTest,DurableRequestsTest,V2WireTest:
+    /tmp/pipestream-completed-observation-focus3-20260908T153221-0400.log
+    Direct exit 0 and matching .exit; 88 tests, zero failures/errors/skips.
+    The new classes contribute six and five tests; existing wire tests 77.
+  Covers current authorization, child-cut decode/refusal, altered root fields,
+  valid-checksum closure corruption, exact recovery and unchanged output bytes;
+  binding-in-flight, refused-ID consumption, directional/global connection
+  limits, retained owners, detach abandonment and completed-cut exclusion.
+
+Final production SHA-256
+  DurableRequests.java a325b245158ac88779ebbb1c7481eaef31076639d086fc403bb3bc8f13cff7fd
+  SessionStore.java c260228d04bdd15519732dd9e255912bc9fbfa87c51a9ce20290e2951772eb7f
+  Messages.java 05483405fab2c8fbd5d3dc2e231b245367a2cd8193d48e5984fe940dc7752783
+
+Full verification and independent review
+  Maven -Psealed-interop install, without a test filter:
+    /tmp/pipestream-completed-observation-full-20260908T153233-0400.log
+    Direct exit 0 and matching .exit. Independently parsed all 112 fresh XML
+    reports: 679 testcase nodes, 679 tests, zero failures/errors/skips.
+    Report UTC window: 2026-09-08T19:34:26.604212291Z through
+    2026-09-08T19:36:13.948112336Z. Native sqlite-file-growth: 1/1 passed.
+  Strict three-type javadoc (-package -Xdoclint:all -Werror):
+    /tmp/pipestream-completed-observation-doclint-20260908T153647-0400.log
+    Exit 0; DurableRequests, SessionStore and Messages, including nested types.
+    Standard Doclet 25.0.3+9-jvmci-25.1-b19.
+  Existing-profile examples, using the newly built Java artifact:
+    /tmp/pipestream-completed-observation-examples-20260908T153655-0400.log
+    Exit 0; Java-to-Rust, Rust-to-C++ recovery, three-node scatter all PASS.
+    These are NOT the outstanding V2 durable cross-language acceptance suite.
+  Draft core 05:
+    /tmp/pipestream-completed-observation-draft-20260908T153706-0400.log
+    Exit 0; idnits zero errors/flaws/warnings, existing FIPS-180-4 comment.
+  Root independently checked logs, exit sidecars, report counts/times and hashes.
+  Rust production sources are unchanged here; the preceding 9372f08 checkpoint
+  records the full 816-test Rust gate. No new full Rust run is claimed here.
+
+Reproduction commands
+  From repository root (local Maven cache path is environment-specific):
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop \
+      -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository \
+      -Dtest=CompletedSessionObservationTest,DurableRequestsTest,V2WireTest test
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop \
+      -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository install
+    mvn -q -f implementations/java-netty/pom.xml -Psealed-interop \
+      -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository \
+      dependency:build-classpath \
+      -Dmdep.outputFile=/tmp/pipestream-completed-observation-doclint-cp-20260908T153647-0400.txt \
+      -Dmdep.pathSeparator=:
+    javadoc -package -Xdoclint:all -Werror \
+      -d /tmp/pipestream-completed-observation-doclint-out-20260908T153647-0400 \
+      -classpath "implementations/java-netty/target/classes:$(cat /tmp/pipestream-completed-observation-doclint-cp-20260908T153647-0400.txt)" \
+      -sourcepath implementations/java-netty/src/main/java \
+      implementations/java-netty/src/main/java/ai/pipestream/quic/v2/DurableRequests.java \
+      implementations/java-netty/src/main/java/ai/pipestream/quic/v2/SessionStore.java \
+      implementations/java-netty/src/main/java/ai/pipestream/quic/v2/Messages.java
+    ./build.sh core 05 draft
+  From implementations/rust-quinn:
+    ./target/release/pipestream-conformance examples
+  Formatting used google-java-format 1.28.0 on the three production and two
+  test sources before final verification.
+
+Built Java artifact SHA-256
+  pipestream-quic-netty-0.1.0-SNAPSHOT.jar
+    7030bcfba71c26e3ad3e8207058c11b6cd301d7cdff6b7698c5a55c78d73ce7d
+  pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar
+    758c38e32a597bf5df16682176d818e60adb9b667547d6174fdcd211d029bf9c
+
+Evidence boundaries
+  These are storage/connection-library tests with real SQLite state, not a
+  Java durable listener or proof of actual QUIC response/FIN delivery. The host
+  must retain tickets through its real bounded workers, stream jobs and write
+  completions; it must enforce connection deadlines and native credit bounds.
+  Limits here are per connection; whole-authority worker quotas and whole-process
+  RSS are separate. An application write completion does not assert peer ACK.
+  Full Java durable server/client integration, the neutral two-direction
+  failure/resource driver and equivalent external workload/gRPC comparison
+  remain mandatory. No new durable profile is advertised by this checkpoint.

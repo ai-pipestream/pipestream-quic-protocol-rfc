@@ -695,12 +695,11 @@ public final class Messages {
    * @param root exact root scope closure summary
    */
   public record Complete(long request, long generation, ScopeSummary root) implements DrainMessage {
-    /** Validate the record's structural constraints. */
+    /** Validate structure; an authorized authority refuses a child-scope cut with CONFLICT. */
     public Complete {
       id(request);
       id(generation);
       present(root);
-      require(root.scope() == 0, "completed drain needs root summary");
     }
   }
 

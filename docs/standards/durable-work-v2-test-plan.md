@@ -2584,6 +2584,29 @@ Clippy, strict Java doclint, existing-profile examples and draft checks pass.
 Exact commands and evidence boundaries are
 in the [control-wait record](../../conformance/results/durable-work-v2-control-waits-2026-09-08.txt).
 
+### Java connection ownership and exact completion, 2026-09-08
+
+Java's `DurableRequests` now separates connection request ownership from task
+completion. Its retained tickets keep a request charged through storage workers,
+input admissions, result transfers and control response ownership. Connection
+loss does not release still-running owners. It enforces decode-order request
+IDs, one immutable session binding, connection and directional stream caps,
+detach exclusion and an exclusive completed-session cut. `SessionStore.completed`
+checks the exact authorized generation and committed root without expiring
+outputs. These are connection-library and storage checks, not an activated Java
+durable listener or proof of actual QUIC delivery.
+
+The completion pass corrected Java's existing codec: a structurally valid
+child-scope `Complete` request must decode, then receive an authorized `CONFLICT`
+refusal. Rejecting it as malformed framing did not match Section 12 or the CDDL.
+The focused gate passes 88 tests: six completed-root observations, five
+connection-ownership tests and 77 existing wire tests. Full Java passes 679
+tests with zero failures/errors/skips in 112 fresh XML reports. Strict
+three-type doclint, the native guard, existing-profile examples and draft checks
+pass. Commands, corrections
+and evidence boundaries are recorded in the
+[connection-ownership checkpoint](../../conformance/results/durable-work-v2-connection-ownership-2026-09-08.txt).
+
 ## Cross-language and workload gates
 
 The independent Rust process driver must run Rust-to-Java and Java-to-Rust

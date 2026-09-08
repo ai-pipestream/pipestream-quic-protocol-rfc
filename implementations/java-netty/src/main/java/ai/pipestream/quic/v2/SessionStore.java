@@ -1203,6 +1203,44 @@ final class SessionStore {
   }
 
   /**
+   * Verify a completed-session request against the exact committed root under current
+   * authorization. This read does not itself drain a connection. Its caller must hold an exclusive
+   * connection cut with no other requests or transfers until the resulting response is sent.
+   *
+   * @param access current authenticated owner gate
+   * @param selected retained compatible profiles
+   * @param generation attached generation, not selected by this request
+   * @param request exact previously observed root and generation
+   * @return correlated verification result, to send only while the connection cut stays valid
+   * @throws SQLException inconsistent retained evidence or database failure
+   */
+  Completed completed(Access access, Capabilities selected, long generation, Complete request)
+      throws SQLException {
+    Objects.requireNonNull(request);
+    return sessionTransaction(
+        access,
+        selected,
+        generation,
+        false,
+        (connection, binding) -> {
+          if (request.generation() != binding.generation())
+            throw error(ProtocolError.Code.CONFLICT, "completed cut names another generation");
+          if (request.root().scope() != 0)
+            throw error(ProtocolError.Code.CONFLICT, "completed cut names a child scope");
+          DeclarationStore.Scope root = DeclarationStore.scope(connection, binding, 0);
+          ScopeSummary summary = root.state().summary();
+          if (summary == null)
+            throw error(ProtocolError.Code.NOT_READY, "root closure is not committed");
+          ClosureStore.verify(connection, binding, 0);
+          if (!summary.equals(request.root()))
+            throw error(ProtocolError.Code.CONFLICT, "completed cut differs from committed root");
+          Completed response = new Completed(request.request(), binding.generation(), summary);
+          Wire.encode(response, selected.controlLimit());
+          return response;
+        });
+  }
+
+  /**
    * Perform one bounded background closure step, independently of a caller or execution grant.
    * Partial folds are volatile; immutable terminal rows and the sealed membership remain durable.
    * Existing descendant-summary audits retain their documented session-wide streaming cost.
