@@ -1,0 +1,211 @@
+PipeStream Java V2 stream owner milestone, 2026-09-07
+================================================================
+
+Status
+------
+This report records the bounded stream-ownership and late-FIN milestone. The
+standalone quiche regression and final native library suite are verified. The
+fresh source-pinned Netty artifacts at version 4.2.17.Final-pipestream.2 passed
+their 294-test native Java suite. The full source-bootstrap conformance run also
+passed; its 347 Java tests and existing cross-language checks are separate
+evidence from the native library results below.
+
+Product base: cae80ae3ec7c32d92a86bce64adc1b10c554ab28
+Product branch: feat/durable-work-results-v2
+Retained reference repositories, local commits only (no upstream push):
+  /work/reference-code/quiche-pipestream
+    branch pipestream-transport-credit-v1
+    commit 35ffb337bdedbe5e8751e90857263db2182d4a3b
+  /work/reference-code/netty-quic-pipestream
+    branch pipestream-transport-credit-v1
+    commit e36146aa27f89ad1a75d21bbed7761d2b3b1da93
+The complete reviewed patches are part of the product repository; rebuilding
+does not depend on these unpublished local commit IDs.
+
+Scope
+-----
+The Java package-private StreamTransport is a connection-confined owner for one
+typed bidirectional control stream and explicitly bounded unidirectional data
+stream leases. It installs separate native ordinary/reserved send allowances,
+fixed receive-window geometry, per-direction concurrent slots, a finite lifetime
+stream-ordinal ceiling, one bounded in-flight data chunk, explicit FIN/reset and
+explicit slot release. It is transport machinery, not profile negotiation,
+authorization, object integrity, receipt correlation or durable settlement.
+
+Five focused StreamTransportTest fixtures were added:
+  limitsValidateGeometryAndNativeReservation
+  stalledDataDoesNotBlockTypedControlAndFinFollowsExactPayload
+  serverToClientDataUsesIndependentControlAndExplicitSettlement
+  localResetSettlesQueuedWriteBeforeExplicitSlotRelease
+  stalledWriteDeadlineDoesNotPreventControlProgress
+
+The loopback fixture uses real mutual TLS and QUIC. It negotiates only Core
+capabilities and does not advertise or simulate a durable profile. The two data
+directions independently stall a unidirectional stream at the configured receive
+window while typed control frames continue in both directions. Resume requires
+the exact payload and a received FIN frame. Local reset settles queued owner
+resources without claiming peer receipt. Slot release remains explicit.
+
+Late empty FIN: reproduced RED
+--------------------------------
+The retained Java server QLOG showed server stream payload acknowledged before a
+late empty FIN was accepted. A peer FIN then reached the application, after which
+the server emitted ACK plus MAX_STREAMS but no STREAM FIN. Native local FIN
+acceptance was therefore not treated as peer delivery.
+
+Raw Java trace retained as:
+  conformance/results/java-late-fin-before-fix-2026-09-07.qlog
+  SHA256 870d3b31e5aa81a0d9f94f46bbf97286fc7a7cc50e51933e29860e9775d32ad9
+
+A deterministic packet-driven Pipe regression sends client stream 0 data,
+consumes it at the server, sends and fully acknowledges the server payload,
+accepts a late empty server FIN without packet emission, receives and consumes
+the peer FIN, then requires the next server packet to contain the empty STREAM
+FIN. Before the fix it failed at that final packet oracle.
+
+Exact required RED execution:
+  /tmp/quiche-late-empty-fin-true-red-20260907T212433.log
+  exit 101
+  test: tests::late_empty_fin_is_emitted_after_payload_ack_and_peer_fin
+  result: 0 passed, 1 failed, 934 filtered out
+
+Copied concise RED evidence:
+  conformance/results/quiche-late-fin-before-fix-2026-09-07.log
+  SHA256 8794f7f8b217a8c1cecf60c71e374012fcfb4a4b5eea68672ff646d33dd52d7b
+
+Native FIN acknowledgment fix and edge coverage
+-------------------------------------------------
+The fix tracks a written FIN independently from payload offset ranges. Stream
+completion requires both complete payload acknowledgment and acknowledgment of
+the FIN at the correct final offset. Reset abandons that FIN wait because reset
+reliability is tracked separately by packet recovery.
+
+Six focused SendBuf unit edges are present and green in the final native run:
+  late_empty_fin_after_payload_ack_waits_for_fin_ack
+    Payload ACK before a late empty FIN does not complete; emission alone does
+    not complete; the matching FIN ACK completes it.
+  wrong_final_offset_does_not_ack_fin
+    FIN ACKs at lower or higher offsets do not complete the stream.
+  repeated_fin_after_ack_does_not_rearm
+    Repeating an already acknowledged empty FIN does not recreate a pending FIN.
+  fin_ack_before_payload_gaps_close_waits_for_data
+    A correct FIN ACK cannot bypass an outstanding payload ACK gap.
+  wholly_empty_fin_waits_for_fin_ack
+    Offset-zero payload bookkeeping plus the offset-zero FIN ACK are both used.
+  reset_abandons_fin_wait
+    Reset clears the pending FIN requirement and completes the reset send side.
+
+The packet-driven late-empty-FIN regression is also green in the final run.
+
+Final native verification:
+  /tmp/quiche-sendbuf-full-locked-feature-lib-20260907T213402.log
+  exit 0
+  command: cargo test --locked -p quiche --lib --features 'ffi qlog custom-client-dcid'
+  result: 941 passed, 0 failed, 0 ignored, 0 measured, 0 filtered out
+
+Copied full GREEN evidence:
+  conformance/results/quiche-fin-ack-fixed-2026-09-07.log
+  SHA256 61d8ae2967d17264dd06f27a6c85dd4a98bfe2c5bf6dec3a7ef336bedc43705f
+The raw Cargo output retains its final blank line. A file-specific Git whitespace
+attribute allows that captured ending; source whitespace checks remain unchanged.
+
+Version and source bundle
+-------------------------
+Java transport coordinates:
+  ai.pipestream.transport:netty-codec-classes-quic:4.2.17.Final-pipestream.2
+  ai.pipestream.transport:netty-codec-native-quic:4.2.17.Final-pipestream.2:linux-x86_64
+
+Current checked bundle SHA256 values:
+  netty.patch
+    8229873fe87905f957d3b5401860b77c7102615e6018ba6744d213923662a7f1
+  quiche.patch
+    27964bfbcd947415c0ef27fbd9dfd3c02eda151259471d2fb503e24939aae7e1
+  quiche-Cargo.lock
+    c5039e79db6949df057e185ef182003a891fdcb2820fb09c9886f8c546f8cc34
+
+Fresh isolated source build:
+  /work/reference-code/pipestream-quic-build.d5CaSFZQ/maven-repository
+  Native build log:
+    /work/reference-code/pipestream-quic-build.d5CaSFZQ/verify.log
+  Native suite: 31 fresh XML reports, 294 tests, zero failures/errors/skips.
+  .2 classes JAR SHA256:
+    2e11dec7693fd1eaec8d8a4372e0068f4adcd0e34061d74d7330c9eb3e02dedf
+  .2 native linux-x86_64 classifier JAR SHA256:
+    5c6e457aec4e72edb080093b2eef51d2fb0c31357cf962c8efe660e9266607b4
+The actual classifier manifest identifies the exact two patch hashes above,
+quiche revision 4f347477006bf7f928335d28f05056013f70b87e, BoringSSL revision
+0226f30467f540a3f62ef48d453f93927da199b6 and the unique
+libnetty_quiche42_pipestream_linux_x86_64.so library. The standalone quiche
+tests instead use its BoringSSL submodule f1c75347daa2ea81a941e953f2263e0a4d970c8d.
+No .1 artifact hash is used as evidence for .2. These hashes identify this build,
+not bit-identical binary reproducibility across toolchains or timestamps.
+
+Full regression and source identity
+----------------------------------
+Command: ./conformance/run_all.sh
+Retained session 10729, actual exit 0.
+Log: /tmp/pipestream-rfc-finfix-conformance-full-20260907T213520.log
+The script performed the one fresh native bootstrap above and reused only its
+returned Maven repository for the Java reference and external Java example.
+Reference XML: 31 reports, 347 tests, zero failures/errors/skips. This includes
+the five StreamTransport fixtures, all 14 Core client tests (including the
+previously failing detach/FIN oracle), 13 Core server tests and the actual loaded
+dependency provenance test. Their runtime classpath names d5CaSFZQ and .2.
+Rust: 788 workspace tests plus 6 external-example tests, all passed. Native
+SQLite/C++, frozen vectors/CDDL and bounded models passed. All 9 existing V1
+language pairings, 32 raw QUIC capability probes, recursive/recovery checks and
+all 3 external examples passed. These V1 checks are not V2 durable-profile parity.
+No semantic changes or timeout/oracle weakening were made during this run.
+
+Focused repetition and documentation checks
+------------------------------------------
+Fresh-cache focused command:
+  mvn -f implementations/java-netty/pom.xml -Psealed-interop \
+    -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.d5CaSFZQ/maven-repository \
+    -Dtest=V2CoreClientTest,V2CoreServerTest,V2TlsTest,TlsPeerIdentityTest,StreamTransportTest,TransportDependencyTest test
+Session 13861, exit 0:
+  /tmp/pipestream-rfc-finfix-focused-20260907T214511.log
+Six fresh reports: 45 tests, zero failures/errors/skips; Core client 14, Core
+server 13, TLS 9, identity 3, stream owner 5, dependency provenance 1.
+Two bounded post-fix repetitions use the same Maven flags and the selector
+V2CoreClientTest,V2CoreServerTest,StreamTransportTest,TransportDependencyTest:
+  session 91830, exit 0, 33 tests/0 failures/0 errors/0 skips
+    /tmp/pipestream-rfc-finfix-repeat2-20260907T214545.log
+  session 80746, exit 0, 33 tests/0 failures/0 errors/0 skips
+    /tmp/pipestream-rfc-finfix-repeat3-20260907T214559.log
+These are post-fix verification, not retries used to dismiss the original failure.
+The control timeout and exact FRAME_ERROR expectation remain unchanged.
+Focused/repeated runs overwrite their individual XML reports; the 347 total
+above was recorded and independently checked immediately after the full run.
+
+Google Java Format 1.28.0 and source whitespace checks passed for changed Java.
+The fresh isolated Maven cache regenerated target/v2-tls-classpath through
+dependency:build-classpath. Strict Javadoc used -quiet -Xdoclint:all -Werror,
+target/classes plus that dependency classpath, every V2 source and the explicit
+TlsPeerIdentity/AddressValidationTokenHandler sources, writing target/v2-apidocs.
+Session 14728, direct exit 0; no warnings or errors:
+  /tmp/pipestream-rfc-finfix-v2-doclint-rerun-20260907T214658.log
+The preceding empty log had an observation-wrapper serialization error for an
+absent session ID; the rerun retained an authoritative terminal exit. It did not
+change source or suppress warnings. No whole legacy V1-package doclint claim.
+
+Draft command: ./build.sh core 05 draft
+Session 77929, exit 0:
+  /tmp/pipestream-rfc-finfix-draft-core05-20260907T214709.log
+idnits: zero errors/flaws/warnings; one existing FIPS-180-4 downref comment.
+Updated Appendix D was inspected in generated TXT and HTML. No normative wire,
+profile or persistent schema changed, and no Internet-Draft was submitted.
+
+Remaining gates and limitations
+-------------------------------
+- This milestone does not prove a full Java durable-work/result endpoint, durable
+  request settlement, receipt/object retention, or Java-to-Rust durable-profile
+  interoperability.
+- Native retained stream offsets are admission accounting, not exact heap/RSS.
+  Java queues, TLS, datagrams, QUIC metadata and partial backing buffers remain
+  separately bounded concerns.
+- Configured receive/send geometry is a local transport policy. It does not
+  guarantee peer credit delivery, congestion capacity, network delivery, or all
+  end-to-end durable admission gates under arbitrary packet loss.
+- The diagnostic QLOG is evidence for this reproduced interleaving, not a wire
+  conformance oracle or a general packet-loss proof.

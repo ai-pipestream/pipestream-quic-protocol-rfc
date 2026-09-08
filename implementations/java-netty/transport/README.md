@@ -17,7 +17,7 @@ advertises V2 Core only.
   `f1c75347daa2ea81a941e953f2263e0a4d970c8d`; tests using the latter are not
   tests of the exact Netty native TLS build.
 - Modified classes/native artifacts use the group `ai.pipestream.transport`
-  and version `4.2.17.Final-pipestream.1`. Other Netty modules remain official
+  and version `4.2.17.Final-pipestream.2`. Other Netty modules remain official
   `io.netty` 4.2.17.Final dependencies. The native library name uses
   `netty_quiche42_pipestream`, not the official library's name.
 
@@ -51,6 +51,14 @@ charged; resets release cleared send buffers. This is a logical retained-data
 span, not RSS or an allocation counter. Metadata, TLS, datagrams and partial
 backing-buffer prefixes require separate limits. The copying path can retain
 one acknowledged backing-buffer prefix of up to 4095 bytes per send stream.
+
+The `.2` revision also tracks FIN acknowledgment separately from payload
+acknowledgment. A late zero-byte FIN remains live even if all preceding payload
+bytes have already been acknowledged and the application consumes the peer's
+FIN before the next packet is sent. Packet emission alone does not complete the
+send side; the FIN must be acknowledged. Reset abandons that FIN wait and retains
+the connection's existing RESET_STREAM recovery behavior. This is QUIC stream
+correctness, not a change to PipeStream's durable completion semantics.
 
 `STREAM_SEND_BUFFER_LIMITS` is a connection option installed before registration.
 Ordinary streams use the aggregate ceiling `total - reserved`; locally selected
@@ -94,7 +102,7 @@ success or failure. Nothing is installed in the global Maven cache or published.
 Netty's native build owns and deletes generated source directories under its
 `target`; never configure those properties to point at retained source checkouts.
 
-The final bundle passed a fresh rebuild on 2026-09-07: 294 native Java tests in
+The preceding `.1` bundle passed a fresh rebuild on 2026-09-07: 294 native Java tests in
 31 fresh XML reports, with no failures, errors or skips. Generated manifests
 identify the expected upstream revisions, both patch hashes and the distinct
 native-library name. Commands, artifact hashes, red-to-green history and scoped
@@ -103,5 +111,8 @@ lint limitations are recorded in the
 This is a repeatable source-pinned build, not a claim of bit-identical binaries
 across toolchains and timestamps. Source-level Rust tests, native Java transport
 tests, full RFC regression tests and V2 durable-object resource tests are separate
-gates. Passing one does not imply the others; the Java V2 object/control owner
-and its complete durable-profile integration remain open.
+gates. Passing one does not imply the others. The connection-confined Java
+stream owner is now implemented and used by Core with zero data slots; all five
+object/control acceptance gates and its complete durable-profile integration
+remain open. The `.2` FIN correction and stream-owner verification are recorded
+in the [subsequent milestone evidence](../../../conformance/results/durable-work-v2-java-stream-owner-2026-09-07.txt).

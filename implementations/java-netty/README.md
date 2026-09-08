@@ -12,7 +12,7 @@ java -jar target/pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar --help
 
 The reference library and Java example pin the Netty `4.2.17.Final` BOM. QUIC
 classes/native artifacts use the source-built `ai.pipestream.transport` extension
-at `4.2.17.Final-pipestream.1`; other Netty modules remain official `io.netty`
+at `4.2.17.Final-pipestream.2`; other Netty modules remain official `io.netty`
 dependencies. The bootstrap above verifies and installs the pinned extension in
 a fresh isolated Maven repository under reference-code, then prints only that
 repository path to stdout. Build progress goes to stderr. Reuse the captured
@@ -32,8 +32,9 @@ linked into the Java library.
 Dependency provenance and the remaining V2 shared-credit requirement are recorded
 in the [Java transport review](../../docs/standards/java-v2-transport-credit.md).
 The [source-pinned transport extension](transport/README.md) supplies native
-credit/accounting APIs and transport regression tests for the forthcoming V2
-object owner. Selecting it is not evidence of Java durable-work/results parity.
+credit/accounting APIs for the V2 stream owner. Both Core endpoints now install
+its native send limits and reserve the allowance exclusively for Stream 0.
+This is not evidence of Java durable-work/results parity.
 The client
 requires a CA certificate and the server requires an end-entity certificate and
 private key. Both public clients verify the certificate chain and the configured
@@ -53,8 +54,8 @@ The separate `ai.pipestream.quic.v2` package implements the current Section 12
 and Appendix F binary schemas independently. It does not wrap Rust, convert
 messages through JSON, reuse the version-1 CBOR object model, or advertise V2
 durable profiles from an endpoint. The Core-only authenticated listener and client are described
-below; V2 durable execution/storage, client recovery and actual V2 object transport
-remain to be implemented in Java.
+below; V2 durable execution/storage, client recovery and integration of verified
+object transport with those durable owners remain to be implemented in Java.
 
 - `Records` and `Messages` expose immutable typed values for every current
   record and control-message family. Constructors reject structural contradictions;
@@ -186,6 +187,31 @@ shipped Java CLI yet; complete V2 endpoint/durability/recovery, independent fail
 testing and the original external/gRPC workload remain mandatory.
 
 ## Version 2 Core listener
+
+The package-private `StreamTransport` owns stream classification and transport
+admission. Only the one client-created bidirectional Stream 0 may use reserved
+native send allowance. Object streams use ordinary allowance, manual bounded
+reads and frame-mode reception so actual FIN is distinguishable from reset or
+connection loss. Outgoing streams permit one copied, bounded chunk in flight;
+FIN follows pending bytes. Opening, write and FIN waits have independent local
+deadlines. These admission waits are distinct from the negotiated object's
+payload idle/lifetime timers and from request-response deadlines.
+
+Transport slots are not freed by local FIN or reset alone: the caller explicitly
+settles the lease after transport termination, while separately retaining any
+unresolved admission receipt. Connection termination ends local transports,
+not durable obligations. A finite stream-creation/ordinal ceiling also bounds
+native stream history even if Java channels retire before peer ACKs. Exhaustion
+refuses new stream admission; control and existing requests remain available.
+
+The receive configuration fixes initial, replenishment and maximum windows. Its
+connection window is `2*(N+1)*W` for N data streams and per-stream window W,
+including Core's N=0. This includes the pinned transport's 1.5W stream-driven
+lower bound. The configured geometry is not proof against every independent
+credit-update ordering or a measured memory bound. The five gates in the
+[transport review](../../docs/standards/java-v2-transport-credit.md) still apply.
+The object transport fixture is not a durable-profile endpoint. Core uses the
+owner with zero data slots and continues to refuse both unimplemented profiles.
 
 `v2.CoreServer.start(address, authentication, options)` binds an actual QUIC-v1
 UDP listener with the V2 TLS guard and HMAC address-validation Retry tokens. The

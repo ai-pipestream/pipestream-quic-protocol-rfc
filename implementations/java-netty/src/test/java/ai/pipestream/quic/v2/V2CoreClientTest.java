@@ -7,6 +7,7 @@ import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
@@ -15,6 +16,8 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.ChannelInputShutdownEvent;
 import io.netty.channel.socket.nio.NioDatagramChannel;
+import io.netty.handler.codec.quic.QLogConfiguration;
+import io.netty.handler.codec.quic.QuicChannelOption;
 import io.netty.handler.codec.quic.QuicServerCodecBuilder;
 import io.netty.handler.codec.quic.QuicStreamChannel;
 import java.net.DatagramSocket;
@@ -34,16 +37,20 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
 
 @Timeout(30)
 final class V2CoreClientTest {
-  @TempDir static Path directory;
+  @TempDir(cleanup = CleanupMode.ON_SUCCESS)
+  static Path directory;
 
   @BeforeAll
   static void certificates() throws Exception {
@@ -191,14 +198,22 @@ final class V2CoreClientTest {
   @Test
   void detachRequiresCorrelatedAcknowledgmentBeforePeerFin() throws Exception {
     CoreOptions options = options(300, 1000);
-    record Attack(ProtocolError.Code code, BiConsumer<MaliciousServer, QuicStreamChannel> action) {}
+    record Attack(
+        String name,
+        ProtocolError.Code code,
+        BiConsumer<MaliciousServer, QuicStreamChannel> action) {}
     List<Attack> attacks =
         List.of(
-            new Attack(ProtocolError.Code.FRAME_ERROR, (server, stream) -> stream.shutdownOutput()),
             new Attack(
+                "peer FIN before Detached",
+                ProtocolError.Code.FRAME_ERROR,
+                (server, stream) -> server.retainFin(stream, stream.shutdownOutput())),
+            new Attack(
+                "wrong Detached correlation",
                 ProtocolError.Code.FRAME_ERROR,
                 (server, stream) -> server.send(stream, new Messages.Detached(2))),
             new Attack(
+                "duplicate Detached",
                 ProtocolError.Code.FRAME_ERROR,
                 (server, stream) -> {
                   server.send(stream, new Messages.Detached(1));
@@ -206,14 +221,28 @@ final class V2CoreClientTest {
                   stream.shutdownOutput();
                 }),
             new Attack(
+                "Detached without peer FIN",
                 ProtocolError.Code.LIMIT_EXCEEDED,
                 (server, stream) -> server.send(stream, new Messages.Detached(1))));
     for (Attack attack : attacks) {
       try (MaliciousServer server = new MaliciousServer(options, true, attack.action());
           CoreClient client = CoreClient.connect(server.address(), client("localhost"), options)) {
         get(client.ready());
-        assertEquals(attack.code(), assertProtocolFailure(client.detach()).code());
-        assertEquals(attack.code(), assertProtocolFailure(client.closed()).code());
+        ProtocolError detach = assertProtocolFailure(client.detach());
+        String diagnostic =
+            attack.name()
+                + ": "
+                + detach.getMessage()
+                + ", detachReceived="
+                + server.detachReceived.isDone()
+                + ", clientFin="
+                + server.clientFin.isDone()
+                + ", scriptFailure="
+                + server.scriptFailure.isDone()
+                + server.finDiagnostic();
+        assertEquals(attack.code(), detach.code(), diagnostic);
+        ProtocolError closed = assertProtocolFailure(client.closed());
+        assertEquals(attack.code(), closed.code(), diagnostic + ", closed=" + closed.getMessage());
       }
     }
   }
@@ -608,6 +637,12 @@ final class V2CoreClientTest {
     final CompletableFuture<Void> clientFin = new CompletableFuture<>();
     final CompletableFuture<Throwable> scriptFailure = new CompletableFuture<>();
     final AtomicInteger ignoredWrites = new AtomicInteger();
+    final AtomicLong offerAt = new AtomicLong();
+    final AtomicLong detachAt = new AtomicLong();
+    final AtomicLong attackAt = new AtomicLong();
+    final AtomicReference<QuicStreamChannel> attackStream = new AtomicReference<>();
+    final AtomicReference<ChannelFuture> attackFin = new AtomicReference<>();
+    final Path qlogDirectory;
     final Channel listener;
 
     MaliciousServer(
@@ -618,6 +653,7 @@ final class V2CoreClientTest {
       this.options = options;
       this.negotiate = negotiate;
       this.attack = attack;
+      qlogDirectory = Files.createTempDirectory(directory, "core-client-qlog-");
       TlsAuthentication authentication = serverAuthentication();
       var codec =
           new QuicServerCodecBuilder()
@@ -630,6 +666,10 @@ final class V2CoreClientTest {
               .initialMaxStreamDataUnidirectional(0)
               .initialMaxStreamsBidirectional(1)
               .initialMaxStreamsUnidirectional(0)
+              .option(
+                  QuicChannelOption.QLOG,
+                  new QLogConfiguration(
+                      qlogDirectory.toString(), "Core client malicious peer", "FIN diagnostic"))
               .tokenHandler(new AddressValidationTokenHandler())
               .handler(new ChannelInboundHandlerAdapter())
               .streamHandler(
@@ -657,6 +697,42 @@ final class V2CoreClientTest {
 
     void send(QuicStreamChannel stream, Messages.Message message) {
       stream.writeAndFlush(Unpooled.wrappedBuffer(Wire.encode(message, 8192)));
+    }
+
+    void retainFin(QuicStreamChannel stream, ChannelFuture fin) {
+      attackStream.set(stream);
+      attackFin.set(fin);
+    }
+
+    String finDiagnostic() {
+      ChannelFuture fin = attackFin.get();
+      QuicStreamChannel stream = attackStream.get();
+      if (fin == null || stream == null) return "";
+      long assertionAt = System.nanoTime();
+      return ", serverFinDone="
+          + fin.isDone()
+          + ", serverFinSuccess="
+          + fin.isSuccess()
+          + ", serverFinCause="
+          + fin.cause()
+          + ", serverStreamActive="
+          + stream.isActive()
+          + ", serverStreamInputShutdown="
+          + stream.isInputShutdown()
+          + ", serverStreamOutputShutdown="
+          + stream.isOutputShutdown()
+          + ", offerToDetachMs="
+          + elapsed(offerAt.get(), detachAt.get())
+          + ", offerToAttackMs="
+          + elapsed(offerAt.get(), attackAt.get())
+          + ", offerToAssertionMs="
+          + elapsed(offerAt.get(), assertionAt)
+          + ", qlog="
+          + qlogDirectory;
+    }
+
+    private static long elapsed(long start, long end) {
+      return start == 0 || end == 0 ? -1 : TimeUnit.NANOSECONDS.toMillis(end - start);
     }
 
     @Override
@@ -689,20 +765,22 @@ final class V2CoreClientTest {
             if (!negotiated) {
               assertInstanceOf(Messages.Capabilities.class, message);
               negotiated = true;
+              offerAt.compareAndSet(0, System.nanoTime());
               offerReceived.complete(stream);
               if (negotiate) {
                 decoder.limit(options.controlLimit());
                 send(stream, selected(options));
               } else if (attack != null) {
                 attacked = true;
-                attack.accept(MaliciousServer.this, stream);
+                attack(stream);
               }
             } else if (message instanceof Messages.Detach detach) {
+              detachAt.compareAndSet(0, System.nanoTime());
               if (!detachReceived.complete(detach))
                 throw new AssertionError("client sent more than one detach");
               if (!attacked) {
                 attacked = true;
-                attack.accept(MaliciousServer.this, stream);
+                attack(stream);
               }
             }
           }
@@ -717,11 +795,16 @@ final class V2CoreClientTest {
         if (event instanceof ChannelInputShutdownEvent && !attacked) {
           clientFin.complete(null);
           attacked = true;
-          attack.accept(MaliciousServer.this, stream);
+          attack(stream);
         } else {
           if (event instanceof ChannelInputShutdownEvent) clientFin.complete(null);
           context.fireUserEventTriggered(event);
         }
+      }
+
+      private void attack(QuicStreamChannel stream) {
+        attackAt.compareAndSet(0, System.nanoTime());
+        attack.accept(MaliciousServer.this, stream);
       }
     }
   }

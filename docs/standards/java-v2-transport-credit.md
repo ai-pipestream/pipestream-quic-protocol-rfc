@@ -3,7 +3,9 @@
 Status: 2026-09-07. The Java reference and external Java example now use the
 source-pinned QUIC extension with the maintained Netty 4.2.17.Final BOM. The
 official-artifact migration below precedes this extension. Dependency integration
-does not implement durable object transport or prove its control reservation.
+does not prove durable object transport or its complete control reservation.
+The connection-confined Java stream owner now installs native limits in both
+Core endpoints and separately implements bounded object-stream admission.
 Java V2 still advertises Core only. The full durable-work/results goal and its
 independent failure driver and equivalent gRPC workload remain open.
 
@@ -143,12 +145,56 @@ reset writes, and reopened allowance for another stream. A zero-reservation
 negative control distinguishes protected allowance from ordinary native progress.
 
 These are transport admission/cleanup tests, not the complete five gates below.
+The subsequent Core/stream-owner tests exposed another native defect: all payload
+bytes could be acknowledged before a later empty FIN. If the application then
+consumed the peer's FIN before the next send, the native stream could be collected
+without transmitting its own FIN. A retained native QLOG and a deterministic
+packet-level red-to-green regression identify that arrival order; extending the
+PipeStream timeout would not correct it. The `.2` dependency revision tracks FIN
+acknowledgment separately, including empty streams, payload ACK gaps, duplicate
+FIN writes and reset abandonment. This restores the send-side distinction in
+[RFC 9000 Section 3.1](https://www.rfc-editor.org/rfc/rfc9000.html#section-3.1),
+without redefining PipeStream detach or durable outcomes.
+
 Actual PipeStream control messages, deadline scheduling under withheld peer
 credit, repeated receive-window growth/replacement, durable ownership and measured
-whole-process bounds still need the Java object/control owner. The dependency
+whole-process bounds require the five owner acceptance gates below. The dependency
 is integrated through its reproducible pinned build with no co-loaded official
 QUIC classes or system-path dependency. Full protocol regression and object-owner
 resource tests remain separate from dependency identity and native transport tests.
+
+## Java connection-owned stream admission
+
+`StreamTransport` now binds reserved native admission to actual client-created
+bidirectional Stream 0, with one owner per connection. It verifies that the
+connection's native limits were installed before registration. Incoming and
+outgoing objects have separate active-slot ceilings. Open operations reserve
+before stream creation, and a cancelled caller view cannot cancel or free the
+underlying operation. Local writes copy at most one configured chunk per outgoing
+stream and remain charged until the actual Netty future settles. Snapshots report
+this application queue separately from native retained spans.
+
+FIN waits behind that stream's pending bytes. Reset/STOP uses the stream's actual
+direction. Local FIN/reset does not automatically release a protocol request's
+slot, complete its receipt, or assert durable work state. The next durable owner
+must retain input correlation even after transport cleanup. A finite lifetime
+stream ordinal/creation ceiling prevents indefinite native stream-history growth
+despite early Java-channel retirement; it is not an advertised durable quota.
+
+Receive-only streams use explicit QUIC frame reception: Netty does not supply
+half-closure events on those streams, and channel inactivity is not evidence of
+FIN. Reads are manual, with one fixed-size message per read cycle. The future
+verified-object receiver must reserve its staging/worker capacity before requesting
+the next read and hold any asynchronous consumer's buffer ownership until release.
+
+The initial/replenishment/maximum connection window is `2*(N+1)*W`, and every
+receive stream's initial and maximum window is W. The stream-driven 1.5W lower
+bound fits this geometry, including N=0 Core connections. This explicit geometry
+still needs adversarial credit-frame ordering, repeated replacement and measured
+resource tests; it is not an end-to-end proof. `ControlWrites` has a timer-driven
+native retry using the same reserved classification, independent of data reads.
+The stream owner bounds each open/write/FIN wait separately; these local admission
+deadlines do not replace negotiated payload or correlated-response deadlines.
 
 ## Required acceptance before durable object integration
 
@@ -171,6 +217,6 @@ resource tests remain separate from dependency identity and native transport tes
 
 The existing Rust reservation tests remain Rust evidence. Java Core/TLS and V1
 interop regression tests protect the migration, but cannot satisfy these V2
-durable-object gates. Next implementation work must close this transport API and
-ownership boundary alongside the independent Java durable store/execution/result
+durable-object gates. Next implementation work must close all five owner gates
+alongside the independent Java durable store/execution/result
 and recovery layers, not remove or weaken the required profiles.

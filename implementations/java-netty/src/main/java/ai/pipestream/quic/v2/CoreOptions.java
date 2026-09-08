@@ -14,7 +14,8 @@ import java.util.List;
  *     one additional packet-local transport to emit an overload refusal
  * @param connectionsPerOwner ceiling for each mapped owner and for the anonymous bucket
  * @param queuedControlBytes maximum application bytes queued for Netty control writes
- * @param controlWindowBytes initial control stream and connection receive credit
+ * @param controlWindowBytes fixed control stream receive window; the connection uses twice this
+ *     window for initial credit, replenishment and its maximum window
  * @param readChunkBytes maximum individual application read buffer
  * @param handshakeTimeoutMs local handshake deadline
  * @param controlTimeoutMs local control-frame, idle-control and queued-write deadline

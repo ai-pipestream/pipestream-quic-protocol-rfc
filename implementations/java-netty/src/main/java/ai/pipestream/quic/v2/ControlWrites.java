@@ -1,6 +1,7 @@
 package ai.pipestream.quic.v2;
 
 import io.netty.buffer.Unpooled;
+import io.netty.handler.codec.quic.QuicChannelOption;
 import io.netty.handler.codec.quic.QuicStreamChannel;
 import java.util.ArrayDeque;
 import java.util.function.Consumer;
@@ -29,6 +30,9 @@ final class ControlWrites {
       CoreOptions options,
       Consumer<ProtocolError> failure,
       Runnable drained) {
+    if (!Boolean.TRUE.equals(
+        channel.config().getOption(QuicChannelOption.USE_RESERVED_SEND_BUFFER)))
+      throw new IllegalArgumentException("control must own the reserved native allowance");
     this.channel = channel;
     this.options = options;
     this.failure = failure;
@@ -82,8 +86,12 @@ final class ControlWrites {
   }
 
   void check(long now) {
-    if (!ended && !pending.isEmpty())
+    if (!ended && !pending.isEmpty()) {
       ObjectStream.before(now, pending.getFirst().start(), options.controlTimeoutMs() * 1000000L);
+      // The extension schedules an event-loop native writable retry even when classification is
+      // unchanged. Keep the control retry independent of data consumers and writable callbacks.
+      channel.config().setOption(QuicChannelOption.USE_RESERVED_SEND_BUFFER, true);
+    }
   }
 
   boolean empty() {

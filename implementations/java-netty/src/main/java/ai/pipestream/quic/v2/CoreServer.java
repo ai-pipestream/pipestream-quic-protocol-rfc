@@ -18,6 +18,7 @@ import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.ChannelInputShutdownEvent;
 import io.netty.channel.socket.nio.NioDatagramChannel;
 import io.netty.handler.codec.quic.QuicChannel;
+import io.netty.handler.codec.quic.QuicChannelOption;
 import io.netty.handler.codec.quic.QuicServerCodecBuilder;
 import io.netty.handler.codec.quic.QuicStreamChannel;
 import io.netty.handler.codec.quic.QuicStreamType;
@@ -45,6 +46,7 @@ public final class CoreServer implements AutoCloseable {
       AttributeKey.valueOf(CoreServer.class, "connection");
   private final TlsAuthentication authentication;
   private final CoreOptions options;
+  private final StreamTransport.Limits transportLimits;
   private final MultiThreadIoEventLoopGroup group;
   private final Set<Connection> connections = new HashSet<>();
   private final Map<Optional<String>, Integer> owners = new HashMap<>();
@@ -60,6 +62,7 @@ public final class CoreServer implements AutoCloseable {
   private CoreServer(TlsAuthentication authentication, CoreOptions options) {
     this.authentication = Objects.requireNonNull(authentication);
     this.options = Objects.requireNonNull(options);
+    transportLimits = StreamTransport.Limits.core(options);
     if (!authentication.isServer())
       throw new IllegalArgumentException("server TLS configuration required");
     group = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
@@ -81,18 +84,17 @@ public final class CoreServer implements AutoCloseable {
     boolean success = false;
     try {
       var codec =
-          new QuicServerCodecBuilder()
+          server
+              .transportLimits
+              .configure(new QuicServerCodecBuilder(), true)
               .version(1)
               .sslEngineProvider(c -> authentication.engine(c.alloc(), 0))
               .maxIdleTimeout(
                   Math.max(options.controlTimeoutMs(), options.streamLifetimeMs()),
                   TimeUnit.MILLISECONDS)
-              .initialMaxData(options.controlWindowBytes())
-              .initialMaxStreamDataBidirectionalLocal(0)
-              .initialMaxStreamDataBidirectionalRemote(options.controlWindowBytes())
-              .initialMaxStreamDataUnidirectional(0)
-              .initialMaxStreamsBidirectional(1)
-              .initialMaxStreamsUnidirectional(0)
+              .option(
+                  QuicChannelOption.STREAM_SEND_BUFFER_LIMITS,
+                  server.transportLimits.nativeSendLimits())
               .tokenHandler(new AddressValidationTokenHandler())
               .handler(
                   new ChannelInitializer<QuicChannel>() {
@@ -270,6 +272,7 @@ public final class CoreServer implements AutoCloseable {
 
   private final class Connection extends ChannelInboundHandlerAdapter {
     final QuicChannel channel;
+    final StreamTransport transport;
     final TlsAuthentication.Guard guard = authentication.guard();
     final long started = System.nanoTime();
     long lastFrame = started;
@@ -286,6 +289,7 @@ public final class CoreServer implements AutoCloseable {
 
     Connection(QuicChannel channel) {
       this.channel = channel;
+      transport = new StreamTransport(channel, transportLimits, true);
     }
 
     @Override
@@ -329,6 +333,7 @@ public final class CoreServer implements AutoCloseable {
             || stream.streamId() != 0
             || control != null)
           throw ProtocolError.frame("only client bidirectional stream zero is control");
+        transport.bindControl(stream);
         stream
             .config()
             .setAllowHalfClosure(true)

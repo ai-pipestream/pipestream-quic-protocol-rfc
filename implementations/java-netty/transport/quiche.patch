@@ -58,7 +58,7 @@ index e812993..4afaeab 100644
  pub extern "C" fn quiche_conn_stream_readable(
      conn: &Connection, stream_id: u64,
 diff --git a/quiche/src/lib.rs b/quiche/src/lib.rs
-index a93bfb5..5f5002a 100644
+index a93bfb5..ce129fe 100644
 --- a/quiche/src/lib.rs
 +++ b/quiche/src/lib.rs
 @@ -595,6 +595,7 @@ pub struct Config {
@@ -117,7 +117,26 @@ index a93bfb5..5f5002a 100644
                  config.max_connection_window,
              ),
              almost_full: false,
-@@ -5936,6 +5962,26 @@ impl<F: BufFactory> Connection<F> {
+@@ -3447,7 +3473,7 @@ impl<F: BufFactory> Connection<F> {
+                         stream_id,
+                         offset,
+                         length,
+-                        ..
++                        fin,
+                     } => {
+                         // Update tx_buffered and emit qlog before checking if the
+                         // stream still exists.  The client does need to ACK
+@@ -3478,6 +3504,9 @@ impl<F: BufFactory> Connection<F> {
+                         };
+ 
+                         stream.send.ack_and_drop(offset, length);
++                        if fin {
++                            stream.send.ack_fin(offset + length as u64);
++                        }
+ 
+                         let priority_key = Arc::clone(&stream.priority_key);
+ 
+@@ -5936,6 +5965,26 @@ impl<F: BufFactory> Connection<F> {
          Err(Error::InvalidStreamState(stream_id))
      }
  
@@ -145,7 +164,7 @@ index a93bfb5..5f5002a 100644
      ///
      /// Note that once returned by this method, a stream ID will not be returned
 diff --git a/quiche/src/stream/mod.rs b/quiche/src/stream/mod.rs
-index 6355285..c046c13 100644
+index 6355285..be3f1b2 100644
 --- a/quiche/src/stream/mod.rs
 +++ b/quiche/src/stream/mod.rs
 @@ -676,6 +676,15 @@ impl<F: BufFactory> StreamMap<F> {
@@ -164,11 +183,177 @@ index 6355285..c046c13 100644
      /// Returns the number of active streams in the map.
      #[cfg(test)]
      pub fn len(&self) -> usize {
+@@ -1377,6 +1386,8 @@ mod tests {
+         assert!(!stream.send.is_complete());
+ 
+         stream.send.ack(0, 1);
++        assert!(!stream.send.is_complete());
++        stream.send.ack_fin(10);
+         assert!(stream.send.is_complete());
+ 
+         assert!(!stream.is_complete());
+diff --git a/quiche/src/stream/send_buf.rs b/quiche/src/stream/send_buf.rs
+index fb1008b..600a0df 100644
+--- a/quiche/src/stream/send_buf.rs
++++ b/quiche/src/stream/send_buf.rs
+@@ -118,6 +118,9 @@ where
+     /// The final stream offset written to the stream, if any.
+     fin_off: Option<u64>,
+ 
++    /// Whether a written FIN still needs acknowledgment (unless reset).
++    fin_pending: bool,
++
+     /// Whether the stream's send-side has been shut down.
+     shutdown: bool,
+ 
+@@ -163,6 +166,9 @@ impl<F: BufFactory> SendBuf<F> {
+         }
+ 
+         if fin {
++            if self.fin_off.is_none() {
++                self.fin_pending = true;
++            }
+             self.fin_off = Some(max_off);
+         }
+ 
+@@ -320,6 +326,13 @@ impl<F: BufFactory> SendBuf<F> {
+         self.acked.insert(off..off + len as u64);
+     }
+ 
++    /// Acknowledges a FIN at its final offset, independently of payload ACKs.
++    pub fn ack_fin(&mut self, final_off: u64) {
++        if self.fin_off == Some(final_off) {
++            self.fin_pending = false;
++        }
++    }
++
+     pub fn ack_and_drop(&mut self, off: u64, len: usize) {
+         self.ack(off, len);
+ 
+@@ -420,6 +433,9 @@ impl<F: BufFactory> SendBuf<F> {
+         let unsent_len = self.off_back().saturating_sub(unsent_off);
+ 
+         self.fin_off = Some(unsent_off);
++        // Reset abandons FIN delivery; RESET_STREAM reliability is tracked
++        // independently by the connection's packet recovery state.
++        self.fin_pending = false;
+ 
+         // Drop all buffered data.
+         self.data.clear();
+@@ -501,10 +517,12 @@ impl<F: BufFactory> SendBuf<F> {
+     /// Returns true if the send-side of the stream is complete.
+     ///
+     /// This happens when the stream's send final size is known, and the peer
+-    /// has already acked all stream data up to that point.
++    /// has already acked all stream data up to that point and its FIN, or the
++    /// buffer has been reset. ACKing payload before a later empty FIN cannot
++    /// complete the stream or permit its state to be collected.
+     pub fn is_complete(&self) -> bool {
+         if let Some(fin_off) = self.fin_off {
+-            if self.acked == (0..fin_off) {
++            if !self.fin_pending && self.acked == (0..fin_off) {
+                 return true;
+             }
+         }
+@@ -846,4 +864,93 @@ mod tests {
+         assert_eq!(fin_off, 50);
+         assert_eq!(unsent, 0);
+     }
++
++    #[test]
++    fn late_empty_fin_after_payload_ack_waits_for_fin_ack() {
++        let mut send = <SendBuf>::new(u64::MAX);
++        let mut out = [0; 16];
++
++        assert_eq!(send.write(b"payload", false), Ok(7));
++        assert_eq!(send.emit(&mut out), Ok((7, false)));
++        send.ack_and_drop(0, 7);
++        assert!(!send.is_complete());
++
++        assert_eq!(send.write(b"", true), Ok(0));
++        assert!(!send.is_complete());
++        assert_eq!(send.emit(&mut out), Ok((0, true)));
++        assert!(!send.is_complete());
++        send.ack_fin(7);
++        assert!(send.is_complete());
++    }
++
++    #[test]
++    fn wrong_final_offset_does_not_ack_fin() {
++        let mut send = <SendBuf>::new(u64::MAX);
++        let mut out = [0; 16];
++
++        assert_eq!(send.write(b"payload", true), Ok(7));
++        assert_eq!(send.emit(&mut out), Ok((7, true)));
++        send.ack_and_drop(0, 7);
++        send.ack_fin(6);
++        assert!(!send.is_complete());
++        send.ack_fin(8);
++        assert!(!send.is_complete());
++        send.ack_fin(7);
++        assert!(send.is_complete());
++    }
++
++    #[test]
++    fn repeated_fin_after_ack_does_not_rearm() {
++        let mut send = <SendBuf>::new(u64::MAX);
++        let mut out = [0; 1];
++
++        assert_eq!(send.write(b"", true), Ok(0));
++        assert_eq!(send.emit(&mut out), Ok((0, true)));
++        send.ack_and_drop(0, 0);
++        send.ack_fin(0);
++        assert!(send.is_complete());
++
++        assert_eq!(send.write(b"", true), Ok(0));
++        assert_eq!(send.emit(&mut out), Ok((0, true)));
++        assert!(send.is_complete());
++    }
++
++    #[test]
++    fn fin_ack_before_payload_gaps_close_waits_for_data() {
++        let mut send = <SendBuf>::new(u64::MAX);
++        let mut out = [0; 16];
++
++        assert_eq!(send.write(b"payload", true), Ok(7));
++        assert_eq!(send.emit(&mut out), Ok((7, true)));
++        send.ack_and_drop(3, 4);
++        send.ack_fin(7);
++        assert!(!send.is_complete());
++        send.ack_and_drop(0, 3);
++        assert!(send.is_complete());
++    }
++
++    #[test]
++    fn wholly_empty_fin_waits_for_fin_ack() {
++        let mut send = <SendBuf>::new(u64::MAX);
++        let mut out = [0; 1];
++
++        assert_eq!(send.write(b"", true), Ok(0));
++        assert_eq!(send.emit(&mut out), Ok((0, true)));
++        assert!(!send.is_complete());
++        send.ack_and_drop(0, 0);
++        send.ack_fin(0);
++        assert!(send.is_complete());
++    }
++
++    #[test]
++    fn reset_abandons_fin_wait() {
++        let mut send = <SendBuf>::new(u64::MAX);
++        let mut out = [0; 16];
++
++        assert_eq!(send.write(b"payload", true), Ok(7));
++        assert_eq!(send.emit(&mut out), Ok((7, true)));
++        assert!(!send.is_complete());
++        assert_eq!(send.reset(), (7, 0));
++        assert!(send.is_complete());
++    }
+ }
 diff --git a/quiche/src/tests.rs b/quiche/src/tests.rs
-index 0944993..b223709 100644
+index 0944993..ea79012 100644
 --- a/quiche/src/tests.rs
 +++ b/quiche/src/tests.rs
-@@ -991,6 +991,336 @@ fn streamio(#[values("cubic", "bbr2_gcongestion")] cc_algorithm_name: &str) {
+@@ -991,6 +991,387 @@ fn streamio(#[values("cubic", "bbr2_gcongestion")] cc_algorithm_name: &str) {
      assert!(pipe.server.stream_finished(4));
  }
  
@@ -198,6 +383,57 @@ index 0944993..b223709 100644
 +            .unwrap();
 +    assert_eq!(pipe.client_recv(&mut buf[..written]), Ok(written));
 +    assert_eq!(pipe.client.stream_send_retained(), 0);
++}
++
++#[test]
++fn late_empty_fin_is_emitted_after_payload_ack_and_peer_fin() {
++    let mut pipe = retained_stream_pipe();
++    let mut buf = [0; 65535];
++
++    assert_eq!(pipe.client.stream_send(0, b"offer", false), Ok(5));
++    let (written, _) = pipe.client.send(&mut buf).unwrap();
++    assert_eq!(pipe.server_recv(&mut buf[..written]), Ok(written));
++    let mut received = [0; 16];
++    assert_eq!(pipe.server.stream_recv(0, &mut received), Ok((5, false)));
++    assert_eq!(&received[..5], b"offer");
++
++    assert_eq!(pipe.server.stream_send(0, b"capabilities", false), Ok(12));
++    let first = pipe.server.next_pkt_num;
++    let (written, _) = pipe.server.send(&mut buf).unwrap();
++    assert_eq!(pipe.client_recv(&mut buf[..written]), Ok(written));
++
++    let mut ranges = ranges::RangeSet::default();
++    ranges.insert(first..pipe.server.next_pkt_num);
++    let written = test_utils::encode_pkt(
++        &mut pipe.client,
++        Type::Short,
++        &[frame::Frame::ACK {
++            ack_delay: 0,
++            ranges,
++            ecn_counts: None,
++        }],
++        &mut buf,
++    )
++    .unwrap();
++    assert_eq!(pipe.server_recv(&mut buf[..written]), Ok(written));
++    assert_eq!(pipe.server.stream_send_retained(), 0);
++
++    // Accept a late, empty local FIN but do not give packet_send() a chance
++    // to emit it before the peer's FIN arrives on the same stream.
++    assert_eq!(pipe.server.stream_send(0, b"", true), Ok(0));
++    assert_eq!(pipe.client.stream_send(0, b"", true), Ok(0));
++    let (written, _) = pipe.client.send(&mut buf).unwrap();
++    assert_eq!(pipe.server_recv(&mut buf[..written]), Ok(written));
++    assert_eq!(pipe.server.stream_recv(0, &mut received), Ok((0, true)));
++
++    let (written, _) = pipe.server.send(&mut buf).unwrap();
++    let frames =
++        test_utils::decode_pkt(&mut pipe.client, &mut buf[..written]).unwrap();
++    assert!(frames.iter().any(|frame| matches!(
++        frame,
++        frame::Frame::Stream { stream_id: 0, data }
++            if data.is_empty() && data.fin()
++    )));
 +}
 +
 +#[test]

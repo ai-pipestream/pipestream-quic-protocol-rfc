@@ -1,5 +1,5 @@
 diff --git a/codec-classes-quic/pom.xml b/codec-classes-quic/pom.xml
-index f5cab0a..b2ae9af 100644
+index f5cab0a..00619b2 100644
 --- a/codec-classes-quic/pom.xml
 +++ b/codec-classes-quic/pom.xml
 @@ -22,10 +22,18 @@
@@ -8,7 +8,7 @@ index f5cab0a..b2ae9af 100644
  
 +  <groupId>ai.pipestream.transport</groupId>
    <artifactId>netty-codec-classes-quic</artifactId>
-+  <version>4.2.17.Final-pipestream.1</version>
++  <version>4.2.17.Final-pipestream.2</version>
    <packaging>jar</packaging>
  
 -  <name>Netty/Codec/Classes/Quic</name>
@@ -600,7 +600,7 @@ index 917a730..6b2ee53 100644
      public boolean isReadFrames() {
          return readFrames;
 diff --git a/codec-native-quic/pom.xml b/codec-native-quic/pom.xml
-index e498164..d292ba8 100644
+index e498164..9a68cf8 100644
 --- a/codec-native-quic/pom.xml
 +++ b/codec-native-quic/pom.xml
 @@ -22,17 +22,25 @@
@@ -609,7 +609,7 @@ index e498164..d292ba8 100644
  
 +  <groupId>ai.pipestream.transport</groupId>
    <artifactId>netty-codec-native-quic</artifactId>
-+  <version>4.2.17.Final-pipestream.1</version>
++  <version>4.2.17.Final-pipestream.2</version>
    <packaging>${packaging.type}</packaging>
  
 -  <name>Netty/Codec/Native/Quic</name>

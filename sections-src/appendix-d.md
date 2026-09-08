@@ -117,6 +117,21 @@ transport-owned send buffering in the reservation requirement. Java's Core-only
 endpoints still accept no data streams; independent durable object transport
 and its stalled-data/resource evidence remain required.
 
+The Java connection-confined stream owner now binds native reservation to
+Stream 0 and bounds object stream slots, copied in-flight chunks, stream creation
+history and local open/write/FIN waits. Authenticated transport fixtures check
+control progress beside stalled data in both directions, exact incremental bytes
+and FIN, explicit slot settlement, reset and a named write deadline. They do not
+advertise a durable profile or establish all receive-credit orderings, native
+ACK-withholding behavior or whole-process memory bounds. Those tests also exposed
+a native stream-retirement bug: payload acknowledgments could cause a later empty
+FIN to be lost when the application consumed the peer's FIN first. The pinned
+dependency now distinguishes FIN acknowledgment from payload acknowledgment;
+a deterministic packet-level regression reproduces that order. This is an
+underlying QUIC correction, not a PipeStream wire change. Independent Java durable
+storage, execution, results, recovery and the original cross-language failure and
+workload-comparison deliverables remain open.
+
 As of 2026-09-07, the Rust authority library also implements transactional
 admission and replay, fenced worker execution, both branch producers and real
 child-output reassembly, cancellation/closure, retained result reads,

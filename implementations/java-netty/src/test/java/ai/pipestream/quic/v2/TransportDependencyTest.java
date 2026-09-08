@@ -15,9 +15,9 @@ import org.junit.jupiter.api.Test;
 
 final class TransportDependencyTest {
   private static final String CLASSES_ARTIFACT =
-      "netty-codec-classes-quic-4.2.17.Final-pipestream.1.jar";
+      "netty-codec-classes-quic-4.2.17.Final-pipestream.2.jar";
   private static final String NATIVE_ARTIFACT =
-      "netty-codec-native-quic-4.2.17.Final-pipestream.1-linux-x86_64.jar";
+      "netty-codec-native-quic-4.2.17.Final-pipestream.2-linux-x86_64.jar";
   private static final String CUSTOM_NATIVE =
       "META-INF/native/libnetty_quiche42_pipestream_linux_x86_64.so";
   private static final String OFFICIAL_NATIVE = "META-INF/native/libnetty_quiche42_linux_x86_64.so";
@@ -67,10 +67,10 @@ final class TransportDependencyTest {
       assertEquals(
           "0226f30467f540a3f62ef48d453f93927da199b6", attributes.getValue("BoringSSL-Revision"));
       assertEquals(
-          "209c4752825bde71527d27fdaaa12f54a7a13c8a6477225d7d5e2d2fefab7881",
+          "27964bfbcd947415c0ef27fbd9dfd3c02eda151259471d2fb503e24939aae7e1",
           attributes.getValue("PipeStream-Quiche-Patch-SHA256"));
       assertEquals(
-          "a6f0cbd615abce2d572763b8d14299f92e9af45fb77e71e55676794d29a771c7",
+          "8229873fe87905f957d3b5401860b77c7102615e6018ba6744d213923662a7f1",
           attributes.getValue("PipeStream-Netty-Patch-SHA256"));
     }
   }

@@ -18,6 +18,7 @@ import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.ChannelInputShutdownEvent;
 import io.netty.channel.socket.nio.NioDatagramChannel;
 import io.netty.handler.codec.quic.QuicChannel;
+import io.netty.handler.codec.quic.QuicChannelOption;
 import io.netty.handler.codec.quic.QuicClientCodecBuilder;
 import io.netty.handler.codec.quic.QuicConnectionCloseEvent;
 import io.netty.handler.codec.quic.QuicStreamChannel;
@@ -43,6 +44,7 @@ public final class CoreClient implements AutoCloseable {
   private static long reservedBytes;
   private final long bufferBudget;
   private final CoreOptions options;
+  private final StreamTransport.Limits transportLimits;
   private final TlsAuthentication authentication;
   private final TlsAuthentication.Guard guard;
   private final MultiThreadIoEventLoopGroup group;
@@ -61,6 +63,7 @@ public final class CoreClient implements AutoCloseable {
   private long detachStart;
   private Channel socket;
   private QuicChannel connection;
+  private StreamTransport transport;
   private Control control;
   private Capabilities selected;
   private boolean authenticated;
@@ -73,6 +76,7 @@ public final class CoreClient implements AutoCloseable {
   private CoreClient(TlsAuthentication authentication, CoreOptions options) {
     this.authentication = Objects.requireNonNull(authentication);
     this.options = Objects.requireNonNull(options);
+    transportLimits = StreamTransport.Limits.core(options);
     if (authentication.isServer())
       throw new IllegalArgumentException("client TLS configuration required");
     guard = authentication.guard();
@@ -115,7 +119,9 @@ public final class CoreClient implements AutoCloseable {
     boolean success = false;
     try {
       var codec =
-          new QuicClientCodecBuilder()
+          client
+              .transportLimits
+              .configure(new QuicClientCodecBuilder(), false)
               .version(1)
               .sslEngineProvider(c -> authentication.engine(c.alloc(), remote.getPort()))
               .maxIdleTimeout(
@@ -123,12 +129,6 @@ public final class CoreClient implements AutoCloseable {
                       options.handshakeTimeoutMs(),
                       Math.max(options.controlTimeoutMs(), options.streamLifetimeMs())),
                   TimeUnit.MILLISECONDS)
-              .initialMaxData(options.controlWindowBytes())
-              .initialMaxStreamDataBidirectionalLocal(options.controlWindowBytes())
-              .initialMaxStreamDataBidirectionalRemote(0)
-              .initialMaxStreamDataUnidirectional(0)
-              .initialMaxStreamsBidirectional(0)
-              .initialMaxStreamsUnidirectional(0)
               .build();
       // Retain the channel before waiting so interrupted bind cannot orphan a socket.
       var binding =
@@ -195,11 +195,13 @@ public final class CoreClient implements AutoCloseable {
     timer = loop.scheduleAtFixedRate(this::check, interval, interval, TimeUnit.MILLISECONDS);
     try {
       QuicChannel.newBootstrap(socket)
+          .option(QuicChannelOption.STREAM_SEND_BUFFER_LIMITS, transportLimits.nativeSendLimits())
           .handler(
               new ChannelInitializer<QuicChannel>() {
                 @Override
                 protected void initChannel(QuicChannel channel) {
                   connection = channel;
+                  transport = new StreamTransport(channel, transportLimits, false);
                   channel.pipeline().addLast(guard, new Connection());
                   channel
                       .closeFuture()
@@ -352,6 +354,7 @@ public final class CoreClient implements AutoCloseable {
                 new ChannelInitializer<QuicStreamChannel>() {
                   @Override
                   protected void initChannel(QuicStreamChannel stream) {
+                    transport.bindControl(stream);
                     stream
                         .config()
                         .setAllowHalfClosure(true)

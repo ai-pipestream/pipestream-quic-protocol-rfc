@@ -1,0 +1,24 @@
+   Compiling quiche v0.25.0 (/work/reference-code/quiche-pipestream/quiche)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.58s
+     Running unittests src/lib.rs (target/debug/deps/quiche-1cf166e39ffda5f0)
+
+running 1 test
+test tests::late_empty_fin_is_emitted_after_payload_ack_and_peer_fin ... FAILED
+
+failures:
+
+---- tests::late_empty_fin_is_emitted_after_payload_ack_and_peer_fin stdout ----
+
+thread 'tests::late_empty_fin_is_emitted_after_payload_ack_and_peer_fin' (3153228) panicked at quiche/src/tests.rs:1066:5:
+assertion failed: frames.iter().any(|frame|
+        matches!(frame, frame::Frame::Stream { stream_id: 0, data } if
+            data.is_empty() && data.fin()))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::late_empty_fin_is_emitted_after_payload_ack_and_peer_fin
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 934 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p quiche --lib`
