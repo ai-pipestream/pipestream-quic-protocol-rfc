@@ -48,12 +48,12 @@ Both are paired; a root cannot switch either side.
 | `maximumPolicy` | largest `Records.Policy` accepted exactly | 60,000 / 3,600,000 / 86,400,000 ms |
 | `maxOwners`, `maxSessions`, `maxSessionsPerOwner` | retained-history bounds | 1024 / 1024 / 64 |
 | `files` | `BoundedSqlite.Limits` for the authority DB | 256 MiB db, 64 MiB WAL/journal, 512 KiB shm |
-| `objects` | `ObjectLimits(bytes, files, objectBytes, handles)` | 8 GiB, 10,000, 16 MiB, 256 |
+| `objects` | `ObjectLimits(bytes, files, objectBytes, handles)` | 8 GiB, 10,000, 16 MiB, 128 |
 | `maxJobs`, `maxJobsPerOwner` | funded-job ceilings (persisted) | 64 / 16 |
 | `execution` | `ExecutionLimits(workers, workersPerOwner, leaseMillis, bufferBytes)` | 4 / 2 / 30,000 / 65,536 |
 | `scheduler` | `SchedulerLimits(pageSize, pollMillis)` | 64 / 50 |
 | `retention` | `RetentionLimits(pageSize, pollMillis)` | 64 / 1000 |
-| `results` | `ResultLimits(reads, readsPerOwner, bufferBytes, pollMillis)` | 256 / 64 / 65,536 / 250 |
+| `results` | `ResultLimits(reads, readsPerOwner, bufferBytes, pollMillis)` | 128 / 32 / 65,536 / 250 |
 | `waits` | `WaitLimits(pending, perOwner, workers, pollMillis)` | 1024 / 64 / 4 / 50 |
 | `storageWorkers` | `WorkerLimits(threads, queued, queuedPerOwner)` off-loop SQLite/file pool | 8 / 512 / 64 |
 | `producer` | local producer-1 transport-equivalent limits (`Messages.Capabilities` response form) used by mode-2 expansion | control 1 MiB, stream 64, pending 64, object 16 MiB, idle 30 s, lifetime 300 s |

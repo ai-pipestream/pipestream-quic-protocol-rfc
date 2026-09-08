@@ -211,6 +211,7 @@ final class DurableRequests implements AutoCloseable {
   private boolean bindingPending;
   private boolean completing;
   private boolean detached;
+  private boolean draining;
   private boolean closed;
   private int inputs;
   private int outputs;
@@ -261,7 +262,8 @@ final class DurableRequests implements AutoCloseable {
       highest = id;
       try {
         access.check();
-        if (closed || detached || completing) throw error(NOT_READY, "connection draining");
+        if (closed || detached || completing || draining)
+          throw error(NOT_READY, "connection draining");
         if ((message instanceof Read || message instanceof GetManifest)
             && !selected.supported().contains(RESULT_DELIVERY))
           throw error(EXTENSION_UNSUPPORTED, "result profile not selected");
@@ -309,7 +311,8 @@ final class DurableRequests implements AutoCloseable {
   Ticket input() {
     synchronized (lock) {
       access.check();
-      if (closed || detached || completing) throw error(NOT_READY, "connection draining");
+      if (closed || detached || completing || draining)
+        throw error(NOT_READY, "connection draining");
       if (binding == null) throw error(NOT_READY, "session not attached");
       if (pending.size() >= selected.pendingLimit() || inputs >= selected.streamLimit())
         throw ProtocolError.limit("connection input or request capacity exhausted");
@@ -335,13 +338,25 @@ final class DurableRequests implements AutoCloseable {
   }
 
   /**
+   * Refuse every subsequent new request or input with NOT_READY while existing owners drain, as a
+   * listener does during shutdown. Unlike detach this creates no drain flight and sends nothing;
+   * the caller observes {@link #usage()} to learn when all owners have released.
+   */
+  void refuseNew() {
+    synchronized (lock) {
+      draining = true;
+    }
+  }
+
+  /**
    * Read current connection-owned capacity, not durable job or whole-process resource statistics.
    *
    * @return current request/transfer charges
    */
   Usage usage() {
     synchronized (lock) {
-      return new Usage(pending.size(), inputs, outputs, bindingPending, detached || completing);
+      return new Usage(
+          pending.size(), inputs, outputs, bindingPending, detached || completing || draining);
     }
   }
 

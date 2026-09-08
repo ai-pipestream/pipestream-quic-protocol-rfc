@@ -412,11 +412,26 @@ final class StreamTransport {
     void abort(ProtocolError cause) {
       confined();
       Objects.requireNonNull(cause);
+      abort((int) cause.code().applicationError(), cause);
+    }
+
+    /**
+     * Stop a receive-only stream whose object was already admitted, using application error zero as
+     * Section 12.5 requires for a redundant replayed input. This ends the transport lease without a
+     * protocol failure; the correlated admission response is sent separately.
+     */
+    void stopReplayed() {
+      confined();
+      if (local) throw new IllegalStateException("only incoming objects can be stopped as replay");
+      abort(0, new IOException("input already admitted; redundant stream stopped"));
+    }
+
+    private void abort(int applicationError, Throwable cause) {
       if (released || failure != null) return;
       failure = cause;
       if (finish != null) finish.completeExceptionally(cause);
-      if (local) stream.shutdownOutput((int) cause.code().applicationError());
-      else stream.shutdownInput((int) cause.code().applicationError());
+      if (local) stream.shutdownOutput(applicationError);
+      else stream.shutdownInput(applicationError);
     }
 
     void release() {
