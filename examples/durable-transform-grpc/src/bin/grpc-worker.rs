@@ -112,8 +112,18 @@ fn reply(op_hex: &str, digest: &[u8], outcome: &str, attempt: i64, at: u64, deta
     }
 }
 
+#[derive(Clone)]
+struct Svc(Arc<Worker>);
+
+impl std::ops::Deref for Svc {
+    type Target = Worker;
+    fn deref(&self) -> &Worker {
+        &self.0
+    }
+}
+
 #[tonic::async_trait]
-impl proto::transform_worker_server::TransformWorker for Arc<Worker> {
+impl proto::transform_worker_server::TransformWorker for Svc {
     async fn submit(
         &self,
         request: Request<tonic::Streaming<proto::SubmitRequest>>,
@@ -262,7 +272,7 @@ impl proto::transform_worker_server::TransformWorker for Arc<Worker> {
         let row = receipt_row(&db, &op).map_err(|e| Status::internal(e.to_string()))?;
         match row {
             None => Err(Status::not_found(NOT_FOUND)),
-            Some((_, state, attempt, at, _)) if state == "RETRYABLE" && attempt as u64 == r.expected_attempt => {
+            Some((_, state, attempt, _at, _)) if state == "RETRYABLE" && attempt as u64 == r.expected_attempt => {
                 // The frozen transform never yields RETRYABLE; this arm exists
                 // so the retry/fencing path is real protocol, not a stub.
                 Err(Status::failed_precondition("no retryable attempt; resubmit is a replay"))
@@ -423,7 +433,7 @@ impl proto::transform_worker_server::TransformWorker for Arc<Worker> {
             .map_err(|e| Status::internal(e.to_string()))?;
         }
         let (tx, rx) = mpsc::channel(8);
-        let worker = self.clone();
+        let worker = self.0.clone();
         tokio::spawn(async move {
             for piece in bytes.chunks(32 * 1024) {
                 if tx
@@ -496,7 +506,7 @@ async fn main() -> Result<()> {
             std::fs::read(&args.client_ca).context("read client CA")?,
         ));
     let addr = args.bind;
-    let svc = proto::transform_worker_server::TransformWorkerServer::new(worker);
+    let svc = proto::transform_worker_server::TransformWorkerServer::new(Svc(worker));
     let server = Server::builder().tls_config(tls)?.add_service(svc).serve(addr);
     println!("LISTENING {addr}");
     if let Some(path) = args.ready_file {

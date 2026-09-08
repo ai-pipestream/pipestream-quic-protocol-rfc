@@ -31,4 +31,4 @@ tonic-prost = "0.14"
 workload-core = { path = "../durable-transform-workload/workload-core" }
 
 [build-dependencies]
-tonic-build = "0.14"
+tonic-prost-build = "0.14"

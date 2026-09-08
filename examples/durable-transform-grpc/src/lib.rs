@@ -7,7 +7,7 @@
 //! store on both baseline processes; the PipeStream arm comparison notes
 //! any residual storage-setting difference explicitly.
 use anyhow::{Context, Result, bail};
-use rusqlite::{Connection, params};
+use rusqlite::Connection;
 use sha2::{Digest as _, Sha256};
 use std::path::Path;
 

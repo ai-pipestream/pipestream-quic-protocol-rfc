@@ -22,8 +22,6 @@ use workload_core::{
     chunk_count, chunk_len, expected_chunk, expected_final_digest, generate_chunk,
 };
 
-const OBJECT_LIMIT: u64 = 16 * 1024 * 1024;
-
 #[derive(Debug, Args)]
 struct Tls {
     #[arg(long)]

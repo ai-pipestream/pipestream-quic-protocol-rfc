@@ -1313,6 +1313,7 @@ dependencies = [
  "clap",
  "pipestream-quinn",
  "rustix",
+ "rustls",
  "sha2",
  "tokio",
  "workload-core",
