@@ -159,13 +159,18 @@ persistent rewrite credits and guarded WAL/shared-memory headroom. An image
 credit covers that image and one clock write, not arbitrary SQL or a whole job.
 Earlier local formats are refused without a wire change. Independent Java V2
 input storage also implements bounded immutable reception, exact FIN/digest
-verification and crash-safe file installation. Database format 4 and input
-policy format 2 add immutable two-way installation binding with exact replay
-and mismatch refusal; pairing creates no protocol work. Those installed bytes are not
-admission receipts; atomic authority/job integration remains required. This layer is not
-yet a durable-profile listener; Java admission,
-execution, results, retirement and full cross-language failure/resource gates
-remain required.
+verification and crash-safe file installation. Current database format 5 and
+input policy format 3 retain immutable two-way installation binding and atomic
+storage admission: verified input, attempt 1, branch child identity, restartable
+job, replay receipt, funded output allowances and metadata, and the UTC watermark.
+Ordinary input reception cannot consume the retained output allowances. Tests
+cover real process death before admission commit and after receipt return,
+funding-installation interruptions, header replay and policy/capacity refusal.
+Recovery cross-checks job/member/receipt coverage and parent/child metadata.
+A regression also preserves caller child obligations after a parent's deadline;
+that failure is not implicit subtree cancellation. This layer is not yet a
+durable-profile listener. Java worker execution, producer-1 ingress, results,
+retirement and full cross-language failure/resource gates remain required.
 
 As of 2026-09-07, the Rust authority library also implements transactional
 admission and replay, fenced worker execution, both branch producers and real

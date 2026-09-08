@@ -1,10 +1,11 @@
 # Java V2 authority storage
 
-`v2.SessionStore` and `v2.DeclarationStore` are the independent Java session and
-declaration transaction layer for Sections 12.3 through 12.5. They are
+`v2.SessionStore`, `v2.DeclarationStore` and `v2.AdmissionStore` are the independent
+Java session, declaration and admission transaction layer for Sections 12.3
+through 12.5. They are
 package-private and are not wired into a durable-profile listener. The shipped
-Java endpoint still advertises Core only. Payload admission, execution, results
-and retirement remain to be implemented.
+Java endpoint still advertises Core only. Worker execution, results and retirement
+remain to be implemented; storage admission is not endpoint interoperability.
 
 ## Identity and transaction boundary
 
@@ -40,8 +41,9 @@ and cleanup implementation, not a flag-setting shortcut.
 The retained control ceiling is conservative: reconnection must select at least
 the original control limit. Stream counts, pending counts, timers and current
 object limits are connection policy, not reasons to rewrite a creation receipt.
-Future admission must fund its representations and obey both current negotiated
-limits and retained session admission ceilings.
+Admission additionally retains the largest promised control representation and
+object requirement. A later attachment that cannot represent those promises
+refuses without rewriting the original creation receipt.
 
 ## Membership and operation receipts
 
@@ -73,7 +75,7 @@ valid. These checks use bounded records and point lookups, not a whole-session
 membership map. Producer-1 declarations are not exposed through an unfenced local
 shortcut; they require the future parent-attempt/lease/deadline checks.
 
-The local database format is version 4. Earlier experimental V2 storage formats,
+The local database format is version 5. Earlier experimental V2 storage formats,
 like V1 and foreign databases, are refused without conversion. This is an internal
 format revision, not a wire-profile change or an authorized reset of an existing
 authority identity.
@@ -115,8 +117,8 @@ database replacement outside the owning process.
 
 Pairing is local storage setup, not caller authentication or work admission. It
 does not create sessions, declarations, operations, jobs or input objects. The
-future admission transaction must check the exact pair again inside its own
-writer transaction and retain a live input owner until that commit. A prior
+admission transaction checks the exact pair again inside its own writer
+transaction and retains a live input owner until that commit. A prior
 successful `verifyInputs` call is not a transferable permission or durable job
 promise. Cloned or stale backups still require the operator's external
 anti-rollback and non-reuse discipline; UUIDs cannot prove backup freshness.
@@ -137,7 +139,13 @@ writes. Each declared member reserves a 2,048-byte work body with two writes
 and a 256-byte first-fence body with one write. Every reserved write also funds
 one 64-byte shared-clock image in the same transaction. Those credits are not
 an allowance for arbitrary SQL, payload files, jobs or the whole future lifecycle.
-Admission still has to fund its complete write set and any larger representations.
+Admission enlarges its work body to at least 4,096 bytes and to the conservative
+`2048 + 1280 * maximum_output_count` representation bound, with at least four
+future work writes. A 2,048-byte job image reserves six writes for expansion/
+settlement and input/output reclamation intent/completion. Branches atomically
+allocate their child scope and its existing four-credit image. Ordinary
+admission writes do not spend these future credits. The eventual lifecycle
+writers must implement and verify those funded transitions before activation.
 
 Ordinary declaration counter/seal updates preserve the scope's credits; replay
 does not rewrite any image or consume another credit. A funded replacement
@@ -172,6 +180,59 @@ describes the same pinned SQLite geometry; V2 does not use V1 job states or
 its reservation ledger. These are guarded file-length bounds, not measured
 allocated disk blocks, process RSS, throughput or a power-loss proof.
 
+## Funded input admission
+
+The immutable deployment configuration includes explicit application labels,
+supported modes, a safe-restart mechanism and global/per-owner executor limits.
+The constructor without an execution policy enables no applications. There is
+no unknown-application fallback. Application policy is rechecked through a local
+authorization gate, separate from connection credentials and free of processing
+effects.
+
+`checkInput` validates an owned attached session, input producer, declared
+membership, application/mode, duration, output profile, representation and resource
+bounds, ancestry and trusted UTC. It reserves nothing. Actual reception remains
+outside the database transaction. A later `admit` repeats those checks and requires
+the exact installed FIN/digest-verified input. Missing complete input is NOT_READY.
+An input header whose operation already committed can replay its exact receipt
+without reading its bytes or extending its execution interval. Declarations and
+admissions share one operation namespace with explicitly tagged stored requests;
+cross-kind identity reuse and changed admission headers are CONFLICT.
+
+The committing transaction holds the paired input-store monitor and SQLite writer.
+It installs durable output funding before creating authoritative metadata links,
+then commits the work view, attempt 1, one child scope for modes 1/2, restartable
+job, original operation receipt, representation requirements and UTC watermark
+together. Mode 1 waits for caller children; mode 2 starts active with a separately
+retained unfinished-expansion obligation. A membership seal cannot complete that
+obligation. No callback runs inside admission. A receipt promises accepted work,
+not that processing has succeeded or that Java's worker loop is implemented.
+
+Input/output charges and global, per-owner and per-session job counts derive
+from bounded typed job records. They are not reconstructed from a client stream
+or a success counter. Output allowances remain charged in the same file store
+that funds ordinary inputs. Failed metadata admission can leave an installed,
+charged file or funding orphan, but no receipt, admitted view, job or child scope.
+Recovery verifies operation/job/member coverage, parent/child agreement, funded
+image geometry, profile bounds and the UTC watermark. Paired-store verification
+also checks every retained input and funding reference before treating that pair
+as ready. No orphan is reclaimed by this increment.
+
+Caller descendants inherit cancellation/skip fences, not their parent's deadline
+failure. They remain independent obligations after that deadline. The future
+local producer-1 worker interface must additionally enforce its parent attempt,
+lease and deadline; the caller API does not expose that interface.
+
+The deployment supplies trusted UTC explicitly. Missing trust, negative time,
+regression within an operation or regression behind the retained watermark is
+CLOCK_UNSAFE for a new admission. Final policy checks precede the last UTC sample,
+which must still precede the proposed execution deadline. All deadline and
+retention additions are checked before commitment. Replays remain observable
+under unsafe time without issuing a new promise. Forward jumps are accepted
+only when the deployment marks that sample trusted; a jump across the proposed
+deadline refuses the admission, never clamps or extends it. This API does not
+establish clock trust, backup freshness or elapsed time across power loss.
+
 ## Persistence and resource scope
 
 `BoundedSqlite` shares the Java implementation's existing bounded Linux native
@@ -201,14 +262,15 @@ they cannot simulate every power-loss or storage-device failure.
 
 The independent [input store](java-v2-input-store.md) now receives, verifies and
 durably installs bounded immutable bytes, and exact input/database installations
-can be paired explicitly. This does not issue admission receipts or create jobs.
+can be paired explicitly. Storage admission now commits its receipt and funded
+job atomically; the endpoint and executor are not activated by that fact.
 
-Funded payload admission, worker leases and attempt fences, subtree settlement,
+Worker leases and attempt fences, local producer-1 ingress, subtree settlement,
 results/read pins, retirement/reconciliation,
 durable client observations and authenticated endpoint integration remain
 mandatory. Fixed image credits now protect their specifically bounded writes;
-the complete admission, terminal and cleanup write sets still need their own
-funded transitions before activation. This increment does not prove full
+terminal and cleanup write sets still need their real funded transitions and
+cost gates before activation. This increment does not prove full
 Java V2 behavior, live TLS-policy
 revocation settlement, cross-language V2 equivalence or the protocol-neutral
 failure driver. The external chunk/distribute/transform/reassemble workload and

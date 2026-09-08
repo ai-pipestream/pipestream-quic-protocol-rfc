@@ -26,26 +26,29 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Independent Java V2 immutable input storage, not work admission or authorization. Blocking calls
- * belong outside transport event loops. A private local directory has one cooperative process
- * owner; no installed object is deleted here without an authoritative liveness proof.
+ * Independent Java V2 immutable input storage and durable output funding, not work admission or
+ * authorization. Blocking calls belong outside transport event loops. A private local directory has
+ * one cooperative process owner; no installed object or reservation is deleted here without an
+ * authoritative liveness proof.
  */
 final class InputStore implements AutoCloseable {
   private static final byte[] MAGIC = {'P', 'S', 'J', 'V', '2', 'I', '0', '1'};
+  private static final byte[] FUNDING_MAGIC = {'P', 'S', 'J', 'V', '2', 'R', '0', '1'};
   private static final int METADATA_LIMIT = 8192;
   private static final int PREFIX = 12;
   private static final int CHECKSUM = 32;
   private static final int BLOCK = 8192;
-  private static final String FORMAT = "pipestream-java-v2-input-store-2";
+  private static final int OUTPUT_OVERHEAD = PREFIX + METADATA_LIMIT + CHECKSUM;
+  private static final String FORMAT = "pipestream-java-v2-input-store-3";
   private static final Set<String> ROOT_NAMES =
-      Set.of("writer.lock", "policy.cbor", "pending", "objects");
+      Set.of("writer.lock", "policy.cbor", "pending", "objects", "reservations");
   private static final Set<Path> OPEN_ROOTS = new HashSet<>();
 
   /**
    * Persistent file-length and file-name bounds, not filesystem block or RSS limits.
    *
-   * @param bytes aggregate object and temporary file bytes, including bounded headers
-   * @param files aggregate file names, including both names during installation
+   * @param bytes aggregate file bytes and funded output allowances, including bounded headers
+   * @param files aggregate file names and funded output names, including installation names
    * @param objectBytes maximum input payload length
    * @param handles simultaneous receivers and readers
    */
@@ -62,10 +65,11 @@ final class InputStore implements AutoCloseable {
   }
 
   /**
-   * Conservative charges; in-progress reception reserves both possible installation names.
+   * Conservative charges; reception reserves both installation names and output funding reserves
+   * future output bytes and names even before an executor produces them.
    *
-   * @param bytes charged complete file bytes
-   * @param files charged file names
+   * @param bytes charged file bytes and funded allowances
+   * @param files charged file names and funded allowances
    * @param handles active receivers and readers
    */
   record Usage(long bytes, int files, int handles) {}
@@ -80,6 +84,14 @@ final class InputStore implements AutoCloseable {
     OBJECT_SYNCED,
     /** The staging name was removed. */
     STAGING_REMOVED,
+    /** An output funding record's staging bytes were synchronized. */
+    FUNDING_RECEIVED,
+    /** An immutable output funding name was linked. */
+    FUNDING_LINKED,
+    /** The output funding namespace was synchronized. */
+    FUNDING_SYNCED,
+    /** The output funding staging name was removed. */
+    FUNDING_STAGING_REMOVED,
     /** Recovery completed its retained-file audit. */
     RECOVERY_AUDITED
   }
@@ -99,6 +111,8 @@ final class InputStore implements AutoCloseable {
   private record Envelope(UUID store, Commitments.Context context, InputHeader header) {}
 
   private record Inspected(Envelope envelope, long offset, long size) {}
+
+  private record Funding(Envelope envelope, long size, long chargedBytes, int chargedFiles) {}
 
   private final Path root;
   private final Limits limits;
@@ -245,6 +259,7 @@ final class InputStore implements AutoCloseable {
         }
         Files.createDirectory(root.resolve("pending"));
         Files.createDirectory(root.resolve("objects"));
+        Files.createDirectory(root.resolve("reservations"));
         sync(root);
       } else {
         byte[] retained = bounded(root.resolve("policy.cbor"), 4096);
@@ -425,6 +440,142 @@ final class InputStore implements AutoCloseable {
     forceFile(path);
     sync(root.resolve("objects"));
     return Optional.of(new Stored(expected, path));
+  }
+
+  /**
+   * Durably fund an input admission's entire output byte and count budget. The same quota governs
+   * ordinary input reception, so it cannot consume these retained allowances. Installation does not
+   * admit work: a failed authority transaction leaves an orphan charged until an authoritative
+   * liveness proof permits reclamation.
+   *
+   * <p>Each possible output funds two payload copies and two bounded private headers/names, enough
+   * for pending and installed files concurrently. This reserves file-length/name capacity, not
+   * filesystem blocks or device free space. A future output writer must consume these allowances
+   * and enforce the private header bound; this class does not yet implement output publication.
+   *
+   * @param context already authenticated session context
+   * @param header immutable input admission parameters, including the output budget
+   * @return durable immutable funding identity, not an admission receipt
+   * @throws IOException for file failure, corruption or a closed store
+   * @throws ProtocolError for capacity exhaustion or a changed operation's parameters
+   */
+  synchronized Reservation reserveOutputs(Commitments.Context context, InputHeader header)
+      throws IOException {
+    Optional<Reservation> existing = findReservation(context, header);
+    if (existing.isPresent()) return existing.get();
+    Envelope expected = envelope(context, header);
+    byte[] encoded = fundingMetadata(expected);
+    Funding funding = funding(expected, PREFIX + CHECKSUM + encoded.length);
+    long installationBytes = add(funding.chargedBytes(), funding.size());
+    int installationFiles = funding.chargedFiles() + 1;
+    reserve(installationBytes, installationFiles);
+    Path staging = root.resolve("pending").resolve(UUID.randomUUID() + ".part");
+    Path target = fundingPath(expected);
+    boolean created = false;
+    boolean retained = false;
+    try {
+      try (FileChannel output = create(staging)) {
+        created = true;
+        writeAll(
+            output, ByteBuffer.allocate(PREFIX).put(FUNDING_MAGIC).putInt(encoded.length).flip());
+        writeAll(output, ByteBuffer.wrap(encoded));
+        writeAll(output, ByteBuffer.wrap(Commitments.sha256().digest(encoded)));
+        output.force(true);
+        reached(Phase.FUNDING_RECEIVED);
+        try {
+          Files.createLink(target, staging);
+          retained = true;
+          reached(Phase.FUNDING_LINKED);
+        } catch (FileAlreadyExistsException duplicate) {
+          inspectFunding(target, expected);
+          forceFile(target);
+          retained = true;
+        }
+        sync(root.resolve("reservations"));
+        reached(Phase.FUNDING_SYNCED);
+      }
+      Files.delete(staging);
+      reached(Phase.FUNDING_STAGING_REMOVED);
+      sync(root.resolve("pending"));
+      release(funding.size(), 1);
+      return new Reservation(expected, target);
+    } catch (IOException | RuntimeException failure) {
+      try {
+        if (created) {
+          Files.deleteIfExists(staging);
+          sync(root.resolve("pending"));
+        }
+        // A linked record stays funded even when its installation sync or subsequent cleanup fails.
+        release(retained ? funding.size() : installationBytes, retained ? 1 : installationFiles);
+      } catch (IOException cleanup) {
+        failure.addSuppressed(cleanup);
+      }
+      throw failure;
+    } finally {
+      handles--;
+    }
+  }
+
+  /**
+   * Verify and synchronize funding for this exact admission operation. A changed header under the
+   * same operation identity is a conflict, not a new reservation. Input admission originators own
+   * their input producer; unlike cancellation and retry, they cannot target the other producer.
+   *
+   * @param context authenticated session identity
+   * @param header exact immutable admission header
+   * @return verified funding if installed
+   * @throws IOException for corruption, failed synchronization or a closed store
+   * @throws ProtocolError for changed parameters under the retained operation identity
+   */
+  synchronized Optional<Reservation> findReservation(
+      Commitments.Context context, InputHeader header) throws IOException {
+    ensureOpen();
+    Envelope expected = envelope(context, header);
+    Path path = fundingPath(expected);
+    if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return Optional.empty();
+    inspectFunding(path, expected);
+    // A visible link from an interrupted attempt is not proof its file and directory were forced.
+    forceFile(path);
+    sync(root.resolve("reservations"));
+    return Optional.of(new Reservation(expected, path));
+  }
+
+  /** Durable funding identity, not a bearer credential or a release capability. */
+  final class Reservation {
+    private final Envelope envelope;
+    private final Path path;
+
+    private Reservation(Envelope envelope, Path path) {
+      this.envelope = envelope;
+      this.path = path;
+    }
+
+    /**
+     * Get the immutable funded admission parameters.
+     *
+     * @return exact original input header
+     */
+    InputHeader header() {
+      return envelope.header();
+    }
+
+    /**
+     * Get the owner-qualified identity whose future outputs are funded.
+     *
+     * @return immutable context, not authorization
+     */
+    Commitments.Context context() {
+      return envelope.context();
+    }
+
+    /**
+     * Get a bounded opaque reference suitable for an authority's atomic job record.
+     *
+     * @return installed funding filename, never a caller-selected path
+     */
+    String reference() {
+      return path.getFileName().toString();
+    }
   }
 
   /** One bounded immutable reception; finish means actual transport FIN, not admission. */
@@ -699,24 +850,33 @@ final class InputStore implements AutoCloseable {
     if (!names.equals(ROOT_NAMES)) throw corrupt("incomplete input-store installation");
     for (String name : ROOT_NAMES) {
       Path path = root.resolve(name);
-      boolean directory = name.equals("pending") || name.equals("objects");
+      boolean directory =
+          name.equals("pending") || name.equals("objects") || name.equals("reservations");
       if (directory
           ? !Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)
           : !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
         throw corrupt("input-store entry has wrong file type");
     }
     // Complete validation precedes cleanup. A malformed live object must not be hidden by deletion.
-    for (String namespace : new String[] {"objects", "pending"}) {
+    for (String namespace : new String[] {"reservations", "objects", "pending"}) {
       try (var entries = Files.newDirectoryStream(root.resolve(namespace))) {
         for (Path path : entries) {
           String name = path.getFileName().toString();
           boolean object = namespace.equals("objects");
+          boolean reservation = namespace.equals("reservations");
           if (!name.matches(
                   object
                       ? "[0-9a-f]{64}\\.input"
-                      : "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.part")
+                      : reservation
+                          ? "[0-9a-f]{64}\\.funding"
+                          : "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.part")
               || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
             throw corrupt("unknown input-store file");
+          if (reservation) {
+            Funding funding = inspectFunding(path, null);
+            chargeRetained(funding.chargedBytes(), funding.chargedFiles());
+            continue;
+          }
           long size = Files.size(path);
           if (size > add(limits.objectBytes(), METADATA_LIMIT + PREFIX + CHECKSUM))
             throw corrupt("input-store file exceeds local ceiling");
@@ -725,10 +885,7 @@ final class InputStore implements AutoCloseable {
             if (!objectPath(inspected.envelope()).equals(path))
               throw corrupt("input-store filename contradicts identity");
           }
-          bytes = add(bytes, size);
-          if (files == limits.files() || bytes > limits.bytes())
-            throw ProtocolError.limit("retained input storage exceeds policy");
-          files++;
+          chargeRetained(size, 1);
         }
       }
     }
@@ -758,6 +915,89 @@ final class InputStore implements AutoCloseable {
   private Path objectPath(Envelope envelope) {
     byte[] digest = Commitments.sha256().digest(metadata(envelope));
     return root.resolve("objects").resolve(HexFormat.of().formatHex(digest) + ".input");
+  }
+
+  private Path fundingPath(Envelope envelope) {
+    Cbor.Writer key = new Cbor.Writer(METADATA_LIMIT);
+    key.array(8);
+    key.text("pipestream-java-v2-output-funding-1", 128);
+    key.bytes(uuid(envelope.store()));
+    if (authorityIdentity == null) key.nil();
+    else key.bytes(uuid(authorityIdentity));
+    key.text(envelope.context().authority(), 128);
+    key.text(envelope.context().owner(), 128);
+    key.number(envelope.context().generation());
+    key.number(envelope.header().parameters().work().producer());
+    key.bytes(envelope.header().operation().bytes());
+    byte[] digest = Commitments.sha256().digest(key.finish());
+    return root.resolve("reservations").resolve(HexFormat.of().formatHex(digest) + ".funding");
+  }
+
+  private byte[] fundingMetadata(Envelope envelope) {
+    Cbor.Writer out = new Cbor.Writer(METADATA_LIMIT);
+    out.array(6);
+    out.bytes(uuid(envelope.store()));
+    if (authorityIdentity == null) out.nil();
+    else out.bytes(uuid(authorityIdentity));
+    out.text(envelope.context().authority(), 128);
+    out.text(envelope.context().owner(), 128);
+    out.number(envelope.context().generation());
+    RecordCodec.write(out, envelope.header());
+    return out.finish();
+  }
+
+  private static Funding funding(Envelope envelope, long size) {
+    OutputBudget budget = envelope.header().parameters().outputs();
+    long outputBytes = add(budget.totalBytes(), multiply(budget.count(), OUTPUT_OVERHEAD));
+    return new Funding(envelope, size, add(size, multiply(outputBytes, 2)), 1 + 2 * budget.count());
+  }
+
+  private Funding inspectFunding(Path path, Envelope expected) throws IOException {
+    Funding retained;
+    try {
+      byte[] complete = bounded(path, OUTPUT_OVERHEAD);
+      if (complete.length < PREFIX + CHECKSUM + 1) throw corrupt("truncated output funding");
+      ByteBuffer prefix = ByteBuffer.wrap(complete);
+      byte[] magic = new byte[8];
+      prefix.get(magic);
+      int count = prefix.getInt();
+      if (!Arrays.equals(magic, FUNDING_MAGIC)
+          || count < 1
+          || count > METADATA_LIMIT
+          || complete.length != PREFIX + CHECKSUM + count)
+        throw corrupt("invalid output funding header");
+      byte[] encoded = Arrays.copyOfRange(complete, PREFIX, PREFIX + count);
+      byte[] checksum = Arrays.copyOfRange(complete, PREFIX + count, complete.length);
+      if (!MessageDigest.isEqual(checksum, Commitments.sha256().digest(encoded)))
+        throw corrupt("output funding checksum differs");
+      Cbor.Reader in = new Cbor.Reader(encoded, METADATA_LIMIT);
+      in.exact(6);
+      ByteBuffer storeId = ByteBuffer.wrap(in.bytes(16));
+      UUID store = new UUID(storeId.getLong(), storeId.getLong());
+      UUID authority = null;
+      if (!in.nullable()) {
+        ByteBuffer authorityId = ByteBuffer.wrap(in.bytes(16));
+        authority = new UUID(authorityId.getLong(), authorityId.getLong());
+      }
+      Commitments.Context context =
+          new Commitments.Context(in.text(128), in.text(128), in.number());
+      InputHeader header = RecordCodec.inputHeader(in);
+      in.end();
+      Envelope envelope = new Envelope(store, context, header);
+      if (!store.equals(identity)
+          || !Objects.equals(authority, authorityIdentity)
+          || context.generation() != header.generation()
+          || !Arrays.equals(encoded, fundingMetadata(envelope))
+          || !fundingPath(envelope).equals(path)) throw corrupt("output funding identity differs");
+      Wire.encodeRecord(header, Wire.HEADER_LIMIT);
+      retained = funding(envelope, complete.length);
+    } catch (ProtocolError failure) {
+      throw corrupt("invalid retained output funding", failure);
+    }
+    if (expected != null && !expected.equals(retained.envelope()))
+      throw new ProtocolError(
+          ProtocolError.Code.CONFLICT, "output funding operation parameters differ");
+    return retained;
   }
 
   private static byte[] metadata(Envelope envelope) {
@@ -883,6 +1123,13 @@ final class InputStore implements AutoCloseable {
     if (addedBytes > limits.bytes() - bytes || addedFiles > limits.files() - files)
       throw ProtocolError.limit("input storage capacity exhausted");
     pin();
+    bytes += addedBytes;
+    files += addedFiles;
+  }
+
+  private void chargeRetained(long addedBytes, int addedFiles) {
+    if (addedBytes > limits.bytes() - bytes || addedFiles > limits.files() - files)
+      throw ProtocolError.limit("retained input storage exceeds policy");
     bytes += addedBytes;
     files += addedFiles;
   }

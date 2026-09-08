@@ -17,6 +17,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
@@ -28,7 +29,7 @@ import java.util.concurrent.Semaphore;
  * another implementation's database is accepted. Never call it on a transport event loop.
  */
 final class SessionStore {
-  private static final int VERSION = 4;
+  private static final int VERSION = 5;
   private static final int MAX_BINDING_BYTES = 1024;
   private static final Set<String> TABLES =
       Set.of(
@@ -38,6 +39,7 @@ final class SessionStore {
           "ps_v2_scopes",
           "ps_v2_entities",
           "ps_v2_operations",
+          "ps_v2_jobs",
           "ps_v2_slots");
   // Bound simultaneous V2 database connections even when callers open multiple store handles.
   private static final Semaphore DATABASE_OPERATIONS = new Semaphore(16);
@@ -52,6 +54,7 @@ final class SessionStore {
    * @param maxSessions bound on retained sessions, including retirement in progress
    * @param maxSessionsPerOwner bound on one owner's retained sessions
    * @param files separate hard SQLite file-length limits
+   * @param execution immutable enabled application contracts and executor capacity
    */
   record Configuration(
       String authority,
@@ -60,16 +63,48 @@ final class SessionStore {
       int maxOwners,
       int maxSessions,
       int maxSessionsPerOwner,
-      BoundedSqlite.Limits files) {
+      BoundedSqlite.Limits files,
+      AdmissionStore.ExecutionPolicy execution) {
     /** Check local configuration bounds and required values. */
     Configuration {
       Checks.identity(authority);
       Objects.requireNonNull(sessionLimits);
       Objects.requireNonNull(maximumPolicy);
       Objects.requireNonNull(files);
+      Objects.requireNonNull(execution);
       Checks.range(maxOwners, 1, 65536);
       Checks.range(maxSessions, 1, 65536);
       Checks.range(maxSessionsPerOwner, 1, maxSessions);
+    }
+
+    /**
+     * Configure a session/declaration store with no enabled processing contracts.
+     *
+     * @param authority configured issuer
+     * @param sessionLimits per-session ceilings
+     * @param maximumPolicy maximum accepted lifetimes
+     * @param maxOwners retained owner bound
+     * @param maxSessions retained session bound
+     * @param maxSessionsPerOwner per-owner session bound
+     * @param files SQLite file ceilings
+     */
+    Configuration(
+        String authority,
+        Limits sessionLimits,
+        Policy maximumPolicy,
+        int maxOwners,
+        int maxSessions,
+        int maxSessionsPerOwner,
+        BoundedSqlite.Limits files) {
+      this(
+          authority,
+          sessionLimits,
+          maximumPolicy,
+          maxOwners,
+          maxSessions,
+          maxSessionsPerOwner,
+          files,
+          AdmissionStore.ExecutionPolicy.disabled());
     }
 
     /**
@@ -78,8 +113,8 @@ final class SessionStore {
      * @return bounded deterministic CBOR policy image
      */
     byte[] encode() {
-      Cbor.Writer out = new Cbor.Writer(1024);
-      out.array(10);
+      Cbor.Writer out = new Cbor.Writer(8192);
+      out.array(11);
       out.text(authority, 128);
       RecordCodec.write(out, sessionLimits);
       RecordCodec.write(out, maximumPolicy);
@@ -90,6 +125,7 @@ final class SessionStore {
       out.number(files.walBytes());
       out.number(files.journalBytes());
       out.number(files.sharedMemoryBytes());
+      execution.write(out);
       return out.finish();
     }
   }
@@ -114,7 +150,13 @@ final class SessionStore {
   }
 
   private record Retained(
-      Binding binding, int profiles, int controlLimit, boolean revoked, boolean retiring) {}
+      Binding binding,
+      int profiles,
+      int controlLimit,
+      boolean revoked,
+      boolean retiring,
+      int requiredControl,
+      long requiredObject) {}
 
   private record Metadata(long highWater, UUID identity, UUID inputs) {}
 
@@ -266,6 +308,13 @@ final class SessionStore {
             }
           } else if (!metadata.inputs().equals(inputs.identity())) {
             throw corrupt("database belongs to a different input installation");
+          }
+          try (var query = connection.createStatement();
+              var rows = query.executeQuery("SELECT generation FROM ps_v2_sessions")) {
+            while (rows.next()) {
+              Retained session = retained(connection, rows.getLong(1));
+              AdmissionStore.verifyStorage(connection, session.binding(), inputs);
+            }
           }
           // Keep the input-owner monitor until commit so close cannot invalidate the checked pair.
           inputs.verifyAuthority(identity);
@@ -470,8 +519,12 @@ final class SessionStore {
         selected,
         generation,
         true,
-        (connection, binding) ->
-            DeclarationStore.declare(connection, config.files(), binding, selected, request));
+        (connection, binding) -> {
+          boolean replay =
+              DeclarationStore.operation(connection, binding, request.operation()) != null;
+          if (!replay) AdmissionStore.checkDeclaration(connection, binding, request.scope());
+          return DeclarationStore.declare(connection, config.files(), binding, selected, request);
+        });
   }
 
   /**
@@ -535,6 +588,169 @@ final class SessionStore {
         generation,
         false,
         (connection, binding) -> DeclarationStore.snapshot(connection, binding, request));
+  }
+
+  /**
+   * Validate a new input header before accepting payload, or replay its retained admission. This
+   * does not reserve capacity or authorize a later commit; admission repeats all current checks.
+   *
+   * @param access current authenticated owner
+   * @param selected selected connection capabilities
+   * @param generation attached session
+   * @param inputs live, already paired input store
+   * @param header exact input intent
+   * @param clock trusted UTC source, with explicit unsafe readings
+   * @param authorization current application authorization, without application effects
+   * @return matching retained admission, or empty for a currently admissible new header
+   * @throws IOException invalid input-store pairing or storage failure
+   * @throws SQLException database corruption or failure
+   */
+  Optional<OperationReceipt> checkInput(
+      Access access,
+      Capabilities selected,
+      long generation,
+      InputStore inputs,
+      InputHeader header,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization)
+      throws IOException, SQLException {
+    AdmissionStore.Clock checkedClock = AdmissionStore.checkedClock(clock);
+    return inputTransaction(
+        access,
+        selected,
+        generation,
+        inputs,
+        header,
+        checkedClock,
+        authorization,
+        false,
+        (connection, binding) ->
+            new InputResult<>(
+                Optional.ofNullable(
+                    AdmissionStore.check(
+                        connection,
+                        config,
+                        binding,
+                        selected,
+                        header,
+                        checkedClock,
+                        authorization)),
+                false));
+  }
+
+  /**
+   * Commit validated immutable input, funded completion records, job and admission receipt
+   * together. Files installed before a failed database commit remain charged, unauthoritative
+   * orphans. No application callback runs here and a returned receipt does not assert successful
+   * processing.
+   *
+   * @param access current authenticated owner
+   * @param selected selected connection capabilities
+   * @param generation attached session
+   * @param inputs live, already paired input store
+   * @param header immutable input intent
+   * @param streamId actual client input-stream correlation supplied by the transport
+   * @param clock trusted UTC source
+   * @param authorization current application authorization without side effects
+   * @return correlated admission only after durable commit
+   * @throws IOException missing/corrupt input, unsafe pairing or file failure
+   * @throws SQLException database corruption or failure
+   */
+  AdmissionResponse admit(
+      Access access,
+      Capabilities selected,
+      long generation,
+      InputStore inputs,
+      InputHeader header,
+      long streamId,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization)
+      throws IOException, SQLException {
+    RequestTag tag = new RequestTag(true, streamId);
+    AdmissionStore.Clock checkedClock = AdmissionStore.checkedClock(clock);
+    return inputTransaction(
+        access,
+        selected,
+        generation,
+        inputs,
+        header,
+        checkedClock,
+        authorization,
+        true,
+        (connection, binding) -> {
+          AdmissionStore.Admission result =
+              AdmissionStore.admit(
+                  connection,
+                  config,
+                  binding,
+                  selected,
+                  inputs,
+                  header,
+                  checkedClock,
+                  authorization);
+          return new InputResult<>(new AdmissionResponse(tag, result.receipt()), result.fresh());
+        });
+  }
+
+  private record InputResult<T>(T value, boolean fresh) {}
+
+  @FunctionalInterface
+  private interface InputTransaction<T> {
+    InputResult<T> run(Connection connection, Binding binding) throws IOException, SQLException;
+  }
+
+  private <T> T inputTransaction(
+      Access access,
+      Capabilities selected,
+      long generation,
+      InputStore inputs,
+      InputHeader header,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization,
+      boolean write,
+      InputTransaction<T> action)
+      throws IOException, SQLException {
+    Objects.requireNonNull(access).check();
+    profiles(Objects.requireNonNull(selected));
+    Checks.id(generation);
+    synchronized (Objects.requireNonNull(inputs)) {
+      if (!DATABASE_OPERATIONS.tryAcquire())
+        throw ProtocolError.limit("V2 database operation capacity");
+      try (Connection connection = database.connect();
+          var statement = connection.createStatement()) {
+        if (!write) statement.execute("PRAGMA query_only=ON");
+        statement.execute(write ? "BEGIN IMMEDIATE" : "BEGIN");
+        try {
+          access.check();
+          Metadata metadata = metadata(connection);
+          Retained retained = visible(connection, generation, access.owner());
+          compatible(retained, selected);
+          // Do not inspect another principal's payload namespace before owner authorization.
+          inputs.verifyAuthority(identity);
+          if (!inputs.identity().equals(metadata.inputs()))
+            throw corrupt("input storage pairing differs");
+          InputResult<T> result = action.run(connection, retained.binding());
+          inputs.verifyAuthority(identity);
+          access.check();
+          AdmissionStore.beforeCommit(
+              connection, config, retained.binding(), header, clock, authorization, result.fresh());
+          statement.execute("COMMIT");
+          return result.value();
+        } catch (IOException | SQLException | RuntimeException failure) {
+          rollback(connection, failure);
+          throw failure;
+        }
+      } catch (SQLException failure) {
+        if ((failure.getErrorCode() & 255) == 13) {
+          ProtocolError refusal = ProtocolError.limit("SQLite file capacity exhausted");
+          refusal.initCause(failure);
+          throw refusal;
+        }
+        throw failure;
+      } finally {
+        DATABASE_OPERATIONS.release();
+      }
+    }
   }
 
   private interface SessionTransaction<T> {
@@ -601,8 +817,8 @@ final class SessionStore {
           """
           CREATE TABLE ps_v2_meta (
             singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-            version INTEGER NOT NULL CHECK(version=4),
-            config BLOB NOT NULL CHECK(length(config) BETWEEN 1 AND 1024),
+            version INTEGER NOT NULL CHECK(version=5),
+            config BLOB NOT NULL CHECK(length(config) BETWEEN 1 AND 8192),
             high_water INTEGER NOT NULL CHECK(high_water>=0),
             clock_slot INTEGER NOT NULL UNIQUE REFERENCES ps_v2_slots(id) CHECK(clock_slot=1),
             store_id BLOB NOT NULL CHECK(length(store_id)=16 AND store_id!=zeroblob(16)),
@@ -631,6 +847,9 @@ final class SessionStore {
             retiring INTEGER NOT NULL CHECK(retiring IN (0,1)),
             entity_count INTEGER NOT NULL DEFAULT 0 CHECK(entity_count>=0),
             operation_count INTEGER NOT NULL DEFAULT 0 CHECK(operation_count>=0),
+            last_scope INTEGER NOT NULL DEFAULT 0 CHECK(last_scope>=0),
+            required_control INTEGER NOT NULL DEFAULT 4096 CHECK(required_control BETWEEN 4096 AND 1048576),
+            required_object INTEGER NOT NULL DEFAULT 0 CHECK(required_object>=0),
             UNIQUE(owner,sequence)
           ) STRICT
           """);
@@ -651,6 +870,7 @@ final class SessionStore {
           """);
     }
     DeclarationStore.createSchema(connection);
+    AdmissionStore.createSchema(connection);
     try (var insert =
         connection.prepareStatement("INSERT INTO ps_v2_meta VALUES(1,?,?,0,1,?,NULL,?)")) {
       insert.setInt(1, VERSION);
@@ -678,7 +898,7 @@ final class SessionStore {
         var row =
             statement.executeQuery(
                 """
-                SELECT version,CASE WHEN length(config)<=1024 THEN config END,high_water,
+                SELECT version,CASE WHEN length(config)<=8192 THEN config END,high_water,
                   CASE WHEN length(store_id)=16 THEN store_id END,
                   CASE WHEN length(input_id)=16 THEN input_id END,input_id IS NOT NULL,
                   CASE WHEN length(identity_hash)=32 THEN identity_hash END
@@ -749,6 +969,13 @@ final class SessionStore {
               """)) {
         if (row.next()) throw corrupt("allocator or live root scope is inconsistent");
       }
+      try (var row =
+          statement.executeQuery(
+              """
+              SELECT 1 FROM ps_v2_jobs WHERE (SELECT input_id FROM ps_v2_meta WHERE singleton=1) IS NULL LIMIT 1
+              """)) {
+        if (row.next()) throw corrupt("admitted jobs without paired storage");
+      }
       try (var query =
           connection.prepareStatement(
               """
@@ -759,7 +986,10 @@ final class SessionStore {
           if (row.next()) throw corrupt("owner accounting exceeds configuration");
         }
       }
-      try (var rows = statement.executeQuery("SELECT owner,high_water FROM ps_v2_owners")) {
+      try (var rows =
+          statement.executeQuery(
+              "SELECT CASE WHEN length(CAST(owner AS BLOB)) BETWEEN 1 AND 128 THEN owner"
+                  + " END,high_water FROM ps_v2_owners")) {
         while (rows.next()) {
           try {
             Checks.identity(rows.getString(1));
@@ -775,6 +1005,7 @@ final class SessionStore {
         while (rows.next()) {
           Retained session = retained(connection, rows.getLong(1));
           if (!session.retiring()) DeclarationStore.audit(connection, session.binding());
+          if (!session.retiring()) AdmissionStore.audit(connection, config, session.binding());
         }
       }
     }
@@ -797,8 +1028,10 @@ final class SessionStore {
     try (var query =
         connection.prepareStatement(
             """
-            SELECT owner,sequence,CASE WHEN length(receipt)<=1024 THEN receipt END,
-              CASE WHEN length(receipt_hash)=32 THEN receipt_hash END,profiles,control_limit,revoked,retiring
+            SELECT CASE WHEN length(CAST(owner AS BLOB)) BETWEEN 1 AND 128 THEN owner END,
+              sequence,CASE WHEN length(receipt)<=1024 THEN receipt END,
+              CASE WHEN length(receipt_hash)=32 THEN receipt_hash END,profiles,control_limit,revoked,retiring,
+              required_control,required_object
             FROM ps_v2_sessions WHERE generation=?
             """)) {
       query.setLong(1, generation);
@@ -831,7 +1064,19 @@ final class SessionStore {
             || binding.creationSequence() != row.getLong(2)
             || !binding.limits().equals(config.sessionLimits()))
           throw corrupt("creation binding differs");
-        return new Retained(binding, profiles, control, row.getInt(7) != 0, row.getInt(8) != 0);
+        int requiredControl = row.getInt(9);
+        long requiredObject = row.getLong(10);
+        if (requiredControl < 4096
+            || requiredControl > Wire.MAX_CONTROL_LIMIT
+            || requiredObject < 0) throw corrupt("invalid retained response requirements");
+        return new Retained(
+            binding,
+            profiles,
+            control,
+            row.getInt(7) != 0,
+            row.getInt(8) != 0,
+            requiredControl,
+            requiredObject);
       }
     }
   }
@@ -841,7 +1086,8 @@ final class SessionStore {
     // Do not decode another owner's retained contents, including malformed receipts, before denial.
     try (var query =
         connection.prepareStatement(
-            "SELECT owner,revoked,retiring FROM ps_v2_sessions WHERE generation=?")) {
+            "SELECT CASE WHEN length(CAST(owner AS BLOB)) BETWEEN 1 AND 128 THEN owner"
+                + " END,revoked,retiring FROM ps_v2_sessions WHERE generation=?")) {
       query.setLong(1, generation);
       try (var row = query.executeQuery()) {
         if (!row.next()) throw error(ProtocolError.Code.NOT_FOUND, "session unavailable");
@@ -871,7 +1117,8 @@ final class SessionStore {
       throw error(
           ProtocolError.Code.EXTENSION_UNSUPPORTED,
           "immutable session profile combination differs");
-    if (selected.controlLimit() < retained.controlLimit())
+    if (selected.controlLimit() < Math.max(retained.controlLimit(), retained.requiredControl())
+        || selected.objectLimit() < retained.requiredObject())
       throw ProtocolError.limit("connection cannot represent retained session responses");
   }
 

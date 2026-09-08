@@ -394,6 +394,12 @@ exemption from admission or resource accounting. A resource refusal does not
 erase already accepted children or their declarations; an implementation MAY
 suspend expansion and retry without extending the original parent deadline.
 
+These parent execution-ownership checks apply to the authority's local producer
+interface. An external caller's producer-0 child declarations and admissions
+remain subject to their own authorization, admission limits and cancellation
+fences. A parent's deadline or FAILED outcome alone MUST NOT revoke that child
+scope or prevent the caller from completing its independent obligations.
+
 Content type and application labels are bounded printable ASCII without
 control characters. The application label identifies an explicitly configured
 versioned processing contract. Unknown application contracts are refused

@@ -348,13 +348,31 @@ can be activated. Prior local formats are refused, not converted.
 The independent V2 `InputStore` receives and verifies immutable input bytes with
 bounded file/name/handle reservations, exact FIN/digest checks, crash-safe
 installation and verified replay lookup. It uses Java file channels and V2 typed
-headers, not the V1 payload schema. This is not admission: binding it to the
-authority's exact installation and atomically funding jobs, outputs and receipts
-remain required in the admission transaction. Local setup now supports an
-immutable two-way binding between database format 4 and input policy format 2;
+headers, not the V1 payload schema. Installing bytes is not admission. Local
+setup supports an immutable two-way installation binding; current private
+database format 5 and input policy format 3 also retain funded admissions and
+output allowances. Earlier private formats are refused without conversion;
 standalone roots cannot be adopted and another empty root cannot replace the
 bound one. Pairing itself creates no work or admission receipt.
 See the [input storage contract](../../docs/standards/java-v2-input-store.md).
+
+`v2.AdmissionStore` now commits exact validated input, attempt 1, branch child
+identity, restartable job, replay receipt, response capacity and trusted UTC
+together. Output byte/name allowances are durable records charged against the
+same store used by ordinary input reception. Work/job/child images preallocate
+future completion space and rewrite credits. Both credential and application
+policy are checked again before the final time sample and commit. Changed
+operation intent conflicts across declaration and admission; exact replay does
+not re-read payloads or renew deadlines. Caller children remain independent
+obligations after a parent deadline, subject to cancellation/skip fences.
+
+Recovery checks job/member/receipt coverage, parent/child agreement, retained
+profiles, UTC watermarks and funded image geometry; paired recovery also verifies
+the referenced input/funding files. Actual process-exit tests distinguish
+pre-commit rollback from committed admission with a lost acknowledgment.
+This remains storage-library behavior. Worker leases, real producer-1 expansion,
+terminal publication, results/read pins, retirement and durable-profile transport
+integration are not established by these admission tests.
 
 ## Sealed-work library foundation
 

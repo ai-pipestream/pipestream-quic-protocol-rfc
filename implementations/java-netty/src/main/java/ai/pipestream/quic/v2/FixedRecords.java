@@ -31,6 +31,12 @@ final class FixedRecords {
   /** Capacity of a retained fence body. */
   static final int FENCE_CAPACITY = 256;
 
+  /** Capacity of one restartable job, including lease and reclamation progress. */
+  static final int JOB_CAPACITY = 2048;
+
+  /** Expansion/settlement plus input and output reclamation intent/completion writes. */
+  static final long JOB_CREDITS = 6;
+
   /** Rewrite credits reserved for a scope image. */
   static final long SCOPE_CREDITS = 4;
 
@@ -54,7 +60,9 @@ final class FixedRecords {
     /** Work-view record. */
     WORK,
     /** Entity fence record. */
-    FENCE
+    FENCE,
+    /** Restartable execution and storage-retention record. */
+    JOB
   }
 
   /**
@@ -114,7 +122,7 @@ final class FixedRecords {
           """
           CREATE TABLE ps_v2_slots (
             id INTEGER PRIMARY KEY CHECK(id>0),
-            kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 3),
+            kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 4),
             image BLOB NOT NULL CHECK(length(image) BETWEEN 129 AND 1048704)
           ) STRICT
           """);
@@ -141,13 +149,40 @@ final class FixedRecords {
       int producer,
       long entity,
       byte[] declaration) {
+    return key(
+        new Commitments.Context(binding.authority(), binding.owner(), binding.generation()),
+        kind,
+        scope,
+        producer,
+        entity,
+        declaration);
+  }
+
+  /**
+   * Hash a checked local accounting row's immutable identity without inventing a session receipt.
+   *
+   * @param context owner-qualified context from retained metadata
+   * @param kind record role
+   * @param scope scope identity
+   * @param producer producer identity
+   * @param entity entity identity
+   * @param declaration originating operation, or null
+   * @return ownership commitment
+   */
+  static byte[] key(
+      Commitments.Context context,
+      Kind kind,
+      long scope,
+      int producer,
+      long entity,
+      byte[] declaration) {
     var digest = Commitments.sha256();
     Cbor.Writer out = new Cbor.Writer(digest);
     out.array(9);
     out.text("pipestream-java-v2-slot-key", 128);
-    out.text(binding.authority(), 128);
-    out.text(binding.owner(), 128);
-    out.number(binding.generation());
+    out.text(context.authority(), 128);
+    out.text(context.owner(), 128);
+    out.number(context.generation());
     out.number(kind.ordinal());
     out.number(scope);
     out.number(producer);
@@ -539,6 +574,7 @@ final class FixedRecords {
               case SCOPE -> "SELECT count(*) FROM ps_v2_scopes WHERE state_slot=?";
               case WORK -> "SELECT count(*) FROM ps_v2_entities WHERE view_slot=?";
               case FENCE -> "SELECT count(*) FROM ps_v2_entities WHERE fence_slot=?";
+              case JOB -> "SELECT count(*) FROM ps_v2_jobs WHERE state_slot=?";
             };
         try (var owner = connection.prepareStatement(reference)) {
           owner.setLong(1, id);

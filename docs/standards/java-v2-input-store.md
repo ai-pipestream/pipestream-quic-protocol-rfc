@@ -22,7 +22,7 @@ channel: closing that channel could otherwise affect the first handle's POSIX
 lock. Closing the store refuses while any receiver or reader remains active.
 The store is not a multi-host shared-filesystem authority.
 
-`policy.cbor` format 2 retains a fresh local installation identity, an optional
+`policy.cbor` format 3 retains a fresh local installation identity, an optional
 immutable database-installation identity, file-byte, file-name, per-object and
 active-handle limits, and a checksum. These identities do not replace protocol
 non-reuse rules or confer authorization. Earlier private policies are refused,
@@ -95,16 +95,42 @@ authority must use its operation history. Readers verify the same file
 descriptor before exposing payload-only bytes and count against the handle
 limit. They must be opened only after current execution/read authorization.
 
+## Durable output funding
+
+`reserveOutputs(context, header)` installs an immutable checksummed record under
+`reservations`, keyed by the store/database identities, owner-qualified context,
+admission producer and operation ID. Its content commits the full input header.
+Changed parameters under that identity are CONFLICT; exact replay verifies and
+forces the record and directory again without adding another charge.
+
+For output count `n`, total payload budget `b` and funding record length `r`,
+the retained byte charge is `r + 2*b + 2*n*8236` and the name charge is `1 + 2*n`.
+The 8,236-byte per-object allowance covers the bounded private header, prefix and
+checksum. The two copies/names cover pending and installed output simultaneously.
+Installing funding additionally reserves one temporary record of length `r` and
+one name, released only after synchronized staging cleanup. Even a zero-output
+admission has a durable funding identity. Arithmetic or quota overflow refuses
+before creating a record. There is no payload-sized allocation.
+
+These allowances participate in ordinary input capacity checks and survive
+restart. Recovery validates all funding records and reconstructs future charges
+before removing abandoned staging files. A funding record linked before a crash
+remains charged even when no database job references it. A failed installation
+sync cannot refund its future allowances; exact replay re-establishes durability.
+No funding release or output writer is implemented here yet. The future result
+writer must consume these prepaid allowances and enforce their descriptor bounds,
+not add an independent quota or pretend that absent output bytes are free capacity.
+
 ## Remaining gates
 
-The authority must still validate the exact pair in admission, declared membership,
-application contracts, producer ownership and cancellation fences, and commit
-input identity, timestamps, job, receipt and all output/metadata/publication
-reservations together. It must recheck authorization and trusted time at that
-commit, preserve input dependencies across retry/restart, and reconcile orphan
-objects with authoritative references. No durable profile can be advertised
-until these requirements and the full Java execution/results/retirement paths
-are implemented and tested.
+The authority admission transaction now validates the exact pair, declared
+membership, application, producer and cancellation fences, and atomically commits
+input identity, timestamps, job, receipt and output/metadata funding. It rechecks
+authorization and trusted time at commitment. The remaining executor/result
+paths must preserve dependencies across retry/restart, consume the funded
+allowances and reconcile orphans with authoritative references. No durable profile
+can be advertised until the full Java execution/results/retirement paths and
+their failure/resource acceptance gates are implemented and tested.
 
 The acceptance ledger and current-unit raw evidence distinguish ordinary
 correctness tests, real process interruption tests and bounded-heap streaming

@@ -1,0 +1,174 @@
+Java V2 internal admission and output funding, 2026-09-08
+Base: 494e7802c425238a9b916dbcc77114be67956615
+Implementation and tests: the commit containing this result file.
+Log names are labels; actual Maven completion times below are authoritative.
+
+Scope
+  Java database format 5 and input policy format 3 implement internal funded
+  admission on the immutable paired stores. Earlier private formats refuse;
+  there is no conversion or wire-format change. The transaction checks owned
+  attachment, explicit application/restart policy, declared membership, producer,
+  cancellation ancestry, trusted UTC, representation limits and live capacity.
+  Exact installed input is required; missing complete input is NOT_READY.
+
+  Durable output allowances precede the atomic database commit of attempt 1,
+  work, optional child scope, restartable job, replay receipt, representation
+  requirements and clock watermark. Failed metadata commitment leaves charged
+  file-store orphans, not an accepted operation. Exact replay does not refresh
+  deadlines, re-read payloads or consume another admission allowance. Changed
+  headers and declaration/admission operation-ID collisions are CONFLICT.
+
+  The final application-authorization callback precedes the final trusted UTC
+  sample. Recovery checks job/member/receipt coverage, parent/child identities,
+  configured application and profile, limits, fixed-record credits, allocator,
+  retention arithmetic and watermark against retained admission timestamps.
+  Paired-store verification checks retained jobs' input and funding references.
+  Scans decode bounded records and bounded owner strings, not a whole job map.
+  They scan retained state and do not establish constant-time admission.
+
+  Mode 1 starts WAITING_CHILDREN; mode 2 starts ACTIVE with an independent
+  unfinished-expansion obligation. Caller children retain their own execution
+  deadlines. Parent deadline/FAILED alone is not subtree cancellation. Section
+  12 now explicitly distinguishes caller obligations from the local producer's
+  parent-attempt/lease/deadline fence. Cancellation fences still apply.
+
+  Work capacity is at least max(4096, 2048 + 1280*maximum_output_count), including
+  329728 bytes for 256 outputs, with at least four remaining image credits.
+  Each 2048-byte job reserves six writes; a new child scope reserves four.
+  These are image/shared-clock reservations, not arbitrary SQL/device promises.
+  Output funding retains r + 2*b + 2*n*8236 bytes and 1 + 2*n names, where r is
+  the bounded funding record length, b the total output budget and n the count.
+  Installation additionally needs one temporary r-byte record and one name.
+  Ordinary input reception cannot consume these allowances after restart.
+
+  Java's shipped endpoint remains Core only. This checkpoint does not implement
+  worker acquisition/renewal/settlement, producer-1 ingress, actual output
+  publication/delivery, funding consumption, orphan reclamation or retirement.
+  It does not complete the V2 failure driver, full cross-language/resource gates
+  or the original external workload and equivalent streaming-gRPC comparison.
+
+Environment
+  Repository: /work/main/pipestream-ai/dev-tools/pipestream-quic-protocol-rfc
+  Maven cache: /work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+  Maven 3.9.16, GraalVM Java 25.0.3, source release 21.
+  SQLite JDBC 3.53.4.0, native SQLite 3.53.4.
+  Netty transport artifacts: 4.2.17.Final-pipestream.3.
+  No dependency, upstream checkout, Rust implementation or native-source edits.
+
+Focused verification and test review
+  Command from repository root:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -Dtest=SessionStoreTest,DeclarationStoreTest,InputStoreTest,InputStoreRecoveryTest,StoreBindingTest,StoreBindingRecoveryTest,AdmissionStoreTest,AdmissionStoreRecoveryTest,AdmissionPolicyTest,AdmissionCapacityTest,InputStoreFundingTest,InputStoreFundingRecoveryTest test
+  Session 15625, terminal exit 0; 72 tests, 0 failures/errors/skips.
+  Maven finished 2026-09-08 03:10:37 EDT; elapsed 7.919 seconds.
+    /tmp/pipestream-admission-funding-final-expanded-focused-rerun-20260908T031123.log
+
+  Six new classes contribute 23 tests: AdmissionStoreTest (6),
+  AdmissionStoreRecoveryTest (1), AdmissionPolicyTest (5), AdmissionCapacityTest
+  (6), InputStoreFundingTest (4), InputStoreFundingRecoveryTest (1).
+  Recovery methods loop over actual child-process crash boundaries; those
+  individual cases are not added again to the JUnit test count.
+
+  Admission recovery uses Runtime.halt(51) at the final authorization gate
+  before database commit and halt(52) after the admission receipt returns.
+  The first retains installed funding but no job or accepted operation; the
+  second recovers the original receipt, job and child scope. Exact replay
+  preserves row counts and original timestamps. Clock assertions distinguish
+  revision 1/value 0 before admission from revision 2/value 1000 after it.
+  Funding recovery halts separately after reception, linking, directory sync
+  and staging removal. Only installed links retain future allowances; recovery
+  verifies charges before deleting abandoned staging names. These are process
+  failures at completed I/O boundaries, not power-loss or disk-device tests.
+
+  Named refusals include unknown application, missing result profile, changed
+  intent, producer/generation mismatch, untrusted/decreasing/overflowing UTC,
+  final authorization withdrawal and separate global/per-owner/session limits.
+  Tests cover 256-output funding, late authorization-driven time advance,
+  smaller attachment representation, corrupt recovery watermark and unsafe-
+  clock exact replay without a new deadline. Test setup corrections preserved
+  intended assertions: attached generation is not creation sequence; profile
+  and original control limits must match the fixture; funding installation
+  needs temporary headroom; absent complete input is NOT_READY; mode 2 is ACTIVE.
+
+  Genuine regression, same test before and after production correction:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository '-Dtest=AdmissionStoreTest#callerChildDeclarationAndAdmissionUseTheirOwnDeadlineAfterParentDeadline' test
+  Red session 89949, terminal exit 1: CLOCK_UNSAFE from the incorrect new
+  requirement that caller child declarations supply parent execution time.
+    /tmp/pipestream-admission-ancestor-deadline-red-rerun-20260908T025715.log
+  Green session 99577, terminal exit 0, after removing parent-deadline inheritance
+  from caller declarations/admissions while retaining cancellation checks.
+    /tmp/pipestream-admission-ancestor-deadline-green-20260908T025855.log
+  Parent interval [1000,2000) does not prevent a child admitted at 3000 with
+  deadline 4000; the parent still awaits its own eventual settlement logic.
+
+Final verification
+  Unfiltered full command from repository root:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository install
+  Session 99064, terminal exit 0; 428 tests, 0 failures/errors/skips.
+    /tmp/pipestream-admission-funding-full-install-20260908T031145.log
+  Maven finished 2026-09-08 03:13:37 EDT (07:13:37 UTC); elapsed 2:53.
+  Independent XML inspection: 45 reports, 428 testcase nodes, aggregate
+  tests/failures/errors/skips = [428,0,0,0]. Fresh XML mtimes span
+  07:12:17.527668698 through 07:13:35.807387809 UTC.
+  Native sqlite-file-growth passed 1/1 separately.
+  Existing shade module-info and overlapping-resource warnings remain visible.
+
+  Existing physical SQLite-full fixtures now initialize at 25 pages/102400
+  bytes and retain 7 declaration commits or 21 creation commits before refusal.
+  These fixture observations do not prove the entire future job lifecycle.
+  Existing streaming-input heap fixture writes/reads/reopens 67108864 bytes
+  under a 33554432-byte heap maximum; digest:
+    eeeea29f19e99097aff081c75a85115c7732967d5824201ddba0d2d1f6202723
+  observedRssKiB=205888 is a point observation, not peak or heap-sized RSS.
+
+  Strict Javadoc from repository root for all six changed production types:
+    classpath="implementations/java-netty/target/classes:$(cat implementations/java-netty/target/v2-tls-classpath)"
+    javadoc -quiet -package -Xdoclint:all -Werror -d implementations/java-netty/target/admission-funding-apidocs -classpath "$classpath" -sourcepath implementations/java-netty/src/main/java implementations/java-netty/src/main/java/ai/pipestream/quic/v2/AdmissionStore.java implementations/java-netty/src/main/java/ai/pipestream/quic/v2/DeclarationStore.java implementations/java-netty/src/main/java/ai/pipestream/quic/v2/FixedRecords.java implementations/java-netty/src/main/java/ai/pipestream/quic/v2/InputStore.java implementations/java-netty/src/main/java/ai/pipestream/quic/v2/JobRecord.java implementations/java-netty/src/main/java/ai/pipestream/quic/v2/SessionStore.java
+  Terminal exit 0, empty log:
+    /tmp/pipestream-admission-funding-doclint-bounded-read-20260908T030730.log
+
+  Existing examples, cwd implementations/rust-quinn, after full jar packaging:
+    target/release/pipestream-conformance examples
+  Session 73059, terminal exit 0:
+    /tmp/pipestream-admission-funding-examples-fresh-jar-20260908T031409.log
+    PASS Java source -> Rust/Quinn server
+    PASS Rust source recovery -> C++/MsQuic server
+    PASS Rust source scatter -> Java, Rust, and C++ servers
+  These are existing examples, not full V2 durable-profile interoperability.
+
+  Draft command from repository root:
+    ./build.sh core 05 draft
+  Session 50980, terminal exit 0:
+    /tmp/pipestream-admission-funding-draft-20260908T030413.log
+  idnits 2.17.1: 0 errors/flaws/warnings, 1 FIPS-180-4 downref comment.
+  Existing RFC9308 explicit bibxml override warning remains. All normative
+  edits preceded generated artifacts; no IETF submission was performed.
+
+Final SHA-256
+  Production files under implementations/java-netty/src/main/java/ai/pipestream/quic/v2/:
+    AdmissionStore.java 219fe65837fa7f7134ff854ff48ad88b6d345b0b39037c5a28d1cabf97493d5f
+    DeclarationStore.java f086f658a3b908d5f14a4ace18eacbbedb390a902f7e0cd3343e5291fa8e2cd0
+    FixedRecords.java 0d605a3abb63e43a31b3103af2b382ffc1956ef56d9535f308ec10363df9f695
+    InputStore.java f9fb7f4cd402f06e19d23f0acde22f3fa05103acf9995cae061dc8518e199646
+    JobRecord.java 000ccbd284f134e1b5ec168feebdaddf0844dc724e6a7950d70d1509a6629371
+    SessionStore.java 696b47deee5263d052fbfb61ddaa26ed44b48b20de050c114635ec85603e15fb
+  Tests under implementations/java-netty/src/test/java/ai/pipestream/quic/v2/:
+    AdmissionCapacityTest.java 5a05e7fa07ff7eddd27088831b71e771e74a91d21191c3afa961ab3331a2ad27
+    AdmissionPolicyTest.java 4f775e38f0588eb8d1af075780126fa96b79ad18aaaf776d29c0ee55d24fe059
+    AdmissionStoreRecoveryTest.java 5d816811d3c2292f458b9feb6a681e513d142578d0d95f26c728667360964fa8
+    AdmissionStoreTest.java 67bb667d2458876bae97b5b537e5a1ca527f81ff8d8c9017cf9101c0a2ada10a
+    InputStoreFundingRecoveryTest.java a38aa92f94cf2eb0c77b3c8347a2722792ba2cbb4b1cea8ff99175b623c12892
+    InputStoreFundingTest.java 4beb68100a2b5f107683ef83184bb3d8cb4d3b84dae15189a2bf3604524ed70f
+  implementations/java-netty/target/pipestream-quic-netty-0.1.0-SNAPSHOT.jar
+    ef936e0b4cb0726723a8abf8d55b0e10da046495f0157804b87b2184bc24eb94
+  implementations/java-netty/target/pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar
+    e5e546b10d3bd74640985d30d3f040833599de51c67b3ec2a0f73bf7bc003f9d
+  Unchanged implementations/rust-quinn/target/release/pipestream-quinn
+    7cff7d80f68adcc0e1badf09d0f0e145aa35791fd14e51ab19daa51f33c73810
+  Unchanged implementations/rust-quinn/target/release/pipestream-conformance
+    73934f2119aba98eacecd7b632eb9f63c6e282e84483b2fc250f65a8507adba8
+  draft-krickert-pipestream-05.xml
+    dbdb09699bc63bb590f7f4dba40e0cc53b7175ef067a0e22654997f98fd0dfe7
+  draft-krickert-pipestream-05.txt
+    fe2b8d53e16f6f9dd87b8961f6e84d2c803bacd568e212626b3dd61ec8e89c53
+  draft-krickert-pipestream-05.html
+    9e1be887ba6478688f36d1eface33fb6106eccd75e6acadcc505a62659100e68

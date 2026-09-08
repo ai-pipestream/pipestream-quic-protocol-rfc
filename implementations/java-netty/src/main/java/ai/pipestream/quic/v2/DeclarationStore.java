@@ -20,39 +20,105 @@ final class DeclarationStore {
   private static final int RECEIPT_BYTES = 1024;
   private static final int VIEW_BYTES = 1048576;
 
-  private record Scope(long slot, long revision, ScopeState state) {
+  /**
+   * Retained scope image and its slot revision.
+   *
+   * @param slot fixed-record slot identifier
+   * @param revision fixed-record revision
+   * @param state decoded scope state
+   */
+  record Scope(long slot, long revision, ScopeState state) {
+    /**
+     * Returns the immutable scope identifier.
+     *
+     * @return immutable scope identifier
+     */
     long id() {
       return state.id();
     }
 
+    /**
+     * Returns the immutable producer identifier.
+     *
+     * @return immutable producer identifier
+     */
     int producer() {
       return state.producer();
     }
 
+    /**
+     * Returns the immutable parent work key, or {@code null} for the root.
+     *
+     * @return immutable parent work key, or {@code null}
+     */
     WorkKey parent() {
       return state.parent();
     }
 
+    /**
+     * Returns the retained membership seal, or {@code null} before sealing.
+     *
+     * @return retained membership seal, or {@code null}
+     */
     Digest seal() {
       return state.seal();
     }
 
+    /**
+     * Returns the accepted member count.
+     *
+     * @return accepted member count
+     */
     long declared() {
       return state.declared();
     }
 
+    /**
+     * Returns the highest accepted member identifier.
+     *
+     * @return highest accepted member identifier
+     */
     long last() {
       return state.last();
     }
 
+    /**
+     * Returns this scope with replacement membership counters and digest.
+     *
+     * @param count replacement accepted-member count
+     * @param highWater replacement highest member identifier
+     * @param digest replacement membership digest
+     * @return scope with replacement membership state
+     */
     Scope members(long count, long highWater, Digest digest) {
       return new Scope(slot, revision, state.members(count, highWater, digest));
     }
   }
 
-  private record Entity(long revision, WorkView view) {}
+  /**
+   * Retained declaration-backed work view and its fixed-record geometry.
+   *
+   * @param slot fixed-record slot identifier
+   * @param revision fixed-record revision
+   * @param view decoded work view
+   * @param declaration declaration operation identifier
+   * @param geometry fixed-record geometry
+   */
+  record Entity(
+      long slot,
+      long revision,
+      WorkView view,
+      OperationId declaration,
+      FixedRecords.Header geometry) {}
 
-  private record Operation(Declare request, OperationReceipt receipt) {}
+  /**
+   * Decoded durable declaration request, admitted input header, and replay receipt.
+   *
+   * @param request decoded declaration request
+   * @param input admitted input header
+   * @param receipt replay receipt
+   */
+  record Operation(Declare request, InputHeader input, OperationReceipt receipt) {}
 
   private record Usage(long entities, long operations) {}
 
@@ -86,6 +152,7 @@ final class DeclarationStore {
             generation INTEGER NOT NULL REFERENCES ps_v2_sessions(generation),
             producer INTEGER NOT NULL CHECK(producer IN (0,1)),
             operation BLOB NOT NULL CHECK(length(operation)=16 AND operation!=zeroblob(16)),
+            request_kind INTEGER NOT NULL CHECK(request_kind IN (0,1)),
             request BLOB NOT NULL CHECK(length(request) BETWEEN 1 AND 4101),
             request_digest BLOB NOT NULL CHECK(length(request_digest)=32),
             receipt BLOB NOT NULL CHECK(length(receipt) BETWEEN 1 AND 1024),
@@ -238,15 +305,15 @@ final class DeclarationStore {
     try (var insert =
         connection.prepareStatement(
             """
-            INSERT INTO ps_v2_operations(generation,producer,operation,request,request_digest,receipt,record_hash)
-              VALUES (?,0,?,?,?,?,?)
+            INSERT INTO ps_v2_operations(generation,producer,operation,request_kind,request,request_digest,receipt,record_hash)
+              VALUES (?,0,?,0,?,?,?,?)
             """)) {
       insert.setLong(1, binding.generation());
       insert.setBytes(2, request.operation().bytes());
       insert.setBytes(3, requestBytes);
       insert.setBytes(4, digest.bytes());
       insert.setBytes(5, receiptBytes);
-      insert.setBytes(6, operationHash(binding, requestBytes, receiptBytes));
+      insert.setBytes(6, operationHash(binding, 0, requestBytes, receiptBytes));
       insert.executeUpdate();
     }
     return new DeclarationResponse(request.request(), receipt);
@@ -396,19 +463,20 @@ final class DeclarationStore {
     long covered = 0;
     try (var query =
         connection.prepareStatement(
-            "SELECT producer,operation FROM ps_v2_operations WHERE generation=?")) {
+            "SELECT producer,CASE WHEN length(operation)=16 THEN operation END FROM"
+                + " ps_v2_operations WHERE generation=?")) {
       query.setLong(1, binding.generation());
       try (var rows = query.executeQuery()) {
         while (rows.next()) {
           if (rows.getInt(1) != 0)
-            throw corrupt("unsupported operation producer in declaration-only store");
+            throw corrupt("unsupported local producer operation in caller store");
           byte[] bytes = rows.getBytes(2);
           if (bytes == null || bytes.length != 16)
             throw corrupt("invalid retained operation identity");
           try {
             Operation value = operation(connection, binding, new OperationId(bytes));
             if (value == null) throw corrupt("retained operation disappeared inside audit");
-            int accepted = value.request().entityIds().size();
+            int accepted = value.request() == null ? 0 : value.request().entityIds().size();
             if (accepted > usage.entities() - covered)
               throw corrupt("declaration receipts exceed retained membership");
             covered += accepted;
@@ -422,7 +490,16 @@ final class DeclarationStore {
       throw corrupt("declaration receipts do not cover retained membership");
   }
 
-  private static Scope scope(Connection connection, Binding binding, long id) throws SQLException {
+  /**
+   * Load and validate one retained scope under its session binding.
+   *
+   * @param connection open database connection
+   * @param binding immutable session binding
+   * @param id scope identifier
+   * @return validated retained scope
+   * @throws SQLException for storage or retained-state validation failure
+   */
+  static Scope scope(Connection connection, Binding binding, long id) throws SQLException {
     try (var query =
         connection.prepareStatement(
             """
@@ -488,13 +565,23 @@ final class DeclarationStore {
       if (!view.work().equals(new WorkKey(scope.id(), scope.producer(), id)))
         throw corrupt("work identity differs from retained scope");
       new OperationId(declaration);
-      return new Entity(image.header().revision(), view);
+      return new Entity(
+          viewSlot, image.header().revision(), view, new OperationId(declaration), image.header());
     } catch (ProtocolError invalid) {
       throw corrupt("invalid retained work view", invalid);
     }
   }
 
-  private static Operation operation(Connection connection, Binding binding, OperationId id)
+  /**
+   * Load and validate one producer-zero declaration operation, or return {@code null} when absent.
+   *
+   * @param connection open database connection
+   * @param binding immutable session binding
+   * @param id declaration operation identifier
+   * @return validated operation, or {@code null} when absent
+   * @throws SQLException for storage or retained-state validation failure
+   */
+  static Operation operation(Connection connection, Binding binding, OperationId id)
       throws SQLException {
     try (var query =
         connection.prepareStatement(
@@ -502,7 +589,7 @@ final class DeclarationStore {
             SELECT CASE WHEN length(request)<=4101 THEN request END,
               CASE WHEN length(request_digest)=32 THEN request_digest END,
               CASE WHEN length(receipt)<=1024 THEN receipt END,
-              CASE WHEN length(record_hash)=32 THEN record_hash END
+              CASE WHEN length(record_hash)=32 THEN record_hash END,request_kind
             FROM ps_v2_operations WHERE generation=? AND producer=0 AND operation=?
             """)) {
       query.setLong(1, binding.generation());
@@ -513,14 +600,35 @@ final class DeclarationStore {
             digest = row.getBytes(2),
             receiptBytes = row.getBytes(3),
             hash = row.getBytes(4);
+        int kind = row.getInt(5);
         if (requestBytes == null
             || digest == null
             || receiptBytes == null
             || hash == null
             || requestBytes.length > REQUEST_BYTES
-            || !Arrays.equals(hash, operationHash(binding, requestBytes, receiptBytes)))
+            || kind < 0
+            || kind > 1
+            || !Arrays.equals(hash, operationHash(binding, kind, requestBytes, receiptBytes)))
           throw corrupt("operation record integrity failure");
         try {
+          if (kind == 1) {
+            InputHeader input =
+                (InputHeader) Wire.decodeRecord(Wire.RecordKind.INPUT_HEADER, requestBytes, 4096);
+            OperationReceipt receipt =
+                (OperationReceipt)
+                    Wire.decodeRecord(
+                        Wire.RecordKind.OPERATION_RECEIPT, receiptBytes, RECEIPT_BYTES);
+            Digest expected = Commitments.operation(context(binding), 0, input);
+            if (!input.operation().equals(id)
+                || input.generation() != binding.generation()
+                || !receipt.operation().equals(id)
+                || !receipt.requestDigest().equals(expected)
+                || !Arrays.equals(digest, expected.bytes())
+                || !(receipt.outcome() instanceof Admitted admitted))
+              throw corrupt("admission receipt differs from immutable intent");
+            AdmissionStore.validateReceipt(connection, binding, input, admitted);
+            return new Operation(null, input, receipt);
+          }
           Wire.Frame frame = Wire.decode(requestBytes, Wire.INITIAL_CONTROL_LIMIT);
           if (!(frame instanceof Wire.Known known)
               || !(known.message() instanceof Declare request)
@@ -565,11 +673,70 @@ final class DeclarationStore {
               }
             }
           }
-          return new Operation(request, receipt);
+          return new Operation(request, null, receipt);
         } catch (ProtocolError invalid) {
           throw corrupt("invalid retained operation encoding", invalid);
         }
       }
+    }
+  }
+
+  /**
+   * Read the checked identity and funded work image for one member.
+   *
+   * @param connection enclosing snapshot
+   * @param binding authenticated session
+   * @param work expected work identity
+   * @return current work and immutable declaration linkage
+   * @throws SQLException corrupt metadata or storage failure
+   */
+  static Entity member(Connection connection, Binding binding, WorkKey work) throws SQLException {
+    Scope scope = scope(connection, binding, work.scope());
+    if (scope.producer() != work.producer())
+      throw error(ProtocolError.Code.CONFLICT, "work producer differs from scope");
+    try (var query =
+        connection.prepareStatement(
+            """
+            SELECT id,view_slot,fence_slot,CASE WHEN length(declaration)=16 THEN declaration END,producer
+              FROM ps_v2_entities WHERE generation=? AND scope=? AND id=?
+            """)) {
+      query.setLong(1, binding.generation());
+      query.setLong(2, work.scope());
+      query.setLong(3, work.entity());
+      try (var row = query.executeQuery()) {
+        if (!row.next()) throw error(ProtocolError.Code.NOT_FOUND, "work identity is undeclared");
+        return entity(connection, binding, scope, row);
+      }
+    }
+  }
+
+  /**
+   * Retain an admission in the same caller operation namespace as declarations.
+   *
+   * @param connection admission writer transaction
+   * @param binding authenticated immutable session
+   * @param input exact input header
+   * @param receipt committed typed outcome
+   * @throws SQLException duplicate identity or storage failure
+   */
+  static void retainAdmission(
+      Connection connection, Binding binding, InputHeader input, OperationReceipt receipt)
+      throws SQLException {
+    byte[] requestBytes = Wire.encodeRecord(input, 4096);
+    byte[] receiptBytes = Wire.encodeRecord(receipt, RECEIPT_BYTES);
+    try (var insert =
+        connection.prepareStatement(
+            """
+            INSERT INTO ps_v2_operations(generation,producer,operation,request_kind,request,request_digest,receipt,record_hash)
+              VALUES (?,0,?,1,?,?,?,?)
+            """)) {
+      insert.setLong(1, binding.generation());
+      insert.setBytes(2, input.operation().bytes());
+      insert.setBytes(3, requestBytes);
+      insert.setBytes(4, receipt.requestDigest().bytes());
+      insert.setBytes(5, receiptBytes);
+      insert.setBytes(6, operationHash(binding, 1, requestBytes, receiptBytes));
+      insert.executeUpdate();
     }
   }
 
@@ -642,11 +809,12 @@ final class DeclarationStore {
     return out;
   }
 
-  private static byte[] operationHash(Binding binding, byte[] request, byte[] receipt) {
+  private static byte[] operationHash(Binding binding, int kind, byte[] request, byte[] receipt) {
     var digest = Commitments.sha256();
     Cbor.Writer out = hashWriter(digest, "pipestream-java-v2-operation", binding);
-    out.array(3);
+    out.array(4);
     out.number(0);
+    out.number(kind);
     out.bytes(request);
     out.bytes(receipt);
     return digest.digest();
