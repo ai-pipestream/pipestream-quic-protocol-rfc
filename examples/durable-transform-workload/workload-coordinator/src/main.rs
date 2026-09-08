@@ -430,6 +430,9 @@ async fn run_session(
     session.log("checkpoint", -1, &format!("declared {}", summary.declared.0));
     let completed = session.client.complete().await?;
     session.log("complete", -1, &format!("declared {}", completed.declared.0));
+    // Durable commits behind this worker: one admission commit plus one
+    // terminal-outcome commit per chunk; the chunk count bounds the total.
+    session.log("commits", -1, &format!("{} chunks", ordinals.len()));
     session.client.shutdown().await?;
     session.log("session-close", -1, "");
     Ok(())

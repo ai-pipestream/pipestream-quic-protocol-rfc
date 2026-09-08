@@ -48,6 +48,7 @@ kill $PIDS 2>/dev/null || true
 wait 2>/dev/null || true
 lo_after=$(awk -F'[: ]+' '/^lo:/{print $3":"$11}' /proc/net/dev)
 echo -e "wall_ms=$((END_MS - START_MS))\nlo_rx_tx_before=$lo_before\nlo_rx_tx_after=$lo_after" > "$ART/ps-net.txt"
+echo -e "restart-safety: Pure (deterministic re-execution, no external effects)\nfixture-schedule-schema: kimi interface-v1 1452f60 (c566751a...)" > "$ART/run-record.txt"
 grep -q "first-usable-output" "$ART/ps-events.tsv" || { echo "PS: no first-usable"; exit 1; }
 grep -q "final-verified" "$ART/ps-events.tsv" || { echo "PS: no final-verified"; exit 1; }
 echo "PS arm done in $((END_MS - START_MS)) ms"

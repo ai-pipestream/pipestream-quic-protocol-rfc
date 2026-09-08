@@ -334,6 +334,9 @@ async fn run_worker(
         }
         log(&run.events, started, worker as i64, ordinal as i64, "chunk-verified", "");
     }
+    // One SQLite txn commit per submitted chunk plus one output fsync each;
+    // the count below is measured evidence for the fsync accounting.
+    log(&run.events, started, worker as i64, -1, "commits", &format!("{} chunks", ordinals.len()));
     log(&run.events, started, worker as i64, -1, "session-close", "");
     Ok(())
 }

@@ -70,3 +70,8 @@ summaries. Missing collectors invalidate the run; no invented zeros.
 - Fault schedules 5–6 (explicit retryable vs restart, revoked reader,
   expired output, wrong-output) are coordinator/worker capabilities, not
   yet scripted end-to-end here.
+- `schedules/fault-schedule-v1.tsv` rows F3/F4 (post-commit worker kill,
+  mid-download coordinator kill) are declared intent: current fault scripts
+  demonstrate F1/F2 timing-approximated; boundary-armed precision (arming on
+  `PUBLICATION_COMMITTED` / partial `RESULT_VERIFIED` markers) is pending.
+  See `reviews/kimi-interface-v1.md` for the proxy mapping.
