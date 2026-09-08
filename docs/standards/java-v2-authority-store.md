@@ -1,9 +1,10 @@
 # Java V2 authority storage
 
-`v2.SessionStore` is the independent Java creation/attachment transaction layer
-for Section 12.3. It is package-private and is not wired into a durable-profile
-listener. The shipped Java endpoint still advertises Core only. It does not yet
-implement declaration, payload admission, execution, results or retirement.
+`v2.SessionStore` and `v2.DeclarationStore` are the independent Java session and
+declaration transaction layer for Sections 12.3 through 12.5. They are
+package-private and are not wired into a durable-profile listener. The shipped
+Java endpoint still advertises Core only. Payload admission, execution, results
+and retirement remain to be implemented.
 
 ## Identity and transaction boundary
 
@@ -42,6 +43,41 @@ object limits are connection policy, not reasons to rewrite a creation receipt.
 Future admission must fund its representations and obey both current negotiated
 limits and retained session admission ceilings.
 
+## Membership and operation receipts
+
+A caller declaration commits its ordered members, initial DECLARED views,
+scope high-water/count/seal, session charges and immutable operation receipt in
+one writer transaction. The receipt is inserted last; a deferred foreign key
+requires every member to reference its committed declaration operation. A failed
+insert or authorization withdrawal immediately before commit rolls back all of
+those writes. No input is admitted and no callback is scheduled by declaration.
+
+Replay validates the normalized original request, normative operation digest,
+typed receipt, referenced scope and every covered member's operation link before
+returning the original receipt with a fresh connection correlation. Changed
+intent conflicts; missing operation lookup is NOT_FOUND, not proof that an
+in-flight request cannot commit. Receipt and entity charges have separate limits;
+existing replay does not consume another charge. A sealed scope cannot grow.
+
+Sealing hashes the ordered SQLite cursor incrementally across all batches.
+Paging reads at most one bounded page plus a continuation row, with an exclusive
+lower entity bound. Empty pages do not assert completeness. `snapshot` reads one
+current work view and rejects a future revision; it deliberately does not perform
+the WORK request's optional wait. The dispatcher must implement bounded waiting
+outside the database transaction. No checkpoint or closure is inferred here.
+
+Recovery checks actual row counts, scope counts/high-water marks, streamed seals,
+checksummed typed views, exact declaration links and complete receipt coverage.
+Adjusting counters to hide a missing member cannot make the retained receipt
+valid. These checks use bounded records and point lookups, not a whole-session
+membership map. Producer-1 declarations are not exposed through an unfenced local
+shortcut; they require the future parent-attempt/lease/deadline checks.
+
+The local database format is version 2. Earlier experimental V2 storage formats,
+like V1 and foreign databases, are refused without conversion. This is an internal
+format revision, not a wire-profile change or an authorized reset of an existing
+authority identity.
+
 ## Persistence and resource scope
 
 `BoundedSqlite` shares the Java implementation's existing bounded Linux native
@@ -69,10 +105,13 @@ they cannot simulate every power-loss or storage-device failure.
 
 ## Remaining full-goal gates
 
-Declaration/operation journals, funded payload admission, worker leases and
-attempt fences, subtree settlement, results/read pins, retirement/reconciliation,
+Funded payload admission, worker leases and attempt fences, subtree settlement,
+results/read pins, retirement/reconciliation,
 durable client observations and authenticated endpoint integration remain
-mandatory. This increment does not prove full Java V2 behavior, live TLS-policy
+mandatory. Declaration's physical limits are not yet a reservation for all later
+terminal, cancellation and cleanup metadata/journal writes; those funded
+transitions are required before activation. This increment does not prove full
+Java V2 behavior, live TLS-policy
 revocation settlement, cross-language V2 equivalence or the protocol-neutral
 failure driver. The external chunk/distribute/transform/reassemble workload and
 equivalent authenticated durable streaming-gRPC comparison are still required.

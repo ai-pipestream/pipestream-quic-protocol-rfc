@@ -328,6 +328,14 @@ facility with V1, not the V1 schema. See the
 [storage boundary and remaining gates](../../docs/standards/java-v2-authority-store.md).
 This is not yet a durable-profile endpoint; the Java CLI still advertises Core only.
 
+`v2.DeclarationStore` adds atomic caller membership/operation receipts, immutable
+replay, streamed sealing, bounded pages and immediate revisioned work snapshots.
+Recovery validates receipt-to-member links as well as row counts and seals;
+missing members cannot become successful receipt replay. Actual SQLite tests
+exercise concurrent duplicates, commit interruption, corruption and exhaustion.
+This is declaration, not input admission, producer-1 expansion, a wait timer,
+checkpoint closure or reserved capacity for all later terminal transitions.
+
 ## Sealed-work library foundation
 
 The independent Java `SealedWork`, `SealedScope`, and `SealedSessionStore`

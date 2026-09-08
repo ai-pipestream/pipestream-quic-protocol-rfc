@@ -1,0 +1,143 @@
+Java V2 durable declarations and observed work snapshots, 2026-09-07
+==================================================================
+
+Scope
+-----
+This milestone adds owner-authorized SQLite transactions for caller-owned root
+membership declarations, immutable operation receipts, ordered pages and one
+immediate declared-work snapshot. It uses the existing bounded native SQLite
+VFS and the session binding/authorization checks. It is a store API milestone,
+not a complete durable-profile endpoint, wait dispatcher or interoperability
+claim.
+
+Source checkpoints
+------------------
+implementations/java-netty/src/main/java/ai/pipestream/quic/BoundedSqlite.java
+  cda3f79ae13a62b6af252fe049b4fc267e2c13216cdadefb8f2505a297c9b77d
+implementations/java-netty/src/main/java/ai/pipestream/quic/v2/SessionStore.java
+  4e430bc3e34af1901f0c1869699f5f32fc00081953e818606e5540cac98b4a4e
+implementations/java-netty/src/main/java/ai/pipestream/quic/v2/DeclarationStore.java
+  344231720d8603505a053add5d47cc1237ccf7d89e4a1cd257eefb02768c040f
+implementations/java-netty/src/test/java/ai/pipestream/quic/v2/DeclarationStoreTest.java
+  296243c3db8d7014543c23bfe54945fd02d64ae3d76ceed8ef2ef21b2006aff2
+
+All Maven commands used the resolved .3 transport cache:
+  /work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+
+An initial testCompile session failed under -Werror solely because javac
+reported trailing whitespace in DeclarationStore.java; formatting removed it
+and the immediate compile-only rerun succeeded. This mechanical compiler gate
+is distinct from the later two-test behavioral RED.
+  /tmp/pipestream-declarationstore-testcompile-20260907T234340.log
+  /tmp/pipestream-declarationstore-testcompile-rerun-20260907T234403.log
+
+Red, fix and focused evidence
+-----------------------------
+Missing-membership regression session 98814: exit 1; two tests, two failures.
+  /tmp/pipestream-declarationstore-missing-member-red-20260907T235344.log
+Both lookup/replay after deleting an accepted member and recovery after also
+adjusting aggregate counters incorrectly accepted the retained receipt. This
+isolated missing receipt-to-membership consistency, not a count mismatch.
+
+The fix links every accepted entity to its declaration operation, checks every
+covered member and its operation link on lookup/replay, and verifies total
+linked coverage on recovery. Focused green session 21226: exit 0; both tests passed.
+  /tmp/pipestream-declarationstore-missing-member-green-20260907T235707.log
+
+Final focused session 1428: exit 0; 11 declaration plus 12 session tests,
+zero failures, errors or skips; native sqlite-file-growth 1/1 passed.
+  /tmp/pipestream-declarationstore-final-focused-20260907T235719.log
+
+Approved final focused session 95550: exit 0; 12 declaration plus 12 session
+tests, zero failures, errors or skips; native sqlite-file-growth 1/1 passed.
+  /tmp/pipestream-declarationstore-approved-focused-20260907T235955.log
+Command from repository root:
+  mvn -f implementations/java-netty/pom.xml -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -Dtest=DeclarationStoreTest,SessionStoreTest test
+The report mtime is 2026-09-07 23:59:59 America/New_York
+(2026-09-08 03:59:59 UTC); suite time is 0.957 seconds.
+
+Declaration scenarios
+---------------------
+declareReplayLookupPageAndImmediateSnapshotAreExact
+  Exact receipt replay with new correlation, exclusive ordered paging, and
+  revision-1 DECLARED/attempt-0 snapshots; future revisions conflict.
+conflictsSealingAndNotFoundDoNotMutateMembership
+  Operation reuse, sealed membership, unknown operation/scope/work boundaries.
+thousandMembersAcrossBatchesHaveStableStreamedSealAfterReopen
+  Four batches, 1,000 ascending IDs including Long.MAX_VALUE, expected seal
+  built separately through the shared Commitments streaming API, and reopen.
+concurrentDuplicateAndConflictingOperationsSerialize
+  Two handles produce one duplicate result; changed concurrent parameters
+  produce exactly one winner and one CONFLICT.
+entityAndOperationQuotasRefuseWithoutPartialMembership
+  Independent immutable session entity and operation ceilings.
+precommitDenialAndOperationInsertFailureRollBackEveryDeclarationWrite
+  Third authorization check and a real SQLite receipt-insert trigger abort
+  leave no member, operation, scope count or session charge.
+authorizationAndRetainedIntegrityPrecedeOrBlockDeclarationReads
+  Denial precedence, producer mismatch, entity-to-operation foreign key and
+  corrupt receipt read/recovery refusal.
+processDeathAroundDeclarationCommitHasExactRecoveryBoundary
+  Owned JVM halt before COMMIT leaves no operation/member; halt after COMMIT
+  replays a separately constructed typed receipt using shared Commitments.
+physicalFileLimitLeavesPriorDeclarationReplayableAndNoPartialOperation
+  Real 64 KiB main-file guard exhaustion returns LIMIT_EXCEEDED with SQLite
+  cause; prior evidence remains replayable after reopen and no refused record
+  or counter survives.
+declarationReceiptCannotReplayAfterItsAcceptedMemberDisappears
+recoveryRejectsMissingDeclarationMemberEvenWhenCountersAreAdjusted
+  Direct and recovery receipt-to-membership consistency regressions.
+emptyRootSealPersistsAsMembershipMetadataWithoutInventingClosure
+  Expected empty seal through shared Commitments, zero membership and stable
+  empty page after Long.MAX_VALUE; sealing alone is not scope closure.
+
+Final full Java verification
+----------------------------
+Full Java reference session 9852: exit 0.
+  /tmp/pipestream-declarationstore-java-reference-full-20260908T000008.log
+Command:
+  mvn install -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -f implementations/java-netty/pom.xml
+The 33 fresh Surefire XML reports contain 371 tests, zero failures, errors or
+skips, with UTC mtimes from 2026-09-08 04:02:13.942533516 through
+04:03:33.187496256. Native sqlite-file-growth passed 1/1. Separate review inspected
+the final raw XML, not only Maven's terminal banner. The profile also retains
+the Core Java-client/Rust-authority test; that proves Core interoperability,
+not Java durable declarations over QUIC or Rust receipt/membership parity.
+Final XML SHA256s:
+  DeclarationStoreTest 9ff7900acabcbecd53f32fdad609c3df6beb85e50159c163909ed26ba0d69e89
+  SessionStoreTest 67d6b1c47e8d90bc132f4d343dc7785025e5b21de878e472b6c6d5eaf90c06c7
+
+Additional retained gates
+-------------------------
+V2 and package-private API doclint logs are empty; both commands exited zero.
+Both used -Xdoclint:all -Werror; the new-type gate also used -package for
+SessionStore, DeclarationStore and BoundedSqlite. Classpath and sourcepath
+follow the session-store evidence record, using this build's target/classes.
+  /tmp/pipestream-declarationstore-v2-doclint-20260908T000355.log
+  /tmp/pipestream-declarationstore-package-doclint-20260908T000406.log
+The external Java example verified successfully, session 80038 exit 0:
+  mvn verify -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+  Working directory: examples/java-to-rust. This is build-only, with no tests.
+  /tmp/pipestream-declarationstore-java-to-rust-verify-20260908T000413.log
+The retained runtime example command, session 78719 exit 0, reported its three
+existing PASS lines (Java -> Rust, Rust recovery -> C++, Rust scatter -> all three):
+  implementations/rust-quinn/target/release/pipestream-conformance examples
+  /tmp/pipestream-declarationstore-retained-rust-examples-20260908T000426.log
+These retained examples do not exercise Java declaration storage. Draft core-05
+built successfully (./build.sh core 05 draft, session 62521 exit 0);
+idnits reported zero errors, zero flaws and zero warnings,
+plus the existing FIPS-180-4 down-reference comment.
+  /tmp/pipestream-declarationstore-draft-core05-20260908T000439.log
+
+Limitations
+-----------
+These tests cover blocking package-private store APIs and real SQLite recovery.
+They do not expose producer-1 declaration, admit or execute work, allocate child
+scopes, settle closure, publish/read results, retire sessions, or exercise the
+wire dispatcher. snapshot() is one immediate observation; optional WATCH wait
+scheduling and deadlines remain outside this API. No Java durable profile was
+advertised over QUIC, and no Rust parity or full V2 conformance is claimed.
+No Rust source changed and no Rust workspace suite or native transport
+bootstrap was rerun; unchanged retained binaries exercised the existing
+runtime examples. Rust receipt/membership reconciliation and the both-language
+failure/resource gates remain open.

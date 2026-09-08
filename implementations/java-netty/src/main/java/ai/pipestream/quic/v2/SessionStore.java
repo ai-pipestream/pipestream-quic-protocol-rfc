@@ -26,10 +26,16 @@ import java.util.concurrent.Semaphore;
  * another implementation's database is accepted. Never call it on a transport event loop.
  */
 final class SessionStore {
-  private static final int VERSION = 1;
+  private static final int VERSION = 2;
   private static final int MAX_BINDING_BYTES = 1024;
   private static final Set<String> TABLES =
-      Set.of("ps_v2_meta", "ps_v2_owners", "ps_v2_sessions", "ps_v2_scopes");
+      Set.of(
+          "ps_v2_meta",
+          "ps_v2_owners",
+          "ps_v2_sessions",
+          "ps_v2_scopes",
+          "ps_v2_entities",
+          "ps_v2_operations");
   // Bound simultaneous V2 database connections even when callers open multiple store handles.
   private static final Semaphore DATABASE_OPERATIONS = new Semaphore(16);
 
@@ -341,6 +347,112 @@ final class SessionStore {
         });
   }
 
+  /**
+   * Atomically declare caller-owned membership and its immutable replay receipt.
+   *
+   * @param access current owner authorization
+   * @param selected completed capability selection
+   * @param generation retained session generation
+   * @param request exact declaration intent, not input admission
+   * @return correlated committed receipt
+   * @throws SQLException for storage failure
+   */
+  DeclarationResponse declare(
+      Access access, Capabilities selected, long generation, Declare request) throws SQLException {
+    return sessionTransaction(
+        access,
+        selected,
+        generation,
+        true,
+        (connection, binding) -> DeclarationStore.declare(connection, binding, selected, request));
+  }
+
+  /**
+   * Look up a caller-originated operation without scheduling work or inventing an outcome.
+   *
+   * @param access current owner authorization
+   * @param selected completed capability selection
+   * @param generation retained session generation
+   * @param request operation identity in producer namespace zero
+   * @return correlated retained receipt
+   * @throws SQLException for storage failure or corrupt retained evidence
+   */
+  OperationResponse lookupOperation(
+      Access access, Capabilities selected, long generation, LookupOperation request)
+      throws SQLException {
+    return sessionTransaction(
+        access,
+        selected,
+        generation,
+        false,
+        (connection, binding) -> DeclarationStore.lookup(connection, binding, request));
+  }
+
+  /**
+   * Observe a bounded membership page in one read snapshot.
+   *
+   * @param access current owner authorization
+   * @param selected completed capability selection
+   * @param generation retained session generation
+   * @param request scope, exclusive lower bound and page ceiling
+   * @return ordered members and immutable seal when committed
+   * @throws SQLException for storage failure or corrupt retained evidence
+   */
+  PageResponse page(Access access, Capabilities selected, long generation, Page request)
+      throws SQLException {
+    return sessionTransaction(
+        access,
+        selected,
+        generation,
+        false,
+        (connection, binding) -> DeclarationStore.page(connection, binding, request));
+  }
+
+  /**
+   * Read one current work snapshot, without performing the request's optional wait. The connection
+   * dispatcher must schedule and bound any wait outside this transaction, using this observation to
+   * decide whether the revision changed. This method alone is not a WORK-wait RPC implementation.
+   *
+   * @param access current owner authorization
+   * @param selected completed capability selection
+   * @param generation retained session generation
+   * @param request work identity, revision comparison and eventual response correlation
+   * @return current revision/view, not proof that a requested wait elapsed
+   * @throws SQLException for storage failure or corrupt retained evidence
+   */
+  WatchResponse snapshot(Access access, Capabilities selected, long generation, Watch request)
+      throws SQLException {
+    return sessionTransaction(
+        access,
+        selected,
+        generation,
+        false,
+        (connection, binding) -> DeclarationStore.snapshot(connection, binding, request));
+  }
+
+  private interface SessionTransaction<T> {
+    T run(Connection connection, Binding binding) throws SQLException;
+  }
+
+  private <T> T sessionTransaction(
+      Access access,
+      Capabilities selected,
+      long generation,
+      boolean write,
+      SessionTransaction<T> action)
+      throws SQLException {
+    return transaction(
+        access,
+        selected,
+        write,
+        connection -> {
+          Checks.id(generation);
+          Retained retained = visible(connection, generation, access.owner());
+          compatible(retained, selected);
+          return action.run(connection, retained.binding());
+        });
+  }
+
   private void bootstrap(boolean initialize) throws SQLException {
     try (Connection connection = database.connect();
         var statement = connection.createStatement()) {
@@ -380,7 +492,7 @@ final class SessionStore {
           """
           CREATE TABLE ps_v2_meta (
             singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-            version INTEGER NOT NULL CHECK(version=1),
+            version INTEGER NOT NULL CHECK(version=2),
             config BLOB NOT NULL CHECK(length(config) BETWEEN 1 AND 1024),
             high_water INTEGER NOT NULL CHECK(high_water>=0)
           ) STRICT
@@ -404,6 +516,8 @@ final class SessionStore {
             control_limit INTEGER NOT NULL CHECK(control_limit BETWEEN 4096 AND 1048576),
             revoked INTEGER NOT NULL CHECK(revoked IN (0,1)),
             retiring INTEGER NOT NULL CHECK(retiring IN (0,1)),
+            entity_count INTEGER NOT NULL DEFAULT 0 CHECK(entity_count>=0),
+            operation_count INTEGER NOT NULL DEFAULT 0 CHECK(operation_count>=0),
             UNIQUE(owner,sequence)
           ) STRICT
           """);
@@ -415,7 +529,8 @@ final class SessionStore {
             parent_scope INTEGER, parent_producer INTEGER, parent_entity INTEGER,
             sealed INTEGER NOT NULL CHECK(sealed IN (0,1)), seal BLOB,
             declared INTEGER NOT NULL CHECK(declared>=0), last_entity INTEGER NOT NULL CHECK(last_entity>=0),
-            PRIMARY KEY(generation,id), UNIQUE(generation,parent_scope,parent_producer,parent_entity),
+            PRIMARY KEY(generation,id), UNIQUE(generation,id,producer),
+            UNIQUE(generation,parent_scope,parent_producer,parent_entity),
             CHECK((id=0 AND producer=0 AND parent_scope IS NULL AND parent_producer IS NULL AND parent_entity IS NULL)
               OR (id>0 AND parent_scope IS NOT NULL AND parent_scope>=0 AND parent_scope<id
                 AND parent_producer IS NOT NULL AND parent_producer IN (0,1)
@@ -424,6 +539,7 @@ final class SessionStore {
           ) STRICT
           """);
     }
+    DeclarationStore.createSchema(connection);
     try (var insert = connection.prepareStatement("INSERT INTO ps_v2_meta VALUES(1,?,?,0)")) {
       insert.setInt(1, VERSION);
       insert.setBytes(2, configBytes);
@@ -494,7 +610,10 @@ final class SessionStore {
       // Stream bounded receipts from SQLite; never materialize all owners/sessions in a map.
       try (var rows =
           statement.executeQuery("SELECT generation FROM ps_v2_sessions ORDER BY generation")) {
-        while (rows.next()) retained(connection, rows.getLong(1));
+        while (rows.next()) {
+          Retained session = retained(connection, rows.getLong(1));
+          if (!session.retiring()) DeclarationStore.audit(connection, session.binding());
+        }
       }
     }
   }

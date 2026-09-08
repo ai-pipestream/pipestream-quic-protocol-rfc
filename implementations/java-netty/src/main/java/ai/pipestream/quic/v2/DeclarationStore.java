@@ -1,0 +1,624 @@
+package ai.pipestream.quic.v2;
+
+import static ai.pipestream.quic.v2.Messages.*;
+import static ai.pipestream.quic.v2.Records.*;
+
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Arrays;
+
+/**
+ * Durable membership and caller-operation records inside SessionStore's authenticated transactions.
+ * All helpers require the caller's checked session binding. None allocates a child, admits input,
+ * executes work, acknowledges closure or bypasses a local worker fence.
+ */
+final class DeclarationStore {
+  private static final int REQUEST_BYTES = 4101;
+  private static final int RECEIPT_BYTES = 1024;
+  private static final int VIEW_BYTES = 1048576;
+
+  private record Scope(
+      long id, int producer, WorkKey parent, Digest seal, long declared, long last) {}
+
+  private record Entity(long revision, WorkView view) {}
+
+  private record Operation(Declare request, OperationReceipt receipt) {}
+
+  private record Usage(long entities, long operations) {}
+
+  private DeclarationStore() {}
+
+  /**
+   * Create this version's tables in the same initialization transaction as the session schema.
+   *
+   * @param connection owned initialization transaction
+   * @throws SQLException for schema or storage failure
+   */
+  static void createSchema(Connection connection) throws SQLException {
+    try (var sql = connection.createStatement()) {
+      sql.execute(
+          """
+          CREATE TABLE ps_v2_entities (
+            generation INTEGER NOT NULL, scope INTEGER NOT NULL, id INTEGER NOT NULL CHECK(id>0),
+            producer INTEGER NOT NULL CHECK(producer IN (0,1)),
+            declaration BLOB NOT NULL CHECK(length(declaration)=16),
+            revision INTEGER NOT NULL CHECK(revision>0),
+            view BLOB NOT NULL CHECK(length(view) BETWEEN 1 AND 1048576),
+            view_hash BLOB NOT NULL CHECK(length(view_hash)=32),
+            PRIMARY KEY(generation,scope,id),
+            FOREIGN KEY(generation,scope,producer) REFERENCES ps_v2_scopes(generation,id,producer),
+            FOREIGN KEY(generation,producer,declaration) REFERENCES ps_v2_operations(generation,producer,operation)
+              DEFERRABLE INITIALLY DEFERRED
+          ) STRICT
+          """);
+      sql.execute(
+          """
+          CREATE TABLE ps_v2_operations (
+            generation INTEGER NOT NULL REFERENCES ps_v2_sessions(generation),
+            producer INTEGER NOT NULL CHECK(producer IN (0,1)),
+            operation BLOB NOT NULL CHECK(length(operation)=16 AND operation!=zeroblob(16)),
+            request BLOB NOT NULL CHECK(length(request) BETWEEN 1 AND 4101),
+            request_digest BLOB NOT NULL CHECK(length(request_digest)=32),
+            receipt BLOB NOT NULL CHECK(length(receipt) BETWEEN 1 AND 1024),
+            record_hash BLOB NOT NULL CHECK(length(record_hash)=32),
+            PRIMARY KEY(generation,producer,operation)
+          ) STRICT
+          """);
+    }
+  }
+
+  /**
+   * Commit or replay a caller declaration. All writes use the enclosing writer transaction.
+   *
+   * @param connection checked writer transaction
+   * @param binding authorized immutable session
+   * @param selected current selected limits
+   * @param request immutable declaration
+   * @return correlated declaration receipt
+   * @throws SQLException for storage failure or corruption
+   */
+  static DeclarationResponse declare(
+      Connection connection, Binding binding, Capabilities selected, Declare request)
+      throws SQLException {
+    Commitments.Context context = context(binding);
+    Digest digest = Commitments.operation(context, 0, request);
+    Operation prior = operation(connection, binding, request.operation());
+    if (prior != null) {
+      if (!digest.equals(prior.receipt().requestDigest())
+          || !normalized(request).equals(prior.request()))
+        throw error(
+            ProtocolError.Code.CONFLICT, "operation identity has different immutable parameters");
+      return new DeclarationResponse(request.request(), prior.receipt());
+    }
+    Scope scope = scope(connection, binding.generation(), request.scope());
+    if (scope.producer() != 0)
+      throw error(
+          ProtocolError.Code.UNAUTHORIZED, "caller cannot declare another producer's scope");
+    if (scope.seal() != null)
+      throw error(ProtocolError.Code.CONFLICT, "scope membership is sealed");
+    if (!request.entityIds().isEmpty() && request.entityIds().getFirst() <= scope.last())
+      throw error(
+          ProtocolError.Code.CONFLICT, "entity identity is not above the scope high-water mark");
+
+    Usage usage = usage(connection, binding);
+    int added = request.entityIds().size();
+    if (added > binding.limits().entities() - usage.entities()
+        || usage.operations() >= binding.limits().operations())
+      throw ProtocolError.limit("session declaration or operation capacity");
+    long declared = add(scope.declared(), added);
+    long last = request.entityIds().isEmpty() ? scope.last() : request.entityIds().getLast();
+    try (var insert =
+        connection.prepareStatement(
+            """
+            INSERT INTO ps_v2_entities(generation,scope,id,producer,declaration,revision,view,view_hash)
+              VALUES (?,?,?,?,?,1,?,?)
+            """)) {
+      for (long entity : request.entityIds()) {
+        WorkView view =
+            new WorkView(
+                new WorkKey(scope.id(), scope.producer(), entity),
+                State.DECLARED,
+                0,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null);
+        byte[] bytes = Wire.encodeRecord(view, VIEW_BYTES);
+        // Test the largest future connection correlation representation of this observed record.
+        Wire.encode(new WatchResponse(Long.MAX_VALUE, 1, view), selected.controlLimit());
+        insert.setLong(1, binding.generation());
+        insert.setLong(2, scope.id());
+        insert.setLong(3, entity);
+        insert.setInt(4, scope.producer());
+        insert.setBytes(5, request.operation().bytes());
+        insert.setBytes(6, bytes);
+        insert.setBytes(
+            7, entityHash(binding, scope.id(), entity, 1, request.operation().bytes(), bytes));
+        insert.executeUpdate();
+      }
+    }
+    Digest seal =
+        request.seal()
+            ? seal(
+                connection,
+                binding,
+                new Scope(scope.id(), scope.producer(), scope.parent(), null, declared, last))
+            : null;
+    OperationReceipt receipt =
+        new OperationReceipt(
+            request.operation(),
+            digest,
+            new Declared(scope.id(), scope.producer(), added, declared, seal));
+    Wire.encode(new DeclarationResponse(Long.MAX_VALUE, receipt), selected.controlLimit());
+    byte[] requestBytes = Wire.encode(normalized(request), Wire.INITIAL_CONTROL_LIMIT);
+    byte[] receiptBytes = Wire.encodeRecord(receipt, RECEIPT_BYTES);
+    try (var update =
+        connection.prepareStatement(
+            """
+            UPDATE ps_v2_scopes SET declared=?,last_entity=?,sealed=?,seal=? WHERE generation=? AND id=?
+            """)) {
+      update.setLong(1, declared);
+      update.setLong(2, last);
+      update.setInt(3, seal == null ? 0 : 1);
+      update.setBytes(4, seal == null ? null : seal.bytes());
+      update.setLong(5, binding.generation());
+      update.setLong(6, scope.id());
+      if (update.executeUpdate() != 1)
+        throw corrupt("scope disappeared inside declaration transaction");
+    }
+    try (var update =
+        connection.prepareStatement(
+            """
+            UPDATE ps_v2_sessions SET entity_count=?,operation_count=? WHERE generation=?
+            """)) {
+      update.setLong(1, add(usage.entities(), added));
+      update.setLong(2, add(usage.operations(), 1));
+      update.setLong(3, binding.generation());
+      if (update.executeUpdate() != 1)
+        throw corrupt("session disappeared inside declaration transaction");
+    }
+    try (var insert =
+        connection.prepareStatement(
+            """
+            INSERT INTO ps_v2_operations(generation,producer,operation,request,request_digest,receipt,record_hash)
+              VALUES (?,0,?,?,?,?,?)
+            """)) {
+      insert.setLong(1, binding.generation());
+      insert.setBytes(2, request.operation().bytes());
+      insert.setBytes(3, requestBytes);
+      insert.setBytes(4, digest.bytes());
+      insert.setBytes(5, receiptBytes);
+      insert.setBytes(6, operationHash(binding, requestBytes, receiptBytes));
+      insert.executeUpdate();
+    }
+    return new DeclarationResponse(request.request(), receipt);
+  }
+
+  /**
+   * Retrieve retained caller operation evidence, not an assertion of noncommit on absence.
+   *
+   * @param connection checked read transaction
+   * @param binding authorized session
+   * @param request operation lookup
+   * @return correlated retained receipt
+   * @throws SQLException for corruption or storage failure
+   */
+  static OperationResponse lookup(Connection connection, Binding binding, LookupOperation request)
+      throws SQLException {
+    Operation operation = operation(connection, binding, request.operation());
+    if (operation == null)
+      throw error(ProtocolError.Code.NOT_FOUND, "operation receipt unavailable");
+    return new OperationResponse(request.request(), operation.receipt());
+  }
+
+  /**
+   * Read a single bounded page; full sealed membership is not inferred from a partial page.
+   *
+   * @param connection checked read transaction
+   * @param binding authorized session
+   * @param request page bounds
+   * @return snapshot with exact continuation flag
+   * @throws SQLException for corruption or storage failure
+   */
+  static PageResponse page(Connection connection, Binding binding, Page request)
+      throws SQLException {
+    Scope scope = scope(connection, binding.generation(), request.scope());
+    var entries = new ArrayList<Entry>(request.limit());
+    boolean more = false;
+    try (var query =
+        connection.prepareStatement(
+            """
+              SELECT id,revision,CASE WHEN length(view)<=1048576 THEN view END,
+            CASE WHEN length(view_hash)=32 THEN view_hash END,
+            CASE WHEN length(declaration)=16 THEN declaration END,producer
+              FROM ps_v2_entities WHERE generation=? AND scope=? AND id>? ORDER BY id LIMIT ?
+            """)) {
+      query.setLong(1, binding.generation());
+      query.setLong(2, scope.id());
+      query.setLong(3, request.afterEntity());
+      query.setInt(4, request.limit() + 1);
+      try (var rows = query.executeQuery()) {
+        while (rows.next()) {
+          Entity value = entity(binding, scope, rows);
+          if (entries.size() == request.limit()) {
+            more = true;
+            break;
+          }
+          entries.add(new Entry(value.view().work().entity(), value.view().state()));
+        }
+      }
+    }
+    return new PageResponse(
+        request.request(),
+        scope.id(),
+        scope.producer(),
+        scope.parent(),
+        scope.seal() != null,
+        scope.seal(),
+        scope.declared(),
+        entries,
+        more);
+  }
+
+  /**
+   * Take a current view without holding a database transaction for a connection-local wait.
+   *
+   * @param connection checked read transaction
+   * @param binding authorized session
+   * @param request identity and revision comparison
+   * @return current revision and exact view
+   * @throws SQLException for corruption or storage failure
+   */
+  static WatchResponse snapshot(Connection connection, Binding binding, Watch request)
+      throws SQLException {
+    Scope scope = scope(connection, binding.generation(), request.work().scope());
+    if (scope.producer() != request.work().producer())
+      throw error(ProtocolError.Code.CONFLICT, "work producer differs from its scope");
+    try (var query =
+        connection.prepareStatement(
+            """
+              SELECT id,revision,CASE WHEN length(view)<=1048576 THEN view END,
+            CASE WHEN length(view_hash)=32 THEN view_hash END,
+            CASE WHEN length(declaration)=16 THEN declaration END,producer
+              FROM ps_v2_entities WHERE generation=? AND scope=? AND id=?
+            """)) {
+      query.setLong(1, binding.generation());
+      query.setLong(2, scope.id());
+      query.setLong(3, request.work().entity());
+      try (var rows = query.executeQuery()) {
+        if (!rows.next()) throw error(ProtocolError.Code.NOT_FOUND, "work identity is undeclared");
+        Entity entity = entity(binding, scope, rows);
+        if (request.afterRevision() > entity.revision())
+          throw error(ProtocolError.Code.CONFLICT, "observed revision is ahead of retained work");
+        return new WatchResponse(request.request(), entity.revision(), entity.view());
+      }
+    }
+  }
+
+  /**
+   * Audit one live session's actual records and charges before admitting recovered capacity.
+   *
+   * @param connection initialization snapshot
+   * @param binding decoded immutable live session
+   * @throws SQLException for missing, contradictory or corrupt records
+   */
+  static void audit(Connection connection, Binding binding) throws SQLException {
+    Usage usage = usage(connection, binding);
+    if (count(connection, "ps_v2_entities", binding.generation()) != usage.entities()
+        || count(connection, "ps_v2_operations", binding.generation()) != usage.operations())
+      throw corrupt("declaration accounting differs from retained rows");
+    try (var query =
+        connection.prepareStatement("SELECT id FROM ps_v2_scopes WHERE generation=? ORDER BY id")) {
+      query.setLong(1, binding.generation());
+      try (var scopes = query.executeQuery()) {
+        while (scopes.next()) {
+          Scope scope = scope(connection, binding.generation(), scopes.getLong(1));
+          long observed = 0, last = 0;
+          try (var members =
+              connection.prepareStatement(
+                  """
+                    SELECT id,revision,CASE WHEN length(view)<=1048576 THEN view END,
+                  CASE WHEN length(view_hash)=32 THEN view_hash END,
+                  CASE WHEN length(declaration)=16 THEN declaration END,producer
+                    FROM ps_v2_entities WHERE generation=? AND scope=? ORDER BY id
+                  """)) {
+            members.setLong(1, binding.generation());
+            members.setLong(2, scope.id());
+            try (var rows = members.executeQuery()) {
+              while (rows.next()) {
+                last = entity(binding, scope, rows).view().work().entity();
+                observed++;
+              }
+            }
+          }
+          if (observed != scope.declared() || last != scope.last())
+            throw corrupt("scope membership accounting differs");
+          if (scope.seal() != null && !scope.seal().equals(seal(connection, binding, scope)))
+            throw corrupt("scope seal does not commit retained membership");
+        }
+      }
+    }
+    long covered = 0;
+    try (var query =
+        connection.prepareStatement(
+            "SELECT producer,operation FROM ps_v2_operations WHERE generation=?")) {
+      query.setLong(1, binding.generation());
+      try (var rows = query.executeQuery()) {
+        while (rows.next()) {
+          if (rows.getInt(1) != 0)
+            throw corrupt("unsupported operation producer in declaration-only store");
+          byte[] bytes = rows.getBytes(2);
+          if (bytes == null || bytes.length != 16)
+            throw corrupt("invalid retained operation identity");
+          try {
+            Operation value = operation(connection, binding, new OperationId(bytes));
+            if (value == null) throw corrupt("retained operation disappeared inside audit");
+            int accepted = value.request().entityIds().size();
+            if (accepted > usage.entities() - covered)
+              throw corrupt("declaration receipts exceed retained membership");
+            covered += accepted;
+          } catch (ProtocolError invalid) {
+            throw corrupt("invalid retained operation identity", invalid);
+          }
+        }
+      }
+    }
+    if (covered != usage.entities())
+      throw corrupt("declaration receipts do not cover retained membership");
+  }
+
+  private static Scope scope(Connection connection, long generation, long id) throws SQLException {
+    try (var query =
+        connection.prepareStatement(
+            """
+            SELECT producer,parent_scope,parent_producer,parent_entity,sealed,
+              CASE WHEN length(seal)=32 THEN seal END,declared,last_entity
+            FROM ps_v2_scopes WHERE generation=? AND id=?
+            """)) {
+      query.setLong(1, generation);
+      query.setLong(2, id);
+      try (var row = query.executeQuery()) {
+        if (!row.next()) throw error(ProtocolError.Code.NOT_FOUND, "scope unavailable");
+        try {
+          int producer = row.getInt(1);
+          WorkKey parent =
+              row.getObject(2) == null
+                  ? null
+                  : new WorkKey(row.getLong(2), row.getInt(3), row.getLong(4));
+          Checks.scope(id, producer, parent);
+          int sealed = row.getInt(5);
+          byte[] bytes = row.getBytes(6);
+          long declared = row.getLong(7), last = row.getLong(8);
+          if (sealed < 0
+              || sealed > 1
+              || (sealed == 1) != (bytes != null)
+              || declared < 0
+              || last < 0
+              || (declared == 0) != (last == 0)) throw corrupt("invalid retained scope metadata");
+          return new Scope(
+              id, producer, parent, bytes == null ? null : new Digest(bytes), declared, last);
+        } catch (ProtocolError invalid) {
+          throw corrupt("invalid retained scope metadata", invalid);
+        }
+      }
+    }
+  }
+
+  private static Entity entity(Binding binding, Scope scope, ResultSet row) throws SQLException {
+    long id = row.getLong(1), revision = row.getLong(2);
+    byte[] bytes = row.getBytes(3), hash = row.getBytes(4), declaration = row.getBytes(5);
+    if (id <= 0
+        || revision <= 0
+        || bytes == null
+        || hash == null
+        || declaration == null
+        || row.getInt(6) != scope.producer()
+        || !Arrays.equals(hash, entityHash(binding, scope.id(), id, revision, declaration, bytes)))
+      throw corrupt("retained work view integrity failure");
+    try {
+      WorkView view = (WorkView) Wire.decodeRecord(Wire.RecordKind.WORK_VIEW, bytes, VIEW_BYTES);
+      if (!view.work().equals(new WorkKey(scope.id(), scope.producer(), id)))
+        throw corrupt("work identity differs from retained scope");
+      new OperationId(declaration);
+      return new Entity(revision, view);
+    } catch (ProtocolError invalid) {
+      throw corrupt("invalid retained work view", invalid);
+    }
+  }
+
+  private static Operation operation(Connection connection, Binding binding, OperationId id)
+      throws SQLException {
+    try (var query =
+        connection.prepareStatement(
+            """
+            SELECT CASE WHEN length(request)<=4101 THEN request END,
+              CASE WHEN length(request_digest)=32 THEN request_digest END,
+              CASE WHEN length(receipt)<=1024 THEN receipt END,
+              CASE WHEN length(record_hash)=32 THEN record_hash END
+            FROM ps_v2_operations WHERE generation=? AND producer=0 AND operation=?
+            """)) {
+      query.setLong(1, binding.generation());
+      query.setBytes(2, id.bytes());
+      try (var row = query.executeQuery()) {
+        if (!row.next()) return null;
+        byte[] requestBytes = row.getBytes(1),
+            digest = row.getBytes(2),
+            receiptBytes = row.getBytes(3),
+            hash = row.getBytes(4);
+        if (requestBytes == null
+            || digest == null
+            || receiptBytes == null
+            || hash == null
+            || requestBytes.length > REQUEST_BYTES
+            || !Arrays.equals(hash, operationHash(binding, requestBytes, receiptBytes)))
+          throw corrupt("operation record integrity failure");
+        try {
+          Wire.Frame frame = Wire.decode(requestBytes, Wire.INITIAL_CONTROL_LIMIT);
+          if (!(frame instanceof Wire.Known known)
+              || !(known.message() instanceof Declare request)
+              || request.request() != 1
+              || !request.operation().equals(id))
+            throw corrupt("invalid retained declaration request");
+          OperationReceipt receipt =
+              (OperationReceipt)
+                  Wire.decodeRecord(Wire.RecordKind.OPERATION_RECEIPT, receiptBytes, RECEIPT_BYTES);
+          Digest expected = Commitments.operation(context(binding), 0, request);
+          if (!id.equals(receipt.operation())
+              || !expected.equals(receipt.requestDigest())
+              || !Arrays.equals(digest, expected.bytes())
+              || !(receipt.outcome() instanceof Declared declared)
+              || declared.scope() != request.scope()
+              || declared.producer() != 0
+              || declared.acceptedCount() != request.entityIds().size()
+              || request.seal() != (declared.seal() != null))
+            throw corrupt("declaration receipt differs from immutable intent");
+          Scope scope = scope(connection, binding.generation(), request.scope());
+          if (scope.producer() != declared.producer()
+              || declared.declared() > scope.declared()
+              || (declared.seal() != null
+                  && (!declared.seal().equals(scope.seal())
+                      || declared.declared() != scope.declared())))
+            throw corrupt("declaration receipt contradicts retained scope");
+          try (var member =
+              connection.prepareStatement(
+                  """
+                  SELECT producer,CASE WHEN length(declaration)=16 THEN declaration END
+                    FROM ps_v2_entities WHERE generation=? AND scope=? AND id=?
+                  """)) {
+            member.setLong(1, binding.generation());
+            member.setLong(2, request.scope());
+            for (long entity : request.entityIds()) {
+              member.setLong(3, entity);
+              try (var retained = member.executeQuery()) {
+                if (!retained.next()
+                    || retained.getInt(1) != declared.producer()
+                    || !Arrays.equals(id.bytes(), retained.getBytes(2)))
+                  throw corrupt("declaration receipt has missing or contradictory membership");
+              }
+            }
+          }
+          return new Operation(request, receipt);
+        } catch (ProtocolError invalid) {
+          throw corrupt("invalid retained operation encoding", invalid);
+        }
+      }
+    }
+  }
+
+  private static Usage usage(Connection connection, Binding binding) throws SQLException {
+    try (var query =
+        connection.prepareStatement(
+            "SELECT entity_count,operation_count FROM ps_v2_sessions WHERE generation=?")) {
+      query.setLong(1, binding.generation());
+      try (var row = query.executeQuery()) {
+        if (!row.next()) throw corrupt("session accounting missing");
+        long entities = row.getLong(1), operations = row.getLong(2);
+        if (entities < 0
+            || entities > binding.limits().entities()
+            || operations < 0
+            || operations > binding.limits().operations())
+          throw corrupt("session accounting exceeds retained limits");
+        return new Usage(entities, operations);
+      }
+    }
+  }
+
+  private static Digest seal(Connection connection, Binding binding, Scope scope)
+      throws SQLException {
+    Commitments.Seal seal =
+        new Commitments.Seal(
+            context(binding), scope.id(), scope.producer(), scope.parent(), scope.declared());
+    try (var query =
+        connection.prepareStatement(
+            "SELECT id FROM ps_v2_entities WHERE generation=? AND scope=? ORDER BY id")) {
+      query.setLong(1, binding.generation());
+      query.setLong(2, scope.id());
+      try (var row = query.executeQuery()) {
+        while (row.next()) seal.add(row.getLong(1));
+      }
+      return seal.finish();
+    } catch (ProtocolError invalid) {
+      throw corrupt("scope seal membership differs", invalid);
+    }
+  }
+
+  private static long count(Connection connection, String table, long generation)
+      throws SQLException {
+    try (var query =
+        connection.prepareStatement("SELECT count(*) FROM " + table + " WHERE generation=?")) {
+      query.setLong(1, generation);
+      try (var row = query.executeQuery()) {
+        if (!row.next()) throw corrupt("missing aggregate count");
+        return row.getLong(1);
+      }
+    }
+  }
+
+  private static Declare normalized(Declare request) {
+    return new Declare(
+        1, request.operation(), request.scope(), request.entityIds(), request.seal());
+  }
+
+  private static Commitments.Context context(Binding binding) {
+    return new Commitments.Context(binding.authority(), binding.owner(), binding.generation());
+  }
+
+  private static Cbor.Writer hashWriter(
+      java.security.MessageDigest digest, String domain, Binding binding) {
+    Cbor.Writer out = new Cbor.Writer(digest);
+    out.array(5);
+    out.text(domain, 128);
+    out.text(binding.authority(), 128);
+    out.text(binding.owner(), 128);
+    out.number(binding.generation());
+    return out;
+  }
+
+  private static byte[] entityHash(
+      Binding binding, long scope, long entity, long revision, byte[] declaration, byte[] bytes) {
+    var digest = Commitments.sha256();
+    Cbor.Writer out = hashWriter(digest, "pipestream-java-v2-entity", binding);
+    out.array(5);
+    out.number(scope);
+    out.number(entity);
+    out.number(revision);
+    out.bytes(declaration);
+    out.bytes(bytes);
+    return digest.digest();
+  }
+
+  private static byte[] operationHash(Binding binding, byte[] request, byte[] receipt) {
+    var digest = Commitments.sha256();
+    Cbor.Writer out = hashWriter(digest, "pipestream-java-v2-operation", binding);
+    out.array(3);
+    out.number(0);
+    out.bytes(request);
+    out.bytes(receipt);
+    return digest.digest();
+  }
+
+  private static long add(long left, long right) {
+    if (left < 0 || right < 0 || right > Long.MAX_VALUE - left)
+      throw ProtocolError.limit("declaration counter exhausted");
+    return left + right;
+  }
+
+  private static ProtocolError error(ProtocolError.Code code, String detail) {
+    return new ProtocolError(code, detail);
+  }
+
+  private static SQLException corrupt(String detail) {
+    return new SQLException("V2 declarations: " + detail);
+  }
+
+  private static SQLException corrupt(String detail, Throwable cause) {
+    return new SQLException("V2 declarations: " + detail, cause);
+  }
+}

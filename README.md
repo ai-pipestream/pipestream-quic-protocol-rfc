@@ -62,6 +62,10 @@ hashes. Its authenticated Core-only Netty listener now implements negotiation,
 correlated refusals, detach/half-close, connection quotas and live deadlines.
 The Java Core client now verifies selection and waits for the correlated detach
 response and actual peer FIN, with independently bounded lifecycle and cleanup.
+Its independent [authority storage](docs/standards/java-v2-authority-store.md)
+now commits sessions and caller declarations with immutable operation replay,
+streamed seals and bounded membership/work reads. Recovery checks receipt/member
+consistency, including real crash, capacity and contradictory-storage cases.
 Independent Java durable execution/results/recovery, complete cross-language
 failure evidence and the workload comparison remain unfinished.
 The Rust `pipestream_core::v2` library now implements typed codecs for every

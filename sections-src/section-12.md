@@ -809,6 +809,12 @@ reconcile accounting before admitting new capacity. Independent implementations
 must test these boundaries against their real storage, not infer them from
 the abstract models or a metadata-only unit test.
 
+For a live session, reconciliation includes consistency between declaration
+receipts, retained membership and seals. Matching aggregate counts alone do not
+establish that consistency. An authority MUST NOT use a receipt with missing or
+contradictory required membership to report successful declaration replay, or
+replace the missing membership with a successful empty-scope observation.
+
 When payload deletion and authoritative accounting cannot share one atomic
 commit, cleanup MUST retain recoverable evidence of deletion eligibility before
 removing referenced bytes. It MUST NOT refund their reserved capacity while a

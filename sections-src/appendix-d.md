@@ -150,7 +150,11 @@ owner-sequence queries and immutable attachment/replay, including allocation of
 the empty root scope. It distinguishes first installation from recovery and
 refuses missing recovery storage instead of resetting the authority's counters.
 It uses the Java bounded SQLite file facility without converting V1 session
-schemas. This layer is not yet a durable-profile listener; Java admission,
+schemas. Caller declarations now atomically retain ordered members, operation
+receipts and streamed seals; bounded pages and immediate work snapshots are
+available. Real SQLite tests cover replay, concurrent mutations, crash boundaries,
+capacity refusal and contradictory receipt/member recovery. This layer is not
+yet a durable-profile listener; Java admission,
 execution, results, retirement and full cross-language failure/resource gates
 remain required.
 

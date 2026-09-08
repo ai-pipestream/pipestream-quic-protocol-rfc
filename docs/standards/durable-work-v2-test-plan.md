@@ -1888,6 +1888,29 @@ resource evidence. The original workload/equivalent durable streaming-gRPC
 comparison remains mandatory. No acceptance family below is closed by this
 creation-only increment.
 
+## Java V2 declaration storage evidence, 2026-09-07
+
+`v2.DeclarationStoreTest` covers atomic caller declaration/receipt commits,
+immutable replay, duplicate and conflicting races, streamed multi-batch seals,
+bounded pages, immediate snapshots, separate entity/operation quotas, guarded
+SQLite capacity refusal, authorization withdrawal and abrupt process death.
+The [storage boundary](java-v2-authority-store.md) describes the local format,
+deferred declaration-member foreign key and still-required funded transitions.
+
+Two missing-member regressions first failed: receipt lookup/replay could return
+success after a committed member was deleted, and adjusting aggregate counters
+could let the inconsistent unsealed scope reopen. Receipt-to-member validation
+and complete recovery coverage now reject these cases. Section 12 clarifies that
+aggregate agreement is insufficient and missing membership is not an empty-scope
+success. Exact commands, raw failure/verification evidence and scope limits are
+recorded in `conformance/results/durable-work-v2-java-declarations-2026-09-07.txt`.
+
+This does not prove the equivalent Rust corruption checks, a Java authenticated
+durable dispatcher, funded admission/terminal settlement, producer-1 expansion,
+bounded WORK waiting or closure. Rust receipt/membership reconciliation must also
+be attacked independently; existing green suites do not close that gate. All
+original cross-language failure and workload/baseline requirements remain open.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently
@@ -2071,6 +2094,9 @@ creation-only increment.
   results and anti-reuse identity must survive without phantom work.
 - Atomically couple jobs, receipts, fences, summaries and reservations. Preserve
   pins and orphan charges on restart; reconcile before admitting new capacity.
+- Check exact declaration receipt/member/seal consistency, including missing
+  members with otherwise matching counts. Recovery and replay must not report
+  success from contradictory live evidence. Legitimate retirement stays distinct.
 - Safe matched-store ownership, references checked before deletion, replayable
   interrupted cleanup and retirement only after root closure plus every longer
   receipt/output/dependency/read promise. Preserve issuer/owner high-water marks.
