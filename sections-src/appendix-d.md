@@ -178,12 +178,14 @@ closure counters. Output bytes now stream into immutable storage under the funde
 allowances. Fenced success publication verifies the exact object set and atomically
 commits its manifest and terminal work/job state; paired recovery verifies actual
 published bytes. Unpublished installed files remain charged orphans. This layer is
-not yet a durable-profile listener. A bounded Java leaf runner now invokes actual
+not yet a durable-profile listener. A bounded Java runner now invokes actual
 registered callbacks outside metadata transactions and publishes their real outputs.
 It rechecks current execution fences and can reclaim unpinned, strictly older
 unpublished output slots under a durable replacement claim, without refunding
 their funding. Background discovery now revisits committed jobs in finite bounded
-pages and dispatches leaf callbacks without a connection or volatile job queue.
+pages and dispatches leaf and caller-expanded callbacks without a connection or
+volatile job queue. Waiting parents occupy no physical worker; discovery uses an
+advisory child-summary readiness hint and the claim fully verifies STRICT closure.
 Global/per-owner physical limits and independent deadline maintenance apply;
 shutdown does not claim logical cancellation or forced callback termination.
 The Java scheduler also drives incremental closure folds over actual sealed
@@ -194,7 +196,14 @@ completion evidence. Direct-member pages are bounded, but verification of existi
 descendant summaries still performs a session-wide streaming audit. The local
 snapshot API checks authorization and the expected seal; it does not implement
 wire checkpoint waits or completed-session shutdown.
-Branch callbacks, explicit retry, producer-1
+Caller-expanded callbacks now page exact direct children and stream committed
+outputs through a reserved sequential reader. Current parent execution authority
+is checked on each I/O operation, including internal reads after external output
+expiry. Unfinished readers and swallowed interface refusals prevent success.
+Missing or corrupt retained bytes are storage failures, not computed outcomes.
+Metadata verification still audits the session and output verification hashes
+actual payloads; bounded buffers are not a constant-time or zero-copy claim.
+Explicit retry, producer-1
 ingress, broader orphan/subtree reconciliation, result-read pins and transport,
 retirement and full cross-language failure/resource gates remain required.
 

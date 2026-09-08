@@ -1051,6 +1051,124 @@ final class SessionStore {
   }
 
   /**
+   * Page the current parent's exact successful child scope without granting a caller result lease.
+   *
+   * @param access current retained execution grant
+   * @param lease live parent worker
+   * @param after exclusive child entity bound
+   * @param limit maximum returned members
+   * @param clock trusted UTC source
+   * @param authorization current parent application permission
+   * @return bounded immutable child identities
+   * @throws SQLException contradictory metadata or failed observation
+   */
+  BranchStore.Page children(
+      ExecutionStore.Access access,
+      ExecutionStore.Lease lease,
+      long after,
+      int limit,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization)
+      throws SQLException {
+    return branchRead(
+        access,
+        lease,
+        clock,
+        authorization,
+        (connection, binding, parent) ->
+            BranchStore.page(connection, binding, parent, after, limit));
+  }
+
+  /**
+   * Observe a committed direct-child output under the current parent's dependency authorization.
+   *
+   * @param access current retained execution grant
+   * @param lease live parent worker
+   * @param entity exact direct child
+   * @param index published output index
+   * @param clock trusted UTC source
+   * @param authorization current parent application permission
+   * @return immutable output and producing file identity, not independent read authorization
+   * @throws SQLException contradictory metadata or failed observation
+   */
+  BranchStore.Source childOutput(
+      ExecutionStore.Access access,
+      ExecutionStore.Lease lease,
+      long entity,
+      int index,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization)
+      throws SQLException {
+    return branchRead(
+        access,
+        lease,
+        clock,
+        authorization,
+        (connection, binding, parent) ->
+            BranchStore.output(connection, config, identity, binding, parent, entity, index));
+  }
+
+  private <T> T branchRead(
+      ExecutionStore.Access access,
+      ExecutionStore.Lease lease,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization,
+      BranchRead<T> read)
+      throws SQLException {
+    Objects.requireNonNull(access).check();
+    Objects.requireNonNull(lease);
+    Objects.requireNonNull(authorization);
+    if (!access.owner().equals(lease.owner()) || !identity.equals(lease.installation()))
+      throw error(
+          ProtocolError.Code.UNAUTHORIZED, "parent belongs to another owner or installation");
+    AdmissionStore.Clock checkedClock = AdmissionStore.checkedClock(clock);
+    if (!DATABASE_OPERATIONS.tryAcquire())
+      throw ProtocolError.limit("V2 database operation capacity");
+    try (Connection connection = database.connect();
+        var statement = connection.createStatement()) {
+      statement.execute("PRAGMA query_only=ON");
+      statement.execute("BEGIN");
+      try {
+        access.check();
+        metadata(connection);
+        Binding binding = visible(connection, lease.generation(), access.owner()).binding();
+        ExecutionStore.Loaded parent =
+            ExecutionStore.load(connection, config, binding, lease.work(), authorization);
+        ExecutionStore.check(
+            connection,
+            binding,
+            parent,
+            lease,
+            ExecutionStore.Change.CHECK,
+            AdmissionStore.now(connection, binding.authority(), checkedClock));
+        T result = read.apply(connection, binding, parent);
+        access.check();
+        authorization.check(binding, parent.stored().record().input().parameters());
+        ExecutionStore.check(
+            connection,
+            binding,
+            parent,
+            lease,
+            ExecutionStore.Change.CHECK,
+            AdmissionStore.now(connection, binding.authority(), checkedClock));
+        statement.execute("COMMIT");
+        return result;
+      } catch (SQLException | RuntimeException | Error failure) {
+        rollback(connection, failure);
+        throw failure;
+      }
+    } finally {
+      DATABASE_OPERATIONS.release();
+    }
+  }
+
+  @FunctionalInterface
+  private interface BranchRead<T> {
+    T apply(Connection connection, Binding binding, ExecutionStore.Loaded parent)
+        throws SQLException;
+  }
+
+  /**
    * Inspect the immutable deployment registry without granting execution.
    *
    * @return retained application and executor policy
@@ -1149,7 +1267,8 @@ final class SessionStore {
                       job.stage(),
                       job.input().parameters().mode(),
                       view.deadline(),
-                      job.leaseUntil()));
+                      job.leaseUntil(),
+                      !job.expansionComplete() || BranchStore.ready(connection, binding, view)));
             }
           }
         }

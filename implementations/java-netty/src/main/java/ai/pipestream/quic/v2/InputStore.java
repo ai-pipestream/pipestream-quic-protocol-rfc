@@ -350,6 +350,22 @@ final class InputStore implements AutoCloseable {
   }
 
   /**
+   * Refuse an admission whose callback can never obtain its minimum physical I/O geometry. Current
+   * handle occupancy is transient and is not an admission reservation.
+   *
+   * @param parameters exact requested processing mode and output budget
+   * @throws IOException closed storage
+   */
+  synchronized void requireExecutionHandles(AdmitParameters parameters) throws IOException {
+    ensureOpen();
+    int required =
+        1 + (parameters.mode() == 0 ? 0 : 1) + (parameters.outputs().count() == 0 ? 0 : 1);
+    if (limits.handles() < required)
+      throw ProtocolError.limit(
+          "callback input, dependency and output handle policy is insufficient");
+  }
+
+  /**
    * Get the persistent local store identity for an eventual authority-store binding.
    *
    * @return installation identity, not a protocol principal
@@ -614,6 +630,18 @@ final class InputStore implements AutoCloseable {
       throws IOException {
     ensureOpen();
     return outputs.reserveWriter(context, header, lease);
+  }
+
+  /**
+   * Reserve one sequential output-reader handle before a branch callback starts. This credit grants
+   * no result or dependency access; the authority must validate each selected object.
+   *
+   * @return store-bound capacity held until every borrowed reader closes
+   * @throws IOException closed storage
+   */
+  synchronized OutputStore.ReaderCredit reserveOutputReader() throws IOException {
+    ensureOpen();
+    return outputs.reserveReader();
   }
 
   /**

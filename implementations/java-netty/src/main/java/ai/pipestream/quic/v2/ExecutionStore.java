@@ -146,6 +146,7 @@ final class ExecutionStore {
    * @param mode admitted application mode
    * @param deadline original execution deadline
    * @param leaseUntil observed lease expiry, null without an executing worker
+   * @param dependenciesReady advisory child-closure availability, not verified execution authority
    */
   record Candidate(
       Position position,
@@ -154,7 +155,8 @@ final class ExecutionStore {
       JobRecord.Stage stage,
       int mode,
       long deadline,
-      Long leaseUntil) {}
+      Long leaseUntil,
+      boolean dependenciesReady) {}
 
   /**
    * At most one bounded page of local discovery observations.

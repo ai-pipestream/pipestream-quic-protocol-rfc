@@ -1,11 +1,11 @@
 # Java V2 authority storage
 
 `v2.SessionStore`, `v2.DeclarationStore`, `v2.AdmissionStore`, `v2.ExecutionStore`,
-`v2.PublicationStore` and `v2.ClosureStore` are the independent Java session,
-declaration, admission, local execution, result-publication and closure transaction
-layer for Sections 12.3 through 12.8. They are
+`v2.PublicationStore`, `v2.ClosureStore` and `v2.BranchStore` are the independent Java
+session, declaration, admission, local execution, result-publication, closure and
+direct-child dependency layer for Sections 12.3 through 12.9. They are
 package-private and are not wired into a durable-profile listener. The shipped
-Java endpoint still advertises Core only. Branch execution, result delivery
+Java endpoint still advertises Core only. Authority-produced expansion, result delivery
 and retirement remain to be implemented; storage behavior is not endpoint interoperability.
 
 ## Identity and transaction boundary
@@ -281,8 +281,9 @@ A branch cannot be claimed for rehydration from a membership seal alone: it need
 a committed successful child closure, verified against actual terminal members,
 descendant commitments and status counts. Closure verification streams retained
 state; it is not constant-time scheduling. The closure writer described below
-now produces that evidence; the branch callback interface remains required.
-The leaf scheduler does not substitute a seal for a successful closure.
+now produces that evidence; caller-expanded callbacks can consume the committed
+child outputs through the dependency interface below. The scheduler does not
+substitute a seal for a successful closure.
 
 ## Fenced result publication
 
@@ -315,20 +316,21 @@ time promises, and paired-store recovery checks every published descriptor again
 the actual immutable files. It does not re-execute work to repair missing storage.
 Failure before publication leaves charged orphan files, not a visible result.
 The output store refuses to recycle an installed slot without authoritative
-reclamation. The leaf callback runner now reclaims strictly older unpublished
+reclamation. The callback runner now reclaims strictly older unpublished
 outputs under a newly committed current claim, without releasing their funding.
 Result-read authorization/pins, broader reconciliation and the QUIC delivery
 adapter remain separate required implementations.
 
-## Bounded leaf callback execution
+## Bounded callback execution
 
 `ExecutionRuntime` invokes real registered application code after a durable claim
 and outside metadata transactions. It is a synchronous runner for host-owned
 worker threads, not a durable-profile listener. `ExecutionScheduler` supplies its
 background discovery and physical worker pool.
-It accepts exact leaf-only registrations matching the admission registry's label,
-mode and restart-safety contract. Missing callbacks, mismatched contracts and
-branch registrations are refused, not executed through a fallback.
+It accepts exact leaf (mode 0) and caller-expanded branch (mode 1) registrations
+matching the admission registry's label, mode and restart-safety contract. Missing
+callbacks, mismatched contracts and authority-expansion (mode 2) registrations
+are refused, not executed through a fallback.
 
 One runner bounds simultaneous physical invocations globally and per retained
 owner across sessions, with no waiting queue. The host must use that runner as its
@@ -352,16 +354,20 @@ extend the original deadline. A monotonic interval also fences each invocation;
 its check participates in the final committing authorization gates, not just the
 check before payload verification.
 
-Before invoking code, the runner acquires its input handle and, for a nonzero
-output budget, a dedicated output-writer handle credit. Sequential output writers
-borrow that same credit; ordinary readers cannot consume it. If these resources
+Before invoking code, the runner acquires its input handle, a sequential child-reader
+credit for a branch and, for a nonzero output budget, a dedicated output-writer
+credit. Sequential readers/writers borrow their respective credit; ordinary readers
+cannot consume it. Fresh admission refuses an intrinsically insufficient handle
+policy before output funding or a receipt: one handle for own input, one for branch
+dependencies, and one for a nonzero output count. This is a policy check, not an
+admission-time reservation of all future simultaneous callbacks. If these resources
 are unavailable, no callback runs and the committed job remains recoverable,
 not FAILED because of transient dispatch pressure. Byte/name funding remains
 unchanged. Repeated renewal under a frozen trusted UTC sample cannot restart the
 monotonic allowance: only an actual positive durable-expiry delta adds process time.
 
 Success publishes the exact completed set through `succeedExecution`. An unfinished
-output or a swallowed output-budget refusal prevents success. Application
+output writer or child reader, or a swallowed interface refusal, prevents success. Application
 exceptions become a bounded generic INTERNAL_ERROR failure without disclosing
 exception text; an explicit retryable outcome remains AWAITING_RETRY. Persistence
 failures and lost authority cannot be turned into fabricated successful or failed
@@ -380,6 +386,47 @@ that cannot establish an old identity remain a refusal, not deletion evidence.
 Reclamation scans the two shared output namespaces and retains at most 512 target
 descriptors, with installed-body verification bounded by that job's funded bytes.
 It is not a constant-time lookup or a demonstrated many-job throughput result.
+
+## Caller-expanded child reassembly
+
+Mode 1 callbacks begin only after their exact child scope has committed successful
+STRICT closure. `children(after, limit)` returns at most 256 ordered direct-child
+identities and an exact continuation flag. It cannot enumerate another scope.
+`beginChildOutput(entity, index)` resolves a published descriptor from that same
+scope; `readChildOutput` streams bounded chunks and `finishChildOutput` requires
+observed EOF before returning the sequential reader credit. Reading zero bytes
+does not establish EOF. Only one child output can be open per callback, alongside
+the parent's own input and optional output writer. Applications need not select
+every child output, but every opened reader must finish before successful return.
+
+Each metadata observation checks the current parent's retained owner/application
+grant, attempt, local lease, deadline and exclusion fences. A read-only SQLite
+snapshot validates the exact child allocation and complete successful closure,
+then rechecks current authorization and time before returning. The callback's
+paired-store monitor covers this observation and the physical output open, and
+each later chunk checks current parent authority. Descriptors do not grant bearer
+access; no callback-supplied locator is dereferenced. Historical child attempt/lease
+identity locates the immutable file without granting new execution ownership.
+
+The output's externally promised interval may have expired while its internal
+parent dependency remains live. The reader therefore uses retained successful
+child evidence rather than an external result lease. Exact length, digest and
+content type must match the committed manifest. Missing or corrupt physical
+storage and contradictory metadata preserve the recoverable job and report a
+storage error, not a fabricated computation outcome. Unknown child/output
+selection and invalid callback sequencing are sticky named interface refusals.
+
+The child-reader credit is bound to its physical store and remains charged while
+idle or borrowed. A borrowed reader also pins that child's funding against local
+reclamation; returning it removes the per-file pin, not the reserved handle.
+Closing the credit with a live physical reader refuses. This increment does not
+implement external result-read leases or dependency-aware expiry/refunds: retained
+output allowances still remain charged after parent settlement.
+
+Pages and payload chunks have bounded memory, not constant cost. Child metadata
+checks perform the existing session-wide streaming closure audit. Object lookup
+and opening each verify the payload using fixed buffers. These repeated scans and
+hashes are real costs, not a zero-copy or many-job throughput claim.
 
 ## Background discovery and deadline maintenance
 
@@ -404,12 +451,16 @@ closure counts. The host supplies one shared runtime and scheduler for its
 paired authority.
 
 Workers resolve a current retained-owner grant independently of connection
-credentials, then invoke the real leaf runner. Discovery observations cannot
+credentials, then invoke the real callback runner. Discovery observations cannot
 authorize processing: claims and publication recheck current state, policy,
 the trusted clock watermark, deadline and durable ownership. A live lease is
 left alone across restart. Reacquiring an expired lease preserves wire attempt
 identity. AWAITING_RETRY is never automatically rerun, and terminal jobs are
-never re-executed. Branch callbacks remain explicitly unsupported.
+never re-executed. Discovery observes whether an exact successful child summary
+is present and leaves waiting parents out of the worker pool, so a parent at the
+front of a one-worker sweep cannot starve its own children. This bounded readiness
+hint does not verify all descendants or authorize execution: the actual claim
+still audits STRICT closure. Authority-produced expansion remains unsupported.
 
 Deadline settlement runs on the discovery thread, separately from the callback
 pool, including when every physical worker is busy or the owner grant is denied.
@@ -517,7 +568,7 @@ durably installs bounded immutable bytes, and exact input/database installations
 can be paired explicitly. Storage admission now commits its receipt and funded
 job atomically; the endpoint and executor are not activated by that fact.
 
-Branch callbacks, explicit wire-attempt retry,
+Authority-produced branch expansion, explicit wire-attempt retry,
 local producer-1 ingress, subtree settlement,
 results/read pins, retirement/reconciliation,
 durable client observations and authenticated endpoint integration remain
@@ -528,3 +579,11 @@ Java V2 behavior, live TLS-policy
 revocation settlement, cross-language V2 equivalence or the protocol-neutral
 failure driver. The external chunk/distribute/transform/reassemble workload and
 equivalent authenticated durable streaming-gRPC comparison are still required.
+
+Enabling mode 2 is not just widening the registration check. Expansion needs
+its own fenced declaration/admission interface and a durable completion transition
+distinct from sealing. Replacement workers must reuse original producer operation
+identities. Resource admission must cover each execution phase: receiving a child
+must not compete with idle parent reassembly credits for the last available handle.
+The expansion phase must release its physical worker while awaiting children;
+rehydration then reacquires and verifies the completed expansion and STRICT closure.

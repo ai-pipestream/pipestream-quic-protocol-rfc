@@ -141,6 +141,16 @@ reader is not a protocol result-read lease: current owner authorization, retenti
 revocation, dependency pins and bounded transport delivery must be enforced by the
 still-required result service.
 
+Caller-expanded branch execution reserves one store-bound sequential child-reader
+credit before invoking application code, alongside its own input and optional
+output-writer credit. Borrowing an output reader pins that funding without charging
+a second global handle; closing the physical reader returns the credit for another
+child. A foreign, closed or already borrowed credit refuses reuse. The credit cannot
+be released while its physical reader remains open. This reserves capacity only:
+the parent execution authority must separately validate every selected dependency.
+Fresh admission rejects a handle policy below this callback's intrinsic minimum
+before output funding. Transient handle occupancy is checked at dispatch.
+
 ## Remaining gates
 
 The authority admission transaction now validates the exact pair, declared

@@ -2064,6 +2064,45 @@ metadata promises. Pairing alone does not satisfy that gate or activate Java's
 durable profiles. Full execution/results/retirement, neutral cross-language
 failure testing and the external equivalent-workload comparison remain required.
 
+### Java caller-expanded branch execution evidence, 2026-09-08
+
+The Java authority now includes atomic admission, fenced publication and real
+closure reconciliation described in [its storage contract](java-v2-authority-store.md).
+The branch increment uses that actual behavior, not synthetic successful children.
+Its [raw verification record](../../conformance/results/durable-work-v2-java-branches-2026-09-08.txt)
+identifies commands, source boundary, focused/full gate results and their limits.
+
+- V2-SET/CLOSE/RESULT: `BranchExecutionTest` checks real two-child publication,
+  exact paged membership, parent bytes, independent root commitment and paired
+  reopen. Unclosed scopes do not invoke a parent callback. `BranchSchedulerTest`
+  drives children, child closure, parent reassembly and root closure automatically
+  with one worker and all three jobs in the same discovery page.
+- V2-TIME/AUTH: internal dependency reads survive verified external output expiry.
+  `BranchExecutionCapacityTest` changes the parent application grant or advances
+  to its deadline during a child read; further bytes are refused, no success
+  manifest appears, and physical input-store handles close.
+- V2-RESULT/STORE: branch tests require exact named refusals for leaf misuse,
+  unknown children, absent/invalid output indexes, overlapping readers and
+  unfinished reads. An explicitly swallowed refusal still prevents success.
+  A zero-length read does not establish EOF; a genuinely empty child object
+  can reach EOF and finish normally.
+- V2-STORE: the capacity test reserves three input-store handles, refuses an
+  ordinary competitor, and reuses one protected child-reader credit while
+  writing the parent. Foreign, borrowed and closed credits refuse reuse;
+  intrinsically insufficient admission geometry leaves no output funding.
+  `BranchExecutionRecoveryTest` halts a real child JVM with its reader open,
+  refuses early replacement, then reassembles after lease expiry without
+  changing the wire attempt or completed children. Paired reopen checks actual
+  retained storage. Swallowed missing-file and checksummed liveness-corruption
+  faults preserve the parent instead of fabricating computation outcomes.
+
+These are independent Java library/scheduler tests, not durable endpoint or
+cross-language conformance. Mode 2 expansion, cancellation/retry, external
+result delivery, cleanup/retirement, full resource/failure-driver evidence and
+the original equivalent-workload comparison remain mandatory. Pages and handle
+counts do not establish constant-time processing, process-wide RSS bounds or
+power-loss correctness. All cross-language families below remain open.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

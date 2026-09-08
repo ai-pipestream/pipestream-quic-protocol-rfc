@@ -390,18 +390,29 @@ authorization and original deadlines are checked at commitment. Paired recovery
 checks published bytes against their retained descriptors. Installed but
 unpublished files remain charged orphans, not results or permission to reuse slots.
 
-`v2.ExecutionRuntime` now runs exact registered leaf callbacks outside metadata
+`v2.ExecutionRuntime` now runs exact registered leaf and caller-expanded branch
+callbacks outside metadata
 transactions, with bounded global/per-owner invocations and incremental input/output
 I/O. It checks current fences on every I/O action and final commit, rejects swallowed
 output errors, and reclaims strictly older unpublished slots only under a current
 durable replacement claim with no live output handles. There is no automatic retry,
 branch fallback, or claim of exactly-once external effects.
 
+Mode 1 callbacks page only their own closed, successful child scope and stream
+committed child outputs into real parent processing. A reserved sequential reader
+credit protects that dependency path alongside the own-input reader and optional
+output writer. Internal reads can outlive external result expiry, but still check
+current parent authority and exact child commitments. An unfinished reader prevents
+success; missing or corrupt storage is not turned into a computation outcome.
+See [child reassembly and its costs](../../docs/standards/java-v2-authority-store.md#caller-expanded-child-reassembly).
+
 `v2.ExecutionScheduler` now discovers those committed jobs in bounded, finite
 keyset sweeps and dispatches them through a fixed global/per-owner pool with no
 waiting job queue. It resolves retained execution grants without a connection,
 leaves live leases and explicit-retry outcomes alone, and revisits jobs after
-restart. Deadline maintenance runs separately from busy callbacks. Shutdown
+restart. Waiting parents consume no workers: a child-summary readiness hint avoids
+starvation in a one-worker pool, while each actual claim fully verifies closure.
+Deadline maintenance runs separately from busy callbacks. Shutdown
 stops dispatch without cancelling work or interrupting callbacks; the host must
 await physical stop before closing storage. See the
 [discovery bounds and lifecycle contract](../../docs/standards/java-v2-authority-store.md#background-discovery-and-deadline-maintenance).
@@ -417,7 +428,7 @@ closure claim. See the
 [closure contract and costs](../../docs/standards/java-v2-authority-store.md#incremental-closure-and-strict-settlement).
 
 This remains authority-library behavior, not an activated durable listener.
-Branch callbacks, explicit attempt retry, producer-1
+Explicit attempt retry, producer-1
 expansion, broader orphan and subtree reconciliation,
 results/read pins, retirement and durable-profile transport integration remain
 required. A returned local worker lease alone does not prove a callback ran.

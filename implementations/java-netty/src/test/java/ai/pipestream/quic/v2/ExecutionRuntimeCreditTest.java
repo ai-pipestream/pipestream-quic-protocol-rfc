@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import ai.pipestream.quic.BoundedSqlite;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -38,8 +39,9 @@ final class ExecutionRuntimeCreditTest {
 
   @Test
   void runtimeReservesWriterAndInputBeforeCallbackWithoutLeakingEitherHandle() throws Exception {
-    InputStore.Limits oneHandle = new InputStore.Limits(4L << 20, 32, 1 << 20, 1);
-    Fixture fixture = fixture("preflight", oneHandle, List.of(job(1, new byte[] {1}, 1, 1, 1)));
+    InputStore.Limits twoHandles = new InputStore.Limits(4L << 20, 32, 1 << 20, 2);
+    Job admitted = job(1, new byte[] {1}, 1, 1, 1);
+    Fixture fixture = fixture("preflight", twoHandles, List.of(admitted));
     AtomicBoolean called = new AtomicBoolean();
     ExecutionRuntime runtime =
         runtime(
@@ -49,15 +51,22 @@ final class ExecutionRuntimeCreditTest {
               return ExecutionRuntime.Outcome.succeeded();
             });
 
-    ProtocolError refused =
-        assertThrows(
-            ProtocolError.class, () -> runtime.run(execAccess(), 1, new Records.WorkKey(0, 0, 1)));
-    assertEquals(ProtocolError.Code.LIMIT_EXCEEDED, refused.code(), refused::getMessage);
-    assertFalse(called.get());
-    Records.WorkView retained = snapshot(fixture.sessions(), new Records.WorkKey(0, 0, 1));
-    assertEquals(Records.State.ACTIVE, retained.state());
-    assertNull(retained.manifest());
-    assertNull(retained.diagnostic());
+    InputStore.Stored stored = fixture.inputs().find(context(), header(admitted)).orElseThrow();
+    try (InputStream competitor = stored.openStream()) {
+      assertEquals(1, fixture.inputs().usage().handles());
+      assertEquals(1, competitor.read());
+      ProtocolError refused =
+          assertThrows(
+              ProtocolError.class,
+              () -> runtime.run(execAccess(), 1, new Records.WorkKey(0, 0, 1)));
+      assertEquals(ProtocolError.Code.LIMIT_EXCEEDED, refused.code(), refused::getMessage);
+      assertFalse(called.get());
+      Records.WorkView retained = snapshot(fixture.sessions(), new Records.WorkKey(0, 0, 1));
+      assertEquals(Records.State.ACTIVE, retained.state());
+      assertNull(retained.manifest());
+      assertNull(retained.diagnostic());
+      assertEquals(1, fixture.inputs().usage().handles());
+    }
     assertEquals(0, fixture.inputs().usage().handles());
     fixture.inputs().close();
   }

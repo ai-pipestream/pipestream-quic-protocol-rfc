@@ -12,10 +12,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 /**
- * Authority-owned durable job discovery and bounded leaf dispatch, independent of connections. The
- * database is the job source; a volatile cursor and bounded in-flight map are only scheduling
+ * Authority-owned durable job discovery and bounded callback dispatch, independent of connections.
+ * The database is the job source; a volatile cursor and bounded in-flight map are only scheduling
  * hints. Restart begins a new sweep and every callback still requires a committed current lease.
- * This does not activate a durable-profile endpoint or implement branch/cancellation lifecycle.
+ * This does not activate a durable-profile endpoint or implement authority expansion/cancellation.
  */
 final class ExecutionScheduler implements AutoCloseable {
   /**
@@ -212,13 +212,17 @@ final class ExecutionScheduler implements AutoCloseable {
       }
       if (candidate.stage() == JobRecord.Stage.AWAITING_RETRY) continue;
       if (candidate.leaseUntil() != null && now < candidate.leaseUntil()) continue;
-      if (candidate.mode() != 0) {
+      if (candidate.mode() == 2) {
         record(
             candidate.position(),
-            new ProtocolError(ProtocolError.Code.APPLICATION_UNSUPPORTED, "branch runtime"),
-            "branch execution is not implemented");
+            new ProtocolError(ProtocolError.Code.APPLICATION_UNSUPPORTED, "authority expansion"),
+            "authority expansion is not implemented");
         continue;
       }
+      // Waiting parents consume no physical worker. Otherwise a parent at the start of a
+      // one-worker sweep could repeatedly occupy the slot before its children are dispatched.
+      // This is advisory only: the claim still verifies actual STRICT closure and current fences.
+      if (!candidate.dependenciesReady()) continue;
       dispatch(candidate);
     }
     // Advance only after a complete page. A stopped or failed page can be safely rediscovered.

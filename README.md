@@ -68,11 +68,13 @@ streamed seals and bounded membership/work reads. Recovery checks receipt/member
 consistency, including real crash, capacity and contradictory-storage cases.
 Java V2 storage additionally preallocates mutable scope/work/fence/clock images
 and retains credits for their bounded rewrites; ordinary mutations preserve
-the promised WAL headroom. Those image credits do not yet fund entire jobs.
+the promised WAL headroom. Admission additionally funds job acquisition and settlement.
 Its independent [immutable input store](docs/standards/java-v2-input-store.md)
 now verifies and installs bounded payload files, with immutable two-way
-database/input installation binding. It is not yet integrated with the
-authority's required atomic job/admission transaction.
+database/input installation binding. Atomic admission now couples verified input,
+funded output allowances, a restartable job and immutable replay receipt. The bounded
+Java runtime and scheduler execute leaf and caller-expanded branch callbacks,
+including protected child-output reassembly and actual child/root closure.
 Independent Java durable execution/results/recovery, complete cross-language
 failure evidence and the workload comparison remain unfinished.
 The Rust `pipestream_core::v2` library now implements typed codecs for every

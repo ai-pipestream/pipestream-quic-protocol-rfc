@@ -1,0 +1,175 @@
+Java V2 caller-expanded branch execution, 2026-09-08
+Base: 278823dbd7af64f19dc40eaf81051f0694a31566
+Implementation and tests: the commit containing this evidence file.
+
+Implemented contract
+  Mode 1 callbacks page their own direct child scope, resolve committed child
+  outputs and stream actual bytes into parent processing. A claim requires real
+  successful STRICT child closure, not membership sealing alone. The scheduler
+  observes child-summary readiness without occupying a worker; the committing
+  claim still verifies all closure evidence. This prevents an unresolved parent
+  at the front of a one-worker page from repeatedly displacing its own children.
+
+  Callback I/O checks current parent owner/application permission, attempt,
+  local lease, deadline and exclusion fences. The metadata snapshot and physical
+  open share the paired-store monitor with replacement claims. Child descriptor
+  identity is not bearer authorization and no result locator is dereferenced.
+  External result expiry does not end the accepted parent's internal dependency.
+  Actual child file identity, length, digest and content type must match the
+  successful manifest. Storage errors preserve the recoverable parent rather
+  than manufacturing a computation outcome, even if the callback catches them.
+
+  Each callback reserves one own-input handle, one sequential child-reader
+  credit for a branch and one writer credit for a nonzero output count. A fresh
+  admission whose policy cannot supply that intrinsic geometry refuses before
+  output funding or a receipt. Transient occupancy is checked at dispatch.
+  A borrowed reader adds a per-funding physical pin without another global
+  handle charge. Credits are store-bound, single-borrow and cannot be released
+  before physical closure. Every opened child reader must reach observed EOF
+  and finish before successful return; a zero-length read cannot establish EOF.
+
+  Child pages contain at most 256 identities and payload reads use the configured
+  chunk ceiling. Metadata reads still perform session-wide closure verification,
+  and both file lookup and opening hash actual payloads with fixed buffers.
+  These are bounded-memory paths, not constant-time, zero-copy, throughput or
+  total-process memory claims. Retained output allowances are not refunded by
+  parent settlement; dependency-aware expiry/cleanup remains separate work.
+  No wire schema, local storage format or public profile advertisement changed.
+
+Review corrections
+  Negative callback assertions can be caught by ExecutionRuntime and become a
+  generic FAILED outcome. The new tests require exact terminal diagnostic codes
+  outside callbacks; the swallowed-refusal test also proves the callback caught
+  the expected refusal and continued to return success. Tests use real child
+  publication/closure and physical output bytes, not synthetic terminal rows.
+  Scheduler coverage places the parent and both children in the same page with
+  one physical worker; page size one would avoid the starvation condition.
+  A known closed child losing its job or output-liveness accounting is now an
+  SQL storage error, not NOT_READY/OUTPUT_UNAVAILABLE turned into parent FAILED.
+  The negative accounting fixture changes a genuinely settled job's checksummed
+  image; its actual success manifest and child closure are not fabricated.
+
+Production-only verification
+  Final main compilation after the storage-error correction, session 5484, exit 0:
+    /tmp/pipestream-branch-main-compile-rerun-20260908T070911-0400.log
+  Actual finish 07:09:14 EDT, elapsed 1.869s, 58 production source files.
+  Final strict package Javadoc (-Xdoclint:all -Werror), exit 0,
+  empty log:
+    /tmp/pipestream-branch-scheduler-doclint-rerun-20260908T070911-0400.log
+  Coverage: AdmissionStore, BranchStore, ExecutionRuntime, ExecutionScheduler,
+  ExecutionStore, InputStore, OutputStore and SessionStore. These gates did not
+  compile or run tests. Formatting and whitespace checks passed.
+
+Draft verification
+  ./build.sh core 05 draft, session 52073, exit 0:
+    /tmp/pipestream-branch-draft-20260908T070217-0400.log
+  idnits: 0 errors, 0 flaws, 0 warnings, existing FIPS-180-4 downref comment.
+  The generated TXT and HTML implementation-status text was checked. This is
+  local draft generation, not submission or IETF acceptance.
+  SHA-256:
+    XML 104bf1f0f07666780034906ba110bdcfbca3b5abd918482ac1f2d15274c921ce
+    TXT 70a1ff449431ad5234dc669e40306e006293611c8e9bd6f103aaa44d5ed20b61
+    HTML 51b60127e167ea7870537f354768f5fcd231a3af6034109148c83ae5e1565093
+
+Focused test verification
+  Initial session 94545 exited 1 during test compilation, before tests ran:
+    /tmp/pipestream-branch-focused-20260908T071000-0400.log
+  Actual finish 07:15:06 EDT. The capacity fixture's broad close() throws Exception
+  triggered six AutoCloseable/InterruptedException warnings under -Werror.
+  The only run-driven correction narrowed that test helper to IOException,
+  matching its inputs.close() body. No warning suppression or assertion weakening.
+
+  Rerun session 36595 exited 0:
+    /tmp/pipestream-branch-focused-rerun-20260908T071600-0400.log
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -Dtest=BranchExecutionTest,BranchExecutionCapacityTest,BranchSchedulerTest,BranchExecutionRecoveryTest,ExecutionRuntimeTest,ExecutionSchedulerTest,ExecutionDiscoveryTest,OutputStoreTest test
+  Actual finish 07:16:08 EDT, elapsed 6.268s. Fresh selected XML and raw output
+  agree: 35 tests, zero failures/errors/skips. Branch execution 5, capacity 4,
+  recovery 2, branch scheduler 1, existing discovery 5, runtime 10, scheduler 5,
+  output store 3. Native SQLite file-growth guard passed 1/1. Selected report
+  modification times span 07:16:05.813 to 07:16:08.233 EDT.
+
+  The capacity test observes all three input-store handle credits occupied,
+  refuses a competing ordinary reader with LIMIT_EXCEEDED, then successfully
+  reads two child outputs sequentially while writing the parent. Its funded
+  bytes/names remain unchanged and every handle is returned. The two-handle
+  admission refusal leaves no output reservation or admission. These are pool
+  accounting observations, not a process-wide descriptor or RSS measurement.
+
+  An actual child JVM exits 126 while a parent's child reader is open. Paired
+  reopen preserves child results and the parent's attempt1/lease1 until2100.
+  At2099 an early callback does not run; at2101 replacement uses attempt1,
+  lease2 until4101, reassembles the expected bytes and closes the root. Child
+  views, funded bytes/names and final closure survive a second paired reopen.
+  Separate cases preserve ACTIVE/no manifest after swallowed missing-file
+  IOException or a checksummed but contradictory child-liveness SQLException.
+  A process exit is not a simulated power loss or storage-device failure.
+
+Full verification
+  Initial unfiltered install, session 11538, exited 1:
+    /tmp/pipestream-branch-full-install-20260908T071700-0400.log
+  Actual finish 07:20:25 EDT, elapsed 3m37s. All 71 fresh XML reports total
+  506 tests, zero assertion failures, one error, zero skips. The sole error was
+  the legacy ExecutionRuntimeCreditTest fixture trying to admit a nonzero-output
+  leaf into a one-handle store. Fresh admission now correctly refuses that
+  intrinsically impossible policy. All four new branch suites passed.
+  The revised fixture creates a valid two-handle store with one ordinary reader
+  actually occupied, retaining the original transient dispatch-pressure and
+  exact resource-cleanup oracle. No production check was weakened.
+
+  Expanded focused rerun, session 65168, exited 0:
+    /tmp/pipestream-branch-credit-focused-20260908T072100-0400.log
+  The prior eight selectors plus ExecutionRuntimeCreditTest passed 38 tests,
+  zero failures/errors/skips; native SQLite guard 1/1. The revised test proves
+  the competing input is really readable, no callback starts, the accepted job
+  remains ACTIVE with no diagnostic/manifest, the competitor remains charged,
+  and zero input-store handles remain after it closes.
+
+  Final unfiltered install, session 67504, exited 0:
+    /tmp/pipestream-branch-credit-full-install-20260908T072200-0400.log
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository install
+  No selectors or skip flags. Actual finish 07:26:15 EDT, elapsed 3m45s. All
+  71 fresh XML reports total 506 tests, zero failures/errors/skips; timestamps
+  span 07:24:30 to 07:26:14 EDT. An independent XML sum agrees. Native SQLite
+  file-growth guard passed 1/1. Existing native-access and shaded-resource/module
+  warnings remain in the raw output; this is not a warning-free Maven build claim.
+
+  External examples, session 17722, exited 0 using the fresh Java artifacts:
+    /tmp/pipestream-branch-credit-examples-20260908T072600-0400.log
+    cd implementations/rust-quinn
+    target/release/pipestream-conformance examples
+  Raw outcomes:
+    PASS Java source -> Rust/Quinn server
+    PASS Rust source recovery -> C++/MsQuic server
+    PASS Rust source scatter -> Java, Rust, and C++ servers
+  These are existing Core example regressions, not V2 durable interoperability
+  or the goal's still-required equivalent streaming-gRPC workload.
+
+  Built artifact SHA-256, under implementations/java-netty/target:
+    pipestream-quic-netty-0.1.0-SNAPSHOT.jar 9b52b7117a08956b7adf5ed695757f1610bcdea00eadadcebf846c78f8d45896
+    pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar 49c51313322c2862b56d65fdf56d0c84cec5cfc37b6c449c9b484e8150f31f46
+    native/sqlite_guard_test 3dc46f85b2fbf31018a0dd18277bd14604b83a66c3be22decadf3e33f9dfc3bd
+
+  Frozen source SHA-256, under implementations/java-netty/src:
+    main/java/ai/pipestream/quic/v2/BranchStore.java c6ed22c6f28ff22871214b00c33714657a048cece5f79bab19daf95af98d1124
+    main/java/ai/pipestream/quic/v2/ExecutionRuntime.java 656c0d187aa31bd64960c33d7029f8092c3995b5e29bc452859c4558e8c63175
+    main/java/ai/pipestream/quic/v2/ExecutionScheduler.java 322009fcf3283247ab6a2859c902ea4503caacc13dfca50fbac0d30b2ef6bfcb
+    main/java/ai/pipestream/quic/v2/ExecutionStore.java 5e32601168740310bf23529d1630f46db2e54d1a2f346692251865c650906ac9
+    main/java/ai/pipestream/quic/v2/SessionStore.java c73471c05297671dd80422125902b1e7642a009a881fb9d4565888ef8ea85b6c
+    main/java/ai/pipestream/quic/v2/InputStore.java bb293dba41781dea6286b69a424949b4aab9b9e457489dd3c7f26a6229d8f27b
+    main/java/ai/pipestream/quic/v2/OutputStore.java b9d0cdd82b4226f3498ea459b5fdd7ec2115544c63af3a00ac80a8d16a7b4c33
+    main/java/ai/pipestream/quic/v2/AdmissionStore.java 361345c729e43c40f39c9300eb98a31a4b8869c03bb5dd1844d8ae81ef9cb6dd
+    test/java/ai/pipestream/quic/v2/BranchExecutionTest.java 9397a5704fd70fca4742908f0958d659fd3389fbb7c02e31d3ae85c21ccb5fa0
+    test/java/ai/pipestream/quic/v2/BranchExecutionCapacityTest.java d15b9b59ddc2be655b45d2e9a07dc29b7d3f10fd6661f1342125874fe74c5450
+    test/java/ai/pipestream/quic/v2/BranchExecutionRecoveryTest.java 0e95d934075cfa5cecf9142c1e9581eaa2e702d0071ad33235d91c384e648a5a
+    test/java/ai/pipestream/quic/v2/BranchSchedulerTest.java c3dbab7eee6856230b216dcb0ece2f5213975e42e058cd716500e63549a06efd
+    test/java/ai/pipestream/quic/v2/ExecutionRuntimeCreditTest.java 7183da88fe034c7374a557e198c49c5cd0379096451c2781ec4f25c0bd32a60b
+
+Remaining full-goal boundary
+  Authority-produced mode 2 expansion, explicit wire retry, cancellation and
+  revocation reconciliation, external result-read pins, dependency-safe cleanup,
+  retirement and authenticated durable transport/client integration remain
+  required. Java still advertises Core only. Full independent cross-language V2
+  failure/resource coverage, the external distributed transformation workload
+  and equivalent authenticated durable streaming-gRPC baseline remain required.
+  This checkpoint does not complete the active goal or establish conformance
+  to the entire durable profile.

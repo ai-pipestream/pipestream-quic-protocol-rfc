@@ -275,6 +275,57 @@ final class OutputStore {
   }
 
   /**
+   * Reserve one sequential output-reader handle before application dispatch. This is physical
+   * capacity only, not authorization to read any particular output.
+   *
+   * @return one exclusively owned reader credit
+   * @throws IOException closed storage
+   */
+  ReaderCredit reserveReader() throws IOException {
+    owner.pinOutput();
+    return new ReaderCredit();
+  }
+
+  /** One store-bound read handle, borrowed by at most one physical output reader at a time. */
+  final class ReaderCredit implements AutoCloseable {
+    private final OutputStore source = OutputStore.this;
+    private String borrowed;
+    private boolean closed;
+
+    private ReaderCredit() {}
+
+    private void borrow(OutputStore expected, String funding) {
+      if (source != expected || closed || borrowed != null)
+        throw conflict("output reader credit is foreign, closed or already borrowed");
+      pins.merge(funding, 1, Integer::sum);
+      borrowed = funding;
+    }
+
+    private void returned(String funding) {
+      if (closed || !funding.equals(borrowed))
+        throw new IllegalStateException("output reader credit accounting differs");
+      removePin(funding);
+      borrowed = null;
+    }
+
+    /**
+     * Release the reserved handle only after its physical reader has closed. Repeated close is
+     * safe; a borrowed credit refuses release and remains charged.
+     *
+     * @throws IOException a physical reader still owns this credit
+     */
+    @Override
+    public void close() throws IOException {
+      synchronized (owner) {
+        if (closed) return;
+        if (borrowed != null) throw new IOException("output reader credit is still borrowed");
+        owner.unpinOutput();
+        closed = true;
+      }
+    }
+  }
+
+  /**
    * Verify and synchronize an exact immutable output; ignores only the lease observation expiry.
    *
    * @param context expected session
@@ -653,11 +704,23 @@ final class OutputStore {
      * @throws IOException changed identity, corruption, missing funding or failed read
      */
     InputStream openStream() throws IOException {
+      return openStream(null);
+    }
+
+    /**
+     * Open this exact output using an already charged sequential reader handle.
+     *
+     * @param credit this store's unborrowed credit, or null to acquire an ordinary handle
+     * @return verified payload-only reader; close returns its credit without refunding it
+     * @throws IOException changed identity, corruption, missing funding or failed read
+     */
+    InputStream openStream(ReaderCredit credit) throws IOException {
       synchronized (owner) {
         owner.verifyAuthority(metadata.identity().authority());
         String funding = parse(reference).funding();
         validateFunding(metadata, owner.outputFunding(funding));
-        pin(funding);
+        if (credit == null) pin(funding);
+        else credit.borrow(OutputStore.this, funding);
         FileChannel input = null;
         try {
           input =
@@ -665,7 +728,7 @@ final class OutputStore {
                   installed(reference), StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
           Inspected value = inspect(input, metadata, true);
           input.position(value.offset());
-          return new Reader(input, metadata.length(), funding);
+          return new Reader(input, metadata.length(), funding, credit);
         } catch (IOException | RuntimeException failure) {
           if (input != null) {
             try {
@@ -675,7 +738,7 @@ final class OutputStore {
             }
           }
           // Do not turn a failed physical close into a reusable shared descriptor allowance.
-          if (input == null || !input.isOpen()) unpin(funding);
+          if (input == null || !input.isOpen()) returnReader(funding, credit);
           throw failure;
         }
       }
@@ -686,12 +749,14 @@ final class OutputStore {
     private final InputStream input;
     private final FileChannel channel;
     private final String funding;
+    private final ReaderCredit credit;
     private long remaining;
     private boolean ended;
 
-    Reader(FileChannel channel, long length, String funding) {
+    Reader(FileChannel channel, long length, String funding, ReaderCredit credit) {
       this.channel = channel;
       this.funding = funding;
+      this.credit = credit;
       input = Channels.newInputStream(channel);
       remaining = length;
     }
@@ -728,7 +793,7 @@ final class OutputStore {
         throw new IOException("output read descriptor remained open");
       }
       synchronized (owner) {
-        unpin(funding);
+        returnReader(funding, credit);
       }
       ended = true;
       if (failure != null) throw failure;
@@ -830,10 +895,19 @@ final class OutputStore {
   }
 
   private void unpin(String funding) {
+    removePin(funding);
+    owner.unpinOutput();
+  }
+
+  private void returnReader(String funding, ReaderCredit credit) {
+    if (credit == null) unpin(funding);
+    else credit.returned(funding);
+  }
+
+  private void removePin(String funding) {
     Integer count = pins.get(funding);
     if (count == null || count < 1)
       throw new IllegalStateException("output funding handle accounting underflow");
-    owner.unpinOutput();
     if (count == 1) pins.remove(funding);
     else pins.put(funding, count - 1);
   }

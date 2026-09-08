@@ -314,6 +314,7 @@ final class AdmissionStore {
     OperationReceipt prior =
         check(connection, config, binding, selected, header, clock, authorization);
     if (prior != null) return new Admission(prior, false);
+    inputs.requireExecutionHandles(header.parameters());
     Commitments.Context context = context(binding);
     InputStore.Stored input =
         inputs

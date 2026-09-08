@@ -2479,3 +2479,28 @@ tests do not prove those end-to-end bounds. Complete independent Java durable
 behavior, the neutral Rust failure driver, full both-language failure/resource
 evidence and the original workload/equivalent authenticated durable streaming-gRPC
 comparison remain required. The full goal remains active and incomplete.
+
+### Java caller-expanded reassembly checkpoint, 2026-09-08
+
+Building on the admitted-job, publication and closure checkpoints, Java now runs
+mode 1 parent callbacks against real committed child outputs. It reserves a
+sequential child-reader handle before dispatch, checks current parent execution
+authority on incremental I/O, and preserves internal dependencies after external
+output expiry. Waiting parents occupy no worker slot; a one-worker scheduler
+can execute children, close their scope, reassemble the parent and close the root.
+Storage faults remain storage faults even when swallowed by application code.
+
+Reviewed assertions and raw execution evidence establish that 38 focused tests
+and the unfiltered 506-test Java suite pass with no failures/errors/skips,
+as do the three existing external examples, strict scoped Javadoc and draft build.
+The [branch verification record](../../conformance/results/durable-work-v2-java-branches-2026-09-08.txt)
+retains initial fixture failures, exact corrections, process-interruption and
+handle-accounting evidence, command exits and artifact hashes.
+
+Next is the independently fenced local producer-1 expansion interface, including
+durable progress distinct from sealing and phase-specific resource reservation.
+Explicit retry/cancellation, external result delivery, dependency-safe cleanup,
+retirement and Java durable transport/client integration still remain. Neither
+this checkpoint nor existing Core examples complete task 2. The neutral
+cross-language failure driver and all original workload/gRPC comparison
+deliverables remain required; the full goal stays active.

@@ -16,8 +16,8 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Bounded synchronous application execution, separate from transport readers and metadata
  * transactions. The host dispatches calls on its worker threads; there is no volatile job queue.
- * This runner currently accepts explicitly registered leaf contracts only. Branch expansion and
- * dependency readers must be implemented before registering branch contracts here.
+ * Leaf and caller-expanded branch callbacks use the same fenced I/O boundary. Authority-produced
+ * expansion requires its separate durable producer interface before registering mode 2 here.
  */
 final class ExecutionRuntime {
   /**
@@ -58,13 +58,14 @@ final class ExecutionRuntime {
    * @param callback actual processing implementation
    */
   record Registration(AdmissionStore.Application contract, Callback callback) {
-    /** Require real code and the currently implemented leaf mode. */
+    /** Require real code and only the implemented leaf or caller-expanded branch modes. */
     Registration {
       Objects.requireNonNull(contract);
       Objects.requireNonNull(callback);
-      if (!contract.modes().equals(Set.of(0)))
+      if (!Set.of(0, 1).containsAll(contract.modes()))
         throw error(
-            ProtocolError.Code.APPLICATION_UNSUPPORTED, "branch runtime is not implemented");
+            ProtocolError.Code.APPLICATION_UNSUPPORTED,
+            "authority expansion runtime is not implemented");
     }
   }
 
@@ -207,7 +208,10 @@ final class ExecutionRuntime {
                 ? null
                 : inputs.reserveOutputWriter(identity, details.job().input(), lease);
         InputStream reader = null;
+        OutputStore.ReaderCredit childCredit = null;
         try {
+          if (details.job().input().parameters().mode() != 0)
+            childCredit = inputs.reserveOutputReader();
           reader =
               inputs
                   .find(identity, details.job().input())
@@ -223,6 +227,7 @@ final class ExecutionRuntime {
                   gate,
                   reader,
                   writerCredit,
+                  childCredit,
                   started,
                   interval(lease, observed));
         } catch (IOException | RuntimeException | Error failure) {
@@ -235,6 +240,12 @@ final class ExecutionRuntime {
           if (writerCredit != null)
             try {
               writerCredit.close();
+            } catch (IOException cleanup) {
+              failure.addSuppressed(cleanup);
+            }
+          if (childCredit != null)
+            try {
+              childCredit.close();
             } catch (IOException cleanup) {
               failure.addSuppressed(cleanup);
             }
@@ -320,10 +331,13 @@ final class ExecutionRuntime {
     private final AdmissionStore.Authorization gate;
     private final InputStream reader;
     private final OutputStore.WriterCredit writerCredit;
+    private final OutputStore.ReaderCredit childCredit;
     private final AtomicReference<Diagnostic> failure = new AtomicReference<>();
     private boolean acceptFailures = true;
     private Exception storageFailure;
     private OutputStore.Writer pending;
+    private InputStream childReader;
+    private boolean childEof;
     private int produced;
     private volatile boolean open = true;
     private boolean physicalClosed;
@@ -339,6 +353,7 @@ final class ExecutionRuntime {
         AdmissionStore.Authorization gate,
         InputStream reader,
         OutputStore.WriterCredit writerCredit,
+        OutputStore.ReaderCredit childCredit,
         long started,
         long interval) {
       this.access = access;
@@ -362,6 +377,7 @@ final class ExecutionRuntime {
           };
       this.reader = reader;
       this.writerCredit = writerCredit;
+      this.childCredit = childCredit;
       leaseStart = started;
       leaseNanos = interval;
     }
@@ -472,6 +488,87 @@ final class ExecutionRuntime {
     }
 
     /**
+     * Page only this parent's exact closed and successful direct child scope.
+     *
+     * @param after exclusive lower child entity bound
+     * @param limit maximum returned identities, from one through 256
+     * @return ordered child identities and continuation flag, not payloads
+     * @throws IOException earlier physical I/O failure
+     * @throws SQLException unavailable or contradictory retained evidence
+     */
+    BranchStore.Page children(long after, int limit) throws IOException, SQLException {
+      return io(() -> sessions.children(access, lease, after, limit, checkedClock, gate));
+    }
+
+    /**
+     * Open one committed direct-child output under the current parent dependency. External result
+     * expiry does not revoke this internal dependency; a locator is never dereferenced.
+     *
+     * @param entity member of this parent's own child scope
+     * @param index exact committed output index
+     * @return immutable descriptor for the opened payload
+     * @throws IOException missing, corrupt or unavailable physical output
+     * @throws SQLException unavailable or contradictory retained evidence
+     */
+    Output beginChildOutput(long entity, int index) throws IOException, SQLException {
+      return io(
+          () -> {
+            if (childCredit == null)
+              throw error(ProtocolError.Code.CONFLICT, "leaf has no child reader");
+            if (childReader != null)
+              throw error(ProtocolError.Code.CONFLICT, "a child output is already open");
+            BranchStore.Source source =
+                sessions.childOutput(access, lease, entity, index, checkedClock, gate);
+            childReader = BranchStore.open(inputs, source, childCredit);
+            childEof = false;
+            return source.output();
+          });
+    }
+
+    /**
+     * Read one bounded child-output chunk after checking current parent ownership and policy.
+     *
+     * @param bytes caller-owned incremental destination
+     * @param offset destination offset
+     * @param length requested bytes, at most bufferLimit
+     * @return bytes read, zero for an empty request, or -1 at verified EOF
+     * @throws IOException retained payload failure
+     * @throws SQLException unavailable execution metadata
+     */
+    int readChildOutput(byte[] bytes, int offset, int length) throws IOException, SQLException {
+      return io(
+          () -> {
+            Objects.checkFromIndexSize(offset, length, bytes.length);
+            chunk(length);
+            if (childReader == null)
+              throw error(ProtocolError.Code.CONFLICT, "no child output is open");
+            int read = childReader.read(bytes, offset, length);
+            if (read < 0) childEof = true;
+            return read;
+          });
+    }
+
+    /**
+     * Finish an exactly consumed child output and return its sequential reader capacity.
+     *
+     * @throws IOException failed physical close
+     * @throws SQLException unavailable execution metadata
+     */
+    void finishChildOutput() throws IOException, SQLException {
+      io(
+          () -> {
+            if (childReader == null)
+              throw error(ProtocolError.Code.CONFLICT, "no child output is open");
+            if (!childEof)
+              throw error(ProtocolError.Code.INTEGRITY_ERROR, "child output lacks verified EOF");
+            childReader.close();
+            childReader = null;
+            childEof = false;
+            return null;
+          });
+    }
+
+    /**
      * Start one exact-length output under admission-funded count and byte allowances.
      *
      * @param length exact output payload length
@@ -554,12 +651,12 @@ final class ExecutionRuntime {
       // for recovery/operator inspection; exact authority fences still decide any later mutation.
       if (storageFailure instanceof IOException failure) throw failure;
       if (storageFailure instanceof SQLException failure) throw failure;
-      if (outcome.success() && pending != null)
+      if (outcome.success() && (pending != null || childReader != null))
         failure.compareAndSet(
             null,
             new Diagnostic(
                 ProtocolError.Code.INTEGRITY_ERROR.value(),
-                "application left an unfinished output"));
+                "application left unfinished output I/O"));
       Diagnostic sticky;
       synchronized (failure) {
         // Freeze the callback's errors before choosing its outcome. Later use of a captured
@@ -589,6 +686,9 @@ final class ExecutionRuntime {
         try {
           return action.run();
         } catch (IOException failure) {
+          storageFailure = failure;
+          throw failure;
+        } catch (SQLException failure) {
           storageFailure = failure;
           throw failure;
         } catch (ProtocolError failure) {
@@ -640,9 +740,18 @@ final class ExecutionRuntime {
       boolean writerClosed = pending == null;
       boolean readerClosed = false;
       boolean creditClosed = writerCredit == null;
+      boolean childClosed = childReader == null;
+      boolean childCreditClosed = childCredit == null;
       // A bounded idempotent retry distinguishes namespace-cleanup failure from a descriptor
       // that remains open. The first error is still reported; persistent uncertainty stays charged.
       for (int attempt = 0; attempt < 2; attempt++) {
+        try {
+          if (!childClosed) childReader.close();
+          childClosed = true;
+        } catch (IOException error) {
+          if (failure == null) failure = error;
+          else if (failure != error) failure.addSuppressed(error);
+        }
         try {
           if (!writerClosed) pending.close();
           writerClosed = true;
@@ -664,15 +773,23 @@ final class ExecutionRuntime {
           if (failure == null) failure = error;
           else if (failure != error) failure.addSuppressed(error);
         }
+        try {
+          if (!childCreditClosed) childCredit.close();
+          childCreditClosed = true;
+        } catch (IOException error) {
+          if (failure == null) failure = error;
+          else if (failure != error) failure.addSuppressed(error);
+        }
       }
-      physicalClosed = writerClosed && readerClosed && creditClosed;
+      physicalClosed =
+          writerClosed && readerClosed && creditClosed && childClosed && childCreditClosed;
       if (failure != null) throw failure;
     }
   }
 
   @FunctionalInterface
   private interface IoAction<T> {
-    T run() throws IOException;
+    T run() throws IOException, SQLException;
   }
 
   private static ProtocolError error(ProtocolError.Code code, String detail) {
