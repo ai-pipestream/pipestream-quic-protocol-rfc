@@ -428,8 +428,14 @@ closure claim. See the
 [closure contract and costs](../../docs/standards/java-v2-authority-store.md#incremental-closure-and-strict-settlement).
 
 This remains authority-library behavior, not an activated durable listener.
-Explicit attempt retry, producer-1
-expansion, broader orphan and subtree reconciliation,
+Local `declareProduced`, `checkProducedInput` and `admitProduced` now enforce the
+current mode-2 parent fence and exact child scope, including on receipt replay.
+Their operation journal and recovery audit keep caller and authority producer
+namespaces separate. Sealing children does not complete expansion. See the
+[local producer contract](../../docs/standards/java-v2-authority-store.md#fenced-local-child-declarations-and-admission).
+
+Explicit attempt retry, producer callback scheduling and durable expansion
+completion, broader orphan and subtree reconciliation,
 results/read pins, retirement and durable-profile transport integration remain
 required. A returned local worker lease alone does not prove a callback ran.
 

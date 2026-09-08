@@ -203,8 +203,12 @@ expiry. Unfinished readers and swallowed interface refusals prevent success.
 Missing or corrupt retained bytes are storage failures, not computed outcomes.
 Metadata verification still audits the session and output verification hashes
 actual payloads; bounded buffers are not a constant-time or zero-copy claim.
-Explicit retry, producer-1
-ingress, broader orphan/subtree reconciliation, result-read pins and transport,
+Local producer-1 declaration and input-admission APIs now recheck current parent
+ownership, deadline and authorization through commitment, even on replay. Their
+operation journal and recovery audit distinguish the caller and authority
+namespaces. Membership sealing still cannot complete authority expansion.
+Explicit retry, producer callback scheduling and durable expansion completion,
+broader orphan/subtree reconciliation, result-read pins and transport,
 retirement and full cross-language failure/resource gates remain required.
 
 As of 2026-09-07, the Rust authority library also implements transactional

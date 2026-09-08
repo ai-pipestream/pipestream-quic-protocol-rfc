@@ -1,0 +1,140 @@
+Local producer transactions and final admission time, 2026-09-08
+Base: d8b3de53557ebc1d27a041098d5f3f9453320991
+Implementation and tests: the commit containing this evidence file.
+
+Contract and implementation
+  Java declares, preflights and admits producer-1 children through local APIs
+  tied to the current mode-2 parent lease and exact allocated child scope.
+  The owner, database/input installation, attempt, lease, deadline, application
+  policy and ancestor fences are checked through commitment, including replay.
+  Producer namespaces are separate in operation lookup, normative commitments,
+  private checksums, foreign-key links and recovery audits. Caller input APIs
+  remain producer-0 only. Shared admission code still funds actual immutable
+  input, output allowance, work/job records and the original operation receipt.
+
+  A final parent authorization check can outlive a shorter new child deadline.
+  Java now validates both intervals at the same final UTC sample. Inspection
+  found Rust local declaration/admission checked parent ownership near the start
+  but not after final authorization. Rust now repeats that fence at commitment
+  and after retained local receipt validation. New child admission checks the
+  same final parent/child time and persists the final watermark. New empty-root
+  closure also refuses clock regression or an already exhausted receipt interval.
+  Existing external receipt observation remains available under unsafe time.
+
+  Section 12.5 explicitly requires the final new-admission deadline check after
+  storage and authorization. An expired new child is refused DEADLINE_EXCEEDED;
+  its declaration is not erased. There is no new wire record, profile or local
+  storage-format revision. This does not enable Java mode-2 callback scheduling
+  or infer expansion completion from a seal.
+
+Reviewed test coverage
+  ProducedDeclarationTest: 4 tests. Real declaration/seal/replay, operation
+  namespace collision and caller lookup isolation, changed intent, replacement
+  lease replay, stale replay, other parent/owner/installation, exact deadline,
+  final authorization rollback and empty-seal expansion incompleteness.
+  ProducedAdmissionTest: 5 tests. Real bytes and funded admission survive graceful
+  paired reopen; original receipt/time/deadline/reference/accounting remain
+  unchanged on replay. External producer-1 input and unsafe local replay refuse.
+  Quota refusal preserves accepted siblings. Preflight does not demand completed
+  payload; actual admission does. Late parent and short-child deadlines refuse
+  with no authoritative child job/receipt. Funding orphans remain charged.
+  ProducedRecoveryTest: 1 test, two real bounded child-JVM runs. Exit 61 halts
+  after sealed declaration and input installation but before admission; exit 62
+  halts immediately after durable local admission, before delivering a receipt
+  to the outer test. Paired reopen audits both namespaces, rejects early lease
+  replacement, verifies actual bytes/digest, and completes or replays exactly
+  one child admission after expiry. Heap ceiling is 64 MiB, not a process RSS
+  bound or a power-loss claim. These are local API crashes, not wire ACK tests.
+
+  Four new Rust tests in execution/tests/branch_tests.rs use real prepared child
+  inputs plus final-authorization clock hooks. They distinguish fresh declaration
+  lease expiry, admission parent-lease/deadline expiry, shorter-child expiry,
+  late retained-input replay, clock-free external observation, and empty-root
+  clock regression/full receipt-interval exhaustion. Exact refusal codes and
+  absent authoritative records are asserted outside application callbacks.
+
+  Static review corrected fixture clock regression, wrong authorization-call
+  counts, parent-versus-child admission timestamps, preflight-versus-admission
+  expectations, unfounded funding-refund assumptions, and Rust move ownership.
+  No failed assertion was weakened to obtain the final passing runs. All test
+  execution followed static review; production design and raw results were
+  reviewed separately from test authorship/execution.
+
+Java verification
+  Maven uses -f implementations/java-netty/pom.xml -Psealed-interop and
+  -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+  Final production-only compile (-DskipTests compile), exit 0:
+    /tmp/pipestream-producer-clock-compile-20260908T074948-0400.log
+  Finished 07:49:51 EDT, 58 main files, release 21.
+  Strict package Javadoc -Xdoclint:all -Werror, exit 0:
+    /tmp/pipestream-producer-clock-doclint-20260908T075037-0400.log
+  Scope: SessionStore, DeclarationStore, AdmissionStore. This final log contains
+  normal generation output, with no warnings/errors; it is not an empty log.
+
+  Focused Maven test, session 25991 exit 0, finished 07:57:40 EDT:
+    /tmp/pipestream-producer-focused-20260908T075731-0400.log
+  Selector: ProducedDeclarationTest,ProducedAdmissionTest,ProducedRecoveryTest,
+  AdmissionPolicyTest,AdmissionStoreTest,DeclarationStoreTest,ExecutionStoreTest,
+  BranchExecutionTest,BranchExecutionRecoveryTest
+  Nine fresh XML reports: 45 tests, 0 failures/errors/skips; native guard 1/1.
+
+  Full unfiltered Maven install, session 98211 exit 0, finished 08:01:55 EDT:
+    /tmp/pipestream-producer-full-install-20260908T075823-0400.log
+  74 fresh XML reports: 516 tests, 0 failures/errors/skips; independently summed
+  from report attributes. XML times 08:00:17.873 through 08:01:54.439 EDT.
+  Native SQLite file-growth guard passed 1/1. Existing native-access and shaded
+  resource/module warnings remain; this is not a warning-free Maven claim.
+  JAR SHA-256:
+    normal 5842d84e1500bf819b0f0b5140aec6aaf5396b7ed633203e3e48be34433e027a
+    shaded 954324b10180491d1a2994c6ccdd7bc95e5758436cb9d2bb27175b689f97f347
+    native guard 3dc46f85b2fbf31018a0dd18277bd14604b83a66c3be22decadf3e33f9dfc3bd
+
+  Existing external examples against the fresh Java artifact, session 71652 exit 0:
+    cd implementations/rust-quinn && target/release/pipestream-conformance examples
+    /tmp/pipestream-producer-examples-20260908T080218-0400.log
+  PASS Java source -> Rust/Quinn server
+  PASS Rust source recovery -> C++/MsQuic server
+  PASS Rust source scatter -> Java, Rust, and C++ servers
+  These are existing profile/Core regression examples, not full V2 durable
+  interoperability or proof of new local producer behavior over the network.
+
+Rust verification
+  Working directory: implementations/rust-quinn
+  cargo check --locked -p pipestream-core, exit 0:
+    /tmp/pipestream-producer-rust-core-check-20260908T075552-0400.log
+  Focused cargo test --locked -p pipestream-core runs, session 86963 exit 0:
+    /tmp/pipestream-producer-rust-authority-focused-20260908T080448-0400.log
+  Real selected families: execution branch 23, admission 14, ingress 9,
+  authority root/scope recovery 28. Total 74 passed; zero-test filtered binaries
+  are not counted as coverage. No failures or ignored tests in selected families.
+
+  cargo test --locked --workspace, session 14549 exit 0:
+    /tmp/pipestream-producer-rust-full-workspace-20260908T080517-0400.log
+  Result-group passed counts: 30,447,1,1,1,1,235,69,1,1,1,1,4,8,0,0.
+  Independently summed: 801 passed, 0 failed/ignored/measured/filtered.
+  cargo clippy --locked -p pipestream-core --all-targets -- -D warnings,
+  session 5267 exit 0, no warnings:
+    /tmp/pipestream-producer-rust-core-clippy-20260908T080709-0400.log
+
+Draft verification
+  ./build.sh core 05 draft, session 9814 exit 0:
+    /tmp/pipestream-producer-final-draft-20260908T080251-0400.log
+  idnits: 0 errors, 0 flaws, 0 warnings, existing FIPS-180-4 downref comment.
+  Generated TXT/HTML final-admission rule and partial implementation status
+  inspected. No draft submission or IETF acceptance is implied.
+  Final SHA-256:
+    XML cf5f0fa6598c8e6fe17d8f47d763a6c9c681039f12dae46c5afb779c67728713
+    TXT 8eefb58c7c92fad2d945f8dc3d9c8f1bc079c9951cea2a7a7b226c768224e8c0
+    HTML f72b49081ed18007d1246034dc0c49107a20ddd41522caf3df8c291645a7d59a
+
+Limits and remaining work
+  Java local producer APIs do not yet provide expansion callbacks, phase-specific
+  receiver credits, durable expansion completion or full retry/cancellation,
+  result delivery, retention/retirement or durable transport/client integration.
+  Existing guarded file geometry and bounded-record costs remain; the additional
+  parent checks do not demonstrate constant-time transactions or whole-process
+  resource limits. The neutral cross-language failure driver and the original
+  external workload/equivalent authenticated durable streaming-gRPC comparison
+  remain mandatory. Further final-time audits must cover the other worker and
+  publication transitions; these admission/declaration tests do not prove them.
+  The full goal remains active and incomplete.

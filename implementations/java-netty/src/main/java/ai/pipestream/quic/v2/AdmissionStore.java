@@ -211,17 +211,46 @@ final class AdmissionStore {
       Clock clock,
       Authorization authorization)
       throws SQLException {
+    return check(connection, config, binding, selected, header, clock, authorization, 0);
+  }
+
+  /**
+   * Apply common admission checks for an already authorized producer. A producer-one caller must
+   * hold the current parent fence in its enclosing transaction, including on receipt replay.
+   *
+   * @param connection checked metadata transaction
+   * @param config immutable deployment policy
+   * @param binding authorized retained session
+   * @param selected selected transport limits
+   * @param header exact input intent
+   * @param clock trusted UTC source
+   * @param authorization current application policy
+   * @param producer authorized operation originator
+   * @return retained receipt or null for eligible new input
+   * @throws SQLException corrupt retained metadata or storage failure
+   */
+  static OperationReceipt check(
+      Connection connection,
+      SessionStore.Configuration config,
+      Binding binding,
+      Capabilities selected,
+      InputHeader header,
+      Clock clock,
+      Authorization authorization,
+      int producer)
+      throws SQLException {
+    Checks.producer(producer);
     Objects.requireNonNull(header);
     Objects.requireNonNull(clock);
     Objects.requireNonNull(authorization);
     if (header.generation() != binding.generation())
       throw error(ProtocolError.Code.CONFLICT, "input generation differs from attached session");
     AdmitParameters parameters = header.parameters();
-    if (parameters.work().producer() != 0)
-      throw error(ProtocolError.Code.UNAUTHORIZED, "caller cannot supply producer-one input");
+    if (parameters.work().producer() != producer)
+      throw error(ProtocolError.Code.UNAUTHORIZED, "cannot supply another producer's input");
     authorization.check(binding, parameters);
     DeclarationStore.Operation prior =
-        DeclarationStore.operation(connection, binding, header.operation());
+        DeclarationStore.operation(connection, binding, producer, header.operation());
     if (prior != null) {
       if (!header.equals(prior.input()))
         throw error(
@@ -311,8 +340,39 @@ final class AdmissionStore {
       Clock clock,
       Authorization authorization)
       throws IOException, SQLException {
+    return admit(connection, config, binding, selected, inputs, header, clock, authorization, 0);
+  }
+
+  /**
+   * Commit common input and resource promises for an explicitly authorized producer. The enclosing
+   * transaction must retain the local parent fence for producer one through commitment.
+   *
+   * @param connection checked writer transaction
+   * @param config immutable deployment policy
+   * @param binding authorized retained session
+   * @param selected selected transport limits
+   * @param inputs exclusively held paired storage
+   * @param header immutable input intent
+   * @param clock trusted UTC source
+   * @param authorization current application policy
+   * @param producer authorized operation originator
+   * @return retained receipt and whether admission is new
+   * @throws IOException missing input, funding or synchronization failure
+   * @throws SQLException corrupt metadata or storage failure
+   */
+  static Admission admit(
+      Connection connection,
+      SessionStore.Configuration config,
+      Binding binding,
+      Capabilities selected,
+      InputStore inputs,
+      InputHeader header,
+      Clock clock,
+      Authorization authorization,
+      int producer)
+      throws IOException, SQLException {
     OperationReceipt prior =
-        check(connection, config, binding, selected, header, clock, authorization);
+        check(connection, config, binding, selected, header, clock, authorization, producer);
     if (prior != null) return new Admission(prior, false);
     inputs.requireExecutionHandles(header.parameters());
     Commitments.Context context = context(binding);
@@ -324,7 +384,7 @@ final class AdmissionStore {
                     error(ProtocolError.Code.NOT_READY, "complete validated input is unavailable"));
     InputStore.Reservation funding = inputs.reserveOutputs(context, header);
     // Filesystem installation can take time; preflight was not an execution interval promise.
-    check(connection, config, binding, selected, header, clock, authorization);
+    check(connection, config, binding, selected, header, clock, authorization, producer);
     long admittedAt = now(connection, binding.authority(), clock);
     AdmitParameters parameters = header.parameters();
     long deadline = add(admittedAt, parameters.executionMs());
@@ -416,7 +476,7 @@ final class AdmissionStore {
     OperationReceipt receipt =
         new OperationReceipt(
             header.operation(),
-            Commitments.operation(context, 0, header),
+            Commitments.operation(context, producer, header),
             new Admitted(parameters.work(), 1, admittedAt, deadline, child));
     Wire.encode(
         new AdmissionResponse(new RequestTag(true, 4611686018427387903L), receipt),
@@ -467,15 +527,31 @@ final class AdmissionStore {
     authorization.check(binding, header.parameters());
     if (fresh) {
       long utc = now(connection, binding.authority(), clock);
-      WorkView view =
-          DeclarationStore.member(connection, binding, header.parameters().work()).view();
-      if (utc < view.admittedAt())
-        throw error(ProtocolError.Code.CLOCK_UNSAFE, "UTC moved behind admission");
-      if (utc >= view.deadline())
-        throw error(ProtocolError.Code.DEADLINE_EXCEEDED, "input commit passed execution deadline");
-      ancestors(connection, binding, header.parameters().work().scope());
+      checkAdmissionInterval(connection, binding, header, utc);
       remember(connection, config, binding.authority(), utc);
     }
+  }
+
+  /**
+   * Check a new admission's interval and ancestry at the enclosing transaction's final clock
+   * sample. A local producer must validate both this child interval and its parent ownership.
+   *
+   * @param connection checked admission transaction
+   * @param binding retained session
+   * @param header exact newly admitted input
+   * @param utc final trusted UTC sample
+   * @throws SQLException corrupt admission or ancestor evidence
+   */
+  static void checkAdmissionInterval(
+      Connection connection, Binding binding, InputHeader header, long utc) throws SQLException {
+    WorkView view = DeclarationStore.member(connection, binding, header.parameters().work()).view();
+    if (view.admittedAt() == null || view.deadline() == null)
+      throw corrupt("new admission lacks its interval");
+    if (utc < view.admittedAt())
+      throw error(ProtocolError.Code.CLOCK_UNSAFE, "UTC moved behind admission");
+    if (utc >= view.deadline())
+      throw error(ProtocolError.Code.DEADLINE_EXCEEDED, "input commit passed execution deadline");
+    ancestors(connection, binding, header.parameters().work().scope());
   }
 
   /**
@@ -831,7 +907,8 @@ final class AdmissionStore {
               throw corrupt("child metadata contradicts parent membership");
           }
           DeclarationStore.Operation receipt =
-              DeclarationStore.operation(connection, binding, record.input().operation());
+              DeclarationStore.operation(
+                  connection, binding, work.producer(), record.input().operation());
           if (receipt == null || !record.input().equals(receipt.input()))
             throw corrupt("job admission receipt missing");
         }

@@ -73,8 +73,10 @@ Recovery checks actual row counts, scope counts/high-water marks, streamed seals
 checksummed typed views, exact declaration links and complete receipt coverage.
 Adjusting counters to hide a missing member cannot make the retained receipt
 valid. These checks use bounded records and point lookups, not a whole-session
-membership map. Producer-1 declarations are not exposed through an unfenced local
-shortcut; they require the future parent-attempt/lease/deadline checks.
+membership map. Caller and authority operations have separate producer namespaces,
+including in the normative digest, local record checksum and recovery lookup.
+Only the fenced local producer interface below can declare producer-1 children;
+the caller declaration and operation-lookup APIs remain producer-0 only.
 
 The local database format is version 5. Earlier experimental V2 storage formats,
 like V1 and foreign databases, are refused without conversion. This is an internal
@@ -197,8 +199,8 @@ outside the database transaction. A later `admit` repeats those checks and requi
 the exact installed FIN/digest-verified input. Missing complete input is NOT_READY.
 An input header whose operation already committed can replay its exact receipt
 without reading its bytes or extending its execution interval. Declarations and
-admissions share one operation namespace with explicitly tagged stored requests;
-cross-kind identity reuse and changed admission headers are CONFLICT.
+admissions share one operation namespace per producer with explicitly tagged stored
+requests; cross-kind identity reuse and changed admission headers are CONFLICT.
 
 The committing transaction holds the paired input-store monitor and SQLite writer.
 It installs durable output funding before creating authoritative metadata links,
@@ -207,7 +209,7 @@ job, original operation receipt, representation requirements and UTC watermark
 together. Mode 1 waits for caller children; mode 2 starts active with a separately
 retained unfinished-expansion obligation. A membership seal cannot complete that
 obligation. No callback runs inside admission. A receipt promises accepted work,
-not that processing has succeeded or that Java's worker loop is implemented.
+not that processing has succeeded.
 
 Input/output charges and global, per-owner and per-session job counts derive
 from bounded typed job records. They are not reconstructed from a client stream
@@ -217,22 +219,66 @@ charged file or funding orphan, but no receipt, admitted view, job or child scop
 Recovery verifies operation/job/member coverage, parent/child agreement, funded
 image geometry, profile bounds and the UTC watermark. Paired-store verification
 also checks every retained input and funding reference before treating that pair
-as ready. No orphan is reclaimed by this increment.
+as ready. These admission APIs do not reclaim orphans.
 
 Caller descendants inherit cancellation/skip fences, not their parent's deadline
-failure. They remain independent obligations after that deadline. The future
-local producer-1 worker interface must additionally enforce its parent attempt,
-lease and deadline; the caller API does not expose that interface.
+failure. They remain independent obligations after that deadline. The local
+producer-1 interface additionally enforces its parent attempt, lease and deadline;
+the caller API does not expose that interface.
 
 The deployment supplies trusted UTC explicitly. Missing trust, negative time,
 regression within an operation or regression behind the retained watermark is
 CLOCK_UNSAFE for a new admission. Final policy checks precede the last UTC sample,
 which must still precede the proposed execution deadline. All deadline and
-retention additions are checked before commitment. Replays remain observable
+retention additions are checked before commitment. Caller replays remain observable
 under unsafe time without issuing a new promise. Forward jumps are accepted
 only when the deployment marks that sample trusted; a jump across the proposed
 deadline refuses the admission, never clamps or extends it. This API does not
 establish clock trust, backup freshness or elapsed time across power loss.
+
+## Fenced local child declarations and admission
+
+`declareProduced`, `checkProducedInput` and `admitProduced` operate on the exact
+producer-1 child scope allocated by a mode-2 parent's admission. They require a
+current execution grant and lease for that parent, its unchanged database/input
+installation pair, compatible retained capabilities, pending expansion, and
+current parent application permission. Child admission additionally checks the
+child's application permission. Requests for another parent's scope are CONFLICT;
+external producer-1 input remains UNAUTHORIZED.
+
+Each transaction checks the parent before its action and again after storage
+work and final authorization, using fresh trusted UTC. Parent attempt, local
+lease, original deadline and ancestor cancellation fences apply even when the
+local operation merely replays its original receipt. Unlike caller receipt
+observation, local replay is not permitted under unsafe time or stale parent
+ownership. A replacement lease can reuse the original operation identity and
+immutable parameters without repeating admission or changing accepted children.
+For a new admission, that final clock sample must satisfy both the parent's
+lease/deadline and the child's newly promised deadline. A still-live parent
+cannot make an already-expired child admission valid.
+
+Declaration uses the existing bounded membership, seal, receipt and fixed-record
+accounting. Input preflight reserves nothing. Reception remains outside the
+database transaction and installs FIN/digest-verified immutable bytes before
+admission. Local admission uses the same configured application/mode, capacity,
+input/output funding, job, child-scope and clock promises as caller admission.
+It returns the operation receipt directly, without inventing a QUIC stream ID.
+A refused commit rolls back authoritative records; already installed input or
+output funding stays charged until safe orphan reclamation. Accepted sibling
+work and its original declaration are not erased by resource pressure.
+
+The operation journal and recovery audit now validate both producer namespaces.
+The same 16-byte operation ID can independently name a caller operation and an
+authority operation; within one producer namespace its original parameters and
+operation kind remain immutable. Scope seals and input commitments bind the
+actual producer, not an inferred caller identity. Existing record capacities,
+session-wide streaming audit costs and guarded file-length limits still apply.
+
+These are local storage APIs, not an expansion callback runtime or a durable
+endpoint. A child membership seal still leaves `expansionComplete=false` in its
+parent job. Durable expansion completion, phase-specific receiver credits and
+resumable producer callback scheduling remain required before mode 2 can run.
+No wire message, profile advertisement or storage-format revision changes here.
 
 ## Durable worker ownership and failure settlement
 

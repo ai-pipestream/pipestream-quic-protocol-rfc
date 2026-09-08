@@ -30,6 +30,18 @@ impl Origin {
         identity: &SessionIdentity,
         scope: Number,
     ) -> Result<()> {
+        self.check_time(store, tx, identity, scope).map(|_| ())
+    }
+    /// Validate local ownership after metadata and authorization work, returning
+    /// the same final UTC sample that must also satisfy a new child's deadline.
+    /// External receipt observations do not need a clock or execution grant.
+    pub fn check_time(
+        &self,
+        store: &AuthorityStore,
+        tx: &Transaction<'_>,
+        identity: &SessionIdentity,
+        scope: Number,
+    ) -> Result<Option<Number>> {
         let Self::Worker {
             identity: expected,
             parent,
@@ -38,7 +50,7 @@ impl Origin {
             lease,
         } = self
         else {
-            return Ok(());
+            return Ok(None);
         };
         if identity != expected || scope.0 != child.0 {
             return Err(protocol(
@@ -58,13 +70,6 @@ impl Origin {
                 "parent cancellation accepted",
             ));
         }
-        let now = store.check_clock(tx)?;
-        if view.deadline.is_some_and(|deadline| now >= deadline) {
-            return Err(protocol(
-                ErrorCode::DeadlineExceeded,
-                "parent execution deadline reached",
-            ));
-        }
         let row: i64 = tx.query_row(
             "SELECT row_id FROM work WHERE generation=?1 AND scope=?2 AND entity=?3",
             params![
@@ -81,6 +86,13 @@ impl Origin {
                 row,
             },
         )?;
+        let now = store.check_clock(tx)?;
+        if view.deadline.is_some_and(|deadline| now >= deadline) {
+            return Err(protocol(
+                ErrorCode::DeadlineExceeded,
+                "parent execution deadline reached",
+            ));
+        }
         if job.parameters.mode != Mode(2)
             || view.state != State::ACTIVE
             || view.child
@@ -99,6 +111,6 @@ impl Origin {
                 "worker producer grant is stale",
             ));
         }
-        Ok(())
+        Ok(Some(now))
     }
 }

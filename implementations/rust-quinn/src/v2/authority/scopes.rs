@@ -250,6 +250,7 @@ impl AuthorityStore {
                     "operation parameters changed",
                 ));
             }
+            origin.check(self, &tx, identity, scope)?;
             return Ok(receipt);
         }
         let mut retained = load(&tx, identity.generation, scope)?;
@@ -424,8 +425,27 @@ impl AuthorityStore {
                 seal: sealed,
             }),
         )?;
-        self.remember_clock(&tx, now)?;
         self.authorize(&identity.owner, permission)?;
+        let committed_at = match origin.check_time(self, &tx, identity, scope)? {
+            Some(checked) => checked,
+            None => self.check_clock(&tx)?,
+        };
+        if committed_at < now {
+            return Err(protocol(
+                ErrorCode::ClockUnsafe,
+                "UTC regressed during declaration",
+            ));
+        }
+        if scope == Number(0)
+            && retained.summary.is_some()
+            && committed_at >= add_duration(now, binding.policy.receipt_retention_ms)?
+        {
+            return Err(protocol(
+                ErrorCode::ClockUnsafe,
+                "UTC jump overtook new root closure retention",
+            ));
+        }
+        self.remember_clock(&tx, committed_at)?;
         commit(tx, "declare")?;
         Ok(receipt)
     }
@@ -458,7 +478,7 @@ impl AuthorityStore {
         let binding = self.authorize_session(&tx, identity, Permission::Inspect)?;
         let result = work(&tx, identity.generation, key)?;
         result.1.validate_profiles(binding.results)?;
-        if after.0 > result.0.0 {
+        if after.0 > result.0 .0 {
             return Err(protocol(
                 ErrorCode::Conflict,
                 "watch revision is ahead of work",

@@ -2103,6 +2103,49 @@ the original equivalent-workload comparison remain mandatory. Pages and handle
 counts do not establish constant-time processing, process-wide RSS bounds or
 power-loss correctness. All cross-language families below remain open.
 
+### Local producer transactions and final admission time, 2026-09-08
+
+Java's `declareProduced`, `checkProducedInput` and `admitProduced` now use a
+current parent execution grant, its exact allocated child scope and the paired
+input installation. Normal admission funding is shared, not bypassed. Operation
+digests, private checksums, retained lookup and recovery distinguish producer 0
+from producer 1. Java's callback runtime still refuses mode 2; these APIs do not
+complete its durable expansion phase or supply a receiver credit.
+
+- V2-ID/REPLAY: `ProducedDeclarationTest` and `ProducedAdmissionTest` pin caller
+  versus authority operation namespaces, changed-intent refusal, original receipt
+  reuse after lease replacement, and the unchanged child admission time, deadline,
+  funding reference and operation/job counts across graceful recovery.
+- V2-AUTH/TIME: local replay requires a live parent and trusted time. Other owner,
+  installation or child scope, stale ownership, exact deadline expiry and final
+  authorization withdrawal refuse without authoritative mutation. A short child
+  deadline is rechecked after the final parent authorization against the same UTC
+  sample as the still-live parent fence. Caller receipt observation remains distinct.
+- V2-STORE: available-capacity preflight can accept an unfinished header, but
+  admission requires validated FIN and actual installed bytes. Quota refusal
+  preserves accepted siblings and declarations. A refused metadata commit may
+  leave charged output-funding orphans; tests do not mistake those for admissions
+  or assert an unfunded rollback refund.
+- V2-CRASH: `ProducedRecoveryTest` starts bounded 64 MiB child JVMs and requires
+  distinct halt exits before admission and immediately after its durable commit.
+  Paired reopen audits producer-1 journal/job links, refuses premature replacement,
+  and completes or replays the original child admission after lease expiry. It
+  verifies actual payload bytes and exactly one child job. A seal never makes
+  the unfinished parent expansion successful.
+- Rust's `branch_tests` late-authorization regressions exercise the matching
+  declaration, admission and retained-input replay paths. The admission checks
+  both parent ownership and child deadline at final time. Empty-root declaration
+  refuses a regressed clock or an already exhausted new closure-receipt interval.
+  External retained operation observation still works under unsafe time.
+
+Section 12.5 now explicitly requires final new-admission deadline validation after
+storage and authorization work, including the combined local parent/child check.
+The [producer verification record](../../conformance/results/durable-work-v2-local-producer-2026-09-08.txt)
+records commands, counts, observed process exits and limits. No new wire record or
+profile is introduced. These tests are local implementation evidence, not the
+neutral cross-language failure driver, whole-process resource bounds, or the
+original external workload and equivalent durable streaming-gRPC comparison.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

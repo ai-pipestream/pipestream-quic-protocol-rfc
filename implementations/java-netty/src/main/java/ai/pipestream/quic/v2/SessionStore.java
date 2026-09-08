@@ -551,6 +551,157 @@ final class SessionStore {
   }
 
   /**
+   * Declare or replay authority-produced children under their current parent's execution fence. The
+   * child scope is fixed by parent admission; sealing membership never completes expansion. This
+   * local API is not a caller RPC and does not run application code.
+   *
+   * @param access current retained execution grant
+   * @param parent current parent lease
+   * @param selected retained compatible profile selection
+   * @param inputs live paired storage held through commitment
+   * @param request immutable declaration in the producer-one operation namespace
+   * @param clock trusted UTC source
+   * @param authorization current parent application policy
+   * @return correlated committed declaration receipt
+   * @throws IOException invalid storage pairing or closed storage
+   * @throws SQLException corrupt metadata or failed commit
+   */
+  DeclarationResponse declareProduced(
+      ExecutionStore.Access access,
+      ExecutionStore.Lease parent,
+      Capabilities selected,
+      InputStore inputs,
+      Declare request,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization)
+      throws IOException, SQLException {
+    Objects.requireNonNull(request);
+    return producerTransaction(
+        access,
+        parent,
+        selected,
+        inputs,
+        request.scope(),
+        null,
+        clock,
+        authorization,
+        true,
+        (connection, binding) -> {
+          boolean fresh =
+              DeclarationStore.operation(connection, binding, 1, request.operation()) == null;
+          return new InputResult<>(
+              DeclarationStore.declare(connection, config.files(), binding, selected, 1, request),
+              fresh);
+        });
+  }
+
+  /**
+   * Preflight a locally produced child's immutable header without reserving admission capacity.
+   * Receipt replay still requires current parent authority; a previous check grants no later
+   * commit.
+   *
+   * @param access current retained execution grant
+   * @param parent current parent lease
+   * @param selected retained compatible profile selection
+   * @param inputs live paired storage
+   * @param header immutable producer-one input intent
+   * @param clock trusted UTC source
+   * @param authorization current parent and child application policy
+   * @return retained admission or empty for currently eligible new input
+   * @throws IOException invalid storage pairing or closed storage
+   * @throws SQLException corrupt metadata or storage failure
+   */
+  Optional<OperationReceipt> checkProducedInput(
+      ExecutionStore.Access access,
+      ExecutionStore.Lease parent,
+      Capabilities selected,
+      InputStore inputs,
+      InputHeader header,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization)
+      throws IOException, SQLException {
+    Objects.requireNonNull(header);
+    AdmissionStore.Clock checkedClock = AdmissionStore.checkedClock(clock);
+    return producerTransaction(
+        access,
+        parent,
+        selected,
+        inputs,
+        header.parameters().work().scope(),
+        header,
+        checkedClock,
+        authorization,
+        false,
+        (connection, binding) ->
+            new InputResult<>(
+                Optional.ofNullable(
+                    AdmissionStore.check(
+                        connection,
+                        config,
+                        binding,
+                        selected,
+                        header,
+                        checkedClock,
+                        authorization,
+                        1)),
+                false));
+  }
+
+  /**
+   * Admit validated locally produced input with the same immutable receipt and resource promises as
+   * caller input, additionally fenced by the current parent through commitment. Installed files
+   * after a refused commit remain charged orphans; accepted siblings and declarations are
+   * preserved.
+   *
+   * @param access current retained execution grant
+   * @param parent current parent lease
+   * @param selected retained compatible profile selection
+   * @param inputs live paired storage
+   * @param header exact producer-one input intent
+   * @param clock trusted UTC source
+   * @param authorization current parent and child application policy
+   * @return committed admission receipt, with no fabricated transport stream correlation
+   * @throws IOException missing/corrupt input, invalid pairing or funding failure
+   * @throws SQLException corrupt metadata or failed commit
+   */
+  OperationReceipt admitProduced(
+      ExecutionStore.Access access,
+      ExecutionStore.Lease parent,
+      Capabilities selected,
+      InputStore inputs,
+      InputHeader header,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization)
+      throws IOException, SQLException {
+    Objects.requireNonNull(header);
+    AdmissionStore.Clock checkedClock = AdmissionStore.checkedClock(clock);
+    return producerTransaction(
+        access,
+        parent,
+        selected,
+        inputs,
+        header.parameters().work().scope(),
+        header,
+        checkedClock,
+        authorization,
+        true,
+        (connection, binding) -> {
+          AdmissionStore.Admission result =
+              AdmissionStore.admit(
+                  connection,
+                  config,
+                  binding,
+                  selected,
+                  inputs,
+                  header,
+                  checkedClock,
+                  authorization,
+                  1);
+          return new InputResult<>(result.receipt(), result.fresh());
+        });
+  }
+
+  /**
    * Observe a bounded membership page in one read snapshot.
    *
    * @param access current owner authorization
@@ -1533,6 +1684,107 @@ final class SessionStore {
   @FunctionalInterface
   private interface InputTransaction<T> {
     InputResult<T> run(Connection connection, Binding binding) throws IOException, SQLException;
+  }
+
+  private <T> T producerTransaction(
+      ExecutionStore.Access access,
+      ExecutionStore.Lease lease,
+      Capabilities selected,
+      InputStore inputs,
+      long scope,
+      InputHeader header,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization,
+      boolean write,
+      InputTransaction<T> action)
+      throws IOException, SQLException {
+    Objects.requireNonNull(access).check();
+    Objects.requireNonNull(lease);
+    Objects.requireNonNull(authorization);
+    profiles(Objects.requireNonNull(selected));
+    if (!access.owner().equals(lease.owner()) || !identity.equals(lease.installation()))
+      throw error(
+          ProtocolError.Code.UNAUTHORIZED, "parent belongs to another owner or installation");
+    AdmissionStore.Clock checkedClock = AdmissionStore.checkedClock(clock);
+    synchronized (Objects.requireNonNull(inputs)) {
+      if (!DATABASE_OPERATIONS.tryAcquire())
+        throw ProtocolError.limit("V2 database operation capacity");
+      try (Connection connection = database.connect();
+          var statement = connection.createStatement()) {
+        if (!write) statement.execute("PRAGMA query_only=ON");
+        statement.execute(write ? "BEGIN IMMEDIATE" : "BEGIN");
+        try {
+          access.check();
+          Metadata metadata = metadata(connection);
+          Retained retained = visible(connection, lease.generation(), access.owner());
+          compatible(retained, selected);
+          Binding binding = retained.binding();
+          inputs.verifyAuthority(identity);
+          if (!inputs.identity().equals(metadata.inputs()))
+            throw corrupt("local producer input storage pairing differs");
+          ExecutionStore.Loaded parent =
+              ExecutionStore.load(connection, config, binding, lease.work(), authorization);
+          checkProducer(
+              connection,
+              binding,
+              parent,
+              lease,
+              scope,
+              AdmissionStore.now(connection, binding.authority(), checkedClock));
+          if (write) FixedRecords.protect(connection, config.files());
+          InputResult<T> result = action.run(connection, binding);
+          inputs.verifyAuthority(identity);
+          access.check();
+          if (header != null)
+            AdmissionStore.beforeCommit(
+                connection, config, binding, header, checkedClock, authorization, result.fresh());
+          authorization.check(binding, parent.stored().record().input().parameters());
+          long committedAt = AdmissionStore.now(connection, binding.authority(), checkedClock);
+          checkProducer(connection, binding, parent, lease, scope, committedAt);
+          if (result.fresh() && header != null)
+            AdmissionStore.checkAdmissionInterval(connection, binding, header, committedAt);
+          if (result.fresh())
+            AdmissionStore.remember(connection, config, binding.authority(), committedAt);
+          statement.execute("COMMIT");
+          return result.value();
+        } catch (IOException | SQLException | RuntimeException | Error failure) {
+          rollback(connection, failure);
+          throw failure;
+        }
+      } catch (SQLException failure) {
+        if ((failure.getErrorCode() & 255) == 13) {
+          ProtocolError refusal = ProtocolError.limit("SQLite file capacity exhausted");
+          refusal.initCause(failure);
+          throw refusal;
+        }
+        throw failure;
+      } finally {
+        DATABASE_OPERATIONS.release();
+      }
+    }
+  }
+
+  private static void checkProducer(
+      Connection connection,
+      Binding binding,
+      ExecutionStore.Loaded parent,
+      ExecutionStore.Lease lease,
+      long scope,
+      long now)
+      throws SQLException {
+    ExecutionStore.check(connection, binding, parent, lease, ExecutionStore.Change.CHECK, now);
+    JobRecord job = parent.stored().record();
+    if (job.input().parameters().mode() != 2 || job.expansionComplete())
+      throw error(ProtocolError.Code.CONFLICT, "parent has no pending authority expansion");
+    ChildScope child = parent.entity().view().child();
+    if (child == null || child.producer() != 1)
+      throw corrupt("authority-expanded parent lacks producer-one child scope");
+    if (scope != child.scope())
+      throw error(ProtocolError.Code.CONFLICT, "local mutation targets another parent's scope");
+    DeclarationStore.Scope target = DeclarationStore.scope(connection, binding, scope);
+    if (target.producer() != 1 || !lease.work().equals(target.parent()))
+      throw corrupt("producer-one child scope contradicts parent admission");
+    AdmissionStore.ancestors(connection, binding, scope);
   }
 
   private <T> T inputTransaction(

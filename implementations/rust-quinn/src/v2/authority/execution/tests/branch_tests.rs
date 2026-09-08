@@ -432,6 +432,463 @@ struct CapturePreparation {
     ready: std::sync::mpsc::SyncSender<()>,
     release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
 }
+
+struct LateClock {
+    utc: AtomicU64,
+    trusted: AtomicBool,
+}
+impl Clock for LateClock {
+    fn read(&self) -> ClockReading {
+        ClockReading {
+            utc_ms: Number(self.utc.load(Ordering::SeqCst)),
+            trusted: self.trusted.load(Ordering::SeqCst),
+        }
+    }
+}
+struct LateAuthorization {
+    clock: Arc<LateClock>,
+    calls: AtomicUsize,
+    trigger: AtomicUsize,
+    advance_to: AtomicU64,
+    deny: AtomicBool,
+}
+impl LateAuthorization {
+    fn arm(&self, trigger: usize, advance_to: u64, deny: bool) {
+        self.calls.store(0, Ordering::SeqCst);
+        self.advance_to.store(advance_to, Ordering::SeqCst);
+        self.deny.store(deny, Ordering::SeqCst);
+        self.trigger.store(trigger, Ordering::SeqCst);
+    }
+    fn disarm(&self) {
+        self.trigger.store(0, Ordering::SeqCst);
+    }
+}
+impl Authorization for LateAuthorization {
+    fn permits(&self, owner: &IdentityLabel, _: Permission) -> bool {
+        if owner.0 != "alice" {
+            return false;
+        }
+        let trigger = self.trigger.load(Ordering::SeqCst);
+        if trigger == 0 {
+            return true;
+        }
+        let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if call == trigger {
+            self.clock
+                .utc
+                .store(self.advance_to.load(Ordering::SeqCst), Ordering::SeqCst);
+            return !self.deny.load(Ordering::SeqCst);
+        }
+        true
+    }
+}
+struct LateFixture {
+    _directory: tempfile::TempDir,
+    store: AuthorityStore,
+    payloads: PayloadStore,
+    binding: Binding,
+    executor: Executor,
+    clock: Arc<LateClock>,
+    authorization: Arc<LateAuthorization>,
+}
+impl LateFixture {
+    fn new(application: Arc<dyn Application>) -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        let clock = Arc::new(LateClock {
+            utc: AtomicU64::new(1000),
+            trusted: AtomicBool::new(true),
+        });
+        let authorization = Arc::new(LateAuthorization {
+            clock: clock.clone(),
+            calls: AtomicUsize::new(0),
+            trigger: AtomicUsize::new(0),
+            advance_to: AtomicU64::new(1000),
+            deny: AtomicBool::new(false),
+        });
+        let store = AuthorityStore::initialize(
+            &directory.path().join("authority.sqlite"),
+            IdentityLabel("test-authority".into()),
+            super::super::super::tests::policy(),
+            PhysicalLimits::default(),
+            clock.clone(),
+            authorization.clone(),
+        )
+        .unwrap();
+        let binding = store
+            .create_session(
+                &IdentityLabel("alice".into()),
+                Id(1),
+                &Policy {
+                    execution_limit_ms: Duration(10000),
+                    output_retention_ms: Duration(20000),
+                    receipt_retention_ms: Duration(30000),
+                },
+                &caps(),
+            )
+            .unwrap();
+        store
+            .declare(
+                &binding.identity,
+                OperationId([1; 16]),
+                Number(0),
+                &[Id(1)],
+                true,
+            )
+            .unwrap();
+        let payloads = PayloadStore::initialize(
+            &directory.path().join("objects"),
+            store.payload_identity().unwrap(),
+            payload_policy(),
+        )
+        .unwrap();
+        store.bind_payloads(&payloads).unwrap();
+        let executor = Executor::new(
+            store.clone(),
+            payloads.clone(),
+            applications(application),
+            ResultEndpoint::new("results.example:7443".into()).unwrap(),
+            caps(),
+            Duration(100),
+        )
+        .unwrap();
+        let fixture = Self {
+            _directory: directory,
+            store,
+            payloads,
+            binding,
+            executor,
+            clock,
+            authorization,
+        };
+        fixture.admit_parent();
+        fixture
+    }
+    fn admit_parent(&self) {
+        let header = InputHeader {
+            kind: Literal,
+            generation: self.binding.identity.generation,
+            operation: OperationId([2; 16]),
+            parameters: AdmitParameters {
+                work: self.key(),
+                mode: Mode(2),
+                ..parameters(Id(0), Id(1), Producer(0), b"abc")
+            },
+        };
+        let now = Instant::now();
+        let InputReception::Receiving(mut receiving) = self
+            .store
+            .receive_input(
+                &self.binding.identity,
+                &header,
+                &caps(),
+                &self.payloads,
+                &self.executor.applications,
+                now,
+            )
+            .unwrap()
+        else {
+            panic!("unexpected replay")
+        };
+        receiving.receive(b"abc", now).unwrap();
+        let InputPreparation::Ready(prepared) = self
+            .store
+            .prepare_input(
+                receiving.finish(now).unwrap(),
+                &caps(),
+                &self.executor.applications,
+            )
+            .unwrap()
+        else {
+            panic!("unexpected replay")
+        };
+        self.store
+            .admit_input(*prepared, &caps(), &self.executor.applications)
+            .unwrap();
+    }
+    fn key(&self) -> WorkKey {
+        WorkKey {
+            scope: Number(0),
+            producer: Producer(0),
+            entity: Id(1),
+        }
+    }
+}
+
+struct CaptureLatePreparation {
+    prepared: Arc<std::sync::Mutex<Option<PreparedInput>>>,
+    ready: std::sync::mpsc::SyncSender<()>,
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    child_ms: u64,
+}
+impl Application for CaptureLatePreparation {
+    fn expansion(&self) -> Option<&dyn Expansion> {
+        Some(self)
+    }
+    fn execute(&self, context: &mut WorkContext) -> Result<ApplicationOutcome> {
+        UppercaseScatter.execute(context)
+    }
+}
+impl Expansion for CaptureLatePreparation {
+    fn expand(&self, context: &mut ExpansionContext<'_>) -> Result<ExpansionOutcome> {
+        context.declare(context.operation(Id(1))?, &[Id(1)], false)?;
+        let now = Instant::now();
+        let mut child = parameters(context.child_scope(), Id(1), Producer(1), b"abc");
+        child.execution_ms = Duration(self.child_ms);
+        let InputReception::Receiving(mut receiving) =
+            context.receive_input(context.operation(Id(2))?, child, now)?
+        else {
+            panic!("unexpected replay")
+        };
+        receiving.receive(b"abc", now)?;
+        let InputPreparation::Ready(prepared) = context.prepare_input(receiving.finish(now)?)?
+        else {
+            panic!("unexpected replay")
+        };
+        *self.prepared.lock().unwrap() = Some(*prepared);
+        self.ready.send(()).unwrap();
+        self.release
+            .lock()
+            .unwrap()
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        Ok(ExpansionOutcome::Yield)
+    }
+}
+
+#[test]
+fn local_declaration_rechecks_parent_at_the_final_authorization_boundary() {
+    let prepared = Arc::new(std::sync::Mutex::new(None));
+    let (ready, started) = std::sync::mpsc::sync_channel(1);
+    let (release, released) = std::sync::mpsc::sync_channel(1);
+    let fixture = LateFixture::new(Arc::new(CaptureLatePreparation {
+        prepared: prepared.clone(),
+        ready,
+        release: std::sync::Mutex::new(released),
+        child_ms: 1000,
+    }));
+    let executor = fixture.executor.clone();
+    let identity = fixture.binding.identity.clone();
+    let key = fixture.key();
+    let worker = std::thread::spawn(move || executor.run(&identity, &key));
+    started
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .unwrap();
+    let origin = prepared
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .input
+        .origin
+        .clone();
+    fixture.authorization.arm(3, 1100, false);
+    let operation = OperationId([70; 16]);
+    refuse(
+        fixture.store.declare_as(
+            &fixture.binding.identity,
+            operation,
+            Number(1),
+            &[Id(2)],
+            false,
+            &origin,
+        ),
+        ErrorCode::Conflict,
+    );
+    assert_eq!(fixture.authorization.calls.load(Ordering::SeqCst), 4);
+    let mut connection = fixture.store.connect().unwrap();
+    let tx = connection.transaction().unwrap();
+    assert!(
+        scopes::operation(
+            &tx,
+            fixture.binding.identity.generation,
+            Producer(1),
+            operation
+        )
+        .unwrap()
+        .is_none()
+    );
+    refuse(
+        scopes::work(
+            &tx,
+            fixture.binding.identity.generation,
+            &WorkKey {
+                scope: Number(1),
+                producer: Producer(1),
+                entity: Id(2),
+            },
+        ),
+        ErrorCode::NotFound,
+    );
+    drop(tx);
+    drop(connection);
+    fixture.authorization.disarm();
+    release.send(()).unwrap();
+    refuse(worker.join().unwrap(), ErrorCode::Conflict);
+}
+
+#[test]
+fn local_admission_checks_parent_and_shorter_child_deadlines_after_final_authorization() {
+    for (child_ms, advance_to, expected) in [
+        (1000, 1100, ErrorCode::Conflict),
+        (50, 1050, ErrorCode::DeadlineExceeded),
+        (5000, 2000, ErrorCode::DeadlineExceeded),
+    ] {
+        let prepared = Arc::new(std::sync::Mutex::new(None));
+        let (ready, started) = std::sync::mpsc::sync_channel(1);
+        let (release, released) = std::sync::mpsc::sync_channel(1);
+        let fixture = LateFixture::new(Arc::new(CaptureLatePreparation {
+            prepared: prepared.clone(),
+            ready,
+            release: std::sync::Mutex::new(released),
+            child_ms,
+        }));
+        let executor = fixture.executor.clone();
+        let identity = fixture.binding.identity.clone();
+        let key = fixture.key();
+        let worker = std::thread::spawn(move || executor.run(&identity, &key));
+        started
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        let prepared = prepared.lock().unwrap().take().unwrap();
+        let operation = prepared.input.header.operation;
+        let work = prepared.input.header.parameters.work.clone();
+        fixture.authorization.arm(4, advance_to, false);
+        refuse(
+            fixture
+                .store
+                .admit_input(prepared, &caps(), &fixture.executor.applications),
+            expected,
+        );
+        assert_eq!(fixture.authorization.calls.load(Ordering::SeqCst), 5);
+        let mut connection = fixture.store.connect().unwrap();
+        let tx = connection.transaction().unwrap();
+        assert_eq!(
+            scopes::work(&tx, fixture.binding.identity.generation, &work)
+                .unwrap()
+                .1
+                .state,
+            State::DECLARED
+        );
+        assert!(
+            scopes::operation(
+                &tx,
+                fixture.binding.identity.generation,
+                Producer(1),
+                operation
+            )
+            .unwrap()
+            .is_none()
+        );
+        drop(tx);
+        drop(connection);
+        fixture.authorization.disarm();
+        release.send(()).unwrap();
+        if advance_to == 1050 {
+            assert_eq!(worker.join().unwrap().unwrap().state, State::ACTIVE);
+        } else {
+            refuse(worker.join().unwrap(), expected);
+        }
+    }
+}
+
+#[test]
+fn retained_local_receipt_rechecks_parent_but_external_receipt_observation_is_clock_free() {
+    let prepared = Arc::new(std::sync::Mutex::new(None));
+    let (ready, started) = std::sync::mpsc::sync_channel(1);
+    let (release, released) = std::sync::mpsc::sync_channel(1);
+    let fixture = LateFixture::new(Arc::new(CaptureLatePreparation {
+        prepared: prepared.clone(),
+        ready,
+        release: std::sync::Mutex::new(released),
+        child_ms: 1000,
+    }));
+    let executor = fixture.executor.clone();
+    let identity = fixture.binding.identity.clone();
+    let key = fixture.key();
+    let worker = std::thread::spawn(move || executor.run(&identity, &key));
+    started
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .unwrap();
+    let prepared = prepared.lock().unwrap().take().unwrap();
+    let header = prepared.input.header.clone();
+    let origin = prepared.input.origin.clone();
+    let receipt = fixture
+        .store
+        .admit_input(prepared, &caps(), &fixture.executor.applications)
+        .unwrap();
+    fixture.authorization.arm(3, 1100, false);
+    refuse(
+        fixture.store.receive_input_as(
+            (&fixture.binding.identity, origin),
+            &header,
+            &caps(),
+            &fixture.payloads,
+            &fixture.executor.applications,
+            Instant::now(),
+        ),
+        ErrorCode::Conflict,
+    );
+    assert_eq!(fixture.authorization.calls.load(Ordering::SeqCst), 3);
+    fixture.authorization.disarm();
+    fixture.clock.trusted.store(false, Ordering::SeqCst);
+    let external = fixture
+        .store
+        .operation(&fixture.binding.identity, OperationId([2; 16]))
+        .unwrap();
+    assert!(matches!(external.body, Outcome::Admitted { .. }));
+    assert_ne!(external, receipt);
+    fixture.clock.trusted.store(true, Ordering::SeqCst);
+    release.send(()).unwrap();
+    refuse(worker.join().unwrap(), ErrorCode::Conflict);
+}
+
+#[test]
+fn empty_root_seal_rechecks_clock_regression_and_full_receipt_interval_at_final_authorization() {
+    for final_utc in [999, 31_000] {
+        let fixture = LateFixture::new(Arc::new(UppercaseScatter));
+        let binding = fixture
+            .store
+            .create_session(
+                &IdentityLabel("alice".into()),
+                Id(2),
+                &Policy {
+                    execution_limit_ms: Duration(10000),
+                    output_retention_ms: Duration(20000),
+                    receipt_retention_ms: Duration(30000),
+                },
+                &caps(),
+            )
+            .unwrap();
+        fixture.authorization.arm(2, final_utc, false);
+        let operation = OperationId([80; 16]);
+        refuse(
+            fixture
+                .store
+                .declare(&binding.identity, operation, Number(0), &[], true),
+            ErrorCode::ClockUnsafe,
+        );
+        assert_eq!(fixture.authorization.calls.load(Ordering::SeqCst), 2);
+        let mut connection = fixture.store.connect().unwrap();
+        let tx = connection.transaction().unwrap();
+        assert!(
+            scopes::operation(&tx, binding.identity.generation, Producer(0), operation)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            scopes::closed(&tx, binding.identity.generation, Number(0))
+                .unwrap()
+                .is_none()
+        );
+        drop(tx);
+        drop(connection);
+        fixture.authorization.disarm();
+        refuse(
+            fixture.store.operation(&binding.identity, operation),
+            ErrorCode::NotFound,
+        );
+    }
+}
 impl Application for CapturePreparation {
     fn expansion(&self) -> Option<&dyn Expansion> {
         Some(self)

@@ -394,6 +394,14 @@ exemption from admission or resource accounting. A resource refusal does not
 erase already accepted children or their declarations; an implementation MAY
 suspend expansion and retry without extending the original parent deadline.
 
+Immediately before committing a new admission, the authority MUST recheck its
+proposed execution deadline after storage work and final authorization checks.
+This applies to both caller and locally produced input. For local input, the
+same final time observation MUST satisfy the parent execution-ownership and
+deadline checks and the new child's execution deadline. A still-live parent
+does not make an expired child admission valid; the authority MUST refuse that
+new admission with DEADLINE_EXCEEDED without erasing its declared obligation.
+
 These parent execution-ownership checks apply to the authority's local producer
 interface. An external caller's producer-0 child declarations and admissions
 remain subject to their own authorization, admission limits and cancellation

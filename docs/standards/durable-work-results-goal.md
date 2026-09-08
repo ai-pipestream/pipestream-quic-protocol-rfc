@@ -2504,3 +2504,34 @@ retirement and Java durable transport/client integration still remain. Neither
 this checkpoint nor existing Core examples complete task 2. The neutral
 cross-language failure driver and all original workload/gRPC comparison
 deliverables remain required; the full goal stays active.
+
+### Local producer transactions and final-time fencing checkpoint, 2026-09-08
+
+Java now has real parent-fenced producer-1 declaration, preflight and admission,
+with separate operation namespaces audited across recovery. It retains normal
+input/output/job funding and never equates a membership seal with completed
+expansion. A crash before admission resumes from installed input; a crash after
+commit replays the original child receipt without another job or deadline.
+
+Review found a shorter child's proposed deadline could pass during final parent
+authorization. Java now checks both intervals against the same final sample.
+The corresponding Rust declaration/admission paths now recheck local parent
+ownership after final authorization and retained local receipt validation.
+Section 12.5 explicitly states the final new-admission deadline requirement.
+
+Reviewed raw evidence: 45 focused and 516 full Java tests, 74 focused and 801
+full Rust workspace tests, no failures or skips/ignored tests. Strict Java
+documentation checks, core Rust warnings-denied Clippy, three existing external
+examples and the updated draft build pass. Commands, hashes, crash boundaries
+and scope limitations are in the
+[producer verification record](../../conformance/results/durable-work-v2-local-producer-2026-09-08.txt).
+
+Next complete Java's phase-specific receiver credit, producer callback scheduling
+and durable expansion transition, including declared-but-unadmitted obligations.
+Also audit remaining Rust execution/publication final-time boundaries: for example,
+`execution/branch.rs::finish` currently loads the execution fence before mutation
+and performs final authorization without rechecking time against that pre-transition
+fence. The declaration/admission fixes do not establish safety for every transition.
+Full Java retry/cancellation/results/retirement/transport/client behavior, the
+neutral cross-language driver and every original workload/gRPC deliverable remain
+required. This checkpoint is verified progress, not completion of the full goal.

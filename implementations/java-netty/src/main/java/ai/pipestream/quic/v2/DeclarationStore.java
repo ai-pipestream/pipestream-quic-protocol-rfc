@@ -11,9 +11,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 
 /**
- * Durable membership and caller-operation records inside SessionStore's authenticated transactions.
- * All helpers require the caller's checked session binding. None allocates a child, admits input,
- * executes work, acknowledges closure or bypasses a local worker fence.
+ * Durable membership and producer-operation records inside SessionStore's authenticated
+ * transactions. All helpers require the caller's checked session binding. None allocates a child,
+ * admits input, executes work, acknowledges closure or bypasses a local worker fence.
  */
 final class DeclarationStore {
   private static final int REQUEST_BYTES = 4101;
@@ -181,9 +181,34 @@ final class DeclarationStore {
       Capabilities selected,
       Declare request)
       throws SQLException {
+    return declare(connection, files, binding, selected, 0, request);
+  }
+
+  /**
+   * Commit membership in an explicitly authorized producer namespace. The enclosing transaction
+   * must enforce the local parent fence for producer one, including on replay.
+   *
+   * @param connection checked writer transaction
+   * @param files guarded file policy
+   * @param binding authorized immutable session
+   * @param selected selected limits
+   * @param producer authorized operation originator
+   * @param request immutable declaration
+   * @return correlated retained receipt
+   * @throws SQLException storage failure or corrupt retained evidence
+   */
+  static DeclarationResponse declare(
+      Connection connection,
+      BoundedSqlite.Limits files,
+      Binding binding,
+      Capabilities selected,
+      int producer,
+      Declare request)
+      throws SQLException {
+    Checks.producer(producer);
     Commitments.Context context = context(binding);
-    Digest digest = Commitments.operation(context, 0, request);
-    Operation prior = operation(connection, binding, request.operation());
+    Digest digest = Commitments.operation(context, producer, request);
+    Operation prior = operation(connection, binding, producer, request.operation());
     if (prior != null) {
       if (!digest.equals(prior.receipt().requestDigest())
           || !normalized(request).equals(prior.request()))
@@ -192,9 +217,8 @@ final class DeclarationStore {
       return new DeclarationResponse(request.request(), prior.receipt());
     }
     Scope scope = scope(connection, binding, request.scope());
-    if (scope.producer() != 0)
-      throw error(
-          ProtocolError.Code.UNAUTHORIZED, "caller cannot declare another producer's scope");
+    if (scope.producer() != producer)
+      throw error(ProtocolError.Code.UNAUTHORIZED, "cannot declare another producer's scope");
     if (scope.seal() != null)
       throw error(ProtocolError.Code.CONFLICT, "scope membership is sealed");
     if (!request.entityIds().isEmpty() && request.entityIds().getFirst() <= scope.last())
@@ -306,14 +330,15 @@ final class DeclarationStore {
         connection.prepareStatement(
             """
             INSERT INTO ps_v2_operations(generation,producer,operation,request_kind,request,request_digest,receipt,record_hash)
-              VALUES (?,0,?,0,?,?,?,?)
+              VALUES (?,?,?,0,?,?,?,?)
             """)) {
       insert.setLong(1, binding.generation());
-      insert.setBytes(2, request.operation().bytes());
-      insert.setBytes(3, requestBytes);
-      insert.setBytes(4, digest.bytes());
-      insert.setBytes(5, receiptBytes);
-      insert.setBytes(6, operationHash(binding, 0, requestBytes, receiptBytes));
+      insert.setInt(2, producer);
+      insert.setBytes(3, request.operation().bytes());
+      insert.setBytes(4, requestBytes);
+      insert.setBytes(5, digest.bytes());
+      insert.setBytes(6, receiptBytes);
+      insert.setBytes(7, operationHash(binding, producer, 0, requestBytes, receiptBytes));
       insert.executeUpdate();
     }
     return new DeclarationResponse(request.request(), receipt);
@@ -471,13 +496,12 @@ final class DeclarationStore {
       query.setLong(1, binding.generation());
       try (var rows = query.executeQuery()) {
         while (rows.next()) {
-          if (rows.getInt(1) != 0)
-            throw corrupt("unsupported local producer operation in caller store");
+          int producer = rows.getInt(1);
           byte[] bytes = rows.getBytes(2);
           if (bytes == null || bytes.length != 16)
             throw corrupt("invalid retained operation identity");
           try {
-            Operation value = operation(connection, binding, new OperationId(bytes));
+            Operation value = operation(connection, binding, producer, new OperationId(bytes));
             if (value == null) throw corrupt("retained operation disappeared inside audit");
             int accepted = value.request() == null ? 0 : value.request().entityIds().size();
             if (accepted > usage.entities() - covered)
@@ -586,6 +610,23 @@ final class DeclarationStore {
    */
   static Operation operation(Connection connection, Binding binding, OperationId id)
       throws SQLException {
+    return operation(connection, binding, 0, id);
+  }
+
+  /**
+   * Load one operation from its explicit producer namespace, validating its complete retained
+   * commitment and target. This helper grants no producer authority.
+   *
+   * @param connection checked metadata snapshot
+   * @param binding immutable session binding
+   * @param producer operation originator
+   * @param id operation identity within that namespace
+   * @return validated operation, or null when absent
+   * @throws SQLException storage failure or corrupt retained evidence
+   */
+  static Operation operation(Connection connection, Binding binding, int producer, OperationId id)
+      throws SQLException {
+    Checks.producer(producer);
     try (var query =
         connection.prepareStatement(
             """
@@ -593,10 +634,11 @@ final class DeclarationStore {
               CASE WHEN length(request_digest)=32 THEN request_digest END,
               CASE WHEN length(receipt)<=1024 THEN receipt END,
               CASE WHEN length(record_hash)=32 THEN record_hash END,request_kind
-            FROM ps_v2_operations WHERE generation=? AND producer=0 AND operation=?
+            FROM ps_v2_operations WHERE generation=? AND producer=? AND operation=?
             """)) {
       query.setLong(1, binding.generation());
-      query.setBytes(2, id.bytes());
+      query.setInt(2, producer);
+      query.setBytes(3, id.bytes());
       try (var row = query.executeQuery()) {
         if (!row.next()) return null;
         byte[] requestBytes = row.getBytes(1),
@@ -611,7 +653,8 @@ final class DeclarationStore {
             || requestBytes.length > REQUEST_BYTES
             || kind < 0
             || kind > 1
-            || !Arrays.equals(hash, operationHash(binding, kind, requestBytes, receiptBytes)))
+            || !Arrays.equals(
+                hash, operationHash(binding, producer, kind, requestBytes, receiptBytes)))
           throw corrupt("operation record integrity failure");
         try {
           if (kind == 1) {
@@ -621,9 +664,10 @@ final class DeclarationStore {
                 (OperationReceipt)
                     Wire.decodeRecord(
                         Wire.RecordKind.OPERATION_RECEIPT, receiptBytes, RECEIPT_BYTES);
-            Digest expected = Commitments.operation(context(binding), 0, input);
+            Digest expected = Commitments.operation(context(binding), producer, input);
             if (!input.operation().equals(id)
                 || input.generation() != binding.generation()
+                || input.parameters().work().producer() != producer
                 || !receipt.operation().equals(id)
                 || !receipt.requestDigest().equals(expected)
                 || !Arrays.equals(digest, expected.bytes())
@@ -641,13 +685,13 @@ final class DeclarationStore {
           OperationReceipt receipt =
               (OperationReceipt)
                   Wire.decodeRecord(Wire.RecordKind.OPERATION_RECEIPT, receiptBytes, RECEIPT_BYTES);
-          Digest expected = Commitments.operation(context(binding), 0, request);
+          Digest expected = Commitments.operation(context(binding), producer, request);
           if (!id.equals(receipt.operation())
               || !expected.equals(receipt.requestDigest())
               || !Arrays.equals(digest, expected.bytes())
               || !(receipt.outcome() instanceof Declared declared)
               || declared.scope() != request.scope()
-              || declared.producer() != 0
+              || declared.producer() != producer
               || declared.acceptedCount() != request.entityIds().size()
               || request.seal() != (declared.seal() != null))
             throw corrupt("declaration receipt differs from immutable intent");
@@ -714,7 +758,7 @@ final class DeclarationStore {
   }
 
   /**
-   * Retain an admission in the same caller operation namespace as declarations.
+   * Retain an admission in the input producer's operation namespace, shared with declarations.
    *
    * @param connection admission writer transaction
    * @param binding authenticated immutable session
@@ -727,18 +771,20 @@ final class DeclarationStore {
       throws SQLException {
     byte[] requestBytes = Wire.encodeRecord(input, 4096);
     byte[] receiptBytes = Wire.encodeRecord(receipt, RECEIPT_BYTES);
+    int producer = input.parameters().work().producer();
     try (var insert =
         connection.prepareStatement(
             """
             INSERT INTO ps_v2_operations(generation,producer,operation,request_kind,request,request_digest,receipt,record_hash)
-              VALUES (?,0,?,1,?,?,?,?)
+              VALUES (?,?,?,1,?,?,?,?)
             """)) {
       insert.setLong(1, binding.generation());
-      insert.setBytes(2, input.operation().bytes());
-      insert.setBytes(3, requestBytes);
-      insert.setBytes(4, receipt.requestDigest().bytes());
-      insert.setBytes(5, receiptBytes);
-      insert.setBytes(6, operationHash(binding, 1, requestBytes, receiptBytes));
+      insert.setInt(2, producer);
+      insert.setBytes(3, input.operation().bytes());
+      insert.setBytes(4, requestBytes);
+      insert.setBytes(5, receipt.requestDigest().bytes());
+      insert.setBytes(6, receiptBytes);
+      insert.setBytes(7, operationHash(binding, producer, 1, requestBytes, receiptBytes));
       insert.executeUpdate();
     }
   }
@@ -812,11 +858,12 @@ final class DeclarationStore {
     return out;
   }
 
-  private static byte[] operationHash(Binding binding, int kind, byte[] request, byte[] receipt) {
+  private static byte[] operationHash(
+      Binding binding, int producer, int kind, byte[] request, byte[] receipt) {
     var digest = Commitments.sha256();
     Cbor.Writer out = hashWriter(digest, "pipestream-java-v2-operation", binding);
     out.array(4);
-    out.number(0);
+    out.number(producer);
     out.number(kind);
     out.bytes(request);
     out.bytes(receipt);

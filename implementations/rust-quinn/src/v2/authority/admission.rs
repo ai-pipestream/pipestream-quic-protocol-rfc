@@ -1,5 +1,5 @@
 use super::{
-    ingress::{Applications, PreparedInput, response_capacity},
+    ingress::{response_capacity, Applications, PreparedInput},
     *,
 };
 
@@ -210,8 +210,24 @@ impl AuthorityStore {
             .max(parameters.outputs.total_bytes.0.min(job.object_limit.0));
         tx.execute("UPDATE sessions SET operations=operations+1,last_scope=?2,required_control=max(required_control,?3),required_object=max(required_object,?4) WHERE generation=?1",
             params![sql(identity.generation.0)?, sql(child.map_or(last_scope, |c| c.scope.0))?, sql(response)?, sql(required_object)?])?;
-        self.remember_clock(&tx, now)?;
         self.authorize(&identity.owner, permission)?;
+        let committed_at = match input.origin.check_time(self, &tx, identity, key.scope)? {
+            Some(checked) => checked,
+            None => self.check_clock(&tx)?,
+        };
+        if committed_at < now {
+            return Err(protocol(
+                ErrorCode::ClockUnsafe,
+                "UTC regressed during admission",
+            ));
+        }
+        if committed_at >= deadline {
+            return Err(protocol(
+                ErrorCode::DeadlineExceeded,
+                "input commit passed execution deadline",
+            ));
+        }
+        self.remember_clock(&tx, committed_at)?;
         commit(tx, "admit-input")?;
         Ok(receipt)
     }

@@ -345,6 +345,7 @@ impl AuthorityStore {
                     "input operation parameters changed",
                 ));
             }
+            origin.check(self, tx, identity, parameters.work.scope)?;
             return Ok(Some(receipt));
         }
         let (_, view) =

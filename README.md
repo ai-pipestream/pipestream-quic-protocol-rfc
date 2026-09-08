@@ -75,6 +75,9 @@ database/input installation binding. Atomic admission now couples verified input
 funded output allowances, a restartable job and immutable replay receipt. The bounded
 Java runtime and scheduler execute leaf and caller-expanded branch callbacks,
 including protected child-output reassembly and actual child/root closure.
+Local producer-1 declaration and admission APIs now enforce the current parent
+lease and preserve separate operation namespaces across recovery. Automatic
+authority expansion and its durable completion transition remain unfinished.
 Independent Java durable execution/results/recovery, complete cross-language
 failure evidence and the workload comparison remain unfinished.
 The Rust `pipestream_core::v2` library now implements typed codecs for every
