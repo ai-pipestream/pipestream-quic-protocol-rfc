@@ -2562,6 +2562,28 @@ stream retained records. Retirement intent uses protected ordinary allocation;
 these tests do not establish a new full-store retirement reservation guarantee.
 No durable Java profile is activated by this local implementation checkpoint.
 
+### Java asynchronous control waits and shared deadline correction, 2026-09-08
+
+The Java durable control integration now has `ControlWaitService` for bounded
+asynchronous WORK and checkpoint observations. `SessionStore.checkpoint` returns
+an empty observation only for a matching sealed scope without committed closure;
+unsealed, mismatching and unauthorized requests refuse instead of entering a wait.
+Dedicated bounded workers release database capacity between polls. Closing a
+connection-local handle abandons no durable work and retains the charge for any
+still-running observation. Connection correlation, response delivery and drain
+accounting remain transport responsibilities; this does not activate a profile.
+
+The checkpoint deadline review also corrected Rust's dispatcher: a positive wait
+includes queued time and cannot yield a successful summary after its elapsed
+deadline. Zero wait may return an already committed summary. Section 12 now states
+that distinction explicitly, without claiming a hard storage-latency bound.
+The two focused Java classes pass nine tests; the full Java gate passes 668
+tests across 110 fresh XML reports. Rust's delayed-dispatch regression passes,
+and its full workspace passes 816 tests without failures or ignored tests.
+Clippy, strict Java doclint, existing-profile examples and draft checks pass.
+Exact commands and evidence boundaries are
+in the [control-wait record](../../conformance/results/durable-work-v2-control-waits-2026-09-08.txt).
+
 ## Cross-language and workload gates
 
 The independent Rust process driver must run Rust-to-Java and Java-to-Rust

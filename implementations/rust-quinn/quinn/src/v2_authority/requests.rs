@@ -162,6 +162,14 @@ impl Pending {
             .blocking(move |shared| dispatch(shared, &first_identity, message))
             .await?;
         loop {
+            // A queued or slow metadata observation cannot produce a late checkpoint success.
+            // Zero-wait checkpoints still observe an already committed closure immediately.
+            if wait != 0
+                && matches!(&self.message, Control::Scope(Scope::Checkpoint { .. }))
+                && Instant::now() >= deadline
+            {
+                return Err(error(ErrorCode::WaitTimeout, "checkpoint wait expired"));
+            }
             let ready = match (&self.message, &response) {
                 (
                     Control::Work(Work::Watch { after_revision, .. }),

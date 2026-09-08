@@ -469,6 +469,16 @@ Durable-profile transport/client integration and cross-language failure/resource
 evidence remain required. A returned local worker lease alone does not prove a
 callback ran.
 
+`ControlWaitService` provides asynchronous WORK and checkpoint observations for
+the durable transport integration. Bounded authority-wide and per-owner queues
+use dedicated SQLite workers; an idle wait holds no database worker. Every poll
+rechecks current authorization. WORK timeout returns a current unchanged view;
+checkpoint timeout returns `WAIT_TIMEOUT`. Unsealed scopes refuse immediately
+with `NOT_READY`. Connection loss abandons only the observation, and an in-flight
+read stays charged until it physically returns. The transport must still own
+request correlation, connection-local pending limits, response delivery and
+drain accounting. This library does not activate Java's durable profiles.
+
 ## Sealed-work library foundation
 
 The independent Java `SealedWork`, `SealedScope`, and `SealedSessionStore`

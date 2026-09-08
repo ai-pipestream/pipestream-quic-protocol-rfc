@@ -1,0 +1,95 @@
+Durable WORK/checkpoint observation and deadline checkpoint, 2026-09-08
+
+Repository: pipestream-quic-protocol-rfc
+Branch: feat/durable-work-results-v2
+Parent: 073d1309f85bec5b6863582c5814f41a53a42a45
+
+Implementation scope
+  Java SessionStore.checkpoint distinguishes a matching sealed scope without
+  closure from an unsealed/mismatching/unauthorized scope. It verifies closure
+  and response bounds in the authorized snapshot, without a UTC lease.
+  ControlWaitService runs observations on bounded dedicated workers. A shared
+  service enforces finite pending/per-owner capacity across connections and
+  sessions, without keeping a database worker between polls. Each observation
+  rechecks current authorization. Abandoning a handle never cancels durable
+  execution; a queued/running read stays charged until the worker returns.
+  WORK expiry returns a current unchanged view; checkpoint expiry is WAIT_TIMEOUT.
+  Positive checkpoint waits include queue time and cannot return late success.
+  Zero wait may return an already committed closure. The same positive-wait
+  deadline guard was corrected in Rust and clarified in Section 12.
+
+Review findings before execution
+  The Java tests originally checked isDone immediately after submission; worker
+  authorization-count/latch evidence now establishes a real prior observation.
+  Per-owner rejection is checked before global capacity fills; Bob has a real
+  separate session. Final-read expiry and revocation use explicit release gates.
+  The Rust regression initially expected Pending.run to throw a protocol error.
+  Static review corrected it to assert the actual correlated REFUSAL response
+  and release its connection ticket before the follow-up zero-wait request.
+
+Focused Java verification
+  CheckpointObservationTest,ControlWaitServiceTest:
+    /tmp/pipestream-control-wait-focus-20260908T150349-0400.log
+    Direct exit 0, matching .exit sidecar; 9 tests, zero failures/errors/skips.
+    Native SQLite growth guard 1/1 passed.
+  Covers exact closure/recovery, unsealed versus missing-input membership,
+  wrong seals, authorization precedence/revocation, final credential check,
+  unchanged/change/future revisions, monotonic signed wrap, positive/zero
+  checkpoint deadlines, per-owner/global capacity and cancel-safe accounting.
+
+Full Java verification
+  mvn -f implementations/java-netty/pom.xml -Psealed-interop
+    -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository install
+    /tmp/pipestream-control-wait-full-20260908T150401-0400.log
+    Direct exit 0, matching .exit sidecar, finished 2026-09-08 15:07:44 EDT.
+    Independently counted 110 fresh XML reports: 668 tests, zero failures,
+    errors or skips. First XML UTC mtime 2026-09-08 19:05:54.097797967;
+    last 2026-09-08 19:07:42.645322637. Native SQLite growth guard passed.
+
+Final Java SHA-256
+  ControlWaitService.java 2ce4d31e3d6564446694a163c497bc4ce841de29c25c971d98488f98940a8d46
+  SessionStore.java c01060d03c98b0f5e36036afba3f879904231c87b76b29b73464936122df9d64
+  Shaded JAR 8374c0cdebc7af8bba0f7d443c92bbebee529c6fd01c01630875a964d31dbd7a
+
+Additional completed gates
+  Strict two-type package javadoc, -Xdoclint:all -Werror:
+    /tmp/pipestream-control-wait-doclint-20260908T150754-0400.log
+    Direct exit 0 and matching .exit; no errors or warnings.
+  Existing-profile examples:
+    /tmp/pipestream-control-wait-examples-20260908T150802-0400.log
+    Direct exit 0 and matching .exit. Java -> Rust, Rust recovery -> C++, and
+    scatter -> Java/Rust/C++ PASS. Not Java V2 durable interoperability evidence.
+  ./build.sh core 05 draft:
+    /tmp/pipestream-control-wait-draft-20260908T150812-0400.log
+    Direct exit 0 and matching .exit; idnits zero errors/flaws/warnings, existing
+    FIPS downref comment. Rendered TXT checkpoint paragraph inspected.
+  Rust delayed_positive_checkpoint_cannot_return_a_ready_summary_after_its_deadline:
+    /tmp/pipestream-control-wait-rust-focus-20260908T150841-0400.log
+    Direct exit 0 and matching .exit; exact named test 1 passed. A real TLS
+    authority connection submits a positive wait against a known closed root,
+    delays executing the pending request until after its accepted deadline,
+    observes correlated WAIT_TIMEOUT, then gets the exact root with zero wait.
+  cargo test --locked --workspace, in implementations/rust-quinn:
+    /tmp/pipestream-control-wait-rust-full-20260908T150902-0400.log
+    Direct exit 0 and matching .exit; independently summed 16 test summaries:
+    816 passed, zero failed/ignored/filtered. All summaries report ok.
+  cargo clippy --locked -p pipestream-quinn --all-targets -- -D warnings:
+    /tmp/pipestream-control-wait-rust-clippy-20260908T151105-0400.log
+    Direct exit 0 and matching .exit.
+
+Final Rust SHA-256
+  quinn/src/v2_authority/requests.rs ea6469d27903a966dc78ba137ad7a2dbb2db50d5cefbb7715dcca2fbdb61cd0b
+  quinn/src/v2_tls/tests/authority.rs 02e67b935ff11e57006b61200e53ce389045f5a52fc742b1e2d558b68762a29a
+
+Scope limits
+  These observations are not a Java durable endpoint. The host must share one
+  service across its authority connections; separate instances/processes do not
+  coordinate these volatile limits. The transport still owns correlation,
+  connection-local pending limits, delivery deadlines, input/result transfers
+  and drain accounting. No Java durable profile advertisement is added.
+  Queue/thread/record bounds are not a whole-process RSS measurement or a hard
+  storage-latency guarantee. Existing closure verification retains its streaming
+  audit costs. No neutral two-direction durable failure-driver or equivalent
+  workload/gRPC comparison acceptance is claimed. Those goal deliverables remain
+  mandatory, along with full Java durable server/client integration.
+  No hosted-CI, main-merge, deployment or IETF-submission claim is made.

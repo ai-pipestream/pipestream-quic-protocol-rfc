@@ -726,6 +726,15 @@ seal is INTEGRITY_ERROR. Once ready, operation 5 returns the immutable summary
 with scope, producer, parent, seal, declared count, counters, status root and
 closure time. If its connection-local wait expires first, return WAIT_TIMEOUT,
 not a successful summary. Reconnection begins a new wait against the same set.
+The wait interval starts when the connection accepts the complete request,
+including time queued for authority storage. A zero wait requests one immediate
+authorized observation: return an already committed summary or WAIT_TIMEOUT.
+For a positive wait, the server MUST check elapsed monotonic time after its
+authorized observation and MUST NOT return checkpoint success if the interval
+has expired. This does not require interrupting an in-flight storage operation
+or promise a hard response-latency bound. An unsealed scope still returns
+NOT_READY and a mismatching seal still returns INTEGRITY_ERROR; neither enters
+a checkpoint wait. Every observation remains subject to current authorization.
 The client verifies identity, seal, count partition and known commitments
 before acknowledging coverage in its own durable observations.
 

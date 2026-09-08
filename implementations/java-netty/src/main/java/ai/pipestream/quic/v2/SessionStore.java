@@ -1160,23 +1160,45 @@ final class SessionStore {
   ScopeSummary scopeSummary(
       Access access, Capabilities selected, long generation, long scope, Digest expectedSeal)
       throws SQLException {
-    Objects.requireNonNull(expectedSeal);
-    Checks.number(scope);
+    return checkpoint(access, selected, generation, new Checkpoint(1, scope, expectedSeal, 0))
+        .orElseThrow(() -> error(ProtocolError.Code.NOT_READY, "scope has no committed closure"))
+        .summary();
+  }
+
+  /**
+   * Observe checkpoint eligibility and closure in one authorized read transaction. An unsealed
+   * scope refuses immediately; only a sealed, matching scope without closure is eligible to wait.
+   * This distinction must not be inferred by catching every NOT_READY from a summary lookup.
+   *
+   * @param access current authenticated owner gate
+   * @param selected retained compatible profile selection
+   * @param generation attached session
+   * @param request correlation, scope and exact expected seal; waiting is handled outside SQLite
+   * @return verified correlated closure, or empty while the matching sealed scope is unresolved
+   * @throws SQLException inconsistent retained evidence or database failure
+   */
+  Optional<CheckpointResponse> checkpoint(
+      Access access, Capabilities selected, long generation, Checkpoint request)
+      throws SQLException {
+    Objects.requireNonNull(request);
     return sessionTransaction(
         access,
         selected,
         generation,
         false,
         (connection, binding) -> {
-          DeclarationStore.Scope retained = DeclarationStore.scope(connection, binding, scope);
+          DeclarationStore.Scope retained =
+              DeclarationStore.scope(connection, binding, request.scope());
           if (retained.seal() == null)
             throw error(ProtocolError.Code.NOT_READY, "scope membership is not sealed");
-          if (!retained.seal().equals(expectedSeal))
+          if (!retained.seal().equals(request.seal()))
             throw error(ProtocolError.Code.INTEGRITY_ERROR, "checkpoint membership seal differs");
-          if (retained.state().summary() == null)
-            throw error(ProtocolError.Code.NOT_READY, "scope has no committed closure");
-          ClosureStore.verify(connection, binding, scope);
-          return retained.state().summary();
+          if (retained.state().summary() == null) return Optional.empty();
+          ClosureStore.verify(connection, binding, request.scope());
+          CheckpointResponse response =
+              new CheckpointResponse(request.request(), retained.state().summary());
+          Wire.encode(response, selected.controlLimit());
+          return Optional.of(response);
         });
   }
 

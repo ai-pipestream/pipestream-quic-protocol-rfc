@@ -578,6 +578,37 @@ async fn dispatcher_watch_and_checkpoint_waits_release_metadata_capacity() {
 }
 
 #[tokio::test]
+async fn delayed_positive_checkpoint_cannot_return_a_ready_summary_after_its_deadline() {
+    let db = Database::new();
+    let tls = Fixture::new();
+    let (connection, _wire) = db.connect(&tls, caps(), Some(0)).await;
+    control(&connection, create(1)).await;
+    let digest = seal(control(&connection, declare(2, vec![], true)).await);
+    let expected = root(&connection, 3, digest).await;
+
+    let delayed = pending(
+        &connection,
+        Control::Scope(Scope::Checkpoint {
+            request: Id(4),
+            scope: Number(0),
+            seal: digest,
+            wait_ms: WaitMs(1),
+        }),
+    );
+    let not_before = tokio::time::Instant::now() + Duration::from_millis(5);
+    tokio::time::sleep_until(not_before).await;
+    assert!(tokio::time::Instant::now() >= not_before);
+    let mut timed_out = delayed.run().await.unwrap();
+    let ResponseBody::Control(control) = timed_out.body() else {
+        panic!("control refusal expected")
+    };
+    refused(control, 4, ErrorCode::WaitTimeout);
+    drop(timed_out);
+
+    assert_eq!(root(&connection, 5, digest).await, expected);
+}
+
+#[tokio::test]
 async fn dispatcher_complete_checks_exact_root_and_all_connection_work() {
     let db = Database::new();
     let tls = Fixture::new();
