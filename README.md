@@ -24,7 +24,12 @@ this is a reviewed draft, not a claim those features are already implemented.
 
 The [durable-work/results goal](docs/standards/durable-work-results-goal.md)
 tracks the successor contract, independent Rust/Java implementation, and equivalent
-streaming-gRPC workload evidence. Local draft -05 defines the version-2 contract
+streaming-gRPC workload evidence. The
+[asynchronous handoff pack](docs/plans/async-rfc-2026-09/README.md) records the
+2026-09-08 checkpoint and four assignable tickets across three workstreams.
+Contract design has reached its acceptance milestone; complete Java V2
+integration, independent failure certification and the workload comparison are
+still open. Local draft -05 defines the version-2 contract
 in Section 12 and Appendix F, with frozen wire examples. Its executable lifecycle
 models are bounded design checks. Rust's embeddable
 `v2_authority::server::Server` now integrates authenticated QUIC, durable dispatch,
@@ -83,13 +88,16 @@ Reassembly runs after verified child closure, with phase-specific handle credits
 Local cancellation and administrative revocation now drive bounded fenced
 settlement. Java's local result service also pins exact published objects under
 current authorization and bounded pending/active delivery lifetimes; its Netty
-result-stream integration and complete cleanup scheduling remain unfinished.
+result-stream integration remains unfinished.
 The local input collector now records durable eligibility before deletion and
 waits for exact-object readers and receivers before synchronized removal and quota
 refund. The output collector separately checks external expiry, parent settlement
 and physical output pins, removes synchronized output names before funding, and
-retains release evidence through refund and restart. Orphan sweeping, fair cleanup
-scheduling and session retirement remain unfinished.
+retains release evidence through refund and restart. Bounded orphan sweeping,
+automatic cleanup scheduling and checked session retirement now have local
+implementation and recovery tests. Asynchronous control waits and connection
+ownership enforce local queue deadlines, immutable attachment and drain cuts;
+these helpers still need integration into a durable Java listener/client.
 Independent Java durable execution/results/recovery, complete cross-language
 failure evidence and the workload comparison remain unfinished.
 The Rust `pipestream_core::v2` library now implements typed codecs for every

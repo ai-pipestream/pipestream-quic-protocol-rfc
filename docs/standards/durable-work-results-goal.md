@@ -7,6 +7,14 @@ Task 1's contract/design acceptance is recorded below. Tasks 2 and 3 are open;
 Rust now has a version-2 durable endpoint and client. Complete independent Java
 parity, cross-language failure evidence and the workload comparison remain open.
 
+Current handoff checkpoint (2026-09-08): `24975c241e152a893d9827b5c76493c1e1d5d0d5`
+is published on the feature branch in Forgejo and GitHub, not merged into main.
+The [async assignment pack](../plans/async-rfc-2026-09/README.md) preserves this
+goal while separating Java endpoint/client integration, neutral failure/resource
+certification, and the external workload/gRPC comparison. It includes independent
+worktree ownership, dependencies, acceptance gates and review handoffs. The user
+will assign those tasks; writing the pack does not launch them or finish the goal.
+
 ## Required order and acceptance evidence
 
 ### 1. Complete the contract
@@ -2872,3 +2880,38 @@ no wire relaxation or profile advertisement was introduced. Java durable
 transport/client integration, independent authenticated two-direction failure and
 resource evidence, and the external workload/equivalent streaming-gRPC comparison
 remain required. This increment is not task-2 or full-goal acceptance.
+
+### Java control/connection checkpoint and asynchronous handoff, 2026-09-08
+
+`9372f08` adds bounded asynchronous WORK/checkpoint observations and corrects
+positive checkpoint wait deadlines after authorized queued storage work in both
+the normative text and Rust dispatcher. Java full verification passed 668 tests;
+Rust full verification passed 816 tests with Clippy. The
+[control-wait evidence](../../conformance/results/durable-work-v2-control-waits-2026-09-08.txt)
+records exact scope and commands.
+
+`24975c2` adds connection request/transfer ownership, immutable session attachment,
+retained physical tickets, detach draining and exclusive completed-session cuts.
+The storage verifier checks the exact authorized committed root; it is not proof
+of transport delivery. Java's codec now lets a structurally valid child-scope
+Complete request reach the specified authorized CONFLICT refusal instead of
+rejecting it as FRAME_ERROR. This fixes implementation drift from the existing
+Section 12/CDDL, without changing the wire schema.
+
+The focused gate passed 88 tests; full Java install passed 679 tests with zero
+failures/errors/skips in 112 independently checked fresh XML reports. Changed-type
+strict doclint, native guard, existing-profile examples and draft checks passed.
+The [connection-ownership evidence](../../conformance/results/durable-work-v2-connection-ownership-2026-09-08.txt)
+preserves failures/corrections, final commands and tested artifact hashes. No
+Rust production change or new full Rust run is claimed in that checkpoint.
+
+The user requested an asynchronous handoff to other coding agents to conserve
+the coordinating chat's remaining usage. The
+[async assignment pack](../plans/async-rfc-2026-09/README.md) separates the remaining
+Java host/client integration, independent failure/resource matrix and external
+workload/equivalent gRPC baseline. Java server and client are separate tickets
+that can work against the opposite existing Rust peer. The pack defines file ownership, shared-spec review,
+real dependency gates and durable evidence requirements. Assignment preparation
+does not activate profiles, launch those implementation jobs, merge main, pause
+the app's goal automatically, or satisfy the remaining goal. The next coordinator
+step is review of assigned branches and their evidence, then integrated gates.
