@@ -31,6 +31,9 @@ pub fn open_durable(path: &Path) -> Result<Connection> {
         std::fs::create_dir_all(parent)?;
     }
     let conn = Connection::open(path)?;
+    // Three coordinator tasks share one database file; wait on transient
+    // writer contention instead of failing the run (WAL + FULL sync stay).
+    conn.busy_timeout(std::time::Duration::from_secs(30))?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "FULL")?;
     conn.execute_batch(
