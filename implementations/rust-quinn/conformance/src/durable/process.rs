@@ -119,6 +119,35 @@ impl AuthorityFixture {
         run_output_owned(&self.root, &command, OP_TIMEOUT)
     }
 
+    /// Spawn a one-shot client op without waiting for it. The returned child
+    /// is fixture-owned: callers must reap it (bounded) on every path.
+    pub fn spawn_client_op(
+        &self,
+        journal: &Path,
+        owner: &str,
+        creation_sequence: u64,
+        connection: &[String],
+        operation: &[&str],
+    ) -> Result<Child> {
+        let mut command = with_owned(&self.base(), &["client".into()]);
+        command.extend(self.journal_args(journal, owner, creation_sequence));
+        command.extend(connection.iter().cloned());
+        command.extend(operation.iter().map(|value| (*value).to_owned()));
+        ensure!(!command.is_empty(), "empty client command");
+        Command::new(&command[0])
+            .args(&command[1..])
+            .current_dir(&self.root)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .with_context(|| format!("start {}", command.join(" ")))
+    }
+
+    /// Reap a spawned client op with bounded output draining.
+    pub fn wait_client_op(child: Child, timeout: Duration) -> Result<Output> {
+        wait_output(child, timeout)
+    }
+
     /// Authenticated readiness probe: `next-sequence` over mTLS.
     pub fn next_sequence(&self, server: &OwnedServer, principal: &str) -> Result<u64> {
         let connection = self.connection_args(server, principal)?;
@@ -258,7 +287,6 @@ impl OwnedServer {
 
     /// Immediate hard kill (SIGKILL). Process death only; not power-loss
     /// coverage. The child is reaped before returning.
-    #[allow(dead_code)] // exercised by the milestone-2 crash rows
     pub fn kill(mut self) -> Result<()> {
         let mut child = self
             .child
