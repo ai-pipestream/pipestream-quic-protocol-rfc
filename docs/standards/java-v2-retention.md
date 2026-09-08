@@ -1,9 +1,9 @@
 # Java V2 retention and retirement implementation plan
 
-This records implementation and remaining work for Section 12.9. Java now has a
-single-job input and terminal output reclamation operations. Orphan sweeping
-and session retirement remain
-unimplemented. The normative contract remains
+This records implementation and remaining work for Section 12.9. Java now has
+single-job input and terminal output reclamation operations. Bounded orphan
+reconciliation and automatic cleanup scheduling are implemented and locally verified; session
+retirement remains unimplemented. The normative contract remains
 in `sections-src/section-12.md`. The local result-read service and per-input
 physical reader pins supply part of the liveness machinery. Java's durable
 endpoint/client and the independent failure driver remain separate obligations.
@@ -116,8 +116,8 @@ checks an existing input before creating the first intent, so missing live bytes
 cannot manufacture deletion authority. A repeat completes an earlier intent or
 reports already-released state. Revocation does not prevent local maintenance.
 Child-closure validation currently uses the existing session-wide streaming audit;
-the single target bound is not a constant-time or hard wall-clock bound. A fair
-bounded sweep/scheduler integration remains required.
+the single target bound is not a constant-time or hard wall-clock bound. The
+automatic cleanup service below schedules these operations in finite pages.
 
 ### Terminal output collector
 
@@ -160,8 +160,69 @@ parent settlement with a live output reader, exact prepaid quota/refund checks,
 and recovery-barrier refusal. Strict doclint, the native guard, existing examples
 and draft checks pass. See the
 [output reclamation evidence](../../conformance/results/durable-work-v2-output-reclamation-2026-09-08.txt).
-This local collector does not supply orphan reclamation, fair scheduling, session
-retirement, durable Java wire integration or two-language failure-driver evidence.
+That checkpoint did not supply orphan reclamation or fair scheduling. The next
+increment below supplies those locally verified operations; session
+retirement, durable Java wire integration and two-language failure evidence remain.
+
+### Bounded orphan reconciliation and automatic cleanup
+
+`OrphanStore` checks a discovered input or funding identity against its known
+session, declared member, retained operation receipt and any admitted job in an
+exclusive metadata writer snapshot. A missing job with an admitted member or
+receipt is corruption, not deletion authority. Unknown and retiring sessions
+are refused. A referenced resource is not an orphan merely because its job has
+settled. Input reception/read pins and output callback/descriptor pins protect
+the exact identity throughout the check and removal.
+
+Discovery hints can outlive both admission and legitimate terminal cleanup. A
+retry of such a hint must distinguish a checked completed release from a live
+reference or an unreferenced orphan. Completed release evidence plus physical
+absence yields `ABSENT`; resurrected names or uncertain charges still refuse.
+Treating every refunded job reference as corruption would permanently block the
+orphan pass after a temporarily refused upload is later accepted and cleaned up.
+
+Unlike terminal resource deletion, this operation establishes that no admission
+ever promised the candidate resource. It does not create an expiry intent or
+erase metadata. Physical names and headers are independently checked, input
+contents are hashed before removal, and funding with execution output names is
+refused. Removal and directory synchronization precede physical refunds. A
+same-process failure retains the exact identity and charge in the storage
+instance, blocks same-name reinstallation, and is rediscoverable by a replacement
+cleanup service even after the file name disappeared. Restart reconstructs
+physical usage behind the existing directory-synchronization barrier.
+
+The produced-input runtime holds the payload-store monitor across both FIN and
+admission, including the already-installed shortcut. Otherwise an in-flight
+installation could become unpinned before its metadata transaction starts and
+be mistaken for abandoned staging. Future durable transport integration must
+preserve that handoff as well; this local runtime change is not wire integration.
+
+`RetentionService` has one authority-owned daemon and one serialized maintenance
+operation. Each call visits at most its configured number of job candidates and
+physical candidates, from 1 through 64. Jobs use finite keyset sweeps; pinned or
+refused jobs do not prevent later entries from being visited. A separate physical
+scan holds at most one directory descriptor charged to the shared handle pool.
+Each pass visits at most the immutable file-policy ceiling. Directory discovery
+is weakly consistent, not a snapshot or a fairness guarantee under arbitrary
+continuous directory mutation; later passes revisit surviving names.
+
+An uncertain orphan removal is retried before advancing that physical pass.
+Repeated orphan failure does not stop job cleanup, but can delay other orphans;
+the service reports a bounded named diagnostic rather than inferring safe
+deletion from damaged metadata. Closing the service stops scheduling without
+interrupting physical I/O. Active maintenance completes before releasing its
+storage attachment and scanner charge. This is bounded scheduling and handle
+accounting, not a measured whole-process memory or hard I/O latency bound.
+
+Regression coverage includes real process deaths at orphan unlink/sync,
+same-process synchronization failures, replacement-service retry, stale discovery
+after legitimate admission and cleanup, resurrection refusal, admission
+handoff, exact refunds, live pins, job-page fairness and service shutdown. The
+103-test focused gate and full 638-test Java suite pass with zero failures,
+errors or skips. Strict six-type doclint, native guard, existing examples and
+draft checks also pass. The stale-hint regression failed against the prior
+implementation and passed after the classification/absence correction. See the
+[orphan and scheduling evidence](../../conformance/results/durable-work-v2-orphan-retention-2026-09-08.txt).
 
 ## Retirement is a different durable transition
 

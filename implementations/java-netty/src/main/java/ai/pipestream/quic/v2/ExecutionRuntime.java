@@ -589,16 +589,18 @@ final class ExecutionRuntime {
                     context.checkedClock,
                     context.gate);
             if (retained.isPresent()) return retained;
-            if (inputs.find(context.identity, header).isPresent())
-              return Optional.of(
-                  sessions.admitProduced(
-                      context.access,
-                      context.lease,
-                      context.localProducerLimits,
-                      inputs,
-                      header,
-                      context.checkedClock,
-                      context.gate));
+            synchronized (inputs) {
+              if (inputs.find(context.identity, header).isPresent())
+                return Optional.of(
+                    sessions.admitProduced(
+                        context.access,
+                        context.lease,
+                        context.localProducerLimits,
+                        inputs,
+                        header,
+                        context.checkedClock,
+                        context.gate));
+            }
             context.producingInput =
                 inputs.begin(
                     context.identity,
@@ -641,18 +643,22 @@ final class ExecutionRuntime {
           () -> {
             if (context.producingInput == null)
               throw error(ProtocolError.Code.CONFLICT, "no produced input is open");
-            context.producingInput.finish(System.nanoTime());
-            InputHeader header = context.producingHeader;
-            context.producingInput = null;
-            context.producingHeader = null;
-            return sessions.admitProduced(
-                context.access,
-                context.lease,
-                context.localProducerLimits,
-                inputs,
-                header,
-                context.checkedClock,
-                context.gate);
+            // The receiver returns its physical pin at FIN. Keep installation and metadata
+            // admission indivisible to the orphan collector through that handoff.
+            synchronized (inputs) {
+              context.producingInput.finish(System.nanoTime());
+              InputHeader header = context.producingHeader;
+              context.producingInput = null;
+              context.producingHeader = null;
+              return sessions.admitProduced(
+                  context.access,
+                  context.lease,
+                  context.localProducerLimits,
+                  inputs,
+                  header,
+                  context.checkedClock,
+                  context.gate);
+            }
           });
     }
   }

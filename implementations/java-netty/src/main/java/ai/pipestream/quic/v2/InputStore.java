@@ -10,6 +10,7 @@ import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.channels.OverlappingFileLockException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -17,10 +18,14 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -83,6 +88,44 @@ final class InputStore implements AutoCloseable {
    */
   record Usage(long bytes, int files, int handles) {}
 
+  /**
+   * Installation-derived candidate, never deletion authority or an arbitrary filesystem path.
+   *
+   * @param installation exact payload-store identity
+   * @param funding true for output funding, false for an input object
+   * @param context owner-qualified session
+   * @param header original immutable upload intent
+   * @param reference derived bounded filename
+   */
+  record OrphanCandidate(
+      UUID installation,
+      boolean funding,
+      Commitments.Context context,
+      InputHeader header,
+      String reference) {
+    /** Validate structure; the owning store rechecks name derivation before use. */
+    OrphanCandidate {
+      Objects.requireNonNull(installation);
+      Objects.requireNonNull(context);
+      Objects.requireNonNull(header);
+      Objects.requireNonNull(reference);
+    }
+  }
+
+  /**
+   * Bounded physical discovery observations, not a snapshot or proof of reference absence.
+   *
+   * @param candidates checked names still present when examined
+   * @param examined directory entries visited, including ones concurrently removed
+   * @param done this finite directory pass ended or exhausted its captured visit allowance
+   */
+  record OrphanPage(List<OrphanCandidate> candidates, int examined, boolean done) {
+    /** Keep immutable bounded observations. */
+    OrphanPage {
+      candidates = List.copyOf(candidates);
+    }
+  }
+
   /** Package-local observation points for actual filesystem interruption tests. */
   enum Phase {
     /** Staging bytes and header were synchronized. */
@@ -131,6 +174,10 @@ final class InputStore implements AutoCloseable {
     OUTPUT_FUNDING_REMOVED,
     /** Funding removal is synchronized, before physical quota refund. */
     OUTPUT_FUNDING_SYNCED,
+    /** One verified unadmitted resource was unlinked before directory synchronization. */
+    ORPHAN_REMOVED,
+    /** Orphan removal is synchronized before physical quota refund. */
+    ORPHAN_SYNCED,
     /** Recovery completed its retained-file audit. */
     RECOVERY_AUDITED,
     /** Recovered input and funding absence is synchronized before capacity becomes usable. */
@@ -171,8 +218,14 @@ final class InputStore implements AutoCloseable {
   private final Map<Path, Long> inputRemovals = new HashMap<>();
   // Preserve prepaid output charges across a same-process interrupted funding removal.
   private final Map<Path, Funding> outputRemovals = new HashMap<>();
+
+  private record OrphanCharge(OrphanCandidate candidate, long bytes, int files) {}
+
+  private final Map<Path, OrphanCharge> orphanRemovals = new LinkedHashMap<>();
+  private OrphanScan orphanScan;
   private boolean closed;
   private Object resultService;
+  private Object retentionService;
 
   private InputStore(
       Path root,
@@ -467,6 +520,8 @@ final class InputStore implements AutoCloseable {
       throws IOException {
     ensureOpen();
     Envelope envelope = envelope(context, header);
+    if (orphanRemovals.containsKey(objectPath(envelope)))
+      throw new ProtocolError(ProtocolError.Code.CONFLICT, "input orphan cleanup is incomplete");
     if (header.parameters().input().length() > limits.objectBytes())
       throw ProtocolError.limit("input exceeds local object ceiling");
     ObjectStream.Payload verifier =
@@ -550,6 +605,8 @@ final class InputStore implements AutoCloseable {
    */
   synchronized Reservation reserveOutputs(Commitments.Context context, InputHeader header)
       throws IOException {
+    if (orphanRemovals.containsKey(fundingPath(envelope(context, header))))
+      throw new ProtocolError(ProtocolError.Code.CONFLICT, "funding orphan cleanup is incomplete");
     Optional<Reservation> existing = findReservation(context, header);
     if (existing.isPresent()) return existing.get();
     Envelope expected = envelope(context, header);
@@ -711,6 +768,30 @@ final class InputStore implements AutoCloseable {
   synchronized void releaseResults(Object service) {
     if (resultService != service) throw new IllegalStateException("foreign result service");
     resultService = null;
+  }
+
+  /**
+   * Claim the one cleanup service that can outlive individual transport connections.
+   *
+   * @param service local maintenance identity
+   * @throws IOException closed installation
+   */
+  synchronized void claimRetention(Object service) throws IOException {
+    ensureOpen();
+    Objects.requireNonNull(service);
+    if (retentionService != null)
+      throw new IllegalStateException("retention service already attached");
+    retentionService = service;
+  }
+
+  /**
+   * Release maintenance ownership only after its active operation and physical scan stop.
+   *
+   * @param service exact registered identity
+   */
+  synchronized void releaseRetention(Object service) {
+    if (retentionService != service) throw new IllegalStateException("foreign retention service");
+    retentionService = null;
   }
 
   /**
@@ -890,6 +971,198 @@ final class InputStore implements AutoCloseable {
     Funding charged = outputRemovals.remove(target);
     if (charged != null) release(charged.chargedBytes(), charged.chargedFiles());
     return true;
+  }
+
+  /**
+   * Start one bounded-memory physical directory pass, charged to the shared handle pool. The
+   * lifetime entry allowance is captured from the immutable file policy, so new installations
+   * cannot extend a pass indefinitely. This is weakly consistent discovery, not a file snapshot;
+   * every candidate requires a fresh paired-metadata reference check before removal.
+   *
+   * @return exclusively attached scanner that must be closed
+   * @throws IOException closed store or directory failure
+   */
+  synchronized OrphanScan scanOrphans() throws IOException {
+    ensureOpen();
+    if (orphanScan != null)
+      throw new ProtocolError(ProtocolError.Code.CONFLICT, "orphan scanner already attached");
+    pin();
+    orphanScan = new OrphanScan();
+    return orphanScan;
+  }
+
+  /**
+   * Rediscover the oldest uncertain removal even when its physical name is already absent. Charges
+   * belong to this installation, not to a particular maintenance service. The returned identity is
+   * only a hint and must undergo the usual paired metadata and liveness checks.
+   *
+   * @return oldest pending candidate, or null when no synchronized refund is outstanding
+   * @throws IOException closed installation
+   */
+  synchronized OrphanCandidate pendingOrphan() throws IOException {
+    ensureOpen();
+    Iterator<OrphanCharge> pending = orphanRemovals.values().iterator();
+    return pending.hasNext() ? pending.next().candidate() : null;
+  }
+
+  /** One charged, incrementally visited pair of physical namespaces. */
+  final class OrphanScan implements AutoCloseable {
+    private long remaining = limits.files();
+    private int namespace;
+    private DirectoryStream<Path> directory;
+    private Iterator<Path> entries;
+    private boolean ended;
+
+    private OrphanScan() {}
+
+    /**
+     * Visit a bounded number of names without materializing the directory or reading payloads.
+     *
+     * @param limit maximum examined entries, one through 64
+     * @return checked candidates and finite-pass completion state
+     * @throws IOException closed scan, corrupt metadata or directory failure
+     */
+    OrphanPage nextPage(int limit) throws IOException {
+      Checks.range(limit, 1, 64);
+      synchronized (InputStore.this) {
+        ensureOpen();
+        if (ended) throw new IOException("orphan scanner is closed");
+        List<OrphanCandidate> candidates = new ArrayList<>(limit);
+        int examined = 0;
+        while (examined < limit && remaining > 0 && namespace < 2) {
+          if (directory == null) {
+            directory =
+                Files.newDirectoryStream(root.resolve(namespace == 0 ? "objects" : "reservations"));
+            entries = directory.iterator();
+          }
+          if (!entries.hasNext()) {
+            directory.close();
+            directory = null;
+            entries = null;
+            namespace++;
+            continue;
+          }
+          Path path = entries.next();
+          examined++;
+          remaining--;
+          if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) continue;
+          boolean funding = namespace == 1;
+          Envelope envelope =
+              funding
+                  ? inspectFunding(path, null).envelope()
+                  : inspect(path, null, false).envelope();
+          OrphanCandidate candidate =
+              new OrphanCandidate(
+                  identity,
+                  funding,
+                  envelope.context(),
+                  envelope.header(),
+                  path.getFileName().toString());
+          orphanPath(candidate);
+          candidates.add(candidate);
+        }
+        boolean done = remaining == 0 || namespace == 2;
+        if (done) close();
+        return new OrphanPage(candidates, examined, done);
+      }
+    }
+
+    /**
+     * Close the actual directory cursor before returning its shared handle charge.
+     *
+     * @throws IOException uncertain directory close; the charge remains until a successful retry
+     */
+    @Override
+    public void close() throws IOException {
+      synchronized (InputStore.this) {
+        if (ended) return;
+        if (directory != null) directory.close();
+        directory = null;
+        entries = null;
+        ended = true;
+        orphanScan = null;
+        unpinOutput();
+      }
+    }
+  }
+
+  /**
+   * Revalidate installation and name derivation without assuming a resource remains present.
+   *
+   * @param candidate previously discovered identity
+   * @throws IOException foreign installation or contradictory filename
+   */
+  synchronized void verifyOrphanCandidate(OrphanCandidate candidate) throws IOException {
+    ensureOpen();
+    orphanPath(candidate);
+  }
+
+  /**
+   * Check a stale discovery hint after authoritative terminal cleanup completed. Absence is
+   * accepted only after the caller audits the job's retained release evidence; a resurrected
+   * resource or uncertain physical charge is corruption, not another orphan to delete.
+   *
+   * @param candidate exact identity from an earlier physical discovery
+   * @throws IOException present or unobservable resource, pending charge or surviving outputs
+   */
+  synchronized void verifyReleasedCandidate(OrphanCandidate candidate) throws IOException {
+    ensureOpen();
+    Path path = orphanPath(candidate);
+    if (!Files.notExists(path, LinkOption.NOFOLLOW_LINKS)
+        || orphanRemovals.containsKey(path)
+        || inputRemovals.containsKey(path)
+        || outputRemovals.containsKey(path))
+      throw corrupt("completed release retains an orphan candidate resource or charge");
+    if (candidate.funding()) outputs.verifyUnadmitted(candidate.reference(), candidate.header());
+  }
+
+  /**
+   * Remove a resource only after a paired writer transaction proves it was never admitted.
+   * Input/reception and output pins must have been excluded under this same monitor. Repeated calls
+   * finish pending synchronized accounting rather than inferring a refund from absence.
+   *
+   * @param candidate exact unreferenced resource
+   * @return true if an existing or pending physical charge was released
+   * @throws IOException malformed storage, execution outputs or incomplete synchronization
+   */
+  synchronized boolean reclaimOrphan(OrphanCandidate candidate) throws IOException {
+    ensureOpen();
+    Path path = orphanPath(candidate);
+    if (inputInUse(candidate.context(), candidate.header())
+        || outputInUse(candidate.context(), candidate.header()))
+      throw corrupt("orphan removal attempted with live physical ownership");
+    Envelope expected = envelope(candidate.context(), candidate.header());
+    if (candidate.funding()) outputs.verifyUnadmitted(candidate.reference(), candidate.header());
+    if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
+      OrphanCharge charged;
+      if (candidate.funding()) {
+        Funding retained = inspectFunding(path, expected);
+        charged = new OrphanCharge(candidate, retained.chargedBytes(), retained.chargedFiles());
+      } else {
+        Inspected retained = inspect(path, expected, true);
+        charged = new OrphanCharge(candidate, retained.size(), 1);
+      }
+      OrphanCharge pending = orphanRemovals.putIfAbsent(path, charged);
+      if (pending != null && !pending.equals(charged))
+        throw corrupt("pending orphan removal changed identity or charge");
+      Files.delete(path);
+      reached(Phase.ORPHAN_REMOVED);
+    }
+    sync(path.getParent());
+    reached(Phase.ORPHAN_SYNCED);
+    OrphanCharge charged = orphanRemovals.remove(path);
+    if (charged != null) release(charged.bytes(), charged.files());
+    return charged != null;
+  }
+
+  private Path orphanPath(OrphanCandidate candidate) throws IOException {
+    Objects.requireNonNull(candidate);
+    if (!identity.equals(candidate.installation())) throw corrupt("foreign orphan installation");
+    Envelope expected = envelope(candidate.context(), candidate.header());
+    Path path = candidate.funding() ? fundingPath(expected) : objectPath(expected);
+    if (!path.getFileName().toString().equals(candidate.reference()))
+      throw corrupt("orphan filename contradicts retained identity");
+    return path;
   }
 
   /**
@@ -1348,6 +1621,7 @@ final class InputStore implements AutoCloseable {
   public synchronized void close() throws IOException {
     if (closed) return;
     if (resultService != null) throw new IOException("V2 result service still attached");
+    if (retentionService != null) throw new IOException("V2 retention service still attached");
     if (handles != 0) throw new IOException("V2 input store still has active handles");
     lock.release();
     lockChannel.close();

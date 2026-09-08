@@ -2485,6 +2485,45 @@ The verification record is
   actual disk/network I/O and failure-time cleanup separately. A heap gate is
   not an RSS claim and file length is not allocated filesystem blocks.
 
+### Java orphan and automatic-retention coverage
+
+The local orphan/scheduler increment maps the following tests to V2-STORE and
+V2-TIME. Its complete verification record belongs in the execution record; these
+are not cross-language transport tests.
+
+- `OrphanStoreTest`: exact known-session/declaration/admission proof, missing
+  admitted-job corruption, unsafe clock refusal, live input readers and duplicate
+  receivers, independent input/funding release, and same-process synchronization
+  failure with same-name installation refusal until retry.
+- `OrphanStoreRecoveryTest`: real child-JVM death at input and funding unlink and
+  synchronization boundaries. Reopen checks exact reconstructed byte/file usage,
+  preserved declared-but-unadmitted state, no phantom job, repeated absence,
+  removal of the other resource, and final empty-store reopen.
+- `OrphanScanTest`: bounded entry pages, one scanner and its shared handle charge,
+  finite discovery with later installation, exact candidate identity, foreign
+  installation and altered-name refusal, and idempotent physical cursor close.
+- `RetentionServiceTest`: timer-driven cleanup without foreground calls,
+  page-size-one job progress past a pinned predecessor, named unsafe-clock
+  failure, preserved accepted work alongside orphan removal, exact physical
+  charges across service replacement after an interrupted refund, exclusive
+  attachment, and shutdown while actual synchronized cleanup is paused.
+- `OrphanRetainedReleaseTest`: a saved discovery hint becomes absent after
+  verified terminal cleanup, while resurrection of the exact refunded input or
+  funding remains a corruption refusal with its physical charge preserved.
+- The service's stale-hint regression temporarily refuses orphan cleanup under
+  unsafe time, then admits and settles the same upload. Restored safe time must
+  allow its legitimate job cleanup and later independent orphan cleanup without
+  repeatedly refusing the stale hint.
+- `ProducedInputOrphanRaceTest`: a real produced child pauses after FIN and before
+  admission's initial authorization check. A concurrent reaper must block on the
+  handoff monitor, then observe the committed admission. The test verifies the
+  child receipt, exact retained bytes and parent waiting-for-children state.
+
+Finite directory passes are weakly consistent discovery, not a snapshot or proof
+of fairness during arbitrary directory mutation. These checks establish neither
+whole-process resource measurements nor session retirement. The independent
+two-direction failure driver and workload gates below remain mandatory.
+
 ## Cross-language and workload gates
 
 The independent Rust process driver must run Rust-to-Java and Java-to-Rust

@@ -2682,6 +2682,89 @@ final class SessionStore {
     }
   }
 
+  /**
+   * Reconcile one discovered resource using current metadata, never file age or an inferred missing
+   * job. Known declared membership, admission receipts and any competing admitted job must agree.
+   * Unknown or partially retiring sessions are refused, not treated as orphans. The caller must
+   * keep upload completion and admission under the input-store monitor when performing them as one
+   * live handoff; otherwise a never-admitted upload is only staging.
+   *
+   * @param inputs exclusively paired installation
+   * @param candidate checked physical discovery hint
+   * @param clock trusted UTC source checked before destructive work
+   * @return retained, physically pinned, released or already absent
+   * @throws IOException contradictory files or synchronization failure
+   * @throws SQLException missing/contradictory admitted evidence or database failure
+   */
+  OrphanStore.Result reclaimOrphan(
+      InputStore inputs, InputStore.OrphanCandidate candidate, AdmissionStore.Clock clock)
+      throws IOException, SQLException {
+    Objects.requireNonNull(inputs);
+    Objects.requireNonNull(candidate);
+    AdmissionStore.Clock checkedClock = AdmissionStore.checkedClock(clock);
+    synchronized (inputs) {
+      inputs.verifyAuthority(identity);
+      inputs.verifyOrphanCandidate(candidate);
+      if (!DATABASE_OPERATIONS.tryAcquire())
+        throw ProtocolError.limit("V2 database operation capacity");
+      try (Connection connection = database.connect();
+          var statement = connection.createStatement()) {
+        statement.execute("BEGIN IMMEDIATE");
+        boolean committed = false;
+        try {
+          Metadata metadata = metadata(connection);
+          if (!inputs.identity().equals(metadata.inputs()))
+            throw corrupt("orphan input storage pairing differs");
+          Retained retained = retained(connection, candidate.context().generation());
+          if (retained == null)
+            throw error(ProtocolError.Code.NOT_FOUND, "orphan candidate lacks a retained session");
+          if (retained.retiring())
+            throw error(
+                ProtocolError.Code.EXPIRED, "orphan candidate belongs to a retiring session");
+          Binding binding = retained.binding();
+          Commitments.Context context =
+              new Commitments.Context(binding.authority(), binding.owner(), binding.generation());
+          if (!context.equals(candidate.context()))
+            throw corrupt("orphan candidate contradicts retained owner or authority");
+          OrphanStore.Result result;
+          OrphanStore.Reference reference =
+              OrphanStore.reference(connection, config, binding, candidate);
+          if (reference == OrphanStore.Reference.LIVE) {
+            result = OrphanStore.Result.RETAINED;
+          } else if (reference == OrphanStore.Reference.RELEASED) {
+            inputs.verifyReleasedCandidate(candidate);
+            result = OrphanStore.Result.ABSENT;
+          } else if (inputs.inputInUse(context, candidate.header())
+              || inputs.outputInUse(context, candidate.header())) {
+            result = OrphanStore.Result.PINNED;
+          } else {
+            inputs.verifyAuthority(identity);
+            long at = AdmissionStore.now(connection, binding.authority(), checkedClock);
+            boolean removed = inputs.reclaimOrphan(candidate);
+            inputs.verifyAuthority(identity);
+            AdmissionStore.remember(connection, config, binding.authority(), at);
+            result = removed ? OrphanStore.Result.RELEASED : OrphanStore.Result.ABSENT;
+          }
+          statement.execute("COMMIT");
+          committed = true;
+          return result;
+        } catch (IOException | SQLException | RuntimeException | Error failure) {
+          if (!committed) rollback(connection, failure);
+          throw failure;
+        }
+      } catch (SQLException failure) {
+        if ((failure.getErrorCode() & 255) == 13) {
+          ProtocolError refusal = ProtocolError.limit("SQLite file capacity exhausted");
+          refusal.initCause(failure);
+          throw refusal;
+        }
+        throw failure;
+      } finally {
+        DATABASE_OPERATIONS.release();
+      }
+    }
+  }
+
   private void bootstrap(boolean initialize) throws SQLException {
     try (Connection connection = database.connect();
         var statement = connection.createStatement()) {

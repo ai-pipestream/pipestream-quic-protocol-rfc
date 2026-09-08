@@ -1,0 +1,127 @@
+Java V2 orphan reconciliation and automatic retention, 2026-09-08
+
+Base: 869d0925e55e19c490cbdfbc0aede27dbb14555f
+Branch: feat/durable-work-results-v2
+
+Implemented scope
+  Independent Java local maintenance: known-session, declared-work orphan
+  reconciliation; bounded physical discovery; automatic terminal input/output
+  cleanup; exact physical pins; service shutdown and retry ownership. No wire
+  schema or private database format change. No Java durable endpoint claim.
+
+  OrphanStore checks member/job/receipt identity in a paired writer snapshot.
+  Missing admitted metadata is corruption, not deletion authority. Input body
+  hashes and exact storage names are checked before unreferenced deletion.
+  Funding with execution outputs refuses. Unlink and directory synchronization
+  precede refunds. Same-process uncertain charges survive service replacement
+  and block same-name installation until retry. Restart reconstructs usage
+  behind the existing startup directory-synchronization barriers.
+
+  RetentionService visits at most 1..64 configured job and physical candidates
+  per call. Jobs use finite keyset sweeps; physical discovery uses one charged
+  directory handle and at most the immutable file-policy entry ceiling per
+  weakly consistent pass. Failed orphan retries can delay later orphans but do
+  not stop job cleanup. Stop does not interrupt physical I/O or accepted work.
+
+  Produced input FIN and admission, including reuse of installed input, share
+  the payload-store monitor so cleanup cannot enter the unpinned handoff gap.
+  Cached hints distinguish live admission, no admission, and checked completed
+  release. A completed release requires physical absence and no uncertain
+  charge; resurrected files remain corruption, never newly deletable orphans.
+
+Review and initial verification corrections
+  Initial test compilation did not run tests: an in-progress race assertion
+  called operation() on Records.Input, and strict javac flagged explicit close
+  of a try-with-resources variable. The assertion now compares the actual typed
+  input and reads exact stored bytes; explicit close/await assertions remain.
+  Log: /tmp/pipestream-orphan-focused-20260908T132339-0400.log
+  The wrapper exit was not retained; compile diagnostics establish failure.
+
+  Initial 99-test execution: 97 passed, one assertion failure, one error.
+  Log: /tmp/pipestream-orphan-final-focus-20260908T132534-0400.log
+  Fixture publication moved UTC backwards between jobs; corrected to one safe
+  fixed time without changing the watermark guard. Parent after completed
+  expansion correctly expects WAITING_CHILDREN while its admitted child stays
+  ACTIVE. No production guard or refusal was weakened for these fixture fixes.
+
+  Corrected 99-test focus: direct exit 0.
+  /tmp/pipestream-orphan-corrected-focus-20260908T132749-0400.log
+  Intermediate full suite: 634 tests, zero failures/errors/skips, direct exit 0.
+  /tmp/pipestream-orphan-full-install-20260908T132810-0400.log
+  These preceded the additional stale-hint regression and are not final counts.
+
+Observed production defect: stale orphan retry after legitimate cleanup
+  A clock-unsafe orphan retry remained pending while the same upload was later
+  admitted, executed and reclaimed. Treating its refunded job reference as
+  corruption caused a new refusal every maintenance call, blocking later
+  independent orphan cleanup.
+
+  RED: RetentionServiceTest#staleUnsafeOrphanCandidateBecomesAbsentAfterTheSameInputIsLegitimatelySettled
+  /tmp/pipestream-orphan-stale-candidate-red-20260908T133202-0400.log
+  Direct exit 1; one test, one assertion failure: expected 1 refusal, got 5.
+  No production change or weakened assertion preceded this failure.
+
+  The fix classifies audited completed releases separately and verifies actual
+  absence. A first green attempt failed test compilation on a missing Path
+  import in the additional resurrection tests; that import was corrected.
+  /tmp/pipestream-orphan-stale-candidate-green-20260908T133316-0400.log
+  Direct exit 1, before behavioral test execution.
+
+  GREEN, unchanged stale-hint regression: direct exit 0, one test passed.
+  /tmp/pipestream-orphan-stale-candidate-green2-20260908T133432-0400.log
+
+Final focused verification
+  Maven sealed-interop profile, existing isolated Maven repository:
+  /work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+  /tmp/pipestream-orphan-expanded-focus-20260908T133445-0400.log
+  Direct exit 0; 103 tests, zero failures/errors/skips; native guard 1/1.
+  Includes real process deaths at both input/funding orphan unlink and sync,
+  replacement service without reopening storage, active maintenance shutdown,
+  live pins, stale hints, resurrection refusal and produced admission/reaper race.
+
+Final full verification
+  mvn -f implementations/java-netty/pom.xml -Psealed-interop
+    -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository install
+  /tmp/pipestream-orphan-final-full-install-20260908T133503-0400.log
+  Direct exit 0, completed 2026-09-08 13:38:41 EDT.
+  638 tests, zero failures/errors/skips, independently counted from all 101
+  fresh Surefire XML reports. Report modification times UTC:
+    first 2026-09-08 17:36:56.616182119
+    last  2026-09-08 17:38:40.470793482
+  Native SQLite file-growth guard also passed 1/1 in this command.
+  Java release 21 compilation on GraalCE JDK 25.1.3; native Linux storage guard.
+
+Strict documentation and example gates
+  Six changed/new production types, javadoc -package -Xdoclint:all -Werror:
+  /tmp/pipestream-orphan-final-doclint-20260908T133854-0400.log
+  Direct exit 0; no warnings/errors. An earlier pre-final doclint log lost its
+  wrapper exit and was explicitly rerun; it is not substituted for this gate.
+  Existing-profile external examples:
+  /tmp/pipestream-orphan-final-examples-20260908T133901-0400.log
+  Java -> Rust; Rust recovery -> C++; scatter -> Java/Rust/C++ all passed.
+  These existing examples do not establish Java V2 durable interoperability.
+  ./build.sh core 05 draft
+  /tmp/pipestream-orphan-final-draft-20260908T133912-0400.log
+  Direct exit 0; idnits reports zero errors/flaws/warnings and the existing FIPS
+  down-reference comment. No Internet-Draft submission was performed.
+
+SHA-256, final production sources under implementations/java-netty/src/main/java/ai/pipestream/quic/v2
+  ExecutionRuntime.java b20629f99d873dc2b938a75a7195bf7a9428c954c4e088677afdb7951f38e2cc
+  InputStore.java 37c12001f08d3d8b0976d4f828c12e21977a37bc34d51cb2de96fbcc12560f99
+  OutputStore.java 69e041e719646e60f3c59c8bfd18f484fed7e1d4e2ce3f421285882c75c42d21
+  SessionStore.java 068313c204156cb26fbb4f793ae4add3cc62ac618967184239a38fa17f62233a
+  OrphanStore.java dace43126edc2f85cb40eb7acded44bbcbfd2c2896fa10bcc817227af833ac44
+  RetentionService.java 98204ab59571006f24aee5113f4b2e23eb2e9420e442c3f7030afde451ffe696
+  Shaded JAR 8de209e585082487880c45a7cff406c2832d88e00071c840bf791b5efd2797b4
+
+Scope limits
+  Unknown or retiring sessions refuse orphan deletion. Durable session retirement
+  remains unimplemented in Java. Directory discovery is not a snapshot or an
+  arbitrary-mutation fairness proof. Existing child-closure audits retain their
+  session-wide streaming cost. Page/handle bounds are not measured process RSS,
+  device-space, actual I/O or hard latency bounds. Java durable transport/client,
+  the independent two-direction failure/resource driver, and the complete external
+  workload/equivalent authenticated durable streaming-gRPC comparison remain.
+  No Rust production change or new full Rust suite run in this increment.
+  This is local verification, not hosted CI, main merge, deployment, IETF
+  submission, task-2 acceptance or completion of the full goal.

@@ -2804,3 +2804,41 @@ and paired metadata/liveness proof. Java durable endpoint/client integration,
 the neutral two-direction failure/resource driver, and the original external
 workload/equivalent streaming-gRPC comparison remain required. This checkpoint
 does not complete task 2 or the overall goal.
+
+### Java orphan reconciliation and automatic retention checkpoint, 2026-09-08
+
+Java now has an authority-owned automatic cleanup service with finite job pages
+and bounded physical discovery. Known-session orphan checks verify declaration,
+job and receipt identity under the same ownership/writer discipline as admission.
+Missing admitted metadata refuses; input hashes, exact names, physical pins and
+funding/output consistency are checked before removal. Unlink and directory
+synchronization precede refunds. Uncertain charges survive replacing the cleanup
+service on the same open storage instance, even when the file is already absent.
+Produced-input FIN and admission now share one storage-monitor handoff.
+
+Review identified another ordering defect: after a temporarily refused orphan
+candidate was legitimately admitted and then reclaimed, retrying its stale hint
+was incorrectly treated as corruption and blocked later orphan cleanup. A real
+regression failed with five refusals instead of the single original clock refusal.
+The corrected three-way reference check accepts audited completed release only
+with verified physical absence; resurrected input/funding still refuses without
+deletion or refund. The unchanged regression then passed.
+
+The expanded 103-test focused gate and full unfiltered 638-test Java suite pass
+with zero failures/errors/skips, independently counted from 101 fresh XML reports.
+Coverage includes four real JVM orphan unlink/sync crash boundaries, same-process
+failure and service replacement, active-maintenance shutdown, job-page fairness,
+live pins, stale discovery, resurrection refusal, and the concurrent produced
+input/admission handoff. Strict six-type doclint, native SQLite guard, all three
+existing-profile examples and draft/idnits pass. Initial fixture/compile failures,
+red/green evidence, exact logs, exits and source/artifact hashes are recorded in
+the [orphan and scheduling evidence](../../conformance/results/durable-work-v2-orphan-retention-2026-09-08.txt).
+
+Next implement checked durable session retirement, including partial-deletion
+recovery, authorization precedence, retained high-water marks and delayed-upload
+fencing. Physical directory discovery remains weakly consistent; page limits do
+not establish process-memory or hard latency bounds, and child-closure auditing
+retains its existing session-wide cost. Java durable endpoint/client integration,
+the neutral two-direction failure/resource driver and the original external
+workload/equivalent authenticated durable streaming-gRPC baseline remain required.
+This is local implementation progress, not task-2 or full-goal acceptance.

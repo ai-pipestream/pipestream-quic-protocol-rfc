@@ -490,6 +490,23 @@ final class OutputStore {
   }
 
   /**
+   * Require an unadmitted funding record to have no output names or physical execution owners.
+   *
+   * @param reference exact funding filename
+   * @param header unadmitted input identity
+   * @throws IOException impossible execution bytes without an admitted job
+   */
+  void verifyUnadmitted(String reference, InputHeader header) throws IOException {
+    if (inUse(reference)) throw corrupt("unadmitted funding has physical output owners");
+    for (int index = 0; index < header.parameters().outputs().count(); index++) {
+      String slot = name(reference, index);
+      if (Files.exists(installed(slot), LinkOption.NOFOLLOW_LINKS)
+          || Files.exists(pending(slot), LinkOption.NOFOLLOW_LINKS))
+        throw corrupt("unadmitted funding has execution output names");
+    }
+  }
+
+  /**
    * Audit at most the admitted output slots against terminal metadata. Missing names require
    * previously checked durable release evidence; every remaining name still requires its funding,
    * exact admitted identity, producing fence and, for success, manifest descriptor.
