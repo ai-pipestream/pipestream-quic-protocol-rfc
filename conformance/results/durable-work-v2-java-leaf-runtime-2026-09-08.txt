@@ -1,0 +1,212 @@
+Java V2 leaf callback execution and orphan slot reclamation, 2026-09-08
+Base: a6bcc322a04684eb5ec650d047c7b6e089143f74
+Implementation and tests: the commit containing this evidence file.
+Log filenames are labels, not independently verified completion timestamps.
+
+Implemented scope
+  ExecutionRuntime invokes exact registered leaf application code after a durable
+  worker claim and outside metadata transactions. The callback streams actual
+  admitted input and funded output through a thread-confined context. Success uses
+  the exact immutable publication transaction, not a fabricated result descriptor.
+  Registered contract, mode and restart-safety policy must match admission. Unknown
+  and branch callbacks are refused rather than silently converted.
+
+  One host-owned runner enforces bounded physical callbacks globally and per owner,
+  with no waiting queue. Before invocation it obtains an input reader and reserves
+  a dedicated output-writer handle for nonzero output budgets. Sequential output
+  writers borrow that credit without another handle charge. Readers cannot spend
+  that reservation. Setup capacity refusal invokes no callback and does not turn
+  transient dispatch pressure into a terminal computation failure.
+
+  Every callback I/O operation checks current owner/application permission, attempt,
+  durable local lease, ancestor exclusion and original execution deadline. The
+  check and physical operation share the input monitor with replacement claims.
+  Arbitrary callback code runs outside the monitor and must cooperate; there is no
+  promise of forced preemption or exactly-once external effects. Captured contexts
+  cannot issue I/O from another thread or after invocation.
+
+  The process monotonic interval is checked around policy/clock callbacks and in
+  committing authorization gates. Renewal adds process time only when the durable
+  expiry actually advances; a frozen trusted UTC value cannot repeatedly restart
+  the local interval. Current checks remain independent of the presenting TLS
+  credential lifetime. Callback errors are frozen before choosing the outcome.
+
+  Swallowed output-budget and interface errors prevent success. A requested success
+  with unfinished output is FAILED/INTEGRITY_ERROR. Explicit retryable or failed
+  outcomes may leave unpublished partial staging without having their disposition
+  silently changed. Persistence failures or lost authority do not fabricate a new
+  computation outcome. Generic application exceptions do not disclose their text.
+
+  A newly committed CURRENT EXECUTING claim provides the durable deletion-eligibility
+  evidence for strictly older (attempt, local lease) orphan output slots. The
+  trusted low-level reclaim API does not itself confer that authority. All target
+  identities, funding geometry and installed digests are validated before unlink.
+  Same/future/foreign identities are preserved and refused. Per-funding physical
+  readers, writers and reserved writer credits block reclamation. Unrelated funded
+  objects are not blocked by those pins. Both namespaces are synchronized before
+  reuse; no byte/name allowance is refunded and no published output is inferred
+  reclaimable from absence. Terminal success cannot receive a replacement claim.
+  Reclaim scans the two shared namespaces, retaining at most 512 target descriptors
+  and hashing at most that job's funded installed payload bytes. The resource
+  fixture does not establish constant-time discovery or many-job throughput.
+
+  Physical cleanup retries idempotent closes at most twice. Confirmed descriptor
+  closure allows the invocation permit to return even when directory cleanup
+  reported an error; a persistently uncertain descriptor stays conservatively
+  charged. Dirty namespaces and original funding remain independently accounted.
+
+  No storage-format, wire-grammar, dependency, native or Rust code changes. Java
+  still advertises Core only. This runner is not the background durable-job
+  discovery scheduler, a branch runtime, explicit retry implementation, result-read
+  service or activated durable-profile endpoint. Full cancellation/revocation,
+  closure writing, retention/reconciliation and cross-language failure-driver
+  coverage remain required, as does the original external workload/equivalent
+  authenticated durable streaming-gRPC comparison. The goal is not complete.
+
+Environment
+  Repository: /work/main/pipestream-ai/dev-tools/pipestream-quic-protocol-rfc
+  Maven cache: /work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+  Maven 3.9.16; GraalVM Java 25.0.3; Java source release 21.
+  Existing SQLite JDBC 3.53.4.0/native 3.53.4 and Netty QUIC
+  4.2.17.Final-pipestream.3 artifacts reused.
+
+Review and intermediate verification
+  The initial compile exposed numeric Diagnostic code/enum mismatches, corrected
+  to explicit code.value()/Code.from conversions without changing refusal meaning.
+  Strict doclint initially required four missing main getter/factory descriptions;
+  descriptions were matched to their actual signatures, not suppressed.
+
+  Early runtime focus session 21050 exited 1:
+    /tmp/pipestream-execution-runtime-focused-20260908T045050.log
+  The 64 MiB resource callback passed. The failing fixture expected
+  IllegalStateException for a captured closed context, but the API returns the
+  deliberate named CONFLICT refusal. That oracle was corrected to exact CONFLICT.
+
+  Intermediate runtime/reclaim focus session 84141 exited 1:
+    /tmp/pipestream-execution-runtime-reclaim-focused-20260908T050030.log
+  Runtime tests passed; the foreign physical installation fixture incorrectly
+  expected ProtocolError instead of InputStore's IOException ownership refusal.
+  These were fixture corrections, not claims of red production regressions.
+
+  Production review separately found and corrected resource/clock cases: an
+  invocation-permit leak after confirmed physical close, unchecked gate errors
+  that could be swallowed, frozen-UTC renewal resetting process time, callback
+  error/outcome races, partial output overriding explicit retryable disposition,
+  and missing output-writer handle reservation before dispatch. Focused tests must
+  demonstrate the intended boundary; a pass count alone does not prove coverage.
+
+  Test review corrected boundary placement rather than weakening refusals. The
+  stale-worker fixture shares an advancing UTC source so CLOCK_UNSAFE cannot mask
+  the intended stale-lease CONFLICT. The one-shot unchecked policy error is armed
+  inside the callback, not during its earlier claim/description checks. The
+  per-owner fixture uses each owner's actual allocated generation and tests the
+  per-owner ceiling before filling the independent global slot. The cleanup fault
+  fixture supplies both required handles so it reaches the post-close failure,
+  rather than failing earlier during dispatch reservation.
+
+  The reclamation crash fixture creates real admission and committed replacement
+  ownership. A hardlink to the exact old installed object reconstructs the valid
+  post-link/pre-staging-unlink image after opening the test store; creating it
+  before open would let ordinary startup cleanup erase the intended boundary.
+  This is a physical fault image, not fabricated success, membership or ownership.
+  Its four halt points are OUTPUT_RECLAIM_AUDITED, OUTPUT_RECLAIM_PENDING_REMOVED,
+  OUTPUT_RECLAIM_INSTALLED_REMOVED and OUTPUT_RECLAIM_SYNCED. Recovery must preserve
+  the original funded byte/name totals, ACTIVE/no manifest, wire attempt 1 and the
+  committed second local lease before an eventual third lease publishes fresh bytes.
+
+Focused gate
+  Command from repository root:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository '-Dtest=ExecutionRuntime*,OutputStoreReclaim*' test
+  Session 52895 exited 1: 18 tests, 0 failures, 1 error.
+    /tmp/pipestream-runtime-reclaim-focused-20260908T051900.log
+  Actual Maven finish 2026-09-08 05:21:57 EDT. The remaining error was Bob's
+  InputHeader retaining generation 1 after its context had correctly moved to the
+  returned generation. The fixture now carries the actual binding throughout;
+  production refused the contradictory header as designed.
+
+  Final focused session 89053 exited 0: 18 tests, 0 failures, 0 errors, 0 skipped,
+  plus native sqlite-file-growth 1/1.
+    /tmp/pipestream-runtime-reclaim-focused-rerun-20260908T052300.log
+  Actual Maven finish 2026-09-08 05:22:59 EDT; elapsed 14.939 seconds.
+  Suite counts: ExecutionRuntimeTest 10, ExecutionRuntimeCreditTest 3,
+  ExecutionRuntimeResourceTest 1, OutputStoreReclaimTest 3,
+  OutputStoreReclaimRecoveryTest 1 (four independently halted child JVMs).
+
+  Resource child raw observation:
+    bytes=67108864
+    digest=eeeea29f19e99097aff081c75a85115c7732967d5824201ddba0d2d1f6202723
+    buffer=8192 heapMax=33554432 observedRssKiB=160272 elapsedMillis=9275
+  The callback uses a reused 8192-byte buffer; after publication the paired stores
+  reopen and the complete actual result is re-read and hashed. Elapsed time covers
+  the whole fixture, including setup, admission and recovery, not copy throughput
+  alone. RSS is an observed process sample, not a peak or a 32 MiB total-process
+  claim. The larger process RSS is explicitly separate from the managed heap.
+
+Frozen source SHA-256
+  Production under implementations/java-netty/src/main/java/ai/pipestream/quic/v2:
+    ExecutionRuntime.java 7a637217b969421b02501a754ae5b46b15a628ce273fc19268a87898cc459e7d
+    ExecutionStore.java f7488208524350235062b8034598cc0f9d509bbdc9f2f0142722f2c7b44e59e5
+    InputStore.java 9ebd7847e49fcf24f3acda1977b356610ff8a9a89c594d41d3e56c6bbcb7e73d
+    OutputStore.java 6a0e15eb8461da7edeb64057345e67178f04f34f3dc9e178b627a3775723dbac
+    SessionStore.java 8e4ff111f9135f597eacab69326a7810fc482287ed358ec87eadee600d772dab
+  Tests under implementations/java-netty/src/test/java/ai/pipestream/quic/v2:
+    ExecutionRuntimeTest.java 35491b11dbbf32103eee6c01007c739ef545bfd8f4e86aef392b523e1a2adaba
+    ExecutionRuntimeCreditTest.java 3d47ef220ce1857c4d9110f5706f0fa55b983a2262a9f16ea2318b686a2e2a12
+    ExecutionRuntimeResourceTest.java 4f3c6651b418ad48c3a12ba0e97ba68dd6afde3d63ed8b85071effb8cb374462
+    OutputStoreReclaimTest.java d98899918af661394e4006344c9a63cad3f9c3f4edd47f8ec375cc9c77bc42ac
+    OutputStoreReclaimRecoveryTest.java b43fbb32f137ae9ba14c7987d71549b7ad3787db6bb7c94ce6a960b0fa81fdcb
+
+Final unfiltered and artifact gates
+  Command from repository root, no selectors or skip flags:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository install
+  Session 94017 exited 0:
+    /tmp/pipestream-runtime-reclaim-full-install-20260908T052300.log
+  Actual Maven finish 2026-09-08 05:26:58 EDT; elapsed 3:42.
+  Independently summed fresh JUnit XML: 61 suites, 473 tests, 0 failures,
+  0 errors, 0 skipped. Report mtimes span 05:25:14.294 through 05:26:56.668 EDT.
+  Native sqlite-file-growth: 1/1 passed. This unfiltered gate includes admission,
+  worker, closure, publication, physical storage, Core transport and sealed
+  interoperability regressions, not just the five new test classes.
+
+  Runtime resource observation from the unfiltered run:
+    bytes=67108864
+    digest=eeeea29f19e99097aff081c75a85115c7732967d5824201ddba0d2d1f6202723
+    buffer=8192 heapMax=33554432 observedRssKiB=160888 elapsedMillis=9629
+  Existing funded publication-capacity regression also remained green:
+    renewals=50 before=90672 saturated=712816 after=741632
+    payloadBytes=16 manifestEncodedBytes=2710
+
+  Fresh-JAR examples from implementations/rust-quinn:
+    target/release/pipestream-conformance examples
+  Session 50122 exited 0:
+    /tmp/pipestream-runtime-reclaim-examples-20260908T052700.log
+    PASS Java source -> Rust/Quinn server
+    PASS Rust source recovery -> C++/MsQuic server
+    PASS Rust source scatter -> Java, Rust, and C++ servers
+  These existing examples are regression evidence, not full V2 result delivery
+  interoperability or the original goal's unfinished comparative workload.
+
+  Strict package Javadoc session 86789 exited 0 with -Xdoclint:all -Werror for
+  ExecutionRuntime, ExecutionStore, SessionStore, InputStore and OutputStore:
+    /tmp/pipestream-runtime-reclaim-doclint-rerun-20260908T052900.log
+  Final log is empty; output is target/runtime-reclaim-apidocs. A preceding
+  classpath-command attempt used a repository-relative -f path from the module
+  directory and failed before doclint; its corrected classpath command is recorded
+  in /tmp/pipestream-runtime-reclaim-doclint-classpath-rerun-20260908T052900.log.
+
+  Draft command from repository root:
+    ./build.sh core 05 draft
+  Session 84218 exited 0:
+    /tmp/pipestream-runtime-draft-20260908T050500.log
+  idnits 2.17.1: 0 errors, 0 flaws, 0 warnings, one possible FIPS-180-4 downref
+  comment. XML generation reports explicit RFC9308 settings overriding canned
+  bibxml. Local build only; no draft submission or IETF status is implied.
+
+  Final artifact SHA-256:
+    Java normal JAR 48872aed8b5c55309a55445f79d54bb5fa2322f2036ae8ad28df12481d4f2893
+    Java shaded JAR 1bcef568d3afb0726ea158e6bcc12e3d847b6f33009268790dbfdd751bb90ef5
+    Unchanged pipestream-quinn 7cff7d80f68adcc0e1badf09d0f0e145aa35791fd14e51ab19daa51f33c73810
+    Unchanged pipestream-conformance 73934f2119aba98eacecd7b632eb9f63c6e282e84483b2fc250f65a8507adba8
+    draft-krickert-pipestream-05.xml 398871e937a25f2c1e5ae330a509bef341e4c5cb468fc9499d8d64db6f14562a
+    draft-krickert-pipestream-05.txt 3d7bb96f66b88361a9e78385d3c0d8a409170c96c76e1035326f77ce7a29cd07
+    draft-krickert-pipestream-05.html 64d0f153a3581cbb27162a97d95dc8f707bdc3836e928a649860b82d4ce35403

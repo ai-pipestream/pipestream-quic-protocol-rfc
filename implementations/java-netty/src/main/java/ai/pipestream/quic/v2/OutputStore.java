@@ -15,8 +15,10 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -25,9 +27,10 @@ import java.util.UUID;
 
 /**
  * Streaming immutable output files within {@link InputStore}'s prepaid allowance and handle pool.
- * Installation is not publication, and local worker identity is not authorization. An installed
- * slot is never recycled here, including for a replacement lease; reclamation requires a separate
- * authoritative liveness proof. Blocking calls belong outside transport event loops.
+ * Installation is not publication, and local worker identity is not authorization. Recycling an
+ * unpublished slot requires a newly committed current replacement lease and no physical output
+ * handles for that funding. No durable allowance is refunded. Blocking calls belong outside
+ * transport event loops.
  */
 final class OutputStore {
   private static final byte[] MAGIC = {'P', 'S', 'J', 'V', '2', 'O', '0', '1'};
@@ -82,12 +85,19 @@ final class OutputStore {
 
   private record Ticket(String funding, Metadata metadata) {}
 
+  private record ReclaimTarget(Path path, Metadata metadata, boolean installed) {}
+
   private final InputStore owner;
   private final Path root;
   // Only live writers, bounded by the owner's <=128 shared handles. Installed state stays on disk.
   private final Map<String, Ticket> active = new HashMap<>();
+  // Readers and writers, including failed-close pins, share the owner's <=128 handle bound.
+  private final Map<String, Integer> pins = new HashMap<>();
+  // One already charged sequential-writer credit per funding, also bounded by shared handles.
+  private final Map<String, WriterCredit> credits = new HashMap<>();
   // Guarded by owner. Visible staging removal alone does not make the slot durably reusable.
   private boolean pendingSyncRequired;
+  private boolean outputsSyncRequired;
 
   /**
    * Attach to the one owning input/funding installation; creates no independent resource pool.
@@ -130,7 +140,7 @@ final class OutputStore {
     Checks.label(contentType);
     if (index >= budget.count() || length > objectLimit || objectLimit > budget.totalBytes())
       throw ProtocolError.limit("output index or length exceeds funded budget");
-    if (pendingSyncRequired) syncPending();
+    syncDirtyNamespaces();
     Identity identity = identity(context, header, lease, index);
     Metadata metadata =
         new Metadata(identity, length, contentType, objectLimit, new Digest(new byte[32]));
@@ -150,13 +160,21 @@ final class OutputStore {
     if (promised > budget.totalBytes() || length > budget.totalBytes() - promised)
       throw ProtocolError.limit("output aggregate exceeds funded byte budget");
     byte[] encoded = encode(metadata);
-    owner.pinOutput();
+    WriterCredit credit = credits.get(funding.reference());
+    if (credit == null) pin(funding.reference());
+    else credit.borrow(identity);
     FileChannel channel = null;
     try {
       channel = create(staging);
       writeHeader(channel, encoded);
       active.put(reference, new Ticket(funding.reference(), metadata));
-      return new Writer(reference, channel, metadata, PREFIX + CHECKSUM + encoded.length);
+      return new Writer(
+          reference,
+          funding.reference(),
+          credit,
+          channel,
+          metadata,
+          PREFIX + CHECKSUM + encoded.length);
     } catch (IOException | RuntimeException failure) {
       boolean closed = true;
       if (channel != null) {
@@ -178,9 +196,81 @@ final class OutputStore {
       }
       if (closed) {
         active.remove(reference);
-        owner.unpinOutput();
+        returnWriter(funding.reference(), credit);
       }
       throw failure;
+    }
+  }
+
+  /**
+   * Hold one output writer handle for the exact callback before application code begins.
+   *
+   * @param context retained session
+   * @param header exact admitted input
+   * @param lease authority-checked current worker
+   * @return one exclusively owned credit, not execution permission
+   * @throws IOException corrupt funding or closed storage
+   */
+  WriterCredit reserveWriter(
+      Commitments.Context context, InputHeader header, ExecutionStore.Lease lease)
+      throws IOException {
+    InputStore.Reservation funding = funding(context, header, lease);
+    if (header.parameters().outputs().count() == 0)
+      throw ProtocolError.limit("zero-output admission has no writer credit");
+    if (credits.containsKey(funding.reference()))
+      throw conflict("output funding already has a writer credit");
+    for (Ticket ticket : active.values())
+      if (ticket.funding().equals(funding.reference()))
+        throw conflict("output funding already has an active writer");
+    WriterCredit credit =
+        new WriterCredit(funding.reference(), identity(context, header, lease, 0));
+    pin(funding.reference());
+    credits.put(funding.reference(), credit);
+    return credit;
+  }
+
+  /** One reserved physical writer handle, reusable sequentially only by its exact worker. */
+  final class WriterCredit implements AutoCloseable {
+    private final String funding;
+    private final Identity worker;
+    private boolean borrowed;
+    private boolean closed;
+
+    private WriterCredit(String funding, Identity worker) {
+      this.funding = funding;
+      this.worker = worker;
+    }
+
+    private void borrow(Identity identity) {
+      requireWorker(worker, identity);
+      if (closed || borrowed || credits.get(funding) != this)
+        throw conflict("output writer credit is closed or already borrowed");
+      borrowed = true;
+    }
+
+    private void returned() {
+      if (closed || !borrowed || credits.get(funding) != this)
+        throw new IllegalStateException("output writer credit accounting differs");
+      borrowed = false;
+    }
+
+    /**
+     * Release the charged handle only after its physical writer has closed. Repeated close is safe;
+     * a borrowed credit stays pinned and refuses release rather than inventing available capacity.
+     *
+     * @throws IOException a writer still owns the reserved handle
+     */
+    @Override
+    public void close() throws IOException {
+      synchronized (owner) {
+        if (closed) return;
+        if (borrowed) throw new IOException("output writer credit still has a physical writer");
+        if (credits.get(funding) != this)
+          throw new IllegalStateException("output writer credit ownership differs");
+        unpin(funding);
+        credits.remove(funding);
+        closed = true;
+      }
     }
   }
 
@@ -231,7 +321,7 @@ final class OutputStore {
     Checks.range(count, 0, 256);
     if (count > header.parameters().outputs().count())
       throw ProtocolError.limit("published count exceeds admitted output budget");
-    if (pendingSyncRequired) syncPending();
+    syncDirtyNamespaces();
     for (Ticket ticket : active.values())
       if (ticket.funding().equals(funding.reference()))
         throw conflict("output set still has a live physical writer");
@@ -242,9 +332,80 @@ final class OutputStore {
       throw new ProtocolError(ProtocolError.Code.NOT_READY, "output set is incomplete");
   }
 
-  /** One streaming callback output. Close releases a handle, not its admission's funding. */
+  /**
+   * Reclaim older unpublished slots under the caller's just-committed current execution fence. The
+   * authority, not this physical store, proves that fence is current and cannot follow success.
+   * Every target is checked before any unlink, and all funding remains charged across failures.
+   *
+   * @param context exact session identity
+   * @param header admitted input
+   * @param lease newly committed current replacement lease
+   * @throws IOException unexplained storage or synchronization failure
+   */
+  void reclaim(Commitments.Context context, InputHeader header, ExecutionStore.Lease lease)
+      throws IOException {
+    InputStore.Reservation funding = funding(context, header, lease);
+    if (pins.containsKey(funding.reference()))
+      throw conflict("output funding still has a physical reader or writer");
+    syncDirtyNamespaces();
+    Identity current = identity(context, header, lease, 0);
+    List<ReclaimTarget> targets = new ArrayList<>();
+    String prefix = funding.reference().substring(0, 64) + "-";
+    long payloads = 0;
+    Identity prior = null;
+    for (String namespace : new String[] {"outputs", "output-pending"}) {
+      boolean complete = namespace.equals("outputs");
+      try (var entries = Files.newDirectoryStream(root.resolve(namespace))) {
+        for (Path path : entries) {
+          if (!path.getFileName().toString().startsWith(prefix)) continue;
+          Slot slot = parse(path.getFileName().toString());
+          Metadata value =
+              (complete ? inspect(path, null, false) : inspectPending(path)).metadata();
+          validateFunding(value, funding);
+          if (slot.index() != value.identity().index())
+            throw corrupt("orphan filename differs from retained output identity");
+          requireOlder(value.identity(), current);
+          if (prior != null && !sameWorker(prior, value.identity()))
+            throw corrupt("orphan output slots mix producing worker identities");
+          prior = value.identity();
+          Path target = installed(path.getFileName().toString());
+          boolean linked = !complete && Files.exists(target, LinkOption.NOFOLLOW_LINKS);
+          if (linked && !Files.isSameFile(target, path))
+            throw corrupt("orphan staging differs from its installed immutable file");
+          if (complete || !linked) payloads = add(payloads, value.length());
+          if (payloads > header.parameters().outputs().totalBytes())
+            throw corrupt("orphan output lengths exceed admitted byte budget");
+          targets.add(new ReclaimTarget(path, value, complete));
+        }
+      }
+    }
+    // This also validates aggregate physical geometry before hashing any installed payload.
+    auditFunding(funding);
+    for (ReclaimTarget target : targets)
+      if (target.installed()) inspect(target.path(), target.metadata(), true);
+    owner.outputPhase(InputStore.Phase.OUTPUT_RECLAIM_AUDITED);
+    pendingSyncRequired = true;
+    outputsSyncRequired = true;
+    for (ReclaimTarget target : targets) {
+      if (target.installed()) continue;
+      Files.delete(target.path());
+      owner.outputPhase(InputStore.Phase.OUTPUT_RECLAIM_PENDING_REMOVED);
+    }
+    syncPending();
+    for (ReclaimTarget target : targets) {
+      if (!target.installed()) continue;
+      Files.delete(target.path());
+      owner.outputPhase(InputStore.Phase.OUTPUT_RECLAIM_INSTALLED_REMOVED);
+    }
+    syncOutputs();
+    owner.outputPhase(InputStore.Phase.OUTPUT_RECLAIM_SYNCED);
+  }
+
+  /** One streaming output. Close releases its handle or returns its borrowed callback credit. */
   final class Writer implements AutoCloseable {
     private final String reference;
+    private final String funding;
+    private final WriterCredit credit;
     private final FileChannel channel;
     private final Metadata initial;
     private final long offset;
@@ -252,8 +413,16 @@ final class OutputStore {
     private long written;
     private boolean ended;
 
-    private Writer(String reference, FileChannel channel, Metadata initial, long offset) {
+    private Writer(
+        String reference,
+        String funding,
+        WriterCredit credit,
+        FileChannel channel,
+        Metadata initial,
+        long offset) {
       this.reference = reference;
+      this.funding = funding;
+      this.credit = credit;
       this.channel = channel;
       this.initial = initial;
       this.offset = offset;
@@ -377,7 +546,7 @@ final class OutputStore {
           else failure.addSuppressed(cleanup);
         } finally {
           active.remove(reference);
-          owner.unpinOutput();
+          returnWriter(funding, credit);
           ended = true;
         }
       }
@@ -486,8 +655,9 @@ final class OutputStore {
     InputStream openStream() throws IOException {
       synchronized (owner) {
         owner.verifyAuthority(metadata.identity().authority());
-        validateFunding(metadata, owner.outputFunding(parse(reference).funding()));
-        owner.pinOutput();
+        String funding = parse(reference).funding();
+        validateFunding(metadata, owner.outputFunding(funding));
+        pin(funding);
         FileChannel input = null;
         try {
           input =
@@ -495,7 +665,7 @@ final class OutputStore {
                   installed(reference), StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
           Inspected value = inspect(input, metadata, true);
           input.position(value.offset());
-          return new Reader(input, metadata.length());
+          return new Reader(input, metadata.length(), funding);
         } catch (IOException | RuntimeException failure) {
           if (input != null) {
             try {
@@ -505,7 +675,7 @@ final class OutputStore {
             }
           }
           // Do not turn a failed physical close into a reusable shared descriptor allowance.
-          if (input == null || !input.isOpen()) owner.unpinOutput();
+          if (input == null || !input.isOpen()) unpin(funding);
           throw failure;
         }
       }
@@ -514,10 +684,14 @@ final class OutputStore {
 
   private final class Reader extends InputStream {
     private final InputStream input;
+    private final FileChannel channel;
+    private final String funding;
     private long remaining;
     private boolean ended;
 
-    Reader(FileChannel channel, long length) {
+    Reader(FileChannel channel, long length, String funding) {
+      this.channel = channel;
+      this.funding = funding;
       input = Channels.newInputStream(channel);
       remaining = length;
     }
@@ -543,11 +717,21 @@ final class OutputStore {
     @Override
     public synchronized void close() throws IOException {
       if (ended) return;
-      input.close();
+      IOException failure = null;
+      try {
+        input.close();
+      } catch (IOException close) {
+        failure = close;
+      }
+      if (channel.isOpen()) {
+        if (failure != null) throw failure;
+        throw new IOException("output read descriptor remained open");
+      }
       synchronized (owner) {
-        owner.unpinOutput();
+        unpin(funding);
       }
       ended = true;
+      if (failure != null) throw failure;
     }
   }
 
@@ -606,7 +790,7 @@ final class OutputStore {
    * @throws IOException synchronized cleanup failure
    */
   void cleanupPending() throws IOException {
-    if (!active.isEmpty()) throw corrupt("cannot recover staging with active physical writers");
+    if (!pins.isEmpty()) throw corrupt("cannot recover staging with active physical handles");
     pendingSyncRequired = true;
     try (var entries = Files.newDirectoryStream(root.resolve("output-pending"))) {
       for (Path path : entries) {
@@ -617,11 +801,41 @@ final class OutputStore {
     }
     // Also covers a previous process's visible but not durably synchronized last deletion.
     syncPending();
+    syncOutputs();
   }
 
   private void syncPending() throws IOException {
     sync(root.resolve("output-pending"));
     pendingSyncRequired = false;
+  }
+
+  private void syncOutputs() throws IOException {
+    sync(root.resolve("outputs"));
+    outputsSyncRequired = false;
+  }
+
+  private void syncDirtyNamespaces() throws IOException {
+    if (pendingSyncRequired) syncPending();
+    if (outputsSyncRequired) syncOutputs();
+  }
+
+  private void pin(String funding) throws IOException {
+    owner.pinOutput();
+    pins.merge(funding, 1, Integer::sum);
+  }
+
+  private void returnWriter(String funding, WriterCredit credit) {
+    if (credit == null) unpin(funding);
+    else credit.returned();
+  }
+
+  private void unpin(String funding) {
+    Integer count = pins.get(funding);
+    if (count == null || count < 1)
+      throw new IllegalStateException("output funding handle accounting underflow");
+    owner.unpinOutput();
+    if (count == 1) pins.remove(funding);
+    else pins.put(funding, count - 1);
   }
 
   private InputStore.Reservation funding(
@@ -747,6 +961,17 @@ final class OutputStore {
       throw conflict("funded output slot belongs to another worker");
   }
 
+  private static void requireOlder(Identity retained, Identity current) {
+    if (!retained.store().equals(current.store())
+        || !retained.authority().equals(current.authority())
+        || !retained.context().equals(current.context())
+        || !retained.header().equals(current.header()))
+      throw conflict("orphan output belongs to another admission identity");
+    if (retained.attempt() > current.attempt()
+        || retained.attempt() == current.attempt() && retained.lease() >= current.lease())
+      throw conflict("output worker identity is not strictly older than current claim");
+  }
+
   private static String name(String funding, int index) {
     return funding.substring(0, 64) + "-" + index + ".output";
   }
@@ -796,7 +1021,21 @@ final class OutputStore {
     }
   }
 
+  private Inspected inspectPending(Path path) throws IOException {
+    if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
+      throw corrupt("output staging is not a regular file");
+    try (FileChannel input =
+        FileChannel.open(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+      return inspect(input, null, false, true);
+    }
+  }
+
   private Inspected inspect(FileChannel input, Metadata expected, boolean hash) throws IOException {
+    return inspect(input, expected, hash, false);
+  }
+
+  private Inspected inspect(FileChannel input, Metadata expected, boolean hash, boolean partial)
+      throws IOException {
     try {
       ByteBuffer prefix = ByteBuffer.allocate(PREFIX);
       readAll(input, prefix);
@@ -836,7 +1075,8 @@ final class OutputStore {
         throw corrupt("output metadata identity differs");
       long offset = PREFIX + CHECKSUM + (long) count;
       long size = add(offset, metadata.length());
-      if (input.size() != size) throw corrupt("output payload geometry differs");
+      if (partial ? input.size() < offset || input.size() > size : input.size() != size)
+        throw corrupt("output payload geometry differs");
       if (hash) {
         MessageDigest digest = Commitments.sha256();
         ByteBuffer block = ByteBuffer.allocate(BLOCK);
@@ -851,7 +1091,7 @@ final class OutputStore {
         if (!MessageDigest.isEqual(metadata.sha256().bytes(), digest.digest()))
           throw corrupt("retained output digest differs");
       }
-      return new Inspected(metadata, offset, size);
+      return new Inspected(metadata, offset, partial ? input.size() : size);
     } catch (ProtocolError invalid) {
       throw corrupt("invalid retained output", invalid);
     }

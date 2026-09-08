@@ -5,7 +5,7 @@ and `v2.PublicationStore` are the independent Java session, declaration, admissi
 local execution and result-publication transaction layer for Sections 12.3
 through 12.7. They are
 package-private and are not wired into a durable-profile listener. The shipped
-Java endpoint still advertises Core only. The callback runtime, result delivery
+Java endpoint still advertises Core only. Branch execution, result delivery
 and retirement remain to be implemented; storage behavior is not endpoint interoperability.
 
 ## Identity and transaction boundary
@@ -313,10 +313,71 @@ Recovery validates successful manifests against profiles, identity, budgets and
 time promises, and paired-store recovery checks every published descriptor against
 the actual immutable files. It does not re-execute work to repair missing storage.
 Failure before publication leaves charged orphan files, not a visible result.
-The output store currently refuses to recycle an installed slot for another lease
-without authoritative reclamation; it does not silently overwrite that evidence.
-Callback execution, orphan reconciliation, result-read authorization/pins and the
-QUIC delivery adapter remain separate required implementations.
+The output store refuses to recycle an installed slot without authoritative
+reclamation. The leaf callback runner now reclaims strictly older unpublished
+outputs under a newly committed current claim, without releasing their funding.
+Result-read authorization/pins, broader reconciliation and the QUIC delivery
+adapter remain separate required implementations.
+
+## Bounded leaf callback execution
+
+`ExecutionRuntime` invokes real registered application code after a durable claim
+and outside metadata transactions. It is a synchronous runner for host-owned
+worker threads, not a durable-profile listener or background discovery scheduler.
+It accepts exact leaf-only registrations matching the admission registry's label,
+mode and restart-safety contract. Missing callbacks, mismatched contracts and
+branch registrations are refused, not executed through a fallback.
+
+One runner bounds simultaneous physical invocations globally and per retained
+owner across sessions, with no waiting queue. The host must use that runner as its
+shared dispatch boundary; constructing several independent runners is not a
+deployment-wide pool. Invocation slots remain occupied until application code
+returns and its physical input/output handles close. Cleanup makes a bounded
+idempotent close retry: a namespace-sync error does not leak a worker slot once
+physical closure is proven, but persistent uncertainty conservatively retains it.
+Arbitrary callback code is not forcibly preempted. Applications
+must cooperate with current fences and satisfy their explicitly declared safe
+restart contract; multiple invocations do not imply exactly-once external effects.
+
+The callback context is thread-confined, invalid after invocation, and exposes no
+raw file handle. Input reads and output begin/write/finish are bounded incremental
+operations with fresh owner, application, ancestor, attempt, deadline and lease
+checks. The ownership check and physical output action share the input monitor
+with replacement claims, so an old callback cannot recreate a slot after its
+replacement reclaims it. Callback computation itself never holds that monitor.
+Renewal is explicit and cooperative, retains the same wire attempt, and cannot
+extend the original deadline. A monotonic interval also fences each invocation;
+its check participates in the final committing authorization gates, not just the
+check before payload verification.
+
+Before invoking code, the runner acquires its input handle and, for a nonzero
+output budget, a dedicated output-writer handle credit. Sequential output writers
+borrow that same credit; ordinary readers cannot consume it. If these resources
+are unavailable, no callback runs and the committed job remains recoverable,
+not FAILED because of transient dispatch pressure. Byte/name funding remains
+unchanged. Repeated renewal under a frozen trusted UTC sample cannot restart the
+monotonic allowance: only an actual positive durable-expiry delta adds process time.
+
+Success publishes the exact completed set through `succeedExecution`. An unfinished
+output or a swallowed output-budget refusal prevents success. Application
+exceptions become a bounded generic INTERNAL_ERROR failure without disclosing
+exception text; an explicit retryable outcome remains AWAITING_RETRY. Persistence
+failures and lost authority cannot be turned into fabricated successful or failed
+computations. Final publication/failure still uses the current authority checks.
+
+Replacement claims also provide the durable eligibility evidence for recycling
+strictly older `(attempt, local lease)` orphan output slots. Claim and reclamation
+hold the same input monitor. Every candidate identity, allowance and installed
+digest is checked before any unlink. Live output readers or writers for that
+funding refuse reclamation; unrelated funding is not blocked by those pins.
+Pending and installed namespaces are synchronized before reuse, including after
+interrupted cleanup. No funding is refunded and no same/current/future or foreign
+output is inferred to be reclaimable. A terminal success cannot receive a new
+claim, so this path cannot authorize deleting a published result. Corrupt headers
+that cannot establish an old identity remain a refusal, not deletion evidence.
+Reclamation scans the two shared output namespaces and retains at most 512 target
+descriptors, with installed-body verification bounded by that job's funded bytes.
+It is not a constant-time lookup or a demonstrated many-job throughput result.
 
 ## Persistence and resource scope
 
@@ -350,7 +411,8 @@ durably installs bounded immutable bytes, and exact input/database installations
 can be paired explicitly. Storage admission now commits its receipt and funded
 job atomically; the endpoint and executor are not activated by that fact.
 
-The callback runtime, explicit wire-attempt retry, local producer-1 ingress, subtree settlement,
+The background worker scheduler, branch callbacks, explicit wire-attempt retry,
+local producer-1 ingress, subtree settlement,
 results/read pins, retirement/reconciliation,
 durable client observations and authenticated endpoint integration remain
 mandatory. Fixed image credits now protect their specifically bounded writes;

@@ -77,7 +77,7 @@ final class InputStore implements AutoCloseable {
    *
    * @param bytes charged file bytes and funded allowances
    * @param files charged file names and funded allowances
-   * @param handles active receivers and readers
+   * @param handles live or callback-reserved receive, read and write handles
    */
   record Usage(long bytes, int files, int handles) {}
 
@@ -107,6 +107,14 @@ final class InputStore implements AutoCloseable {
     OUTPUT_SYNCED,
     /** The output staging name was removed. */
     OUTPUT_STAGING_REMOVED,
+    /** Every orphan target passed identity, allowance and installed-payload verification. */
+    OUTPUT_RECLAIM_AUDITED,
+    /** One eligible orphan staging name was removed. */
+    OUTPUT_RECLAIM_PENDING_REMOVED,
+    /** One eligible immutable orphan name was removed. */
+    OUTPUT_RECLAIM_INSTALLED_REMOVED,
+    /** Both orphan namespaces were synchronized before their slots became reusable. */
+    OUTPUT_RECLAIM_SYNCED,
     /** Recovery completed its retained-file audit. */
     RECOVERY_AUDITED
   }
@@ -561,8 +569,9 @@ final class InputStore implements AutoCloseable {
 
   /**
    * Start one output using the admission's prepaid byte/name allowance and shared handle pool. The
-   * authority must check current execution ownership before calling this storage primitive.
-   * Existing slots and live physical writers are never recycled for a replacement worker here.
+   * authority must check current execution ownership before calling this storage primitive. This
+   * call never implicitly recycles existing slots; replacement workers require explicit
+   * authority-proven reclamation, and live physical output handles prevent that reclamation.
    *
    * @param context authenticated retained session
    * @param header exact admitted input intent
@@ -585,6 +594,26 @@ final class InputStore implements AutoCloseable {
       throws IOException {
     ensureOpen();
     return outputs.begin(context, header, lease, index, length, contentType, objectLimit);
+  }
+
+  /**
+   * Reserve one physical output-writer handle before invoking an admitted callback. The authority
+   * must first prove current execution ownership; this credit is not authorization. Matching
+   * sequential output writers borrow the same handle, so unrelated reception or readers cannot
+   * spend it. A positive admitted output count is required; bytes and names stay admission-funded.
+   *
+   * @param context exact retained session
+   * @param header immutable admitted input
+   * @param lease current committed worker identity, ignoring renewable expiry observations
+   * @return credit to close after all borrowed writers have physically closed
+   * @throws IOException missing/corrupt funding or closed storage
+   * @throws ProtocolError exhausted shared handles, zero output count or an existing credit/writer
+   */
+  synchronized OutputStore.WriterCredit reserveOutputWriter(
+      Commitments.Context context, InputHeader header, ExecutionStore.Lease lease)
+      throws IOException {
+    ensureOpen();
+    return outputs.reserveWriter(context, header, lease);
   }
 
   /**
@@ -618,6 +647,26 @@ final class InputStore implements AutoCloseable {
       throws IOException {
     ensureOpen();
     outputs.verifyCount(context, header, lease, count);
+  }
+
+  /**
+   * Recycle only unpinned output slots from strictly older execution identities. The authority must
+   * supply its newly committed current EXECUTING job lease, holding this monitor through the claim
+   * commit and this call. A historical lease or inferred absence is not deletion authority; no
+   * successful terminal work may be claimed again. Runtime I/O must continue checking ownership.
+   * Funding remains charged, and no current, future, foreign or published output is reclaimed.
+   *
+   * @param context exact retained session
+   * @param header immutable admitted input
+   * @param currentCommittedLease current durable replacement execution fence, not a credential
+   * @throws IOException corruption or incomplete synchronized deletion
+   * @throws ProtocolError live physical handles or output identity not strictly older
+   */
+  synchronized void reclaimOutputs(
+      Commitments.Context context, InputHeader header, ExecutionStore.Lease currentCommittedLease)
+      throws IOException {
+    ensureOpen();
+    outputs.reclaim(context, header, currentCommittedLease);
   }
 
   /**

@@ -129,8 +129,11 @@ private metadata. Renewing a lease's timestamp does not change that identity.
 Installed objects remain immutable and charged. Pending and installed names fit
 inside the same funded allowance. Recovery audits installed bodies and funding
 before removing exclusively abandoned staging, and does not turn an orphan into
-a successful result. Another lease cannot recycle an installed slot without a
-future authoritative reclamation proof. No funding release is implemented yet.
+a successful result. A newly committed current replacement claim can authorize
+explicit reclamation of strictly older unpublished slots. Live per-funding
+readers/writers prevent that reclamation. All targets are checked before unlink,
+and both namespaces must be synchronized before reuse. Funding stays charged;
+this is slot recycling, not retention expiry or a capacity refund.
 
 The authority's separate `succeedExecution` transaction verifies the exact output
 set before publishing a manifest and terminal success. A local verified file

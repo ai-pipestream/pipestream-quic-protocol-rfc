@@ -853,7 +853,41 @@ final class SessionStore {
     }
   }
 
-  private record ExecutionResult(ExecutionStore.Lease lease, WorkView work) {}
+  /**
+   * Read immutable callback inputs after checking current local ownership.
+   *
+   * @param access current retained owner grant
+   * @param lease committed local worker
+   * @param clock trusted UTC source
+   * @param authorization current application permission
+   * @return admitted parameters, never authority inferred from callback input
+   * @throws SQLException unavailable or inconsistent metadata
+   */
+  ExecutionStore.Details describeExecution(
+      ExecutionStore.Access access,
+      ExecutionStore.Lease lease,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization)
+      throws SQLException {
+    return executeOwned(access, lease, 0, clock, authorization, ExecutionStore.Change.CHECK, null)
+        .details();
+  }
+
+  /**
+   * Inspect the immutable deployment registry without granting execution.
+   *
+   * @return retained application and executor policy
+   */
+  AdmissionStore.ExecutionPolicy executionPolicy() {
+    return config.execution();
+  }
+
+  private record ExecutionResult(
+      ExecutionStore.Lease lease, WorkView work, ExecutionStore.Details details) {
+    ExecutionResult(ExecutionStore.Lease lease, WorkView work) {
+      this(lease, work, null);
+    }
+  }
 
   private ExecutionResult executeOwned(
       ExecutionStore.Access access,
@@ -984,7 +1018,10 @@ final class SessionStore {
         if (write && result.work() != null) checkTerminalInterval(result.work(), committedAt);
         if (write) AdmissionStore.remember(connection, config, binding.authority(), committedAt);
         statement.execute("COMMIT");
-        return result;
+        return new ExecutionResult(
+            result.lease(),
+            result.work(),
+            new ExecutionStore.Details(binding, loaded.stored().record()));
       } catch (IOException | SQLException | RuntimeException failure) {
         rollback(connection, failure);
         throw failure;

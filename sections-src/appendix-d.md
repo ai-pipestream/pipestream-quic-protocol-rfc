@@ -178,8 +178,12 @@ closure counters. Output bytes now stream into immutable storage under the funde
 allowances. Fenced success publication verifies the exact object set and atomically
 commits its manifest and terminal work/job state; paired recovery verifies actual
 published bytes. Unpublished installed files remain charged orphans. This layer is
-not yet a durable-profile listener. Java callback execution, explicit retry,
-producer-1 ingress, orphan/subtree reconciliation, result-read pins and transport,
+not yet a durable-profile listener. A bounded Java leaf runner now invokes actual
+registered callbacks outside metadata transactions and publishes their real outputs.
+It rechecks current execution fences and can reclaim unpinned, strictly older
+unpublished output slots under a durable replacement claim, without refunding
+their funding. Branch callbacks, background scheduling, explicit retry, producer-1
+ingress, broader orphan/subtree reconciliation, result-read pins and transport,
 retirement and full cross-language failure/resource gates remain required.
 
 As of 2026-09-07, the Rust authority library also implements transactional

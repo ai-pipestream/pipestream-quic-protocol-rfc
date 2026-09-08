@@ -90,6 +90,14 @@ final class ExecutionStore {
    */
   record Loaded(DeclarationStore.Entity entity, AdmissionStore.StoredJob stored) {}
 
+  /**
+   * Immutable application inputs from a checked local ownership observation.
+   *
+   * @param binding retained owner/session policy
+   * @param job admitted application, payload and output ceilings
+   */
+  record Details(Binding binding, JobRecord job) {}
+
   private ExecutionStore() {}
 
   /**

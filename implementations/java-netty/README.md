@@ -390,10 +390,18 @@ authorization and original deadlines are checked at commitment. Paired recovery
 checks published bytes against their retained descriptors. Installed but
 unpublished files remain charged orphans, not results or permission to reuse slots.
 
-This remains storage-library behavior. The callback runtime, explicit attempt
-retry, producer-1 expansion, orphan and subtree reconciliation,
+`v2.ExecutionRuntime` now runs exact registered leaf callbacks outside metadata
+transactions, with bounded global/per-owner invocations and incremental input/output
+I/O. It checks current fences on every I/O action and final commit, rejects swallowed
+output errors, and reclaims strictly older unpublished slots only under a current
+durable replacement claim with no live output handles. There is no automatic retry,
+branch fallback, or claim of exactly-once external effects.
+
+This remains authority-library behavior, not an activated durable listener. The
+background worker scheduler, branch callbacks, explicit attempt retry, producer-1
+expansion, broader orphan and subtree reconciliation,
 results/read pins, retirement and durable-profile transport integration remain
-required. A returned local worker lease does not prove a callback ran.
+required. A returned local worker lease alone does not prove a callback ran.
 
 ## Sealed-work library foundation
 
