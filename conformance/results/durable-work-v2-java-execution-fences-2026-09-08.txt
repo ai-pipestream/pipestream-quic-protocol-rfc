@@ -1,0 +1,223 @@
+Java V2 local execution fences and failure settlement, 2026-09-08
+Base: 1705791551afcb12cfc449dfe7d6dc6772f44cd8
+Implementation and tests: the commit containing this result file.
+Log names are labels; actual completion times are recorded separately.
+
+Scope and boundaries
+  The independent Java authority now commits local worker claims, renewals,
+  expired-lease replacements, retryable failures and terminal failures. Internal
+  lease numbers increase on acquisition, not on renewal. Replacement preserves
+  the original wire attempt, input, child allocation, admission time and deadline.
+  A live lease prevents replacement; stale or expired workers cannot renew or
+  publish. Final owner/application checks precede the final UTC sample, which
+  checks the pre-transition lease rather than a newly proposed renewal.
+
+  ExecutionStore.Access is a retained execution-policy gate, not the presenting
+  TLS certificate. SessionStore.expireExecution is owner-independent local
+  maintenance: it needs no caller connection or former execution grant. A new
+  failure requires trusted UTC at or after the original deadline. Existing
+  cancellation/revocation fences retain precedence; parent failure alone does
+  not cancel caller descendants. Already terminal maintenance observations
+  issue no new time promise and may be read with an unsafe clock.
+
+  Claims verify the exact paired input and output-funding files before committing
+  ownership. Ordinary claim/renewal writes preserve settlement credits. A failure
+  consumes one WORK and one JOB image credit. Deadline failure after a retryable
+  failure consumes a second pair; recovery accepts that actual path while keeping
+  four job cleanup writes funded. Terminal failure releases logical executor
+  capacity, never the retained input/output bytes or a physical callback pin.
+  A final UTC sample reaching a newly proposed terminal receipt's expiry refuses
+  CLOCK_UNSAFE and rolls back, rather than publishing already expired evidence.
+
+  ClosureStore verifies retained closure before parent execution and at recovery.
+  Descending scope-ID traversal checks actual parent allocations, exact seals,
+  ordered terminal members, counts/status roots, descendant closure, STRICT
+  success, profiles and timestamp ordering. One invocation visits the session's
+  scopes and members of summarized scopes with indexed lookups and bounded
+  records; it retains at most 63 status hashes, not a recursive subtree map.
+  Repeated calls repeat that scan. This is not constant-time scheduling, a
+  measured large-session throughput result or a whole-process RSS claim.
+
+  No wire grammar or dependency changed. Private database format 5 is unchanged;
+  recovery now recognizes these implemented job transitions in its existing
+  typed images. Java still advertises Core only. This checkpoint implements no
+  callback scheduler, explicit wire-attempt retry, local producer-1 ingress,
+  successful output writer/publication, closure writer, subtree cancellation,
+  result read pins or retirement. Test-installed closure summaries are fixtures,
+  not evidence of an implemented closure writer. The full cross-language V2
+  failure driver and original external workload/equivalent streaming-gRPC
+  comparison remain required; this checkpoint does not complete the goal.
+
+Environment and focused verification
+  Repository: /work/main/pipestream-ai/dev-tools/pipestream-quic-protocol-rfc
+  Maven cache: /work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+  Maven 3.9.16, GraalVM Java 25.0.3, source release 21.
+  SQLite JDBC 3.53.4.0, native SQLite 3.53.4.
+  Netty transport artifacts: 4.2.17.Final-pipestream.3.
+  No dependency, Rust implementation, native source or upstream checkout edits.
+
+  Reproduce the focused selection from the repository root:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -Dtest=ExecutionStoreTest,ExecutionStoreRecoveryTest,ExecutionStorePolicyTest,ExecutionStoreCapacityTest,ExecutionClosureTest,AdmissionStoreTest,AdmissionStoreRecoveryTest,AdmissionCapacityTest,AdmissionPolicyTest test
+  Final focused session 67769, terminal exit 0; 33 tests, 0 failures/errors/skips.
+    /tmp/pipestream-execution-admission-final-focused-rerun-20260908T035647.log
+  Maven finished 2026-09-08 03:56:41 EDT (07:56:41 UTC), elapsed 5.130 seconds.
+  Nine fresh XML reports: 33 testcase nodes, aggregate [33,0,0,0]; UTC report
+  mtimes 07:56:39.901200235 through 07:56:41.626633199.
+  Native sqlite-file-growth passed 1/1 separately.
+
+  Five new classes contribute 15 tests: ExecutionStoreTest (5),
+  ExecutionStoreRecoveryTest (3), ExecutionStorePolicyTest (2),
+  ExecutionStoreCapacityTest (1), ExecutionClosureTest (4).
+  Cases cover all three retained restart-safety contracts, real process death,
+  exact lease/wire-attempt recovery, old-lease expiry during renewal, late
+  authorization withdrawal, trusted time jumps and immutable parent/child
+  obligations. Loop iterations are not inflated into separate JUnit test counts.
+
+Actual crash, regression and capacity oracles
+  ExecutionStoreRecoveryTest starts owned child JVMs and Runtime.halt exits:
+    71: third/final application authorization check, after claim image writes
+        but before database commit; recovery has lease 0 and no lease expiry.
+    72: after claim returns from its commit; recovery retains lease 1 until 1500.
+  Before that lease expires, replacement is NOT_READY. At expiry it becomes
+  lease 2 with wire attempt 1 and the original execution interval unchanged.
+  Child waits and cleanup are bounded; no live cluster process is stopped.
+  These are process interruptions, not power-loss or storage-device tests.
+
+  Recovery-credit regression selector:
+    -Dtest=ExecutionStoreRecoveryTest
+  Red session 92582, terminal exit 1: retryable failure followed by deadline
+  failure spent two image credits, but reopening failed in ExecutionStore.audit
+  with "job lifecycle identity, interval or funding differs". Other cases passed.
+    /tmp/pipestream-execution-store-recovery-red-20260908T033409.log
+  After correcting the recovery minimum to cover the two-settlement path,
+  green session 96262 exited 0 with 3/0/0/0 using the same test source.
+    /tmp/pipestream-execution-store-recovery-green-20260908T033947.log
+
+  Receipt-clock regression selector:
+    -Dtest=ExecutionStorePolicyTest
+  Corrected red session 21261, terminal exit 1: expiry sampled 2000 then the
+  exact proposed receipt expiry 32000; expected CLOCK_UNSAFE but committed.
+    /tmp/pipestream-execution-store-policy-corrected-red-20260908T034221.log
+  The new final-interval gate made session 50572 exit 0 with 2/0/0/0.
+    /tmp/pipestream-execution-store-policy-green-20260908T034558.log
+  Earlier session 35764 used 22001, confusing output retention with receipt
+  retention. That was a flawed fixture, not the production regression evidence.
+  The corrected fixture derives the boundary from the retained receipt policy.
+
+  Closure regression selector:
+    -Dtest=ExecutionClosureTest
+  Red session 95217, terminal exit 1: a checksummed summary claiming success over
+  a still-DECLARED child incorrectly permitted parent claim.
+    /tmp/pipestream-execution-closure-red-20260908T034911.log
+  The final tests also pin the intended rejection to member/status validation,
+  keep closure times inside the durable watermark, use a real failed child and
+  its actual status leaf, and admit a genuine sealed empty summary as a positive
+  control. The empty fixture uses the normative empty status root, not arbitrary
+  bytes; child-header helpers use their supplied mode. Session 97741 exposed
+  those fixture setup defects before correction, not a reason to weaken checks.
+    /tmp/pipestream-execution-admission-final-focused-20260908T035255.log
+  All four corrected cases pass in the final 33-test gate. Another case settles
+  the parent FAILED at 2000, then successfully declares/admits its caller child
+  at 3000 with deadline 4000 while preserving the parent's terminal failure.
+
+  Actual authority-level pinned-WAL gate:
+    -Dtest=ExecutionStoreCapacityTest
+  Hold a real reader snapshot, renew through the authority API until native
+  SQLITE_FULL (code 13) is mapped to LIMIT_EXCEEDED, then commit terminal failure
+  under the still-live lease without releasing that reader. Assertions require
+  exact WORK/JOB credit consumption, retained input/funding and no manifest;
+  release the pin and reopen to verify the same terminal outcome.
+  Session 73899, terminal exit 0; one test, native guard 1/1 separately.
+    /tmp/pipestream-execution-store-capacity-focused-rerun-20260908T034735.log
+  Exact observations, reproduced in the final focused run:
+    WAL limit = 2097152 bytes; shared-memory limit = 65536 bytes
+    successful ordinary renewals = 57
+    WAL before renewals = 74192 bytes
+    saturated ordinary WAL = 778736 bytes
+    WAL after funded terminal settlement = 795192 bytes
+  The post-settlement size is greater than the saturation size and below the
+  configured physical WAL bound. The initial 1 MiB fixture could not fund even
+  admission's combined scope/work/job/fence promises and failed before the
+  intended saturation phase (session 67161). The fixture was changed to 2 MiB;
+  native-full, real-reader, exact-credit and post-settlement-bound assertions
+  were retained and strengthened. No production quota or reservation was relaxed.
+
+  Strict package-level Javadoc, all five changed production types:
+    classpath="implementations/java-netty/target/classes:$(cat implementations/java-netty/target/v2-tls-classpath)"
+    javadoc -quiet -package -Xdoclint:all -Werror -d implementations/java-netty/target/execution-closure-apidocs -classpath "$classpath" -sourcepath implementations/java-netty/src/main/java implementations/java-netty/src/main/java/ai/pipestream/quic/v2/ExecutionStore.java implementations/java-netty/src/main/java/ai/pipestream/quic/v2/ClosureStore.java implementations/java-netty/src/main/java/ai/pipestream/quic/v2/SessionStore.java implementations/java-netty/src/main/java/ai/pipestream/quic/v2/AdmissionStore.java implementations/java-netty/src/main/java/ai/pipestream/quic/v2/DeclarationStore.java
+  Terminal exit 0, empty log:
+    /tmp/pipestream-execution-closure-doclint-20260908T035053.log
+
+  Draft build from repository root: ./build.sh core 05 draft
+  Session 63178, terminal exit 0:
+    /tmp/pipestream-execution-closure-draft-20260908T035104.log
+  idnits 2.17.1: 0 errors/flaws/warnings, 1 FIPS-180-4 downref comment.
+  Existing RFC9308 explicit bibxml override warning remains. This is local draft
+  validation, not a new IETF submission or acceptance.
+
+Full verification and artifact provenance
+  Unfiltered command from repository root, with no test skip flags:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository install
+  Retained session 59574 reached terminal exit 0, BUILD SUCCESS:
+    /tmp/pipestream-execution-closure-full-install-20260908T035733.log
+  Maven finished 2026-09-08 04:01:11 EDT (08:01:11 UTC), elapsed 3:13.
+  Independently parsed all 50 fresh Surefire XML reports: 443 tests and 443
+  testcase nodes, 0 failures, 0 errors, 0 skips. UTC report mtimes range from
+  07:59:51.110337562 to 08:01:09.710706481. Native sqlite-file-growth passed 1/1
+  separately. The full run reproduced the exact 57-renewal WAL observations
+  above. Existing shaded-JAR duplicate resource/module warnings remain; these
+  are not a warning-free packaging or hosted-CI claim.
+
+  Examples command from implementations/rust-quinn, after packaging the new JAR:
+    target/release/pipestream-conformance examples
+  Retained session 81522 reached terminal exit 0:
+    /tmp/pipestream-execution-closure-examples-20260908T040046.log
+  All three existing external examples passed:
+    Java source -> Rust/Quinn server
+    Rust source recovery -> C++/MsQuic server
+    Rust source scatter -> Java, Rust, and C++ servers
+  These existing examples protect the current supported paths. They do not
+  establish the still-required full V2 durable/results cross-language workload.
+
+  SHA-256, verified against the files after full verification:
+    implementations/java-netty/target/pipestream-quic-netty-0.1.0-SNAPSHOT.jar
+      c19cf3dafbd08493fe1c42907bb3c4674431250d2915389d2727029779651583
+    implementations/java-netty/target/pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar
+      f9e3986aa7c60b4b09232e45566188ccfe33e39896211219ae23332b26a5f56a
+    implementations/rust-quinn/target/release/pipestream-quinn (unchanged)
+      7cff7d80f68adcc0e1badf09d0f0e145aa35791fd14e51ab19daa51f33c73810
+    implementations/rust-quinn/target/release/pipestream-conformance (unchanged)
+      73934f2119aba98eacecd7b632eb9f63c6e282e84483b2fc250f65a8507adba8
+    draft-krickert-pipestream-05.xml
+      c15ceb8d568e2dbb80dcb37772c04643ce24063b0e3cb708a2620940bd206b7f
+    draft-krickert-pipestream-05.txt
+      c20d2fd6c72180d5de002f43b98b246ce40b692cf8ae661d010dfdf06abe5ea2
+    draft-krickert-pipestream-05.html
+      521319eb62350263d87e192d1512a20a44761e1b364aa6a6d40ef5572ad2d6a6
+
+  Production files under implementations/java-netty/src/main/java/ai/pipestream/quic/v2:
+    ExecutionStore.java
+      1a82cd13647d3247677a9cc3d4eb19f03714bf569ca529169236423ea0dc7058
+    ClosureStore.java
+      0ab745f8fb0b1de61df051b154fcc40704282fae65d08e7708d98acf14edf954
+    SessionStore.java
+      73a3fb0ff87a0f040f5b137e52f1b0bc365381f6fd3263f3db30af50e07c4d45
+    AdmissionStore.java
+      a25c25c42403cf4d50dd7465f6cf5b44e4afe9d42d36ef6da06dc962d469bbea
+    DeclarationStore.java
+      7b9d79974ad914c931b17e6975f524bf9ca3b66fd233248b44bb2d2e4c5499eb
+  Test files under implementations/java-netty/src/test/java/ai/pipestream/quic/v2:
+    ExecutionStoreTest.java
+      a86f619ca4b50a08b3db545f8c05371acd1ca94a979c790f779b2443b47db53c
+    ExecutionStoreRecoveryTest.java
+      2498bda2265b535f36f904837c6921b2d108d68d19ac41cc6ef95a44e353dea9
+    ExecutionStorePolicyTest.java
+      1f7a72aae73aaf3f31bb9d77ac91c232393a1fb36ccb388bff8d724dee2dad8c
+    ExecutionStoreCapacityTest.java
+      5ae6095c62d5b90328894012abd5763c28c511ef850746faa465592a77dc4ef3
+    ExecutionClosureTest.java
+      683e49e72b7dc0409bb4bc9955bef45786e4851e69e7031206beee6a931641df
+
+  No production, test or draft-source edits followed these final gates. Only
+  this evidence record was completed afterward. Local verification, publication
+  of the branch, hosted CI, deployment and IETF submission are separate states.

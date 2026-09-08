@@ -1,0 +1,480 @@
+package ai.pipestream.quic.v2;
+
+import static ai.pipestream.quic.v2.Messages.*;
+import static ai.pipestream.quic.v2.Records.*;
+
+import java.io.IOException;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.Objects;
+import java.util.UUID;
+
+/**
+ * Durable local worker ownership and failure settlement. These are authority-internal operations,
+ * not peer messages or an execution scheduler. Application callbacks run only after a committed
+ * claim and outside metadata transactions; result publication uses a separate funded file path.
+ */
+final class ExecutionStore {
+  /**
+   * Current execution authorization, independent of a presenting TLS certificate's lifetime.
+   *
+   * @param owner retained principal
+   * @param checkCurrent current execution-policy gate, without application effects
+   */
+  record Access(String owner, Runnable checkCurrent) {
+    /** Validate the local retained-grant gate. */
+    Access {
+      Checks.identity(owner);
+      Objects.requireNonNull(checkCurrent);
+    }
+
+    /** Recheck permission; a prior successful check is not cached authorization. */
+    void check() {
+      checkCurrent.run();
+    }
+  }
+
+  /**
+   * Immutable local worker fence. This is neither wire attempt identity nor a bearer credential.
+   *
+   * @param installation exact authority database installation
+   * @param owner retained owner
+   * @param generation session generation
+   * @param work logical work
+   * @param attempt current wire attempt
+   * @param number durable, strictly increasing local acquisition counter
+   * @param until lease expiry observed when this handle was issued
+   */
+  record Lease(
+      UUID installation,
+      String owner,
+      long generation,
+      WorkKey work,
+      long attempt,
+      long number,
+      long until) {
+    /** Validate bounded local identity; the database still checks every field on use. */
+    Lease {
+      Objects.requireNonNull(installation);
+      Checks.identity(owner);
+      Checks.id(generation);
+      Objects.requireNonNull(work);
+      Checks.id(attempt);
+      Checks.id(number);
+      Checks.id(until);
+    }
+  }
+
+  /** Internal transition selector, never decoded from a peer. */
+  enum Change {
+    /** Acquire a new internal execution generation. */
+    CLAIM,
+    /** Extend current ownership without changing its generation. */
+    RENEW,
+    /** Check ownership before scheduling an application effect. */
+    CHECK,
+    /** Commit a non-retryable application failure. */
+    FAIL,
+    /** Commit an attempt failure requiring explicit caller retry. */
+    RETRYABLE
+  }
+
+  /**
+   * One checked work/job pair, held only within its database transaction.
+   *
+   * @param entity current work state
+   * @param stored current durable job
+   */
+  record Loaded(DeclarationStore.Entity entity, AdmissionStore.StoredJob stored) {}
+
+  private ExecutionStore() {}
+
+  /**
+   * Authorize before inspecting executable state or exposing its time/lease commitments.
+   *
+   * @param connection checked owner transaction
+   * @param config immutable application registry
+   * @param binding retained session
+   * @param work requested work
+   * @param authorization current application permission
+   * @return checked job and work
+   * @throws SQLException inconsistent retained state
+   */
+  static Loaded load(
+      Connection connection,
+      SessionStore.Configuration config,
+      Binding binding,
+      WorkKey work,
+      AdmissionStore.Authorization authorization)
+      throws SQLException {
+    DeclarationStore.Entity entity = DeclarationStore.member(connection, binding, work);
+    AdmissionStore.StoredJob stored = AdmissionStore.job(connection, binding, work);
+    if (stored == null) throw error(ProtocolError.Code.NOT_READY, "work is not admitted");
+    JobRecord job = stored.record();
+    authorization.check(binding, job.input().parameters());
+    if (config.execution().resolve(job.input().parameters()).safety() != job.safety())
+      throw error(ProtocolError.Code.APPLICATION_UNSUPPORTED, "retained restart contract differs");
+    WorkView view = entity.view();
+    if (view.input() == null
+        || view.attempt() != job.attempt()
+        || !view.input().equals(job.input().parameters().input()))
+      throw corrupt("job contradicts admitted work");
+    return new Loaded(entity, stored);
+  }
+
+  /**
+   * Verify admitted input and output funding before a new worker can be scheduled.
+   *
+   * @param inputs already bound, exclusively held input store
+   * @param binding retained owner
+   * @param loaded checked job
+   * @throws IOException missing or corrupt immutable bytes/funding
+   */
+  static void verifyInput(InputStore inputs, Binding binding, Loaded loaded) throws IOException {
+    JobRecord job = loaded.stored().record();
+    Commitments.Context context =
+        new Commitments.Context(binding.authority(), binding.owner(), binding.generation());
+    if (!inputs
+        .find(context, job.input())
+        .orElseThrow(() -> new IOException("execution input missing"))
+        .reference()
+        .equals(job.inputReference())) throw new IOException("execution input differs");
+    if (!inputs
+        .findReservation(context, job.input())
+        .orElseThrow(() -> new IOException("execution funding missing"))
+        .reference()
+        .equals(job.outputReference())) throw new IOException("execution funding differs");
+  }
+
+  /**
+   * Validate execution eligibility without changing stored state.
+   *
+   * @param connection metadata transaction
+   * @param binding retained session
+   * @param loaded checked job
+   * @param lease prior ownership, or null for acquisition
+   * @param change requested transition
+   * @param now safe UTC sample
+   * @throws SQLException corrupt child relationships
+   */
+  static void check(
+      Connection connection, Binding binding, Loaded loaded, Lease lease, Change change, long now)
+      throws SQLException {
+    WorkView view = loaded.entity().view();
+    JobRecord job = loaded.stored().record();
+    eligible(connection, binding, view);
+    if (now >= view.deadline())
+      throw error(ProtocolError.Code.DEADLINE_EXCEEDED, "original execution deadline reached");
+    if (change == Change.CLAIM) {
+      if (job.stage() == JobRecord.Stage.AWAITING_RETRY)
+        throw error(ProtocolError.Code.NOT_READY, "job awaits explicit retry");
+      if (job.leaseUntil() != null && now < job.leaseUntil())
+        throw error(ProtocolError.Code.NOT_READY, "current worker lease remains live");
+      if (job.input().parameters().mode() != 2 || job.expansionComplete())
+        requireChildren(connection, binding, view);
+    } else if (lease == null
+        || job.stage() != JobRecord.Stage.EXECUTING
+        || job.attempt() != lease.attempt()
+        || job.lease() != lease.number()
+        || job.leaseUntil() == null
+        || now >= job.leaseUntil()) {
+      throw error(ProtocolError.Code.CONFLICT, "worker lease is stale or expired");
+    }
+  }
+
+  /**
+   * Apply a checked lease transition using ordinary write capacity, preserving settlement credits.
+   *
+   * @param connection writer transaction
+   * @param config retained storage policy
+   * @param installation database installation identity
+   * @param binding retained session
+   * @param loaded checked current job
+   * @param change acquisition or renewal
+   * @param duration requested local lease duration
+   * @param now safe commit-time sample
+   * @return new observation of durable ownership
+   * @throws SQLException failed atomic image write
+   */
+  static Lease lease(
+      Connection connection,
+      SessionStore.Configuration config,
+      UUID installation,
+      Binding binding,
+      Loaded loaded,
+      Change change,
+      long duration,
+      long now)
+      throws SQLException {
+    JobRecord job = loaded.stored().record();
+    WorkView view = loaded.entity().view();
+    long number = change == Change.CLAIM ? add(job.lease(), 1) : job.lease();
+    // Check overflow before applying the deadline ceiling, never saturate an invalid addition.
+    long until = Math.min(add(now, duration), view.deadline());
+    if (change == Change.RENEW) until = Math.max(until, job.leaseUntil());
+    JobRecord replacement =
+        new JobRecord(
+            job.input(),
+            job.safety(),
+            job.attempt(),
+            number,
+            until,
+            JobRecord.Stage.EXECUTING,
+            job.inputReference(),
+            job.outputReference(),
+            job.objectLimit(),
+            job.inputLive(),
+            job.outputsLive(),
+            job.executorLive(),
+            job.expansionComplete(),
+            0);
+    if (view.state() == State.WAITING_CHILDREN) {
+      WorkView active =
+          new WorkView(
+              view.work(),
+              State.ACTIVE,
+              view.attempt(),
+              view.input(),
+              view.admittedAt(),
+              view.deadline(),
+              null,
+              null,
+              null,
+              view.child(),
+              null,
+              null);
+      replaceWork(connection, config, binding, loaded.entity(), active, false);
+    }
+    replaceJob(connection, config, binding, loaded.stored(), replacement, false);
+    return new Lease(
+        installation,
+        binding.owner(),
+        binding.generation(),
+        view.work(),
+        job.attempt(),
+        number,
+        until);
+  }
+
+  /**
+   * Commit an application attempt failure or authoritative terminal failure from funded images.
+   *
+   * @param connection writer transaction
+   * @param config exact file policy
+   * @param binding retained session
+   * @param loaded checked job/work
+   * @param diagnostic validated bounded explanation
+   * @param retryable whether explicit retry remains possible
+   * @param now safe commit-time sample
+   * @return replacement work view, returned only after outer commit
+   * @throws SQLException atomic image write failure
+   */
+  static WorkView fail(
+      Connection connection,
+      SessionStore.Configuration config,
+      Binding binding,
+      Loaded loaded,
+      Diagnostic diagnostic,
+      boolean retryable,
+      long now)
+      throws SQLException {
+    WorkView view = loaded.entity().view();
+    JobRecord job = loaded.stored().record();
+    WorkView failed =
+        new WorkView(
+            view.work(),
+            retryable ? State.AWAITING_RETRY : State.FAILED,
+            view.attempt(),
+            view.input(),
+            view.admittedAt(),
+            view.deadline(),
+            retryable ? null : now,
+            retryable ? null : add(now, binding.policy().receiptRetention()),
+            null,
+            view.child(),
+            null,
+            diagnostic);
+    JobRecord settled =
+        new JobRecord(
+            job.input(),
+            job.safety(),
+            job.attempt(),
+            job.lease(),
+            null,
+            retryable ? JobRecord.Stage.AWAITING_RETRY : JobRecord.Stage.SETTLED,
+            job.inputReference(),
+            job.outputReference(),
+            job.objectLimit(),
+            job.inputLive(),
+            job.outputsLive(),
+            retryable,
+            job.expansionComplete(),
+            0);
+    replaceWork(connection, config, binding, loaded.entity(), failed, true);
+    replaceJob(connection, config, binding, loaded.stored(), settled, true);
+    return failed;
+  }
+
+  /**
+   * Check terminal and cancellation precedence without treating parent failure as cancellation.
+   *
+   * @param connection metadata transaction
+   * @param binding retained session
+   * @param view requested work
+   * @throws SQLException inconsistent ancestry
+   */
+  static void eligible(Connection connection, Binding binding, WorkView view) throws SQLException {
+    if (view.state().terminal())
+      throw error(ProtocolError.Code.ALREADY_TERMINAL, "logical work is already terminal");
+    if (view.state() == State.CANCELLING)
+      throw error(ProtocolError.Code.CANCELLED, "work cancellation already accepted");
+    AdmissionStore.ancestors(connection, binding, view.work().scope());
+  }
+
+  private static void requireChildren(Connection connection, Binding binding, WorkView view)
+      throws SQLException {
+    if (view.child() == null) return;
+    DeclarationStore.Scope child =
+        DeclarationStore.scope(connection, binding, view.child().scope());
+    if (!view.work().equals(child.parent()) || child.producer() != view.child().producer())
+      throw corrupt("child scope contradicts executing parent");
+    ScopeSummary summary = child.state().summary();
+    if (summary == null)
+      throw error(ProtocolError.Code.NOT_READY, "child scope is not closed successfully");
+    ClosureStore.verify(connection, binding, child.id());
+    if (summary.counts().success() != summary.declared())
+      throw error(ProtocolError.Code.NOT_READY, "child scope is not closed successfully");
+  }
+
+  private static void replaceJob(
+      Connection connection,
+      SessionStore.Configuration config,
+      Binding binding,
+      AdmissionStore.StoredJob stored,
+      JobRecord replacement,
+      boolean spend)
+      throws SQLException {
+    WorkKey work = replacement.input().parameters().work();
+    FixedRecords.replace(
+        connection,
+        config.files(),
+        stored.slot(),
+        FixedRecords.Kind.JOB,
+        FixedRecords.key(
+            binding,
+            FixedRecords.Kind.JOB,
+            work.scope(),
+            work.producer(),
+            work.entity(),
+            replacement.input().operation().bytes()),
+        stored.geometry().revision(),
+        replacement.encode(),
+        spend);
+  }
+
+  private static void replaceWork(
+      Connection connection,
+      SessionStore.Configuration config,
+      Binding binding,
+      DeclarationStore.Entity stored,
+      WorkView replacement,
+      boolean spend)
+      throws SQLException {
+    WorkKey work = replacement.work();
+    FixedRecords.replace(
+        connection,
+        config.files(),
+        stored.slot(),
+        FixedRecords.Kind.WORK,
+        FixedRecords.key(
+            binding,
+            FixedRecords.Kind.WORK,
+            work.scope(),
+            work.producer(),
+            work.entity(),
+            stored.declaration().bytes()),
+        stored.revision(),
+        Wire.encodeRecord(replacement, Wire.MAX_CONTROL_LIMIT),
+        spend);
+  }
+
+  /**
+   * Audit only implemented lifecycle states and the remaining promises they actually fund.
+   *
+   * @param connection recovery snapshot
+   * @param binding retained session
+   * @param entity checked work
+   * @param stored checked job
+   * @param watermark persisted greatest UTC sample
+   * @throws SQLException unsupported state or unfunded/mismatched retained state
+   */
+  static void audit(
+      Connection connection,
+      Binding binding,
+      DeclarationStore.Entity entity,
+      AdmissionStore.StoredJob stored,
+      long watermark)
+      throws SQLException {
+    WorkView view = entity.view();
+    JobRecord job = stored.record();
+    boolean failed = job.stage() == JobRecord.Stage.SETTLED;
+    boolean retry = job.stage() == JobRecord.Stage.AWAITING_RETRY;
+    // A terminal deadline failure can follow AWAITING_RETRY without a new attempt. That path
+    // spends two settlement writes; terminal history does not retain the intermediate diagnostic.
+    int spent = failed ? 2 : retry ? 1 : 0;
+    if (job.attempt() != 1
+        || view.attempt() != job.attempt()
+        || !job.inputLive()
+        || !job.outputsLive()
+        || job.executorLive() == failed
+        || job.releaseIntent() != 0
+        || !view.input().equals(job.input().parameters().input())
+        || job.expansionComplete() != (job.input().parameters().mode() != 2)
+        || entity.geometry().credits() < 4 - spent
+        || stored.geometry().credits() < FixedRecords.JOB_CREDITS - spent
+        || job.leaseUntil() != null
+            && (job.leaseUntil() > view.deadline() || job.leaseUntil() <= view.admittedAt()))
+      throw corrupt("job lifecycle identity, interval or funding differs");
+    boolean valid =
+        switch (job.stage()) {
+          case QUEUED ->
+              job.lease() == 0
+                  && view.state() == State.ACTIVE
+                  && job.input().parameters().mode() != 1;
+          case WAITING_CHILDREN ->
+              job.lease() == 0
+                  && view.state() == State.WAITING_CHILDREN
+                  && job.input().parameters().mode() == 1;
+          case EXECUTING -> job.lease() > 0 && view.state() == State.ACTIVE;
+          case AWAITING_RETRY -> job.lease() > 0 && view.state() == State.AWAITING_RETRY;
+          case SETTLED -> view.state() == State.FAILED;
+        };
+    if (!valid) throw corrupt("unsupported execution lifecycle state");
+    if (job.stage() == JobRecord.Stage.EXECUTING
+        && (job.input().parameters().mode() != 2 || job.expansionComplete())) {
+      try {
+        requireChildren(connection, binding, view);
+      } catch (ProtocolError invalid) {
+        throw new SQLException("V2 execution: worker lacks closed successful children", invalid);
+      }
+    }
+    if (failed
+        && (view.terminalAt() > watermark
+            || view.receiptUntil() != add(view.terminalAt(), binding.policy().receiptRetention())))
+      throw corrupt("terminal receipt interval contradicts clock or policy");
+  }
+
+  private static long add(long left, long right) {
+    if (left < 0 || right < 0 || right > Long.MAX_VALUE - left)
+      throw ProtocolError.limit("execution counter or timestamp exhausted");
+    return left + right;
+  }
+
+  private static ProtocolError error(ProtocolError.Code code, String detail) {
+    return new ProtocolError(code, detail);
+  }
+
+  private static SQLException corrupt(String detail) {
+    return new SQLException("V2 execution: " + detail);
+  }
+}

@@ -1,7 +1,7 @@
 # Java V2 authority storage
 
 `v2.SessionStore`, `v2.DeclarationStore` and `v2.AdmissionStore` are the independent
-Java session, declaration and admission transaction layer for Sections 12.3
+Java session, declaration, admission and local execution transaction layer for Sections 12.3
 through 12.5. They are
 package-private and are not wired into a durable-profile listener. The shipped
 Java endpoint still advertises Core only. Worker execution, results and retirement
@@ -233,6 +233,55 @@ only when the deployment marks that sample trusted; a jump across the proposed
 deadline refuses the admission, never clamps or extends it. This API does not
 establish clock trust, backup freshness or elapsed time across power loss.
 
+## Durable worker ownership and failure settlement
+
+`claimExecution` commits a strictly increasing internal lease number without
+changing the wire attempt, admitted input, child allocation or original deadline.
+A live lease prevents another claim. An expired lease can be replaced only after
+rechecking the same configured restart contract, current execution authorization,
+immutable input and output funding. Reopening a database alone does not invalidate
+a live lease or authorize duplicate concurrent execution. Renewal requires the
+old lease to remain live through the transaction's final checks; it cannot revive
+expired ownership or extend the work's original deadline. Its requested timestamp
+addition is checked before the deadline ceiling is applied.
+
+Execution authorization is a local retained-grant gate, separate from presenting
+TLS credentials. A certificate expiring after admission does not by itself erase
+that grant. Owner and application policy are rechecked before commit, followed by
+a fresh trusted UTC sample checked against the pre-transition lease. Claims and
+renewals use ordinary write capacity, preserving funded settlement credits.
+Callbacks must run outside these transactions and must recheck their fence before
+further effects. These storage methods are not themselves a callback runtime.
+
+`failExecution` atomically changes the work and job images under the current lease.
+A retryable outcome is AWAITING_RETRY, retains executor capacity and requires a
+future explicit retry operation. Terminal failure releases the logical executor
+charge but retains input/output charges. Neither operation grants permission to
+delete bytes held by a callback, reader or dependency. Each consumes one funded
+work-image and job-image write; deadline failure after AWAITING_RETRY consumes a
+second pair, leaving the job's four cleanup writes funded.
+
+`expireExecution` is owner-independent authority maintenance, not a caller RPC.
+It can settle an admitted work item at its deadline even when the former caller
+is disconnected or no longer has an execution grant. It requires safe UTC for a
+new failure; an already terminal observation needs no fresh time promise. An
+accepted cancellation or revocation fence takes precedence and must be reconciled
+through cancellation, not overwritten by FAILED. Parent deadline failure still
+does not cancel independent children.
+
+Terminal timestamps are sampled within the committing transaction after current
+policy checks. A final clock sample reaching the proposed terminal receipt's
+expiry makes that new promise unsafe and refuses CLOCK_UNSAFE with rollback;
+maintenance can try again with stable trusted time. It does not publish a receipt
+whose entire promised interval elapsed during its own transaction. This check
+does not establish the deployment clock's trust or undo external callback effects.
+
+A branch cannot be claimed for rehydration from a membership seal alone: it needs
+a committed successful child closure, verified against actual terminal members,
+descendant commitments and status counts. Closure verification streams retained
+state; it is not constant-time scheduling. The separate closure writer, successful
+result publication and the callback scheduler still need their full implementations.
+
 ## Persistence and resource scope
 
 `BoundedSqlite` shares the Java implementation's existing bounded Linux native
@@ -265,7 +314,7 @@ durably installs bounded immutable bytes, and exact input/database installations
 can be paired explicitly. Storage admission now commits its receipt and funded
 job atomically; the endpoint and executor are not activated by that fact.
 
-Worker leases and attempt fences, local producer-1 ingress, subtree settlement,
+The callback runtime, explicit wire-attempt retry, local producer-1 ingress, subtree settlement,
 results/read pins, retirement/reconciliation,
 durable client observations and authenticated endpoint integration remain
 mandatory. Fixed image credits now protect their specifically bounded writes;

@@ -97,7 +97,13 @@ final class AdmissionStore {
       }
     }
 
-    private Application resolve(AdmitParameters parameters) {
+    /**
+     * Resolve one explicitly configured processing contract.
+     *
+     * @param parameters admitted application intent
+     * @return exact supported contract
+     */
+    Application resolve(AdmitParameters parameters) {
       for (Application application : applications)
         if (application.label().equals(parameters.application())
             && application.modes().contains(parameters.mode())) return application;
@@ -148,7 +154,14 @@ final class AdmissionStore {
   private record Usage(
       long jobs, long ownerJobs, long sessionJobs, long inputBytes, long outputBytes) {}
 
-  private record StoredJob(long slot, FixedRecords.Header geometry, JobRecord record) {}
+  /**
+   * Checked job ownership and fixed-image state within one transaction.
+   *
+   * @param slot owned fixed record
+   * @param geometry retained revision and funding
+   * @param record decoded job
+   */
+  record StoredJob(long slot, FixedRecords.Header geometry, JobRecord record) {}
 
   private AdmissionStore() {}
 
@@ -481,7 +494,16 @@ final class AdmissionStore {
     ancestors(connection, binding, scope);
   }
 
-  private static void remember(
+  /**
+   * Persist a checked UTC watermark without consuming another record's credits.
+   *
+   * @param connection writer transaction
+   * @param config immutable file policy
+   * @param authority clock owner
+   * @param utc trusted nondecreasing time
+   * @throws SQLException corrupt clock or failed write
+   */
+  static void remember(
       Connection connection, SessionStore.Configuration config, String authority, long utc)
       throws SQLException {
     FixedRecords.Snapshot clockImage = clockImage(connection, authority);
@@ -549,8 +571,15 @@ final class AdmissionStore {
     return new ChildScope(id, producer);
   }
 
-  private static void ancestors(Connection connection, Binding binding, long scopeId)
-      throws SQLException {
+  /**
+   * Check actual ancestry and all accepted exclusion fences, not parent deadlines.
+   *
+   * @param connection metadata snapshot
+   * @param binding retained session
+   * @param scopeId scope to check
+   * @throws SQLException contradictory parent metadata
+   */
+  static void ancestors(Connection connection, Binding binding, long scopeId) throws SQLException {
     long remaining = binding.limits().scopes();
     while (true) {
       if (remaining-- == 0) throw corrupt("ancestor chain exceeds scope bound");
@@ -632,8 +661,16 @@ final class AdmissionStore {
     return new StoredJob(slot, image.header(), job);
   }
 
-  private static StoredJob job(Connection connection, Binding binding, WorkKey work)
-      throws SQLException {
+  /**
+   * Read one owned job without scheduling it or changing its lease.
+   *
+   * @param connection metadata snapshot
+   * @param binding retained owner
+   * @param work logical work key
+   * @return checked job, or null before admission
+   * @throws SQLException corrupt retained job
+   */
+  static StoredJob job(Connection connection, Binding binding, WorkKey work) throws SQLException {
     try (var query =
         connection.prepareStatement(
             """
@@ -770,9 +807,7 @@ final class AdmissionStore {
               || responseCapacity(parameters.outputs().count()) > requiredControl
               || entity.geometry().capacity()
                   < Math.max(4096, responseCapacity(parameters.outputs().count()))
-              || stored.geometry().capacity() < FixedRecords.JOB_CAPACITY
-              || entity.geometry().credits() < 4
-              || stored.geometry().credits() < FixedRecords.JOB_CREDITS)
+              || stored.geometry().capacity() < FixedRecords.JOB_CAPACITY)
             throw corrupt("admitted job has unfunded metadata or changed execution contract");
           WorkView view = entity.view();
           if (view.admittedAt() == null || view.admittedAt() > watermark)
@@ -783,24 +818,7 @@ final class AdmissionStore {
           } catch (ProtocolError invalid) {
             throw new SQLException("V2 admission: retained retention promise overflows", invalid);
           }
-          // This store currently creates queued/waiting admissions; lifecycle writers extend these
-          // checks together with their real transitions, rather than accepting unexplained state.
-          if (record.attempt() != 1
-              || record.lease() != 0
-              || record.leaseUntil() != null
-              || !record.inputLive()
-              || !record.outputsLive()
-              || !record.executorLive()
-              || record.releaseIntent() != 0
-              || view.attempt() != 1
-              || !view.input().equals(parameters.input())
-              || view.state() != (parameters.mode() == 1 ? State.WAITING_CHILDREN : State.ACTIVE)
-              || record.stage()
-                  != (parameters.mode() == 1
-                      ? JobRecord.Stage.WAITING_CHILDREN
-                      : JobRecord.Stage.QUEUED)
-              || record.expansionComplete() != (parameters.mode() != 2))
-            throw corrupt("unsupported admission lifecycle state");
+          ExecutionStore.audit(connection, binding, entity, stored, watermark);
           if (parameters.mode() == 0
               ? view.child() != null
               : view.child() == null || view.child().producer() != (parameters.mode() == 1 ? 0 : 1))
@@ -898,8 +916,16 @@ final class AdmissionStore {
     };
   }
 
-  private static long now(Connection connection, String authority, Clock clock)
-      throws SQLException {
+  /**
+   * Check a fresh UTC sample against the retained watermark.
+   *
+   * @param connection metadata snapshot
+   * @param authority clock owner
+   * @param clock trusted local source
+   * @return safe current UTC
+   * @throws SQLException corrupt retained clock
+   */
+  static long now(Connection connection, String authority, Clock clock) throws SQLException {
     Time sample = clock.sample();
     if (sample == null || !sample.trusted() || sample.utcMillis() < 0)
       throw error(ProtocolError.Code.CLOCK_UNSAFE, "trusted UTC unavailable");

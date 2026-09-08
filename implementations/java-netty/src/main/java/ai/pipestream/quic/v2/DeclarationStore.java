@@ -430,12 +430,14 @@ final class DeclarationStore {
     if (count(connection, "ps_v2_entities", binding.generation()) != usage.entities()
         || count(connection, "ps_v2_operations", binding.generation()) != usage.operations())
       throw corrupt("declaration accounting differs from retained rows");
+    long summarized = -1;
     try (var query =
         connection.prepareStatement("SELECT id FROM ps_v2_scopes WHERE generation=? ORDER BY id")) {
       query.setLong(1, binding.generation());
       try (var scopes = query.executeQuery()) {
         while (scopes.next()) {
           Scope scope = scope(connection, binding, scopes.getLong(1));
+          if (scope.state().summary() != null) summarized = scope.id();
           long observed = 0, last = 0;
           try (var members =
               connection.prepareStatement(
@@ -460,6 +462,7 @@ final class DeclarationStore {
         }
       }
     }
+    if (summarized >= 0) ClosureStore.verify(connection, binding, summarized);
     long covered = 0;
     try (var query =
         connection.prepareStatement(

@@ -692,6 +692,330 @@ final class SessionStore {
         });
   }
 
+  /**
+   * Commit a fresh durable worker lease after revalidating the exact paired input and funding. An
+   * expired lease may be replaced without creating a new wire attempt. This method schedules no
+   * callback and exposes no durable-profile endpoint.
+   *
+   * @param access current retained execution grant, not connection credentials
+   * @param generation retained session
+   * @param work logical work
+   * @param inputs exclusively held paired input store
+   * @param leaseMillis positive bounded local ownership duration
+   * @param clock trusted UTC source
+   * @param authorization current application execution policy
+   * @return committed local lease
+   * @throws IOException invalid pairing or missing/corrupt input/funding
+   * @throws SQLException corrupt metadata or failed commit
+   */
+  ExecutionStore.Lease claimExecution(
+      ExecutionStore.Access access,
+      long generation,
+      WorkKey work,
+      InputStore inputs,
+      long leaseMillis,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization)
+      throws IOException, SQLException {
+    synchronized (Objects.requireNonNull(inputs)) {
+      return executionTransaction(
+              access,
+              generation,
+              work,
+              null,
+              inputs,
+              leaseMillis,
+              clock,
+              authorization,
+              ExecutionStore.Change.CLAIM,
+              null)
+          .lease();
+    }
+  }
+
+  /**
+   * Renew still-live ownership without changing its number or the original work deadline.
+   *
+   * @param access current retained execution grant
+   * @param lease original worker fence
+   * @param leaseMillis positive desired duration
+   * @param clock trusted UTC source
+   * @param authorization current application policy
+   * @return committed renewed observation of the same local ownership
+   * @throws SQLException corrupt metadata or failed commit
+   */
+  ExecutionStore.Lease renewExecution(
+      ExecutionStore.Access access,
+      ExecutionStore.Lease lease,
+      long leaseMillis,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization)
+      throws SQLException {
+    return executeOwned(
+            access, lease, leaseMillis, clock, authorization, ExecutionStore.Change.RENEW, null)
+        .lease();
+  }
+
+  /**
+   * Revalidate a worker before scheduling another effect, without manufacturing a new lease.
+   *
+   * @param access current retained execution grant
+   * @param lease worker fence
+   * @param clock trusted UTC source
+   * @param authorization current application policy
+   * @throws SQLException corrupt metadata or failed snapshot
+   */
+  void checkExecution(
+      ExecutionStore.Access access,
+      ExecutionStore.Lease lease,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization)
+      throws SQLException {
+    executeOwned(access, lease, 0, clock, authorization, ExecutionStore.Change.CHECK, null);
+  }
+
+  /**
+   * Atomically publish a fenced failure or retryable attempt outcome from prepaid image credits.
+   * Byte reservations remain charged until separate reference-safe reclamation; failure is not
+   * permission to delete an input or release a still-running physical callback's handles.
+   *
+   * @param access current retained execution grant
+   * @param lease worker fence
+   * @param diagnostic bounded application explanation
+   * @param retryable whether explicit retry is required instead of terminal failure
+   * @param clock trusted UTC source
+   * @param authorization current application policy
+   * @return committed work view
+   * @throws SQLException corrupt metadata or failed atomic settlement
+   */
+  WorkView failExecution(
+      ExecutionStore.Access access,
+      ExecutionStore.Lease lease,
+      Diagnostic diagnostic,
+      boolean retryable,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization)
+      throws SQLException {
+    return executeOwned(
+            access,
+            lease,
+            0,
+            clock,
+            authorization,
+            retryable ? ExecutionStore.Change.RETRYABLE : ExecutionStore.Change.FAIL,
+            Objects.requireNonNull(diagnostic))
+        .work();
+  }
+
+  private record ExecutionResult(ExecutionStore.Lease lease, WorkView work) {}
+
+  private ExecutionResult executeOwned(
+      ExecutionStore.Access access,
+      ExecutionStore.Lease lease,
+      long duration,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization,
+      ExecutionStore.Change change,
+      Diagnostic diagnostic)
+      throws SQLException {
+    Objects.requireNonNull(lease);
+    try {
+      return executionTransaction(
+          access,
+          lease.generation(),
+          lease.work(),
+          lease,
+          null,
+          duration,
+          clock,
+          authorization,
+          change,
+          diagnostic);
+    } catch (IOException impossible) {
+      throw new SQLException(
+          "unexpected filesystem access in metadata-only worker transition", impossible);
+    }
+  }
+
+  private ExecutionResult executionTransaction(
+      ExecutionStore.Access access,
+      long generation,
+      WorkKey work,
+      ExecutionStore.Lease lease,
+      InputStore inputs,
+      long duration,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization,
+      ExecutionStore.Change change,
+      Diagnostic diagnostic)
+      throws IOException, SQLException {
+    Objects.requireNonNull(access).check();
+    Objects.requireNonNull(authorization);
+    Objects.requireNonNull(work);
+    Checks.id(generation);
+    if (change == ExecutionStore.Change.CLAIM || change == ExecutionStore.Change.RENEW)
+      Checks.id(duration);
+    if (lease != null
+        && (!access.owner().equals(lease.owner()) || !identity.equals(lease.installation())))
+      throw error(
+          ProtocolError.Code.UNAUTHORIZED, "worker belongs to another owner or installation");
+    AdmissionStore.Clock checkedClock = AdmissionStore.checkedClock(clock);
+    boolean write = change != ExecutionStore.Change.CHECK;
+    if (!DATABASE_OPERATIONS.tryAcquire())
+      throw ProtocolError.limit("V2 database operation capacity");
+    try (Connection connection = database.connect();
+        var statement = connection.createStatement()) {
+      if (!write) statement.execute("PRAGMA query_only=ON");
+      statement.execute(write ? "BEGIN IMMEDIATE" : "BEGIN");
+      try {
+        access.check();
+        Metadata metadata = metadata(connection);
+        Retained retained = visible(connection, generation, access.owner());
+        Binding binding = retained.binding();
+        ExecutionStore.Loaded loaded =
+            ExecutionStore.load(connection, config, binding, work, authorization);
+        long now = AdmissionStore.now(connection, binding.authority(), checkedClock);
+        ExecutionStore.check(connection, binding, loaded, lease, change, now);
+        if (inputs != null) {
+          inputs.verifyAuthority(identity);
+          if (!inputs.identity().equals(metadata.inputs()))
+            throw corrupt("worker input storage pairing differs");
+          ExecutionStore.verifyInput(inputs, binding, loaded);
+          inputs.verifyAuthority(identity);
+        }
+        // Processing never runs in this transaction. Refresh policy and time after input I/O.
+        authorization.check(binding, loaded.stored().record().input().parameters());
+        now = AdmissionStore.now(connection, binding.authority(), checkedClock);
+        ExecutionStore.check(connection, binding, loaded, lease, change, now);
+        ExecutionResult result;
+        if (change == ExecutionStore.Change.CLAIM || change == ExecutionStore.Change.RENEW) {
+          result =
+              new ExecutionResult(
+                  ExecutionStore.lease(
+                      connection, config, identity, binding, loaded, change, duration, now),
+                  null);
+        } else if (change == ExecutionStore.Change.CHECK) {
+          result = new ExecutionResult(null, loaded.entity().view());
+        } else {
+          result =
+              new ExecutionResult(
+                  null,
+                  ExecutionStore.fail(
+                      connection,
+                      config,
+                      binding,
+                      loaded,
+                      diagnostic,
+                      change == ExecutionStore.Change.RETRYABLE,
+                      now));
+        }
+        // Recheck elapsed storage work against the pre-transition fence, never against a renewal
+        // which could otherwise hide expiry during its own transaction.
+        access.check();
+        authorization.check(binding, loaded.stored().record().input().parameters());
+        long committedAt = AdmissionStore.now(connection, binding.authority(), checkedClock);
+        ExecutionStore.check(connection, binding, loaded, lease, change, committedAt);
+        if (result.lease() != null && committedAt >= result.lease().until())
+          throw error(ProtocolError.Code.CONFLICT, "new worker lease expired before commit");
+        if (write && result.work() != null) checkTerminalInterval(result.work(), committedAt);
+        if (write) AdmissionStore.remember(connection, config, binding.authority(), committedAt);
+        statement.execute("COMMIT");
+        return result;
+      } catch (IOException | SQLException | RuntimeException failure) {
+        rollback(connection, failure);
+        throw failure;
+      }
+    } catch (SQLException failure) {
+      if ((failure.getErrorCode() & 255) == 13) {
+        ProtocolError refusal = ProtocolError.limit("SQLite file capacity exhausted");
+        refusal.initCause(failure);
+        throw refusal;
+      }
+      throw failure;
+    } finally {
+      DATABASE_OPERATIONS.release();
+    }
+  }
+
+  /**
+   * Settle a reached execution deadline as local authority maintenance. This must not depend on the
+   * former caller's certificate or execution grant, and must never be exposed as an anonymous
+   * caller API. Accepted cancellation/revocation fences take precedence over deadline failure.
+   *
+   * @param generation retained session
+   * @param work logical work
+   * @param clock trusted UTC source for a new settlement
+   * @return committed failure, or an unchanged already terminal observation
+   * @throws SQLException corrupt retained state or failed settlement
+   */
+  WorkView expireExecution(long generation, WorkKey work, AdmissionStore.Clock clock)
+      throws SQLException {
+    Checks.id(generation);
+    Objects.requireNonNull(work);
+    AdmissionStore.Clock checkedClock = AdmissionStore.checkedClock(clock);
+    if (!DATABASE_OPERATIONS.tryAcquire())
+      throw ProtocolError.limit("V2 database operation capacity");
+    try (Connection connection = database.connect();
+        var statement = connection.createStatement()) {
+      statement.execute("BEGIN IMMEDIATE");
+      try {
+        metadata(connection);
+        Retained retained = retained(connection, generation);
+        if (retained == null) throw error(ProtocolError.Code.NOT_FOUND, "session unavailable");
+        if (retained.retiring())
+          throw error(ProtocolError.Code.EXPIRED, "session retirement committed");
+        Binding binding = retained.binding();
+        DeclarationStore.Entity entity = DeclarationStore.member(connection, binding, work);
+        if (entity.view().state().terminal()) {
+          statement.execute("COMMIT");
+          return entity.view();
+        }
+        if (retained.revoked())
+          throw error(ProtocolError.Code.CANCELLED, "revocation requires cancellation settlement");
+        ExecutionStore.eligible(connection, binding, entity.view());
+        AdmissionStore.StoredJob stored = AdmissionStore.job(connection, binding, work);
+        if (stored == null) throw error(ProtocolError.Code.NOT_READY, "work is not admitted");
+        long now = AdmissionStore.now(connection, binding.authority(), checkedClock);
+        if (now < entity.view().deadline())
+          throw error(ProtocolError.Code.NOT_READY, "original execution deadline has not arrived");
+        WorkView result =
+            ExecutionStore.fail(
+                connection,
+                config,
+                binding,
+                new ExecutionStore.Loaded(entity, stored),
+                new Diagnostic(
+                    ProtocolError.Code.DEADLINE_EXCEEDED.value(), "execution deadline reached"),
+                false,
+                now);
+        long committedAt = AdmissionStore.now(connection, binding.authority(), checkedClock);
+        checkTerminalInterval(result, committedAt);
+        AdmissionStore.remember(connection, config, binding.authority(), committedAt);
+        statement.execute("COMMIT");
+        return result;
+      } catch (SQLException | RuntimeException failure) {
+        rollback(connection, failure);
+        throw failure;
+      }
+    } catch (SQLException failure) {
+      if ((failure.getErrorCode() & 255) == 13) {
+        ProtocolError refusal = ProtocolError.limit("SQLite file capacity exhausted");
+        refusal.initCause(failure);
+        throw refusal;
+      }
+      throw failure;
+    } finally {
+      DATABASE_OPERATIONS.release();
+    }
+  }
+
+  private static void checkTerminalInterval(WorkView view, long now) {
+    if (view.state().terminal() && now >= view.receiptUntil())
+      throw error(
+          ProtocolError.Code.CLOCK_UNSAFE,
+          "UTC jump overtook the proposed terminal receipt interval");
+  }
+
   private record InputResult<T>(T value, boolean fresh) {}
 
   @FunctionalInterface

@@ -168,9 +168,16 @@ cover real process death before admission commit and after receipt return,
 funding-installation interruptions, header replay and policy/capacity refusal.
 Recovery cross-checks job/member/receipt coverage and parent/child metadata.
 A regression also preserves caller child obligations after a parent's deadline;
-that failure is not implicit subtree cancellation. This layer is not yet a
-durable-profile listener. Java worker execution, producer-1 ingress, results,
-retirement and full cross-language failure/resource gates remain required.
+that failure is not implicit subtree cancellation. Local worker leases now
+support durable claim/renewal and expired-lease replacement without changing the
+wire attempt. Failure and retryable outcomes commit with their job charges;
+owner-independent deadline maintenance does not require the caller to reconnect.
+Claims preserve funded settlement writes, and failure retains payload allowances
+for later dependency-safe reclamation. Parent rehydration cannot rely on unchecked
+closure counters. This layer is not yet a durable-profile listener. Java callback
+execution, explicit retry, producer-1 ingress, successful result publication,
+subtree reconciliation, retirement and full cross-language failure/resource gates
+remain required.
 
 As of 2026-09-07, the Rust authority library also implements transactional
 admission and replay, fenced worker execution, both branch producers and real

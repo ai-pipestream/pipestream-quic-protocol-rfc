@@ -370,9 +370,22 @@ Recovery checks job/member/receipt coverage, parent/child agreement, retained
 profiles, UTC watermarks and funded image geometry; paired recovery also verifies
 the referenced input/funding files. Actual process-exit tests distinguish
 pre-commit rollback from committed admission with a lost acknowledgment.
-This remains storage-library behavior. Worker leases, real producer-1 expansion,
-terminal publication, results/read pins, retirement and durable-profile transport
-integration are not established by these admission tests.
+`v2.ExecutionStore` adds persistent local worker claims, renewal, expired-lease
+replacement, stale-worker checks and funded failure settlement. Lease replacement
+does not create another wire attempt or extend the original execution deadline.
+Local execution grants are separate from connection-certificate lifetimes;
+owner-independent deadline maintenance can settle accepted work without a caller
+connection. Failure/retryable state and job charges commit together while immutable
+bytes remain charged for later reference-safe cleanup. Claims and renewals preserve
+the image credits reserved for settlement. A terminal failure after a retryable
+failure can consume two settlement writes, and recovery checks the resulting
+remaining promises. Parent rehydration requires verified actual child closure,
+not a seal or a success counter alone.
+
+This remains storage-library behavior. The callback runtime, explicit attempt
+retry, producer-1 expansion, successful result publication, subtree reconciliation,
+results/read pins, retirement and durable-profile transport integration remain
+required. A returned local worker lease does not prove a callback ran.
 
 ## Sealed-work library foundation
 
