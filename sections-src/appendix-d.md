@@ -153,7 +153,11 @@ It uses the Java bounded SQLite file facility without converting V1 session
 schemas. Caller declarations now atomically retain ordered members, operation
 receipts and streamed seals; bounded pages and immediate work snapshots are
 available. Real SQLite tests cover replay, concurrent mutations, crash boundaries,
-capacity refusal and contradictory receipt/member recovery. This layer is not
+capacity refusal and contradictory receipt/member recovery. Java V2 storage
+format 3 adds fixed-capacity scope, work, fence and shared-clock images with
+persistent rewrite credits and guarded WAL/shared-memory headroom. An image
+credit covers that image and one clock write, not arbitrary SQL or a whole job.
+Earlier local formats are refused without a wire change. This layer is not
 yet a durable-profile listener; Java admission,
 execution, results, retirement and full cross-language failure/resource gates
 remain required.

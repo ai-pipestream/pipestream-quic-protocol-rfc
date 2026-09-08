@@ -382,10 +382,15 @@ final class SessionStoreTest {
   @Test
   void physicalDatabaseLimitRefusesAtomicallyWithoutEvictingCommittedHistory() throws Exception {
     Path path = database("physical-full");
-    BoundedSqlite.Limits files = new BoundedSqlite.Limits(65_536, 1 << 20, 65_536, 65_536);
+    BoundedSqlite.Limits files = new BoundedSqlite.Limits(128 << 10, 64L << 20, 65_536, 512 << 10);
     SessionStore.Configuration config =
         new SessionStore.Configuration("issuer-a", LIMITS, MAXIMUM, 1, 1024, 1024, files);
     SessionStore store = SessionStore.initialize(path, config);
+    long initialBytes = Files.size(path);
+    long initialPages;
+    try (var connection = BoundedSqlite.open(path, files).connect()) {
+      initialPages = scalar(connection, "PRAGMA page_count");
+    }
 
     int committed = 0;
     ProtocolError refusal = null;
@@ -402,6 +407,9 @@ final class SessionStoreTest {
       }
     }
     assertTrue(committed > 0);
+    System.out.printf(
+        "session physical-full initialPages=%d initialBytes=%d committed=%d%n",
+        initialPages, initialBytes, committed);
     assertNotNull(refusal, "physical file policy did not exhaust within bounded attempts");
     assertEquals(ProtocolError.Code.LIMIT_EXCEEDED, refusal.code(), refusal::getMessage);
     assertInstanceOf(SQLException.class, refusal.getCause());
@@ -436,7 +444,7 @@ final class SessionStoreTest {
         reopened
             .nextSequence(access("alice"), durable(8192, 1 << 20), new Messages.NextSequence(2004))
             .nextCreationSequence());
-    assertTrue(Files.size(path) <= 65_536);
+    assertTrue(Files.size(path) <= 128 << 10);
   }
 
   @Test
@@ -584,6 +592,14 @@ final class SessionStoreTest {
         binding.creationSequence(),
         binding.policy(),
         binding.limits());
+  }
+
+  private static long scalar(java.sql.Connection connection, String sql) throws SQLException {
+    try (var statement = connection.createStatement();
+        var rows = statement.executeQuery(sql)) {
+      assertTrue(rows.next());
+      return rows.getLong(1);
+    }
   }
 
   private static Messages.Binding createTogether(

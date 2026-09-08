@@ -26,7 +26,7 @@ import java.util.concurrent.Semaphore;
  * another implementation's database is accepted. Never call it on a transport event loop.
  */
 final class SessionStore {
-  private static final int VERSION = 2;
+  private static final int VERSION = 3;
   private static final int MAX_BINDING_BYTES = 1024;
   private static final Set<String> TABLES =
       Set.of(
@@ -35,7 +35,8 @@ final class SessionStore {
           "ps_v2_sessions",
           "ps_v2_scopes",
           "ps_v2_entities",
-          "ps_v2_operations");
+          "ps_v2_operations",
+          "ps_v2_slots");
   // Bound simultaneous V2 database connections even when callers open multiple store handles.
   private static final Semaphore DATABASE_OPERATIONS = new Semaphore(16);
 
@@ -277,6 +278,7 @@ final class SessionStore {
           if (encoded.length > MAX_BINDING_BYTES)
             throw ProtocolError.limit("creation receipt representation");
 
+          FixedRecords.protect(connection, config.files());
           try (var update =
               connection.prepareStatement("UPDATE ps_v2_meta SET high_water=? WHERE singleton=1")) {
             update.setLong(1, generation);
@@ -308,13 +310,23 @@ final class SessionStore {
             insert.setInt(7, selected.controlLimit());
             insert.executeUpdate();
           }
+          long rootSlot =
+              FixedRecords.allocate(
+                  connection,
+                  config.files(),
+                  FixedRecords.Kind.SCOPE,
+                  FixedRecords.key(binding, FixedRecords.Kind.SCOPE, 0, 0, 0, null),
+                  ScopeState.root().encode(),
+                  FixedRecords.SCOPE_CAPACITY,
+                  FixedRecords.SCOPE_CREDITS);
           try (var insert =
               connection.prepareStatement(
                   """
                   INSERT INTO ps_v2_scopes(generation,id,producer,parent_scope,parent_producer,parent_entity,
-                      sealed,seal,declared,last_entity) VALUES (?,0,0,NULL,NULL,NULL,0,NULL,0,0)
+                      state_slot) VALUES (?,0,0,NULL,NULL,NULL,?)
                   """)) {
             insert.setLong(1, generation);
+            insert.setLong(2, rootSlot);
             insert.executeUpdate();
           }
           return correlate(binding, request.request());
@@ -364,7 +376,8 @@ final class SessionStore {
         selected,
         generation,
         true,
-        (connection, binding) -> DeclarationStore.declare(connection, binding, selected, request));
+        (connection, binding) ->
+            DeclarationStore.declare(connection, config.files(), binding, selected, request));
   }
 
   /**
@@ -449,6 +462,7 @@ final class SessionStore {
           Checks.id(generation);
           Retained retained = visible(connection, generation, access.owner());
           compatible(retained, selected);
+          if (write) FixedRecords.protect(connection, config.files());
           return action.run(connection, retained.binding());
         });
   }
@@ -487,14 +501,16 @@ final class SessionStore {
   }
 
   private void createSchema(Connection connection) throws SQLException {
+    FixedRecords.createSchema(connection, config.authority());
     try (var sql = connection.createStatement()) {
       sql.execute(
           """
           CREATE TABLE ps_v2_meta (
             singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-            version INTEGER NOT NULL CHECK(version=2),
+            version INTEGER NOT NULL CHECK(version=3),
             config BLOB NOT NULL CHECK(length(config) BETWEEN 1 AND 1024),
-            high_water INTEGER NOT NULL CHECK(high_water>=0)
+            high_water INTEGER NOT NULL CHECK(high_water>=0),
+            clock_slot INTEGER NOT NULL UNIQUE REFERENCES ps_v2_slots(id) CHECK(clock_slot=1)
           ) STRICT
           """);
       sql.execute(
@@ -527,20 +543,18 @@ final class SessionStore {
             generation INTEGER NOT NULL REFERENCES ps_v2_sessions(generation),
             id INTEGER NOT NULL CHECK(id>=0), producer INTEGER NOT NULL CHECK(producer IN (0,1)),
             parent_scope INTEGER, parent_producer INTEGER, parent_entity INTEGER,
-            sealed INTEGER NOT NULL CHECK(sealed IN (0,1)), seal BLOB,
-            declared INTEGER NOT NULL CHECK(declared>=0), last_entity INTEGER NOT NULL CHECK(last_entity>=0),
+            state_slot INTEGER NOT NULL UNIQUE REFERENCES ps_v2_slots(id),
             PRIMARY KEY(generation,id), UNIQUE(generation,id,producer),
             UNIQUE(generation,parent_scope,parent_producer,parent_entity),
             CHECK((id=0 AND producer=0 AND parent_scope IS NULL AND parent_producer IS NULL AND parent_entity IS NULL)
               OR (id>0 AND parent_scope IS NOT NULL AND parent_scope>=0 AND parent_scope<id
                 AND parent_producer IS NOT NULL AND parent_producer IN (0,1)
-                AND parent_entity IS NOT NULL AND parent_entity>0)),
-            CHECK((sealed=0 AND seal IS NULL) OR (sealed=1 AND seal IS NOT NULL AND length(seal)=32))
+                AND parent_entity IS NOT NULL AND parent_entity>0))
           ) STRICT
           """);
     }
     DeclarationStore.createSchema(connection);
-    try (var insert = connection.prepareStatement("INSERT INTO ps_v2_meta VALUES(1,?,?,0)")) {
+    try (var insert = connection.prepareStatement("INSERT INTO ps_v2_meta VALUES(1,?,?,0,1)")) {
       insert.setInt(1, VERSION);
       insert.setBytes(2, configBytes);
       insert.executeUpdate();
@@ -573,6 +587,7 @@ final class SessionStore {
       try (var row = statement.executeQuery("PRAGMA foreign_key_check")) {
         if (row.next()) throw corrupt("SQLite foreign-key check failed");
       }
+      FixedRecords.audit(connection, config.files(), config.authority());
       if (count(connection, "SELECT count(*) FROM ps_v2_sessions") > config.maxSessions()
           || count(connection, "SELECT count(*) FROM ps_v2_owners") > config.maxOwners())
         throw corrupt("retained accounting exceeds configuration");

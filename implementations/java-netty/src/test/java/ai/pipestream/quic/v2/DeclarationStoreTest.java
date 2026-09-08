@@ -117,7 +117,18 @@ final class DeclarationStoreTest {
 
   @Test
   void thousandMembersAcrossBatchesHaveStableStreamedSealAfterReopen() throws Exception {
-    SessionStore store = initialized("large", 1000, 8);
+    Path path = directory.resolve("large.sqlite");
+    SessionStore.Configuration config =
+        new SessionStore.Configuration(
+            "issuer-a",
+            new Records.Limits(1, 1000, 8, 1 << 20, 1 << 20, 1),
+            new Records.Policy(10000, 10000, 10000),
+            4,
+            4,
+            4,
+            new BoundedSqlite.Limits(256L << 20, 512L << 20, 64L << 20, 4L << 20));
+    SessionStore store = SessionStore.initialize(path, config);
+    store.create(access(), SELECTED, new Messages.Create(1, 1, POLICY));
     List<Long> ids = new ArrayList<>(1000);
     for (long id = 1; id < 1000; id++) ids.add(id * 10);
     ids.add(Long.MAX_VALUE);
@@ -138,8 +149,7 @@ final class DeclarationStoreTest {
       if (to == ids.size())
         assertEquals(expected, ((Records.Declared) result.receipt().outcome()).seal());
     }
-    SessionStore reopened =
-        SessionStore.open(directory.resolve("large.sqlite"), configuration(1000, 8));
+    SessionStore reopened = SessionStore.open(path, config);
     assertEquals(
         expected, reopened.page(access(), SELECTED, 1, new Messages.Page(20, 0, 9990, 2)).seal());
   }
@@ -251,6 +261,7 @@ final class DeclarationStoreTest {
       statement.execute(
           "CREATE TRIGGER fail_operation BEFORE INSERT ON ps_v2_operations BEGIN SELECT"
               + " RAISE(ABORT,'test operation interruption'); END");
+      assertEquals(2, scalar(connection, "SELECT count(*) FROM ps_v2_slots"));
     }
     SQLException failure =
         assertThrows(
@@ -263,6 +274,9 @@ final class DeclarationStoreTest {
                     new Messages.Declare(2, operation(1), 0, List.of(1L), false)));
     assertTrue(failure.getMessage().contains("test operation interruption"));
     assertTrue(sql.page(access(), SELECTED, 1, new Messages.Page(3, 0, 0, 10)).entries().isEmpty());
+    try (var connection = BoundedSqlite.open(sqlPath, config.files()).connect()) {
+      assertEquals(2, scalar(connection, "SELECT count(*) FROM ps_v2_slots"));
+    }
     assertCode(
         ProtocolError.Code.NOT_FOUND,
         () ->
@@ -352,7 +366,7 @@ final class DeclarationStoreTest {
   @Test
   void physicalFileLimitLeavesPriorDeclarationReplayableAndNoPartialOperation() throws Exception {
     Path path = directory.resolve("physical-full.sqlite");
-    BoundedSqlite.Limits files = new BoundedSqlite.Limits(65_536, 1 << 20, 65_536, 65_536);
+    BoundedSqlite.Limits files = new BoundedSqlite.Limits(128 << 10, 64L << 20, 65_536, 512 << 10);
     SessionStore.Configuration config =
         new SessionStore.Configuration(
             "issuer-a",
@@ -363,6 +377,11 @@ final class DeclarationStoreTest {
             1,
             files);
     SessionStore store = SessionStore.initialize(path, config);
+    long initialBytes = java.nio.file.Files.size(path);
+    long initialPages;
+    try (var connection = BoundedSqlite.open(path, files).connect()) {
+      initialPages = scalar(connection, "PRAGMA page_count");
+    }
     store.create(access(), SELECTED, new Messages.Create(1, 1, POLICY));
     int committed = 0;
     ProtocolError refusal = null;
@@ -380,6 +399,9 @@ final class DeclarationStoreTest {
       }
     }
     assertTrue(committed > 0);
+    System.out.printf(
+        "declaration physical-full initialPages=%d initialBytes=%d committed=%d%n",
+        initialPages, initialBytes, committed);
     assertNotNull(refusal, "declaration storage did not reach its physical bound");
     assertEquals(ProtocolError.Code.LIMIT_EXCEEDED, refusal.code());
     assertInstanceOf(SQLException.class, refusal.getCause());
@@ -411,7 +433,7 @@ final class DeclarationStoreTest {
             .lookupOperation(
                 access(), SELECTED, 1, new Messages.LookupOperation(2004, operation(1)))
             .receipt());
-    assertTrue(java.nio.file.Files.size(path) <= 65_536);
+    assertTrue(java.nio.file.Files.size(path) <= 128 << 10);
   }
 
   @Test
@@ -425,10 +447,22 @@ final class DeclarationStoreTest {
     store.declare(access(), SELECTED, 1, declaration);
     try (var connection = BoundedSqlite.open(path, config.files()).connect();
         var statement = connection.createStatement()) {
+      long viewSlot =
+          scalar(
+              connection,
+              "SELECT view_slot FROM ps_v2_entities WHERE generation=1 AND scope=0 AND id=1");
+      long fenceSlot =
+          scalar(
+              connection,
+              "SELECT fence_slot FROM ps_v2_entities WHERE generation=1 AND scope=0 AND id=1");
       assertEquals(
           1,
           statement.executeUpdate(
               "DELETE FROM ps_v2_entities WHERE generation=1 AND scope=0 AND id=1"));
+      assertEquals(
+          2,
+          statement.executeUpdate(
+              "DELETE FROM ps_v2_slots WHERE id IN (" + viewSlot + "," + fenceSlot + ")"));
     }
     assertThrows(
         SQLException.class,
@@ -450,19 +484,49 @@ final class DeclarationStoreTest {
     store.create(access(), SELECTED, new Messages.Create(1, 1, POLICY));
     store.declare(
         access(), SELECTED, 1, new Messages.Declare(2, operation(1), 0, List.of(1L), false));
+    Messages.Binding binding =
+        store.attach(access(), SELECTED, new Messages.Attach(99, "issuer-a", "alice", 1));
     try (var connection = BoundedSqlite.open(path, config.files()).connect();
         var statement = connection.createStatement()) {
+      long viewSlot =
+          scalar(
+              connection,
+              "SELECT view_slot FROM ps_v2_entities WHERE generation=1 AND scope=0 AND id=1");
+      long fenceSlot =
+          scalar(
+              connection,
+              "SELECT fence_slot FROM ps_v2_entities WHERE generation=1 AND scope=0 AND id=1");
       assertEquals(
           1,
           statement.executeUpdate(
               "DELETE FROM ps_v2_entities WHERE generation=1 AND scope=0 AND id=1"));
       assertEquals(
-          1,
+          2,
           statement.executeUpdate(
-              "UPDATE ps_v2_scopes SET declared=0,last_entity=0 WHERE generation=1 AND id=0"));
+              "DELETE FROM ps_v2_slots WHERE id IN (" + viewSlot + "," + fenceSlot + ")"));
+      statement.execute("BEGIN IMMEDIATE");
+      long slot =
+          scalar(connection, "SELECT state_slot FROM ps_v2_scopes WHERE generation=1 AND id=0");
+      FixedRecords.Snapshot image =
+          FixedRecords.read(
+              connection,
+              slot,
+              FixedRecords.Kind.SCOPE,
+              FixedRecords.key(binding, FixedRecords.Kind.SCOPE, 0, 0, 0, null));
+      ScopeState state = ScopeState.decode(image.body());
+      FixedRecords.replace(
+          connection,
+          config.files(),
+          slot,
+          FixedRecords.Kind.SCOPE,
+          image.header().key(),
+          image.header().revision(),
+          state.members(0, 0, null).encode(),
+          false);
       assertEquals(
           1,
           statement.executeUpdate("UPDATE ps_v2_sessions SET entity_count=0 WHERE generation=1"));
+      statement.execute("COMMIT");
     }
     assertThrows(SQLException.class, () -> SessionStore.open(path, config));
   }
@@ -606,6 +670,14 @@ final class DeclarationStoreTest {
   private static void assertCode(ProtocolError.Code code, Throwing action) {
     ProtocolError e = assertThrows(ProtocolError.class, action::run);
     assertEquals(code, e.code(), e::getMessage);
+  }
+
+  private static long scalar(java.sql.Connection connection, String sql) throws SQLException {
+    try (var statement = connection.createStatement();
+        var rows = statement.executeQuery(sql)) {
+      assertTrue(rows.next());
+      return rows.getLong(1);
+    }
   }
 
   @FunctionalInterface

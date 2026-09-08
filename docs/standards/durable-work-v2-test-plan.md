@@ -1941,6 +1941,43 @@ This remains Rust storage
 evidence, not independent Java durable-profile parity, the protocol-neutral V2
 failure driver or the external workload and equivalent streaming-gRPC baseline.
 
+### Java fixed records and reserved image writes, 2026-09-08
+
+Java V2 authority format 3 independently retains scope/work/fence images and
+the shared clock in fixed-capacity SQLite BLOBs. Session creation allocates a
+root image with four rewrite credits; each declared member allocates a work
+image with two credits and a fence image with one. Every credit conservatively
+funds that full image and a shared-clock update. Ordinary mutations preserve
+those reservations, and replay does not spend a credit. These are image-write
+guarantees, not admission for a complete job or arbitrary SQL.
+
+Checksummed headers bind identity, role, physical slot, revision, used/capacity
+lengths and remaining credit. Reads bound allocation before loading a body and
+verify its checksum and zero padding. Recovery checks exact ownership links,
+typed images and clock values, supported geometry and retained funding. Revision
+checks retain enough increments for all outstanding promises. Representation
+growth preserves the original body/revision and requires ordinary capacity.
+Earlier local formats are refused without conversion; no wire grammar changed.
+
+The real JDBC/native tests cover credit preservation/spending, stale revisions,
+foreign identity, corrupted padding and valid-checksum invalid clock values.
+Physical cases pin a reader, prohibit main-page growth and arm SQL UPDATE
+triggers while rewriting an entire image and the clock through the native BLOB
+API. A separate test exhausts ordinary protected WAL writes with SQLITE_FULL
+and then commits a promised rewrite with that reader still pinned. Failed
+representation growth must leave the original record intact after rollback and
+reopen. The declaration and creation exhaustion fixtures still require real
+SQLITE_FULL, successful prior commits, intact replay and no partial mutation.
+
+The [storage contract](java-v2-authority-store.md) describes the write-cost model
+and its limits. Exact commands, physical measurements, reviewed failures and
+source hashes are in
+`conformance/results/durable-work-v2-java-fixed-records-2026-09-08.txt`.
+These are guarded file-length and transaction tests, not allocated disk-block,
+RSS, power-loss or throughput measurements. The Java listener remains Core
+only; complete Java admission/execution/results/retirement, cross-language V2
+failure testing and the external workload/gRPC comparison remain mandatory.
+
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 
 - Own the `pipestream/2` mapping without accepting version-1 messages or silently

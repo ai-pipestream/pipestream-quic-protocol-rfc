@@ -112,4 +112,35 @@ public final class BoundedSqlite {
       throw failure;
     }
   }
+
+  /**
+   * Apply a connection-local WAL ceiling inside an explicit main writer transaction. The caller
+   * must derive and retain its own completion reservations. This primitive neither interprets a
+   * protocol schema nor grants admission.
+   *
+   * @param connection owned guarded connection
+   * @param bytes maximum permitted WAL length, within the immutable file policy
+   * @throws SQLException for an unguarded connection, wrong transaction or unsupported geometry
+   */
+  public static void walCeiling(Connection connection, long bytes) throws SQLException {
+    SealedSqliteImages.walCeiling(connection, bytes);
+  }
+
+  /**
+   * Replace an existing, exact-size BLOB through SQLite's incremental BLOB API. No SQL row
+   * replacement or UPDATE trigger is invoked. The caller must validate its record and roll back the
+   * enclosing writer transaction on any failure.
+   *
+   * @param connection owned guarded writer connection
+   * @param table existing main-database table
+   * @param column existing unindexed BLOB column
+   * @param rowid existing row identity
+   * @param image exact replacement bytes, at most 16 MiB
+   * @throws SQLException for invalid storage, transaction context or a size mismatch
+   */
+  public static void replaceImage(
+      Connection connection, String table, String column, long rowid, byte[] image)
+      throws SQLException {
+    SealedSqliteImages.replace(connection, table, column, rowid, image);
+  }
 }

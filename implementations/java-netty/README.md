@@ -336,6 +336,15 @@ exercise concurrent duplicates, commit interruption, corruption and exhaustion.
 This is declaration, not input admission, producer-1 expansion, a wait timer,
 checkpoint closure or reserved capacity for all later terminal transitions.
 
+Java V2 storage format 3 now puts mutable scopes, work views, first-fence storage
+and the shared clock in preallocated checksummed images. `FixedRecords` retains
+write credits and guards their WAL/shared-memory headroom before ordinary
+mutations. Ordinary declarations preserve those credits; replay spends none.
+This uses Java's existing native BLOB primitive, not Rust storage code. Each
+credit funds one image and one clock update only; complete admission, execution
+and cleanup still require their own funded write sets before durable profiles
+can be activated. Prior local formats are refused, not converted.
+
 ## Sealed-work library foundation
 
 The independent Java `SealedWork`, `SealedScope`, and `SealedSessionStore`

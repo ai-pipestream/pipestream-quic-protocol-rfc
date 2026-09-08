@@ -1,0 +1,198 @@
+Java V2 fixed records and reserved image writes, 2026-09-08
+Base: ec34dfaf58316f709e51446b9c81ea9e5732e3ba
+Implementation and tests: the commit containing this result file.
+Log filename timestamps use America/New_York (EDT, UTC-04:00).
+2026-09-08 01:10 local is 2026-09-08 05:10 UTC.
+
+Scope and limits
+  Java authority format 3 preallocates scope, work, first-fence and shared-clock
+  images. Each checked header binds the role, slot, immutable owner-qualified
+  identity, revision, used/capacity lengths, body checksum and remaining rewrite
+  credits. Scope creation reserves four image writes; a declared member reserves
+  two work-image writes and one fence-image write. Each credit also funds one
+  shared-clock write. Ordinary writes preserve all retained reservations.
+
+  Recovery checks full images, exact ownership links, clock encoding, geometry
+  and retained credit. Growth preserves body/revision and requires ordinary
+  headroom. Earlier experimental formats are refused, not converted. The native
+  bounded VFS and BLOB primitive are unchanged; this is independent Java V2
+  state, not reuse of Rust or V1 job states. No wire encoding changed.
+
+  These are guarded file-length and transaction guarantees. They do not prove
+  allocated disk blocks, RSS, throughput, disk-device durability or complete job
+  admission. Helpers require the caller's owned writer transaction and rollback
+  on failure. Java's endpoint still advertises Core only. Full Java durable
+  execution/results/retirement, cross-language V2 failure-driver evidence and
+  the external workload with equivalent durable streaming-gRPC remain required.
+
+Build environment
+  Repository: /work/main/pipestream-ai/dev-tools/pipestream-quic-protocol-rfc
+  Maven cache: /work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+  SQLite JDBC: 3.53.4.0; native test engine: 3.53.4.
+  Pinned SQLite amalgamation SHA-256:
+    1e71ddf93849c6a6ecf58b827c0692073d2dd7ee40196158068f7b29f422e87d
+  Existing Netty transport artifacts: 4.2.17.Final-pipestream.3.
+  No dependency or upstream reference-checkout changes in this unit.
+
+Reviewed fixture failures and corrections
+  First focused command, from repository root:
+    mvn -f implementations/java-netty/pom.xml -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -Dtest=FixedRecordsTest,DeclarationStoreTest,SessionStoreTest test
+  Session 87418: terminal exit 1; 30 tests, 0 assertion failures, 3 errors.
+  Log: /tmp/pipestream-funded-storage-focused-20260908T005839.log
+  The two physical-main-full fixtures failed during schema installation:
+  64 KiB no longer held the slot table and required indexes. Their policy is
+  now 128 KiB main, 64 MiB WAL, 64 KiB journal and 512 KiB shared memory. They
+  still demand actual SQLITE_FULL, previously committed history, replay after
+  refusal/reopen and no partial mutation. Initialization uses 21 pages/86,016
+  bytes; declaration exhaustion follows 11 commits and creation exhaustion 33.
+  The 1,000-member/four-batch seal fixture exceeded default 64 MiB WAL funding.
+  Only that fixture gets 512 MiB WAL and 4 MiB shared memory; all 1,000 IDs,
+  including Long.MAX_VALUE, and reopen/seal assertions remain unchanged.
+  Production limits and general fixture defaults were not raised.
+
+  Revised focused session 72003: terminal exit 0; 31 tests, zero failures,
+  errors or skips, plus native sqlite-file-growth 1/1.
+    /tmp/pipestream-funded-storage-focused-rerun-20260908T010419.log
+  Reviewer rejected the one-byte physical rewrites as insufficient evidence
+  for full-capacity changes. The final test uses two distinct full-capacity
+  patterns, exact target/clock state assertions and a real failed-grow rollback
+  test. The arithmetic formula sanity test is separate from physical evidence.
+  The missing-member corruption fixture removes its now-orphaned view/fence
+  slots so it still reaches receipt/member coverage checks, not only orphan
+  detection. Foreign keys remain enabled.
+
+Final physical focused gate
+  From repository root:
+    mvn -f implementations/java-netty/pom.xml -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -Dtest=FixedRecordsTest test
+  Session 51541: terminal exit 0; 8 tests, zero failures, errors or skips.
+  Native sqlite-file-growth passed 1/1.
+  Log: /tmp/pipestream-funded-storage-fixed-records-final-focused-20260908T011010.log
+  Root reviewed the test source and every physical measurement in the raw log.
+
+  Each geometry verifies page_size, pins a real reader, fixes max_page_count to
+  the current size and arms a SQL UPDATE trigger. The native path rewrites an
+  entire fixed-capacity pattern and the shared clock, commits, then verifies
+  exact bodies/revisions/credits with no main-page growth. Every WAL delta is
+  positive and below the conservative per-credit bound.
+
+  page   capacity   main_pages   observed_WAL_delta   bound_bytes
+  512    1          2            4320                 68640
+  512    127        2            4320                 68640
+  512    128        2            4320                 68640
+  512    2048       6            4320                 70784
+  512    65536      131          74000                137784
+  512    1048576    2066         1110088              1174944
+  4096   1          2            8272                 86552
+  4096   127        2            8272                 86552
+  4096   128        2            8272                 86552
+  4096   2048       2            8272                 86552
+  4096   65536      18           74192                152472
+  4096   1048576    258          1062992              1141272
+  65536  1          2            131152               393392
+  65536  127        2            131152               393392
+  65536  128        2            131152               393392
+  65536  2048       2            131152               393392
+  65536  65536      3            196712               458952
+  65536  1048576    18           1180112              1442352
+
+  Real pinned-WAL saturation:
+    ordinary committed writes = 77, then native SQLITE_FULL (code 13)
+    initial WAL = 0 bytes
+    WAL after refusal = 960016 bytes
+    WAL after promised target+clock commit = 960016 bytes
+    remaining target credit = 0; target and clock revisions = 2
+  The reader remains pinned through the promised commit. Equal final file
+  lengths do not imply no write: SQLite reuses the uncommitted tail left by
+  SQLITE_FULL. Exact post-commit body/revision/credit assertions prove the
+  mutation, while the VFS bounds actual write offsets.
+
+  Failed growth fixes max_page_count and requests a 65,536-byte replacement;
+  actual SQLITE_FULL is required. After rollback/close/reopen the original
+  128-byte body, capacity, revision 1 and one reserved credit remain intact.
+  Other focused cases cover ordinary versus funded credit use, stale revisions,
+  cross-identity reads, nonzero padding, and valid-checksum null/string clock
+  bodies rejected by actual SessionStore recovery.
+
+Current source SHA-256
+  BoundedSqlite.java
+    120032857f211f11f80a5c108c011ae5898819d8c5f4b4ecc8e78fa06c7b204f
+  v2/FixedRecords.java
+    5d0b7f8bd6e08b518a99c0d86aeb2047a2af9cb0e31c82ef3fee5bd9a7e80fc0
+  v2/ScopeState.java
+    71276476889c4ac50ed52682c2cd23715a47cf30f17ef560e9a3e73b7a6cff9b
+  v2/DeclarationStore.java
+    6526d8b9c3cf15a1d3a954b3dbbf7342e1605d1502cfc17730e52da18b17a69a
+  v2/SessionStore.java
+    c460bb6e0bae778d7dbbd5f8a5d34de30eb58410d1bd7d686998dd3303f73bb2
+  v2/FixedRecordsTest.java
+    098d72b6d192d4687a626e11f5299a802cb02eae41ae77a21ab6e39d7e43f945
+  v2/DeclarationStoreTest.java
+    6800630c1c7e8677b53dd43d904d8f7b962802c32cfa9b9edfcb06ef64d71d4b
+  v2/SessionStoreTest.java
+    b2ab9198ce12a5f6d9f0e9f4a215b4d4cb6e9dcaf6da8fade5b981f4c2b91fc0
+
+Final complete Java gate
+  From repository root, with no test filters or skip flags:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository install
+  Session 40170: terminal exit 0; 379 tests, zero failures, errors or skips.
+  Native sqlite-file-growth passed 1/1 separately.
+  Log: /tmp/pipestream-funded-storage-java-full-final-20260908T011026.log
+  Maven finished 2026-09-08 01:14:04 EDT (05:14:04 UTC), elapsed 3:36.
+  Root inspected every class result and independently parsed all 34 fresh
+  Surefire XML reports: total 379/0/0/0. FixedRecords 8, DeclarationStore 12,
+  SessionStore 12, V2 Core client/server 14/13 and sealed interoperability 8
+  are included, not additional test counts. The actual tagged Core client
+  case against Rust's authority ran with both identity modes; it is Core
+  negotiation/detach, not a Java durable-profile exchange.
+
+  An earlier full install had already passed 378 tests before the final
+  full-pattern/failed-grow test revision. It is superseded for current test
+  source by the 379-test run, not combined with it:
+    /tmp/pipestream-funded-storage-java-full-20260908T010634.log
+  The final package/install emits existing shade warnings about module-info,
+  shared metadata and license/service resources; it is not a warning-free
+  packaging claim. Main compilation and the strict changed-type doclint below
+  pass. Native transport sources were not rebuilt or changed.
+
+  Fresh changed-test XML mtimes (EDT) and SHA-256:
+    FixedRecords: 2026-09-08 01:13:25.112852327
+      ca15f5dfd3031a6944670465def5ef381e48e1236957ad764946896783fc7797
+    DeclarationStore: 2026-09-08 01:13:24.883676798
+      3b984497faa7a53cf5040186d960cbc811930508bf49b64e44ee7fcd0d5717db
+    SessionStore: 2026-09-08 01:13:25.823695128
+      639200259bf96cfb946eed116323b03cbd02d41f711808a5d8aa8a6c26613a9b
+  Final shaded Java artifact SHA-256:
+    8c53aed0d1dcb219853c6842ccc09bb5116fa31bfe26a54ed3dab68230a14763
+
+Strict changed-type documentation gate
+  From implementations/java-netty:
+    classpath="target/classes:$(cat target/v2-tls-classpath)"
+    javadoc -quiet -package -Xdoclint:all -Werror -d target/funded-storage-apidocs -classpath "$classpath" -sourcepath src/main/java src/main/java/ai/pipestream/quic/BoundedSqlite.java src/main/java/ai/pipestream/quic/v2/FixedRecords.java src/main/java/ai/pipestream/quic/v2/ScopeState.java src/main/java/ai/pipestream/quic/v2/SessionStore.java src/main/java/ai/pipestream/quic/v2/DeclarationStore.java
+  Immediate terminal exit 0; empty raw log:
+    /tmp/pipestream-funded-storage-package-doclint-current-20260908T011420.log
+  Initial missing-member/tag documentation warnings were corrected without
+  changing the production semantics or reducing doclint scope.
+
+Retained examples and current draft
+  From implementations/rust-quinn:
+    target/release/pipestream-conformance examples
+  Session 95533: terminal exit 0. Raw log:
+    /tmp/pipestream-funded-storage-conformance-examples-20260908T011427.log
+  PASS Java source -> Rust/Quinn server
+  PASS Rust source recovery -> C++/MsQuic server
+  PASS Rust source scatter -> Java, Rust, and C++ servers
+  These retained examples use the current rebuilt Java artifact but are not
+  the new V2 protocol-neutral failure driver or required workload comparison.
+  Unchanged Rust release artifacts and full workspace verification remain
+  pinned in durable-work-v2-rust-operation-integrity-2026-09-08.txt; its suite
+  was not needlessly rerun for Java-only changes.
+
+  From repository root:
+    ./build.sh core 05 draft
+  Session 26939: terminal exit 0. Raw log:
+    /tmp/pipestream-funded-storage-draft-20260908T011438.log
+  idnits: 0 errors, 0 flaws, 0 warnings, 1 existing possible FIPS-180-4
+  down-reference comment. kramdown separately emits the existing explicit
+  RFC9308 bibliographic override warning. The appendix accurately retains the
+  Core-only Java endpoint limitation. No IETF submission or acceptance is
+  implied by a successful local draft build.

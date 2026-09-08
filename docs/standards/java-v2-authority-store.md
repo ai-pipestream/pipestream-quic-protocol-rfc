@@ -73,10 +73,61 @@ valid. These checks use bounded records and point lookups, not a whole-session
 membership map. Producer-1 declarations are not exposed through an unfenced local
 shortcut; they require the future parent-attempt/lease/deadline checks.
 
-The local database format is version 2. Earlier experimental V2 storage formats,
+The local database format is version 3. Earlier experimental V2 storage formats,
 like V1 and foreign databases, are refused without conversion. This is an internal
 format revision, not a wire-profile change or an authorized reset of an existing
 authority identity.
+
+## Fixed records and promised writes
+
+Scope state, work views, first-fence storage and the shared clock now occupy
+fixed-capacity images in `ps_v2_slots`. Owning rows retain immutable slot links
+through foreign keys. Each 128-byte header contains the local revision, remaining
+rewrite credits, used/capacity lengths, immutable identity key, body checksum
+and header checksum. The latter also binds the physical row ID and record role.
+Reads bound the image before copying it from SQLite, verify its identity and
+checksums, and reject nonzero padding. These are local integrity checks, not
+authentication against an operator able to rewrite both data and checksums.
+
+Session creation reserves a 1,024-byte root-scope body and four future image
+writes. Each declared member reserves a 2,048-byte work body with two writes
+and a 256-byte first-fence body with one write. Every reserved write also funds
+one 64-byte shared-clock image in the same transaction. Those credits are not
+an allowance for arbitrary SQL, payload files, jobs or the whole future lifecycle.
+Admission still has to fund its complete write set and any larger representations.
+
+Ordinary declaration counter/seal updates preserve the scope's credits; replay
+does not rewrite any image or consume another credit. A funded replacement
+spends one credit while atomically changing the body, revision and retained
+funding. Revision checks preserve enough counter increments for remaining
+promises, including the shared clock. Growth may add capacity/credits but cannot
+reduce them or change the observable body/revision. All helpers require an
+owned writer transaction and rollback on failure.
+
+Before ordinary mutations, the store streams checksummed headers and installs
+a connection-local WAL ceiling below retained completion reservations. The
+guarded native incremental-BLOB primitive overwrites existing bytes, without
+SQL row replacement, image indexes or UPDATE triggers. Promised bytes survive
+restart as image credits; recovery verifies full records, exact owning links,
+clock geometry and the reservation total. No whole-session map is built, but
+these audits do scan retained state and are not constant-time admission.
+
+For page size `p`, frame size `f = p + 24`, and body capacity `c`, a credit uses
+the pinned SQLite 3.53.4 model:
+
+```text
+d = ceil((128 + c) / (p - 4)) + 1
+    + ceil((128 + 64) / (p - 4)) + 1
+reserved_WAL = 32 + (d + 1 + ceil(65536 / f)) * f
+```
+
+This covers each full image, its shared-clock write, a possible repeated commit
+frame and sector padding. The usable WAL is the smaller of the configured WAL
+ceiling and the WAL-index capacity funded by the shared-memory limit. The
+[Java native cost derivation](java-completion-reservations.md#cost-derivation)
+describes the same pinned SQLite geometry; V2 does not use V1 job states or
+its reservation ledger. These are guarded file-length bounds, not measured
+allocated disk blocks, process RSS, throughput or a power-loss proof.
 
 ## Persistence and resource scope
 
@@ -108,9 +159,9 @@ they cannot simulate every power-loss or storage-device failure.
 Funded payload admission, worker leases and attempt fences, subtree settlement,
 results/read pins, retirement/reconciliation,
 durable client observations and authenticated endpoint integration remain
-mandatory. Declaration's physical limits are not yet a reservation for all later
-terminal, cancellation and cleanup metadata/journal writes; those funded
-transitions are required before activation. This increment does not prove full
+mandatory. Fixed image credits now protect their specifically bounded writes;
+the complete admission, terminal and cleanup write sets still need their own
+funded transitions before activation. This increment does not prove full
 Java V2 behavior, live TLS-policy
 revocation settlement, cross-language V2 equivalence or the protocol-neutral
 failure driver. The external chunk/distribute/transform/reassemble workload and
