@@ -1,0 +1,144 @@
+PipeStream Java pinned transport integration, 2026-09-07
+=======================================================
+
+Repository: /work/main/pipestream-ai/dev-tools/pipestream-quic-protocol-rfc
+Branch: feat/durable-work-results-v2
+Base commit: eef343cf981fb00eae359b99589d1cbf4d97679e
+
+Change and dependency boundary
+------------------------------
+The Java reference now selects ai.pipestream.transport QUIC classes/native
+4.2.17.Final-pipestream.1, with official io.netty 4.2.17.Final for other Netty
+modules. The POM bans the duplicate official/incubator QUIC dependencies.
+The external Java example resolves that same extension through the reference.
+No wire schema, profile identifier or persistent format changed. Java V2 still
+advertises Core only; this is not a durable endpoint or shared-credit proof.
+
+transport/build.sh verifies the existing source-pinned patches and lock, builds
+and tests both native modules, then installs only into its fresh isolated Maven
+repository under reference-code. All build progress goes to stderr. Its sole
+stdout line is the repository path, emitted only after success. The conformance
+script captures that path and uses it for the Java reference and example.
+No systemPath dependency, global Maven installation, hidden fallback or upstream
+package publication is used. A developer may reuse the captured repository for
+focused builds of this exact pinned dependency.
+
+Patch inputs are unchanged from the native-credit checkpoint:
+  Netty baseline e0789d32c72f46fd2e7c99b6fdbbf7e2f4409e44
+  quiche baseline 4f347477006bf7f928335d28f05056013f70b87e
+  native BoringSSL 0226f30467f540a3f62ef48d453f93927da199b6
+  netty.patch SHA256 a6f0cbd615abce2d572763b8d14299f92e9af45fb77e71e55676794d29a771c7
+  quiche.patch SHA256 209c4752825bde71527d27fdaaa12f54a7a13c8a6477225d7d5e2d2fefab7881
+  Cargo.lock SHA256 c5039e79db6949df057e185ef182003a891fdcb2820fb09c9886f8c546f8cc34
+
+The new TransportDependencyTest loads the actual native library, requires one
+Quic.class resource and the extension-only API in the exact classes artifact,
+requires one custom native resource and zero official native resources, and
+checks the classifier JAR's exact revision/patch manifest fields. It owns and
+closes its uncached JarFile. It does not inspect private native connection state
+or substitute mocks for the resolved dependency.
+
+Fresh isolated installation and failure output contract
+-------------------------------------------------------
+Command: bash implementations/java-netty/transport/build.sh
+Retained session 68971, actual exit 0; 294 native tests passed.
+Stdout: /tmp/pipestream-rfc-transport-install-stdout-20260907T2010.log
+Stderr: /tmp/pipestream-rfc-transport-install-stderr-20260907T2010.log
+Exactly one stdout line / 69 bytes, naming an existing absolute repository:
+  /work/reference-code/pipestream-quic-build.QpRJV8ku/maven-repository
+Install output names only that isolated repository, not the global Maven cache.
+
+Two refusal checks each exited 2 with zero stdout bytes:
+  unexpected argument: Usage: bash build.sh (no arguments)
+  nonexistent reference root: the exact missing directory named on stderr
+The latter used /tmp/pipestream-reference-root.oAmBak/nonexistent-reference-root;
+it remained absent and neither refusal started a source fetch/build.
+Logs: /tmp/pipestream-rfc-build-refusal-*-20260907T2032.log
+Both transport/build.sh and conformance/run_all.sh passed bash -n.
+
+Focused gate
+------------
+Command:
+  mvn -f implementations/java-netty/pom.xml -Psealed-interop \
+    -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.QpRJV8ku/maven-repository \
+    -Dtest=TransportDependencyTest,V2CoreClientTest,V2CoreServerTest,V2TlsTest,TlsPeerIdentityTest \
+    clean test
+Retained session 81020, actual exit 0.
+Log: /tmp/pipestream-rfc-focused-transport-integration-20260907T2025.log
+Five fresh XML reports: 40 tests, zero failures/errors/skips. Identity 3;
+transport provenance 1; V2 Core client 14; Core server 13; V2 TLS 9.
+
+Full integrated regression
+---------------------------
+Command: ./conformance/run_all.sh
+Retained session 38418, actual exit 0. No production/test changes during run.
+Log: /tmp/pipestream-rfc-conformance-integrated-final-20260907T2025.log
+It performed another fresh bootstrap into:
+  /work/reference-code/pipestream-quic-build.H2tDOQVp/maven-repository
+Fresh native XML: 31 reports, 294 tests, zero failures/errors/skips.
+Fresh Java reference XML: 30 reports, 342 tests, zero failures/errors/skips.
+Reference report mtimes: 20:32:58 through 20:34:19 -0400 on 2026-09-07.
+Rust: 788 workspace tests plus six external example tests (794 total).
+Native SQLite/C++ gates, frozen vectors/CDDL, bounded models, all nine existing
+V1 language pairings, 32 raw capability probes, recursive/recovery checks and
+all three external examples passed. V1 evidence is not promoted to V2 parity.
+
+Actual isolated dependency trees, each BUILD SUCCESS:
+  /tmp/pipestream-rfc-main-netty-dependency-tree-verbose-20260907T2034.log
+  /tmp/pipestream-rfc-example-netty-dependency-tree-verbose-20260907T2034.log
+Both resolve the custom classes/native pair and only official 4.2.17.Final
+for the remaining Netty modules. The full-run classpath was regenerated from
+H2tDOQVp, not reused from an older official-artifact/global-cache run.
+
+Packaged artifact evidence, full-run build
+-----------------------------------------
+SHA256:
+  custom classes JAR: d69d9c5bf1483c1213af1c7fe1361b70d72cc5bce2d0583ff2f421a8e4c975a6
+  custom native classifier JAR: 7fbff29404be9e94122f008e1986166db60a8fe4fadcb9dc556ac091ba231ec8
+  pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar:
+    602d8e37a9b550e17c684db95a371d33a6f888b4b937b5b905a3f4ecf0bbe647
+  java-to-rust-0.1.0-SNAPSHOT-all.jar:
+    f0689aa61ecb8184e7859c17356a3daa1eb6f68c9ca09669a9f4db396b606168
+Both shaded executables contain exactly one Netty QUIC native library:
+  META-INF/native/libnetty_quiche42_pipestream_linux_x86_64.so
+No official/other netty_quiche native entry is present. The embedded library in
+both executables is byte-identical to the resolved native classifier's library:
+  a3f788574a0d0ae743a0ed685a5c2a6efe48c2fa1b08139e955c5ea9c735a08d
+These are exact artifacts from this run, not a bit-identical-build claim across
+toolchains, source directory names or timestamps.
+
+Source snapshot and documentation gates
+---------------------------------------
+SHA256:
+  implementations/java-netty/pom.xml:
+    472f1695cad88b75382dbc6ebb25c324d75e27f7829a85217247bdce2bbe89da
+  implementations/java-netty/transport/build.sh:
+    1f6bac299a9be04a123afbcd891a8179b3e74ecabe85beb028943625e72a51a5
+  conformance/run_all.sh:
+    1c762e5ce3fea55c8e5049657c1555b99670417e861b07c30710cceaa27964cf
+  TransportDependencyTest.java:
+    5b562b5209cc2f8dbac194dcfbfef4eeddc5a6e5393dc4e32bd519d6d7ef80ee
+The new test was formatted with Google Java Format 1.28.0. Strict Javadoc for
+all V2 sources plus TlsPeerIdentity/AddressValidationTokenHandler, against the
+regenerated isolated classpath, passed -Xdoclint:all -Werror with direct exit 0:
+  /tmp/pipestream-rfc-final-strict-v2-javadoc-20260907T2034.log
+No full legacy V1-package doclint claim is made. Whitespace checks pass.
+
+Draft command: ./build.sh core 05 draft
+Retained session 24989, actual exit 0.
+Log: /tmp/pipestream-rfc-core05-draft-20260907T2032.log
+idnits: zero errors/flaws/warnings; one existing FIPS-180-4 comment.
+The updated Appendix D paragraph was inspected in generated TXT and HTML.
+No wire/normative behavior changed. The transport review additionally records
+MAX_STREAM_DATA preceding pending MAX_DATA at packet boundaries as an explicit
+case for the still-unimplemented object/control owner's receive-credit tests.
+
+Remaining goal
+--------------
+Implement the actual Java shared object/control owner and all five gates in
+docs/standards/java-v2-transport-credit.md, then independent durable admission,
+execution/fences, publication/results, retention/retirement and client recovery.
+The neutral Rust failure driver, full both-language exact outcome/refusal/restart/
+resource evidence, and original external workload with equivalent authenticated
+durable streaming-gRPC baseline remain mandatory. No goal completion, main merge,
+deployment, Maven package publication or IETF submission is claimed.

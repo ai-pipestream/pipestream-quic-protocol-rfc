@@ -247,7 +247,11 @@ plugins in `pom.xml`, and MsQuic at an immutable Git tag in `CMakeLists.txt`.
 The direct dependencies were checked against their upstream registries on
 2026-09-04; the reference suite uses the latest compatible stable releases at
 that point. The Java reference and example were subsequently migrated on
-2026-09-07 to the maintained Netty `4.2.17.Final` QUIC artifacts and matching BOM.
+2026-09-07 to the maintained Netty `4.2.17.Final` QUIC source and matching BOM.
+They now select a separately identified [transport extension](implementations/java-netty/transport/README.md)
+built from exact upstream revisions, checked patches and a Cargo lock. The full
+conformance command verifies and installs it into an isolated Maven repository,
+not the global cache. This does not establish Java V2 durable-profile parity.
 The [Java transport review](docs/standards/java-v2-transport-credit.md) records
 the pinned native provenance and remaining control/data-credit work. Rustls
 remains on the 0.23 series required by Quinn rather than the 0.24 development

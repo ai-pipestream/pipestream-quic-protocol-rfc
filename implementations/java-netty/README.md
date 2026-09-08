@@ -5,14 +5,23 @@ CBOR. It publishes a reusable Java library and a shaded standalone client/server
 JAR.
 
 ```bash
-mvn verify
+transport_repository=$(bash transport/build.sh)
+mvn "-Dmaven.repo.local=$transport_repository" verify
 java -jar target/pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar --help
 ```
 
-The reference library and Java example pin the Netty `4.2.17.Final` BOM and
-maintained `io.netty:netty-codec-classes-quic` / `netty-codec-native-quic`
-artifacts. The former incubator QUIC repository is archived; its package names
-and Netty 4.1 dependencies are no longer used. The single-thread NIO owners use
+The reference library and Java example pin the Netty `4.2.17.Final` BOM. QUIC
+classes/native artifacts use the source-built `ai.pipestream.transport` extension
+at `4.2.17.Final-pipestream.1`; other Netty modules remain official `io.netty`
+dependencies. The bootstrap above verifies and installs the pinned extension in
+a fresh isolated Maven repository under reference-code, then prints only that
+repository path to stdout. Build progress goes to stderr. Reuse the captured
+path for subsequent Maven commands; do not replace it with an unrelated local
+JAR or co-load official QUIC classes/native artifacts. The POM rejects those
+duplicate dependencies. Nothing is installed into the global Maven cache.
+
+The former incubator QUIC package names and Netty 4.1 dependencies are no longer
+used. The single-thread NIO owners use
 `MultiThreadIoEventLoopGroup` with `NioIoHandler`. The current build uses Netty's
 `linux-x86_64` native classifier. Building also
 requires CMake 3.24 or newer and a C11 compiler for the small SQLite file-limit
@@ -24,8 +33,7 @@ Dependency provenance and the remaining V2 shared-credit requirement are recorde
 in the [Java transport review](../../docs/standards/java-v2-transport-credit.md).
 The [source-pinned transport extension](transport/README.md) supplies native
 credit/accounting APIs and transport regression tests for the forthcoming V2
-object owner. It is a separate dependency build, not yet selected by this POM
-and not evidence of Java durable-work/results parity.
+object owner. Selecting it is not evidence of Java durable-work/results parity.
 The client
 requires a CA certificate and the server requires an end-entity certificate and
 private key. Both public clients verify the certificate chain and the configured
@@ -71,7 +79,7 @@ members under `-Xmx24m`, reporting heap, retained hash bytes and process RSS/HWM
 separately. This is a local hashing gate, not an endpoint or total-memory guarantee.
 
 ```bash
-mvn -Dtest=V2WireTest,V2CommitmentsTest,V2CommitmentResourceTest test
+mvn "-Dmaven.repo.local=$transport_repository" -Dtest=V2WireTest,V2CommitmentsTest,V2CommitmentResourceTest test
 ```
 
 Neither these library checks nor the existing V1 interoperability suite establish
@@ -114,7 +122,7 @@ This proves incremental local validation, not actual network flow control, stora
 commitment, low total RSS, authenticated endpoints or cross-language V2 behavior.
 
 ```bash
-mvn -Dtest=V2ObjectStreamTest,V2ClientCorrelationTest,V2ObjectResourceTest test
+mvn "-Dmaven.repo.local=$transport_repository" -Dtest=V2ObjectStreamTest,V2ClientCorrelationTest,V2ObjectResourceTest test
 ```
 
 The Netty owner still must enforce actual stream directions/non-reuse, reserve
@@ -164,7 +172,7 @@ on native handshake allocation, total heap or RSS. The guard does not buffer
 application payloads, implement connection admission quotas or schedule stream timers.
 
 ```bash
-mvn -Dtest=V2TlsTest,TlsPeerIdentityTest,SealedServerTest test
+mvn "-Dmaven.repo.local=$transport_repository" -Dtest=V2TlsTest,TlsPeerIdentityTest,SealedServerTest test
 ```
 
 `V2TlsTest` uses actual loopback QUIC, temporary EC certificates and typed capability
@@ -224,7 +232,7 @@ accepts no object streams, so data cannot consume its control credit. Enabling
 durable objects still requires a separately proven shared data/control budget.
 
 ```bash
-mvn -Dtest=V2CoreServerTest test
+mvn "-Dmaven.repo.local=$transport_repository" -Dtest=V2CoreServerTest test
 ```
 
 The 13 actual-network scenarios cover all profile-dependent request families,
@@ -271,7 +279,7 @@ Native write acceptance is still not a peer ACK; object/control credit and full
 Java durable execution, storage, result delivery and recovery remain required.
 
 ```bash
-mvn -Dtest=V2CoreClientTest,V2CoreServerTest test
+mvn "-Dmaven.repo.local=$transport_repository" -Dtest=V2CoreClientTest,V2CoreServerTest test
 ```
 
 The existing `sealed-interop` Maven profile additionally runs the Java Core client
@@ -823,10 +831,10 @@ native-memory, multi-tenant load or full-profile conformance measurement.
 
 ```bash
 cargo build --release --locked --manifest-path ../rust-quinn/Cargo.toml
-mvn test -Psealed-interop
+mvn "-Dmaven.repo.local=$transport_repository" test -Psealed-interop
 ```
 
-Default `mvn test` runs the independent Java codec/store tests without requiring
+Default Maven `test` runs the independent Java codec/store tests without requiring
 a Rust executable. The repository's `conformance/run_all.sh` explicitly enables
 the interoperability profile after building Rust; a missing executable is a
 failure, not a skipped integration test.

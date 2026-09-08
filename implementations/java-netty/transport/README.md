@@ -3,8 +3,8 @@
 This source-pinned dependency extension is being developed for Java V2's
 control/data reservation. It is not an upstream Netty release, a published Maven
 artifact, or evidence that Java implements durable work/results. The main Java
-reference still uses the official Netty 4.2.17.Final artifacts and advertises
-V2 Core only.
+reference selects this extension through its exact Maven coordinates and still
+advertises V2 Core only.
 
 ## Source and artifact boundary
 
@@ -70,8 +70,24 @@ The Linux x86_64 entry point is `bash build.sh` from this directory. It requires
 Git, Maven, Cargo, a C/C++ build toolchain, CMake, Perl and Go. It verifies the
 checked-in patch/lock checksums, fetches exact source revisions into a new
 directory under `/work/reference-code`, and runs the native reactor verification
-with an isolated Maven cache. `PIPESTREAM_REFERENCE_CODE_ROOT` may select another
-existing reference-code root.
+with an isolated Maven cache. After verification it installs the modified
+artifacts only in that cache and prints its absolute path as the sole stdout
+line; progress goes to stderr. A failed build returns no repository path.
+`PIPESTREAM_REFERENCE_CODE_ROOT` may select another existing reference-code root.
+
+From the Java reference directory:
+
+```bash
+transport_repository=$(bash transport/build.sh)
+mvn "-Dmaven.repo.local=$transport_repository" verify
+```
+
+The full conformance command performs that bootstrap once and uses the returned
+repository for both the reference and external Java example. Developers can reuse
+the captured path for focused builds of the same pinned dependency. The POM
+always names the extension explicitly; there is no fallback to official QUIC or
+system-path dependency. Runtime tests check the unique class/native resources
+and exact manifest revision/patch identity.
 
 Every invocation retains its complete build directory and verification log on
 success or failure. Nothing is installed in the global Maven cache or published.
@@ -87,4 +103,5 @@ lint limitations are recorded in the
 This is a repeatable source-pinned build, not a claim of bit-identical binaries
 across toolchains and timestamps. Source-level Rust tests, native Java transport
 tests, full RFC regression tests and V2 durable-object resource tests are separate
-gates. Passing one does not imply the others; Java integration remains open.
+gates. Passing one does not imply the others; the Java V2 object/control owner
+and its complete durable-profile integration remain open.

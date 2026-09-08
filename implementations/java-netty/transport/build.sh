@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# Build the transport extension from pinned upstream sources and reviewed patches.
+# Build/install the pinned extension in a new isolated Maven repository.
+# stdout returns only that repository path after successful verification.
 set -euo pipefail
 
 if [[ $# -ne 0 ]]; then
     printf '%s\n' 'Usage: bash build.sh (no arguments)' >&2
     exit 2
 fi
+
+# Keep build progress visible on stderr, including during command substitution.
+# A caller cannot receive a usable repository path from a failed native build.
+exec 3>&1 1>&2
 
 transport_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 reference_root=${PIPESTREAM_REFERENCE_CODE_ROOT:-/work/reference-code}
@@ -64,10 +69,11 @@ cp "$transport_dir/quiche-Cargo.lock" "$quiche_source/Cargo.lock"
         "-Dmaven.repo.local=$maven_repository" \
         "-DpipestreamQuichePatchSha256=$(sha256sum "$transport_dir/quiche.patch" | cut -d ' ' -f 1)" \
         "-DpipestreamNettyPatchSha256=$(sha256sum "$transport_dir/netty.patch" | cut -d ' ' -f 1)" \
-        verify
+        install
 ) 2>&1 | tee "$build_root/verify.log"
 
-printf '\nVerified transport artifacts (not published or installed globally):\n'
+printf '\nVerified transport artifacts (installed only in the isolated repository):\n'
 find "$netty_source/codec-classes-quic/target" "$netty_source/codec-native-quic/target" \
     -maxdepth 1 -type f -name '*.jar' -exec sha256sum {} +
 printf 'Full build and test outputs remain in %s\n' "$build_root"
+printf '%s\n' "$maven_repository" >&3

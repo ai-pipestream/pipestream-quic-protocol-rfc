@@ -1,16 +1,17 @@
 # Java V2 transport credit review
 
-Status: 2026-09-07. The Java reference and external Java example now pin the
-maintained Netty 4.2.17.Final BOM and QUIC artifacts. This is a dependency/API
-migration, not implementation of durable object transport or proof of its control
-reservation. Java V2 still advertises Core only. The full durable-work/results
-goal and its independent failure driver and equivalent gRPC workload remain open.
+Status: 2026-09-07. The Java reference and external Java example now use the
+source-pinned QUIC extension with the maintained Netty 4.2.17.Final BOM. The
+official-artifact migration below precedes this extension. Dependency integration
+does not implement durable object transport or prove its control reservation.
+Java V2 still advertises Core only. The full durable-work/results goal and its
+independent failure driver and equivalent gRPC workload remain open.
 
 ## Exact dependency boundary
 
 The [incubator repository](https://github.com/netty/netty-incubator-codec-quic)
 was archived on 2026-05-08 and directs users to Netty 4.2. Both Maven projects
-now import `io.netty:netty-bom:4.2.17.Final`; the reference uses
+import `io.netty:netty-bom:4.2.17.Final`. At the migration checkpoint, the reference used
 `io.netty:netty-codec-classes-quic` and the `linux-x86_64` runtime classifier of
 `io.netty:netty-codec-native-quic`. QUIC APIs use
 `io.netty.handler.codec.quic`. Each migrated NIO owner still has one event-loop
@@ -66,6 +67,14 @@ invalidate an argument based solely on configured initial values; they are not a
 measured deadlock or memory result for a Java durable endpoint that does not yet
 exist.
 
+The pinned packet builder also marks connection credit for update whenever it
+successfully emits a MAX_STREAM_DATA frame. It tries MAX_DATA after the stream
+updates, and a frame that does not fit remains pending for a later packet. That
+coupling helps progress but is not atomic delivery of the two limits. Tests of
+replacement streams must therefore exercise the packet-boundary ordering as well
+as the half-window threshold, rather than assuming that observing fresh stream
+credit implies fresh connection credit was received in the same packet.
+
 For N concurrently unread data streams, a bound must cover their effective
 windows, independent control credit, and consumed bytes awaiting a connection
 credit update. It must hold after consumption, autotuning, reset, retirement and
@@ -102,8 +111,11 @@ override is not an implementation plan.
 The [transport patch bundle](../../implementations/java-netty/transport/README.md)
 now implements the missing APIs against the exact source revisions above. It is
 a separately identified dependency build, not an upstream release. The Java
-reference POM still uses the official artifacts; no V2 durable endpoint or
-end-to-end resource claim follows from the extension's native transport tests.
+reference POM now selects the extension's exact coordinates and rejects
+official/incubator QUIC duplicates. Its source bootstrap verifies native tests,
+installs into an isolated Maven repository, and returns that path only after
+success; the reference and example use the same repository. No V2 durable endpoint
+or end-to-end resource claim follows from the native transport tests.
 
 The receive setters expose the initial replenishment window and maximum
 connection/stream windows. An explicitly configured initial window is clamped
@@ -134,8 +146,9 @@ These are transport admission/cleanup tests, not the complete five gates below.
 Actual PipeStream control messages, deadline scheduling under withheld peer
 credit, repeated receive-window growth/replacement, durable ownership and measured
 whole-process bounds still need the Java object/control owner. The dependency
-must be integrated through its reproducible pinned build with no co-loaded
-official QUIC classes or hidden local override.
+is integrated through its reproducible pinned build with no co-loaded official
+QUIC classes or system-path dependency. Full protocol regression and object-owner
+resource tests remain separate from dependency identity and native transport tests.
 
 ## Required acceptance before durable object integration
 

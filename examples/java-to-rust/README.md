@@ -5,12 +5,13 @@ This is a Java 21 application. Its
 imports the reusable Netty `PipeStreamClient` and sends one immutable entity to
 a separately running Rust/Quinn server.
 
-Build the Java implementation into the local Maven repository, then build this
-example:
+Build the pinned transport extension and Java implementation in an isolated Maven
+repository, then build this example using that same repository:
 
 ```sh
-mvn install -q -f ../../implementations/java-netty/pom.xml
-mvn verify -q
+transport_repository=$(bash ../../implementations/java-netty/transport/build.sh)
+mvn "-Dmaven.repo.local=$transport_repository" install -q -f ../../implementations/java-netty/pom.xml
+mvn "-Dmaven.repo.local=$transport_repository" verify -q
 ```
 
 With a Rust server and test certificates already running:

@@ -21,8 +21,10 @@ cargo build --release --locked --workspace --manifest-path implementations/rust-
 implementations/rust-quinn/target/release/pipestream-conformance verify
 implementations/rust-quinn/target/release/pipestream-conformance modelcheck --depth 32 --max-states 1000000
 
-mvn install -q -Psealed-interop -f implementations/java-netty/pom.xml
-mvn verify -q -f examples/java-to-rust/pom.xml
+java_maven_repository=$(bash implementations/java-netty/transport/build.sh)
+mvn install -q -Psealed-interop "-Dmaven.repo.local=$java_maven_repository" \
+  -f implementations/java-netty/pom.xml
+mvn verify -q "-Dmaven.repo.local=$java_maven_repository" -f examples/java-to-rust/pom.xml
 
 cmake -S implementations/cpp-msquic -B implementations/cpp-msquic/build \
   -G Ninja -DCMAKE_BUILD_TYPE=Release

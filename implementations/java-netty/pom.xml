@@ -13,6 +13,7 @@
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <netty.version>4.2.17.Final</netty.version>
+    <pipestream.transport.version>4.2.17.Final-pipestream.1</pipestream.transport.version>
     <jackson.version>2.22.2</jackson.version>
     <junit.version>6.1.3</junit.version>
     <sqlite.version>3.53.4.0</sqlite.version>
@@ -38,12 +39,14 @@
       <version>${sqlite.version}</version>
     </dependency>
     <dependency>
-      <groupId>io.netty</groupId>
+      <groupId>ai.pipestream.transport</groupId>
       <artifactId>netty-codec-classes-quic</artifactId>
+      <version>${pipestream.transport.version}</version>
     </dependency>
     <dependency>
-      <groupId>io.netty</groupId>
+      <groupId>ai.pipestream.transport</groupId>
       <artifactId>netty-codec-native-quic</artifactId>
+      <version>${pipestream.transport.version}</version>
       <classifier>linux-x86_64</classifier>
       <scope>runtime</scope>
     </dependency>
@@ -120,6 +123,15 @@
               <rules>
                 <requireMavenVersion><version>[3.9.0,)</version></requireMavenVersion>
                 <requireJavaVersion><version>[21,)</version></requireJavaVersion>
+                <bannedDependencies>
+                  <excludes>
+                    <!-- These artifacts duplicate the extension's Java classes/native ABI. -->
+                    <exclude>io.netty:netty-codec-classes-quic</exclude>
+                    <exclude>io.netty:netty-codec-native-quic</exclude>
+                    <exclude>io.netty.incubator:netty-incubator-codec-classes-quic</exclude>
+                    <exclude>io.netty.incubator:netty-incubator-codec-native-quic</exclude>
+                  </excludes>
+                </bannedDependencies>
               </rules>
             </configuration>
           </execution>

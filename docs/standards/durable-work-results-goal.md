@@ -2447,3 +2447,35 @@ client recovery. The neutral Rust failure driver, both-language exact outcome/
 refusal/restart/resource evidence, original external workload and equivalent
 authenticated durable streaming-gRPC baseline remain mandatory. The full goal
 remains active and incomplete; no main merge, deployment or draft submission.
+
+### Java source-pinned transport integration, 2026-09-07
+
+The previous checkpoint was verified progress and is published as `eef343c`.
+The Java reference now selects the extension's exact Maven coordinates; the
+external Java example resolves the same dependency. The source bootstrap installs
+only into a fresh isolated repository, emits that path on stdout only after
+verification, and keeps progress on stderr. The full conformance command uses the
+same isolated repository for both Java builds. Official/incubator QUIC duplicates
+are banned. A runtime test checks actual class/native uniqueness and exact
+revision/patch manifests; both packaged executables contain the tested native
+library byte for byte, not merely a matching dependency declaration.
+
+Focused handle 81020 exited zero with 40 tests. Full integrated handle 38418
+exited zero: 342 Java reference tests in 30 fresh XML reports, 294 native transport
+tests in 31 reports, 788 Rust workspace tests plus six external Rust tests,
+native/C++ checks, frozen vectors/bounded models, nine V1 pairings, 32 probes and
+all three examples. Java/native reports have no failures, errors or skips.
+Draft handle 24989 exited zero; Appendix D was inspected in TXT/HTML and idnits
+reported zero errors/flaws/warnings with the existing FIPS comment. Strict scoped
+Javadoc and whitespace checks pass. Full commands, output contracts, source and
+packaged-artifact hashes are in
+`conformance/results/durable-work-v2-java-transport-integration-2026-09-07.txt`.
+
+This integrates the dependency, not the still-missing Java object/control owner.
+Its next tests must include receive-window replenishment, MAX_STREAM_DATA arriving
+before MAX_DATA, stream replacement, blocked send admission, exact incremental
+payload/FIN and independent control deadlines. Native admission and Core-only
+tests do not prove those end-to-end bounds. Complete independent Java durable
+behavior, the neutral Rust failure driver, full both-language failure/resource
+evidence and the original workload/equivalent authenticated durable streaming-gRPC
+comparison remain required. The full goal remains active and incomplete.

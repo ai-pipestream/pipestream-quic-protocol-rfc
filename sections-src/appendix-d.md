@@ -102,9 +102,14 @@ framing, writes and detach, while process-local count and configured application
 buffer quotas remain charged through owned transport termination. These are not
 measurements of native memory or evidence of durable-profile implementation.
 
-The Java reference and external Java example now use Netty 4.2.17.Final's
-maintained QUIC artifacts and aligned dependency BOM, replacing the archived
-incubator module. This dependency migration does not establish the shared
+The Java reference and external Java example use a source-pinned extension of
+Netty 4.2.17.Final's maintained QUIC modules and the aligned dependency BOM,
+replacing the archived incubator module. Exact source revisions, patches and the
+native Rust dependency lock are checked in; source repositories remain separate.
+The build verifies native transport tests and installs uniquely identified
+artifacts into an isolated Maven repository. Runtime tests check the loaded
+classes/native artifact identity and patch revisions, and reject duplicate
+official QUIC resources. This dependency integration does not establish the shared
 control/data reservation. Review of the bundled transport found that initial
 receive credit differs from the replenishment window and that receive windows
 autotune. Section 12.1 now explicitly includes those changing windows and

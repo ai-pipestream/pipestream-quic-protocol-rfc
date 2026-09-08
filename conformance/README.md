@@ -67,6 +67,16 @@ a total RSS bound or a concurrent-workload benchmark.
 ./conformance/run_all.sh
 ```
 
+The Java stage first builds the source-pinned transport extension from the
+checked-in patches and exact upstream revisions, including its native tests.
+It installs artifacts only into a fresh isolated Maven repository under
+reference-code. Both the Java reference and external example then resolve that
+same repository; the global Maven cache is not modified. Bootstrap progress goes
+to stderr and its sole stdout line is the repository path after success. See the
+[transport build contract](../implementations/java-netty/transport/README.md).
+`TransportDependencyTest` verifies the actual loaded class/native resources and
+embedded patch identity, independently of Maven's duplicate-dependency ban.
+
 For focused checks after the Rust workspace has been built:
 
 ```bash
