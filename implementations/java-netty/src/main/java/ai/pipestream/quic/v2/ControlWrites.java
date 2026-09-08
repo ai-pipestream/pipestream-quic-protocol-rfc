@@ -56,6 +56,19 @@ final class ControlWrites {
 
   /** Accept a frame already encoded and registered by the connection's correlation owner. */
   boolean sendEncoded(byte[] frame) {
+    return sendEncoded(frame, null);
+  }
+
+  /**
+   * Queue one encoded frame and observe its native write settlement. Settlement means Netty
+   * accepted or failed the write, never peer receipt; the callback runs on the event loop exactly
+   * once per accepted frame, including after end(). A refused frame never invokes it.
+   *
+   * @param frame encoded control frame
+   * @param settled callback after the write future completes, or null
+   * @return false when the connection already ended or the write was refused
+   */
+  boolean sendEncoded(byte[] frame, Runnable settled) {
     if (ended) return false;
     if (pending.size() >= countLimit || frame.length > limit + 5) {
       failure.accept(ProtocolError.limit("control write count or frame ceiling exhausted"));
@@ -75,11 +88,15 @@ final class ControlWrites {
         .addListener(
             result -> {
               if (pending.remove(write)) bytes -= write.bytes();
-              if (!ended) {
-                if (!result.isSuccess())
-                  failure.accept(
-                      new ProtocolError(ProtocolError.Code.CONTROL_RESET, "control send failed"));
-                else if (pending.isEmpty()) drained.run();
+              try {
+                if (settled != null) settled.run();
+              } finally {
+                if (!ended) {
+                  if (!result.isSuccess())
+                    failure.accept(
+                        new ProtocolError(ProtocolError.Code.CONTROL_RESET, "control send failed"));
+                  else if (pending.isEmpty()) drained.run();
+                }
               }
             });
     return !ended;
