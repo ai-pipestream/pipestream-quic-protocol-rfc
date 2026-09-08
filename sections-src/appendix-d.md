@@ -229,9 +229,15 @@ access while maintenance continues settling declared and admitted obligations.
 Frozen membership receives a real seal only after its complete bounded fold;
 restart reconstructs partial progress. Private format 7 validates typed own-fence
 receipts, scope-fence provenance, pending jobs and terminal child-closure ordering.
-Broader orphan reconciliation, result-read pins and transport, retirement and
-full cross-language failure/resource gates remain required. These remain local
-authority capabilities, not Java durable-profile wire interoperability.
+The local Java result service now couples exact published-object pins with
+current authorization and fresh availability checks, including a final safe-UTC
+sample after file verification. Its bounded registry charges pending stream-slot
+time, distinguishes transport progress from disk reads, and independently checks
+idle/lifetime expiry and revocation. Physical readers retain shared handle charges
+until close. Broader orphan reconciliation, dependency-safe reclamation,
+result-stream transport, retirement and full cross-language failure/resource gates
+remain required. These remain local authority capabilities, not Java
+durable-profile wire interoperability.
 
 Rust now applies the same sealed/admitted-or-terminal coverage check before
 completing expansion and when auditing retained completed jobs. Incomplete

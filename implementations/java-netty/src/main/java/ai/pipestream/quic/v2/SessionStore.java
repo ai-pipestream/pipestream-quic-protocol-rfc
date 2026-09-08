@@ -1710,6 +1710,175 @@ final class SessionStore {
   }
 
   /**
+   * Return authenticated immutable publication evidence, without consulting UTC or object storage.
+   * Expired availability does not make the retained manifest mutable or grant a new read lease.
+   *
+   * @param access current verified owner
+   * @param selected negotiated result-delivery capabilities
+   * @param generation attached session
+   * @param request exact manifest query
+   * @param authorization current result permission
+   * @return exactly correlated publication evidence
+   * @throws SQLException missing or contradictory metadata
+   */
+  ManifestResponse manifest(
+      Access access,
+      Capabilities selected,
+      long generation,
+      GetManifest request,
+      ResultStore.Authorization authorization)
+      throws SQLException {
+    Objects.requireNonNull(request);
+    Objects.requireNonNull(authorization);
+    return sessionTransaction(
+        access,
+        selected,
+        generation,
+        false,
+        (connection, binding) -> {
+          resultProfile(selected);
+          authorization.check(binding, request.work());
+          ManifestResponse response =
+              new ManifestResponse(
+                  request.request(),
+                  ResultStore.retained(connection, binding, request.work(), request.attempt()));
+          Wire.encode(response, selected.controlLimit());
+          authorization.check(binding, request.work());
+          return response;
+        });
+  }
+
+  /**
+   * Pin one exact output inside the same writer transaction as fresh authorization and safe-UTC
+   * availability. Final checks occur after potentially slow storage verification. A refused
+   * acquisition closes its pin and rolls back the UTC watermark, never changing work outcomes.
+   *
+   * @param access current verified owner
+   * @param selected negotiated result-delivery capabilities
+   * @param generation attached session
+   * @param inputs paired exclusive object store
+   * @param request exact object request
+   * @param clock trusted UTC source
+   * @param authorization current result permission
+   * @param finalCheck local delivery-lifetime gate, not a peer-supplied callback
+   * @return pinned object to transfer under independently enforced elapsed deadlines
+   * @throws IOException failed storage pairing or physical cleanup
+   * @throws SQLException missing or contradictory metadata, or failed transaction
+   */
+  ResultStore.Opened openResult(
+      Access access,
+      Capabilities selected,
+      long generation,
+      InputStore inputs,
+      Read request,
+      AdmissionStore.Clock clock,
+      ResultStore.Authorization authorization,
+      Runnable finalCheck)
+      throws IOException, SQLException {
+    Objects.requireNonNull(access).check();
+    resultProfile(Objects.requireNonNull(selected));
+    Checks.id(generation);
+    Objects.requireNonNull(request);
+    Objects.requireNonNull(authorization);
+    Objects.requireNonNull(finalCheck);
+    AdmissionStore.Clock checkedClock = AdmissionStore.checkedClock(clock);
+    synchronized (Objects.requireNonNull(inputs)) {
+      if (!DATABASE_OPERATIONS.tryAcquire())
+        throw ProtocolError.limit("V2 database operation capacity");
+      ResultStore.Opened opened = null;
+      try (Connection connection = database.connect();
+          var statement = connection.createStatement()) {
+        statement.execute("BEGIN IMMEDIATE");
+        try {
+          access.check();
+          Metadata metadata = metadata(connection);
+          Retained retained = visible(connection, generation, access.owner());
+          compatible(retained, selected);
+          Binding binding = retained.binding();
+          authorization.check(binding, request.work());
+          Manifest manifest =
+              ResultStore.retained(connection, binding, request.work(), request.attempt());
+          Output output = ResultStore.requested(manifest, request);
+          ResultStore.available(
+              manifest, AdmissionStore.now(connection, binding.authority(), checkedClock));
+          if (output.length() > selected.objectLimit())
+            throw ProtocolError.limit("connection cannot represent requested output");
+          inputs.verifyAuthority(identity);
+          if (!inputs.identity().equals(metadata.inputs()))
+            throw corrupt("result storage pairing differs");
+          opened = ResultStore.open(connection, identity, binding, inputs, request, output);
+          inputs.verifyAuthority(identity);
+          access.check();
+          authorization.check(binding, request.work());
+          finalCheck.run();
+          long committedAt = AdmissionStore.now(connection, binding.authority(), checkedClock);
+          ResultStore.available(manifest, committedAt);
+          AdmissionStore.remember(connection, config, binding.authority(), committedAt);
+          statement.execute("COMMIT");
+          return opened;
+        } catch (IOException | SQLException | RuntimeException | Error failure) {
+          rollback(connection, failure);
+          throw failure;
+        }
+      } catch (IOException | SQLException | RuntimeException | Error failure) {
+        // Include failures closing JDBC resources after COMMIT: no caller received this pin yet.
+        if (opened != null) {
+          try {
+            opened.close();
+          } catch (IOException cleanup) {
+            failure.addSuppressed(cleanup);
+          }
+        }
+        if (failure instanceof SQLException sql && (sql.getErrorCode() & 255) == 13) {
+          ProtocolError refusal = ProtocolError.limit("SQLite file capacity exhausted");
+          refusal.initCause(failure);
+          throw refusal;
+        }
+        throw failure;
+      } finally {
+        DATABASE_OPERATIONS.release();
+      }
+    }
+  }
+
+  /**
+   * Recheck a live read's owner and result permission. Acquisition already pinned immutable bytes;
+   * UTC availability expiry does not revoke that bounded delivery lease.
+   *
+   * @param access current verified owner
+   * @param selected immutable connection selection
+   * @param generation retained session
+   * @param work pinned work identity
+   * @param authorization current result permission
+   * @throws SQLException failed metadata observation
+   */
+  void checkResultRead(
+      Access access,
+      Capabilities selected,
+      long generation,
+      WorkKey work,
+      ResultStore.Authorization authorization)
+      throws SQLException {
+    Objects.requireNonNull(work);
+    Objects.requireNonNull(authorization);
+    sessionTransaction(
+        access,
+        selected,
+        generation,
+        false,
+        (connection, binding) -> {
+          resultProfile(selected);
+          authorization.check(binding, work);
+          return null;
+        });
+  }
+
+  private static void resultProfile(Capabilities selected) {
+    if (profiles(selected) != 3)
+      throw error(ProtocolError.Code.EXTENSION_UNSUPPORTED, "result delivery not selected");
+  }
+
+  /**
    * Inspect the immutable deployment registry without granting execution.
    *
    * @return retained application and executor policy

@@ -2289,6 +2289,13 @@ original external workload and equivalent durable streaming-gRPC comparison.
   buffers and deadlines are bounded; existing readers survive permitted expiry
   but not indefinitely. A corrupt retained object never triggers an automatic
   rerun or a replacement success manifest.
+- Fresh-read availability and safe UTC are checked again after file verification
+  and final permission checks. Forward expiry, intra-transaction regression and
+  unsafe final time refuse without a reader or watermark change. Success retains
+  the final safe sample, not only the time preceding file work. Local elapsed
+  deadlines include acquisition and pending stream-slot time; disk reads, checks
+  and zero-byte progress do not renew idle time. Independent timer sweeps release
+  expired idle entries but never refund handles still owned by busy I/O.
 - URI grammar and numeric boundaries, manifest plus selected-index reference,
   explicit attachment/authentication, expected commitments, trusted authority
   mapping and no implicit redirects, bearer credentials or cross-authority access.

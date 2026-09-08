@@ -80,6 +80,10 @@ lease and preserve separate operation namespaces across recovery. Its mode-2
 expander now produces and admits real children, yields without changing the wire
 attempt, and commits expansion completion separately from membership sealing.
 Reassembly runs after verified child closure, with phase-specific handle credits.
+Local cancellation and administrative revocation now drive bounded fenced
+settlement. Java's local result service also pins exact published objects under
+current authorization and bounded pending/active delivery lifetimes; its Netty
+result-stream integration and dependency-safe cleanup remain unfinished.
 Independent Java durable execution/results/recovery, complete cross-language
 failure evidence and the workload comparison remain unfinished.
 The Rust `pipestream_core::v2` library now implements typed codecs for every

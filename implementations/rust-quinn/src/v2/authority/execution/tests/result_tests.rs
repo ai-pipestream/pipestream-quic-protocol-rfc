@@ -211,6 +211,119 @@ fn existing_read_uses_monotonic_lifetime_not_output_expiry_or_later_unsafe_utc()
     fixture.reopen().integrity_check().unwrap();
 }
 
+fn assert_result_read_slots_released(fixture: &Fixture) {
+    let results = service(fixture);
+    let now = Instant::now();
+    let reads: Vec<_> = (0..payload_policy().handles.0)
+        .map(|_| {
+            results
+                .begin_read(&fixture.binding.identity, &request(fixture), &caps(), now)
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(reads.len(), payload_policy().handles.0 as usize);
+    drop(reads);
+    assert_eq!(results.pending().unwrap(), 0);
+}
+
+#[test]
+fn result_read_final_authorization_cannot_reach_exact_output_expiry() {
+    let mut fixture = published();
+    let until = fixture.view().output_until.unwrap().0;
+    fixture.clock.0.store(until - 1, Ordering::SeqCst);
+    let before_view = fixture.view();
+    let before_job = fixture.job();
+    let before_records = fixture.durable_snapshot();
+    let authorization = fixture.advance_on_authorization(2, until);
+    let results = service(&fixture);
+
+    refuse(
+        results.begin_read(
+            &fixture.binding.identity,
+            &request(&fixture),
+            &caps(),
+            Instant::now(),
+        ),
+        ErrorCode::Expired,
+    );
+    assert_eq!(authorization.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(results.pending().unwrap(), 0);
+    assert_eq!(fixture.view(), before_view);
+    assert_eq!(fixture.job(), before_job);
+    assert_eq!(fixture.durable_snapshot(), before_records);
+
+    drop(results);
+    fixture.clock.0.store(until - 1, Ordering::SeqCst);
+    fixture.allow();
+    assert_result_read_slots_released(&fixture);
+    fixture.reopen().integrity_check().unwrap();
+}
+
+#[test]
+fn result_read_rejects_intra_call_clock_regression_above_durable_watermark() {
+    let mut fixture = published();
+    fixture.clock.0.store(1070, Ordering::SeqCst);
+    let before_view = fixture.view();
+    let before_job = fixture.job();
+    let before_records = fixture.durable_snapshot();
+    assert_eq!(before_records.clock.3, Number(1000));
+    let authorization = fixture.advance_on_authorization(2, 1060);
+    let results = service(&fixture);
+
+    refuse(
+        results.begin_read(
+            &fixture.binding.identity,
+            &request(&fixture),
+            &caps(),
+            Instant::now(),
+        ),
+        ErrorCode::ClockUnsafe,
+    );
+    assert_eq!(authorization.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(results.pending().unwrap(), 0);
+    assert_eq!(fixture.view(), before_view);
+    assert_eq!(fixture.job(), before_job);
+    assert_eq!(fixture.durable_snapshot(), before_records);
+
+    drop(results);
+    fixture.clock.0.store(1070, Ordering::SeqCst);
+    fixture.allow();
+    assert_result_read_slots_released(&fixture);
+    fixture.reopen().integrity_check().unwrap();
+}
+
+#[test]
+fn successful_result_read_records_the_final_safe_clock_sample() {
+    let mut fixture = published();
+    fixture.clock.0.store(1070, Ordering::SeqCst);
+    let before_view = fixture.view();
+    let before_job = fixture.job();
+    let before_records = fixture.durable_snapshot();
+    let authorization = fixture.advance_on_authorization(2, 1080);
+    let results = service(&fixture);
+
+    let read = results
+        .begin_read(
+            &fixture.binding.identity,
+            &request(&fixture),
+            &caps(),
+            Instant::now(),
+        )
+        .unwrap();
+    assert_eq!(authorization.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(results.pending().unwrap(), 1);
+    assert_eq!(fixture.view(), before_view);
+    assert_eq!(fixture.job(), before_job);
+    let after_records = fixture.durable_snapshot();
+    assert_eq!(after_records.work, before_records.work);
+    assert_eq!(after_records.job, before_records.job);
+    assert_eq!(after_records.clock.3, Number(1080));
+
+    drop(read);
+    assert_eq!(results.pending().unwrap(), 0);
+    fixture.reopen().integrity_check().unwrap();
+}
+
 #[test]
 fn zero_outputs_are_a_real_manifest_but_no_object_and_failed_work_has_no_manifest() {
     for failed in [false, true] {

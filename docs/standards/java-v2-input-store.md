@@ -153,9 +153,11 @@ this is slot recycling, not retention expiry or a capacity refund.
 
 The authority's separate `succeedExecution` transaction verifies the exact output
 set before publishing a manifest and terminal success. A local verified file
-reader is not a protocol result-read lease: current owner authorization, retention,
-revocation, dependency pins and bounded transport delivery must be enforced by the
-still-required result service.
+reader is not a protocol result-read lease. The local `ResultService` now supplies
+current owner authorization, fresh external availability checks, bounded pending
+and active lifetimes, and revocation checks. It owns one registry per exclusive
+input installation and shares this store's physical handle pool. Dependency-safe
+cleanup and the Netty result-stream adapter remain separate required work.
 
 Caller-expanded branch execution reserves one store-bound sequential child-reader
 credit before invoking application code, alongside its own input and optional
@@ -174,9 +176,9 @@ membership, application, producer and cancellation fences, and atomically commit
 input identity, timestamps, job, receipt and output/metadata funding. It rechecks
 authorization and trusted time at commitment. The local executor now preserves
 expansion and reassembly phases across replacement leases and consumes phase-specific
-handle credits. The remaining result delivery and retirement paths must preserve
-dependencies, enforce read authorization and reconcile orphans with authoritative
-references. No durable profile
+handle credits. The local result service now enforces read authorization and
+physical read pins. The remaining transport, cleanup and retirement paths must
+preserve dependencies and reconcile orphans with authoritative references. No durable profile
 can be advertised until the full Java execution/results/retirement paths and
 their failure/resource acceptance gates are implemented and tested.
 

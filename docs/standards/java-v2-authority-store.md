@@ -1,13 +1,14 @@
 # Java V2 authority storage
 
 `v2.SessionStore`, `v2.DeclarationStore`, `v2.AdmissionStore`, `v2.ExecutionStore`,
-`v2.PublicationStore`, `v2.ClosureStore`, `v2.FenceStore` and `v2.BranchStore` are the independent Java
-session, declaration, admission, local execution, result-publication, closure and
-direct-child dependency layer for Sections 12.3 through 12.9. They are
+`v2.PublicationStore`, `v2.ClosureStore`, `v2.FenceStore`, `v2.BranchStore`,
+`v2.ResultStore` and `v2.ResultService` are the independent Java session,
+declaration, admission, local execution, publication, closure, direct-child
+dependency and local result-read layer for Sections 12.3 through 12.9. They are
 package-private and are not wired into a durable-profile listener. The shipped
 Java endpoint still advertises Core only. Local authority-produced expansion is
-implemented behind the host-owned runtime; result delivery, retirement and endpoint
-integration remain to be implemented. Storage and local execution behavior are not
+implemented behind the host-owned runtime; result-stream transport, dependency-safe
+cleanup, retirement and endpoint integration remain to be implemented. Storage and local execution behavior are not
 endpoint interoperability.
 
 ## Identity and transaction boundary
@@ -37,9 +38,9 @@ access, after transaction acquisition and immediately before commit. The eventua
 TLS dispatcher must supply that gate and enforce one session per connection;
 the storage API does not authenticate certificates or replace the dispatcher.
 Stored owner/revocation/retirement state is checked before decoding a requested
-receipt. The database contains reserved lifecycle flags, but this layer exposes
-no revocation or retirement transition: those need the full fenced settlement
-and cleanup implementation, not a flag-setting shortcut.
+receipt. Local administrative revocation now installs a real root cancellation
+fence, as described below. Retirement still requires the cleanup implementation;
+its reserved flag is not a supported flag-setting shortcut.
 
 The retained control ceiling is conservative: reconnection must select at least
 the original control limit. Stream counts, pending counts, timers and current
@@ -749,3 +750,45 @@ requires accepting receipts for own fences, direct or inherited provenance for
 scope flags, matching root/session revocation, valid terminal intervals, and child
 closure before branch settlement. Earlier private schemas are refused without
 conversion. Wire values and Section 12's cancellation semantics are unchanged.
+
+## Result evidence and bounded delivery leases
+
+`SessionStore.manifest` returns an exact authenticated publication without
+consulting UTC or payload files. It checks the producing work/job relationship,
+manifest, retained profile and response ceiling. Availability expiry does not
+erase that evidence, renew a promise or assert that bytes are still present.
+Result permission is a separate current gate, not inferred from application
+execution permission, a historical lease or a locator.
+
+Fresh reads check the exact work, attempt, output index and expected commitment
+inside the same writer transaction that pins the payload and remembers safe UTC.
+The final permission, elapsed-lifetime and UTC checks follow file verification.
+Deadline equality refuses the new lease. Refusal before commit closes the pin
+and rolls back the watermark. Storage opens one descriptor and fully verifies
+the committed bytes on it, rather than hashing once to find a file and again to
+open it. Missing/corrupt retained bytes are OUTPUT_UNAVAILABLE, not a rerun.
+
+`ResultService` owns the exclusive input installation's single read registry.
+Configured global and per-owner counts include acquisition and stream-slot
+waiting across connections, not just started streams. Every opened descriptor
+also consumes the existing shared input/output handle pool. A read allows one
+bounded outstanding payload chunk; reported accepted transport progress may
+consume it incrementally. Neither a disk read, a deadline check nor zero-byte
+progress renews the idle deadline. Stream start does not reset either deadline.
+
+The service's independent timer checks a finite snapshot of at most 128 reads.
+Busy entries stay pinned; foreground operations check again after blocking
+storage work. Elapsed deadlines use a local monotonic nanosecond source, including
+signed values and normal nanoTime wrap, not wire UTC arithmetic. A lease acquired
+before external expiry can finish without sampling UTC again, but current owner
+permission and revocation remain gates before further scheduling. The transport
+must call `check` before each write or FIN, including after flow-control waits,
+and call `sent` only for payload accepted by its bounded transport writer.
+
+FIN after complete payload or abort closes the physical reader without refunding
+durable object bytes. Failed physical closes remain charged for cleanup retry;
+service shutdown does not detach its storage claim while any read is outstanding.
+The service does not retract already buffered bytes or establish client receipt.
+It is not yet wired to Java's V2 Netty endpoint. Per-connection request/stream
+credits, native send-buffer ownership, full process bounds, dependency-safe
+reclamation and retirement require their own integration and evidence.

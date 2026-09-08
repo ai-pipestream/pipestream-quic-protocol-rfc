@@ -149,6 +149,7 @@ final class InputStore implements AutoCloseable {
   private int files;
   private int handles;
   private boolean closed;
+  private Object resultService;
 
   private InputStore(
       Path root,
@@ -664,6 +665,50 @@ final class InputStore implements AutoCloseable {
   }
 
   /**
+   * Claim the single result-delivery registry for this exclusive storage owner.
+   *
+   * @param service local registry identity
+   * @throws IOException closed storage
+   */
+  synchronized void claimResults(Object service) throws IOException {
+    ensureOpen();
+    Objects.requireNonNull(service);
+    if (resultService != null) throw new IllegalStateException("result service already attached");
+    resultService = service;
+  }
+
+  /**
+   * Release a stopped, fully drained delivery registry.
+   *
+   * @param service exact previously attached identity
+   */
+  synchronized void releaseResults(Object service) {
+    if (resultService != service) throw new IllegalStateException("foreign result service");
+    resultService = null;
+  }
+
+  /**
+   * Open one exact published object with a single full verification on its pinned descriptor.
+   * Caller holds this monitor through the current authorization and availability transaction.
+   *
+   * @param context authenticated session
+   * @param header retained admission
+   * @param producer historical producing identity, not execution authority
+   * @param expected committed object descriptor
+   * @return verified payload-only reader whose close releases its physical pin
+   * @throws IOException missing or contradictory retained storage
+   */
+  synchronized InputStream openPublishedOutput(
+      Commitments.Context context,
+      InputHeader header,
+      ExecutionStore.Lease producer,
+      Output expected)
+      throws IOException {
+    ensureOpen();
+    return outputs.openPublished(context, header, producer, expected);
+  }
+
+  /**
    * Reserve one sequential child-input receiver before invoking an expanding callback. Bytes and
    * names are charged for each actual reception; this grants no producer or admission authority.
    *
@@ -1098,6 +1143,7 @@ final class InputStore implements AutoCloseable {
   @Override
   public synchronized void close() throws IOException {
     if (closed) return;
+    if (resultService != null) throw new IOException("V2 result service still attached");
     if (handles != 0) throw new IOException("V2 input store still has active handles");
     lock.release();
     lockChannel.close();

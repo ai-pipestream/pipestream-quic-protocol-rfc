@@ -357,6 +357,33 @@ final class OutputStore {
   }
 
   /**
+   * Bind an already published descriptor before verifying the complete bytes on the reader's one
+   * descriptor. This avoids hashing the same object once to find it and again to open it.
+   *
+   * @param context retained session
+   * @param header retained admission
+   * @param lease historical producer
+   * @param expected committed descriptor
+   * @return pinned and verified payload reader
+   * @throws IOException missing or contradictory retained storage
+   */
+  InputStream openPublished(
+      Commitments.Context context, InputHeader header, ExecutionStore.Lease lease, Output expected)
+      throws IOException {
+    InputStore.Reservation funding = funding(context, header, lease);
+    Identity identity = identity(context, header, lease, expected.index());
+    String reference = name(funding.reference(), expected.index());
+    Metadata metadata = inspect(installed(reference), null, false).metadata();
+    validateFunding(metadata, funding);
+    if (!metadata.identity().equals(identity)
+        || metadata.length() != expected.length()
+        || !metadata.sha256().equals(expected.sha256())
+        || !metadata.contentType().equals(expected.contentType()))
+      throw new IOException("committed output differs from installed descriptor");
+    return new Stored(reference, metadata).openStream();
+  }
+
+  /**
    * Require exactly a finished contiguous set, with no surplus object or active/staged writer.
    *
    * @param context expected session

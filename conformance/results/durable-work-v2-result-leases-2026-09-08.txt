@@ -1,0 +1,181 @@
+V2 local Java result leases and Rust read commit time, 2026-09-08
+
+Scope
+  Java independently reads authenticated retained manifests and opens exact
+  published work/attempt/index/digest objects. A historical worker identity
+  locates bytes but grants neither execution nor result permission. Published
+  work and job identity are checked together. Manifest retrieval does not
+  consult UTC or assert that expired bytes remain available.
+
+  Fresh reads pin the verified physical descriptor inside the writer transaction
+  that checks current result permission and availability and remembers safe UTC.
+  Final authorization, elapsed-lifetime and UTC checks follow file verification.
+  Precommit failure closes the pin and rolls back the watermark. A JDBC-resource
+  close failure after commit also closes the pin before propagating failure;
+  the caller has not received that descriptor. The output path hashes once on
+  the opened descriptor, not once to find it and again to open it.
+
+  ResultService owns one registry for the exclusively paired input installation.
+  Deployment global and per-owner counts span connections and include acquiring
+  and pending reads. Every opened descriptor also consumes the existing shared
+  input/output handle pool. One bounded chunk may remain outstanding per read.
+  Actual accepted transport payload progress may consume that chunk partially;
+  a disk read, check, stream start or empty progress does not renew idle time.
+
+  Local elapsed deadlines include file acquisition and waiting for a response
+  stream. Independent timer sweeps inspect a finite snapshot of at most 128
+  entries. Busy I/O remains charged and foreground paths recheck after blocking
+  work. Normal signed nanoTime values and wrap are supported by subtraction.
+  Revocation/current permission remain gates on further scheduling; existing
+  leases do not resample UTC or become unbounded after external output expiry.
+  FIN or abort closes physical pins, not durable output-byte funding. Failed
+  physical closes remain charged; shutdown cannot detach a live storage owner.
+
+  Rust already supplied result delivery but sampled availability only before
+  output verification. It now checks final safe UTC after the final ReadResult
+  permission callback, refuses intra-operation regression or exact expiry, and
+  retains that final sample rather than the earlier one.
+
+Reviewed tests
+  ResultStoreTest: exact manifest/header/bytes, reopen and zero-byte output;
+  owner and distinct result-policy denial priority; work attempt/index/digest,
+  unpublished output, profile and response-limit refusals; initial/final expiry,
+  loss of UTC trust and intra-operation regression; exact watermark rollback and
+  final-sample success; missing/corrupt output preserving immutable evidence and
+  conservative file/byte/handle charges; clock-independent live permission checks.
+
+  ResultServiceTest: accepted-progress-only idle renewal, independent lifetime,
+  deadline equality, zero/oversize/outstanding chunks, duplicate start, excess
+  progress and missing FIN; global/per-owner/exclusive-service quotas, shared
+  storage handle exhaustion and quota recovery; repeated immutable reads and
+  shutdown; acquisition time, new expired/unsafe reads versus an existing lease;
+  signed elapsed wrap/regression, busy maintenance without early pin refund,
+  revocation and timer-only expiry of an unstarted pending read.
+
+  Static review corrected invalid below-minimum capability durations, backward
+  UTC across test owners, a lifetime case accidentally hitting idle equality,
+  a latch that would block acquisition itself, an incorrect output directory,
+  and a rollback assertion that did not actually inspect the watermark. Test
+  oracles were corrected; production was not relaxed to satisfy them.
+
+Rust defect reproduction and final verification
+  Working directory: implementations/rust-quinn
+  Temporarily restore only the reviewed old results.rs clock ordering, then:
+    cargo test --locked -p pipestream-core result_read_
+  Direct exit 101, all three new tests failed exactly as intended:
+    exact expiry incorrectly accepted; intra-call regression incorrectly accepted;
+    successful read retained 1070 rather than final safe 1080.
+  Log: /tmp/pipestream-result-read-red-20260908T112736-0400.log
+  The corrected source was immediately restored and its hash verified before:
+    cargo test --locked -p pipestream-core authority::execution::tests::result_tests
+  Direct exit 0; whole result module 22 passed, zero failures/ignored.
+  Log: /tmp/pipestream-result-module-green-20260908T112804-0400.log
+
+    cargo test --locked --workspace
+  Direct exit 0 (session 76213); independently summed 16 result groups:
+  815 passed, zero failed/ignored/measured/filtered.
+  Log: /tmp/pipestream-result-full-workspace-20260908T112827-0400.log
+    cargo clippy --locked -p pipestream-core --all-targets -- -D warnings
+  Direct exit 0 (session 64837).
+  Log: /tmp/pipestream-result-clippy-20260908T113025-0400.log
+
+Java focused verification
+  Maven prefix from repository root:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop
+      -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+  Focused suffix:
+    -Dtest=ResultStoreTest,ResultServiceTest,PublicationStoreRecoveryTest,FenceStoreTest test
+  Initial compile-only refusals, both direct exit 1, no tests executed:
+    /tmp/pipestream-result-java-focused-20260908T113127-0400.log
+      -Werror: explicit close of a try-with-resources service variable.
+    /tmp/pipestream-result-java-focused-rerun-20260908T113221-0400.log
+      -Werror: unused try-with-resources capacity-holding read.
+  The shutdown test now explicitly owns service lifetime with finally cleanup;
+  the capacity-holding read is checked. Assertions and production are unchanged.
+
+  Final focus direct exit 0 (session 26393), finished 11:33:34 EDT:
+  26 tests, zero failures/errors/skips; native SQLite guard 1/1.
+  Four fresh XML reports independently checked: ResultStore 10, ResultService 5,
+  PublicationStoreRecovery 1, FenceStore 10; UTC mtimes 15:33:33 through 15:33:34.
+  Log: /tmp/pipestream-result-java-focused-final-20260908T113328-0400.log
+
+  After the full suite, ResultFixture and ResultStoreTest received formatting-only
+  Google Java Format 1.28.0 cleanup. All five focused fixture/test files were
+  checked canonical. No production or test assertions changed. The same focus
+  reran: direct exit 0 (session 70627), 26/0/0/0 plus native guard 1/1, finished
+  11:40:29 EDT. The unfiltered suite was not rerun solely for this layout change.
+  Log: /tmp/pipestream-result-java-focused-post-gjf-20260908T114023-0400.log
+
+Final unfiltered Java verification
+  Same Maven prefix, unfiltered suffix: install
+  Direct exit 0 (session 91538), finished 11:37:38 EDT:
+  578 tests, zero failures/errors/skips; native SQLite guard 1/1.
+  All 86 XML reports independently counted before later formatting-only focus;
+  UTC mtime interval 15:35:47.584177655 through 15:37:37.373662948.
+  Log: /tmp/pipestream-result-java-full-install-20260908T113349-0400.log
+  The earlier announced 113340 filename was not the actual shell-created path.
+
+  Production-only compile suffix: -Dmaven.test.skip=true compile
+  Direct exit 0 (session 53445), including the final SessionStore cleanup scope.
+  Log: /tmp/pipestream-result-post-session-main-compile-20260908T113103-0400.log
+  Strict five-type Javadoc: -package -Xdoclint:all -Werror; direct exit 0.
+  Log: /tmp/pipestream-result-post-session-doclint-20260908T113119-0400.log
+
+  From implementations/rust-quinn: target/release/pipestream-conformance examples
+  Direct exit 0 (session 59381); all three existing-profile examples PASS:
+  Java source to Rust/Quinn; Rust recovery to C++/MsQuic;
+  Rust scatter to Java/Rust/C++.
+  Log: /tmp/pipestream-result-java-examples-20260908T113746-0400.log
+  These are regression examples, not Java durable V2 interoperability evidence.
+
+  Artifact SHA-256:
+    Java ordinary JAR cc3debf0a300bc94ad1b871b0d1369e5ae43d9e9f95d9c95379f4ee1db030e1e
+    Java all JAR c5bdea8e60fc554be4193d1abf1df6f7bf759420940196d9812aacd8cdcf4fcd
+    sqlite_guard_test 3dc46f85b2fbf31018a0dd18277bd14604b83a66c3be22decadf3e33f9dfc3bd
+
+Draft
+    ./build.sh core 05 draft
+  Direct exit 0 (session 22792); idnits zero errors/flaws/warnings and the existing
+  FIPS-180-4 comment. Updated Appendix D inspected in generated TXT and HTML.
+  Log: /tmp/pipestream-result-store-draft-20260908T111959-0400.log
+  Generated artifact SHA-256:
+    XML 01b2b3c6d08be2be6d8cdb70fd9277605252e0b1950c118b46433f0eefaa20d3
+    TXT 18a6f7f4797bf50be432abf74d4c56b96a64d3b57d1eda788116dd04bfe580ea
+    HTML f787a4f741f33ed0f5c3c45eaf3bb6c2125605f067b30edda2a02eacf70ce022
+
+Rust source SHA-256
+  authority/results.rs
+    20a3205c9537a2c3d587fe193ae7627a5e75dc09000394333e675f19784e31f5
+  authority/execution/tests/result_tests.rs
+    3b08f1f64210185b11bb72f8e28bd3d19814ba1ae914c361d740aeae5f84e384
+
+Java production source SHA-256
+  ResultStore.java
+    81b066052e16f62d6a0dd827297e1b704e7a936a97e096c4d9770681b103e754
+  ResultService.java
+    c52a93e1e64b6bd57a87541b5bbe526ff70b2ffe1447f7bb4fe54beba9c13d0e
+  SessionStore.java
+    49b11d04db53dfa30e3443f7447986339e1c236ea97cc9dd9426330e40c4a1aa
+  InputStore.java
+    639ab069f5a10bd56bc69b285bba50e43475011378b8870a00778fdb92d6c525
+  OutputStore.java
+    dcb360f7b2e23554544988ff8332269ed1dbbc025a83b7d912483197c993f2e6
+
+Final Java test source SHA-256
+  ResultFixture.java
+    9e1fe72226d791b0114f6303c13d2a679cc4f7078b44303ac9dc34bcb40f2ce2
+  ResultStoreTest.java
+    73a401ef183b735c444b8da44e42111571cebedb3b628114a98c14d5f632ecff
+  ResultServiceTest.java
+    f075442b93fa1a36f5a7f462a080415bde07cba6584a9c05adb0f6825a93e542
+
+Boundaries
+  These new Java tests exercise real metadata and payload stores, not V2 QUIC
+  result streams or newly added process-death cases. Existing publication crash
+  tests remain part of the focused and full regression gates. Counters/chunk
+  ceilings here are not whole-process heap/RSS, native transport-buffer, wire
+  flow-control or throughput measurements. Java still advertises Core only.
+  Dependency-safe reclamation, session retirement, complete Java durable endpoint
+  and client integration, both-direction neutral failure/resource evidence, and
+  the original external workload/equivalent durable streaming-gRPC comparison
+  remain required. Wire grammar and normative result semantics did not change.

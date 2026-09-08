@@ -2679,3 +2679,41 @@ the neutral cross-language failure driver and all original external workload
 and equivalent authenticated durable streaming-gRPC comparison deliverables.
 These local authority APIs do not activate the Java V2 listener. The full goal
 remains active and incomplete.
+
+### Java result leases and Rust read commit-time checkpoint, 2026-09-08
+
+Java now independently returns authenticated immutable result manifests and pins
+exact published objects. Its current result policy is separate from execution
+permission. Fresh reads check safe UTC and external availability after file
+verification and final authorization; a refused precommit acquisition closes its
+pin and rolls back the watermark. Manifest lookup grants no lease and does not
+depend on current UTC or payload availability.
+
+One local service per exclusive input installation accounts for acquiring,
+pending and active reads globally and per owner. It shares physical handle
+limits with callback and input/output storage. One bounded chunk can be pending;
+only reported transport acceptance renews idle time. Pending stream-slot time
+counts against the original lifetime, independent timer sweeps expire unused
+reads, and current permission/revocation remain scheduling gates. Busy physical
+I/O stays charged. This is local delivery lifecycle behavior, not Netty V2
+result-stream integration or a measured native/process-memory bound.
+
+The comparison found a real Rust acquisition gap: its availability sample
+preceded storage work and final authorization. Three independent regressions
+failed against that exact prior code, demonstrating late expiry, intra-call
+clock regression and retention of the wrong UTC sample. The corrected code
+passed all 22 result tests and the full 815-test Rust workspace, with strict
+Clippy. Java's focused 26-test gate and full 578-test suite passed, including
+the existing physical publication crash test and native storage guard. All
+three existing-profile external examples passed; they do not establish Java
+durable V2 parity. Raw exits, XML counts, source hashes and scope limitations
+are in the [result-lease evidence](../../conformance/results/durable-work-v2-result-leases-2026-09-08.txt).
+
+Next implement dependency-safe Java retention and retirement. Cleanup needs
+durable eligibility evidence before deletion, per-object physical liveness,
+synchronized removal before refunds, and recovery checks that distinguish an
+authorized interrupted deletion from missing promised bytes. Parent dependencies
+remain valid beyond external output expiry. Then complete Java's durable
+endpoint/client and the two-direction neutral failure/resource driver. The
+external workload and equivalent authenticated durable streaming-gRPC comparison
+remain required. This checkpoint does not complete task 2 or the overall goal.

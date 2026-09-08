@@ -225,10 +225,23 @@ impl ResultService {
                 },
             )
             .map_err(storage_read_error)?;
-        self.shared.store.remember_clock(&tx, utc)?;
         self.shared
             .store
             .authorize(&identity.owner, Permission::ReadResult)?;
+        // Object verification and the final permission gate may take time.
+        // A fresh lease must still be available at commitment, and a rollback
+        // within this transaction cannot hide behind the older durable watermark.
+        let committed_at = self.shared.store.check_clock(&tx)?;
+        if committed_at < utc {
+            return Err(protocol(
+                ErrorCode::ClockUnsafe,
+                "result-read clock regressed during acquisition",
+            ));
+        }
+        if committed_at >= manifest.available_until {
+            return Err(protocol(ErrorCode::Expired, "result availability expired"));
+        }
+        self.shared.store.remember_clock(&tx, committed_at)?;
         commit(tx, "result-read")?;
         let lease = Arc::new(Mutex::new(Lease {
             identity: identity.clone(),
