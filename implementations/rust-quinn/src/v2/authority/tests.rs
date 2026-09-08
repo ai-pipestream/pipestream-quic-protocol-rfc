@@ -505,6 +505,334 @@ fn declaration_replay_pages_and_missing_input_checkpoint_are_durable() {
     fixture.store.integrity_check().unwrap();
 }
 
+fn fixture_with_missing_declared_member(adjust_counts: bool) -> (Fixture, Binding) {
+    let fixture = Fixture::new();
+    let binding = fixture.create();
+    fixture
+        .store
+        .declare(&binding.identity, op(1), Number(0), &[Id(1)], false)
+        .unwrap();
+    let mut connection = fixture.store.connect().unwrap();
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
+    tx.execute(
+        "DELETE FROM work WHERE generation=?1 AND scope=0 AND entity=1",
+        [sql(binding.identity.generation.0).unwrap()],
+    )
+    .unwrap();
+    if adjust_counts {
+        tx.execute(
+            "UPDATE sessions SET entities=0 WHERE generation=?1",
+            [sql(binding.identity.generation.0).unwrap()],
+        )
+        .unwrap();
+        let target = records::Target {
+            table: records::Table::Scope,
+            row: tx
+                .query_row(
+                    "SELECT rowid FROM scopes WHERE generation=?1 AND scope=0",
+                    [sql(binding.identity.generation.0).unwrap()],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+        };
+        let (header, mut state): (_, scopes::ScopeState) = records::read(&tx, target).unwrap();
+        state.declared = Number(0);
+        state.last_entity = Number(0);
+        records::replace(&tx, target, header.revision, &state, false).unwrap();
+    }
+    tx.commit().unwrap();
+    (fixture, binding)
+}
+
+#[test]
+fn operation_lookup_rejects_receipt_whose_declared_member_is_missing() {
+    let (fixture, binding) = fixture_with_missing_declared_member(false);
+    match fixture.store.operation(&binding.identity, op(1)) {
+        Err(StoreError::Corrupt(_)) => {}
+        Err(error) => panic!("expected corrupt missing membership, got {error:?}"),
+        Ok(receipt) => panic!("operation lookup accepted missing membership: {receipt:?}"),
+    }
+}
+
+#[test]
+fn identical_declaration_replay_rejects_receipt_whose_member_is_missing() {
+    let (fixture, binding) = fixture_with_missing_declared_member(false);
+    match fixture
+        .store
+        .declare(&binding.identity, op(1), Number(0), &[Id(1)], false)
+    {
+        Err(StoreError::Corrupt(_)) => {}
+        Err(error) => panic!("expected corrupt missing membership, got {error:?}"),
+        Ok(receipt) => panic!("declaration replay accepted missing membership: {receipt:?}"),
+    }
+}
+
+#[test]
+fn recovery_rejects_missing_member_even_when_scalar_counts_and_scope_match() {
+    let (fixture, _) = fixture_with_missing_declared_member(true);
+    let result = AuthorityStore::open(
+        &fixture.directory.path().join("authority.sqlite"),
+        owner("test-authority"),
+        fixture.store.policy.clone(),
+        fixture.store.physical.limits,
+        fixture.clock.clone(),
+        fixture.authorization.clone(),
+    );
+    match result {
+        Err(StoreError::Corrupt(_)) => {}
+        Err(error) => panic!("expected corrupt recovery refusal, got {error:?}"),
+        Ok(_) => panic!("recovery accepted missing membership"),
+    }
+}
+
+#[test]
+fn corrupt_or_oversized_retained_declaration_intent_is_refused_after_authorization() {
+    for corruption in ["changed", "oversized"] {
+        let fixture = Fixture::new();
+        let binding = fixture.create();
+        fixture
+            .store
+            .declare(&binding.identity, op(1), Number(0), &[Id(1)], false)
+            .unwrap();
+        let connection = fixture.store.connect().unwrap();
+        if corruption == "changed" {
+            connection
+                .execute(
+                    "UPDATE operations SET declaration=zeroblob(length(declaration)) WHERE operation=?1",
+                    [op(1).0.as_slice()],
+                )
+                .unwrap();
+        } else {
+            connection
+                .execute_batch("PRAGMA ignore_check_constraints=ON")
+                .unwrap();
+            connection
+                .execute(
+                    "UPDATE operations SET declaration=zeroblob(4097) WHERE operation=?1",
+                    [op(1).0.as_slice()],
+                )
+                .unwrap();
+            connection
+                .execute_batch("PRAGMA ignore_check_constraints=OFF")
+                .unwrap();
+        }
+        let mut foreign = binding.identity.clone();
+        foreign.owner = owner("bob");
+        refuse(
+            fixture.store.operation(&foreign, op(1)),
+            ErrorCode::Unauthorized,
+        );
+        assert!(matches!(
+            fixture.store.operation(&binding.identity, op(1)),
+            Err(StoreError::Corrupt(_))
+        ));
+    }
+}
+
+#[test]
+fn missing_retained_declaration_intent_is_refused_after_authorization_and_on_recovery() {
+    let fixture = Fixture::new();
+    let binding = fixture.create();
+    fixture
+        .store
+        .declare(&binding.identity, op(1), Number(0), &[Id(1)], false)
+        .unwrap();
+    fixture
+        .store
+        .connect()
+        .unwrap()
+        .execute(
+            "UPDATE operations SET declaration=NULL WHERE operation=?1",
+            [op(1).0.as_slice()],
+        )
+        .unwrap();
+
+    let mut foreign = binding.identity.clone();
+    foreign.owner = owner("bob");
+    refuse(
+        fixture.store.operation(&foreign, op(1)),
+        ErrorCode::Unauthorized,
+    );
+    assert!(matches!(
+        fixture.store.operation(&binding.identity, op(1)),
+        Err(StoreError::Corrupt(_))
+    ));
+    assert!(matches!(
+        AuthorityStore::open(
+            &fixture.directory.path().join("authority.sqlite"),
+            owner("test-authority"),
+            fixture.store.policy.clone(),
+            fixture.store.physical.limits,
+            fixture.clock.clone(),
+            fixture.authorization.clone(),
+        ),
+        Err(StoreError::Corrupt(_))
+    ));
+}
+
+#[test]
+fn altered_declaration_receipt_count_or_seal_is_refused() {
+    for corruption in ["count", "seal"] {
+        let fixture = Fixture::new();
+        let binding = fixture.create();
+        let mut receipt = fixture
+            .store
+            .declare(&binding.identity, op(1), Number(0), &[Id(1)], true)
+            .unwrap();
+        let Outcome::Declared {
+            accepted_count,
+            seal,
+            ..
+        } = &mut receipt.body
+        else {
+            panic!("declaration returned a non-declaration receipt");
+        };
+        if corruption == "count" {
+            *accepted_count = BatchCount(0);
+        } else {
+            *seal = Some(Digest([0; 32]));
+        }
+        fixture
+            .store
+            .connect()
+            .unwrap()
+            .execute(
+                "UPDATE operations SET receipt=?1 WHERE operation=?2",
+                params![codec::encode(&receipt, 4096).unwrap(), op(1).0.as_slice()],
+            )
+            .unwrap();
+
+        assert!(matches!(
+            fixture.store.operation(&binding.identity, op(1)),
+            Err(StoreError::Corrupt(_))
+        ));
+        assert!(matches!(
+            AuthorityStore::open(
+                &fixture.directory.path().join("authority.sqlite"),
+                owner("test-authority"),
+                fixture.store.policy.clone(),
+                fixture.store.physical.limits,
+                fixture.clock.clone(),
+                fixture.authorization.clone(),
+            ),
+            Err(StoreError::Corrupt(_))
+        ));
+    }
+}
+
+#[test]
+fn every_multi_batch_and_empty_declaration_replays_after_sealing() {
+    let fixture = Fixture::new();
+    let binding = fixture.create();
+    let first = fixture
+        .store
+        .declare(&binding.identity, op(1), Number(0), &[Id(1), Id(2)], false)
+        .unwrap();
+    let second = fixture
+        .store
+        .declare(&binding.identity, op(2), Number(0), &[Id(3)], true)
+        .unwrap();
+    assert_eq!(
+        fixture
+            .store
+            .declare(&binding.identity, op(1), Number(0), &[Id(1), Id(2)], false)
+            .unwrap(),
+        first
+    );
+    assert_eq!(
+        fixture
+            .store
+            .declare(&binding.identity, op(2), Number(0), &[Id(3)], true)
+            .unwrap(),
+        second
+    );
+
+    let empty = Fixture::new();
+    let empty_binding = empty.create();
+    let receipt = empty
+        .store
+        .declare(&empty_binding.identity, op(1), Number(0), &[], true)
+        .unwrap();
+    assert_eq!(
+        empty
+            .reopen()
+            .declare(&empty_binding.identity, op(1), Number(0), &[], true)
+            .unwrap(),
+        receipt
+    );
+}
+
+#[test]
+fn recovery_refuses_corrupt_sealed_scope_count_or_seal_with_valid_record_checksum() {
+    for corruption in ["count", "seal"] {
+        let fixture = Fixture::new();
+        let binding = fixture.create();
+        fixture
+            .store
+            .declare(&binding.identity, op(1), Number(0), &[Id(1)], true)
+            .unwrap();
+        let mut connection = fixture.store.connect().unwrap();
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        let target = records::Target {
+            table: records::Table::Scope,
+            row: tx
+                .query_row(
+                    "SELECT rowid FROM scopes WHERE generation=?1 AND scope=0",
+                    [sql(binding.identity.generation.0).unwrap()],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+        };
+        let (header, mut state): (_, scopes::ScopeState) = records::read(&tx, target).unwrap();
+        if corruption == "count" {
+            state.declared = Number(2);
+            state.last_entity = Number(2);
+        } else {
+            state.seal = Some(Digest([0; 32]));
+        }
+        records::replace(&tx, target, header.revision, &state, false).unwrap();
+        tx.commit().unwrap();
+
+        let result = AuthorityStore::open(
+            &fixture.directory.path().join("authority.sqlite"),
+            owner("test-authority"),
+            fixture.store.policy.clone(),
+            fixture.store.physical.limits,
+            fixture.clock.clone(),
+            fixture.authorization.clone(),
+        );
+        match result {
+            Err(StoreError::Corrupt(_)) => {}
+            Err(error) => panic!("expected corrupt {corruption} refusal, got {error:?}"),
+            Ok(_) => panic!("recovery accepted corrupt sealed scope {corruption}"),
+        }
+    }
+}
+
+#[test]
+fn recovery_refuses_previous_authority_storage_format_ten() {
+    let fixture = Fixture::new();
+    fixture
+        .store
+        .connect()
+        .unwrap()
+        .execute_batch("PRAGMA user_version=10")
+        .unwrap();
+    let result = AuthorityStore::open(
+        &fixture.directory.path().join("authority.sqlite"),
+        owner("test-authority"),
+        fixture.store.policy.clone(),
+        fixture.store.physical.limits,
+        fixture.clock.clone(),
+        fixture.authorization.clone(),
+    );
+    assert!(matches!(result, Err(StoreError::Corrupt(_))));
+}
+
 #[test]
 fn batching_does_not_change_seal_and_empty_seal_closes_immutably() {
     // This test exercises >2 full declaration batches, not quota refusal.

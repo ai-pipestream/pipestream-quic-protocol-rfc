@@ -1905,11 +1905,41 @@ aggregate agreement is insufficient and missing membership is not an empty-scope
 success. Exact commands, raw failure/verification evidence and scope limits are
 recorded in `conformance/results/durable-work-v2-java-declarations-2026-09-07.txt`.
 
-This does not prove the equivalent Rust corruption checks, a Java authenticated
-durable dispatcher, funded admission/terminal settlement, producer-1 expansion,
-bounded WORK waiting or closure. Rust receipt/membership reconciliation must also
-be attacked independently; existing green suites do not close that gate. All
-original cross-language failure and workload/baseline requirements remain open.
+This Java evidence does not prove the equivalent Rust corruption checks, a Java
+authenticated durable dispatcher, funded admission/terminal settlement,
+producer-1 expansion, bounded WORK waiting or closure. The separate Rust
+receipt/membership attack and correction are recorded below. All original
+cross-language failure and workload/baseline requirements remain open.
+
+## Rust authority operation-integrity evidence, 2026-09-08
+
+Three independent Rust regressions first returned an invalid success: operation
+lookup and identical declaration replay accepted a receipt after its declared
+member was deleted, and recovery accepted the missing member when aggregate
+session and checksummed scope counts had also been adjusted. These are storage
+corruption fixtures, not a claim that successful protocol calls can delete live
+members.
+
+Authority format 11 retains bounded normalized declaration intent, checksums all
+operation receipts and links each member to its declaring operation through a
+deferred foreign key. Receipt lookup validates the original operation commitment
+and exact indexed members. Recovery streams scopes and operation history,
+recomputes seals and reconciles cumulative batch counts, coverage and charges.
+Only sessions with a verified retirement proof may have intentional cleanup
+gaps. Encoded receipt/intent fields are bounded before copying out of SQLite;
+no complete session membership map is built. Old authority formats are refused,
+not converted. The V2 wire mapping and frozen vectors are unchanged.
+
+The focused tests also exercise altered and physically oversized intent,
+authorization precedence, multi-batch and empty sealed replay, and contradictory
+sealed metadata with a valid fixed-record checksum. The physical rewrite-cost
+fixture retains the required typed declaration operation with foreign keys still
+enabled; its 18 page/capacity combinations preserve the same cost and fixed-page
+oracles. Exact commands, observed WAL lengths and source hashes are recorded in
+`conformance/results/durable-work-v2-rust-operation-integrity-2026-09-08.txt`.
+This remains Rust storage
+evidence, not independent Java durable-profile parity, the protocol-neutral V2
+failure driver or the external workload and equivalent streaming-gRPC baseline.
 
 ## V2-WIRE: framing, decoding and representation (12.1, 12.2, Appendix F)
 

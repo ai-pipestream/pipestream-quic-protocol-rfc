@@ -157,17 +157,7 @@ pub(super) fn operation(
     originator: Producer,
     id: OperationId,
 ) -> Result<Option<OperationReceipt>> {
-    let retained: Option<(Vec<u8>, Vec<u8>)> = tx.query_row(
-        "SELECT digest,receipt FROM operations WHERE generation=?1 AND originator=?2 AND operation=?3",
-        params![sql(generation.0)?, sql(originator.0)?, id.0.as_slice()], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
-    let Some((digest, receipt)) = retained else {
-        return Ok(None);
-    };
-    let receipt: OperationReceipt = unpack(&receipt)?;
-    if receipt.operation != id || receipt.request_digest.0.as_slice() != digest {
-        return Err(StoreError::Corrupt("operation index and receipt disagree"));
-    }
-    Ok(Some(receipt))
+    operations::load(tx, generation, originator, id)
 }
 
 pub(super) fn work(tx: &Transaction<'_>, generation: Id, key: &WorkKey) -> Result<(Id, WorkView)> {
@@ -325,10 +315,10 @@ impl AuthorityStore {
                 manifest: None,
                 diagnostic: None,
             };
-            tx.execute("INSERT INTO work(generation,scope,producer,entity,view,fence) VALUES(?1,?2,?3,?4,zeroblob(?5),zeroblob(?6))",
+            tx.execute("INSERT INTO work(generation,scope,producer,entity,view,fence,declaration) VALUES(?1,?2,?3,?4,zeroblob(?5),zeroblob(?6),?7)",
                 params![sql(identity.generation.0)?, sql(scope.0)?, sql(retained.producer.0)?, sql(entity.0)?,
                     (records::HEADER_BYTES + records::WORK_CAPACITY) as i64,
-                    (records::HEADER_BYTES + records::FENCE_CAPACITY) as i64])?;
+                    (records::HEADER_BYTES + records::FENCE_CAPACITY) as i64, id.0.as_slice()])?;
             records::initialize(
                 &tx,
                 records::Target {
@@ -421,15 +411,18 @@ impl AuthorityStore {
             "UPDATE sessions SET entities=?2,operations=operations+1 WHERE generation=?1",
             params![sql(identity.generation.0)?, sql(total)?],
         )?;
-        tx.execute(
-            "INSERT INTO operations VALUES(?1,?5,?2,?3,?4)",
-            params![
-                sql(identity.generation.0)?,
-                id.0.as_slice(),
-                digest.0.as_slice(),
-                pack(&receipt)?,
-                sql(origin.producer().0)?
-            ],
+        operations::retain(
+            &tx,
+            identity,
+            origin.producer(),
+            &receipt,
+            Some(&Scope::Declare {
+                request: Id(1),
+                operation: id,
+                scope,
+                entity_ids: entity_ids.to_vec(),
+                seal: sealed,
+            }),
         )?;
         self.remember_clock(&tx, now)?;
         self.authorize(&identity.owner, permission)?;

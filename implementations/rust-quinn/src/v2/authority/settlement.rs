@@ -157,15 +157,7 @@ fn retain_operation(
     receipt: &OperationReceipt,
 ) -> Result<()> {
     records::protect(tx, 0, 0)?;
-    tx.execute(
-        "INSERT INTO operations VALUES(?1,0,?2,?3,?4)",
-        params![
-            sql(identity.generation.0)?,
-            receipt.operation.0.as_slice(),
-            receipt.request_digest.0.as_slice(),
-            pack(receipt)?
-        ],
-    )?;
+    operations::retain(tx, identity, Producer(0), receipt, None)?;
     tx.execute(
         "UPDATE sessions SET operations=operations+1 WHERE generation=?1",
         [sql(identity.generation.0)?],

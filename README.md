@@ -73,7 +73,10 @@ version-2 message and record, frozen commitments, negotiation checks, bounded
 client correlation and incremental object validation. This is a library
 foundation used by the durable version-2 endpoint. Its `v2::authority` module now
 adds transactional session identity, declaration/operation replay and bounded
-retained-state reads, with subprocess commit-crash tests. Bounded payload staging,
+retained-state reads, with subprocess commit-crash tests. Authority storage format
+11 retains checksummed operation receipts and bounded original declaration intent;
+replay and recovery reconcile exact membership, batch counts, seals and charges.
+Earlier authority formats are refused without conversion. Bounded payload staging,
 immutable installation, header preflight and reference-safe orphan collection are
 now present as well. Work views and scope summaries have preallocated storage
 and persistent fixed-record rewrite credits. Durable output reservations and

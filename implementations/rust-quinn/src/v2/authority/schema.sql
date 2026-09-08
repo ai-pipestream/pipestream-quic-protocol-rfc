@@ -35,7 +35,8 @@ CREATE TABLE scopes (
   producer INTEGER NOT NULL CHECK(producer IN (0,1)),
   parent BLOB,
   state BLOB NOT NULL CHECK(length(state)=1128),
-  PRIMARY KEY(generation, scope)
+  PRIMARY KEY(generation, scope),
+  UNIQUE(generation, scope, producer)
 ) STRICT;
 CREATE TABLE work (
   row_id INTEGER PRIMARY KEY,
@@ -45,15 +46,21 @@ CREATE TABLE work (
   entity INTEGER NOT NULL CHECK(entity > 0),
   view BLOB NOT NULL CHECK(length(view)>104),
   fence BLOB NOT NULL CHECK(length(fence)=360),
+  declaration BLOB NOT NULL CHECK(length(declaration)=16),
   UNIQUE(generation, scope, entity),
-  FOREIGN KEY(generation, scope) REFERENCES scopes(generation, scope)
+  FOREIGN KEY(generation, scope, producer) REFERENCES scopes(generation, scope, producer),
+  FOREIGN KEY(generation, producer, declaration) REFERENCES operations(generation, originator, operation)
+    DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
+CREATE INDEX work_declaration ON work(generation, producer, declaration, scope, entity);
 CREATE TABLE operations (
   generation INTEGER NOT NULL REFERENCES sessions(generation),
   originator INTEGER NOT NULL CHECK(originator IN (0,1)),
   operation BLOB NOT NULL CHECK(length(operation) = 16),
   digest BLOB NOT NULL CHECK(length(digest) = 32),
-  receipt BLOB NOT NULL,
+  receipt BLOB NOT NULL CHECK(length(receipt) BETWEEN 1 AND 4096),
+  declaration BLOB CHECK(declaration IS NULL OR length(declaration) BETWEEN 1 AND 4096),
+  record_hash BLOB NOT NULL CHECK(length(record_hash)=32),
   PRIMARY KEY(generation, originator, operation)
 ) STRICT;
 CREATE TABLE jobs (
@@ -73,4 +80,4 @@ CREATE TABLE retirements (
   generation INTEGER PRIMARY KEY REFERENCES sessions(generation),
   state BLOB NOT NULL CHECK(length(state)=1128)
 ) STRICT;
-PRAGMA user_version = 10;
+PRAGMA user_version = 11;

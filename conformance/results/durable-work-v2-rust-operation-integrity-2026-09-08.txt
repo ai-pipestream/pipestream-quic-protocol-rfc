@@ -1,0 +1,217 @@
+Rust V2 retained operation integrity checkpoint, 2026-09-08 UTC
+Base: 268133b976a419676004d718b966e57fadef3936
+Implementation and tests: the commit containing this result file.
+Log filename timestamps use America/New_York; 2026-09-08 00:34 local is
+2026-09-08 04:34 UTC.
+
+Scope
+  Authority storage format 11 retains the normalized declaration intent with
+  each declaration receipt and links every work member to that operation.
+  Lookup/replay checks the retained operation record and its exact indexed
+  membership. Recovery streams live sessions, scopes and operations to verify
+  counts, seals and total declaration coverage; already proven retiring
+  sessions retain their existing retirement ordering.
+
+  This is local SQLite storage integrity. It does not change PipeStream wire
+  encoding. The guarded SQL mutations below are corruption injection, not
+  successful protocol mutations. This checkpoint does not claim a Java V2
+  endpoint, complete durable-profile interoperability or completion of the
+  original workload/resource goal.
+
+Actual missing-membership RED diagnostics
+  Each command was run from implementations/rust-quinn with the locked Cargo
+  graph and a single exact test filter:
+    cargo test --locked -p pipestream-core --lib <test-name>
+
+  operation_lookup_rejects_receipt_whose_declared_member_is_missing
+    Exit 101; 0 passed, 1 failed, 436 filtered.
+    Lookup incorrectly returned operation 0101...0101, request digest
+    a3cb4244fd675d9853a16f0fa5d3f67d744785cec05c1d8d88c0fc81915d9c7e,
+    DECLARED scope 0/producer 0/count 1/declared 1/no seal after its sole
+    work member had been deleted.
+    /tmp/pipestream-rust-operation-lookup-missing-member-diagnostic-red-20260908T001546.log
+
+  identical_declaration_replay_rejects_receipt_whose_member_is_missing
+    Exit 101; 0 passed, 1 failed, 436 filtered.
+    Identical replay incorrectly returned the same full DECLARED receipt after
+    its sole retained member had been deleted.
+    /tmp/pipestream-rust-identical-replay-missing-member-diagnostic-red-20260908T001601.log
+
+  recovery_rejects_missing_member_even_when_scalar_counts_and_scope_match
+    Exit 101; 0 passed, 1 failed, 436 filtered.
+    Recovery incorrectly accepted the database after deletion and guarded
+    record updates made the session/scope scalar counts and checksum agree at
+    zero while the retained declaration receipt still covered one member.
+    /tmp/pipestream-rust-recovery-missing-member-diagnostic-red-20260908T001610.log
+
+Initial focused GREEN
+  cargo test --locked -p pipestream-core --lib v2::authority::tests
+  Exit 0; 26 passed, 0 failed, 0 ignored, 415 filtered; 0.27 s.
+  This run covered the three regressions plus the then-current authority tests.
+  Log: /tmp/pipestream-rust-authority-focused-20260908T002415.log
+
+Intervening test-fixture corrections
+  The first workspace attempt did not execute a suite: compilation stopped with
+  E0308 because the altered receipt fixture assigned Number(2) to BatchCount.
+  It was corrected to structurally valid BatchCount(0), so encoding succeeds
+  and the corruption reaches lookup/recovery. Exit 101.
+    /tmp/pipestream-rust-workspace-full-20260908T002832.log
+
+  Review also rejected a 15-byte fixed SQL hex literal and replaced it with
+  an exact OperationId([1; 16]) parameter. Neither the questioned literal nor
+  the structurally invalid receipt count is counted as a valid corruption test.
+
+  A later `cargo test --locked --workspace` run reached the physical
+  record-rewrite fixture and exposed its missing declaration operation row.
+  The corrected physical fixture retains enabled foreign keys and supplies a
+  genuinely encoded declaration intent and matching typed receipt solely to
+  satisfy the schema while measuring opaque record rewrite costs. The fixture
+  failed run exited 101 with 442 core tests passed and one failed; the separate
+  conformance model suite passed 30 tests before that failure.
+    /tmp/pipestream-rust-workspace-full-rerun-20260908T003005.log
+
+Integrity scenarios in the final test source
+  - lookup refuses a declaration receipt whose covered work member is absent;
+  - identical declaration replay refuses that missing membership;
+  - recovery refuses missing membership even with matching scalar counts and a
+    valid rewritten scope-record checksum;
+  - changed, missing and physically oversized retained declaration intents are
+    corrupt, while a foreign owner is denied before retained detail is decoded;
+  - altered retained receipt accepted-count and seal are corrupt on lookup and
+    recovery;
+  - every batch of a multi-batch declaration replays after sealing, and an empty
+    sealed root replays after reopen;
+  - recovery refuses sealed-scope count or seal contradictions despite a valid
+    scope-record checksum;
+  - storage format 10 is refused rather than implicitly upgraded;
+  - the physical record-rewrite test supplies a fixed-width declaration key
+    and matching operation without disabling foreign keys or changing its
+    18 page/capacity cases, fixed-page check or write-cost bound.
+
+Current source SHA-256
+  operations.rs
+    84848683a1da46147b6d6ac5d017d2e88aeee9db86f47f42a3b2f0ce6b7f3bee
+  mod.rs
+    f99c6c400282286b34ca7f19f10299bb13f113c354cac4141fc30276e60551ad
+  schema.sql
+    b9428d24aeb2c8c05a102e6749678c3ba40036c4e4e93a86df386a6b1c47cfb6
+  authority/tests.rs
+    29e66e7b9193e1126071e07f675e0f61c44bdbda62892d339d154511fae0bd6b
+  records/tests.rs
+    adc8fccd121f774285f5fb401aef90135297729ca715d3d0ffe5b9cee81b4234
+  scopes.rs
+    9ddfba45be6f43b82b082372d55986603d06c02dce1ed6b382d26986b951b8ba
+  admission.rs
+    b6891b6e7ce5e47033a942b40b70d17cc48bb07e2784524d56d91f52d4d40c6a
+  settlement.rs
+    660480a985a88f1e2014297ccbc63e2636f4c2d245e7f65a15dd6d4ed9c750a5
+  records.rs
+    b66bf447aba50e93eb729e388cbb1e14612ffd91fcf3b3ff70215333d6a49f76
+  execution/retry.rs
+    6710f5037ef9cf03a3c6a0c220cf28a88e2df5b805f7c451fd5abf98df10e43e
+
+Final locked workspace gate
+  cargo test --locked --workspace
+  Working directory: implementations/rust-quinn.
+  Session 38182: terminal exit 0.
+  Log: /tmp/pipestream-rust-workspace-full-final-20260908T003442.log
+  797 passed, zero failed or ignored across 14 top-level test binaries:
+    conformance model/unit tests: 30
+    core library: 443
+    core resource integration binaries: 4 (one test each)
+    QUIC library: 235
+    retained draft-04 wire integration: 69
+    QUIC resource integration binaries: 4 (one test each)
+    server command/configuration: 4
+    real subprocess V2 CLI: 8
+  Both doc-test targets completed successfully with zero tests. Process-crash
+  child invocations are part of their parent test, not extra counted tests.
+  The review checked actual test-binary headers and results in the raw log.
+  The suite includes crash-safe retirement/cleanup, namespace-1 expansion,
+  retained outputs, pinned journals and full input/result resource gates.
+
+Final physical rewrite-cost evidence
+  cargo test --locked -p pipestream-core --lib record_rewrite_cost_bound_covers_page_sizes_padding_and_spilling -- --nocapture
+  Session 2458: terminal exit 0; 1 passed, 0 failed, 442 filtered; 0.37 s.
+  Log: /tmp/pipestream-rust-record-cost-focused-nocapture-20260908T003418.log
+  The reviewer inspected every measurement below in the raw log. These are
+  guarded WAL file lengths for the pinned SQLite build, not allocated disk
+  blocks, RSS, throughput or a comparative performance claim.
+  page   capacity   observed_WAL   bound_bytes
+  512    512        2176           69176
+  512    2048       3784           70784
+  512    4096       5928           72928
+  512    8192       10216          77216
+  512    65536      70784          137784
+  512    1048576    1107944        1174944
+  4096   512        8272           86552
+  4096   2048       8272           86552
+  4096   4096       12392          90672
+  4096   8192       16512          94792
+  4096   65536      74192          152472
+  4096   1048576    1062992        1141272
+  65536  512        131152         393392
+  65536  2048       131152         393392
+  65536  4096       131152         393392
+  65536  8192       131152         393392
+  65536  65536      196712         458952
+  65536  1048576    1180112        1442352
+
+Rust formatting, warnings and release build
+  All commands ran from implementations/rust-quinn.
+  cargo fmt --all -- --check
+    Immediate terminal exit 0; empty log.
+    /tmp/pipestream-rust-fmt-check-20260908T003638.log
+  cargo clippy --locked --workspace --all-targets -- -D warnings
+    Session 13214: terminal exit 0.
+    /tmp/pipestream-rust-clippy-deny-warnings-20260908T003644.log
+  cargo build --locked --release -p pipestream-server -p pipestream-conformance
+    Session 17304: terminal exit 0.
+    /tmp/pipestream-rust-release-server-conformance-20260908T003701.log
+  Rebuilt release binary SHA-256:
+    pipestream-quinn
+      7cff7d80f68adcc0e1badf09d0f0e145aa35791fd14e51ab19daa51f33c73810
+    pipestream-conformance
+      73934f2119aba98eacecd7b632eb9f63c6e282e84483b2fc250f65a8507adba8
+
+Retained interoperability and draft gates
+  From repository root:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -Dtest=V2CoreClientTest,V2CoreServerTest test
+  Session 40462: terminal exit 0; 27 tests (14 client, 13 server), zero failures,
+  errors or skips. Native sqlite-file-growth passed 1/1. The reviewer inspected
+  the two fresh Surefire XML files, including the actual tagged testcase:
+    javaCoreClientNegotiatesAndDetachesFromRustAuthorityWithBothIdentityModes
+  This initializes and serves the rebuilt Rust authority, but exchanges Core
+  negotiation/detach, not Java durable work or results. Java sources and the
+  existing transport cache were unchanged; the full Java suite was not rerun.
+  Log: /tmp/pipestream-rust-authority-java-core-integration-20260908T003745.log
+  XML mtimes (UTC) and SHA-256:
+    V2CoreClientTest: 2026-09-08 04:37:49.953039878
+      eca7ed087da5f54a131cf1940039e19202170f7c505ffc07d3c5991d575860bb
+    V2CoreServerTest: 2026-09-08 04:37:53.409107181
+      4a3278b1505371631c76daaed68e453466106248a5c2e6b2cefb31045e7071c7
+
+  From implementations/rust-quinn:
+    target/release/pipestream-conformance examples
+  Session 5444: terminal exit 0; all three retained example outcomes passed:
+    Java source -> Rust/Quinn server
+    Rust source recovery -> C++/MsQuic server
+    Rust source scatter -> Java, Rust, and C++ servers
+  Log: /tmp/pipestream-rust-authority-conformance-examples-20260908T003816.log
+  These retained examples do not constitute the V2 independent failure driver
+  or the required external workload and equivalent streaming-gRPC comparison.
+
+  From repository root:
+    ./build.sh core 05 draft
+  Session 76164: terminal exit 0. idnits: zero errors, flaws and warnings; one
+  existing possible FIPS-180-4 down-reference comment. kramdown separately
+  reports the existing explicit RFC9308 bibliographic override warning.
+  Log: /tmp/pipestream-rust-authority-draft-20260908T003734.log
+  This is a local draft build, not an IETF submission or acceptance claim.
+
+Remaining full-goal work
+  Independent Java funded admission, execution/results/recovery and durable
+  endpoint/client integration remain unfinished. The protocol-neutral V2
+  failure driver, both-language full-profile evidence and external workload
+  with equivalent authenticated durable streaming-gRPC baseline remain required.
+  This storage-integrity checkpoint does not complete or narrow those tasks.

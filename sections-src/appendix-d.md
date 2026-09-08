@@ -163,7 +163,13 @@ admission and replay, fenced worker execution, both branch producers and real
 child-output reassembly, cancellation/closure, retained result reads,
 dependency-aware payload reclamation and crash-safe session retirement.
 Local storage tests include process death, pinned journals, retained read
-handles and a 32 MiB result-resource case. A separate V2 TLS boundary now tests
+handles and a 32 MiB result-resource case. Rust authority storage format 11 adds
+checksummed operation evidence, bounded original declaration intent and deferred
+declaration-member links. Replay verifies exact membership; recovery streams
+scope members to reconcile batch counts, seals and session charges. Prior local
+formats are refused without changing the wire mapping. These local checksums do
+not authenticate data against an operator able to rewrite both data and checksums.
+A separate V2 TLS boundary now tests
 real QUIC handshakes, certificate mapping/rotation, live credential validity,
 server identity, clock failure and disabled resumption. It does not advertise
 the durable profiles or supply the complete V2 application dispatcher.

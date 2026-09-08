@@ -202,16 +202,7 @@ impl AuthorityStore {
             receipt: receipt.clone(),
         })
         .encode(binding.control_limit.0.min(caps.control_limit.0) as usize)?;
-        tx.execute(
-            "INSERT INTO operations VALUES(?1,?5,?2,?3,?4)",
-            params![
-                sql(identity.generation.0)?,
-                header.operation.0.as_slice(),
-                receipt.request_digest.0.as_slice(),
-                pack(&receipt)?,
-                sql(input.origin.producer().0)?
-            ],
-        )?;
+        operations::retain(&tx, identity, input.origin.producer(), &receipt, None)?;
         let required_object = parameters
             .input
             .length

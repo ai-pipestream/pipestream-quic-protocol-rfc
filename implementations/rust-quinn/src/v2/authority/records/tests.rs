@@ -425,8 +425,40 @@ fn record_rewrite_cost_bound_covers_page_sizes_padding_and_spilling() {
             )
             .unwrap();
             protect(&tx, capacity.max(FENCE_CAPACITY), 2 + FENCE_CREDITS).unwrap();
-            tx.execute("INSERT INTO work(generation,scope,producer,entity,view,fence) VALUES(1,0,0,1,zeroblob(?1),zeroblob(?2))",
-                [(capacity+HEADER_BYTES) as i64, (FENCE_CAPACITY+HEADER_BYTES) as i64]).unwrap();
+            let identity = SessionIdentity {
+                authority: IdentityLabel("a".repeat(128)),
+                owner: IdentityLabel("alice".into()),
+                generation: Id(1),
+            };
+            let operation = OperationId([1; 16]);
+            let declaration = Scope::Declare {
+                request: Id(1),
+                operation,
+                scope: Number(0),
+                entity_ids: vec![Id(1)],
+                seal: false,
+            };
+            let receipt = OperationReceipt {
+                operation,
+                request_digest: Mutation::Declare {
+                    scope: Number(0),
+                    entity_ids: vec![Id(1)],
+                    seal: false,
+                }
+                .digest(&identity, Producer(0), operation)
+                .unwrap(),
+                body: Outcome::Declared {
+                    scope: Number(0),
+                    producer: Producer(0),
+                    accepted_count: BatchCount(1),
+                    declared: Number(1),
+                    seal: None,
+                },
+            };
+            operations::retain(&tx, &identity, Producer(0), &receipt, Some(&declaration)).unwrap();
+            tx.execute("INSERT INTO work(generation,scope,producer,entity,declaration,view,fence) VALUES(1,0,0,1,?3,zeroblob(?1),zeroblob(?2))",
+                params![(capacity+HEADER_BYTES) as i64, (FENCE_CAPACITY+HEADER_BYTES) as i64,
+                    operation.0.as_slice()]).unwrap();
             initialize(
                 &tx,
                 Target {

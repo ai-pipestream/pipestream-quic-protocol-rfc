@@ -439,6 +439,7 @@ pub(super) fn verify(tx: &Transaction<'_>) -> Result<()> {
             return Err(StoreError::Corrupt("scope summary differs from its index"));
         }
     }
+    operations::verify(tx)?;
     jobs::verify(tx)
 }
 

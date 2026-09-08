@@ -118,6 +118,33 @@ The neutral V2 process-kill driver, independent Java V2, client staging recovery
 and equivalent external streaming-gRPC workload/resource comparison
 remain required. This is Rust endpoint evidence, not completion of those gates.
 
+## Version-2 authority operation integrity
+
+The local authority database uses format 11. Previous authority formats are
+refused without conversion; this does not change the V2 wire mapping or payload
+format. Do not initialize a fresh directory under a previously used issuing
+identity to work around a format refusal or missing history.
+
+Each operation receipt has a bounded local checksum binding authority, owner,
+generation, originator, operation ID, request digest, receipt and optional
+declaration intent. A declaration retains the normalized original typed request,
+including all of its at-most-256 IDs. Every member references that declaration's
+operation through a deferred foreign key; the member and receipt commit together.
+Checksums detect inconsistent local storage, not malicious changes by an operator
+who can rewrite both data and checksums, and are not transferable authentication.
+
+Replay verifies the original declaration digest and exact indexed member set.
+Startup streams live scope membership, checks each batch's cumulative count,
+recomputes seals and reconciles session/operation charges. It retains no complete
+session membership map. A covering index prevents a whole-session scan for each
+operation. Reads bound encoded records before copying them out of SQLite.
+
+Partial metadata removal is allowed only after the existing durable retirement
+proof has been verified. Live missing members cannot be reported as successful
+replay or an empty scope. Retirement still removes work before operation history,
+preserving non-reuse state. These checks do not complete the independent Java
+endpoint, neutral V2 failure driver or workload/gRPC comparison.
+
 ## Version-2 runnable commands
 
 The Unix `pipestream-quinn v2` commands explicitly initialize or reopen authority
@@ -858,7 +885,7 @@ reclaims abandoned stages only under exclusive ownership; installed orphans
 remain charged until the authority's reference-safe collector removes them.
 Live installed/read handles remain pinned against collection. The database
 retains a local random store identity and a once-bound canonical payload path.
-Internal authority storage is now format 10; payload roots remain format 4.
+Internal authority storage is now format 11; payload roots remain format 4.
 Prior authority formats are refused, not silently converted or replaced.
 This changes no wire schema or frozen vector.
 
