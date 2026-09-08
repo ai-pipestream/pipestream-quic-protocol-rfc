@@ -96,6 +96,15 @@ authority must use its operation history. Readers verify the same file
 descriptor before exposing payload-only bytes and count against the handle
 limit. They must be opened only after current execution/read authorization.
 
+Each input reader also pins its exact immutable object, including during file
+verification. Multiple readers release that pin only after the last descriptor
+closes; EOF alone does not release it. Per-object pin entries are bounded by the
+same global handle limit. Closing a reader does not refund durable bytes or
+file names. The local `inputPinned` observation is not deletion authority:
+cleanup must hold the store monitor through its physical action and separately
+prove durable eligibility. See the remaining
+[retention and retirement implementation plan](java-v2-retention.md).
+
 Authority expansion reserves one store-bound `ReceiverCredit` before invoking its
 expander. The credit charges one global handle without granting producer authority;
 the fenced authority layer must still validate each declaration and admission. A

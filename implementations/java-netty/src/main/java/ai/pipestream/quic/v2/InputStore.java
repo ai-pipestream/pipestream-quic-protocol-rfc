@@ -18,8 +18,10 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -148,6 +150,7 @@ final class InputStore implements AutoCloseable {
   private long bytes;
   private int files;
   private int handles;
+  private final Map<Path, Integer> inputReaders = new HashMap<>();
   private boolean closed;
   private Object resultService;
 
@@ -805,6 +808,23 @@ final class InputStore implements AutoCloseable {
   }
 
   /**
+   * Observe physical readers of one exact immutable input. A caller making a reclamation decision
+   * must hold this store's monitor through the decision and filesystem operation. This is only a
+   * physical-liveness gate: an unpinned input can still have durable work or parent dependencies.
+   * Receive credits and readers of other inputs do not pin this object.
+   *
+   * @param context exact owner-qualified session
+   * @param header immutable input identity
+   * @return whether acquisition or an unclosed reader still holds this object's descriptor
+   * @throws IOException closed storage
+   */
+  synchronized boolean inputPinned(Commitments.Context context, InputHeader header)
+      throws IOException {
+    ensureOpen();
+    return inputReaders.containsKey(objectPath(envelope(context, header)));
+  }
+
+  /**
    * Observe an output installation boundary for actual interruption tests.
    *
    * @param phase completed filesystem boundary
@@ -1076,20 +1096,25 @@ final class InputStore implements AutoCloseable {
     InputStream openStream() throws IOException {
       synchronized (InputStore.this) {
         pin();
+        inputReaders.merge(path, 1, Integer::sum);
         FileChannel input = null;
         try {
           input = FileChannel.open(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
           Inspected inspected = inspect(input, envelope, true);
           input.position(inspected.offset());
-          return new Reader(input, length());
-        } catch (IOException | RuntimeException failure) {
+          return new Reader(input, length(), path);
+        } catch (IOException | RuntimeException | Error failure) {
+          boolean released = input == null;
           if (input != null)
             try {
               input.close();
             } catch (IOException cleanup) {
               failure.addSuppressed(cleanup);
+            } finally {
+              released = !input.isOpen();
             }
-          handles--;
+          // An unresolved close must not manufacture capacity or permission to delete this input.
+          if (released) unpinInput(path);
           throw failure;
         }
       }
@@ -1098,12 +1123,16 @@ final class InputStore implements AutoCloseable {
 
   private final class Reader extends InputStream {
     private final InputStream input;
+    private final FileChannel channel;
+    private final Path path;
     private long remaining;
     private boolean ended;
 
-    Reader(FileChannel channel, long length) {
+    Reader(FileChannel channel, long length, Path path) {
+      this.channel = channel;
       input = Channels.newInputStream(channel);
       remaining = length;
+      this.path = path;
     }
 
     @Override
@@ -1127,11 +1156,21 @@ final class InputStore implements AutoCloseable {
     @Override
     public synchronized void close() throws IOException {
       if (ended) return;
-      input.close();
+      IOException failure = null;
+      try {
+        input.close();
+      } catch (IOException close) {
+        failure = close;
+      }
+      if (channel.isOpen()) {
+        if (failure != null) throw failure;
+        throw new IOException("input read descriptor remained open");
+      }
       synchronized (InputStore.this) {
-        handles--;
+        unpinInput(path);
       }
       ended = true;
+      if (failure != null) throw failure;
     }
   }
 
@@ -1438,6 +1477,15 @@ final class InputStore implements AutoCloseable {
     ensureOpen();
     if (handles >= limits.handles()) throw ProtocolError.limit("input handle capacity exhausted");
     handles++;
+  }
+
+  private void unpinInput(Path path) {
+    Integer readers = inputReaders.get(path);
+    if (readers == null || readers == 0 || handles == 0)
+      throw new IllegalStateException("input reader accounting underflow");
+    if (readers == 1) inputReaders.remove(path);
+    else inputReaders.put(path, readers - 1);
+    handles--;
   }
 
   private void reserve(long addedBytes, int addedFiles) throws IOException {

@@ -2717,3 +2717,28 @@ remain valid beyond external output expiry. Then complete Java's durable
 endpoint/client and the two-direction neutral failure/resource driver. The
 external workload and equivalent authenticated durable streaming-gRPC comparison
 remain required. This checkpoint does not complete task 2 or the overall goal.
+
+### Java input-reader liveness checkpoint, 2026-09-08
+
+The result-read checkpoint is committed as `6733ac6` on Forgejo and its GitHub
+mirror. Java input storage now also tracks physical readers per exact immutable
+object, alongside the shared handle bound. EOF does not release a pin; the last
+closed descriptor does. Unrelated readers and unborrowed receiver credits do not
+mark an object read-pinned. Closing a reader never refunds retained bytes/names.
+
+The reviewed focused 34-test gate and full unfiltered 584-test Java suite pass,
+with zero failures/errors/skips. All 87 fresh XML reports were independently
+counted. Strict InputStore doclint, the native storage guard and all three existing
+external examples pass. Exact raw logs, exits and hashes are in the
+[reader-pin evidence](../../conformance/results/durable-work-v2-input-reader-pins-2026-09-08.txt).
+
+The [retention implementation plan](java-v2-retention.md) records additional
+required correctness work: release eligibility must survive quota refunds;
+deletion and directory synchronization must precede reuse; delayed duplicate
+input reception must not recreate a reclaimed object; and partial retirement
+requires checked durable evidence before live-state audits can be skipped.
+Reader pins alone do not implement these operations. Next implement the durable
+release records, active-receiver installation gate, bounded collector and real
+crash/recovery tests, followed by retirement and durable Java transport/client
+integration. The full failure matrix and original external workload/equivalent
+streaming-gRPC baseline remain required. The goal stays active and incomplete.

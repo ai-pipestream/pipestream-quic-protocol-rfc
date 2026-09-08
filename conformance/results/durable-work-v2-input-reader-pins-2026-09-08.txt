@@ -1,0 +1,88 @@
+Java V2 per-object input reader pins, 2026-09-08
+
+Scope
+  InputStore counts acquiring and open readers by the exact immutable input
+  path derived from installation/authority/owner/generation/full input header.
+  Entries share the existing global handle bound; unrelated objects and receive
+  credits do not appear read-pinned. Multiple readers and EOF retain pins until
+  physical descriptor closure. Close releases once, including when close reports
+  an error after the channel is already closed. An unresolved descriptor remains
+  charged. Closing readers does not refund durable payload bytes or file names.
+
+  inputPinned is a physical-liveness observation, not deletion authority. The
+  collector must hold the store monitor through its physical action and prove
+  durable eligibility separately. No payload deletion or retirement is enabled.
+
+Static review
+  Six tests exercise real files: multiple readers/two objects; exact shared handle
+  exhaustion; missing and corrupt opens without phantom reader capacity; isolated
+  authority, owner, generation, operation and application identities; real receiver
+  and ReceiverCredit versus zero-byte EOF pinning; and close/reopen accounting.
+  Review corrected an identity case that changed operation and work together and
+  required an actual ReceiverCredit case in addition to the Receiver case.
+  Exceptional OS close behavior is handled by production but was not injected by
+  these tests. These tests do not establish a collector or process-death recovery.
+
+Verification
+  Repository: /work/main/pipestream-ai/dev-tools/pipestream-quic-protocol-rfc
+  Maven prefix:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop
+      -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+  Google Java Format 1.28.0 applied to InputStore and InputStoreReaderPinsTest
+  before final focused/full verification. No source changes afterward.
+
+  Focused suffix:
+    -Dtest=InputStoreReaderPinsTest,InputStoreTest,ResultStoreTest,ResultServiceTest test
+  Direct exit 0 (session 3495), finished 11:53:43 EDT:
+    34 tests, zero failures/errors/skips; native SQLite guard 1/1.
+    ReaderPins 6, InputStore 13, ResultStore 10, ResultService 5.
+  Root independently checked four XML reports, UTC mtimes 15:53:42-15:53:43.
+  Log: /tmp/pipestream-input-reader-pins-focused-20260908T115338-0400.log
+
+  Unfiltered suffix: install
+  Direct exit 0 (session 63290), finished 11:57:14 EDT:
+    584 tests, zero failures/errors/skips; native SQLite guard 1/1.
+  Root independently counted all 87 XML reports:
+    first UTC mtime 2026-09-08 15:55:33.6198782
+    last UTC mtime 2026-09-08 15:57:13.364899658
+  Log: /tmp/pipestream-input-reader-pins-full-install-20260908T115359-0400.log
+  Existing shaded-JAR overlap warnings remain; they are not doclint failures.
+
+  Final InputStore Javadoc: -package -Xdoclint:all -Werror; direct exit 0.
+  Log: /tmp/pipestream-input-reader-pins-final-doclint-20260908T115727-0400.log
+  Earlier 11:49 production-only compile/doclint preceded the final channel-close
+  refinement and are not evidence for the final source. The final focus/full
+  compilation and 11:57 doclint cover the refined source.
+
+  Working directory implementations/rust-quinn:
+    target/release/pipestream-conformance examples
+  Direct exit 0; all three existing-profile examples PASS:
+    Java source to Rust/Quinn;
+    Rust recovery to C++/MsQuic;
+    Rust scatter to Java/Rust/C++.
+  Log: /tmp/pipestream-input-reader-pins-examples-20260908T115734-0400.log
+
+Final source SHA-256
+  InputStore.java
+    80b72e92eb37293fd6333d6fc960f369201ebcf3f30ce98f4a17fda287706cb1
+  InputStoreReaderPinsTest.java
+    8072c918139655b524b375ada8e06b085be380e9e981e154b5813a8945cf98db
+
+Artifact SHA-256
+  Java ordinary JAR
+    77ea9c2c0c7180ca89589ba3d72fa179935f42561b6d58dd37b0c9be0d81c4b9
+  Java all JAR
+    dab5671011cea90feca49b5d7cdd07c69b0ff7d6a231cc6582fdd4b660f68770
+  sqlite_guard_test
+    3dc46f85b2fbf31018a0dd18277bd14604b83a66c3be22decadf3e33f9dfc3bd
+
+Remaining scope
+  The retention plan records durable eligibility timestamps surviving refunds,
+  bounded synchronized deletion, late duplicate receiver installation, parent
+  dependencies, orphan reconciliation and checked partial retirement. Those
+  lifecycle operations are not implemented by reader-pin tracking alone.
+  Java still advertises Core only. Durable Java endpoint/client integration,
+  both-direction neutral failure/resource testing and the external workload with
+  equivalent authenticated durable streaming-gRPC baseline remain required.
+  Rust source, wire grammar and normative draft text did not change in this
+  checkpoint; no new Rust workspace or draft build is claimed here.
