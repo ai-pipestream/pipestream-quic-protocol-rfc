@@ -36,6 +36,10 @@ Verified local checkpoint evidence:
 - Exact commands, artifact hashes and boundaries:
   [connection ownership](../../../conformance/results/durable-work-v2-connection-ownership-2026-09-08.txt)
   and [control waits](../../../conformance/results/durable-work-v2-control-waits-2026-09-08.txt).
+- The [raw checkpoint archive](../../../conformance/results/durable-work-v2-connection-ownership-2026-09-08.raw.tar.gz)
+  preserves all seven logs/exits and 112 final Java XML reports; its SHA-256 and
+  byte-for-byte provenance are in the connection-ownership record. Reviewers
+  need not rely on this host retaining `/tmp` for that checkpoint.
 - These are local results, not a claim of new hosted CI, V2 interoperability,
   main merge, release, deployment or draft submission.
 

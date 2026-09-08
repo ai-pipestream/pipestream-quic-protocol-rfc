@@ -4,6 +4,22 @@ Repository: pipestream-quic-protocol-rfc
 Branch: feat/durable-work-results-v2
 Parent checkpoint: 9372f0892f73550cf6d5ea9cdcb6c7dfae5a40d1
 
+Durable raw evidence archive
+  Checked in beside this record:
+    durable-work-v2-connection-ownership-2026-09-08.raw.tar.gz
+  SHA-256:
+    0b42eea51bd6b9eb469104539f63e2d15fde6c27b103fec8a22c217662947c35
+  Contains seven raw logs and their seven terminal-exit sidecars, including
+  the two initial failed attempts, plus all 112 final Surefire XML reports.
+  The 126 archive members were compared byte-for-byte with the original files.
+  XML inside the archive independently totals 679 tests, zero failures/errors/
+  skips. Original XML modification times are preserved in the tar headers.
+  This archive preserves the already completed runs; it is not a new test run.
+  It includes local build paths and toolchain/dependency metadata, not fixture
+  private keys or runtime payload stores. Review without unpacking over a repo:
+    tar -tzf conformance/results/durable-work-v2-connection-ownership-2026-09-08.raw.tar.gz
+  Extract only into a fresh temporary directory if individual files are needed.
+
 Implementation scope
   DurableRequests owns one connection's decode-order correlation, immutable
   binding, input/result pending counts and drain exclusion. Independent ticket
