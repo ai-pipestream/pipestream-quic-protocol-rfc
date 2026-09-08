@@ -321,3 +321,35 @@ leaf DER. Rust peer launched from
 No wire/schema change, no new profile identifier, no protocol behavior beyond
 Section 12 / Appendix F. CLI argument names may differ from Rust where noted;
 the adapter documents them instead of adding protocol.
+
+## 6. Implementation status and signature deltas (checkpoint after the first end-to-end runs)
+
+Implemented and exercised over real QUIC/mTLS (see the board for commit pins):
+
+- `DurableHost`, `DurableServer`, `DurableOptions`, `ReferenceApplications`,
+  `PrincipalMap`, `V2Main serve|init-authority` (server side).
+- `ClientJournal`, `ClientValidation`, `DurableClient`, `ClientOptions`,
+  `InputSource`, `ResultFiles`, `V2Main next-sequence|init-client|client …`
+  (client side).
+- Test-only `Boundaries` hook interface is wired into the listener (commit and
+  sent boundaries, `withhold` for lost-ACK). The `FixtureMain` TSV recorder/
+  schedule parser is not yet published; production launchers install
+  `Boundaries.NONE`.
+
+Deltas from the planned signatures in sections 1–2 (the code is authoritative):
+
+| planned | actual |
+| --- | --- |
+| `DurableClient.admit(op, params, InputSource)` | `admit(op, params, declarationOperation, InputSource)`; the covering declaration identity is journaled with the admission (same as the Rust CLI's `--declaration`). `InputSource.file(path, contentType, maximumBytes)` prehashes through one handle. |
+| `ResultFiles.Destination.newFile/managed` | `new ResultFiles.Destination(path)` (never overwrites, same-directory staging, hard-link install); `ResultFiles.localCopy(path, selection)` verifies a local copy without network. No managed copy store yet. |
+| `ClientJournal.observedWork` returns `Observed` | unchanged; `select(work, attempt, index)` requires a retained manifest (`DurableClient.manifest` first, as the CLI does). |
+| `OwnerPolicy.fromPrincipals(Supplier<Map>, allowSkip)` | unchanged; `applicationPermitted` defaults to `authorized`. |
+| `DurableHost.Configuration.defaults` table | `objects.handles` 128 (store ceiling), `results` 128/32/65,536/250 (service ceiling). |
+| `DurableOptions.defaults()` | Core: control 512 KiB, pending 64, 32 connections, 8 per owner, 1 MiB queued control; 16 data streams/direction, 64 KiB chunks, 16 MiB objects. |
+| `V2Main serve` exit | SIGTERM/SIGINT → drain → `DRAINED`, exit 0 (signal handler); `STOPPED <reason>` exit 2 when an owner stayed busy. |
+| `V2Main client` operations | `binding declare admit replay lookup unresolved watch page checkpoint manifest select read retry cancel skip cancel-scope complete detach`; every invocation reopens the journal and requires `--journal --authority --owner --creation-sequence` (Rust-compatible). `next-sequence` takes only connection arguments. |
+
+Cross-language runs so far: Rust CLI client ↔ Java `DurableServer` (library
+and `V2Main serve` process), Java `DurableClient` ↔ Rust `pipestream-quinn v2
+serve`, Java ↔ Java (library and processes), each with an authority restart and
+exact original-operation replay.
