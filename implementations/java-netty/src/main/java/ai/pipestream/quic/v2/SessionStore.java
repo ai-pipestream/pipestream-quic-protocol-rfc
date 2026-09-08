@@ -15,6 +15,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
@@ -880,6 +881,120 @@ final class SessionStore {
    */
   AdmissionStore.ExecutionPolicy executionPolicy() {
     return config.execution();
+  }
+
+  /**
+   * Discover a bounded page of retained jobs for authority-owned background maintenance. This is
+   * not a caller API: it crosses owners without supplying credentials, changing leases, sampling
+   * time or authorizing execution. Each sweep fixes an inclusive endpoint so concurrent admissions
+   * cannot extend it indefinitely. Jobs admitted behind the cursor appear in the next sweep.
+   *
+   * @param cursor prior page continuation, null to start a fresh sweep
+   * @param limit maximum examined jobs, between one and 64
+   * @return checked observations and optional continuation; neither is execution authority
+   * @throws SQLException missing or contradictory live records, or database failure
+   */
+  ExecutionStore.Page scanExecutions(ExecutionStore.ScanCursor cursor, int limit)
+      throws SQLException {
+    if (limit < 1 || limit > 64) throw ProtocolError.limit("job discovery page capacity");
+    if (!DATABASE_OPERATIONS.tryAcquire())
+      throw ProtocolError.limit("V2 database operation capacity");
+    try (Connection connection = database.connect();
+        var statement = connection.createStatement()) {
+      statement.execute("PRAGMA query_only=ON");
+      statement.execute("BEGIN");
+      try {
+        metadata(connection);
+        ExecutionStore.Position through = cursor == null ? null : cursor.through();
+        if (cursor == null) {
+          try (var rows =
+              statement.executeQuery(
+                  "SELECT generation,scope,entity FROM ps_v2_jobs ORDER BY generation DESC,scope"
+                      + " DESC,entity DESC LIMIT 1")) {
+            if (rows.next()) through = jobPosition(rows);
+          }
+        }
+        if (through == null) {
+          statement.execute("COMMIT");
+          return new ExecutionStore.Page(List.of(), null);
+        }
+        String lower = cursor == null ? "" : " AND (generation,scope,entity)>(?,?,?)";
+        List<ExecutionStore.Candidate> entries = new ArrayList<>(limit);
+        ExecutionStore.Position last = null;
+        boolean more = false;
+        try (var query =
+            connection.prepareStatement(
+                "SELECT generation,scope,entity,producer FROM ps_v2_jobs"
+                    + " WHERE (generation,scope,entity)<=(?,?,?)"
+                    + lower
+                    + " ORDER BY generation,scope,entity LIMIT ?")) {
+          query.setLong(1, through.generation());
+          query.setLong(2, through.scope());
+          query.setLong(3, through.entity());
+          int parameter = 4;
+          if (cursor != null) {
+            query.setLong(parameter++, cursor.after().generation());
+            query.setLong(parameter++, cursor.after().scope());
+            query.setLong(parameter++, cursor.after().entity());
+          }
+          query.setInt(parameter, limit + 1);
+          try (var rows = query.executeQuery()) {
+            int examined = 0;
+            while (rows.next()) {
+              if (examined++ == limit) {
+                more = true;
+                break;
+              }
+              last = jobPosition(rows);
+              Retained retained = retained(connection, last.generation());
+              if (retained == null) throw corrupt("job lacks retained session");
+              // Intentional retirement may already have removed this job's linked membership.
+              if (retained.retiring()) continue;
+              Binding binding = retained.binding();
+              WorkKey work = new WorkKey(last.scope(), rows.getInt(4), last.entity());
+              ExecutionStore.Loaded loaded =
+                  ExecutionStore.load(connection, config, binding, work, (owner, input) -> {});
+              JobRecord job = loaded.stored().record();
+              WorkView view = loaded.entity().view();
+              boolean consistent =
+                  switch (job.stage()) {
+                    case QUEUED, EXECUTING -> view.state() == State.ACTIVE;
+                    case WAITING_CHILDREN -> view.state() == State.WAITING_CHILDREN;
+                    case AWAITING_RETRY -> view.state() == State.AWAITING_RETRY;
+                    case SETTLED -> view.state().terminal();
+                  };
+              if (!consistent || view.deadline() == null)
+                throw corrupt("job discovery contradicts admitted work state");
+              entries.add(
+                  new ExecutionStore.Candidate(
+                      last,
+                      binding.owner(),
+                      work,
+                      job.stage(),
+                      job.input().parameters().mode(),
+                      view.deadline(),
+                      job.leaseUntil()));
+            }
+          }
+        }
+        statement.execute("COMMIT");
+        return new ExecutionStore.Page(
+            entries, more ? new ExecutionStore.ScanCursor(last, through) : null);
+      } catch (SQLException | RuntimeException failure) {
+        rollback(connection, failure);
+        throw failure;
+      }
+    } finally {
+      DATABASE_OPERATIONS.release();
+    }
+  }
+
+  private static ExecutionStore.Position jobPosition(java.sql.ResultSet row) throws SQLException {
+    try {
+      return new ExecutionStore.Position(row.getLong(1), row.getLong(2), row.getLong(3));
+    } catch (ProtocolError invalid) {
+      throw new SQLException("V2 job discovery identity is invalid", invalid);
+    }
   }
 
   private record ExecutionResult(

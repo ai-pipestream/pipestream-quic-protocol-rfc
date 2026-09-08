@@ -98,6 +98,78 @@ final class ExecutionStore {
    */
   record Details(Binding binding, JobRecord job) {}
 
+  /**
+   * Indexed local discovery position; scopes have exactly one producer.
+   *
+   * @param generation retained session
+   * @param scope allocated scope
+   * @param entity declared entity
+   */
+  record Position(long generation, long scope, long entity) implements Comparable<Position> {
+    /** Validate a real job key, not a sentinel identity. */
+    Position {
+      Checks.id(generation);
+      Checks.number(scope);
+      Checks.id(entity);
+    }
+
+    @Override
+    public int compareTo(Position other) {
+      int order = Long.compare(generation, other.generation);
+      if (order == 0) order = Long.compare(scope, other.scope);
+      return order == 0 ? Long.compare(entity, other.entity) : order;
+    }
+  }
+
+  /**
+   * Volatile progress through one finite discovery sweep, not a durable receipt or lease.
+   *
+   * @param after exclusive last examined job
+   * @param through inclusive upper bound fixed by the sweep's first snapshot
+   */
+  record ScanCursor(Position after, Position through) {
+    /** Reject reversed cursor bounds. */
+    ScanCursor {
+      Objects.requireNonNull(after);
+      Objects.requireNonNull(through);
+      if (after.compareTo(through) > 0) throw new IllegalArgumentException("reversed job cursor");
+    }
+  }
+
+  /**
+   * Advisory scheduling observation. Every action must recheck authoritative state and permission.
+   *
+   * @param position local ordered job key
+   * @param owner retained principal, never a connection credential
+   * @param work exact logical work
+   * @param stage observed durable job state
+   * @param mode admitted application mode
+   * @param deadline original execution deadline
+   * @param leaseUntil observed lease expiry, null without an executing worker
+   */
+  record Candidate(
+      Position position,
+      String owner,
+      WorkKey work,
+      JobRecord.Stage stage,
+      int mode,
+      long deadline,
+      Long leaseUntil) {}
+
+  /**
+   * At most one bounded page of local discovery observations.
+   *
+   * @param entries checked jobs in ascending key order
+   * @param next continuation for this sweep, null after its fixed endpoint
+   */
+  record Page(List<Candidate> entries, ScanCursor next) {
+    /** Freeze the bounded observation, without conferring execution authority. */
+    Page {
+      entries = List.copyOf(entries);
+      if (entries.size() > 64) throw ProtocolError.limit("job discovery page capacity");
+    }
+  }
+
   private ExecutionStore() {}
 
   /**

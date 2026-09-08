@@ -397,8 +397,17 @@ output errors, and reclaims strictly older unpublished slots only under a curren
 durable replacement claim with no live output handles. There is no automatic retry,
 branch fallback, or claim of exactly-once external effects.
 
-This remains authority-library behavior, not an activated durable listener. The
-background worker scheduler, branch callbacks, explicit attempt retry, producer-1
+`v2.ExecutionScheduler` now discovers those committed jobs in bounded, finite
+keyset sweeps and dispatches them through a fixed global/per-owner pool with no
+waiting job queue. It resolves retained execution grants without a connection,
+leaves live leases and explicit-retry outcomes alone, and revisits jobs after
+restart. Deadline maintenance runs separately from busy callbacks. Shutdown
+stops dispatch without cancelling work or interrupting callbacks; the host must
+await physical stop before closing storage. See the
+[discovery bounds and lifecycle contract](../../docs/standards/java-v2-authority-store.md#background-discovery-and-deadline-maintenance).
+
+This remains authority-library behavior, not an activated durable listener.
+Branch callbacks, explicit attempt retry, producer-1
 expansion, broader orphan and subtree reconciliation,
 results/read pins, retirement and durable-profile transport integration remain
 required. A returned local worker lease alone does not prove a callback ran.

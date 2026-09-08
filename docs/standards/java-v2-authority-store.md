@@ -280,8 +280,9 @@ does not establish the deployment clock's trust or undo external callback effect
 A branch cannot be claimed for rehydration from a membership seal alone: it needs
 a committed successful child closure, verified against actual terminal members,
 descendant commitments and status counts. Closure verification streams retained
-state; it is not constant-time scheduling. The separate closure writer and
-callback scheduler still need their full implementations.
+state; it is not constant-time scheduling. The separate closure writer and branch
+callback interface still need their full implementations. The leaf scheduler
+described below does not substitute a seal for a successful closure.
 
 ## Fenced result publication
 
@@ -323,7 +324,8 @@ adapter remain separate required implementations.
 
 `ExecutionRuntime` invokes real registered application code after a durable claim
 and outside metadata transactions. It is a synchronous runner for host-owned
-worker threads, not a durable-profile listener or background discovery scheduler.
+worker threads, not a durable-profile listener. `ExecutionScheduler` supplies its
+background discovery and physical worker pool.
 It accepts exact leaf-only registrations matching the admission registry's label,
 mode and restart-safety contract. Missing callbacks, mismatched contracts and
 branch registrations are refused, not executed through a fallback.
@@ -379,6 +381,60 @@ Reclamation scans the two shared output namespaces and retains at most 512 targe
 descriptors, with installed-body verification bounded by that job's funded bytes.
 It is not a constant-time lookup or a demonstrated many-job throughput result.
 
+## Background discovery and deadline maintenance
+
+`ExecutionScheduler` discovers committed jobs without a connection or an in-memory
+admission notification. `scanExecutions` is an authority-internal read-only API,
+not an authenticated caller endpoint. It reads at most 64 checked job/work pairs
+and one continuation key in a SQLite snapshot, ordered by the existing
+`(generation, scope, entity)` primary key. Scopes have one immutable producer.
+The first page fixes an inclusive upper job key; later admissions cannot keep
+extending that sweep. New admissions behind the cursor and transiently refused
+jobs are revisited in the next sweep. A cursor is neither a lease nor a receipt,
+and restart begins discovery again from retained state.
+
+One dispatcher and at most 128 physical workers use a zero-capacity handoff
+queue. The scheduler retains at most one page, one sweep cursor, an in-flight
+map bounded by the worker ceiling and per-owner counts bounded by that same
+ceiling. Global and per-owner limits apply before submission; reaching a per-owner
+cap leaves any remaining global slots eligible for other owners. There is no unbounded
+waiting job queue or retained exception history. One bounded last-failure record
+and saturating process counters describe refusals, not authoritative work or
+closure counts. The host supplies one shared runtime and scheduler for its
+paired authority.
+
+Workers resolve a current retained-owner grant independently of connection
+credentials, then invoke the real leaf runner. Discovery observations cannot
+authorize processing: claims and publication recheck current state, policy,
+the trusted clock watermark, deadline and durable ownership. A live lease is
+left alone across restart. Reacquiring an expired lease preserves wire attempt
+identity. AWAITING_RETRY is never automatically rerun, and terminal jobs are
+never re-executed. Branch callbacks remain explicitly unsupported.
+
+Deadline settlement runs on the discovery thread, separately from the callback
+pool, including when every physical worker is busy or the owner grant is denied.
+It uses the existing funded owner-independent transaction and rechecks safe UTC
+and cancellation precedence. It does not need to wait for a callback to cooperate
+before recording a reached deadline, nor does it release that callback's physical
+slot or payload handles. Unsafe clock or storage failures retain the durable job
+and produce a bounded local diagnostic; later sweeps can retry.
+
+`close()` stops new submissions and requests worker-pool shutdown without
+interrupting callbacks, cancelling logical work, closing storage or reporting
+completion. Already started maintenance can finish. `awaitStopped` uses one
+bounded monotonic wait for both discovery and workers; false means physical
+activity may remain and the host must keep its stores open. Daemon threads are
+not a promise to keep a JVM alive after its host exits. Arbitrary application or
+grant code must cooperate; it is not forcibly terminated.
+
+Discovery has bounded retained memory, not constant sweep cost or guaranteed
+deadline latency. Every retained job, including terminal history, is examined
+once per sweep; database work and the configured inter-page pause determine
+revisit latency. Each action still performs its normal metadata/file checks.
+This is not an indexed deadline queue or a many-job throughput claim. Future
+indexing must preserve funded writes and restart consistency rather than moving
+accepted jobs into a volatile queue.
+
 ## Persistence and resource scope
 
 `BoundedSqlite` shares the Java implementation's existing bounded Linux native
@@ -411,7 +467,7 @@ durably installs bounded immutable bytes, and exact input/database installations
 can be paired explicitly. Storage admission now commits its receipt and funded
 job atomically; the endpoint and executor are not activated by that fact.
 
-The background worker scheduler, branch callbacks, explicit wire-attempt retry,
+Branch callbacks, explicit wire-attempt retry,
 local producer-1 ingress, subtree settlement,
 results/read pins, retirement/reconciliation,
 durable client observations and authenticated endpoint integration remain

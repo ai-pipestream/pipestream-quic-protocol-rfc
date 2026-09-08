@@ -257,6 +257,19 @@ final class ExecutionRuntime {
     throw error(ProtocolError.Code.APPLICATION_UNSUPPORTED, "no callback for admitted application");
   }
 
+  /**
+   * Check the owning discovery source and physical pool geometry before background dispatch.
+   *
+   * @param source same authority handle used by this runner
+   * @param workers scheduler worker ceiling
+   * @param perOwner scheduler per-owner ceiling
+   */
+  void checkScheduler(SessionStore source, int workers, int perOwner) {
+    if (source != sessions) throw new IllegalArgumentException("scheduler authority differs");
+    if (workers > limits.workers() || perOwner > limits.workersPerOwner())
+      throw ProtocolError.limit("scheduler exceeds callback runtime capacity");
+  }
+
   private synchronized void acquire(String owner) {
     int count = owners.getOrDefault(owner, 0);
     if (active >= limits.workers() || count >= limits.workersPerOwner())

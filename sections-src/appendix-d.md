@@ -182,7 +182,11 @@ not yet a durable-profile listener. A bounded Java leaf runner now invokes actua
 registered callbacks outside metadata transactions and publishes their real outputs.
 It rechecks current execution fences and can reclaim unpinned, strictly older
 unpublished output slots under a durable replacement claim, without refunding
-their funding. Branch callbacks, background scheduling, explicit retry, producer-1
+their funding. Background discovery now revisits committed jobs in finite bounded
+pages and dispatches leaf callbacks without a connection or volatile job queue.
+Global/per-owner physical limits and independent deadline maintenance apply;
+shutdown does not claim logical cancellation or forced callback termination.
+Branch callbacks, explicit retry, producer-1
 ingress, broader orphan/subtree reconciliation, result-read pins and transport,
 retirement and full cross-language failure/resource gates remain required.
 

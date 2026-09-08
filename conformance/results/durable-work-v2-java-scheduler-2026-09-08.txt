@@ -1,0 +1,180 @@
+Java V2 durable discovery and background leaf scheduling, 2026-09-08
+Base: f33bb54aced4d85ad363d1b75e2c32fed5428b65
+Implementation and tests: the commit containing this evidence file.
+Log filenames are labels; actual completion times are reported separately.
+
+Implemented contract
+  Sections 12.5, 12.6 and 12.9 require committed restartable jobs, current
+  execution ownership, explicit wire retries, independent deadline settlement,
+  safe time and preserved accounting. They do not standardize a scheduling
+  algorithm. This increment supplies actual background leaf dispatch in the Java
+  authority library without changing the wire grammar or storage format.
+
+  scanExecutions reads a finite keyset sweep of committed jobs. Each snapshot
+  examines at most 64 checked job/work pairs plus one continuation key using the
+  existing (generation,scope,entity) primary key. The first snapshot fixes the
+  inclusive endpoint. Jobs admitted behind a cursor and transiently refused jobs
+  are rediscovered in the next sweep. No cursor grants execution or mutates the
+  durable attempt, lease, clock, input, operation receipt or completion record.
+  Retiring rows may be skipped only on retained explicit retirement intent, never
+  because required live metadata is missing. This internal API is not a caller
+  interface and must not be exposed as unauthenticated cross-owner observation.
+
+  ExecutionScheduler owns one dispatcher and a fixed daemon worker pool bounded
+  by the shared runtime's global/per-owner geometry (at most 128 workers). Its
+  handoff queue has zero waiting capacity. One bounded page, a sweep cursor,
+  bounded in-flight and owner maps, saturating counters and one fixed diagnostic
+  observation are retained. A physical dispatch race/refusal leaves the durable
+  job discoverable; no volatile queue entry is the admission promise.
+
+  Worker threads resolve retained-owner execution grants, not originating TLS
+  credentials, and call the real ExecutionRuntime. The scan's observations are
+  advisory: current transactional claim/publication checks remain authoritative.
+  Live leases are not replaced merely because the process reopened. Expired
+  ownership can be replaced without incrementing the wire attempt. Terminal
+  jobs and AWAITING_RETRY are never automatically rerun. Unsupported branches
+  receive a local APPLICATION_UNSUPPORTED diagnostic, not a fallback execution.
+
+  Deadline maintenance uses the existing funded owner-independent transaction
+  on the dispatcher, separately from saturated callback workers. Current safe
+  UTC, durable watermark and cancellation precedence are checked at settlement.
+  Physical callbacks and their handles remain charged until actual closure.
+  Unsafe time or storage errors never manufacture success or erase a job.
+
+  close stops new dispatch without interrupting callbacks, cancelling logical
+  work or closing storage. An in-progress maintenance transaction can finish.
+  awaitStopped uses one monotonic bounded wait for dispatcher and physical pool;
+  false does not authorize the host to close stores or claim completion.
+
+Resource and completion boundaries
+  Discovery retains bounded records, not payloads or whole-session membership.
+  Sweep cost still grows with all retained jobs, including terminal history, and
+  includes per-job point reads and configured inter-page delays. Actual claim,
+  settlement and publication retain their existing verification/storage costs.
+  This does not demonstrate constant-time scheduling, indexed deadline lookup,
+  many-job throughput, process peak RSS, power-loss resilience, or fairness
+  beyond the explicit configured per-owner physical cap.
+
+  No Java durable-profile listener is activated. Branch callbacks/producer-one
+  ingress, explicit retry, closure writing, cancellation/revocation settlement,
+  dependency/result read pins, retirement and endpoint/client integration remain
+  required. Full cross-language V2 failure coverage and the external streaming
+  workload versus equivalent authenticated durable gRPC are still required.
+  Neither this checkpoint nor existing Core examples complete the full goal.
+
+Review corrections before executing focused tests
+  Tests now use each owner's actual returned generation, not generation1 for
+  every principal. Declaration IDs are increasing even when admissions occur
+  in a different order. A mode 1 job is WAITING_CHILDREN, while an executing
+  leaf's wire state remains ACTIVE. Tests distinguish protocol enum names from
+  internal job stages and use the actual on-disk Java Binding return type.
+  A marker admitted after a terminal UTC 1100 commit uses UTC 1100, not 1000.
+  Process completion counters are checked after physical shutdown, not during
+  the small interval between authoritative publication and runtime cleanup.
+  Independent owners' terminal outcomes are awaited independently. Bounded
+  polling yields between metadata reads, and cleanup asserts physical stop
+  before closing paired stores. These are fixture corrections, not claims of
+  failing production regression tests.
+
+Production-only gates
+  Main compile session 71790 exited 0:
+    /tmp/pipestream-scheduler-main-compile-20260908T053000.log
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -DskipTests compile
+  Actual Maven finish: 2026-09-08 05:43:51 EDT, elapsed 2.034s. This gate
+  compiled 57 main sources; it did not compile or execute tests.
+
+  Strict package Javadoc session 28631 exited 0, empty log:
+    /tmp/pipestream-scheduler-doclint-20260908T053000.log
+  -Xdoclint:all -Werror covered ExecutionScheduler, ExecutionStore,
+  ExecutionRuntime and SessionStore; output target/scheduler-apidocs.
+  No warning suppression or missing-doc remediation was needed.
+
+  Frozen production SHA-256:
+    ExecutionScheduler.java 74d586ac70a4c27638c057fb5451302a247b8819f9d631ea9cbd883cae475475
+    SessionStore.java 4dfaa4a87e1724238d716b440e0113814f2f5c3c48838463ba66219603aff024
+    ExecutionStore.java 15d341a078004474497c1ec3e6739b253a47130bee4b5d5795eaa169f799231f
+    ExecutionRuntime.java 9612b12db34425cc95e9e27750a8055fe63548f602c161dd54220004dc490037
+
+  Draft gate session 33637 exited 0:
+    /tmp/pipestream-scheduler-draft-20260908T054946-0400.log
+    ./build.sh core 05 draft
+  idnits: 0 errors/0 flaws/0 warnings; one possible FIPS-180-4 downref comment.
+  Local build only, not submission or an IETF status claim.
+  Generated artifact SHA-256 (source status paragraph only, no wire change):
+    XML ee96ec3b7716ecfa118c7c457eaabe6e62da334335148c83c373f44f5cdb266d
+    TXT 2597a78cd5feef1de554f19031cfbd6cea94040b0d4a71bd9b32c8c9098a87ba
+    HTML 0a1a3c8161515f0cbf8740db90969568492d13970aff2674a5520ca4e9455de6
+
+Focused verification
+  Command from repository root:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository -Dtest=ExecutionDiscoveryTest,ExecutionSchedulerTest,ExecutionSchedulerRecoveryTest test
+  First focus session 18197 exited 1 before any tests ran:
+    /tmp/pipestream-scheduler-focused-20260908T055322-0400.log
+  Actual Maven finish 05:53:25 EDT. Strict test compilation rejected 11
+  AutoCloseable warnings because two fixtures declared close() throws Exception,
+  implying InterruptedException although their only action is InputStore.close.
+  Each signature was narrowed to its actual java.io.IOException. No interruption
+  was caught, no warning suppressed and no cleanup assertion removed.
+
+  Focused rerun session 23444 exited 0:
+    /tmp/pipestream-scheduler-focused-rerun-20260908T055422-0400.log
+  Actual Maven finish 05:54:27 EDT. Three fresh XML reports: 11 tests,
+  0 failures, 0 errors, 0 skipped; native sqlite-file-growth guard 1/1.
+  ExecutionDiscoveryTest 5; ExecutionSchedulerTest 5;
+  ExecutionSchedulerRecoveryTest 1. XML mtimes 05:54:26.223–05:54:26.942 EDT.
+
+  The real scheduler child crashes with exit 125 after its committed first
+  lease installs an unpublished OLD object at index 0 and writes a partial
+  second output. It reports attempt 1, lease 1, expiry 2100 and actual funded
+  bytes/files. There is one installed output and one pending output at death.
+  Reopen independently removes partial staging but preserves installed OLD,
+  the funded totals and ACTIVE/no-manifest work. Two scheduler observations at
+  UTC 2099 invoke no callback and preserve the lease. At exactly UTC 2100 a
+  background callback receives actual lease 2/attempt 1, reclaims the old
+  installed output, copies the admitted input and publishes one fresh output.
+  Paired reopen verifies the actual bytes, digest, manifest count and unchanged
+  original funding. The two-object allowance is not refunded or converted into
+  a fabricated single-object admission promise.
+
+  Final test SHA-256:
+    ExecutionDiscoveryTest.java f2a76d4604421e656f2b61695a1068611c9cdbcd0869df1041797ec7fc8be440
+    ExecutionSchedulerTest.java e8117501957d62c4cb08536f4cefe39ec12adb309a1490d8dd3d0001893d420c
+    ExecutionSchedulerRecoveryTest.java 47d9a11dee6d7353e721283b8630c47927ccc98e88b16336ef08de481d93fd0a
+
+Final unfiltered and fresh-artifact gates
+  Command from repository root, no test selectors or skip flags:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository install
+  Session 12361 exited 0:
+    /tmp/pipestream-scheduler-full-install-20260908T055500-0400.log
+  Actual Maven finish 2026-09-08 05:58:44 EDT. Independently summed fresh
+  JUnit XML: 64 suites, 484 tests, 0 failures, 0 errors, 0 skipped.
+  Report mtimes 05:57:06–05:58:43 EDT. Native sqlite-file-growth: 1/1.
+  This includes all existing Java Core/sealed transport, admission, physical
+  input/output, funded publication, closure-verification and runtime regressions.
+
+  Existing 64 MiB runtime resource fixture in this unfiltered run:
+    bytes=67108864
+    digest=eeeea29f19e99097aff081c75a85115c7732967d5824201ddba0d2d1f6202723
+    buffer=8192 heapMax=33554432 observedRssKiB=159220 elapsedMillis=10119
+  This is the full input/callback/publication/reopen fixture, not scheduler
+  throughput or copy-only latency. RSS is an observed process sample, not peak
+  RSS and not a claim that total process memory is limited to the managed heap.
+  Existing publication capacity regression remained green:
+    renewals=50 before=90672 saturated=712816 after=741632
+    payloadBytes=16 manifestEncodedBytes=2710
+
+  Existing examples against the fresh Java JAR, from implementations/rust-quinn:
+    target/release/pipestream-conformance examples
+  Session 49697 exited 0:
+    /tmp/pipestream-scheduler-examples-20260908T055849-0400.log
+    PASS Java source -> Rust/Quinn server
+    PASS Rust source recovery -> C++/MsQuic server
+    PASS Rust source scatter -> Java, Rust, and C++ servers
+  These examples remain regression evidence, not the unfinished V2 result
+  interoperability/failure-driver or equivalent streaming-gRPC workload proof.
+
+  Fresh Java artifact SHA-256:
+    normal JAR d0d9ea58e19b0036d0f0d55ad39bf53ddbd940e4911309d20a195184782e18e6
+    shaded JAR 75c55b7e35ab42e7ca7c64e0401f9a68e453b609df505b86c0e240a489176c64
+  The four final production source hashes exactly match the production-only
+  compile/doclint hashes above. No production code changed after those gates.
