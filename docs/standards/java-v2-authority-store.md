@@ -7,9 +7,11 @@ declaration, admission, local execution, publication, closure, direct-child
 dependency and local result-read layer for Sections 12.3 through 12.9. They are
 package-private and are not wired into a durable-profile listener. The shipped
 Java endpoint still advertises Core only. Local authority-produced expansion is
-implemented behind the host-owned runtime; result-stream transport, dependency-safe
-cleanup, retirement and endpoint integration remain to be implemented. Storage and local execution behavior are not
-endpoint interoperability.
+implemented behind the host-owned runtime. Dependency-safe cleanup, bounded orphan
+reconciliation and checked incremental retirement now have local implementations;
+their verification scopes are recorded in the retention document. Result-stream
+transport and endpoint/client integration remain outstanding. Storage and local
+execution behavior are not endpoint interoperability.
 
 ## Identity and transaction boundary
 
@@ -81,7 +83,7 @@ including in the normative digest, local record checksum and recovery lookup.
 Only the fenced local producer interface below can declare producer-1 children;
 the caller declaration and operation-lookup APIs remain producer-0 only.
 
-The local database format is version 7. Earlier experimental V2 storage formats,
+The local database format is version 9. Earlier experimental V2 storage formats,
 like V1 and foreign databases, are refused without conversion. This is an internal
 format revision, not a wire-profile change or an authorized reset of an existing
 authority identity.
@@ -649,11 +651,12 @@ can be paired explicitly. Storage admission now commits its receipt and funded
 job atomically; admission itself neither invokes application code nor activates the
 network endpoint.
 
-Results/read pins, retirement/reconciliation,
-durable client observations and authenticated endpoint integration remain
-mandatory. Fixed image credits now protect their specifically bounded writes;
-remaining cleanup write sets still need their real funded transitions
-and cost gates before activation. This increment does not prove full
+Local results/read pins and retirement/reconciliation now have implementations
+and separately recorded tests. Durable client observations, authenticated endpoint
+integration and the neutral cross-language failure/resource driver remain
+mandatory. Fixed image credits protect their specifically bounded writes;
+full workload and resource cost gates remain required before activation.
+Local implementation evidence does not prove full
 Java V2 behavior, live TLS-policy
 revocation settlement, cross-language V2 equivalence or the protocol-neutral
 failure driver. The external chunk/distribute/transform/reassemble workload and
@@ -762,8 +765,9 @@ operation additionally requires external expiry and dependent parent settlement;
 it waits for exact funding pins, synchronizes all output names before removing
 funding, and preserves the output eligibility timestamp after its logical refund.
 Recovery accepts missing output names only with validated release evidence and
-checks every remaining descriptor. Orphan sweeping, fair cleanup scheduling and
-session retirement remain unfinished. See the
+checks every remaining descriptor. Subsequent orphan sweeping and fair cleanup
+scheduling are implemented. Private format 9 adds checked retirement eligibility,
+bounded metadata deletion and preserved non-reuse history. See the
 [retention implementation and remaining work](java-v2-retention.md).
 
 ## Result evidence and bounded delivery leases
@@ -805,5 +809,6 @@ durable object bytes. Failed physical closes remain charged for cleanup retry;
 service shutdown does not detach its storage claim while any read is outstanding.
 The service does not retract already buffered bytes or establish client receipt.
 It is not yet wired to Java's V2 Netty endpoint. Per-connection request/stream
-credits, native send-buffer ownership, full process bounds, dependency-safe
-reclamation and retirement require their own integration and evidence.
+credits, native send-buffer ownership and full process bounds require their own
+integration and evidence. Local dependency-safe reclamation and retirement use
+the physical pins described here; see the retention document for their scope.

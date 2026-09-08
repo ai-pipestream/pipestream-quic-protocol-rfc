@@ -1,0 +1,119 @@
+Java V2 checked session retirement and automatic scheduling
+Date: 2026-09-08
+Repository: /work/main/pipestream-ai/dev-tools/pipestream-quic-protocol-rfc
+Branch: feat/durable-work-results-v2
+Parent checkpoint: 198c23ec733978236e0588120d79c064c95dffec
+
+Implementation scope
+  Private metadata format 9 owns an immutable fixed-capacity retirement record.
+  Eligibility binds creation identity, exact closed root, all retention cutoffs,
+  safe UTC and required allocator history. A flag alone never authorizes a
+  partial-state audit exemption. Missing mandatory root evidence is corruption.
+  Intent commits before any metadata deletion; authorized owner requests expire
+  during partial cleanup, with wrong-owner/revoked denials taking precedence.
+  Bounded transactions delete jobs, non-declaration operations, entities,
+  declaration operations, child scopes, then root/proof/session atomically.
+  Authority generation and owner creation high-water marks survive completion.
+  Paired storage installs current generation checks at input begin, funding and
+  FIN; session receiver pins include uploads before their final name exists.
+  RetentionService visits finite generation sweeps and one metadata unit per
+  candidate, with independent counters and safe scanner shutdown.
+
+Static review and negative evidence
+  Production compilation initially passed while skipping all test compilation.
+  Focused test compilation then found missing imports and explicit-close/TWR
+  warnings under -Werror. Test lifetimes were corrected without relaxing gates.
+  The first executed focus found a schema initializer mismatch: VERSION was 9
+  while the metadata table still required version=8. The CHECK now matches 9.
+  Later eight-class focus:
+    /tmp/pipestream-retirement-eight-focus-20260908T142327-0400.log
+    Direct exit 1; 29 tests, 1 failure, 1 error.
+    Missing mandatory root was rejected as ordinary ProtocolError NOT_FOUND,
+    not storage corruption. RetirementStore now wraps it as SQLException with
+    its cause retained. The test still requires storage-corruption classification.
+    A discovery fixture tried to create a third owner under maxOwners=2; its
+    third generation now belongs to existing owner alice, creation sequence 2.
+  The production owner quota was not changed.
+
+  First full unfiltered install:
+    /tmp/pipestream-retirement-final-full-20260908T142601-0400.log
+    Direct exit 1, finished 2026-09-08 14:29:26 EDT.
+    Independently counted 108 XML reports: 659 tests, 0 failures, 1 error, 0 skips.
+    The sole error was StoreBindingRecoveryTest installing input for generation 1
+    without ever creating that session. The new bound-store gate correctly
+    refused NOT_FOUND. The fixture now asserts that refusal with zero physical
+    charge, then creates a real retained session before installing the payload
+    used to test corrupted database/input identity.
+
+Focused green evidence
+  mvn -f implementations/java-netty/pom.xml -Psealed-interop
+    -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository
+    -Dtest=RetirementRecordTest,InputRetirementGateTest,SessionRetirementTest,RetirementServiceTest,RetentionServiceTest,SessionRetirementCrashTest,RetirementIntegrityTest,RetirementChildScopeTest test
+  /tmp/pipestream-retirement-eight-green-20260908T142547-0400.log
+  Direct exit 0, finished 2026-09-08 14:25:54 EDT; native SQLite guard 1/1.
+  Independently counted from eight fresh XML reports:
+    RetirementRecordTest       5 tests, 0 failures/errors/skips
+    InputRetirementGateTest    3 tests, 0 failures/errors/skips
+    SessionRetirementTest      3 tests, 0 failures/errors/skips
+    RetirementServiceTest      3 tests, 0 failures/errors/skips
+    RetentionServiceTest       8 tests, 0 failures/errors/skips
+    SessionRetirementCrashTest 1 test,  0 failures/errors/skips
+    RetirementIntegrityTest   5 tests, 0 failures/errors/skips
+    RetirementChildScopeTest  1 test,  0 failures/errors/skips
+  Total: 29 tests, zero failures/errors/skips.
+  XML timestamps UTC 18:25:52 through 18:25:54, read before the full run replaced them.
+
+  Five real child JVM deaths bracket committed INTENT, JOB, OPERATION, ENTITY
+  and FINISHED states. Each restart opens the real metadata and physical stores,
+  completes bounded cleanup, verifies absence replay and retains allocator history.
+  Non-root scope removal uses a real settled branch and post-commit observer
+  exception followed by paired reopen; that case is not a process-death test.
+  Other cases cover exact cutoff, unsafe/regressing time, active-receiver pins,
+  replay/attach refusal, missing proof/root/flag corruption, authorization-before-
+  decode, timer-driven completion, open-session page fairness and finite sweep
+  ceilings that exclude later-created generations until the next pass.
+
+Final verification
+  Nine-class focus adds StoreBindingRecoveryTest to the eight-class command above:
+    /tmp/pipestream-retirement-nine-focus-20260908T143301-0400.log
+    Direct exit 0; 32 tests, zero failures/errors/skips; native guard 1/1.
+  Full unfiltered command:
+    mvn -f implementations/java-netty/pom.xml -Psealed-interop
+      -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.XCGt5KR9/maven-repository install
+    /tmp/pipestream-retirement-final2-full-20260908T143315-0400.log
+    Direct exit 0, finished 2026-09-08 14:36:41 EDT; native guard 1/1.
+    Independently counted 108 fresh XML reports: 659 tests, zero failures/errors/skips.
+    First XML UTC mtime 2026-09-08 18:34:51.220349115.
+    Last XML UTC mtime 2026-09-08 18:36:39.669815228.
+    No narrow test rerun replaced these final full reports.
+  Strict six-type javadoc -package -Xdoclint:all -Werror:
+    /tmp/pipestream-retirement-final-doclint-20260908T143656-0400.log
+    Direct exit 0; no errors or warnings.
+  Existing-profile examples, implementations/rust-quinn/target/release/pipestream-conformance examples:
+    /tmp/pipestream-retirement-final-examples-20260908T143703-0400.log
+    Direct exit 0; Java -> Rust, Rust recovery -> C++, scatter -> Java/Rust/C++ PASS.
+    These are existing-profile regressions, not Java V2 durable interoperability.
+  ./build.sh core 05 draft:
+    /tmp/pipestream-retirement-final-draft-20260908T143716-0400.log
+    Direct exit 0; idnits zero errors/flaws/warnings, existing FIPS downref comment.
+    No Internet-Draft submission performed.
+
+SHA-256, final production sources under implementations/java-netty/src/main/java/ai/pipestream/quic/v2
+  FixedRecords.java 2fa3ec4e489adf129c1cd49b8d039c62f855ea3dfe2a458b7320b779320cb2a8
+  InputStore.java 2cc15002cf7962c5c3d363914fa9a06c9aa8dab1e7aa0f4421035a1f472168bb
+  SessionStore.java fb3b1656540c1a43c71fec6282d8dc6e05ed8bda38ca3f047a116cac3ad59e1c
+  RetirementRecord.java c3eb4f23fc5008586a9a035d69353f92f1e40de53a96f471b501e5065e1dcb6c
+  RetirementStore.java a041c9f074035f8c0ff317566a2d098efcab6cae2a067bcbbb5c7c1e58cca017
+  RetentionService.java 3c045515a718df3a9524d15046f261c06b604bbc12f756a33007cd3c54b9ed16
+  Shaded JAR a7b99be2dc18c141c79302c76b842b3f7ee003184ae7b05fa533f8584330ed61
+
+Scope limits
+  Record/bundle/page bounds do not measure whole-process RSS, actual device I/O,
+  physical allocation or hard latency. Eligibility/recovery and fixed-record
+  accounting retain streaming scan costs. The retirement proof uses protected
+  ordinary allocation, not a newly proven full-store retirement capacity reserve.
+  Java durable transport/client, the neutral two-direction failure/resource
+  driver and external workload/equivalent authenticated durable streaming-gRPC
+  comparison remain mandatory. No Java durable-profile advertisement was added.
+  This is local implementation evidence, not hosted CI, main merge, deployment,
+  IETF submission, task-2 acceptance or completion of the full goal.

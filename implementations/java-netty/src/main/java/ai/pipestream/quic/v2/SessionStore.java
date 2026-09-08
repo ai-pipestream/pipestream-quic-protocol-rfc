@@ -31,7 +31,7 @@ import java.util.concurrent.Semaphore;
  * another implementation's database is accepted. Never call it on a transport event loop.
  */
 final class SessionStore {
-  private static final int VERSION = 8;
+  private static final int VERSION = 9;
   private static final int MAX_BINDING_BYTES = 1024;
   private static final Set<String> TABLES =
       Set.of(
@@ -315,7 +315,12 @@ final class SessionStore {
               var rows = query.executeQuery("SELECT generation FROM ps_v2_sessions")) {
             while (rows.next()) {
               Retained session = retained(connection, rows.getLong(1));
-              AdmissionStore.verifyStorage(connection, session.binding(), inputs);
+              if (session.retiring()) {
+                RetirementStore.auditRemaining(
+                    connection, session.binding(), retirementProof(connection, session.binding()));
+                if (inputs.sessionHasResources(RetirementStore.context(session.binding())))
+                  throw corrupt("retiring session still owns physical storage");
+              } else AdmissionStore.verifyStorage(connection, session.binding(), inputs);
             }
           }
           // Keep the input-owner monitor until commit so close cannot invalidate the checked pair.
@@ -335,6 +340,44 @@ final class SessionStore {
       } finally {
         DATABASE_OPERATIONS.release();
       }
+      inputs.bindGenerationGate(identity, context -> checkInputGeneration(inputs, context));
+    }
+  }
+
+  private void checkInputGeneration(InputStore inputs, Commitments.Context context)
+      throws IOException {
+    // The caller holds the input-store monitor, also held across every retirement commit.
+    inputs.verifyAuthority(identity);
+    if (!DATABASE_OPERATIONS.tryAcquire())
+      throw ProtocolError.limit("V2 database operation capacity");
+    try (Connection connection = database.connect();
+        var statement = connection.createStatement()) {
+      statement.execute("PRAGMA query_only=ON");
+      statement.execute("BEGIN");
+      try {
+        Metadata metadata = metadata(connection);
+        if (!inputs.identity().equals(metadata.inputs()))
+          throw corrupt("input generation gate storage pairing differs");
+        if (!config.authority().equals(context.authority())) throw denied();
+        Retained session = retained(connection, context.generation());
+        if (session == null)
+          throw error(
+              context.generation() <= metadata.highWater()
+                  ? ProtocolError.Code.EXPIRED
+                  : ProtocolError.Code.NOT_FOUND,
+              "input generation unavailable");
+        if (!session.binding().owner().equals(context.owner()) || session.revoked()) throw denied();
+        if (session.retiring())
+          throw error(ProtocolError.Code.EXPIRED, "session retirement committed");
+        statement.execute("COMMIT");
+      } catch (SQLException | RuntimeException failure) {
+        rollback(connection, failure);
+        throw failure;
+      }
+    } catch (SQLException failure) {
+      throw new IOException("V2 input generation check failed", failure);
+    } finally {
+      DATABASE_OPERATIONS.release();
     }
   }
 
@@ -2765,6 +2808,231 @@ final class SessionStore {
     }
   }
 
+  /**
+   * Retire one closed session after all retention promises and physical resources have ended. The
+   * initial call commits only immutable eligibility. Later calls remove at most {@code limit}
+   * metadata bundles, keeping the root and proof until their final atomic deletion.
+   *
+   * @param generation exact retained generation
+   * @param inputs exclusively paired physical installation
+   * @param limit maximum cleanup bundles, from one through 256
+   * @param clock trusted nondecreasing UTC source
+   * @return committed progress; absence never resets identity allocators
+   * @throws IOException physical storage failure or contradictory resources
+   * @throws SQLException corrupt retained evidence or transaction failure
+   */
+  RetirementStore.Progress retireSession(
+      long generation, InputStore inputs, int limit, AdmissionStore.Clock clock)
+      throws IOException, SQLException {
+    return retireSession(generation, inputs, limit, clock, phase -> {});
+  }
+
+  /**
+   * Retire one session with trusted local post-commit instrumentation for restart tests.
+   *
+   * @param generation exact retained generation
+   * @param inputs exclusively paired physical installation
+   * @param limit maximum cleanup bundles, from one through 256
+   * @param clock trusted nondecreasing UTC source
+   * @param probe observer invoked only after the named transaction commits
+   * @return directly committed cleanup counts
+   * @throws IOException physical storage failure or contradictory resources
+   * @throws SQLException corrupt evidence, transaction failure or observer failure
+   */
+  RetirementStore.Progress retireSession(
+      long generation,
+      InputStore inputs,
+      int limit,
+      AdmissionStore.Clock clock,
+      RetirementStore.Probe probe)
+      throws IOException, SQLException {
+    Checks.id(generation);
+    if (limit < 1 || limit > 256) throw ProtocolError.limit("session retirement batch limit");
+    Objects.requireNonNull(inputs);
+    Objects.requireNonNull(probe);
+    AdmissionStore.Clock checkedClock = AdmissionStore.checkedClock(clock);
+    synchronized (inputs) {
+      inputs.verifyAuthority(identity);
+      if (!DATABASE_OPERATIONS.tryAcquire())
+        throw ProtocolError.limit("V2 database operation capacity");
+      int jobs = 0, operations = 0, entities = 0, scopes = 0;
+      try {
+        for (int unit = 0; unit < limit; unit++) {
+          try (Connection connection = database.connect();
+              var statement = connection.createStatement()) {
+            statement.execute("BEGIN IMMEDIATE");
+            boolean committed = false;
+            try {
+              Metadata metadata = metadata(connection);
+              if (!inputs.identity().equals(metadata.inputs()))
+                throw corrupt("retirement input storage pairing differs");
+              Retained session = retained(connection, generation);
+              if (session == null) {
+                statement.execute("COMMIT");
+                committed = true;
+                return new RetirementStore.Progress(
+                    RetirementStore.State.ABSENT, jobs, operations, entities, scopes);
+              }
+              Binding binding = session.binding();
+              long now = AdmissionStore.now(connection, binding.authority(), checkedClock);
+              RetirementRecord proof;
+              if (!session.retiring()) {
+                FixedRecords.audit(connection, config.files(), binding.authority());
+                proof =
+                    RetirementStore.eligible(
+                        connection, config, binding, session.revoked(), inputs, now);
+                if (proof == null) {
+                  statement.execute("COMMIT");
+                  committed = true;
+                  return new RetirementStore.Progress(RetirementStore.State.NOT_READY, 0, 0, 0, 0);
+                }
+                if (inputs.sessionHasResources(RetirementStore.context(binding))) {
+                  statement.execute("COMMIT");
+                  committed = true;
+                  return new RetirementStore.Progress(RetirementStore.State.PINNED, 0, 0, 0, 0);
+                }
+                inputs.verifyAuthority(identity);
+                long at = AdmissionStore.now(connection, binding.authority(), checkedClock);
+                proof =
+                    new RetirementRecord(
+                        proof.context(),
+                        proof.creationSequence(),
+                        proof.root(),
+                        proof.cutoff(),
+                        at);
+                // No live-state audit exemption exists before this entire transaction commits.
+                long slot =
+                    FixedRecords.allocate(
+                        connection,
+                        config.files(),
+                        FixedRecords.Kind.RETIREMENT,
+                        RetirementStore.key(binding),
+                        proof.encode(),
+                        RetirementRecord.CAPACITY,
+                        0);
+                try (var update =
+                    connection.prepareStatement(
+                        "UPDATE ps_v2_sessions SET retiring=1,retirement_slot=?"
+                            + " WHERE generation=? AND retiring=0 AND retirement_slot IS NULL")) {
+                  update.setLong(1, slot);
+                  update.setLong(2, generation);
+                  if (update.executeUpdate() != 1) throw corrupt("retirement intent changed");
+                }
+                AdmissionStore.remember(connection, config, binding.authority(), at);
+                RetirementStore.auditRemaining(connection, binding, proof);
+                statement.execute("COMMIT");
+                committed = true;
+                probe.at(RetirementStore.Phase.INTENT_COMMITTED);
+                return new RetirementStore.Progress(RetirementStore.State.STARTED, 0, 0, 0, 0);
+              }
+              proof = retirementProof(connection, binding);
+              if (unit == 0) {
+                FixedRecords.audit(connection, config.files(), binding.authority());
+                RetirementStore.auditRemaining(connection, binding, proof);
+                if (inputs.sessionHasResources(RetirementStore.context(binding)))
+                  throw corrupt("retirement intent contradicted by physical resources");
+              }
+              FixedRecords.protect(connection, config.files());
+              RetirementStore.Phase phase = RetirementStore.removeOne(connection, binding, proof);
+              inputs.verifyAuthority(identity);
+              long at = AdmissionStore.now(connection, binding.authority(), checkedClock);
+              AdmissionStore.remember(connection, config, binding.authority(), at);
+              statement.execute("COMMIT");
+              committed = true;
+              switch (phase) {
+                case JOB_REMOVED -> jobs++;
+                case OPERATION_REMOVED -> operations++;
+                case ENTITY_REMOVED -> entities++;
+                case SCOPE_REMOVED -> scopes++;
+                case FINISHED -> {}
+                case INTENT_COMMITTED -> throw new AssertionError("cleanup returned intent");
+              }
+              probe.at(phase);
+              if (phase == RetirementStore.Phase.FINISHED)
+                return new RetirementStore.Progress(
+                    RetirementStore.State.COMPLETE, jobs, operations, entities, scopes);
+            } catch (IOException | SQLException | RuntimeException | Error failure) {
+              if (!committed) rollback(connection, failure);
+              throw failure;
+            }
+          }
+        }
+        return new RetirementStore.Progress(
+            RetirementStore.State.IN_PROGRESS, jobs, operations, entities, scopes);
+      } catch (SQLException failure) {
+        if ((failure.getErrorCode() & 255) == 13) {
+          ProtocolError refusal = ProtocolError.limit("SQLite file capacity exhausted");
+          refusal.initCause(failure);
+          throw refusal;
+        }
+        throw failure;
+      } finally {
+        DATABASE_OPERATIONS.release();
+      }
+    }
+  }
+
+  /**
+   * Discover closed or retiring sessions in a finite keyset sweep. Open sessions consume the
+   * examined-row budget too; a closed-root hint neither checks time nor authorizes deletion.
+   *
+   * @param cursor prior continuation, null to capture a new generation high-water mark
+   * @param limit maximum examined sessions, from one through 64
+   * @return bounded current hints and optional continuation
+   * @throws SQLException corrupt session/root evidence or database failure
+   */
+  RetirementStore.Page scanRetirements(RetirementStore.ScanCursor cursor, int limit)
+      throws SQLException {
+    if (limit < 1 || limit > 64) throw ProtocolError.limit("retirement discovery page capacity");
+    if (!DATABASE_OPERATIONS.tryAcquire())
+      throw ProtocolError.limit("V2 database operation capacity");
+    try (Connection connection = database.connect();
+        var statement = connection.createStatement()) {
+      statement.execute("PRAGMA query_only=ON");
+      statement.execute("BEGIN");
+      try {
+        long highWater = metadata(connection).highWater();
+        long through = cursor == null ? highWater : cursor.through();
+        long after = cursor == null ? 0 : cursor.after();
+        if (through > highWater) throw corrupt("retirement cursor exceeds authority history");
+        List<Long> generations = new ArrayList<>(limit);
+        int examined = 0;
+        long last = after;
+        boolean more = false;
+        try (var query =
+            connection.prepareStatement(
+                "SELECT generation FROM ps_v2_sessions WHERE generation>? AND generation<=?"
+                    + " ORDER BY generation LIMIT ?")) {
+          query.setLong(1, after);
+          query.setLong(2, through);
+          query.setInt(3, limit + 1);
+          try (var rows = query.executeQuery()) {
+            while (rows.next()) {
+              if (examined == limit) {
+                more = true;
+                break;
+              }
+              last = rows.getLong(1);
+              examined++;
+              Retained session = retained(connection, last);
+              if (session.retiring()
+                  || DeclarationStore.scope(connection, session.binding(), 0).state().summary()
+                      != null) generations.add(last);
+            }
+          }
+        }
+        statement.execute("COMMIT");
+        return new RetirementStore.Page(
+            generations, examined, more ? new RetirementStore.ScanCursor(last, through) : null);
+      } catch (SQLException | RuntimeException failure) {
+        rollback(connection, failure);
+        throw failure;
+      }
+    } finally {
+      DATABASE_OPERATIONS.release();
+    }
+  }
+
   private void bootstrap(boolean initialize) throws SQLException {
     try (Connection connection = database.connect();
         var statement = connection.createStatement()) {
@@ -2805,7 +3073,7 @@ final class SessionStore {
           """
           CREATE TABLE ps_v2_meta (
             singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-            version INTEGER NOT NULL CHECK(version=8),
+            version INTEGER NOT NULL CHECK(version=9),
             config BLOB NOT NULL CHECK(length(config) BETWEEN 1 AND 8192),
             high_water INTEGER NOT NULL CHECK(high_water>=0),
             clock_slot INTEGER NOT NULL UNIQUE REFERENCES ps_v2_slots(id) CHECK(clock_slot=1),
@@ -2833,6 +3101,7 @@ final class SessionStore {
             control_limit INTEGER NOT NULL CHECK(control_limit BETWEEN 4096 AND 1048576),
             revoked INTEGER NOT NULL CHECK(revoked IN (0,1)),
             retiring INTEGER NOT NULL CHECK(retiring IN (0,1)),
+            retirement_slot INTEGER UNIQUE REFERENCES ps_v2_slots(id),
             entity_count INTEGER NOT NULL DEFAULT 0 CHECK(entity_count>=0),
             operation_count INTEGER NOT NULL DEFAULT 0 CHECK(operation_count>=0),
             last_scope INTEGER NOT NULL DEFAULT 0 CHECK(last_scope>=0),
@@ -2992,6 +3261,10 @@ final class SessionStore {
           statement.executeQuery("SELECT generation FROM ps_v2_sessions ORDER BY generation")) {
         while (rows.next()) {
           Retained session = retained(connection, rows.getLong(1));
+          if (session.retiring()) {
+            RetirementStore.auditRemaining(
+                connection, session.binding(), retirementProof(connection, session.binding()));
+          }
           if (!session.retiring()) DeclarationStore.audit(connection, session.binding());
           if (!session.retiring()) AdmissionStore.audit(connection, config, session.binding());
           if (!session.retiring())
@@ -3021,7 +3294,7 @@ final class SessionStore {
             SELECT CASE WHEN length(CAST(owner AS BLOB)) BETWEEN 1 AND 128 THEN owner END,
               sequence,CASE WHEN length(receipt)<=1024 THEN receipt END,
               CASE WHEN length(receipt_hash)=32 THEN receipt_hash END,profiles,control_limit,revoked,retiring,
-              required_control,required_object
+              required_control,required_object,retirement_slot
             FROM ps_v2_sessions WHERE generation=?
             """)) {
       query.setLong(1, generation);
@@ -3059,6 +3332,8 @@ final class SessionStore {
         if (requiredControl < 4096
             || requiredControl > Wire.MAX_CONTROL_LIMIT
             || requiredObject < 0) throw corrupt("invalid retained response requirements");
+        Long retirementSlot = row.getObject(11) == null ? null : row.getLong(11);
+        RetirementStore.load(connection, binding, row.getInt(8) != 0, retirementSlot);
         return new Retained(
             binding,
             profiles,
@@ -3082,10 +3357,11 @@ final class SessionStore {
       try (var row = query.executeQuery()) {
         if (!row.next()) throw error(ProtocolError.Code.NOT_FOUND, "session unavailable");
         if (!owner.equals(row.getString(1)) || row.getInt(2) != 0) throw denied();
-        if (row.getInt(3) != 0)
-          throw error(ProtocolError.Code.EXPIRED, "session retirement committed");
       }
     }
+    Retained retained = retained(connection, generation);
+    if (retained.retiring())
+      throw error(ProtocolError.Code.EXPIRED, "session retirement committed");
     try (var query =
         connection.prepareStatement(
             "SELECT producer,parent_scope,parent_producer,parent_entity FROM ps_v2_scopes WHERE"
@@ -3099,7 +3375,24 @@ final class SessionStore {
             || row.getObject(4) != null) throw corrupt("live root scope missing or invalid");
       }
     }
-    return retained(connection, generation);
+    return retained;
+  }
+
+  private RetirementRecord retirementProof(Connection connection, Binding binding)
+      throws SQLException {
+    try (var query =
+        connection.prepareStatement(
+            "SELECT retiring,retirement_slot FROM ps_v2_sessions WHERE generation=?")) {
+      query.setLong(1, binding.generation());
+      try (var row = query.executeQuery()) {
+        if (!row.next()) throw corrupt("retirement session disappeared");
+        return RetirementStore.load(
+            connection,
+            binding,
+            row.getInt(1) != 0,
+            row.getObject(2) == null ? null : row.getLong(2));
+      }
+    }
   }
 
   private static void compatible(Retained retained, Capabilities selected) {

@@ -64,6 +64,16 @@ final class StoreBindingRecoveryTest {
     try (InputStore store =
         InputStore.initializeForAuthority(inputs, INPUT_LIMITS, sessions.identity())) {
       sessions.bindInputs(store);
+      ProtocolError missing =
+          assertThrows(ProtocolError.class, () -> store.begin(context, header, SELECTED, 1));
+      assertEquals(ProtocolError.Code.NOT_FOUND, missing.code());
+      assertEquals(new InputStore.Usage(0, 0, 0), store.usage());
+      Messages.Binding binding =
+          sessions.create(
+              new SessionStore.Access("alice", () -> {}),
+              SELECTED,
+              new Messages.Create(1, 1, new Records.Policy(10_000, 10_000, 10_000)));
+      assertEquals(1, binding.generation());
       install(store, context, header, payload);
       byte[] other = new byte[16];
       other[15] = 9;

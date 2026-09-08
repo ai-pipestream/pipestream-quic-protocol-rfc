@@ -2,8 +2,10 @@
 
 This records implementation and remaining work for Section 12.9. Java now has
 single-job input and terminal output reclamation operations. Bounded orphan
-reconciliation and automatic cleanup scheduling are implemented and locally verified; session
-retirement remains unimplemented. The normative contract remains
+reconciliation and automatic cleanup scheduling are implemented and locally verified.
+Checked session retirement and its automatic scheduling are implemented and
+locally verified, separately from those earlier gates.
+The normative contract remains
 in `sections-src/section-12.md`. The local result-read service and per-input
 physical reader pins supply part of the liveness machinery. Java's durable
 endpoint/client and the independent failure driver remain separate obligations.
@@ -231,15 +233,75 @@ interval measured from root closure, every longer work/output/receipt promise,
 and completion of dependency and physical-pin obligations. Preserve owner and
 authority non-reuse high-water marks.
 
-The current session `retiring` flag is not an implemented retirement operation
-or sufficient eligibility evidence by itself. Before adding a transition that
-sets it, define a retained, checked retirement record and fund its writes and
-incremental metadata cleanup. Recovery must validate that record before it
-skips live-session audits. Keep enough immutable binding/identity for current
-authorization to take precedence over EXPIRED throughout partial retirement.
-No request may replay a partially deleted session as live.
-The receiver-installation fence must also prevent a delayed pre-retirement
-upload from resurrecting names after that session's physical cleanup pass.
+Private format 9 adds an immutable, checksummed `RetirementRecord` and a unique
+session ownership link to it. A flag without that record is corruption. The
+record binds authority, owner, generation, creation sequence, verified closed
+root, latest retention cutoff and trusted authorization time. Recovery checks
+the exact retained root, clock watermark and both non-reuse allocators before
+allowing the intentional absence of previously deleted members or jobs. A
+missing mandatory root is storage corruption, not an ordinary scope lookup miss.
+The fixed-capacity proof is allocated under the ordinary protected SQLite
+budget; capacity refusal rolls back the entire intent and cannot consume writes
+already promised to accepted work. Earlier private formats are refused, not
+silently converted or reset.
+
+`retireSession(generation, inputs, limit, clock)` first audits complete live
+declarations, admissions, fences, closure, terminal intervals and payload release
+evidence. It then checks physical quiescence under the paired input-store monitor
+and refreshes safe UTC before committing proof and flag together. That initial
+call returns `STARTED` without deleting any metadata. Remaining physical names,
+active reception or uncertain orphan charges prevent intent. Logical input,
+output or executor ownership also prevents retirement.
+
+Later calls remove at most 1 through 256 metadata bundles, each in its own
+protected writer transaction. Foreign keys remain enabled. Deletion order is:
+
+1. Refunded jobs and their private state slots.
+2. Non-declaration operations, including retry and scope-cancellation links.
+3. Terminal entities with their work and fence slots.
+4. Declaration operations, after all declared members are gone.
+5. Non-root closed scopes and their slots.
+6. Root, retirement proof and session together in the final atomic commit.
+
+The root and immutable proof survive every intermediate commit. Recovery audits
+surviving terminal work, released jobs and closed scopes without demanding that
+already deleted operations reappear. Owner and authority high-water marks are
+never reduced or deleted. Currently authorized owner requests receive `EXPIRED`
+during partial cleanup; wrong-owner and revoked-owner denials precede proof
+decoding. Final absence permits `NOT_FOUND` for lookup while old creation replay
+still returns `EXPIRED`.
+
+Binding physical storage installs a current database-backed generation gate on
+new input reception, output funding and input FIN installation. The check shares
+the storage monitor with retirement; it does not cache authorization in a retired
+generation set. It refuses retiring generations and holes at or below the retained
+generation high-water mark. Per-session receiver counts include pending uploads
+before a final immutable filename exists, so quiescence cannot overlook delayed
+FIN. Standalone physical-store fixtures without an authority do not install this
+gate; protocol integration must bind the store before accepting inputs.
+
+`RetentionService` now also visits finite keyset session pages with a captured
+generation ceiling. Open sessions consume the page budget but do not prevent
+later closed sessions from being examined. Each candidate gets one metadata
+cleanup unit per visit. A session created beyond a captured ceiling appears in
+the next sweep. Service shutdown retries uncertain retirement-directory closes
+before releasing storage ownership.
+
+These bounds cover examined candidates and committed bundles, not constant-time
+validation: eligibility and recovery stream retained session relationships,
+fixed-record protection scans retained accounting, and physical quiescence can
+inspect up to the configured file ceiling using a charged descriptor. They do
+not establish whole-process memory, physical disk I/O or hard latency bounds.
+The independent resource driver and durable transport integration remain required.
+
+The retirement gate passes 32 focused tests and all 659 Java tests, with zero
+failures/errors/skips in 108 fresh full-run reports. It includes five real JVM
+post-commit deaths, actual branch/child cleanup and partial reopen, corrupt
+proof/flag/root refusals, current authorization precedence, active receiver pins,
+exact cutoff and unsafe-clock tests, and automatic finite-sweep scheduling.
+Strict doclint, the native storage guard, existing-profile examples and draft
+checks also pass. See the
+[retirement verification record](../../conformance/results/durable-work-v2-session-retirement-2026-09-08.txt).
 
 ## Required verification
 

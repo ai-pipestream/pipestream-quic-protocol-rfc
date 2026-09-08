@@ -2524,6 +2524,44 @@ of fairness during arbitrary directory mutation. These checks establish neither
 whole-process resource measurements nor session retirement. The independent
 two-direction failure driver and workload gates below remain mandatory.
 
+### Java checked session retirement, 2026-09-08
+
+`RetirementRecord`, `RetirementStore`, `SessionStore.retireSession` and finite
+session discovery in `RetentionService` implement the local retirement lifecycle.
+Private format 9 adds immutable eligibility before permitting partial metadata
+deletion. The final nine-class gate passes 32 tests; full Java passes 659 tests
+with zero failures/errors/skips in 108 fresh XML reports. Strict doclint, native
+guard, existing-profile examples and draft checks pass. Exact gates are in the
+[retirement evidence](../../conformance/results/durable-work-v2-session-retirement-2026-09-08.txt).
+
+- V2-STORE/V2-TIME: `RetirementRecordTest`, `SessionRetirementTest` and
+  `RetirementIntegrityTest` cover fixed-capacity encoding, exact cutoff,
+  unsafe/regressing UTC, proof/flag/root agreement, current authorization
+  precedence, partial reopen and preserved owner/generation high-water marks.
+  A missing mandatory retirement root must be storage corruption, not an ordinary
+  NOT_FOUND scope response. That regression failed before the classification fix.
+- V2-STORE: `SessionRetirementCrashTest` runs five real JVM deaths after committed
+  intent, job, operation, entity and final deletion boundaries, then opens both
+  actual stores and verifies bounded completion and non-reuse. The separate
+  `RetirementChildScopeTest` uses real branch/child settlement and a post-commit
+  exception at child-scope deletion followed by reopen; this latter case is not
+  a process-death boundary.
+- V2-ADMIT/V2-STORE: `InputRetirementGateTest` and the paired session/integrity
+  tests cover unknown or retired generation refusal, active staging receivers,
+  FIN fencing and exact physical refunds. `StoreBindingRecoveryTest` now creates
+  a real session before its corruption payload; bound-store uploads for an
+  unknown generation are explicitly refused without charging capacity.
+- V2-STORE: `RetirementServiceTest` exercises automatic timer-driven retirement,
+  page-size-one progress past open sessions and a captured generation ceiling
+  that cannot be extended by later creations. Existing `RetentionServiceTest`
+  continues to check orphan/job cleanup independently.
+
+Metadata batch sizes, finite discovery and charged handles are not full process
+resource measurements. Eligibility/recovery and fixed-record accounting still
+stream retained records. Retirement intent uses protected ordinary allocation;
+these tests do not establish a new full-store retirement reservation guarantee.
+No durable Java profile is activated by this local implementation checkpoint.
+
 ## Cross-language and workload gates
 
 The independent Rust process driver must run Rust-to-Java and Java-to-Rust

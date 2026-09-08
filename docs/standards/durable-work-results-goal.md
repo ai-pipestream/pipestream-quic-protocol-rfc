@@ -2842,3 +2842,33 @@ retains its existing session-wide cost. Java durable endpoint/client integration
 the neutral two-direction failure/resource driver and the original external
 workload/equivalent authenticated durable streaming-gRPC baseline remain required.
 This is local implementation progress, not task-2 or full-goal acceptance.
+
+### Java checked session retirement implementation, 2026-09-08
+
+The current increment implements immutable retirement eligibility, foreign-key-safe
+incremental metadata deletion and preserved non-reuse history. Input begin,
+output funding and FIN use a current bound-store generation check; active pending
+receivers prevent retirement even before they install a final name. The existing
+cleanup daemon now discovers closed/retiring sessions in finite generation sweeps
+and advances one metadata bundle per candidate visit.
+
+Nine focused classes pass 32 tests, including five real JVM post-commit deaths,
+real branch/child cleanup with partial reopen, exact cutoff, unsafe/regressing
+time, authorization precedence, corruption refusals and automatic scheduling.
+The initial full run found one older binding-recovery fixture installing bytes
+without creating its session. That fixture now explicitly checks unknown-generation
+refusal and creates a real session before the original corruption scenario.
+The final unfiltered Java run passes 659 tests with zero failures/errors/skips,
+independently counted from 108 fresh XML reports. Strict six-type doclint, the
+native storage guard, all three existing-profile examples and draft/idnits pass.
+Exact red/green logs, exits and source/artifact hashes are recorded in the
+[retirement evidence](../../conformance/results/durable-work-v2-session-retirement-2026-09-08.txt).
+
+Next implement the durable Java transport/client against these local authority
+operations, including authenticated request dispatch, result-stream backpressure
+and crash/reconnect semantics. The current normative retirement contract already
+requires this durable evidence;
+no wire relaxation or profile advertisement was introduced. Java durable
+transport/client integration, independent authenticated two-direction failure and
+resource evidence, and the external workload/equivalent streaming-gRPC comparison
+remain required. This increment is not task-2 or full-goal acceptance.

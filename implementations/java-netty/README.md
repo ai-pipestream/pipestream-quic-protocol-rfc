@@ -458,12 +458,16 @@ revocation now use the same owner-bound metadata store. Acceptance immediately
 fences descendant mutations; bounded maintenance computes full frozen seals and
 terminal settlements, including unadmitted work and restart. Prior terminal
 outcomes and the first accepted own skip/cancel outcome remain authoritative.
-The private V2 format is now 7, with typed fence/journal provenance checks.
+Typed fence/journal provenance checks were introduced in private V2 format 7.
 See the [cancellation contract](../../docs/standards/java-v2-authority-store.md#cancellation-skip-and-bounded-reconciliation).
 
-Broader orphan reconciliation,
-results/read pins, retirement and durable-profile transport integration remain
-required. A returned local worker lease alone does not prove a callback ran.
+Local result-read leases, dependency-safe payload cleanup and bounded orphan
+reconciliation are implemented. Private V2 format 9 adds immutable retirement
+eligibility, incremental metadata cleanup, delayed-upload fencing and automatic
+session discovery. See the [retention contract and evidence scope](../../docs/standards/java-v2-retention.md).
+Durable-profile transport/client integration and cross-language failure/resource
+evidence remain required. A returned local worker lease alone does not prove a
+callback ran.
 
 ## Sealed-work library foundation
 

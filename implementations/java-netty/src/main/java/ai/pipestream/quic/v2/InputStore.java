@@ -215,6 +215,7 @@ final class InputStore implements AutoCloseable {
   private int handles;
   private final Map<Path, Integer> inputReaders = new HashMap<>();
   private final Map<Path, Integer> inputReceivers = new HashMap<>();
+  private final Map<Commitments.Context, Integer> receivingSessions = new HashMap<>();
   private final Map<Path, Long> inputRemovals = new HashMap<>();
   // Preserve prepaid output charges across a same-process interrupted funding removal.
   private final Map<Path, Funding> outputRemovals = new HashMap<>();
@@ -226,6 +227,20 @@ final class InputStore implements AutoCloseable {
   private boolean closed;
   private Object resultService;
   private Object retentionService;
+  private GenerationGate generationGate;
+  private DirectoryStream<Path> retirementDirectory;
+
+  /** Current durable session-lifecycle check supplied by the paired authority. */
+  @FunctionalInterface
+  interface GenerationGate {
+    /**
+     * Reject an unknown or retired generation before installing new resources.
+     *
+     * @param context exact resource owner and generation
+     * @throws IOException metadata or ownership verification unavailable
+     */
+    void check(Commitments.Context context) throws IOException;
+  }
 
   private InputStore(
       Path root,
@@ -519,6 +534,7 @@ final class InputStore implements AutoCloseable {
       ReceiverCredit credit)
       throws IOException {
     ensureOpen();
+    checkGeneration(context);
     Envelope envelope = envelope(context, header);
     if (orphanRemovals.containsKey(objectPath(envelope)))
       throw new ProtocolError(ProtocolError.Code.CONFLICT, "input orphan cleanup is incomplete");
@@ -536,6 +552,7 @@ final class InputStore implements AutoCloseable {
     reserve(reservation, 2, credit);
     Path target = objectPath(envelope);
     inputReceivers.merge(target, 1, Integer::sum);
+    receivingSessions.merge(context, 1, Integer::sum);
     Path path = root.resolve("pending").resolve(UUID.randomUUID() + ".part");
     FileChannel output = null;
     try {
@@ -554,7 +571,7 @@ final class InputStore implements AutoCloseable {
         }
         release(reservation, 2);
         returnReceiver(credit);
-        unpinReceiver(target);
+        unpinReceiver(target, context);
       } catch (IOException cleanup) {
         // Uncertain physical close or unsynchronized deletion retains both the
         // namespace charge and its handle. Recovery must establish safe reuse.
@@ -605,6 +622,8 @@ final class InputStore implements AutoCloseable {
    */
   synchronized Reservation reserveOutputs(Commitments.Context context, InputHeader header)
       throws IOException {
+    ensureOpen();
+    checkGeneration(context);
     if (orphanRemovals.containsKey(fundingPath(envelope(context, header))))
       throw new ProtocolError(ProtocolError.Code.CONFLICT, "funding orphan cleanup is incomplete");
     Optional<Reservation> existing = findReservation(context, header);
@@ -1422,6 +1441,7 @@ final class InputStore implements AutoCloseable {
         reached(Phase.RECEIVED);
         synchronized (InputStore.this) {
           ensureOpen();
+          checkGeneration(envelope.context());
           Path target = objectPath(envelope);
           try {
             Files.createLink(target, path);
@@ -1472,7 +1492,7 @@ final class InputStore implements AutoCloseable {
       synchronized (InputStore.this) {
         release(linked ? size : multiply(size, 2), linked ? 1 : 2);
         returnReceiver(credit);
-        unpinReceiver(objectPath(envelope));
+        unpinReceiver(objectPath(envelope), envelope.context());
       }
       ended = true;
     }
@@ -1622,6 +1642,7 @@ final class InputStore implements AutoCloseable {
     if (closed) return;
     if (resultService != null) throw new IOException("V2 result service still attached");
     if (retentionService != null) throw new IOException("V2 retention service still attached");
+    closeRetirementScan();
     if (handles != 0) throw new IOException("V2 input store still has active handles");
     lock.release();
     lockChannel.close();
@@ -1932,12 +1953,94 @@ final class InputStore implements AutoCloseable {
     handles--;
   }
 
-  private void unpinReceiver(Path path) {
+  private void unpinReceiver(Path path, Commitments.Context context) {
     Integer receivers = inputReceivers.get(path);
     if (receivers == null || receivers == 0)
       throw new IllegalStateException("input receiver identity accounting underflow");
     if (receivers == 1) inputReceivers.remove(path);
     else inputReceivers.put(path, receivers - 1);
+    Integer owned = receivingSessions.get(context);
+    if (owned == null || owned == 0)
+      throw new IllegalStateException("input receiver session accounting underflow");
+    if (owned == 1) receivingSessions.remove(context);
+    else receivingSessions.put(context, owned - 1);
+  }
+
+  /**
+   * Attach the durable lifecycle check after verifying this exact authority/storage pair.
+   * Standalone storage tests have no authority; protocol use must bind before accepting uploads.
+   *
+   * @param authority exact paired metadata installation
+   * @param gate current durable generation check, not cached caller authorization
+   * @throws IOException closed or foreign storage
+   */
+  synchronized void bindGenerationGate(UUID authority, GenerationGate gate) throws IOException {
+    verifyAuthority(authority);
+    generationGate = Objects.requireNonNull(gate);
+  }
+
+  private void checkGeneration(Commitments.Context context) throws IOException {
+    if (generationGate != null) generationGate.check(context);
+  }
+
+  /**
+   * Retry a retirement directory close whose earlier completion was uncertain. Its descriptor
+   * charge remains owned until close returns successfully.
+   *
+   * @throws IOException directory close is still uncertain
+   */
+  synchronized void closeRetirementScan() throws IOException {
+    if (retirementDirectory != null) {
+      retirementDirectory.close();
+      retirementDirectory = null;
+      unpinOutput();
+    }
+  }
+
+  /**
+   * Check session-owned staging and retained names under the admission/cleanup monitor. Other
+   * sessions' receivers do not block this generation. Directory inspection streams at most the
+   * immutable file-policy ceiling and uses one shared descriptor charge, not an unbounded snapshot.
+   *
+   * @param context retiring session identity
+   * @return whether this session still owns physical resources or an uncertain orphan charge
+   * @throws IOException directory failure, contradictory identity or policy overflow
+   */
+  synchronized boolean sessionHasResources(Commitments.Context context) throws IOException {
+    ensureOpen();
+    closeRetirementScan();
+    if (receivingSessions.containsKey(context)) return true;
+    for (OrphanCharge pending : orphanRemovals.values())
+      if (pending.candidate().context().equals(context)) return true;
+    pin();
+    try {
+      int examined = 0;
+      for (String namespace : List.of("objects", "reservations")) {
+        retirementDirectory = Files.newDirectoryStream(root.resolve(namespace));
+        for (Path path : retirementDirectory) {
+          if (examined++ == limits.files())
+            throw corrupt("physical session scan exceeds file policy");
+          Envelope envelope =
+              namespace.equals("objects")
+                  ? inspect(path, null, false).envelope()
+                  : inspectFunding(path, null).envelope();
+          if (envelope.context().generation() == context.generation()) {
+            if (!envelope.context().equals(context))
+              throw corrupt("physical session owner contradicts retiring identity");
+            return true;
+          }
+        }
+        retirementDirectory.close();
+        retirementDirectory = null;
+      }
+      return false;
+    } finally {
+      if (retirementDirectory != null) {
+        retirementDirectory.close();
+        retirementDirectory = null;
+      }
+      unpinOutput();
+    }
   }
 
   private void reserve(long addedBytes, int addedFiles) throws IOException {

@@ -18,7 +18,7 @@ final class RetentionService implements AutoCloseable {
   /**
    * Finite scheduling ceilings, not wall-clock or whole-process memory guarantees.
    *
-   * @param pageSize maximum job and physical-candidate visits per maintenance call
+   * @param pageSize maximum visits for each of job, physical-candidate and session discovery
    * @param pollMillis delay between background calls
    */
   record Limits(int pageSize, long pollMillis) {
@@ -44,6 +44,8 @@ final class RetentionService implements AutoCloseable {
    * @param orphansExamined physical candidates revalidated over all calls
    * @param released resource releases completed by this service
    * @param refused operations refused or failed
+   * @param sessionsExamined session rows examined over all finite retirement sweeps
+   * @param sessionsRetired sessions whose final metadata deletion committed
    * @param lastFailure most recent fixed-size diagnostic
    * @param stopping no new maintenance page may begin
    * @param stopped active work and physical scan have stopped and storage ownership is released
@@ -53,6 +55,8 @@ final class RetentionService implements AutoCloseable {
       long orphansExamined,
       long released,
       long refused,
+      long sessionsExamined,
+      long sessionsRetired,
       Failure lastFailure,
       boolean stopping,
       boolean stopped) {}
@@ -64,6 +68,7 @@ final class RetentionService implements AutoCloseable {
   private final ScheduledExecutorService timer;
   private final ReentrantLock operation = new ReentrantLock();
   private ExecutionStore.ScanCursor jobs;
+  private RetirementStore.ScanCursor retiring;
   private InputStore.OrphanScan orphans;
   private InputStore.OrphanCandidate pendingOrphan;
   private volatile boolean stopping;
@@ -72,6 +77,8 @@ final class RetentionService implements AutoCloseable {
   private long orphansExamined;
   private long released;
   private long refused;
+  private long sessionsExamined;
+  private long sessionsRetired;
   private Failure lastFailure;
 
   /**
@@ -146,6 +153,7 @@ final class RetentionService implements AutoCloseable {
         failed(failure, "retention job discovery unavailable");
       }
       if (!stopping) orphanPage();
+      if (!stopping) retirementPage();
     } catch (Error failure) {
       failed(failure, "fatal retention failure");
       stopping = true;
@@ -196,6 +204,32 @@ final class RetentionService implements AutoCloseable {
     }
   }
 
+  private void retirementPage() {
+    try {
+      RetirementStore.Page page = sessions.scanRetirements(retiring, limits.pageSize());
+      synchronized (this) {
+        for (int i = 0; i < page.examined(); i++) sessionsExamined = increment(sessionsExamined);
+      }
+      for (long generation : page.generations()) {
+        if (stopping) break;
+        try {
+          // One metadata unit per visit keeps a large retiring session from monopolizing a page.
+          RetirementStore.Progress progress = sessions.retireSession(generation, inputs, 1, clock);
+          if (progress.state() == RetirementStore.State.COMPLETE) {
+            synchronized (this) {
+              sessionsRetired = increment(sessionsRetired);
+            }
+          }
+        } catch (IOException | SQLException | RuntimeException failure) {
+          failed(failure, "session retirement unavailable");
+        }
+      }
+      retiring = page.next();
+    } catch (SQLException | RuntimeException failure) {
+      failed(failure, "retirement session discovery unavailable");
+    }
+  }
+
   /**
    * Observe counters without waiting for filesystem or database work.
    *
@@ -203,7 +237,15 @@ final class RetentionService implements AutoCloseable {
    */
   synchronized Status status() {
     return new Status(
-        jobsExamined, orphansExamined, released, refused, lastFailure, stopping, stopped);
+        jobsExamined,
+        orphansExamined,
+        released,
+        refused,
+        sessionsExamined,
+        sessionsRetired,
+        lastFailure,
+        stopping,
+        stopped);
   }
 
   /**
@@ -259,6 +301,7 @@ final class RetentionService implements AutoCloseable {
     }
     if (orphans != null) orphans.close();
     orphans = null;
+    inputs.closeRetirementScan();
     inputs.releaseRetention(this);
     synchronized (this) {
       stopped = true;

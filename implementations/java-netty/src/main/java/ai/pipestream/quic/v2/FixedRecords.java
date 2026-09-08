@@ -65,7 +65,9 @@ final class FixedRecords {
     /** Entity fence record. */
     FENCE,
     /** Restartable execution and storage-retention record. */
-    JOB
+    JOB,
+    /** Immutable eligibility preceding incremental session deletion. */
+    RETIREMENT
   }
 
   /**
@@ -125,7 +127,7 @@ final class FixedRecords {
           """
           CREATE TABLE ps_v2_slots (
             id INTEGER PRIMARY KEY CHECK(id>0),
-            kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 4),
+            kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 5),
             image BLOB NOT NULL CHECK(length(image) BETWEEN 129 AND 1048704)
           ) STRICT
           """);
@@ -578,6 +580,7 @@ final class FixedRecords {
               case WORK -> "SELECT count(*) FROM ps_v2_entities WHERE view_slot=?";
               case FENCE -> "SELECT count(*) FROM ps_v2_entities WHERE fence_slot=?";
               case JOB -> "SELECT count(*) FROM ps_v2_jobs WHERE state_slot=?";
+              case RETIREMENT -> "SELECT count(*) FROM ps_v2_sessions WHERE retirement_slot=?";
             };
         try (var owner = connection.prepareStatement(reference)) {
           owner.setLong(1, id);
