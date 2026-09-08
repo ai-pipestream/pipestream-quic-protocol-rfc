@@ -354,9 +354,9 @@ impl proto::transform_worker_server::TransformWorker for Svc {
             return Err(Status::permission_denied(UNAUTHORIZED));
         }
         let db = self.db.lock().unwrap();
-        let row: Option<(Vec<u8>, Vec<u8>, i64, i64, i64)> = db
+        let row: Option<(Vec<u8>, Vec<u8>, Vec<u8>, i64, i64)> = db
             .query_row(
-                "SELECT input_sha256, output_sha256, output_len, committed_at_ms, available_until_ms
+                "SELECT op_id, input_sha256, output_sha256, output_len, available_until_ms
                  FROM chunks WHERE ordinal = ?1 AND state = ?2 AND attempt = ?3",
                 rusqlite::params![id.ordinal as i64, COMMITTED, r.attempt as i64],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
@@ -365,7 +365,16 @@ impl proto::transform_worker_server::TransformWorker for Svc {
             .map_err(|e| Status::internal(e.to_string()))?;
         match row {
             None => Err(Status::not_found(NOT_FOUND)),
-            Some((input_sha, output_sha, len, at, until)) => {
+            Some((op_id, input_sha, output_sha, len, until)) => {
+                let at: i64 = db
+                    .query_row(
+                        "SELECT committed_at_ms FROM operations WHERE op_id = ?1",
+                        [&op_id],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(|e| Status::internal(e.to_string()))?
+                    .ok_or_else(|| Status::internal("missing operation receipt"))?;
                 if wall_ms() > until as u64 {
                     return Err(Status::failed_precondition(EXPIRED));
                 }
