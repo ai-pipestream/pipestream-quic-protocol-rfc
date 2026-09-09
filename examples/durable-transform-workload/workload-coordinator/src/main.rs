@@ -641,19 +641,26 @@ async fn assemble_final(seed: u64, total: u64, staging: &Path, output: &Path, ev
 /// in `v2_client::transport::objects`); by the time a post-stall payload
 /// step runs, the stream is already reset, so the step surfaces whatever
 /// post-mortem error the writer reports rather than the deadline itself.
-/// The fingerprint is therefore code family AND time window: the failure
-/// must carry a deadline-adjacent code (LimitExceeded or Cancelled — the
-/// two this stack surfaces around stream death; integrity, conflict,
-/// authorization and not-found codes are explicitly rejected) and must
-/// land inside [floor, ceiling] measured from the given anchor instant.
-/// An instant integrity error fails the floor; an unrelated cancellation
-/// fails the code gate, the window, or both. Follow-up for the transport
-/// owners: post-deadline writes report Cancelled instead of the deadline
-/// that killed the stream.
-fn assert_deadline_fired(
+/// The fingerprint is therefore code family AND time window AND session
+/// survival: the failure must carry a deadline-adjacent code (LimitExceeded
+/// or Cancelled — the two this stack surfaces around stream death;
+/// integrity, conflict, authorization and not-found codes are explicitly
+/// rejected), must land inside [floor, ceiling] measured from the given
+/// anchor instant, and the session itself must still serve reads
+/// afterwards. That last check is what rejects unrelated cancellation: a
+/// session-wide shutdown or connection loss fails the survival read, so it
+/// can never earn PASS no matter how well-timed. An instant integrity
+/// error fails the floor. Timestamps are first-observation times, not
+/// termination instants: the stream died somewhere in
+/// (last_alive_ms, dead_ms], with the cap strictly inside. Follow-up for
+/// the transport owners: post-deadline writes report Cancelled instead of
+/// the deadline that killed the stream, and exact death instants are not
+/// externally observable.
+async fn assert_deadline_fired(
     session: &Session,
     result: &std::result::Result<(), session::Failure>,
     anchor: Instant,
+    alive_ms: u64,
     floor_ms: u64,
     ceiling_ms: u64,
     what: &str,
@@ -666,56 +673,51 @@ fn assert_deadline_fired(
             session.log(
                 "probe-stream-dead",
                 -1,
-                &format!("{what}: {e:?} at {elapsed_ms}ms"),
+                &format!("{what}: {e:?} alive_at={alive_ms}ms dead_at={elapsed_ms}ms"),
             );
             if elapsed_ms < floor_ms || elapsed_ms > ceiling_ms {
                 bail!(
                     "{what}: failure at {elapsed_ms}ms outside deadline window [{floor_ms},{ceiling_ms}]ms"
                 );
             }
+            // Stream-scoped death only: the session must still serve reads.
+            session
+                .client
+                .scope_page(Number(0), Number(0), PageLimit(16))
+                .await
+                .map(|_| ())
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "{what}: session did not survive the stream death ({e:?}); refusing to attribute it to the deadline"
+                    )
+                })?;
+            session.log("probe-session-survived", -1, what);
             Ok(())
         }
         other => bail!("{what}: expected deadline-adjacent failure, got {other:?}"),
     }
 }
 
-/// Open one declared entity and return an upload handle plus the full
-/// deterministic content (only a prefix is ever written: the stream must
-/// die by deadline before FIN, so no digest is ever verified).
-async fn open_probe_upload(
-    session: &Session,
+fn probe_params(
     seed: u64,
     worker: u64,
     arm: &str,
-) -> Result<(session::Admission, Vec<u8>)> {
-    let declaration = operation_id(seed, worker, "probe-declare", 0);
-    session
-        .client
-        .mutate(journal::Intent {
-            operation: declaration,
-            mutation: Mutation::Declare {
-                scope: Number(0),
-                entity_ids: vec![Id(1)],
-                seal: true,
-            },
-        })
-        .await?;
-    session.log("probe-declared", -1, arm);
-    let mut content = generate_chunk(seed, 424242, 1024);
-    content.truncate(1024);
+    entity: u64,
+    bytes: &[u8],
+) -> journal::Intent {
     let mut hash = Sha256::new();
-    hash.update(&content);
+    hash.update(bytes);
     let digest: [u8; 32] = hash.finalize().into();
-    let intent = journal::Intent {
-        operation: operation_id(seed, worker, arm, 0),
+    journal::Intent {
+        operation: operation_id(seed, worker, arm, entity),
         mutation: Mutation::Admit(AdmitParameters {
             work: WorkKey {
                 scope: Number(0),
                 producer: Producer(0),
-                entity: Id(1),
+                entity: Id(entity),
             },
             input: Input {
-                length: Number(content.len() as u64),
+                length: Number(bytes.len() as u64),
                 sha256: Digest(digest),
                 content_type: ApplicationLabel(CONTENT_TYPE.into()),
             },
@@ -724,45 +726,112 @@ async fn open_probe_upload(
             execution_ms: Duration(60_000),
             outputs: OutputBudget {
                 count: BatchCount(1),
-                total_bytes: Number(content.len() as u64),
+                total_bytes: Number(bytes.len() as u64),
             },
         }),
-    };
-    let admission = session.client.input(intent, declaration).await?;
-    Ok((admission, content))
+    }
 }
 
-/// Varied unrelated wire traffic: missing-work reads, scope pages, and
-/// watch polls. All read-only, all real round trips, none of them payload
-/// on any object stream, so none may renew object idle.
-async fn unrelated_traffic(session: &Session, ordinal: u64) -> Result<()> {
-    match ordinal % 3 {
-        0 => {
-            let _ = session.client.observed_work(work_key(900 + ordinal)).await?;
-        }
-        1 => {
-            let _ = session
-                .client
-                .scope_page(Number(0), Number(0), PageLimit(16))
-                .await?;
-        }
-        _ => {
-            let _ = session
-                .client
-                .watch(work_key(901 + ordinal), Number(0), WaitMs(100))
-                .await;
-        }
+/// Declare a per-arm entity pair, fully admit the control entity as the
+/// stall-traffic watch target (proving the watch path against really
+/// admitted work), and open a partial upload on the probe entity. Entities
+/// are partitioned per arm (`base`, `base`+1) because the worker remembers
+/// admitted-but-incomplete work across arms. Returns the probe handle, the
+/// full deterministic content (only a prefix is ever written: the stream
+/// must die by deadline before FIN, so no digest is ever verified on it),
+/// and the control entity id for stall-traffic watches.
+async fn open_probe_upload(
+    session: &Session,
+    seed: u64,
+    worker: u64,
+    arm: &str,
+    base: u64,
+) -> Result<(session::Admission, Vec<u8>, u64)> {
+    let declaration = operation_id(seed, worker, "probe-declare", base);
+    session
+        .client
+        .mutate(journal::Intent {
+            operation: declaration,
+            mutation: Mutation::Declare {
+                scope: Number(0),
+                entity_ids: vec![Id(base), Id(base + 1)],
+                seal: true,
+            },
+        })
+        .await?;
+    session.log("probe-declared", -1, arm);
+    let content = generate_chunk(seed, 424242, 1024);
+    // Control entity goes through the full commit path first, so stall
+    // traffic watches really admitted work.
+    let mut control = session
+        .client
+        .input(
+            probe_params(seed, worker, arm, base + 1, &content[..8]),
+            declaration,
+        )
+        .await?;
+    control.write(&content[..8]).await?;
+    control.finish().await?;
+    control.receipt().await?;
+    session.log("probe-control-committed", -1, arm);
+    let intent = probe_params(seed, worker, arm, base, &content);
+    let admission = session.client.input(intent, declaration).await?;
+    Ok((admission, content, base + 1))
+}
+
+/// Varied unrelated WIRE traffic: scope pages and watch polls on the
+/// declared entity, alternating. All read-only, all real round trips, none
+/// of them payload on any object stream, so none may renew object idle.
+/// Every response is validated (not merely awaited): traffic that fails
+/// voids the "despite traffic" claim, so any error fails the arm. Note:
+/// `observed_work` is deliberately NOT used here — it serves from the
+/// local client journal, not the wire, and claiming it as wire traffic
+/// would be false.
+async fn unrelated_traffic(
+    session: &Session,
+    ordinal: u64,
+    watch_entity: u64,
+) -> Result<()> {
+    if ordinal % 2 == 0 {
+        let page = session
+            .client
+            .scope_page(Number(0), Number(0), PageLimit(16))
+            .await?;
+        session.log(
+            "probe-traffic",
+            ordinal as i64,
+            &format!("scope-page declared={}", page.declared.0),
+        );
+    } else {
+        let observed = session
+            .client
+            .watch(
+                WorkKey {
+                    scope: Number(0),
+                    producer: Producer(0),
+                    entity: Id(watch_entity),
+                },
+                Number(0),
+                WaitMs(100),
+            )
+            .await?;
+        session.log(
+            "probe-traffic",
+            ordinal as i64,
+            &format!("watch state={}", observed.view.state.0),
+        );
     }
     Ok(())
 }
 
 async fn probe_idle(session: &Session, seed: u64, worker: u64) -> Result<()> {
-    let (mut admission, content) = open_probe_upload(session, seed, worker, "probe-idle").await?;
+    let (mut admission, content, control) = open_probe_upload(session, seed, worker, "probe-idle", 1).await?;
     admission.write(&content[..16]).await?;
     // Boundary control: a 3 s stall must NOT kill the stream (idle cap is
     // 5 s). This write must succeed, proving liveness before the real stall.
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     admission.write(&content[16..32]).await?;
+    let alive_ms = session.started.elapsed().as_millis() as u64;
     session.log("probe-alive", -1, "idle arm: stream alive after 3 s stall");
     // Real stall: 7 s of varied unrelated wire requests that must NOT
     // renew object idle.
@@ -770,7 +839,7 @@ async fn probe_idle(session: &Session, seed: u64, worker: u64) -> Result<()> {
     let anchor = Instant::now();
     for i in 0..14 {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        unrelated_traffic(session, i).await?;
+        unrelated_traffic(session, i, control).await?;
     }
     // Idle cap (5 s from the last payload progress) has passed: the next
     // payload step must fail inside the deadline window.
@@ -780,14 +849,15 @@ async fn probe_idle(session: &Session, seed: u64, worker: u64) -> Result<()> {
     };
     let _ = admission.abort().await;
     session.log("probe-deadline-observed", -1, "idle");
-    assert_deadline_fired(session, &outcome, anchor, 4_000, 40_000, "idle")
+    assert_deadline_fired(session, &outcome, anchor, alive_ms, 4_000, 40_000, "idle").await
 }
 
 async fn probe_lifetime(session: &Session, seed: u64, worker: u64) -> Result<()> {
-    let (mut admission, content) = open_probe_upload(session, seed, worker, "probe-lifetime").await?;
+    let (mut admission, content, _) = open_probe_upload(session, seed, worker, "probe-lifetime", 3).await?;
     // Slow continuous progress (8 bytes / 2 s) past the 30 s absolute
     // lifetime: progress must NOT extend it.
     let anchor = Instant::now();
+    let alive_ms = session.started.elapsed().as_millis() as u64;
     let mut outcome: std::result::Result<(), session::Failure> = Ok(());
     for i in 0..17 {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -805,14 +875,47 @@ async fn probe_lifetime(session: &Session, seed: u64, worker: u64) -> Result<()>
     }
     let _ = admission.abort().await;
     session.log("probe-deadline-observed", -1, "lifetime");
-    assert_deadline_fired(session, &outcome, anchor, 25_000, 120_000, "lifetime")
+    assert_deadline_fired(session, &outcome, anchor, alive_ms, 25_000, 120_000, "lifetime").await
+}
+
+/// Negative control: inject an unrelated session-wide cancellation
+/// mid-stall and require the predicate to REJECT the resulting death.
+/// Shutdown at ~3 s, probe at ~8 s: code (Cancelled) and window both look
+/// deadline-like, so the old code+window predicate would PASS — only the
+/// session-survival check rejects it. If this arm's death ever earns PASS,
+/// the predicate has a hole. PASS here means correct rejection.
+async fn probe_cancel_neg(session: &Session, seed: u64, worker: u64) -> Result<()> {
+    let (mut admission, content, _) = open_probe_upload(session, seed, worker, "probe-cancel-neg", 7).await?;
+    admission.write(&content[..16]).await?;
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    admission.write(&content[16..32]).await?;
+    let alive_ms = session.started.elapsed().as_millis() as u64;
+    session.log("probe-alive", -1, "cancel-neg arm: stream alive after 3 s stall");
+    // Unrelated cancellation, not a deadline: shut the whole client down.
+    session.client.shutdown().await?;
+    session.log("probe-injected-shutdown", -1, "cancel-neg arm: session shut down mid-stall");
+    let anchor = Instant::now();
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    let outcome = match admission.write(&content[32..48]).await {
+        Err(e) => Err(e),
+        Ok(()) => admission.finish().await.map(|_| ()),
+    };
+    let _ = admission.abort().await;
+    match assert_deadline_fired(session, &outcome, anchor, alive_ms, 4_000, 40_000, "cancel-neg").await {
+        Ok(()) => bail!("cancel-neg: injected unrelated cancellation earned PASS"),
+        Err(_) => {
+            session.log("probe-cancel-rejected", -1, "unrelated cancellation correctly rejected");
+            println!("PROBE PASS: cancel-neg correctly rejected");
+            Ok(())
+        }
+    }
 }
 
 /// Non-vacuity control: a transfer that stays inside both caps must
 /// commit cleanly. Progress over ~6 s also positively shows payload
 /// activity renewing idle (the complement of the idle arm).
 async fn probe_complete(session: &Session, seed: u64, worker: u64) -> Result<()> {
-    let (mut admission, content) = open_probe_upload(session, seed, worker, "probe-complete").await?;
+    let (mut admission, content, _) = open_probe_upload(session, seed, worker, "probe-complete", 5).await?;
     for i in 0..4 {
         tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
         let off = i * 256;
@@ -841,6 +944,7 @@ async fn run_probe(p: &Probe) -> Result<()> {
         "idle" => probe_idle(&session, p.seed, 0).await?,
         "lifetime" => probe_lifetime(&session, p.seed, 0).await?,
         "complete" => probe_complete(&session, p.seed, 0).await?,
+        "cancel-neg" => probe_cancel_neg(&session, p.seed, 0).await?,
         other => bail!("unknown probe arm: {other}"),
     }
     session.client.shutdown().await?;

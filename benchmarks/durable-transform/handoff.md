@@ -132,19 +132,30 @@ used 1.97.1 against that closure. `cargo build` on the host will confirm.
   no samples (proven: killed-sampler arm exits 1
   `metric sampler died mid-run`; clean arm passes).
 - CR13 arms (`run-cr13.sh`, new `probe` subcommand), reopened with
-  timing-window fingerprints: idle arm (3 s stall survives as boundary
-  control; 7 s stall under varied unrelated wire traffic — missing-work
-  reads, scope pages, watch polls — dies at ~7.1 s), lifetime arm
-  (28 s continuous progress dies at ~30.0 s), complete arm (in-cap
-  transfer commits cleanly, proving non-vacuity). PASS requires the
-  failure inside the window with a LimitExceeded/Cancelled code;
-  integrity/conflict/auth codes are explicitly rejected. PASS vs Rust
-  AND Java workers with identical fingerprints. Scoped claim: Rust
-  client upload path only; server-side enforcement and the download
-  direction are NOT covered. Fidelity note for transport owners:
-  post-deadline writes surface Cancelled, not the deadline that killed
-  the stream; a true disable-deadline negative control needs a client
-  idle/lifetime knob that does not exist in the current API.
+  timing-window fingerprints + validated wire traffic (the earlier
+  `observed_work` stall traffic was local journal reads, corrected to
+  scope pages + watch polls with asserted responses) + session-survival
+  gate + injected-cancellation negative arm: idle (3 s survives; 7 s
+  stall dies ~7.1 s), lifetime (28 s progress dies ~30.0 s), complete
+  (commits), cancel-neg (injected shutdown correctly rejected — the old
+  code+window predicate would have passed it). PASS requires in-window
+  failure with LimitExceeded/Cancelled, all other codes rejected, and
+  a surviving session afterwards. Timestamps are first-observation
+  brackets (alive, dead], not termination instants.
+- CR13 status: PARTIAL. Vs Rust all four arms PASS. Vs Java: idle
+  PASS, but lifetime DIVERGES — the 30 s kill lands in-window (30.0 s)
+  yet the connection is unusable afterwards (vs Rust it stays up;
+  Java's own 30 s stream cap coincides — see CoreOptions.java:90 — so
+  this may be server-side enforcement tearing down harder); rerun
+  reproduced it, so it is systematic, not a flake. complete/cancel-neg
+  vs Java unrun (mixed run already proves Java commit paths;
+  cancel-neg mechanics are client-local). Reported as a peer mismatch
+  for adjudication, not papered over. Remaining gaps needing the
+  client-library owner: (1) a disable/extend knob for the idle/lifetime
+  timers (no true disable-timer negative control exists without it);
+  (2) causal deadline evidence (post-deadline writes surface Cancelled,
+  exact death instants unobservable); (3) server-side enforcement and
+  the download direction are untested by these arms.
 
 ## 9. Safe next actions
 
