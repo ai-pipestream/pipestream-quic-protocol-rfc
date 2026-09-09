@@ -28,11 +28,18 @@ run_arm() { # run_arm <ps|grpc> <repdir>
 }
 
 export REPO_BIN="$REPO_BIN"
+export PS_AUTH="$REPO_BIN/ps-auth" PS_COORD="$REPO_BIN/ps-coord"
+export GRPC_WORKER="$REPO_BIN/grpc-worker" GRPC_COORD="$REPO_BIN/grpc-coord"
 # Alternating order A/B/B/A per repeat pair to cancel drift.
 i=0
 while [ "$i" -lt "$REPEATS" ]; do
-  run_arm ps "$WORK/rep-$i-ps"
-  run_arm grpc "$WORK/rep-$i-grpc"
+  if ((i % 2 == 0)); then
+    run_arm ps "$WORK/rep-$i-ps"
+    run_arm grpc "$WORK/rep-$i-grpc"
+  else
+    run_arm grpc "$WORK/rep-$i-grpc"
+    run_arm ps "$WORK/rep-$i-ps"
+  fi
   i=$((i + 1))
 done
 
