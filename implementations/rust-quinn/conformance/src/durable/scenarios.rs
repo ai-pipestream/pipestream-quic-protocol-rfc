@@ -98,6 +98,8 @@ pub fn rows() -> Vec<Row> {
             "g4-stale-attempt-retry",
             "g4-ancestor-fence-publication",
             "g4-deadline-settlement",
+            "g4-revocation-vs-publication",
+            "g4-eventual-settlement",
         ],
     );
     push(
@@ -193,6 +195,13 @@ pub fn rows() -> Vec<Row> {
         "g7-receipt-before-output-expiry",
         "g7-output-before-receipt-expiry",
         "g7-no-deadline-extension",
+        "g4-publication-vs-cancel",
+        "g4-publication-vs-skip",
+        "g4-stale-attempt-retry",
+        "g4-ancestor-fence-publication",
+        "g4-deadline-settlement",
+        "g4-revocation-vs-publication",
+        "g4-eventual-settlement",
         "g5-untrusted-identity",
         "g5-missing-client-cert",
         "g5-unmapped-principal",
@@ -240,8 +249,13 @@ fn direction_coverage(row: &Row, context: &ScenarioContext) -> String {
         "rust-client/rust-server, rust-client/java-server".to_owned()
     } else if G3_BATCH_A_ROWS.contains(&row.id) && context.java_jar.is_some() {
         "rust-client/rust-server, rust-client/java-server, java-client/rust-server".to_owned()
+    } else if row.id == "g4-revocation-vs-publication" && context.java_jar.is_some() {
+        "rust-client/rust-server (rust-client/java-server: named gap — the Java subject \
+         exposes no operator revoke command)"
+            .to_owned()
     } else if (G3_BATCH_B_ROWS.contains(&row.id)
         || G7_EXPIRY_ROWS.contains(&row.id)
+        || G4_ROWS.contains(&row.id)
         || row.id.starts_with("g5-"))
         && context.java_jar.is_some()
     {
@@ -320,6 +334,13 @@ fn run_rust_direction(row: &Row, context: &ScenarioContext) -> Result<()> {
         "g7-receipt-before-output-expiry" => g7_receipt_before_output_expiry(context),
         "g7-output-before-receipt-expiry" => g7_output_before_receipt_expiry(context),
         "g7-no-deadline-extension" => g7_no_deadline_extension(context),
+        "g4-publication-vs-cancel" => g4_publication_vs_cancel(context),
+        "g4-publication-vs-skip" => g4_publication_vs_skip(context),
+        "g4-stale-attempt-retry" => g4_stale_attempt_retry(context),
+        "g4-ancestor-fence-publication" => g4_ancestor_fence_publication(context),
+        "g4-deadline-settlement" => g4_deadline_settlement(context),
+        "g4-revocation-vs-publication" => g4_revocation_vs_publication(context),
+        "g4-eventual-settlement" => g4_eventual_settlement(context),
         "g5-untrusted-identity" => g5_untrusted_identity(context),
         "g5-missing-client-cert" => g5_missing_client_cert(context),
         "g5-unmapped-principal" => g5_unmapped_principal(context),
@@ -396,6 +417,19 @@ fn setup_session(
     server: Subject,
     client: Subject,
 ) -> Result<Session> {
+    setup_session_serve_args(context, scenario_dir, server, client, &[])
+}
+
+/// `setup_session` whose server process carries extra serve flags. The G4
+/// skip rows pass `--allow-skip` (a rust Storage open flag, a java serve
+/// flag); every other row starts servers with the fixed argument set.
+fn setup_session_serve_args(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+    serve_args: &[&str],
+) -> Result<Session> {
     let certs = mtls::generate(&scenario_dir.join("certs"), &[("alice", "alice")])?;
     let fixture = AuthorityFixture::new(
         &context.rust_bin,
@@ -404,7 +438,8 @@ fn setup_session(
         certs,
         server,
         client,
-    )?;
+    )?
+    .with_extra_serve_args(serve_args);
     fixture.run_init_authority()?;
     let server = fixture.start_server()?;
     let sequence = fixture.next_sequence(&server, "alice")?;
@@ -1658,8 +1693,8 @@ fn parse_page_members(line: &str) -> Result<Vec<(u64, String)>> {
                         Some(code) => match code.trim_end_matches(')') {
                             "5" => "SUCCEEDED".to_owned(),
                             "6" => "FAILED".to_owned(),
-                            "12" => "CANCELLED".to_owned(),
-                            "13" => "SKIPPED".to_owned(),
+                            "7" => "CANCELLED".to_owned(),
+                            "8" => "SKIPPED".to_owned(),
                             _ => raw.to_owned(),
                         },
                         None => raw.to_owned(),
@@ -7423,6 +7458,21 @@ const G7_EXPIRY_ROWS: &[&str] = &[
     "g7-no-deadline-extension",
 ];
 
+/// The seven G4 rows this milestone implements: publication/fence races, the
+/// stale-attempt retry, the deadline race, revocation, and eventual
+/// settlement. Like the batch-B/expiry rows they run the canonical direction
+/// plus rust-client/java-server; g4-revocation-vs-publication is rust/rust
+/// only (the Java subject has no operator revoke command — a named gap).
+const G4_ROWS: &[&str] = &[
+    "g4-publication-vs-cancel",
+    "g4-publication-vs-skip",
+    "g4-stale-attempt-retry",
+    "g4-ancestor-fence-publication",
+    "g4-deadline-settlement",
+    "g4-revocation-vs-publication",
+    "g4-eventual-settlement",
+];
+
 /// Retirement surface per subject, recorded in every retirement row:
 /// neither CLI exposes an operator retirement command (the Rust `v2` Command
 /// enum has none; Java V2Main/ClientCommands have none); both servers retire
@@ -8702,6 +8752,2690 @@ fn g3_nonreusable_history_direction(
     stop_and_seal(context, scenario_dir, id, session.server, events)
 }
 
+// ---------------------------------------------------------------------------
+// G4: publication races, fences, settlement (milestone 12)
+// ---------------------------------------------------------------------------
+
+/// Run one G4 row in the canonical rust/rust direction plus the
+/// rust-client/java-server direction when a jar is present (the
+/// `run_expiry_row` shape; the row function itself journals both legs).
+fn run_g4_row(
+    context: &ScenarioContext,
+    row_id: &str,
+    direction: fn(&ScenarioContext, &Path, Subject, Subject) -> Result<()>,
+) -> Result<()> {
+    direction(
+        context,
+        &context.scenario_dir(row_id),
+        Subject::Rust,
+        Subject::Rust,
+    )?;
+    run_hooked_direction(
+        context,
+        row_id,
+        "rust-client-java-server",
+        |context, dir| direction(context, dir, Subject::Java, Subject::Rust),
+    )?;
+    Ok(())
+}
+
+/// Fence-receipt disposition, subject-agnostic: the rust client prints
+/// `disposition: Disposition(0|1)` (Debug), the java client prints
+/// `disposition=0|1` (record toString). 0 = accepted fence, 1 = the work was
+/// already terminal when the fence arrived.
+fn receipt_disposition(receipt_stdout: &str) -> Result<u64> {
+    for (needle, value) in [("Disposition(1)", 1u64), ("Disposition(0)", 0)] {
+        if receipt_stdout.contains(needle) {
+            return Ok(value);
+        }
+    }
+    for (needle, value) in [("disposition=1", 1u64), ("disposition=0", 0)] {
+        if receipt_stdout.contains(needle) {
+            return Ok(value);
+        }
+    }
+    bail!("fence receipt does not render a disposition:\n{receipt_stdout}")
+}
+
+/// Fence-receipt state-at-commit rendered name, when present: rust prints
+/// `state_at_commit: State(4)`, java prints `state=CANCELLING`. Disposition-0
+/// fence receipts may already carry a terminal state (spec contradiction #8);
+/// the rows record which.
+fn receipt_state_at_commit(receipt_stdout: &str) -> String {
+    if let Some(rest) = receipt_stdout.split("state_at_commit: State(").nth(1) {
+        let code = rest.split(')').next().unwrap_or_default();
+        return state_code_name(code).to_owned();
+    }
+    if let Some(rest) = receipt_stdout.split("state=").nth(1) {
+        return rest
+            .split([',', ']'])
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+    }
+    "unrendered".to_owned()
+}
+
+fn state_code_name(code: &str) -> &'static str {
+    match code {
+        "0" => "DECLARED",
+        "1" => "ACTIVE",
+        "2" => "AWAITING_RETRY",
+        "3" => "WAITING_CHILDREN",
+        "4" => "CANCELLING",
+        "5" => "SUCCEEDED",
+        "6" => "FAILED",
+        "7" => "CANCELLED",
+        "8" => "SKIPPED",
+        _ => "UNKNOWN",
+    }
+}
+
+/// Diagnostic code carried by a watch VIEW line, subject-agnostic: rust
+/// renders `DiagnosticCode(11)`, java `Diagnostic[code=11, ...]`.
+fn view_diagnostic_code(view: &str) -> Option<u64> {
+    if let Some(rest) = view.split("DiagnosticCode(").nth(1) {
+        return rest.split(')').next()?.parse().ok();
+    }
+    view.split("code=")
+        .nth(1)?
+        .split([',', ']'])
+        .next()?
+        .parse()
+        .ok()
+}
+
+fn refusal_code_name(code: u64) -> &'static str {
+    REFUSAL_CODES
+        .iter()
+        .find(|(_, known)| u64::from(*known) == code)
+        .map(|(name, _)| *name)
+        .unwrap_or("UNKNOWN")
+}
+
+/// One read probe against a work that must refuse: the read must fail with a
+/// NAMED Section 12.2 code, never a silent failure. Returns the observed
+/// refusal line for the journal.
+fn expect_named_read_refusal(
+    session: &Session,
+    artifacts: &Path,
+    work: &str,
+    name: &str,
+) -> Result<String> {
+    let output = session.op(&[
+        "read",
+        "--work",
+        work,
+        "--attempt",
+        "1",
+        "--index",
+        "0",
+        "--output",
+        &crate::path(&artifacts.join(name)),
+    ])?;
+    let probe = probe_outcome(&output);
+    let text = probe.transcript();
+    fs::write(artifacts.join(name), &text)?;
+    ensure!(
+        !probe.success,
+        "read of fenced work {work} was expected to refuse but exited zero\n{text}"
+    );
+    let (code, line) = probe
+        .refusal
+        .with_context(|| format!("read of fenced work {work} must name a refusal code\n{text}"))?;
+    Ok(format!(
+        "refused {} ({code}): {line}",
+        refusal_code_name(u64::from(code))
+    ))
+}
+
+/// The outcome of one statistical race iteration, recorded into observed.tsv.
+struct RaceIteration {
+    index: u32,
+    input_len: usize,
+    disposition: u64,
+    winning_order: &'static str,
+    final_state: u64,
+    state_at_commit: String,
+    read_outcome: String,
+}
+
+/// One publication-vs-fence iteration: admit a copy/v2 work whose input size
+/// seeds the race window, then immediately race one fence op (`cancel` or
+/// `skip`) against the in-flight publication. The per-iteration input sizes
+/// create the order asymmetry the subject hooks cannot (neither subject can
+/// pause inside the application callback — the matrix's hook-free statistical
+/// variant). Per-iteration spec conformance: exactly one terminal state;
+/// publication-won (disposition 1) ends SUCCEEDED with a byte-exact result
+/// read; fence-won (disposition 0) ends CANCELLED/SKIPPED with the result
+/// read refusing a named code. Returns the classified iteration.
+#[allow(clippy::too_many_arguments)]
+fn g4_fence_race_iteration(
+    session: &Session,
+    events: &mut EventWriter,
+    context: &ScenarioContext,
+    artifacts: &Path,
+    declare: &str,
+    index: u32,
+    input_len: usize,
+    fence: &str,
+    fence_won_state: u64,
+) -> Result<RaceIteration> {
+    let work = format!("0:0:{index}");
+    let seed = context.seed ^ (u64::from(index) * 0x9e37_79b9);
+    let input = oracle::dataset(seed, input_len);
+    let input_sha256 = oracle::sha256_hex(&input);
+    let input_path = artifacts.join(format!("input-{index}.bin"));
+    fs::write(&input_path, &input)?;
+    events.append(
+        "",
+        None,
+        Some(&work),
+        Some(1),
+        None,
+        Some(ArtifactRef {
+            path: format!("artifacts/input-{index}.bin"),
+            len: input.len() as u64,
+            sha256: input_sha256.clone(),
+        }),
+    )?;
+    let admit = oracle::operation_hex(oracle::operation_id(seed, "admit", 1));
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&admit)?),
+        Some(&work),
+        Some(1),
+        None,
+        None,
+    )?;
+    // Spawn the admission without waiting; the sized stream keeps the
+    // server-side publication in flight after the receipt returns.
+    let admit_child = session.fixture.spawn_client_op(
+        &session.journal,
+        "alice",
+        session.sequence,
+        &session.connection,
+        &[
+            "admit",
+            "--operation",
+            &admit,
+            "--declaration",
+            declare,
+            "--work",
+            &work,
+            "--input",
+            &crate::path(&input_path),
+            "--application",
+            "copy/v2",
+        ],
+    )?;
+    let admitted = AuthorityFixture::wait_client_op(admit_child, OP_WAIT)?;
+    let _admit_receipt = require(&admitted, "RECEIPT", "admit operation")?;
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(hex_to_id(&admit)?),
+        Some(&work),
+        Some(1),
+        None,
+        None,
+    )?;
+
+    // Immediately race the fence against the in-flight publication.
+    let fence_op = oracle::operation_hex(oracle::operation_id(seed, fence, 1));
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&fence_op)?),
+        Some(&work),
+        Some(1),
+        None,
+        None,
+    )?;
+    let fence_out = session.op(&[fence, "--operation", &fence_op, "--work", &work])?;
+    let fence_stdout = require(&fence_out, "RECEIPT", &format!("{fence} operation"))?;
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(hex_to_id(&fence_op)?),
+        Some(&work),
+        Some(1),
+        None,
+        None,
+    )?;
+    let disposition = receipt_disposition(&fence_stdout)?;
+    let state_at_commit = receipt_state_at_commit(&fence_stdout);
+
+    // Poll the work to its single terminal state.
+    let deadline = Instant::now() + RECOVERY_TIMEOUT;
+    let (final_state, final_view) = loop {
+        let stdout = session.watch(&work)?;
+        let state = parse_state(&stdout)?;
+        if (5..=8).contains(&state) {
+            break (state, stdout);
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "g4 fence race iteration {index} ({fence}): work {work} did not settle within \
+             {RECOVERY_TIMEOUT:?}\nlast view:\n{stdout}"
+        );
+        thread::sleep(Duration::from_millis(50));
+    };
+    fs::write(
+        artifacts.join(format!("iteration-{index}-terminal-view.txt")),
+        &final_view,
+    )?;
+    events.append(
+        "OBSERVATION_JOURNALED",
+        None,
+        Some(&work),
+        Some(1),
+        None,
+        None,
+    )?;
+
+    let (winning_order, read_outcome) = if disposition == 1 {
+        // Publication won: the work was already terminal when the fence
+        // arrived. The only legal terminal state for this row is success;
+        // a failure here would be a fabricated outcome.
+        ensure!(
+            final_state == 5,
+            "g4 {fence} race iteration {index}: disposition 1 (publication won) but the \
+             terminal state is {} ({}) — never a fabricated failure\n{final_view}",
+            final_state,
+            state_code_name(&final_state.to_string())
+        );
+        let sha = read_output_verified(
+            session,
+            events,
+            &work,
+            1,
+            &input,
+            &input_sha256,
+            artifacts,
+            &format!("iteration-{index}-output.bin"),
+        )?;
+        (
+            "publication",
+            format!("result read byte-exact (sha256={sha})"),
+        )
+    } else {
+        // Fence won: the outcome is the fence's, never SUCCEEDED, never a
+        // fabricated FAILED, and the result read must refuse a named code.
+        ensure!(
+            final_state == fence_won_state,
+            "g4 {fence} race iteration {index}: disposition 0 (fence won) but the terminal \
+             state is {} ({}) — expected {} ({})",
+            final_state,
+            state_code_name(&final_state.to_string()),
+            fence_won_state,
+            state_code_name(&fence_won_state.to_string()),
+        );
+        let refusal = expect_named_read_refusal(
+            session,
+            artifacts,
+            &work,
+            &format!("iteration-{index}-read-refusal.txt"),
+        )?;
+        events.append("", None, Some(&work), Some(1), None, None)?;
+        ("fence", format!("result read {refusal}"))
+    };
+    Ok(RaceIteration {
+        index,
+        input_len,
+        disposition,
+        winning_order,
+        final_state,
+        state_at_commit,
+        read_outcome,
+    })
+}
+
+fn g4_publication_vs_cancel(context: &ScenarioContext) -> Result<()> {
+    run_g4_row(
+        context,
+        "g4-publication-vs-cancel",
+        g4_publication_vs_cancel_direction,
+    )
+}
+
+/// g4-publication-vs-cancel: race cancel against the in-flight publication.
+/// Hook-free statistical variant per the G4 matrix evidence rule: neither
+/// subject can pause inside the application callback, so seeded input sizes
+/// create the order asymmetry and every iteration records its winning order.
+fn g4_publication_vs_cancel_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g4-publication-vs-cancel";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    enforce_no_fault_schedule(context, id)?;
+    let session = setup_session(context, scenario_dir, server, client)?;
+    // Descending sizes: large inputs keep the publication in flight so the
+    // cancel fence usually wins; small inputs publish before the fence
+    // process can start and usually lose. Both orders are legal per row.
+    let sizes = [
+        12 * 1024 * 1024,
+        8 * 1024 * 1024,
+        1024 * 1024,
+        256 * 1024,
+        64 * 1024,
+        64 * 1024,
+    ];
+    let entities: Vec<u64> = (1..=sizes.len() as u64).collect();
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("iterations", sizes.len().to_string()),
+            (
+                "iteration_input_lens",
+                sizes
+                    .iter()
+                    .map(|size| size.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            (
+                "winning_order_rule",
+                "per iteration: disposition=1 → publication won (terminal SUCCEEDED(5), \
+                 result read byte-exact); disposition=0 → fence won (terminal CANCELLED(7), \
+                 result read refuses a named Section 12.2 code); exactly one terminal state"
+                    .into(),
+            ),
+            (
+                "evidence_rule",
+                "hook-free statistical variant (scenario-matrix-g4.md): no subject hook can \
+                 pause inside the application callback, so seeded input sizes create the \
+                 order asymmetry; winning_order is recorded per iteration, never faked"
+                    .into(),
+            ),
+            (
+                "never",
+                "both winners, neither winner, terminal FAILED(6), silent read failure".into(),
+            ),
+        ],
+    )?;
+    let declare = declare_sealed(&session, &mut events, context.seed, "declare", &entities)?;
+    let mut iterations = Vec::new();
+    for (position, size) in sizes.iter().enumerate() {
+        iterations.push(g4_fence_race_iteration(
+            &session,
+            &mut events,
+            context,
+            &artifacts,
+            &declare,
+            (position + 1) as u32,
+            *size,
+            "cancel",
+            7,
+        )?);
+    }
+    detach(&session)?;
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+    ];
+    let mut publication_wins = 0usize;
+    let mut fence_wins = 0usize;
+    for iteration in &iterations {
+        publication_wins += usize::from(iteration.winning_order == "publication");
+        fence_wins += usize::from(iteration.winning_order == "fence");
+        observed.push((
+            Box::leak(format!("iteration_{}_input_len", iteration.index).into_boxed_str()),
+            iteration.input_len.to_string(),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_winning_order", iteration.index).into_boxed_str()),
+            iteration.winning_order.into(),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_disposition", iteration.index).into_boxed_str()),
+            iteration.disposition.to_string(),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_final_state", iteration.index).into_boxed_str()),
+            format!(
+                "{} ({})",
+                iteration.final_state,
+                state_code_name(&iteration.final_state.to_string())
+            ),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_state_at_commit", iteration.index).into_boxed_str()),
+            iteration.state_at_commit.clone(),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_read", iteration.index).into_boxed_str()),
+            iteration.read_outcome.clone(),
+        ));
+    }
+    observed.push((
+        "orders_observed",
+        format!("publication:{publication_wins},fence:{fence_wins}"),
+    ));
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    stop_and_seal(context, scenario_dir, id, session.server, events)
+}
+
+fn g4_publication_vs_skip(context: &ScenarioContext) -> Result<()> {
+    run_g4_row(
+        context,
+        "g4-publication-vs-skip",
+        g4_publication_vs_skip_direction,
+    )
+}
+
+/// g4-publication-vs-skip: race skip (skip-authorized via `--allow-skip` on
+/// both subjects) against the in-flight publication, plus the skip-fence
+/// aftermath: a conflicting later cancel refuses CANCELLED (12) and replaying
+/// the skip operation returns its original receipt unchanged.
+fn g4_publication_vs_skip_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g4-publication-vs-skip";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    enforce_no_fault_schedule(context, id)?;
+    // `--allow-skip` is a rust Storage open flag and a java serve flag; both
+    // spellings ride the serve invocation.
+    let session =
+        setup_session_serve_args(context, scenario_dir, server, client, &["--allow-skip"])?;
+    // Sized one head-step below the cancel row: every admitted work drains
+    // the authority's funded WAL completion budget cumulatively, and run
+    // evidence showed the 12 MiB head size pushing session A's later admits
+    // against that ceiling.
+    let sizes = [
+        8 * 1024 * 1024,
+        4 * 1024 * 1024,
+        1024 * 1024,
+        256 * 1024,
+        64 * 1024,
+        64 * 1024,
+    ];
+    let entities: Vec<u64> = (1..=sizes.len() as u64).collect();
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("iterations", sizes.len().to_string()),
+            (
+                "iteration_input_lens",
+                sizes
+                    .iter()
+                    .map(|size| size.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            (
+                "skip_authorization",
+                "--allow-skip on serve: rust Storage open flag (server/src/v2/ \
+                 configuration.rs Access::permits), java serve flag (V2Main.java)"
+                    .into(),
+            ),
+            (
+                "winning_order_rule",
+                "per iteration: disposition=1 → publication won (terminal SUCCEEDED(5), \
+                 result read byte-exact); disposition=0 → fence won (terminal SKIPPED(8) — \
+                 never SUCCEEDED, never FAILED — result read refuses a named code)"
+                    .into(),
+            ),
+            (
+                "aftermath_rule",
+                "on a fence-won work: a later conflicting cancel refuses CANCELLED (12) \
+                 \"first work fence has another outcome\"; replaying the skip operation \
+                 (same immutable id) returns the identical receipt"
+                    .into(),
+            ),
+            (
+                "aftermath_hold_open",
+                "statistical, hook-free: a mode-1 reassemble/v2 parent is \
+                 nonterminal from admission with a sealed child scope of 33 \
+                 children; child 1 is retry-copy/v2, which parks in \
+                 AWAITING_RETRY with no authorized retry, so reconcile \
+                 cannot close the scope until the fence cascade cancels it; \
+                 the seal-hash and status member scans then cost several \
+                 scan_batch passes, widening the fenced-but-nonterminal \
+                 window to ~6 idle polls (20ms each); a cancel that instead \
+                 observes the settled parent takes the disposition-1 \
+                 terminal path (a legal race outcome), so the aftermath \
+                 retries on a fresh authority, at most 4 attempts, and \
+                 records every order observed"
+                    .into(),
+            ),
+            (
+                "evidence_rule",
+                "hook-free statistical variant (scenario-matrix-g4.md); winning_order \
+                 recorded per iteration, never faked"
+                    .into(),
+            ),
+        ],
+    )?;
+    let declare = declare_sealed(&session, &mut events, context.seed, "declare", &entities)?;
+    let mut iterations = Vec::new();
+    for (position, size) in sizes.iter().enumerate() {
+        iterations.push(g4_fence_race_iteration(
+            &session,
+            &mut events,
+            context,
+            &artifacts,
+            &declare,
+            (position + 1) as u32,
+            *size,
+            "skip",
+            8,
+        )?);
+    }
+
+    // The six statistical iterations share one session; the deterministic
+    // aftermath runs in a FRESH authority: retained completion credits fund
+    // every work ever admitted (records.rs audit), so a session that already
+    // streamed its statistical admissions has no headroom left for a second
+    // large expansion. Detach and stop the iteration session first.
+    detach(&session)?;
+    session.server.stop()?;
+
+    // Statistical aftermath. The parent is a mode-1 reassemble/v2 work: mode
+    // 1 allocates its child scope AT ADMISSION (admission.rs) and enters
+    // WAITING_CHILDREN (3), so the parent is nonterminal with live
+    // descendants the moment its admit returns. The child scope is declared
+    // sealed over 33 small copy/v2 children, and closing that scope costs
+    // reconcile several bounded passes (scan_batch is 32 members per pass,
+    // walked twice: seal hash, then status), so after the skip fence commits
+    // reconcile needs ~5 idle polls (idle_poll_ms = 20) to close the scope
+    // and settle the parent SKIPPED. That window is what the conflicting
+    // cancel needs: it must observe the parent nonterminal with the SKIPPED
+    // fence committed and refuse CANCELLED (12) "first work fence has another
+    // outcome" (settlement.rs work_fence mismatch path). If the cancel
+    // instead observes an already terminal parent it takes the disposition-1
+    // fast path and returns a receipt — a legal race outcome, not a spec
+    // violation — so the aftermath runs up to four fresh-authority attempts,
+    // records every order it saw, and requires at least one skip-won refusal.
+    const AFTERMATH_CHILDREN: u64 = 33;
+    const AFTERMATH_MAX_ATTEMPTS: u32 = 4;
+    let aftermath_dir = scenario_dir.join("aftermath");
+    let aftermath_seed = context.seed ^ 0x0514_b1d5_c0de_u64;
+    let mut refusal_line: Option<String> = None;
+    let mut replay_note = String::new();
+    let mut attempt_notes: Vec<String> = Vec::new();
+    let mut attempts_run = 0u32;
+    for attempt in 1..=AFTERMATH_MAX_ATTEMPTS {
+        if refusal_line.is_some() {
+            break;
+        }
+        attempts_run = attempt;
+        let attempt_seed = aftermath_seed ^ (u64::from(attempt).wrapping_mul(0x9e37_79b9));
+        let attempt_dir = aftermath_dir.join(format!("attempt-{attempt}"));
+        let session =
+            setup_session_serve_args(context, &attempt_dir, server, client, &["--allow-skip"])?;
+        let entities: Vec<u64> = (1..=AFTERMATH_CHILDREN + 1).collect();
+        let declare = declare_sealed(&session, &mut events, attempt_seed, "declare", &entities)?;
+        let work = "0:0:1";
+        let input = oracle::dataset(attempt_seed, 1024 * 1024);
+        let input_path = attempt_dir.join("aftermath-input.bin");
+        fs::write(&input_path, &input)?;
+        let child_input_path = attempt_dir.join("aftermath-child-input.bin");
+        fs::write(
+            &child_input_path,
+            oracle::dataset(attempt_seed ^ 0x0c415d, 1024),
+        )?;
+        admit_modeled(
+            &session,
+            &mut events,
+            attempt_seed,
+            "admit",
+            &declare,
+            work,
+            &input_path,
+            "reassemble/v2",
+            1,
+            1,
+        )?;
+        // Gate on the parent holding in WAITING_CHILDREN with its child
+        // scope open. Mode 1 allocates the child scope at admission, so the
+        // first watch already shows this; the bounded loop only guards
+        // against scheduler delay.
+        let gate_deadline = Instant::now() + RECOVERY_TIMEOUT;
+        let mut gated = false;
+        loop {
+            let stdout = session.watch(work)?;
+            let state = parse_state(&stdout)?;
+            if state == 3 && parse_child_scope(&stdout)?.is_some() {
+                gated = true;
+                break;
+            }
+            if (5..=8).contains(&state) {
+                break;
+            }
+            ensure!(
+                Instant::now() < gate_deadline,
+                "g4-publication-vs-skip aftermath attempt {attempt}: mode-1 \
+                 parent did not reach WAITING_CHILDREN within {RECOVERY_TIMEOUT:?}"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        ensure!(
+            gated,
+            "g4-publication-vs-skip aftermath attempt {attempt}: mode-1 \
+             parent settled before the deterministic gate"
+        );
+        // Declare the child scope sealed over its members, then admit them.
+        // Child 1 is retry-copy/v2: attempt 1 parks it in AWAITING_RETRY
+        // ("never advances its own attempt") with no driver-authorized retry,
+        // so the scope's member scan can never close the scope while the
+        // retry child is nonterminal. After the skip fence commits,
+        // reconcile cancels it in one pass and then still owes the seal-hash
+        // and status member scans (32 members per pass) before the scope can
+        // close and the parent can settle — the fenced-but-nonterminal
+        // window the conflicting cancel races.
+        let child_entities: Vec<u64> = (1..=AFTERMATH_CHILDREN).collect();
+        let (child_declare, _child_receipt) = declare_scoped_batch(
+            &session,
+            &mut events,
+            attempt_seed,
+            "declare-child",
+            0,
+            1,
+            &child_entities,
+            true,
+        )?;
+        for child in 1..=AFTERMATH_CHILDREN {
+            let application = if child == 1 {
+                "retry-copy/v2"
+            } else {
+                "copy/v2"
+            };
+            admit_modeled(
+                &session,
+                &mut events,
+                attempt_seed,
+                &format!("admit-child-{child}"),
+                &child_declare,
+                &format!("1:0:{child}"),
+                &child_input_path,
+                application,
+                0,
+                1,
+            )?;
+        }
+        let skip_op = oracle::operation_hex(oracle::operation_id(attempt_seed, "skip", 1));
+        events.append(
+            "REQUEST_SENT",
+            Some(hex_to_id(&skip_op)?),
+            Some(work),
+            Some(1),
+            None,
+            None,
+        )?;
+        let skip_out = session.op(&["skip", "--operation", &skip_op, "--work", work])?;
+        let skip_stdout = require(&skip_out, "RECEIPT", "skip operation")?;
+        events.append(
+            "RECEIPT_VALIDATED",
+            Some(hex_to_id(&skip_op)?),
+            Some(work),
+            Some(1),
+            None,
+            None,
+        )?;
+        ensure!(
+            receipt_disposition(&skip_stdout)? == 0,
+            "aftermath attempt {attempt}: the skip fence must be accepted \
+             (disposition 0) while descendants are open:\n{skip_stdout}"
+        );
+        let state_at_commit = receipt_state_at_commit(&skip_stdout);
+        ensure!(
+            state_at_commit == "CANCELLING",
+            "aftermath attempt {attempt}: the accepted skip fence must \
+             commit state_at_commit CANCELLING while descendants are open, \
+             got {state_at_commit}:\n{skip_stdout}"
+        );
+        // Conflicting cancel after the accepted skip fence. Probed without
+        // failing so a raced settle (disposition-1 receipt) can retry.
+        let cancel_op = oracle::operation_hex(oracle::operation_id(attempt_seed, "cancel", 1));
+        events.append(
+            "REQUEST_SENT",
+            Some(hex_to_id(&cancel_op)?),
+            Some(work),
+            Some(1),
+            None,
+            None,
+        )?;
+        let cancel_out = session.op(&["cancel", "--operation", &cancel_op, "--work", work])?;
+        let cancel_text = format!(
+            "exit={}\nstdout:\n{}\nstderr:\n{}",
+            cancel_out.status,
+            String::from_utf8_lossy(&cancel_out.stdout),
+            String::from_utf8_lossy(&cancel_out.stderr),
+        );
+        fs::write(
+            artifacts.join(format!("aftermath-attempt-{attempt}-cancel.txt")),
+            &cancel_text,
+        )?;
+        if cancel_out.status.success() {
+            // The cancel observed an already terminal parent and took the
+            // disposition-1 fast path: a legal race outcome. Record it and
+            // retry on a fresh authority.
+            attempt_notes.push(format!(
+                "attempt {attempt}: cancel raced the settle and observed the \
+                 terminal parent (disposition 1)"
+            ));
+            events.append(
+                "OBSERVATION_JOURNALED",
+                Some(hex_to_id(&cancel_op)?),
+                Some(work),
+                Some(1),
+                None,
+                None,
+            )?;
+            detach(&session)?;
+            session.server.stop()?;
+            continue;
+        }
+        let named = refusal_named_line(&cancel_text, &["CANCELLED"]).with_context(|| {
+            format!(
+                "aftermath attempt {attempt}: cancel after the accepted skip \
+                 fence must name CANCELLED (12)\n{cancel_text}"
+            )
+        })?;
+        events.append(
+            "",
+            Some(hex_to_id(&cancel_op)?),
+            Some(work),
+            Some(1),
+            Some(12),
+            None,
+        )?;
+        refusal_line = Some(format!("attempt {attempt} work {work}: {named}"));
+        // Replay stability: the retained skip receipt returns unchanged, and
+        // after reconcile settles the fenced descendants the outcome stays
+        // SKIPPED and the result read still refuses with a named code.
+        let replay_out = session.op(&["skip", "--operation", &skip_op, "--work", work])?;
+        let replay_stdout = require(&replay_out, "RECEIPT", "skip replay")?;
+        ensure!(
+            replay_stdout.trim() == skip_stdout.trim(),
+            "aftermath attempt {attempt}: replayed skip returned a different \
+             receipt:\n{}\noriginal:\n{}",
+            replay_stdout.trim(),
+            skip_stdout.trim()
+        );
+        events.append(
+            "RECEIPT_VALIDATED",
+            Some(hex_to_id(&skip_op)?),
+            Some(work),
+            Some(1),
+            None,
+            None,
+        )?;
+        let settle_deadline = Instant::now() + RECOVERY_TIMEOUT;
+        let terminal = loop {
+            let stdout = session.watch(work)?;
+            let state = parse_state(&stdout)?;
+            if (5..=8).contains(&state) {
+                ensure!(
+                    state == 8,
+                    "aftermath attempt {attempt}: fenced parent must settle \
+                     SKIPPED, got {state}\n{stdout}"
+                );
+                break stdout;
+            }
+            ensure!(
+                Instant::now() < settle_deadline,
+                "g4-publication-vs-skip aftermath attempt {attempt}: parent \
+                 did not settle within {RECOVERY_TIMEOUT:?}"
+            );
+            thread::sleep(Duration::from_millis(50));
+        };
+        let replay_out = session.op(&["skip", "--operation", &skip_op, "--work", work])?;
+        let replay_stdout = require(&replay_out, "RECEIPT", "skip replay")?;
+        ensure!(
+            replay_stdout.trim() == skip_stdout.trim(),
+            "aftermath attempt {attempt}: post-settle replay returned a \
+             different receipt:\n{}\noriginal:\n{}",
+            replay_stdout.trim(),
+            skip_stdout.trim()
+        );
+        events.append(
+            "RECEIPT_VALIDATED",
+            Some(hex_to_id(&skip_op)?),
+            Some(work),
+            Some(1),
+            None,
+            None,
+        )?;
+        let after = session.watch(work)?;
+        ensure!(
+            view_line(&after)? == view_line(&terminal)?,
+            "aftermath attempt {attempt}: skip replay changed the settled \
+             work view:\n{after}\noriginal:\n{terminal}"
+        );
+        let read_note = expect_named_read_refusal(
+            &session,
+            &artifacts,
+            work,
+            &format!("aftermath-attempt-{attempt}-read-refusal.txt"),
+        )?;
+        replay_note = format!(
+            "attempt {attempt} work {work}: identical receipt; still SKIPPED; result read {read_note}"
+        );
+        detach(&session)?;
+        session.server.stop()?;
+    }
+    let refusal_line = refusal_line.with_context(|| {
+        format!(
+            "no aftermath attempt observed the CANCELLED (12) refusal in \
+             {AFTERMATH_MAX_ATTEMPTS} attempts: {}",
+            attempt_notes.join(" | ")
+        )
+    })?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+    ];
+    let mut publication_wins = 0usize;
+    let mut fence_wins = 0usize;
+    for iteration in &iterations {
+        publication_wins += usize::from(iteration.winning_order == "publication");
+        fence_wins += usize::from(iteration.winning_order == "fence");
+        observed.push((
+            Box::leak(format!("iteration_{}_input_len", iteration.index).into_boxed_str()),
+            iteration.input_len.to_string(),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_winning_order", iteration.index).into_boxed_str()),
+            iteration.winning_order.into(),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_final_state", iteration.index).into_boxed_str()),
+            format!(
+                "{} ({})",
+                iteration.final_state,
+                state_code_name(&iteration.final_state.to_string())
+            ),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_read", iteration.index).into_boxed_str()),
+            iteration.read_outcome.clone(),
+        ));
+    }
+    observed.push((
+        "orders_observed",
+        format!("publication:{publication_wins},fence:{fence_wins}"),
+    ));
+    observed.push(("skip_then_cancel_refusal", refusal_line));
+    observed.push(("skip_replay", replay_note));
+    observed.push(("aftermath_attempts", attempts_run.to_string()));
+    observed.push(("aftermath_race_orders", attempt_notes.join(" | ")));
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    drop(events);
+    crate::durable::events::read_events_checked(
+        &scenario_dir.join("events.tsv"),
+        &context.run_id,
+        id,
+        Some(scenario_dir),
+    )?;
+    let sealed = File::create(scenario_dir.join("SEALED"))?;
+    sealed.sync_all()?;
+    Ok(())
+}
+
+fn g4_deadline_settlement(context: &ScenarioContext) -> Result<()> {
+    run_g4_row(
+        context,
+        "g4-deadline-settlement",
+        g4_deadline_settlement_direction,
+    )
+}
+
+/// The outcome of one deadline-race iteration.
+struct DeadlineIteration {
+    index: u32,
+    input_len: usize,
+    winning_order: &'static str,
+    final_state: u64,
+    diagnostic: String,
+    read_outcome: String,
+}
+
+/// g4-deadline-settlement (matrix: g4-publication-vs-deadline): admission
+/// with a short `--execution-ms` deadline races the mode-2 chunk-copy
+/// publication against the deadline. Per-iteration legal orders:
+/// publication-wins (parent terminal SUCCEEDED(5), result byte-exact) or
+/// deadline-wins (parent terminal FAILED(6) carrying the DEADLINE_EXCEEDED
+/// diagnostic, retry afterwards refuses a named code, the declared
+/// obligation persists in the view). Hook-free statistical variant: the
+/// seeded input sizes create the asymmetry; winning_order is recorded, never
+/// faked.
+fn g4_deadline_settlement_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g4-deadline-settlement";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    enforce_no_fault_schedule(context, id)?;
+    const EXECUTION_MS: u64 = 1000;
+    // Mode-2 (chunk-copy/v2) admissions; the parent only succeeds after the
+    // whole producer-1 child scope closes, so large inputs outrun the
+    // deadline while small inputs settle well inside it. 8 MiB (128 chunks)
+    // is the largest input the authority record capacity admits — 12 MiB
+    // (192 chunks) refuses LIMIT_EXCEEDED "authority record completion
+    // capacity exhausted" (rust) / "retained input, output or executor
+    // capacity" (java) once earlier iterations' children still hold funded
+    // jobs. Every iteration therefore owns a fresh authority.
+    let sizes = [8 * 1024 * 1024, 4 * 1024 * 1024, 1024 * 1024, 256 * 1024];
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("application", "chunk-copy/v2".into()),
+            ("mode", "2".into()),
+            ("execution_deadline_ms", EXECUTION_MS.to_string()),
+            ("iterations", sizes.len().to_string()),
+            (
+                "iteration_input_lens",
+                sizes
+                    .iter()
+                    .map(|size| size.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            (
+                "session_model",
+                "one fresh authority per iteration: a deadline-failed mode-2 parent leaves \
+                 funded child jobs that count against the next admission's capacity checks on \
+                 both subjects"
+                    .into(),
+            ),
+            (
+                "winning_order_rule",
+                "per iteration: parent terminal SUCCEEDED(5) → publication won (result read \
+                 byte-exact); parent terminal FAILED(6) with the DEADLINE_EXCEEDED diagnostic \
+                 (code 11) → deadline won (fenced settlement, not silent eviction; result read \
+                 refuses a named code)"
+                    .into(),
+            ),
+            (
+                "retry_after_deadline_refusal",
+                "explicit retry naming the settled attempt refuses DEADLINE_EXCEEDED (11) per \
+                 the matrix; both subjects check terminality first and refuse ALREADY_TERMINAL \
+                 (18) instead — the row accepts either named code and records which \
+                 (deviation note, never faked as 11)"
+                    .into(),
+            ),
+            (
+                "obligation_persistence",
+                "deadline settlement never erases the declared obligation: the work view \
+                 keeps the terminal state, attempt and deadline after the retry refusal"
+                    .into(),
+            ),
+            (
+                "named_gap",
+                "no subject hook can hold the application callback past the deadline \
+                 (scenario-matrix-g4.md hook-free statistical variant); deterministic \
+                 settlement is exercised by the short-deadline leg below"
+                    .into(),
+            ),
+        ],
+    )?;
+    let mut iterations = Vec::new();
+    for (position, size) in sizes.iter().enumerate() {
+        let index = (position + 1) as u32;
+        let iteration_dir = scenario_dir.join(format!("iteration-{index}"));
+        let session = setup_session(context, &iteration_dir, server, client)?;
+        let work = "0:0:1";
+        let seed = context.seed ^ (u64::from(index) * 0x9e37_79b9);
+        let input = oracle::dataset(seed, *size);
+        let input_sha256 = oracle::sha256_hex(&input);
+        let input_path = artifacts.join(format!("input-{index}.bin"));
+        fs::write(&input_path, &input)?;
+        events.append(
+            "",
+            None,
+            Some(work),
+            Some(1),
+            None,
+            Some(ArtifactRef {
+                path: format!("artifacts/input-{index}.bin"),
+                len: input.len() as u64,
+                sha256: input_sha256.clone(),
+            }),
+        )?;
+        let declare = declare_sealed(&session, &mut events, seed, "declare", &[1])?;
+        let admit = oracle::operation_hex(oracle::operation_id(seed, "admit", 1));
+        events.append(
+            "REQUEST_SENT",
+            Some(hex_to_id(&admit)?),
+            Some(work),
+            Some(1),
+            None,
+            None,
+        )?;
+        let admit_child = session.fixture.spawn_client_op(
+            &session.journal,
+            "alice",
+            session.sequence,
+            &session.connection,
+            &[
+                "admit",
+                "--operation",
+                &admit,
+                "--declaration",
+                &declare,
+                "--work",
+                work,
+                "--input",
+                &crate::path(&input_path),
+                "--application",
+                "chunk-copy/v2",
+                "--mode",
+                "2",
+                "--output-count",
+                "1",
+                "--execution-ms",
+                &EXECUTION_MS.to_string(),
+            ],
+        )?;
+        let admitted = AuthorityFixture::wait_client_op(admit_child, OP_WAIT)?;
+        let _receipt = require(&admitted, "RECEIPT", "admit operation")?;
+        events.append(
+            "RECEIPT_VALIDATED",
+            Some(hex_to_id(&admit)?),
+            Some(work),
+            Some(1),
+            None,
+            None,
+        )?;
+        let deadline = Instant::now() + RECOVERY_TIMEOUT;
+        let (final_state, final_view) = loop {
+            let stdout = session.watch(work)?;
+            let state = parse_state(&stdout)?;
+            if (5..=8).contains(&state) {
+                break (state, stdout);
+            }
+            ensure!(
+                Instant::now() < deadline,
+                "g4-deadline-settlement iteration {index}: work {work} did not settle within \
+                 {RECOVERY_TIMEOUT:?}\nlast view:\n{stdout}"
+            );
+            thread::sleep(Duration::from_millis(50));
+        };
+        fs::write(
+            artifacts.join(format!("iteration-{index}-terminal-view.txt")),
+            &final_view,
+        )?;
+        let diagnostic = view_diagnostic_code(&final_view)
+            .map(|code| format!("{} ({code})", refusal_code_name(code)))
+            .unwrap_or_else(|| "none".to_owned());
+        let iteration = if final_state == 5 {
+            let sha = read_output_verified(
+                &session,
+                &mut events,
+                work,
+                1,
+                &input,
+                &input_sha256,
+                &artifacts,
+                &format!("iteration-{index}-output.bin"),
+            )?;
+            DeadlineIteration {
+                index,
+                input_len: *size,
+                winning_order: "publication",
+                final_state,
+                diagnostic,
+                read_outcome: format!("result read byte-exact (sha256={sha})"),
+            }
+        } else if final_state == 6 {
+            ensure!(
+                view_diagnostic_code(&final_view) == Some(11),
+                "g4-deadline-settlement iteration {index}: deadline-won work must carry the \
+                 DEADLINE_EXCEEDED (11) diagnostic, got {diagnostic}\n{final_view}"
+            );
+            if client == Subject::Rust {
+                let deadline_at = parse_field_u64(&final_view, "deadline")?
+                    .context("deadline-won terminal view did not report a deadline")?;
+                let terminal_at = parse_field_u64(&final_view, "terminal_at")?
+                    .context("deadline-won terminal view did not report terminal_at")?;
+                ensure!(
+                    terminal_at >= deadline_at,
+                    "deadline-won work settled before its deadline: terminal_at={terminal_at} \
+                     deadline={deadline_at}"
+                );
+            }
+            let read_outcome = expect_named_read_refusal(
+                &session,
+                &artifacts,
+                work,
+                &format!("iteration-{index}-read-refusal.txt"),
+            )?;
+            DeadlineIteration {
+                index,
+                input_len: *size,
+                winning_order: "deadline",
+                final_state,
+                diagnostic,
+                read_outcome,
+            }
+        } else {
+            bail!(
+                "g4-deadline-settlement iteration {index}: illegal terminal state \
+                 {final_state} ({})\n{final_view}",
+                state_code_name(&final_state.to_string())
+            );
+        };
+        events.append(
+            "OBSERVATION_JOURNALED",
+            None,
+            Some(work),
+            Some(1),
+            None,
+            None,
+        )?;
+        iterations.push(iteration);
+        session.server.stop()?;
+    }
+
+    // Deterministic leg in its own authority: a copy/v2 admission whose
+    // deadline (150 ms) the 12 MiB copy cannot meet settles FAILED with the
+    // DEADLINE_EXCEEDED diagnostic; the explicit retry then refuses a named
+    // code and the declared obligation persists. Retry the leg on fresh
+    // works if the scheduler let the copy finish inside the deadline.
+    const LEG_EXECUTION_MS: u64 = 150;
+    let leg_dir = scenario_dir.join("deterministic-leg");
+    let session = setup_session(context, &leg_dir, server, client)?;
+    let declare = declare_sealed(
+        &session,
+        &mut events,
+        context.seed,
+        "declare-leg",
+        &[1, 2, 3],
+    )?;
+    let mut retry_refusal = None;
+    for leg in 1u64..=3 {
+        if retry_refusal.is_some() {
+            break;
+        }
+        let work = format!("0:0:{leg}");
+        let seed = context.seed ^ (leg * 0x9e37_79b9);
+        let input = oracle::dataset(seed, CLIENT_KILL_INPUT_LEN);
+        let input_path = artifacts.join(format!("leg-input-{leg}.bin"));
+        fs::write(&input_path, &input)?;
+        let admit = oracle::operation_hex(oracle::operation_id(seed, "admit", 1));
+        events.append(
+            "REQUEST_SENT",
+            Some(hex_to_id(&admit)?),
+            Some(&work),
+            Some(1),
+            None,
+            None,
+        )?;
+        let admit_child = session.fixture.spawn_client_op(
+            &session.journal,
+            "alice",
+            session.sequence,
+            &session.connection,
+            &[
+                "admit",
+                "--operation",
+                &admit,
+                "--declaration",
+                &declare,
+                "--work",
+                &work,
+                "--input",
+                &crate::path(&input_path),
+                "--application",
+                "copy/v2",
+                "--execution-ms",
+                &LEG_EXECUTION_MS.to_string(),
+            ],
+        )?;
+        let admitted = AuthorityFixture::wait_client_op(admit_child, OP_WAIT)?;
+        let _receipt = require(&admitted, "RECEIPT", "admit operation")?;
+        events.append(
+            "RECEIPT_VALIDATED",
+            Some(hex_to_id(&admit)?),
+            Some(&work),
+            Some(1),
+            None,
+            None,
+        )?;
+        let deadline = Instant::now() + RECOVERY_TIMEOUT;
+        let (final_state, final_view) = loop {
+            let stdout = session.watch(&work)?;
+            let state = parse_state(&stdout)?;
+            if (5..=8).contains(&state) {
+                break (state, stdout);
+            }
+            ensure!(
+                Instant::now() < deadline,
+                "g4-deadline-settlement leg {leg}: work {work} did not settle within \
+                 {RECOVERY_TIMEOUT:?}\nlast view:\n{stdout}"
+            );
+            thread::sleep(Duration::from_millis(25));
+        };
+        if final_state != 6 || view_diagnostic_code(&final_view) != Some(11) {
+            // The copy finished inside the short deadline; retry the leg.
+            continue;
+        }
+        fs::write(
+            artifacts.join(format!("leg-{leg}-terminal-view.txt")),
+            &final_view,
+        )?;
+        // Explicit retry naming the settled attempt: the matrix expects
+        // DEADLINE_EXCEEDED (11); both subjects check terminality first and
+        // refuse ALREADY_TERMINAL (18). Accept either, record which.
+        let retry_op = oracle::operation_hex(oracle::operation_id(seed, "retry", 1));
+        events.append(
+            "REQUEST_SENT",
+            Some(hex_to_id(&retry_op)?),
+            Some(&work),
+            Some(1),
+            None,
+            None,
+        )?;
+        let retry_text = expect_failure(
+            &session,
+            &artifacts,
+            &format!("leg-{leg}-retry-refusal.txt"),
+            &[
+                "retry",
+                "--operation",
+                &retry_op,
+                "--work",
+                &work,
+                "--expected-attempt",
+                "1",
+            ],
+        )?;
+        let named = refusal_named_line(&retry_text, &["DEADLINE_EXCEEDED", "ALREADY_TERMINAL"])
+            .with_context(|| {
+                format!(
+                    "retry after deadline settlement must name DEADLINE_EXCEEDED (11) or \
+                     ALREADY_TERMINAL (18)\n{retry_text}"
+                )
+            })?;
+        let code = transcript_named_code(&retry_text)
+            .context("retry refusal transcript carries no named code")?;
+        events.append(
+            "",
+            Some(hex_to_id(&retry_op)?),
+            Some(&work),
+            Some(1),
+            Some(code),
+            None,
+        )?;
+        // The declared obligation persists: the view still shows the work,
+        // its terminal state, attempt and deadline after the refusal.
+        let persisted = session.watch(&work)?;
+        ensure!(
+            parse_state(&persisted)? == 6,
+            "retry refusal erased the settled work view:\n{persisted}"
+        );
+        ensure!(
+            view_line(&persisted)? == view_line(&final_view)?,
+            "retry refusal changed the settled work view:\n{persisted}\noriginal:\n{final_view}"
+        );
+        retry_refusal = Some(format!(
+            "work {work}: retry refused {named}; settled view persists byte-identical"
+        ));
+    }
+    let retry_refusal = retry_refusal.context(
+        "no deterministic leg settled at its deadline in three 12 MiB / 150 ms attempts",
+    )?;
+    detach(&session)?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+    ];
+    let mut publication_wins = 0usize;
+    let mut deadline_wins = 0usize;
+    for iteration in &iterations {
+        publication_wins += usize::from(iteration.winning_order == "publication");
+        deadline_wins += usize::from(iteration.winning_order == "deadline");
+        observed.push((
+            Box::leak(format!("iteration_{}_input_len", iteration.index).into_boxed_str()),
+            iteration.input_len.to_string(),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_winning_order", iteration.index).into_boxed_str()),
+            iteration.winning_order.into(),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_final_state", iteration.index).into_boxed_str()),
+            format!(
+                "{} ({})",
+                iteration.final_state,
+                state_code_name(&iteration.final_state.to_string())
+            ),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_diagnostic", iteration.index).into_boxed_str()),
+            iteration.diagnostic.clone(),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_read", iteration.index).into_boxed_str()),
+            iteration.read_outcome.clone(),
+        ));
+    }
+    observed.push((
+        "orders_observed",
+        format!("publication:{publication_wins},deadline:{deadline_wins}"),
+    ));
+    observed.push(("retry_after_deadline_refusal", retry_refusal));
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    stop_and_seal(context, scenario_dir, id, session.server, events)
+}
+
+fn parse_replacement_attempt(receipt_stdout: &str) -> Result<u64> {
+    for needle in ["replacement_attempt: Id(", "replacementAttempt="] {
+        if let Some(rest) = receipt_stdout.split(needle).nth(1) {
+            return rest
+                .split([')', ',', ']'])
+                .next()
+                .context("replacement attempt unterminated")?
+                .trim()
+                .parse()
+                .context("replacement attempt is not decimal");
+        }
+    }
+    bail!("retry receipt does not render a replacement attempt:\n{receipt_stdout}")
+}
+
+fn g4_stale_attempt_retry(context: &ScenarioContext) -> Result<()> {
+    run_g4_row(
+        context,
+        "g4-stale-attempt-retry",
+        g4_stale_attempt_retry_direction,
+    )
+}
+
+/// g4-stale-attempt-retry: retry retry-copy/v2 to attempt 2 (the attempt-1
+/// application outcome is retryable), then attempt a SECOND retry naming
+/// expected-attempt 1 with a new operation id while attempt 2 is live. The
+/// stale expected-attempt refuses CONFLICT (7); replaying the FIRST retry
+/// operation returns its original receipt without advancing the fence again;
+/// the work ends at exactly attempt 2, never 3. Fully deterministic: the
+/// large input keeps attempt 2 live across the stale-retry round trip.
+fn g4_stale_attempt_retry_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g4-stale-attempt-retry";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    enforce_no_fault_schedule(context, id)?;
+    let session = setup_session(context, scenario_dir, server, client)?;
+    let input = oracle::dataset(context.seed, 8 * 1024 * 1024);
+    let input_sha256 = oracle::sha256_hex(&input);
+    let input_path = artifacts.join("input.bin");
+    fs::write(&input_path, &input)?;
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("application", "retry-copy/v2".into()),
+            ("mode", "0".into()),
+            ("input_len", input.len().to_string()),
+            ("input_sha256", input_sha256.clone()),
+            (
+                "attempt_1_outcome",
+                "retryable → state AWAITING_RETRY(2)".into(),
+            ),
+            (
+                "fence_sequence",
+                "retry R1 (expected 1) → attempt 2; stale retry R2 \
+                 (expected 1, new op id, attempt 2 live) → CONFLICT (7) \"retry attempt \
+                 changed\"; replay R1 → identical receipt, fence not advanced"
+                    .into(),
+            ),
+            (
+                "terminal",
+                "SUCCEEDED(5) under exactly attempt 2, never 3".into(),
+            ),
+        ],
+    )?;
+    events.append(
+        "",
+        None,
+        Some("0:0:1"),
+        Some(1),
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/input.bin".into(),
+            len: input.len() as u64,
+            sha256: input_sha256.clone(),
+        }),
+    )?;
+    let declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
+    let admit = oracle::operation_hex(oracle::operation_id(context.seed, "admit", 1));
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&admit)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let admit_child = session.fixture.spawn_client_op(
+        &session.journal,
+        "alice",
+        session.sequence,
+        &session.connection,
+        &[
+            "admit",
+            "--operation",
+            &admit,
+            "--declaration",
+            &declare,
+            "--work",
+            "0:0:1",
+            "--input",
+            &crate::path(&input_path),
+            "--application",
+            "retry-copy/v2",
+        ],
+    )?;
+    let admitted = AuthorityFixture::wait_client_op(admit_child, OP_WAIT)?;
+    let _receipt = require(&admitted, "RECEIPT", "admit operation")?;
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(hex_to_id(&admit)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+
+    // Attempt 1 reports retryable: the work parks in AWAITING_RETRY (state 2).
+    let deadline = Instant::now() + RECOVERY_TIMEOUT;
+    let awaiting = loop {
+        let stdout = session.watch("0:0:1")?;
+        let state = parse_state(&stdout)?;
+        if state == 2 {
+            break stdout;
+        }
+        ensure!(
+            state != 6 && state != 5,
+            "g4-stale-attempt-retry: attempt 1 must park in AWAITING_RETRY, got state {state}\n\
+             {stdout}"
+        );
+        ensure!(
+            Instant::now() < deadline,
+            "g4-stale-attempt-retry: work did not reach AWAITING_RETRY within {RECOVERY_TIMEOUT:?}"
+        );
+        thread::sleep(Duration::from_millis(25));
+    };
+    fs::write(artifacts.join("awaiting-retry-view.txt"), &awaiting)?;
+
+    // R1: explicit retry naming expected attempt 1 fences attempt 1 and
+    // admits attempt 2.
+    let retry_one = oracle::operation_hex(oracle::operation_id(context.seed, "retry", 1));
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&retry_one)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let retry_out = session.op(&[
+        "retry",
+        "--operation",
+        &retry_one,
+        "--work",
+        "0:0:1",
+        "--expected-attempt",
+        "1",
+    ])?;
+    let retry_stdout = require(&retry_out, "RECEIPT", "retry operation")?;
+    ensure!(
+        parse_replacement_attempt(&retry_stdout)? == 2,
+        "retry receipt must name replacement attempt 2:\n{retry_stdout}"
+    );
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(hex_to_id(&retry_one)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+
+    // Wait until attempt 2 is live (ACTIVE under attempt 2), then race the
+    // stale retry into the live window.
+    let deadline = Instant::now() + RECOVERY_TIMEOUT;
+    loop {
+        let stdout = session.watch("0:0:1")?;
+        let state = parse_state(&stdout)?;
+        let attempt = parse_attempt(&stdout)?;
+        if state == 1 && attempt == 2 {
+            break;
+        }
+        ensure!(
+            state != 6,
+            "g4-stale-attempt-retry: attempt 2 fabricated a failure:\n{stdout}"
+        );
+        ensure!(
+            Instant::now() < deadline,
+            "g4-stale-attempt-retry: attempt 2 did not start within {RECOVERY_TIMEOUT:?}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let retry_two = oracle::operation_hex(oracle::operation_id(context.seed, "retry", 2));
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&retry_two)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let stale_text = expect_failure(
+        &session,
+        &artifacts,
+        "stale-retry-refusal.txt",
+        &[
+            "retry",
+            "--operation",
+            &retry_two,
+            "--work",
+            "0:0:1",
+            "--expected-attempt",
+            "1",
+        ],
+    )?;
+    let named = refusal_named_line(&stale_text, &["CONFLICT"]).with_context(|| {
+        format!(
+            "stale retry (expected-attempt 1, attempt 2 live) must name CONFLICT (7)\n\
+                 {stale_text}"
+        )
+    })?;
+    events.append(
+        "",
+        Some(hex_to_id(&retry_two)?),
+        Some("0:0:1"),
+        Some(1),
+        Some(7),
+        None,
+    )?;
+
+    // Attempt 2 now settles successfully under exactly attempt 2.
+    let terminal = watch_terminal(&session, &mut events, "0:0:1", &admit, RECOVERY_TIMEOUT)?;
+    let final_attempt = parse_attempt(&terminal)?;
+    ensure!(
+        final_attempt == 2,
+        "g4-stale-attempt-retry: terminal attempt must be exactly 2, got {final_attempt}\n\
+         {terminal}"
+    );
+
+    // Replaying the FIRST retry operation returns its original receipt
+    // unchanged and never advances the fence to a third attempt.
+    let replay_out = session.op(&[
+        "retry",
+        "--operation",
+        &retry_one,
+        "--work",
+        "0:0:1",
+        "--expected-attempt",
+        "1",
+    ])?;
+    let replay_stdout = require(&replay_out, "RECEIPT", "retry replay")?;
+    ensure!(
+        replay_stdout.trim() == retry_stdout.trim(),
+        "replayed retry returned a different receipt:\n{}\noriginal:\n{}",
+        replay_stdout.trim(),
+        retry_stdout.trim()
+    );
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(hex_to_id(&retry_one)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let after = session.watch("0:0:1")?;
+    ensure!(
+        view_line(&after)? == view_line(&terminal)?,
+        "retry replay changed the settled work view:\n{after}\noriginal:\n{terminal}"
+    );
+    let _sha = read_output_verified(
+        &session,
+        &mut events,
+        "0:0:1",
+        2,
+        &input,
+        &input_sha256,
+        &artifacts,
+        "output.bin",
+    )?;
+    detach(&session)?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("attempt_1_state", "AWAITING_RETRY (2)".into()),
+        ("r1_replacement_attempt", "2".into()),
+        ("stale_retry_refusal", named),
+        ("terminal_attempt", final_attempt.to_string()),
+        ("terminal_state", "SUCCEEDED (5)".into()),
+        (
+            "r1_replay",
+            "identical receipt; settled view byte-identical; fence not advanced".into(),
+        ),
+        (
+            "result_read",
+            "attempt 2 byte-exact against the independent oracle".into(),
+        ),
+    ];
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    stop_and_seal(context, scenario_dir, id, session.server, events)
+}
+
+/// The outcome of one ancestor-fence iteration.
+struct AncestorFenceIteration {
+    index: u32,
+    delay_ms: u64,
+    winning_order: &'static str,
+    parent_saw_cancelling: bool,
+    parent_final_state: u64,
+    child_scope: String,
+    child_succeeded: usize,
+    child_cancelled: usize,
+    child_other: usize,
+}
+
+fn g4_ancestor_fence_publication(context: &ScenarioContext) -> Result<()> {
+    run_g4_row(
+        context,
+        "g4-ancestor-fence-publication",
+        g4_ancestor_fence_publication_direction,
+    )
+}
+
+/// g4-ancestor-fence-publication: admit a mode-2 chunk-copy work (a
+/// producer-1 child scope full of in-flight child publications) and fence the
+/// ancestor with cancel-scope on scope 0. Expected: child publications are
+/// fenced by the ancestor; the parent stays CANCELLING until the descendant
+/// scope closes and ends CANCELLED — never FAILED; committed successful
+/// descendants survive. The seeded pre-fence delays create the order
+/// asymmetry (hook-free statistical variant).
+fn g4_ancestor_fence_publication_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g4-ancestor-fence-publication";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    enforce_no_fault_schedule(context, id)?;
+    const INPUT_LEN: usize = 8 * 1024 * 1024;
+    // Seeded pre-fence delays stagger how many child publications commit
+    // before the ancestor fence lands. Every iteration owns a fresh
+    // authority: the root-scope cancel fence is permanent for the session,
+    // so a second iteration's declare/admit into scope 0 would refuse
+    // CANCELLED "scope cancellation fence accepted".
+    let delays = [0u64, 2, 10];
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("application", "chunk-copy/v2".into()),
+            ("mode", "2".into()),
+            ("input_len", INPUT_LEN.to_string()),
+            ("iterations", delays.len().to_string()),
+            (
+                "iteration_pre_fence_delay_ms",
+                delays
+                    .iter()
+                    .map(|delay| delay.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            (
+                "session_model",
+                "one fresh authority per iteration: the root-scope fence accepted by \
+                 cancel-scope is permanent, so iterations cannot share a session"
+                    .into(),
+            ),
+            (
+                "parent_rule",
+                "the accepted ancestor fence is never overwritten: the parent ends \
+                 CANCELLED(7) — never FAILED(6); it stays CANCELLING(4) while descendants \
+                 settle, or settles immediately when the fence lands before any descendant \
+                 exists"
+                    .into(),
+            ),
+            (
+                "child_rule",
+                "every descendant reaches exactly one terminal state within the bounded \
+                 deadline; committed pre-fence successes (SUCCEEDED) survive; the rest \
+                 settle CANCELLED — never FAILED"
+                    .into(),
+            ),
+            (
+                "winning_order_rule",
+                "per iteration: any child committed SUCCEEDED before the fence → \
+                 \"publication\" (partial); otherwise \"fence\""
+                    .into(),
+            ),
+        ],
+    )?;
+    let mut iterations = Vec::new();
+    for (position, delay_ms) in delays.iter().enumerate() {
+        let index = (position + 1) as u32;
+        let iteration_dir = scenario_dir.join(format!("iteration-{index}"));
+        let session = setup_session(context, &iteration_dir, server, client)?;
+        let work = "0:0:1";
+        let seed = context.seed ^ (u64::from(index) * 0x9e37_79b9);
+        let input = oracle::dataset(seed, INPUT_LEN);
+        let input_path = artifacts.join(format!("input-{index}.bin"));
+        fs::write(&input_path, &input)?;
+        let declare = declare_sealed(&session, &mut events, seed, "declare", &[1])?;
+        let admit = oracle::operation_hex(oracle::operation_id(seed, "admit", 1));
+        events.append(
+            "REQUEST_SENT",
+            Some(hex_to_id(&admit)?),
+            Some(work),
+            Some(1),
+            None,
+            None,
+        )?;
+        let admit_child = session.fixture.spawn_client_op(
+            &session.journal,
+            "alice",
+            session.sequence,
+            &session.connection,
+            &[
+                "admit",
+                "--operation",
+                &admit,
+                "--declaration",
+                &declare,
+                "--work",
+                work,
+                "--input",
+                &crate::path(&input_path),
+                "--application",
+                "chunk-copy/v2",
+                "--mode",
+                "2",
+                "--output-count",
+                "1",
+            ],
+        )?;
+        let admitted = AuthorityFixture::wait_client_op(admit_child, OP_WAIT)?;
+        let _receipt = require(&admitted, "RECEIPT", "admit operation")?;
+        events.append(
+            "RECEIPT_VALIDATED",
+            Some(hex_to_id(&admit)?),
+            Some(work),
+            Some(1),
+            None,
+            None,
+        )?;
+        if *delay_ms > 0 {
+            thread::sleep(Duration::from_millis(*delay_ms));
+        }
+        // Fence the ancestor: cancel every work in scope 0 (the parent); the
+        // descendant scope is fenced through the ancestor check at each
+        // child publication.
+        let fence_op = oracle::operation_hex(oracle::operation_id(seed, "scope-cancel", 1));
+        events.append(
+            "REQUEST_SENT",
+            Some(hex_to_id(&fence_op)?),
+            None,
+            None,
+            None,
+            None,
+        )?;
+        let fence_out = session.op(&["cancel-scope", "--operation", &fence_op, "--scope", "0"])?;
+        let _fence_receipt = require(&fence_out, "RECEIPT", "cancel-scope operation")?;
+        events.append(
+            "RECEIPT_VALIDATED",
+            Some(hex_to_id(&fence_op)?),
+            None,
+            None,
+            None,
+            None,
+        )?;
+
+        // Poll the parent to its single terminal state; a fabricated FAILED
+        // at any point is a row failure.
+        let deadline = Instant::now() + RECOVERY_TIMEOUT;
+        let mut parent_saw_cancelling = false;
+        let (parent_final_state, parent_final_view) = loop {
+            let stdout = session.watch(work)?;
+            let state = parse_state(&stdout)?;
+            ensure!(
+                state != 6,
+                "g4-ancestor-fence-publication iteration {index}: the accepted fence was \
+                 overwritten with FAILED:\n{stdout}"
+            );
+            parent_saw_cancelling |= state == 4;
+            if state == 7 {
+                break (state, stdout);
+            }
+            ensure!(
+                state == 1 || state == 3 || state == 4,
+                "g4-ancestor-fence-publication iteration {index}: unexpected parent state \
+                 {state}\n{stdout}"
+            );
+            ensure!(
+                Instant::now() < deadline,
+                "g4-ancestor-fence-publication iteration {index}: parent {work} did not \
+                 settle within {RECOVERY_TIMEOUT:?}\nlast view:\n{stdout}"
+            );
+            thread::sleep(Duration::from_millis(50));
+        };
+        // CANCELLING is recorded as evidence, not asserted: when the fence
+        // lands before the expansion declares any descendant, the parent
+        // settles terminal CANCELLED without passing through CANCELLING —
+        // with no open descendants that is the spec-correct path.
+        fs::write(
+            artifacts.join(format!("iteration-{index}-parent-terminal-view.txt")),
+            &parent_final_view,
+        )?;
+        events.append(
+            "OBSERVATION_JOURNALED",
+            None,
+            Some(work),
+            Some(1),
+            None,
+            None,
+        )?;
+
+        // Converge the descendant scope: every member terminal, membership
+        // growth stopped by the fence (two consecutive identical pages).
+        let child = parse_child_scope(&parent_final_view)?
+            .map(|(scope, producer)| format!("{scope}:{producer}"))
+            .unwrap_or_else(|| "none".to_owned());
+        let mut child_counts = (0usize, 0usize, 0usize); // succeeded, cancelled, other
+        if let Some((scope, _producer)) = parse_child_scope(&parent_final_view)? {
+            let page_deadline = Instant::now() + RECOVERY_TIMEOUT;
+            let mut previous: Option<(u64, Vec<(u64, String)>)> = None;
+            loop {
+                let page = observe_scope_page(&session, scope, 0, 256)?;
+                let observation = &page.1;
+                let snapshot = (observation.declared, observation.members.clone());
+                let all_terminal = observation
+                    .members
+                    .iter()
+                    .all(|(_, state)| state != "DECLARED");
+                if all_terminal && previous.as_ref() == Some(&snapshot) {
+                    child_counts = observation.members.iter().fold(
+                        (0usize, 0usize, 0usize),
+                        |(mut ok, mut cancelled, mut other), (_, state)| {
+                            match state.as_str() {
+                                "SUCCEEDED" => ok += 1,
+                                "CANCELLED" => cancelled += 1,
+                                _ => other += 1,
+                            }
+                            (ok, cancelled, other)
+                        },
+                    );
+                    ensure!(
+                        child_counts.2 == 0,
+                        "g4-ancestor-fence-publication iteration {index}: descendants settled \
+                         into unexpected terminal states: {:?}",
+                        observation.members
+                    );
+                    break;
+                }
+                previous = Some(snapshot);
+                ensure!(
+                    Instant::now() < page_deadline,
+                    "g4-ancestor-fence-publication iteration {index}: child scope {scope} did \
+                     not converge within {RECOVERY_TIMEOUT:?}"
+                );
+                thread::sleep(Duration::from_millis(50));
+            }
+        }
+        let winning_order = if child_counts.0 > 0 {
+            "publication"
+        } else {
+            "fence"
+        };
+        iterations.push(AncestorFenceIteration {
+            index,
+            delay_ms: *delay_ms,
+            winning_order,
+            parent_saw_cancelling,
+            parent_final_state,
+            child_scope: child,
+            child_succeeded: child_counts.0,
+            child_cancelled: child_counts.1,
+            child_other: child_counts.2,
+        });
+        session.server.stop()?;
+    }
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+    ];
+    let mut publication_wins = 0usize;
+    let mut fence_wins = 0usize;
+    for iteration in &iterations {
+        publication_wins += usize::from(iteration.winning_order == "publication");
+        fence_wins += usize::from(iteration.winning_order == "fence");
+        observed.push((
+            Box::leak(format!("iteration_{}_pre_fence_delay_ms", iteration.index).into_boxed_str()),
+            iteration.delay_ms.to_string(),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_winning_order", iteration.index).into_boxed_str()),
+            iteration.winning_order.into(),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_parent_final_state", iteration.index).into_boxed_str()),
+            format!(
+                "{} ({})",
+                iteration.parent_final_state,
+                state_code_name(&iteration.parent_final_state.to_string())
+            ),
+        ));
+        observed.push((
+            Box::leak(
+                format!("iteration_{}_parent_cancelling_observed", iteration.index)
+                    .into_boxed_str(),
+            ),
+            iteration.parent_saw_cancelling.to_string(),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_child_scope", iteration.index).into_boxed_str()),
+            iteration.child_scope.clone(),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_children_succeeded", iteration.index).into_boxed_str()),
+            iteration.child_succeeded.to_string(),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_children_cancelled", iteration.index).into_boxed_str()),
+            iteration.child_cancelled.to_string(),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_children_other", iteration.index).into_boxed_str()),
+            iteration.child_other.to_string(),
+        ));
+    }
+    observed.push((
+        "orders_observed",
+        format!("publication:{publication_wins},fence:{fence_wins}"),
+    ));
+    observed.push((
+        "never_observed",
+        "parent FAILED(6); descendant FAILED; unsettled descendant at the deadline".into(),
+    ));
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    drop(events);
+    crate::durable::events::read_events_checked(
+        &scenario_dir.join("events.tsv"),
+        &context.run_id,
+        id,
+        Some(scenario_dir),
+    )?;
+    let sealed = File::create(scenario_dir.join("SEALED"))?;
+    sealed.sync_all()?;
+    Ok(())
+}
+
+fn g4_revocation_vs_publication(context: &ScenarioContext) -> Result<()> {
+    g4_revocation_vs_publication_direction(
+        context,
+        &context.scenario_dir("g4-revocation-vs-publication"),
+        Subject::Rust,
+        Subject::Rust,
+    )?;
+    run_hooked_direction(
+        context,
+        "g4-revocation-vs-publication",
+        "rust-client-java-server",
+        |context, dir| {
+            g4_revocation_vs_publication_direction(context, dir, Subject::Java, Subject::Rust)
+        },
+    )?;
+    Ok(())
+}
+
+/// One revocation iteration's recorded outcome.
+struct RevocationIteration {
+    index: u32,
+    input_len: usize,
+    pre_revoke_state: u64,
+    winning_order: &'static str,
+    post_revoke_refusal: String,
+    bytes_intact: bool,
+    objects: u64,
+}
+
+/// g4-revocation-vs-publication: offline operator revocation
+/// (`v2 revoke --owner alice --generation 1`, local action against existing
+/// history, run while the server is stopped — the published CLI holds the
+/// payload root exclusively) with a publication in flight or freshly
+/// committed. Expected: the publication is fenced or completed-before-revoke
+/// (recorded which), every session op on the revoked generation refuses
+/// UNAUTHORIZED (3) after the restart, and transmitted bytes are not
+/// retracted. Rust/rust only: neither Java CLI exposes an operator revoke
+/// command (DurableHost.revoke is host-internal), a named gap the hooked
+/// direction records as INCOMPLETE.
+fn g4_revocation_vs_publication_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    if server == Subject::Java {
+        bail!(
+            "rust-client/java-server is a named gap for this row: neither Java CLI \
+             (V2Main/ClientCommands) exposes an operator revoke command; \
+             DurableHost.revoke(long) is host-internal only. The row evidence is the \
+             rust-client/rust-server direction."
+        );
+    }
+    let id = "g4-revocation-vs-publication";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    enforce_no_fault_schedule(context, id)?;
+    // Descending sizes: the large input is still publishing when the
+    // revocation lands (fenced); the small input usually completed before it
+    // (publication won). Both orders are legal and recorded.
+    let sizes = [8 * 1024 * 1024, 256 * 1024, 64 * 1024];
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("iterations", sizes.len().to_string()),
+            (
+                "iteration_input_lens",
+                sizes
+                    .iter()
+                    .map(|size| size.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            (
+                "revocation_mechanism",
+                "offline operator revocation per the matrix: the server is stopped, the \
+                 operator runs rust `v2 revoke --owner alice --generation 1` (server/src/v2.rs \
+                 Command::Revoke, prints SESSION_REVOKED), the server restarts on the same \
+                 roots. The published CLI opens the payload store with an exclusive \
+                 non-blocking flock (payload.rs RootLock) and refuses LIMIT_EXCEEDED \
+                 \"payload root already owned\" while a server holds the root — the revoke \
+                 cannot run against a live server through the published surface (recorded, \
+                 not routed around). java = named gap (no operator revoke CLI; \
+                 DurableHost.revoke host-internal)"
+                    .into(),
+            ),
+            (
+                "winning_order_rule",
+                "per iteration, sampled by the watch immediately preceding the offline \
+                 stop: terminal SUCCEEDED(5) → publication completed before the revocation; \
+                 nonterminal → the revocation fenced the publication"
+                    .into(),
+            ),
+            (
+                "post_revoke_rule",
+                "after the restart every session op on the revoked generation refuses \
+                 UNAUTHORIZED (3) \"authority access denied\" — existing and new connections \
+                 alike — and fresh session creation still answers (next creation sequence 2)"
+                    .into(),
+            ),
+            (
+                "bytes_not_retracted",
+                "the transmitted input artifact and its independent oracle hash are \
+                 re-verified after the revocation and restart, and remain intact"
+                    .into(),
+            ),
+            (
+                "observation_note",
+                "post-revoke work state is not observable through the published CLIs \
+                 (every session op refuses UNAUTHORIZED); fenced-vs-completed rests on the \
+                 immediately-pre-offline watch sample plus object-dir metrics — recorded, \
+                 not faked"
+                    .into(),
+            ),
+        ],
+    )?;
+    let mut iterations = Vec::new();
+    for (position, size) in sizes.iter().enumerate() {
+        let index = (position + 1) as u32;
+        // Each revocation terminates its session, so every iteration owns a
+        // fresh authority under an iteration subdirectory.
+        let iteration_dir = scenario_dir.join(format!("iteration-{index}"));
+        let session = setup_session(context, &iteration_dir, server, client)?;
+        let seed = context.seed ^ (u64::from(index) * 0x9e37_79b9);
+        let input = oracle::dataset(seed, *size);
+        let input_sha256 = oracle::sha256_hex(&input);
+        let input_path = artifacts.join(format!("input-{index}.bin"));
+        fs::write(&input_path, &input)?;
+        events.append(
+            "",
+            None,
+            Some("0:0:1"),
+            Some(1),
+            None,
+            Some(ArtifactRef {
+                path: format!("artifacts/input-{index}.bin"),
+                len: input.len() as u64,
+                sha256: input_sha256.clone(),
+            }),
+        )?;
+        let declare = declare_sealed(&session, &mut events, seed, "declare", &[1])?;
+        let admit = oracle::operation_hex(oracle::operation_id(seed, "admit", 1));
+        events.append(
+            "REQUEST_SENT",
+            Some(hex_to_id(&admit)?),
+            Some("0:0:1"),
+            Some(1),
+            None,
+            None,
+        )?;
+        let admit_child = session.fixture.spawn_client_op(
+            &session.journal,
+            "alice",
+            session.sequence,
+            &session.connection,
+            &[
+                "admit",
+                "--operation",
+                &admit,
+                "--declaration",
+                &declare,
+                "--work",
+                "0:0:1",
+                "--input",
+                &crate::path(&input_path),
+                "--application",
+                "copy/v2",
+            ],
+        )?;
+        let admitted = AuthorityFixture::wait_client_op(admit_child, OP_WAIT)?;
+        let admit_receipt = require(&admitted, "RECEIPT", "admit operation")?;
+        events.append(
+            "RECEIPT_VALIDATED",
+            Some(hex_to_id(&admit)?),
+            Some("0:0:1"),
+            Some(1),
+            None,
+            None,
+        )?;
+        fs::write(
+            artifacts.join(format!("iteration-{index}-admit-receipt.txt")),
+            &admit_receipt,
+        )?;
+
+        // Sample the work state immediately before taking the server offline
+        // (the race classification).
+        let pre_revoke = session.watch("0:0:1")?;
+        let pre_revoke_state = parse_state(&pre_revoke)?;
+        fs::write(
+            artifacts.join(format!("iteration-{index}-pre-offline-view.txt")),
+            &pre_revoke,
+        )?;
+
+        // Offline operator revocation: the published `v2 revoke` opens the
+        // payload store with an exclusive non-blocking flock (payload.rs
+        // RootLock), so it refuses LIMIT_EXCEEDED "payload root already
+        // owned" while a server holds the root. The operator action
+        // therefore runs while the server is stopped — the matrix's
+        // "offline operator revocation".
+        session.server.kill()?;
+        let mut command = session.fixture.base()?;
+        command.push("revoke".into());
+        command.extend(session.fixture.storage_args());
+        command.push("--owner".into());
+        command.push("alice".into());
+        command.push("--generation".into());
+        command.push(session.sequence.to_string());
+        let revoked = crate::run_output_owned(&session.fixture.root, &command, OP_WAIT)?;
+        let revoked_stdout = require(&revoked, "SESSION_REVOKED", "v2 revoke")?;
+        events.append("REVOCATION_COMMITTED", None, None, None, None, None)?;
+        fs::write(
+            artifacts.join(format!("iteration-{index}-revoke-stdout.txt")),
+            revoked_stdout,
+        )?;
+        let winning_order = if pre_revoke_state == 5 {
+            "publication"
+        } else {
+            "fence"
+        };
+
+        // Restart on the same roots: every session op on the revoked
+        // generation refuses UNAUTHORIZED (3) — existing and new connections
+        // alike — while fresh session creation is not bricked.
+        let restarted = session.fixture.start_server()?;
+        let connection = session.fixture.connection_args(&restarted, "alice")?;
+        let probe = session.fixture.run_client_op(
+            &session.journal,
+            "alice",
+            session.sequence,
+            &connection,
+            &["watch", "--work", "0:0:1"],
+        )?;
+        let probe_text = format!(
+            "exit={}\nstdout:\n{}\nstderr:\n{}",
+            probe.status,
+            String::from_utf8_lossy(&probe.stdout),
+            String::from_utf8_lossy(&probe.stderr),
+        );
+        fs::write(
+            artifacts.join(format!("iteration-{index}-post-revoke-refusal.txt")),
+            &probe_text,
+        )?;
+        ensure!(
+            !probe.status.success(),
+            "post-revoke session op was expected to refuse but exited zero\n{probe_text}"
+        );
+        let named = refusal_named_line(&probe_text, &["UNAUTHORIZED"]).with_context(|| {
+            format!("post-revoke session op must name UNAUTHORIZED (3)\n{probe_text}")
+        })?;
+        events.append("", None, Some("0:0:1"), Some(1), Some(3), None)?;
+        let next = session.fixture.next_sequence(&restarted, "alice")?;
+        ensure!(
+            next == 2,
+            "post-revoke authority must offer the next creation sequence 2, got {next}"
+        );
+        let bytes_intact = oracle::sha256_hex(&fs::read(&input_path)?) == input_sha256;
+        ensure!(
+            bytes_intact,
+            "g4-revocation-vs-publication iteration {index}: transmitted bytes were \
+             retracted by the revocation"
+        );
+        let metrics = storage_metrics(&session.fixture.object_dir)?;
+        iterations.push(RevocationIteration {
+            index,
+            input_len: *size,
+            pre_revoke_state,
+            winning_order,
+            post_revoke_refusal: named,
+            bytes_intact,
+            objects: metrics.0,
+        });
+        restarted.stop()?;
+    }
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+    ];
+    let mut publication_wins = 0usize;
+    let mut fence_wins = 0usize;
+    for iteration in &iterations {
+        publication_wins += usize::from(iteration.winning_order == "publication");
+        fence_wins += usize::from(iteration.winning_order == "fence");
+        observed.push((
+            Box::leak(format!("iteration_{}_input_len", iteration.index).into_boxed_str()),
+            iteration.input_len.to_string(),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_pre_revoke_state", iteration.index).into_boxed_str()),
+            format!(
+                "{} ({})",
+                iteration.pre_revoke_state,
+                state_code_name(&iteration.pre_revoke_state.to_string())
+            ),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_winning_order", iteration.index).into_boxed_str()),
+            iteration.winning_order.into(),
+        ));
+        observed.push((
+            Box::leak(
+                format!("iteration_{}_post_revoke_refusal", iteration.index).into_boxed_str(),
+            ),
+            iteration.post_revoke_refusal.clone(),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_bytes_intact", iteration.index).into_boxed_str()),
+            iteration.bytes_intact.to_string(),
+        ));
+        observed.push((
+            Box::leak(format!("iteration_{}_objects", iteration.index).into_boxed_str()),
+            iteration.objects.to_string(),
+        ));
+    }
+    observed.push((
+        "orders_observed",
+        format!("publication:{publication_wins},fence:{fence_wins}"),
+    ));
+    observed.push((
+        "java_direction",
+        "named gap: no operator revoke command on either Java CLI (V2Main/ \
+         ClientCommands); DurableHost.revoke(long) host-internal only"
+            .into(),
+    ));
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    drop(events);
+    crate::durable::events::read_events_checked(
+        &scenario_dir.join("events.tsv"),
+        &context.run_id,
+        id,
+        Some(scenario_dir),
+    )?;
+    let sealed = File::create(scenario_dir.join("SEALED"))?;
+    sealed.sync_all()?;
+    Ok(())
+}
+
+fn g4_eventual_settlement(context: &ScenarioContext) -> Result<()> {
+    run_g4_row(
+        context,
+        "g4-eventual-settlement",
+        g4_eventual_settlement_direction,
+    )
+}
+
+/// g4-eventual-settlement: admit a mode-2 chunk-copy work, kill the server
+/// mid-expansion (SIGKILL), restart on the same roots, fence the ancestor,
+/// and require bounded eventual settlement: every nonterminal descendant
+/// reaches CANCELLED within the stated deadline, the status tree converges
+/// to exactly one terminal state per work, and no cleanup/retirement runs
+/// before root closure.
+fn g4_eventual_settlement_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g4-eventual-settlement";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    enforce_no_fault_schedule(context, id)?;
+    let mut session = setup_session(context, scenario_dir, server, client)?;
+    const INPUT_LEN: usize = 8 * 1024 * 1024;
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("application", "chunk-copy/v2".into()),
+            ("mode", "2".into()),
+            ("input_len", INPUT_LEN.to_string()),
+            (
+                "settle_deadline_ms",
+                format!("{}", RECOVERY_TIMEOUT.as_millis()),
+            ),
+            (
+                "recovery",
+                "SIGKILL mid-expansion, restart on the same roots, then the ancestor \
+                 cancel-scope fence"
+                    .into(),
+            ),
+            (
+                "settlement_rule",
+                "parent ends CANCELLED(7) — never FAILED(6); every descendant reaches \
+                 exactly one terminal state (CANCELLED, or SUCCEEDED when committed before \
+                 the fence) within the deadline"
+                    .into(),
+            ),
+            (
+                "no_cleanup_before_root_closure",
+                "watch keeps answering and the object dir stays populated until the root \
+                 closes; no retirement/EXPIRED refusals during settlement"
+                    .into(),
+            ),
+        ],
+    )?;
+    let input = oracle::dataset(context.seed, INPUT_LEN);
+    let input_path = artifacts.join("input.bin");
+    fs::write(&input_path, &input)?;
+    let declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
+    let admit = oracle::operation_hex(oracle::operation_id(context.seed, "admit", 1));
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&admit)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let admit_child = session.fixture.spawn_client_op(
+        &session.journal,
+        "alice",
+        session.sequence,
+        &session.connection,
+        &[
+            "admit",
+            "--operation",
+            &admit,
+            "--declaration",
+            &declare,
+            "--work",
+            "0:0:1",
+            "--input",
+            &crate::path(&input_path),
+            "--application",
+            "chunk-copy/v2",
+            "--mode",
+            "2",
+            "--output-count",
+            "1",
+        ],
+    )?;
+    let admitted = AuthorityFixture::wait_client_op(admit_child, OP_WAIT)?;
+    let _receipt = require(&admitted, "RECEIPT", "admit operation")?;
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(hex_to_id(&admit)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let metrics_before = storage_metrics(&session.fixture.object_dir)?;
+
+    // Kill mid-expansion, restart on the same roots, rebind the client
+    // connection to the restarted server (fresh port).
+    session.server.kill()?;
+    let restarted = session.fixture.start_server()?;
+    session.connection = session.fixture.connection_args(&restarted, "alice")?;
+    session.server = restarted;
+
+    let fence_op = oracle::operation_hex(oracle::operation_id(context.seed, "scope-cancel", 1));
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&fence_op)?),
+        None,
+        None,
+        None,
+        None,
+    )?;
+    let fence_out = session.op(&["cancel-scope", "--operation", &fence_op, "--scope", "0"])?;
+    let _fence_receipt = require(&fence_out, "RECEIPT", "cancel-scope operation")?;
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(hex_to_id(&fence_op)?),
+        None,
+        None,
+        None,
+        None,
+    )?;
+    let fence_at = Instant::now();
+
+    // Bounded eventual settlement of the parent.
+    let deadline = fence_at + RECOVERY_TIMEOUT;
+    let mut parent_saw_cancelling = false;
+    let (parent_final_state, parent_final_view) = loop {
+        let stdout = session.watch("0:0:1")?;
+        let state = parse_state(&stdout)?;
+        ensure!(
+            state != 6,
+            "g4-eventual-settlement: the accepted fence was overwritten with FAILED:\n{stdout}"
+        );
+        parent_saw_cancelling |= state == 4;
+        if state == 7 {
+            break (state, stdout);
+        }
+        ensure!(
+            state == 1 || state == 3 || state == 4,
+            "g4-eventual-settlement: unexpected parent state {state}\n{stdout}"
+        );
+        ensure!(
+            Instant::now() < deadline,
+            "g4-eventual-settlement: parent did not settle within {RECOVERY_TIMEOUT:?}\n\
+             last view:\n{stdout}"
+        );
+        thread::sleep(Duration::from_millis(50));
+    };
+    let settlement_ms = fence_at.elapsed().as_millis() as u64;
+    fs::write(
+        artifacts.join("parent-terminal-view.txt"),
+        &parent_final_view,
+    )?;
+    events.append(
+        "OBSERVATION_JOURNALED",
+        None,
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+
+    // Converge the descendant scope to exactly one terminal state per work.
+    let child = parse_child_scope(&parent_final_view)?;
+    let mut child_counts = (0usize, 0usize, 0usize);
+    if let Some((scope, _producer)) = child {
+        let page_deadline = Instant::now() + RECOVERY_TIMEOUT;
+        let mut previous: Option<(u64, Vec<(u64, String)>)> = None;
+        loop {
+            let page = observe_scope_page(&session, scope, 0, 256)?;
+            let observation = &page.1;
+            let snapshot = (observation.declared, observation.members.clone());
+            let all_terminal = observation
+                .members
+                .iter()
+                .all(|(_, state)| state != "DECLARED");
+            if all_terminal && previous.as_ref() == Some(&snapshot) {
+                child_counts = observation.members.iter().fold(
+                    (0usize, 0usize, 0usize),
+                    |(mut ok, mut cancelled, mut other), (_, state)| {
+                        match state.as_str() {
+                            "SUCCEEDED" => ok += 1,
+                            "CANCELLED" => cancelled += 1,
+                            _ => other += 1,
+                        }
+                        (ok, cancelled, other)
+                    },
+                );
+                ensure!(
+                    child_counts.2 == 0,
+                    "g4-eventual-settlement: descendants settled into unexpected terminal \
+                     states: {:?}",
+                    observation.members
+                );
+                break;
+            }
+            previous = Some(snapshot);
+            ensure!(
+                Instant::now() < page_deadline,
+                "g4-eventual-settlement: child scope {scope} did not converge within \
+                 {RECOVERY_TIMEOUT:?}"
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    // No cleanup/retirement before root closure: watch still answers (the
+    // polls above) and the object dir stays populated.
+    let metrics_after = storage_metrics(&session.fixture.object_dir)?;
+    ensure!(
+        metrics_after.0 > 0,
+        "g4-eventual-settlement: object dir emptied before root closure"
+    );
+    detach(&session)?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("settlement_wall_ms", settlement_ms.to_string()),
+        (
+            "parent_final_state",
+            format!(
+                "{} ({})",
+                parent_final_state,
+                state_code_name(&parent_final_state.to_string())
+            ),
+        ),
+        (
+            "parent_cancelling_observed",
+            parent_saw_cancelling.to_string(),
+        ),
+        (
+            "child_scope",
+            child
+                .map(|(scope, producer)| format!("{scope}:{producer}"))
+                .unwrap_or_else(|| "none".to_owned()),
+        ),
+        ("children_succeeded", child_counts.0.to_string()),
+        ("children_cancelled", child_counts.1.to_string()),
+        ("children_other", child_counts.2.to_string()),
+        ("objects_before_restart", metrics_before.0.to_string()),
+        ("objects_after_settlement", metrics_after.0.to_string()),
+    ];
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    stop_and_seal(context, scenario_dir, id, session.server, events)
+}
 /// Section 12.2 refusal-code table, used only to NAME codes that a subject
 /// transcript prints verbatim; a code is never inferred from a generic error.
 const REFUSAL_CODES: &[(&str, u32)] = &[
@@ -9943,6 +12677,13 @@ mod tests {
             "g7-receipt-before-output-expiry",
             "g7-output-before-receipt-expiry",
             "g7-no-deadline-extension",
+            "g4-publication-vs-cancel",
+            "g4-publication-vs-skip",
+            "g4-stale-attempt-retry",
+            "g4-ancestor-fence-publication",
+            "g4-deadline-settlement",
+            "g4-revocation-vs-publication",
+            "g4-eventual-settlement",
             "g5-untrusted-identity",
             "g5-missing-client-cert",
             "g5-unmapped-principal",
@@ -9952,7 +12693,7 @@ mod tests {
             let row = rows.iter().find(|row| row.id == id).unwrap();
             assert!(row.rust_implemented, "{id} must be implemented");
         }
-        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 33);
+        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 40);
     }
 
     #[test]

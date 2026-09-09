@@ -1,0 +1,10 @@
+application	chunk-copy/v2
+mode	2
+execution_deadline_ms	1000
+iterations	4
+iteration_input_lens	8388608,4194304,1048576,262144
+session_model	one fresh authority per iteration: a deadline-failed mode-2 parent leaves funded child jobs that count against the next admission's capacity checks on both subjects
+winning_order_rule	per iteration: parent terminal SUCCEEDED(5) → publication won (result read byte-exact); parent terminal FAILED(6) with the DEADLINE_EXCEEDED diagnostic (code 11) → deadline won (fenced settlement, not silent eviction; result read refuses a named code)
+retry_after_deadline_refusal	explicit retry naming the settled attempt refuses DEADLINE_EXCEEDED (11) per the matrix; both subjects check terminality first and refuse ALREADY_TERMINAL (18) instead — the row accepts either named code and records which (deviation note, never faked as 11)
+obligation_persistence	deadline settlement never erases the declared obligation: the work view keeps the terminal state, attempt and deadline after the retry refusal
+named_gap	no subject hook can hold the application callback past the deadline (scenario-matrix-g4.md hook-free statistical variant); deterministic settlement is exercised by the short-deadline leg below

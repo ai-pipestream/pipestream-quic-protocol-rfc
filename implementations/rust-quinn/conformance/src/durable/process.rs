@@ -84,6 +84,10 @@ pub struct AuthorityFixture {
     pub state_db: PathBuf,
     pub object_dir: PathBuf,
     pub certs: Material,
+    /// Extra flags appended to every `serve` invocation after the fixed
+    /// arguments. G4 skip rows pass `--allow-skip` (a rust Storage open flag
+    /// and a java serve flag); empty for every other fixture.
+    extra_serve_args: Vec<String>,
 }
 
 impl AuthorityFixture {
@@ -105,7 +109,15 @@ impl AuthorityFixture {
             certs,
             server,
             client,
+            extra_serve_args: Vec::new(),
         })
+    }
+
+    /// Append flags to every `serve` invocation this fixture starts (used by
+    /// the G4 skip rows to arm `--allow-skip` on both subjects).
+    pub fn with_extra_serve_args(mut self, args: &[&str]) -> Self {
+        self.extra_serve_args = args.iter().map(|arg| (*arg).to_owned()).collect();
+        self
     }
 
     fn subject_base(&self, subject: Subject) -> Result<Vec<String>> {
@@ -391,6 +403,7 @@ impl AuthorityFixture {
             "--ready-file".into(),
             path(&ready),
         ]);
+        command.extend(self.extra_serve_args.iter().cloned());
         if let Some(arming) = arming {
             command.extend([
                 "--fixture-events".into(),

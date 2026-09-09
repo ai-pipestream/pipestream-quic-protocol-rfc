@@ -1,0 +1,3 @@
+rust-client-java-server direction failed; the row evidence is the rust-client/rust-server direction. Error:
+rust-client/java-server is a named gap for this row: neither Java CLI (V2Main/ClientCommands) exposes an operator revoke command; DurableHost.revoke(long) is host-internal only. The row evidence is the rust-client/rust-server direction.
+java_jar_sha256=ff537a609119534db8caca50d2828a4d421b8b0997ca04896883fff9cc60375b
