@@ -6,6 +6,7 @@ mod gates;
 mod mtls;
 mod oracle;
 mod process;
+mod rawclient;
 mod scenarios;
 mod schedule;
 

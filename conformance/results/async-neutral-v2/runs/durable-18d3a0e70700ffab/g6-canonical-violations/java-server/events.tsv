@@ -1,0 +1,57 @@
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	1	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	2	REQUEST_SENT					artifacts/caps-extra-position.sent-hex	86	ff419b40d4c2e384aa9103540d0634d229817a4ff11365cd0ba832b33c7136fc
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	3	CONNECTION_CLOSED				513			
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	4	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	5	REQUEST_SENT					artifacts/caps-missing-lifetime.sent-hex	74	8d3718fc4cf603e5e4a2342496f4b985f5bb93e599e9036db0a967aea4361093
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	6	CONNECTION_CLOSED				513			
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	7	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	8	REQUEST_SENT					artifacts/caps-control-too-small.sent-hex	80	89630be8a09000959cae9e506a5e5cc7fd6bacc8fe4a850795b3b2082b886e48
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	9	CONNECTION_CLOSED				513			
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	10	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	11	REQUEST_SENT					artifacts/caps-duplicate-profile.sent-hex	78	0e164b64a6a9e058b617ace412035a26637c5419668d2dd13e597b3b3b893d84
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	12	CONNECTION_CLOSED				513			
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	13	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	14	REQUEST_SENT					artifacts/caps-required-not-supported.sent-hex	72	eeddde03935a6ff26a1dbeb3fb31b8412ff1ecbcff18191384a6523501eeee95
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	15	CONNECTION_CLOSED				513			
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	16	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	17	REQUEST_SENT					artifacts/result-profile-without-durable.sent-hex	72	5837f805feea87f7bf8e4f8804bc219f2482d2d3e9a02ddc2961872fd3c5854b
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	18	CONNECTION_CLOSED				514			
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	19	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	20	REQUEST_SENT					artifacts/caps-idle-exceeds-lifetime.sent-hex	80	c545d921dd6d7a95a0423ac7ef121c11931b7b71545bee59dd3de526011e094b
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	21	CONNECTION_CLOSED				513			
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	22	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	23	REQUEST_SENT					artifacts/zero-request.sent-hex	16	bde5e1be49e7020e77786c7bc07237cb091f41cf4ee1f62a1710282c162b07c2
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	24	CONNECTION_CLOSED				513			
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	25	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	26	REQUEST_SENT					artifacts/generation-overflow.sent-hex	34	9add0e5b4479a00e17240bde0afb750f77288a3fb1ab7ab09fab92b74c76c57d
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	27	CONNECTION_CLOSED				513			
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	28	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	29	REQUEST_SENT					artifacts/session-policy-zero.sent-hex	42	cdd5531a76e2d0d0f60320390b465eb99c2e8772bac5dd2b599216d239146206
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	30	CONNECTION_CLOSED				513			
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	31	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	32	REQUEST_SENT					artifacts/session-nonascii-owner.sent-hex	60	127defeca566746d0179c098e0197c122d5800aaaa8a99560a648228f6f5f6f3
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	33	CONNECTION_CLOSED				513			
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	34	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	35	REQUEST_SENT					artifacts/noncanonical-session-request.sent-hex	18	80d771d2713d0b2c5b3728cde63a1c358344c12a3936084e09a6a71361ce4f79
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	36	CONNECTION_CLOSED				513			
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	37	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	38	REQUEST_SENT					artifacts/trailing-cbor-item.sent-hex	18	53a43952d66662eac26d84262e4e05864fdbce9811c3e5de96290681f9f29cd6
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	39	CONNECTION_CLOSED				513			
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	40	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	41	REQUEST_SENT					artifacts/zero-operation-id.sent-hex	58	e2ab03d52510561a87e1dc1d82163187242173ca1d789b2ccbf064a5371a144a
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	42	CONNECTION_CLOSED				513			
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	43	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	44	REQUEST_SENT					artifacts/unsorted-declaration.sent-hex	60	4cb01003a542aad96eece6e6f9d337756a210d769d1426351900c75f970266e5
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	45	CONNECTION_CLOSED				513			
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	46	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	47	REQUEST_SENT					artifacts/empty-unsealed-batch.sent-hex	56	1e0c26060c0aae049d6572302d67d2af4b4e03706dda6b6df34bafd5e66ada1f
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	48	CONNECTION_CLOSED				513			
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	49	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	50	REQUEST_SENT					artifacts/extra-work-key-position.sent-hex	30	476cdfaf5b0f4a985c4ff2dde66f9456599a697a104b4f7365b55eb0269a7852
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	51	CONNECTION_CLOSED				513			
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	52	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	53	REQUEST_SENT					artifacts/unknown-work-state.sent-hex	630	487d1a102d63f08e36ea87b7d85f9c14f11f98158f420c8b87e7d442acc59ad1
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	54	CONNECTION_CLOSED				513			
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	55	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a0e70700ffab	g6-canonical-violations	rust	client	984147-18d3a0e8801bae96	56	REQUEST_SENT					artifacts/inconsistent-success-without-input.sent-hex	66	e500cc94d950c33ebceba37660017c382104e5fd218c43ffb9806c45ec6be47f
+1	durable-18d3a0e70700ffab	g6-canonical-violations	java	server	984147-18d3a0e8801bae96	57	CONNECTION_CLOSED				513			

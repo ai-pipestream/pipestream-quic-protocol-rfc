@@ -223,6 +223,41 @@ impl EventWriter {
         refusal_code: Option<u32>,
         artifact: Option<ArtifactRef>,
     ) -> Result<()> {
+        self.append_as(
+            &self.subject_lang.clone(),
+            &self.subject_role.clone(),
+            boundary,
+            operation_id,
+            work_key,
+            attempt,
+            refusal_code,
+            artifact,
+        )
+    }
+
+    /// Raw-probe rows observe the probed server directly: those records name
+    /// the server's language and the `server` role, while the probe's own
+    /// requests stay `rust`/`client`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn append_as(
+        &mut self,
+        subject_lang: &str,
+        subject_role: &str,
+        boundary: &str,
+        operation_id: Option<[u8; 16]>,
+        work_key: Option<&str>,
+        attempt: Option<u64>,
+        refusal_code: Option<u32>,
+        artifact: Option<ArtifactRef>,
+    ) -> Result<()> {
+        ensure!(
+            matches!(subject_lang, "rust" | "java"),
+            "event subject_lang must be rust or java, got {subject_lang:?}"
+        );
+        ensure!(
+            matches!(subject_role, "server" | "client"),
+            "event subject_role must be server or client, got {subject_role:?}"
+        );
         ensure!(
             self.records < MAX_RECORDS_PER_PROCESS,
             "event record bound exceeded: at most {MAX_RECORDS_PER_PROCESS} records per process"
@@ -238,8 +273,8 @@ impl EventWriter {
         let event = Event {
             run_id: self.run_id.clone(),
             scenario_id: self.scenario_id.clone(),
-            subject_lang: self.subject_lang.clone(),
-            subject_role: self.subject_role.clone(),
+            subject_lang: subject_lang.to_owned(),
+            subject_role: subject_role.to_owned(),
             process_start_id: self.process_start_id.clone(),
             seq: self.seq,
             boundary: boundary.to_owned(),

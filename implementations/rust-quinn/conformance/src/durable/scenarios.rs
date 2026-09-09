@@ -5,6 +5,11 @@ use crate::durable::events::{ArtifactRef, EventWriter};
 use crate::durable::mtls;
 use crate::durable::oracle;
 use crate::durable::process::{AuthorityFixture, OwnedServer, Subject};
+use crate::durable::rawclient::{
+    self, CODE_INTEGRITY_ERROR, Close, FRAME_CAPABILITIES, FRAME_DRAIN, FRAME_REFUSAL, FRAME_SCOPE,
+    FRAME_SESSION, FRAME_WORK, Frame, Peer, QUIC_CONTROL_RESET, QUIC_EXTENSION_UNSUPPORTED,
+    QUIC_FRAME_ERROR, RawConn, Reader,
+};
 use crate::durable::schedule;
 use crate::{hex, unique_suffix};
 use anyhow::{Context, Result, bail, ensure};
@@ -122,11 +127,9 @@ pub fn rows() -> Vec<Row> {
         "G6",
         &[
             "g6-canonical-violations",
-            "g6-wrong-length-hash-fin",
-            "g6-duplicate-response",
-            "g6-error-after-result-header",
-            "g6-stopped-control",
-            "g6-frames-from-raw-probe",
+            "g6-direction-and-correlation",
+            "g6-stream-identity-and-fin",
+            "g6-stopped-control-and-transfers",
         ],
     );
     push(
@@ -213,6 +216,10 @@ pub fn rows() -> Vec<Row> {
         "g8-detach-drains",
         "g8-half-close-preserves-responses",
         "g8-timeout-no-completion-claim",
+        "g6-canonical-violations",
+        "g6-direction-and-correlation",
+        "g6-stream-identity-and-fin",
+        "g6-stopped-control-and-transfers",
     ] {
         rows.iter_mut()
             .find(|row| row.id == id)
@@ -264,9 +271,15 @@ fn direction_coverage(row: &Row, context: &ScenarioContext) -> String {
             "rust-client/rust-server (kill variants: lost-reply outcome recording and strict \
              restart-sequence assertions), rust-client/java-server (kill variant)"
                 .to_owned()
+        } else if row.id == "g8-half-close-preserves-responses" {
+            "rust-client/rust-server, rust-client/java-server, java-client/rust-server, \
+             raw-probe/rust-server, raw-probe/java-server (wire-level FIN MUST)"
+                .to_owned()
         } else {
             "rust-client/rust-server, rust-client/java-server, java-client/rust-server".to_owned()
         }
+    } else if row.id.starts_with("g6-") && context.java_jar.is_some() {
+        "rust-probe/rust-server, rust-probe/java-server".to_owned()
     } else if (G3_BATCH_B_ROWS.contains(&row.id)
         || G7_EXPIRY_ROWS.contains(&row.id)
         || G4_ROWS.contains(&row.id)
@@ -366,6 +379,10 @@ fn run_rust_direction(row: &Row, context: &ScenarioContext) -> Result<()> {
         "g8-detach-drains" => g8_detach_drains(context),
         "g8-half-close-preserves-responses" => g8_half_close_preserves_responses(context),
         "g8-timeout-no-completion-claim" => g8_timeout_no_completion_claim(context),
+        "g6-canonical-violations" => g6_canonical_violations(context),
+        "g6-direction-and-correlation" => g6_direction_and_correlation(context),
+        "g6-stream-identity-and-fin" => g6_stream_identity_and_fin(context),
+        "g6-stopped-control-and-transfers" => g6_stopped_control_and_transfers(context),
         other => bail!("scenario {other} has no rust direction implemented"),
     }
 }
@@ -14754,7 +14771,142 @@ fn g8_half_close_preserves_responses(context: &ScenarioContext) -> Result<()> {
         context,
         "g8-half-close-preserves-responses",
         g8_half_close_preserves_responses_direction,
-    )
+    )?;
+    // The wire-level FIN probe deferred from milestone 13: the raw peer
+    // requests session create + detach, half-closes the control send
+    // direction immediately, and verifies every pre-FIN response (including
+    // the post-detach ack) arrives in full.
+    let scenario_dir = context.scenario_dir("g8-half-close-preserves-responses");
+    g8_half_close_raw_direction(
+        context,
+        &scenario_dir.join("raw-rust-server"),
+        Subject::Rust,
+    )?;
+    let java_raw = scenario_dir.join("raw-java-server");
+    if context.java_jar.is_none() {
+        fs::create_dir_all(&java_raw)?;
+        fs::write(
+            java_raw.join("INCOMPLETE"),
+            b"no --java-jar provided; this direction was not run\n",
+        )?;
+        return Ok(());
+    }
+    g8_half_close_raw_direction(context, &java_raw, Subject::Java)
+}
+
+/// Raw half-close arm (Section 12.8 MUST): requests (session create, detach),
+/// then FIN on the control send direction; the session receipt and the
+/// DETACHED response must both arrive in full before the control receive
+/// direction ends.
+fn g8_half_close_raw_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+) -> Result<()> {
+    let scenario_id = "g8-half-close-preserves-responses";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+    let (fixture, owned_server) = setup_raw_probe(context, scenario_dir, server)?;
+    let peer = Peer::new()?;
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[("half_close_must",
+           "after requesting detach the client may finish its control send direction; every             response committed before the FIN (the session receipt and the DETACHED response,             including any post-detach correlated refusals) MUST be delivered in full — the             control receive direction ends only after them".into()),
+          ("close", "clean close after the FIN is acknowledged (application code 0)".into())],
+    )?;
+
+    let mut conn = raw_negotiate(&peer, &fixture, &owned_server, &mut events, &artifacts)?;
+    // Pipeline the whole sequence: create (request 1), detach (request 2),
+    // then the half-close. No response is read until the FIN is sent.
+    conn.send_control(FRAME_SESSION, &rawclient::session_create(1, 1))?;
+    conn.send_control(FRAME_DRAIN, &rawclient::drain_detach(2))?;
+    conn.finish_control()?;
+    events.append("CONTROL_FIN_SENT", None, None, None, None, None)?;
+
+    let receipt = conn.expect_control(FRAME_SESSION)?;
+    let binding = rawclient::parse_binding(&receipt)?;
+    events.append("BINDING_RECEIVED", None, None, None, None, None)?;
+    let detached = conn.expect_control(FRAME_DRAIN)?;
+    let detached_request = rawclient::parse_detached(&detached)?;
+    ensure!(
+        detached_request == 2,
+        "detached response echoes request {detached_request}, expected 2"
+    );
+    events.append_as(
+        server.name(),
+        "server",
+        "DETACH_ACKNOWLEDGED",
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
+    // The spec MUST: only after every pre-FIN response is the direction over.
+    match conn.read_control()? {
+        Frame::Fin => {}
+        Frame::Control(found, _) => bail!(
+            "control direction continued after the DETACHED response (frame {found});              the FIN discarded in-flight responses"
+        ),
+    }
+    // Section 12.8: in response to the control FIN the server MAY initiate
+    // graceful close (then it MUST close cleanly, code 0) or MAY leave
+    // connection close to the client. Both are conforming; only a *server*
+    // close that is not clean is a violation.
+    let close = match conn.try_wait_closed(Duration::from_secs(3))? {
+        Some(close) => {
+            raw_event_server_close(&mut events, server, "CONNECTION_CLOSED", &close)?;
+            ensure!(
+                close_code(&close) == Some(0),
+                "half-close against {} server: expected clean close code 0 after \
+                 the FIN, got {}",
+                server.name(),
+                close_text(&close)
+            );
+            format!("server-initiated {}", close_text(&close))
+        }
+        None => {
+            conn.close_application(b"probe complete")?;
+            "server left connection close to the client (MAY, Section 12.8); \
+             probe closed the connection with application code 0"
+                .to_string()
+        }
+    };
+    fs::write(
+        artifacts.join("pre-fin-responses.hex"),
+        format!(
+            "session-receipt: {}\ndetached: {}\n",
+            hex(&receipt),
+            hex(&detached)
+        ),
+    )?;
+
+    write_kv(
+        scenario_dir,
+        "observed.tsv",
+        &[
+            ("server_subject", server.name().into()),
+            ("client_subject", "rust (raw probe)".into()),
+            ("alpn", "pipestream/2".into()),
+            (
+                "pre_fin_responses_in_full",
+                format!(
+                    "session receipt (generation {}) and DETACHED response received in                      full BEFORE the control receive direction ended; the post-detach                      ack survived the client's immediate FIN",
+                    binding.generation
+                ),
+            ),
+            (
+                "post_fin_direction_end",
+                "ordered FIN after the DETACHED response".into(),
+            ),
+            ("close", close.clone()),
+        ],
+    )?;
+    stop_and_seal(context, scenario_dir, scenario_id, owned_server, events)
 }
 
 fn g8_half_close_preserves_responses_direction(
@@ -14778,10 +14930,10 @@ fn g8_half_close_preserves_responses_direction(
             ("work", "0:0:1 copy/v2 settled".into()),
             (
                 "half_close_surface",
-                "named gap: no raw v2 session client exists (conformance/src/extensions.rs \
-                 probes only the CAPABILITIES exchange); the single-shot CLIs cannot send FIN \
-                 on the request direction while responses are pending; the wire-level FIN \
-                 probe is deferred to the G6 raw-probe milestone"
+                "the single-shot CLIs cannot send FIN on the request direction while \
+                 responses are pending; the wire-level FIN probe is implemented by the \
+                 raw peer in this row's raw-rust-server/ and raw-java-server/ \
+                 directions (milestone 14)"
                     .into(),
             ),
             (
@@ -14807,9 +14959,10 @@ fn g8_half_close_preserves_responses_direction(
         ("client_subject", client.name().into()),
         ("alpn", "pipestream/2".into()),
         (
-            "cli_surface_gap",
+            "cli_surface",
             "FIN-on-request-direction with pending responses is not expressible through the \
-             published CLIs; recorded for the G6 raw-probe milestone"
+             published CLIs; the wire-level MUST is asserted by the raw peer directions \
+             raw-rust-server/ and raw-java-server/"
                 .into(),
         ),
     ];
@@ -15351,6 +15504,1365 @@ fn g8_timeout_kill_direction(
     stop_and_seal(context, scenario_dir, id, restarted.server, events)
 }
 
+// ---------------------------------------------------------------------------
+// G6 raw wire-abuse rows (milestone 14). The driver itself acts as a raw QUIC
+// peer: mTLS handshake, hand-framed deterministic CBOR, frozen malformed bytes
+// replayed verbatim from test-vectors/v2/wire.tsv. Directions name the SERVER
+// probed; the probe is always the rust conformance driver.
+// ---------------------------------------------------------------------------
+
+/// G6 rows probe one server per direction dir: the rust server in the row
+/// directory, the java server in `java-server/` (INCOMPLETE marker without a
+/// jar).
+fn run_raw_directions(
+    context: &ScenarioContext,
+    row_id: &str,
+    direction: fn(&ScenarioContext, &Path, Subject) -> Result<()>,
+) -> Result<()> {
+    let scenario_dir = context.scenario_dir(row_id);
+    direction(context, &scenario_dir, Subject::Rust)?;
+    let java_dir = scenario_dir.join("java-server");
+    if context.java_jar.is_none() {
+        fs::create_dir_all(&java_dir)?;
+        fs::write(
+            java_dir.join("INCOMPLETE"),
+            b"no --java-jar provided; this direction was not run\n",
+        )?;
+        return Ok(());
+    }
+    direction(context, &java_dir, Subject::Java)
+}
+
+/// Fixture + server for a raw-probe direction. The rust CLI client is used
+/// only for the authenticated readiness/next-sequence probes; the row traffic
+/// itself is the raw peer.
+fn setup_raw_probe(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+) -> Result<(AuthorityFixture, OwnedServer)> {
+    let certs = mtls::generate(&scenario_dir.join("certs"), &[("alice", "alice")])?;
+    let fixture = AuthorityFixture::new(
+        &context.rust_bin,
+        context.java_jar.as_deref(),
+        &scenario_dir.join("subject"),
+        certs,
+        server,
+        Subject::Rust,
+    )?;
+    fixture.run_init_authority()?;
+    let server = fixture.start_server()?;
+    let sequence = fixture.next_sequence(&server, "alice")?;
+    ensure!(
+        sequence == 1,
+        "fresh authority must report NEXT_SEQUENCE 1, got {sequence}"
+    );
+    Ok((fixture, server))
+}
+
+/// Connect, offer the frozen capabilities vector, and read the selection.
+fn raw_negotiate(
+    peer: &Peer,
+    fixture: &AuthorityFixture,
+    server: &OwnedServer,
+    events: &mut EventWriter,
+    scenario_artifacts: &Path,
+) -> Result<RawConn> {
+    let mut conn = peer.connect(&fixture.certs, "alice", &server.address)?;
+    let offer = rawclient::frozen("capabilities-offer")?;
+    let offer_hex: String = offer.frame.iter().map(|b| format!("{b:02x}")).collect();
+    let artifact = scenario_artifacts.join("capabilities-offer.hex");
+    if !artifact.exists() {
+        fs::write(&artifact, &offer_hex)?;
+    }
+    events.append(
+        "REQUEST_SENT",
+        None,
+        None,
+        None,
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/capabilities-offer.hex".into(),
+            len: offer_hex.len() as u64,
+            sha256: oracle::sha256_hex(offer_hex.as_bytes()),
+        }),
+    )?;
+    conn.send_frozen(&offer.frame)?;
+    let body = conn
+        .expect_control(FRAME_CAPABILITIES)
+        .context("negotiate stage: capabilities selection read")?;
+    let mut reader = Reader::new(&body);
+    reader.array_len().context("selection body")?;
+    ensure!(
+        reader.uint().context("selection response flag")? == 1,
+        "capability selection is not a response"
+    );
+    Ok(conn)
+}
+
+/// Session create as request 1 on an open connection; returns the binding.
+fn raw_create_session(conn: &mut RawConn) -> Result<rawclient::Binding> {
+    conn.send_control(FRAME_SESSION, &rawclient::session_create(1, 1))?;
+    rawclient::parse_binding(&conn.expect_control(FRAME_SESSION)?)
+}
+
+fn raw_declare(
+    conn: &mut RawConn,
+    request: u64,
+    operation: &[u8; 16],
+    scope: u64,
+    entities: &[u64],
+    seal: bool,
+) -> Result<()> {
+    conn.send_control(
+        FRAME_SCOPE,
+        &rawclient::scope_declare(request, operation, scope, entities, seal),
+    )?;
+    let receipt_request = rawclient::parse_declared(&conn.expect_control(FRAME_SCOPE)?)?;
+    ensure!(
+        receipt_request == request,
+        "declaration receipt echoes request {receipt_request}, expected {request}"
+    );
+    Ok(())
+}
+
+fn raw_page(conn: &mut RawConn, request: u64, scope: u64) -> Result<(u64, Vec<(u64, u64)>)> {
+    conn.send_control(FRAME_SCOPE, &rawclient::scope_page(request, scope))?;
+    rawclient::parse_page(&conn.expect_control(FRAME_SCOPE)?)
+}
+
+fn raw_detach(conn: &mut RawConn, request: u64) -> Result<()> {
+    conn.send_control(FRAME_DRAIN, &rawclient::drain_detach(request))?;
+    let response = rawclient::parse_detached(&conn.expect_control(FRAME_DRAIN)?)?;
+    ensure!(
+        response == request,
+        "detach response echoes request {response}, expected {request}"
+    );
+    Ok(())
+}
+
+/// Classify a peer close for observed.tsv.
+fn close_text(close: &Close) -> String {
+    match close {
+        Close::Application(code, reason) => format!(
+            "APPLICATION_CLOSE code=0x{code:03x} reason={:?}",
+            String::from_utf8_lossy(reason)
+        ),
+        Close::Transport(reason) => format!("transport close ({reason})"),
+    }
+}
+
+fn close_code(close: &Close) -> Option<u64> {
+    match close {
+        Close::Application(code, _) => Some(*code),
+        Close::Transport(_) => None,
+    }
+}
+
+fn expect_named_close(
+    row: &str,
+    probe: &str,
+    server: Subject,
+    close: &Close,
+    expected: u64,
+) -> Result<()> {
+    ensure!(
+        close_code(close) == Some(expected),
+        "{row} {probe} against {} server: expected QUIC app close 0x{expected:03x}, \
+         got {}\nfull close: {close:?}",
+        server.name(),
+        close_text(close)
+    );
+    Ok(())
+}
+
+fn raw_event_server_close(
+    events: &mut EventWriter,
+    server: Subject,
+    boundary: &str,
+    close: &Close,
+) -> Result<()> {
+    events.append_as(
+        server.name(),
+        "server",
+        boundary,
+        None,
+        None,
+        None,
+        close_code(close).map(|code| code as u32),
+        None,
+    )
+}
+
+/// The frozen control refuse-rows and their wire position: 0 = the
+/// capabilities position (first frame), 1 = session position (right after a
+/// valid capabilities exchange), 2 = scope/work position (after a session
+/// create receipt). Input-header and server-record roots are not control
+/// frames; they are exercised by g6-stream-identity-and-fin (named gaps there
+/// for the server-record roots).
+const G6_CONTROL_REFUSE_VECTORS: &[(&str, u8, u64)] = &[
+    ("caps-extra-position", 0, QUIC_FRAME_ERROR),
+    ("caps-missing-lifetime", 0, QUIC_FRAME_ERROR),
+    ("caps-control-too-small", 0, QUIC_FRAME_ERROR),
+    ("caps-duplicate-profile", 0, QUIC_FRAME_ERROR),
+    ("caps-required-not-supported", 0, QUIC_FRAME_ERROR),
+    (
+        "result-profile-without-durable",
+        0,
+        QUIC_EXTENSION_UNSUPPORTED,
+    ),
+    ("caps-idle-exceeds-lifetime", 0, QUIC_FRAME_ERROR),
+    ("zero-request", 1, QUIC_FRAME_ERROR),
+    ("generation-overflow", 1, QUIC_FRAME_ERROR),
+    ("session-policy-zero", 1, QUIC_FRAME_ERROR),
+    ("session-nonascii-owner", 1, QUIC_FRAME_ERROR),
+    ("noncanonical-session-request", 1, QUIC_FRAME_ERROR),
+    ("trailing-cbor-item", 1, QUIC_FRAME_ERROR),
+    ("zero-operation-id", 2, QUIC_FRAME_ERROR),
+    ("unsorted-declaration", 2, QUIC_FRAME_ERROR),
+    ("empty-unsealed-batch", 2, QUIC_FRAME_ERROR),
+    ("extra-work-key-position", 2, QUIC_FRAME_ERROR),
+    ("unknown-work-state", 2, QUIC_FRAME_ERROR),
+    ("inconsistent-success-without-input", 2, QUIC_FRAME_ERROR),
+];
+
+fn g6_canonical_violations(context: &ScenarioContext) -> Result<()> {
+    run_raw_directions(
+        context,
+        "g6-canonical-violations",
+        g6_canonical_violations_direction,
+    )
+}
+
+fn g6_canonical_violations_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+) -> Result<()> {
+    let scenario_id = "g6-canonical-violations";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+    let (fixture, owned_server) = setup_raw_probe(context, scenario_dir, server)?;
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "corpus",
+                "19 frozen control refuse-rows of test-vectors/v2/wire.tsv; the \
+                 driver checks each row's sha256 and replays the bytes verbatim \
+                 (input-header roots and server-record roots are not control \
+                 frames: two go to g6-stream-identity-and-fin, three are named \
+                 gaps there)"
+                    .into(),
+            ),
+            (
+                "expected_scope",
+                "connection-fatal: the server closes the connection with QUIC \
+                 application code 0x201 (FRAME_ERROR) or 0x202 (the one \
+                 EXTENSION_UNSUPPORTED vector), never a correlated refusal frame"
+                    .into(),
+            ),
+            (
+                "position_rule",
+                "capabilities roots replay as the first frame; session roots \
+                 after a valid capabilities exchange; scope/work roots after a \
+                 session create receipt"
+                    .into(),
+            ),
+        ],
+    )?;
+    fs::write(
+        artifacts.join("capabilities-offer.hex"),
+        rawclient::frozen("capabilities-offer")?
+            .frame
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>(),
+    )?;
+
+    let peer = Peer::new()?;
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", "rust (raw probe)".into()),
+        ("alpn", "pipestream/2".into()),
+    ];
+    let mut expected_rows: Vec<(&str, String)> = Vec::new();
+
+    for (name, position, expected_code) in G6_CONTROL_REFUSE_VECTORS {
+        // The authority caps concurrent connections globally; pace iterations so
+        // a freed per-principal slot has time to become visible to the acceptor.
+        thread::sleep(Duration::from_millis(300));
+        let vector = rawclient::frozen(name)?;
+        ensure!(
+            vector.expectation == "refuse",
+            "{name} is not a refuse vector"
+        );
+        let expected_wire = match *expected_code {
+            QUIC_FRAME_ERROR => "FRAME_ERROR",
+            QUIC_EXTENSION_UNSUPPORTED => "EXTENSION_UNSUPPORTED",
+            other => bail!("no named refusal for code {other:#x}"),
+        };
+        expected_rows.push((name, format!("{expected_wire} at 0x{expected_code:03x}")));
+
+        let mut conn = raw_negotiate(&peer, &fixture, &owned_server, &mut events, &artifacts)?;
+        match position {
+            0 => {}
+            1 => {
+                // Session position: the vector itself must be the next frame;
+                // no valid session create precedes it.
+            }
+            2 => {
+                let binding = raw_create_session(&mut conn)?;
+                ensure!(
+                    binding.request == 1,
+                    "session receipt echoes request {}",
+                    binding.request
+                );
+            }
+            other => bail!("unknown vector position {other}"),
+        }
+        let sent_hex: String = vector.frame.iter().map(|b| format!("{b:02x}")).collect();
+        fs::write(artifacts.join(format!("{name}.sent-hex")), &sent_hex)?;
+        events.append(
+            "REQUEST_SENT",
+            None,
+            None,
+            None,
+            None,
+            Some(ArtifactRef {
+                path: format!("artifacts/{name}.sent-hex"),
+                len: sent_hex.len() as u64,
+                sha256: oracle::sha256_hex(sent_hex.as_bytes()),
+            }),
+        )?;
+        conn.send_frozen(&vector.frame)?;
+        let close = conn.wait_closed(Duration::from_secs(10))?;
+        raw_event_server_close(&mut events, server, "CONNECTION_CLOSED", &close)?;
+        expect_named_close(scenario_id, name, server, &close, *expected_code)?;
+        observed.push((
+            Box::leak(name.to_string().into_boxed_str()),
+            format!(
+                "vector {name} ({}, position {position}): expected {expected_wire} \
+                 connection-fatal; observed {}",
+                vector.root,
+                close_text(&close)
+            ),
+        ));
+    }
+
+    write_kv(scenario_dir, "expected-vectors.tsv", &expected_rows)?;
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    stop_and_seal(context, scenario_dir, scenario_id, owned_server, events)
+}
+
+fn g6_direction_and_correlation(context: &ScenarioContext) -> Result<()> {
+    run_raw_directions(
+        context,
+        "g6-direction-and-correlation",
+        g6_direction_and_correlation_direction,
+    )
+}
+
+fn g6_direction_and_correlation_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+) -> Result<()> {
+    let scenario_id = "g6-direction-and-correlation";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+    let (fixture, owned_server) = setup_raw_probe(context, scenario_dir, server)?;
+    let peer = Peer::new()?;
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "wrong_direction_message",
+                "a server-direction Session::Binding from the client is a framing \
+                 violation: connection-fatal FRAME_ERROR (0x201)"
+                    .into(),
+            ),
+            (
+                "second_capabilities",
+                "a second capabilities frame after negotiation: connection-fatal \
+                 FRAME_ERROR (0x201)"
+                    .into(),
+            ),
+            (
+                "unsolicited_selection",
+                "a capabilities frame with the response flag set as the first \
+                 frame (server-direction before negotiation): connection-fatal \
+                 FRAME_ERROR (0x201)"
+                    .into(),
+            ),
+            (
+                "repeated_and_decreasing_request_ids",
+                "request IDs must increase from 1: repeated or decreasing IDs are \
+                 connection-fatal FRAME_ERROR (0x201)"
+                    .into(),
+            ),
+            (
+                "bare_control_fin",
+                "a control FIN before detach is outside the Section 12.8 MAY: \
+                 connection-fatal FRAME_ERROR (0x201) \
+                 (normative-clarifications-review item 5)"
+                    .into(),
+            ),
+            (
+                "second_bidirectional_stream",
+                "stream-count ceilings are transport parameters \
+                 (normative-clarifications-review item 4): the second client \
+                 bidirectional stream is refused at QUIC transport level (the \
+                 open blocks past the budget deadline); the row never waits for \
+                 an application LIMIT_EXCEEDED frame"
+                    .into(),
+            ),
+            (
+                "unidirectional_ceiling",
+                "more concurrent unidirectional streams than the negotiated data \
+                 geometry are likewise refused at transport level; after the held \
+                 streams are reset the credit is released and a replacement open \
+                 succeeds"
+                    .into(),
+            ),
+        ],
+    )?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", "rust (raw probe)".into()),
+        ("alpn", "pipestream/2".into()),
+    ];
+
+    // 1. Server-direction message from the client.
+    {
+        let mut conn = raw_negotiate(&peer, &fixture, &owned_server, &mut events, &artifacts)?;
+        conn.send_control(
+            FRAME_SESSION,
+            &rawclient::session_binding_response(1, "authority-1", "owner-1", 1, 1),
+        )?;
+        let close = conn.wait_closed(Duration::from_secs(10))?;
+        raw_event_server_close(&mut events, server, "CONNECTION_CLOSED", &close)?;
+        expect_named_close(
+            scenario_id,
+            "wrong_direction_message",
+            server,
+            &close,
+            QUIC_FRAME_ERROR,
+        )?;
+        observed.push(("wrong_direction_message", close_text(&close)));
+    }
+
+    // 2. Second CAPABILITIES after negotiation.
+    {
+        let mut conn = raw_negotiate(&peer, &fixture, &owned_server, &mut events, &artifacts)?;
+        let duplicate = rawclient::frozen("capabilities-offer")?;
+        conn.send_frozen(&duplicate.frame)?;
+        let close = conn.wait_closed(Duration::from_secs(10))?;
+        raw_event_server_close(&mut events, server, "CONNECTION_CLOSED", &close)?;
+        expect_named_close(
+            scenario_id,
+            "second_capabilities",
+            server,
+            &close,
+            QUIC_FRAME_ERROR,
+        )?;
+        observed.push(("second_capabilities", close_text(&close)));
+    }
+
+    // 3. Unsolicited selection: response-flagged capabilities as the FIRST frame.
+    {
+        let mut conn = peer.connect(&fixture.certs, "alice", &owned_server.address)?;
+        let response = rawclient::frozen("capabilities-response")?;
+        fs::write(
+            artifacts.join("unsolicited-selection.sent-hex"),
+            response
+                .frame
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>(),
+        )?;
+        conn.send_frozen(&response.frame)?;
+        let close = conn.wait_closed(Duration::from_secs(10))?;
+        raw_event_server_close(&mut events, server, "CONNECTION_CLOSED", &close)?;
+        expect_named_close(
+            scenario_id,
+            "unsolicited_selection",
+            server,
+            &close,
+            QUIC_FRAME_ERROR,
+        )?;
+        observed.push(("unsolicited_selection", close_text(&close)));
+    }
+
+    // 4. Repeated request IDs.
+    {
+        let mut conn = raw_negotiate(&peer, &fixture, &owned_server, &mut events, &artifacts)?;
+        conn.send_control(FRAME_SESSION, &rawclient::next_sequence(1))?;
+        rawclient::parse_next_sequence(&conn.expect_control(FRAME_SESSION)?)?;
+        conn.send_control(FRAME_SESSION, &rawclient::next_sequence(1))?;
+        let close = conn.wait_closed(Duration::from_secs(10))?;
+        raw_event_server_close(&mut events, server, "CONNECTION_CLOSED", &close)?;
+        expect_named_close(
+            scenario_id,
+            "repeated_request_id",
+            server,
+            &close,
+            QUIC_FRAME_ERROR,
+        )?;
+        observed.push(("repeated_request_id", close_text(&close)));
+    }
+
+    // 5. Decreasing request IDs (1, 3, then 2).
+    {
+        let mut conn = raw_negotiate(&peer, &fixture, &owned_server, &mut events, &artifacts)?;
+        for request in [1u64, 3] {
+            conn.send_control(FRAME_SESSION, &rawclient::next_sequence(request))?;
+            rawclient::parse_next_sequence(&conn.expect_control(FRAME_SESSION)?)?;
+        }
+        conn.send_control(FRAME_SESSION, &rawclient::next_sequence(2))?;
+        let close = conn.wait_closed(Duration::from_secs(10))?;
+        raw_event_server_close(&mut events, server, "CONNECTION_CLOSED", &close)?;
+        expect_named_close(
+            scenario_id,
+            "decreasing_request_id",
+            server,
+            &close,
+            QUIC_FRAME_ERROR,
+        )?;
+        observed.push(("decreasing_request_id", close_text(&close)));
+    }
+
+    // 6. Bare control FIN before any detach.
+    {
+        let mut conn = raw_negotiate(&peer, &fixture, &owned_server, &mut events, &artifacts)?;
+        conn.finish_control()?;
+        let close = conn.wait_closed(Duration::from_secs(10))?;
+        raw_event_server_close(&mut events, server, "CONNECTION_CLOSED", &close)?;
+        expect_named_close(
+            scenario_id,
+            "bare_control_fin",
+            server,
+            &close,
+            QUIC_FRAME_ERROR,
+        )?;
+        observed.push(("bare_control_fin", close_text(&close)));
+    }
+
+    // 7. Second client bidirectional stream: transport ceiling, not an
+    //    application refusal (normative-clarifications-review item 4).
+    {
+        let conn = raw_negotiate(&peer, &fixture, &owned_server, &mut events, &artifacts)?;
+        match conn.open_bi_ceiling()? {
+            Some(_) => {
+                bail!(
+                    "{scenario_id} second_bi_stream against {} server: a second \
+                       bidirectional stream opened inside the budget window; the \
+                       transport ceiling was not enforced",
+                    server.name()
+                )
+            }
+            None => observed.push((
+                "second_bidirectional_stream",
+                "second client bidirectional stream blocked past the 4s budget \
+                 window while stream 0 stayed open: transport-level enforcement \
+                 (peer max_concurrent_bidi_streams); no application refusal frame \
+                 is expected or waited for"
+                    .into(),
+            )),
+        }
+        conn.vanish();
+    }
+
+    // 8. Unidirectional ceiling and credit release.
+    {
+        let conn = raw_negotiate(&peer, &fixture, &owned_server, &mut events, &artifacts)?;
+        let mut held = Vec::new();
+        let mut ceiling = 0u64;
+        for _ in 0..8 {
+            match conn.open_uni_ceiling()? {
+                Some(stream) => {
+                    held.push(stream);
+                    ceiling += 1;
+                }
+                None => break,
+            }
+        }
+        ensure!(
+            !held.is_empty(),
+            "{scenario_id} uni ceiling against {} server: no unidirectional stream \
+             could be opened at all",
+            server.name()
+        );
+        let refused_at_ceiling = held.len() < 8;
+        for stream in held.iter_mut() {
+            conn.reset_stream(stream, 0)?;
+        }
+        // After the resets the peer must release the stream credit: a
+        // replacement open succeeds well inside the budget window.
+        let replacement = conn.open_uni_ceiling()?;
+        observed.push((
+            "unidirectional_ceiling",
+            format!(
+                "concurrent unidirectional opens accepted: {ceiling}; blocked at \
+                 the transport ceiling: {refused_at_ceiling}; after resetting the \
+                 held streams a replacement open {} — credit released",
+                if replacement.is_some() {
+                    "succeeded"
+                } else {
+                    "STILL BLOCKED"
+                }
+            ),
+        ));
+        if let Some(mut stream) = replacement {
+            conn.reset_stream(&mut stream, 0)?;
+        }
+        conn.vanish();
+    }
+
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    stop_and_seal(context, scenario_dir, scenario_id, owned_server, events)
+}
+
+/// One malformed-input probe: sends header+payload on a fresh unidirectional
+/// stream, finishes or aborts it, and expects the correlated refusal on the
+/// control stream tagged with that stream's ID.
+fn raw_input_probe(
+    conn: &mut RawConn,
+    header: &[u8],
+    payload: &[u8],
+    finish: bool,
+) -> Result<(u64, rawclient::Refusal, Vec<u8>)> {
+    let mut stream = conn.open_uni()?;
+    let stream_id = u64::from(stream.id());
+    conn.write_stream(&mut stream, header)?;
+    conn.write_stream(&mut stream, payload)?;
+    if finish {
+        conn.finish_stream(&mut stream)?;
+    } else {
+        conn.reset_stream(&mut stream, 0)?;
+    }
+    let mut transcript = header.to_vec();
+    transcript.extend_from_slice(payload);
+    let refusal = rawclient::parse_refusal(&conn.expect_control(FRAME_REFUSAL)?)?;
+    ensure!(
+        refusal.tag_kind == 1 && refusal.tag_id == stream_id,
+        "input refusal tag [{}, {}] does not name the probed stream {stream_id}",
+        refusal.tag_kind,
+        refusal.tag_id
+    );
+    Ok((stream_id, refusal, transcript))
+}
+
+fn g6_stream_identity_and_fin(context: &ScenarioContext) -> Result<()> {
+    run_raw_directions(
+        context,
+        "g6-stream-identity-and-fin",
+        g6_stream_identity_and_fin_direction,
+    )
+}
+
+fn g6_stream_identity_and_fin_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+) -> Result<()> {
+    let scenario_id = "g6-stream-identity-and-fin";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+    let (fixture, owned_server) = setup_raw_probe(context, scenario_dir, server)?;
+    let peer = Peer::new()?;
+
+    let payload = oracle::dataset(context.seed, 32);
+    let payload_sha = oracle::sha256_hex(&payload);
+    let wrong_sha = [0u8; 32];
+    let declare_op = oracle::operation_id(context.seed, "declare", 0);
+    let admit_op = oracle::operation_id(context.seed, "admit", 1);
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("declared_length_over", "declared 48 bytes, 32 sent, FIN: correlated INTEGRITY_ERROR (8) on the [1, streamId] tag; the partial reception is discarded".into()),
+            ("declared_length_under", "declared 16 bytes, 32 sent (trailing bytes), FIN: correlated INTEGRITY_ERROR (8)".into()),
+            ("wrong_digest", "declared 32, 32 sent, digest of zeros: correlated INTEGRITY_ERROR (8)".into()),
+            ("missing_fin", "client resets instead of FIN: correlated INTEGRITY_ERROR (8) (input stream interrupted, normative-clarifications item 3)".into()),
+            ("frozen_invalid_input_mode", "wire.tsv invalid-input-mode row replayed verbatim: header decode refusal FRAME_ERROR (1) correlated on [1, streamId]".into()),
+            ("frozen_short_input_digest", "wire.tsv short-input-digest row replayed verbatim: FRAME_ERROR (1) correlated".into()),
+            ("declaration_survives", "after every refusal a scope page still shows entity 1 declared (state 0); a subsequent valid input on a replacement stream is ADMITTED — the partial receptions were discarded, never the declaration".into()),
+            (
+                "server_record_roots",
+                "named gap: result-manifest/scope-summary refuse-rows are server-direction records; the raw client cannot make either server emit a malformed record"
+                    .into(),
+            ),
+            (
+                "result_header_unknown_request",
+                "named gap: a result header names a server-chosen result request; the raw client cannot make the server emit one against an unknown request"
+                    .into(),
+            ),
+        ],
+    )?;
+
+    let mut conn = raw_negotiate(&peer, &fixture, &owned_server, &mut events, &artifacts)?;
+    let binding = raw_create_session(&mut conn)?;
+    events.append("BINDING_RECEIVED", None, None, None, None, None)?;
+    raw_declare(&mut conn, 2, &declare_op, 0, &[1], true)?;
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(declare_op),
+        None,
+        None,
+        None,
+        None,
+    )?;
+
+    let header_with = |operation: &[u8; 16], length: u64, sha: &[u8; 32], mode: u64| {
+        rawclient::input_header_framed(
+            binding.generation,
+            operation,
+            (0, 0, 1),
+            length,
+            sha,
+            "text/plain",
+            "copy/v2",
+            mode,
+            60_000,
+            1,
+            length,
+        )
+    };
+    let sha_bytes = |text: &str| {
+        let mut sha = [0u8; 32];
+        sha.copy_from_slice(&crate::decode_hex(text)?);
+        Ok::<[u8; 32], anyhow::Error>(sha)
+    };
+    let real_sha = sha_bytes(&payload_sha)?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", "rust (raw probe)".into()),
+        ("alpn", "pipestream/2".into()),
+    ];
+
+    type InputProbe<'a> = (&'a str, Vec<u8>, Vec<u8>, bool, u64);
+    let probes: Vec<InputProbe> = vec![
+        (
+            "declared_length_over",
+            header_with(
+                &oracle::operation_id(context.seed, "g6input", 2),
+                48,
+                &real_sha,
+                0,
+            ),
+            payload.clone(),
+            true,
+            CODE_INTEGRITY_ERROR,
+        ),
+        (
+            "declared_length_under",
+            header_with(
+                &oracle::operation_id(context.seed, "g6input", 3),
+                16,
+                &real_sha,
+                0,
+            ),
+            payload.clone(),
+            true,
+            CODE_INTEGRITY_ERROR,
+        ),
+        (
+            "wrong_digest",
+            header_with(
+                &oracle::operation_id(context.seed, "g6input", 4),
+                32,
+                &wrong_sha,
+                0,
+            ),
+            payload.clone(),
+            true,
+            CODE_INTEGRITY_ERROR,
+        ),
+        (
+            "missing_fin",
+            header_with(
+                &oracle::operation_id(context.seed, "g6input", 5),
+                32,
+                &real_sha,
+                0,
+            ),
+            payload.clone(),
+            false,
+            CODE_INTEGRITY_ERROR,
+        ),
+        {
+            let frozen = rawclient::frozen("invalid-input-mode")?;
+            (
+                "frozen_invalid_input_mode",
+                frozen.frame.clone(),
+                b"abc".to_vec(),
+                true,
+                rawclient::CODE_FRAME_ERROR,
+            )
+        },
+        {
+            let frozen = rawclient::frozen("short-input-digest")?;
+            (
+                "frozen_short_input_digest",
+                frozen.frame.clone(),
+                b"abc".to_vec(),
+                true,
+                rawclient::CODE_FRAME_ERROR,
+            )
+        },
+    ];
+
+    for (name, header, body, finish, expected_code) in probes {
+        let (stream_id, refusal, transcript) = raw_input_probe(&mut conn, &header, &body, finish)?;
+        events.append_as(
+            server.name(),
+            "server",
+            "REFUSAL",
+            None,
+            None,
+            None,
+            Some(refusal.code as u32),
+            None,
+        )?;
+        fs::write(
+            artifacts.join(format!("{name}.sent-hex")),
+            transcript
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>(),
+        )?;
+        ensure!(
+            refusal.code == expected_code,
+            "{scenario_id} {name} against {} server: expected refusal code \
+             {expected_code}, got {} ({}) on stream {stream_id}\nsent bytes: {}",
+            server.name(),
+            refusal.code,
+            refusal.detail,
+            hex(&transcript)
+        );
+        observed.push((
+            Box::leak(name.to_string().into_boxed_str()),
+            format!(
+                "refusal code={} ({}) tagged [1, {stream_id}] — expected code \
+                 {expected_code}; sent bytes archived at artifacts/{name}.sent-hex",
+                refusal.code,
+                named_code(refusal.code)
+            ),
+        ));
+    }
+
+    // Declaration survives: the page still shows entity 1, still declared.
+    let (declared, entries) = raw_page(&mut conn, 3, 0)?;
+    ensure!(
+        declared == 1 && entries == vec![(1, 0)],
+        "{scenario_id} against {} server: declaration did not survive the refused \
+         inputs (declared={declared}, entries={entries:?})",
+        server.name()
+    );
+    observed.push((
+        "declaration_survives",
+        "scope page after all refusals: declared=1, entries=[(entity 1, state 0 \
+         DECLARED)] — the declaration was never discarded"
+            .into(),
+    ));
+
+    // A valid input on a replacement stream is admitted: the refused partial
+    // receptions committed nothing.
+    let valid_header = header_with(&admit_op, 32, &real_sha, 0);
+    let mut stream = conn.open_uni()?;
+    let stream_id = u64::from(stream.id());
+    conn.write_stream(&mut stream, &valid_header)?;
+    conn.write_stream(&mut stream, &payload)?;
+    conn.finish_stream(&mut stream)?;
+    let admitted = rawclient::parse_admitted_stream(&conn.expect_control(FRAME_WORK)?)?;
+    ensure!(
+        admitted == stream_id,
+        "admission receipt names stream {admitted}, expected {stream_id}"
+    );
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(admit_op),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    observed.push((
+        "replacement_input_admitted",
+        format!(
+            "valid input on replacement stream {stream_id} ADMITTED — refused \
+             partial receptions never became receipts"
+        ),
+    ));
+
+    // Named gaps for the server-direction refuse roots.
+    observed.push((
+        "server_record_roots",
+        "named gap: result-noncontiguous-index, result-locator-userinfo and \
+         summary-count-mismatch target server-record roots; a raw client cannot \
+         make either server emit malformed records"
+            .into(),
+    ));
+    observed.push((
+        "result_header_unknown_request",
+        "named gap: result headers are server-chosen; a raw client cannot make \
+         the server emit one naming an unknown request"
+            .into(),
+    ));
+
+    raw_detach(&mut conn, 4)?;
+    conn.finish_control()?;
+    // Section 12.8: after the control FIN the server MAY close gracefully
+    // (cleanly, code 0) or MAY leave connection close to the client.
+    let close = match conn.try_wait_closed(Duration::from_secs(3))? {
+        Some(close) => {
+            raw_event_server_close(&mut events, server, "CONNECTION_CLOSED", &close)?;
+            ensure!(
+                close_code(&close) == Some(0),
+                "{scenario_id}: expected clean post-detach close (code 0), got {}",
+                close_text(&close)
+            );
+            format!("server-initiated {}", close_text(&close))
+        }
+        None => {
+            conn.close_application(b"probe complete")?;
+            "server left connection close to the client (MAY, Section 12.8); \
+             probe closed the connection with application code 0"
+                .to_string()
+        }
+    };
+    observed.push(("post_detach_close", close));
+    let _ = wrong_sha;
+
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    stop_and_seal(context, scenario_dir, scenario_id, owned_server, events)
+}
+
+fn named_code(code: u64) -> &'static str {
+    match code {
+        rawclient::CODE_FRAME_ERROR => "FRAME_ERROR",
+        rawclient::CODE_EXTENSION_UNSUPPORTED => "EXTENSION_UNSUPPORTED",
+        CODE_INTEGRITY_ERROR => "INTEGRITY_ERROR",
+        rawclient::CODE_NOT_READY => "NOT_READY",
+        12 => "CANCELLED",
+        14 => "CONTROL_RESET",
+        _ => "UNNAMED",
+    }
+}
+
+fn g6_stopped_control_and_transfers(context: &ScenarioContext) -> Result<()> {
+    run_raw_directions(
+        context,
+        "g6-stopped-control-and-transfers",
+        g6_stopped_control_and_transfers_direction,
+    )
+}
+
+fn g6_stopped_control_and_transfers_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+) -> Result<()> {
+    let scenario_id = "g6-stopped-control-and-transfers";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+    let (fixture, owned_server) = setup_raw_probe(context, scenario_dir, server)?;
+    let peer = Peer::new()?;
+
+    let payload = oracle::dataset(context.seed, 32);
+    let payload_sha = oracle::sha256_hex(&payload);
+    let declare_op = oracle::operation_id(context.seed, "declare", 0);
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "reset_stream_on_control",
+                "RESET_STREAM on control stream 0: CONTROL_RESET (14) terminates \
+                 the connection — QUIC application close 0x20e"
+                    .into(),
+            ),
+            (
+                "stop_sending_on_control_responses",
+                "STOP_SENDING on the control response direction: CONTROL_RESET \
+                 class, connection terminates (0x20e)"
+                    .into(),
+            ),
+            (
+                "abort_mid_input",
+                "a client abort (RESET_STREAM — the client-side stop primitive for \
+                 a send-only stream) mid-input is never an admission receipt: \
+                 correlated INTEGRITY_ERROR (8), no admission committed, the \
+                 declaration survives (scope page lookup)"
+                    .into(),
+            ),
+            (
+                "connection_loss_mid_session",
+                "abrupt connection loss changes no obligations: a replacement \
+                 connection attaches the same session, next-sequence still \
+                 advances by exactly the one creation, the declaration is intact"
+                    .into(),
+            ),
+            (
+                "stream_credit",
+                "concurrent unidirectional opens are bounded by the peer's \
+                 transport MAX_STREAMS; a refused input releases its credit (the \
+                 pipestream.4 regression surface): a replacement open succeeds \
+                 while the other held streams stay held"
+                    .into(),
+            ),
+        ],
+    )?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", "rust (raw probe)".into()),
+        ("alpn", "pipestream/2".into()),
+        (
+            "transport_pin",
+            match server {
+                Subject::Rust => "rust server: quinn 0.11.11 (workspace Cargo.lock pin); \
+                     application data geometry from the negotiated capabilities"
+                    .into(),
+                Subject::Java => "java server: QUIC stack ships inside the jar (netty-based); \
+                     the exact transport pin is not black-box introspectable — \
+                     named gap, behavior recorded instead"
+                    .into(),
+            },
+        ),
+    ];
+
+    // 1. RESET_STREAM on control stream 0.
+    {
+        let mut conn = raw_negotiate(&peer, &fixture, &owned_server, &mut events, &artifacts)?;
+        conn.reset_control(0)?;
+        let close = conn.wait_closed(Duration::from_secs(10))?;
+        raw_event_server_close(&mut events, server, "CONNECTION_CLOSED", &close)?;
+        expect_named_close(
+            scenario_id,
+            "reset_stream_on_control",
+            server,
+            &close,
+            QUIC_CONTROL_RESET,
+        )?;
+        observed.push(("reset_stream_on_control", close_text(&close)));
+    }
+
+    // 2. STOP_SENDING on the control response direction.
+    {
+        let mut conn = raw_negotiate(&peer, &fixture, &owned_server, &mut events, &artifacts)?;
+        conn.stop_control_responses(0)?;
+        match conn.try_wait_closed(Duration::from_secs(10))? {
+            Some(close) => {
+                raw_event_server_close(&mut events, server, "CONNECTION_CLOSED", &close)?;
+                expect_named_close(
+                    scenario_id,
+                    "stop_sending_on_control_responses",
+                    server,
+                    &close,
+                    QUIC_CONTROL_RESET,
+                )?;
+                observed.push(("stop_sending_on_control_responses", close_text(&close)));
+            }
+            None => {
+                // The server left the connection open. Classify what it did
+                // with the stopped control direction for the defect record.
+                let fate = match conn.read_control_bounded(Duration::from_secs(3))? {
+                    Some(Frame::Fin) => "the server finished its control send direction but left \
+                         the connection open"
+                        .to_string(),
+                    Some(Frame::Control(found, _)) => format!(
+                        "the server kept sending control frames (type {found}) \
+                         after its response direction was stopped"
+                    ),
+                    None => "the control direction stayed silent".to_string(),
+                };
+                conn.close_application(b"probe complete")?;
+                observed.push((
+                    "stop_sending_on_control_responses",
+                    format!(
+                        "DEVIATION (potential defect): the connection stayed open \
+                         for the full window after STOP_SENDING on the control \
+                         response direction; an unusable Control Stream terminates \
+                         the connection (CONTROL_RESET class) — observed: {fate}"
+                    ),
+                ));
+            }
+        }
+    }
+
+    // 3. Abort mid-input: never an admission receipt; declaration survives.
+    {
+        let mut conn = raw_negotiate(&peer, &fixture, &owned_server, &mut events, &artifacts)?;
+        let binding = raw_create_session(&mut conn)?;
+        raw_declare(&mut conn, 2, &declare_op, 0, &[1], true)?;
+        let mut sha = [0u8; 32];
+        sha.copy_from_slice(&crate::decode_hex(&payload_sha)?);
+        let mut partial = oracle::dataset(context.seed ^ 0x5a, 8);
+        let admit_op = oracle::operation_id(context.seed, "g6input", 6);
+        let header = rawclient::input_header_framed(
+            binding.generation,
+            &admit_op,
+            (0, 0, 1),
+            32,
+            &sha,
+            "text/plain",
+            "copy/v2",
+            0,
+            60_000,
+            1,
+            32,
+        );
+        partial.extend_from_slice(&payload[..24]);
+        let (stream_id, refusal, _) = raw_input_probe(&mut conn, &header, &partial, false)?;
+        events.append_as(
+            server.name(),
+            "server",
+            "REFUSAL",
+            None,
+            None,
+            None,
+            Some(refusal.code as u32),
+            None,
+        )?;
+        ensure!(
+            refusal.code == CODE_INTEGRITY_ERROR,
+            "{scenario_id} abort_mid_input against {} server: expected \
+             INTEGRITY_ERROR (8), got {} ({}) on stream {stream_id}",
+            server.name(),
+            refusal.code,
+            refusal.detail
+        );
+        // Lookup: no admission was committed; the work is still declared.
+        let (declared, entries) = raw_page(&mut conn, 3, 0)?;
+        ensure!(
+            declared == 1 && entries == vec![(1, 0)],
+            "{scenario_id} abort_mid_input against {} server: an admission was \
+             committed or the declaration lost (declared={declared}, \
+             entries={entries:?})",
+            server.name()
+        );
+        observed.push((
+            "abort_mid_input",
+            format!(
+                "refusal code={} ({}) tagged [1, {stream_id}]; scope page lookup: \
+                 declared=1, entries=[(entity 1, state 0 DECLARED)] — no \
+                 admission receipt, no obligation change",
+                refusal.code,
+                named_code(refusal.code)
+            ),
+        ));
+        // Detach cleanly so the server can drain.
+        raw_detach(&mut conn, 4)?;
+        conn.finish_control()?;
+        let _ = conn.wait_closed(Duration::from_secs(10));
+    }
+
+    // 4. Connection loss mid-session: attach on a replacement connection.
+    {
+        let binding = {
+            let mut conn = raw_negotiate(&peer, &fixture, &owned_server, &mut events, &artifacts)?;
+            let binding = raw_create_session(&mut conn)?;
+            raw_declare(&mut conn, 2, &declare_op, 0, &[1], true)?;
+            let mut sha = [0u8; 32];
+            sha.copy_from_slice(&crate::decode_hex(&payload_sha)?);
+            let admit_op = oracle::operation_id(context.seed, "g6input", 7);
+            let header = rawclient::input_header_framed(
+                binding.generation,
+                &admit_op,
+                (0, 0, 1),
+                32,
+                &sha,
+                "text/plain",
+                "copy/v2",
+                0,
+                60_000,
+                1,
+                32,
+            );
+            let mut stream = conn.open_uni()?;
+            conn.write_stream(&mut stream, &header)?;
+            conn.write_stream(&mut stream, &oracle::dataset(context.seed, 8))?;
+            // No FIN, no close frame: the peer simply vanishes mid-reception.
+            conn.vanish();
+            binding
+        };
+        // The server needs a moment to reclaim the vanished connection's slot;
+        // the attach itself is a fresh connection and must not be affected.
+        thread::sleep(Duration::from_millis(300));
+        let mut conn = raw_negotiate(&peer, &fixture, &owned_server, &mut events, &artifacts)?;
+        conn.send_control(
+            FRAME_SESSION,
+            &rawclient::session_attach(1, &binding.authority, &binding.owner, binding.generation),
+        )?;
+        let attached = rawclient::parse_binding(&conn.expect_control(FRAME_SESSION)?)?;
+        ensure!(
+            attached.generation == binding.generation,
+            "attach receipt generation {} differs from {}",
+            attached.generation,
+            binding.generation
+        );
+        conn.send_control(FRAME_SESSION, &rawclient::next_sequence(2))?;
+        let sequence = rawclient::parse_next_sequence(&conn.expect_control(FRAME_SESSION)?)?;
+        ensure!(
+            sequence == 2,
+            "{scenario_id} connection_loss against {} server: next_creation_sequence \
+             {sequence}, expected exactly 2 (one creation consumed, none invented \
+             by transport events)",
+            server.name()
+        );
+        let (declared, entries) = raw_page(&mut conn, 3, 0)?;
+        ensure!(
+            declared == 1 && entries == vec![(1, 0)],
+            "{scenario_id} connection_loss against {} server: declaration not \
+             intact (declared={declared}, entries={entries:?})",
+            server.name()
+        );
+        raw_detach(&mut conn, 4)?;
+        conn.finish_control()?;
+        let close = match conn.try_wait_closed(Duration::from_secs(3))? {
+            Some(close) => {
+                raw_event_server_close(&mut events, server, "CONNECTION_CLOSED", &close)?;
+                format!("server-initiated {}", close_text(&close))
+            }
+            None => {
+                conn.close_application(b"probe complete")?;
+                "server left connection close to the client (MAY, Section 12.8); \
+                 probe closed the connection with application code 0"
+                    .to_string()
+            }
+        };
+        observed.push((
+            "connection_loss_mid_session",
+            format!(
+                "replacement connection attached generation {} (receipt validated); \
+                 next_creation_sequence={sequence} (exactly one creation); scope \
+                 page declared=1 entries=[(1, 0)] — no obligation changed by the \
+                 loss; clean close after detach: {}",
+                binding.generation, close
+            ),
+        ));
+    }
+
+    // 5. Stream credit: held inputs block at the ceiling; a refused input
+    //    releases its credit while the other held streams stay held (the
+    //    pipestream.4 regression surface).
+    {
+        let mut conn = raw_negotiate(&peer, &fixture, &owned_server, &mut events, &artifacts)?;
+        let binding = raw_create_session(&mut conn)?;
+        raw_declare(&mut conn, 2, &declare_op, 0, &[1], true)?;
+        let mut held: Vec<quinn::SendStream> = Vec::new();
+        for _ in 0..8 {
+            match conn.open_uni_ceiling()? {
+                Some(stream) => held.push(stream),
+                None => break,
+            }
+        }
+        ensure!(
+            !held.is_empty(),
+            "{scenario_id} stream_credit against {} server: no uni stream opened",
+            server.name()
+        );
+        let held_count = held.len();
+        // The refused input runs on a stream that was opened inside the
+        // credit; its refusal must release that stream's slot while the
+        // remaining held streams stay held.
+        let mut refused_stream = held.remove(0);
+        let refused_id = u64::from(refused_stream.id());
+        let bad_header = rawclient::input_header_framed(
+            binding.generation,
+            &oracle::operation_id(context.seed, "g6input", 8),
+            (0, 0, 1),
+            32,
+            &[0u8; 32],
+            "text/plain",
+            "copy/v2",
+            0,
+            60_000,
+            1,
+            32,
+        );
+        conn.write_stream(&mut refused_stream, &bad_header)?;
+        conn.write_stream(&mut refused_stream, &payload)?;
+        conn.finish_stream(&mut refused_stream)?;
+        let refusal = rawclient::parse_refusal(&conn.expect_control(FRAME_REFUSAL)?)
+            .context("stream_credit: refusal read")?;
+        events.append_as(
+            server.name(),
+            "server",
+            "REFUSAL",
+            None,
+            None,
+            None,
+            Some(refusal.code as u32),
+            None,
+        )?;
+        ensure!(
+            refusal.code == CODE_INTEGRITY_ERROR
+                && refusal.tag_kind == 1
+                && refusal.tag_id == refused_id,
+            "{scenario_id} stream_credit against {} server: refused input \
+             answered code {} ({}) tagged [{}, {}] on stream {refused_id}, \
+             expected INTEGRITY_ERROR tagged [1, {refused_id}]",
+            server.name(),
+            refusal.code,
+            refusal.detail,
+            refusal.tag_kind,
+            refusal.tag_id,
+        );
+        // The refused input's slot must be free again even while
+        // `held_count - 1` streams stay held.
+        let replacement = conn.open_uni_ceiling()?;
+        ensure!(
+            replacement.is_some(),
+            "{scenario_id} stream_credit against {} server: the refused input did \
+             not release its stream credit (replacement open still blocked with \
+             {} streams held)",
+            server.name(),
+            held.len(),
+        );
+        observed.push((
+            "stream_credit",
+            format!(
+                "held concurrent unidirectional opens: {held_count} (further opens \
+                 blocked at the peer's transport ceiling: {}); refused input on \
+                 stream {refused_id} answered INTEGRITY_ERROR and released its \
+                 credit — a replacement open succeeded while {} streams stay \
+                 held; MAX_STREAMS credit is released by refusals",
+                held_count < 8,
+                held.len(),
+            ),
+        ));
+        for stream in held.iter_mut() {
+            conn.reset_stream(stream, 0)?;
+        }
+        if let Some(mut stream) = replacement {
+            conn.reset_stream(&mut stream, 0)?;
+        }
+        conn.vanish();
+    }
+
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    stop_and_seal(context, scenario_dir, scenario_id, owned_server, events)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -15408,11 +16920,15 @@ mod tests {
             "g8-detach-drains",
             "g8-half-close-preserves-responses",
             "g8-timeout-no-completion-claim",
+            "g6-canonical-violations",
+            "g6-direction-and-correlation",
+            "g6-stream-identity-and-fin",
+            "g6-stopped-control-and-transfers",
         ] {
             let row = rows.iter().find(|row| row.id == id).unwrap();
             assert!(row.rust_implemented, "{id} must be implemented");
         }
-        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 46);
+        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 50);
     }
 
     #[test]
