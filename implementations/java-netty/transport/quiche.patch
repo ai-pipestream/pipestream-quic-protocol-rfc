@@ -69,7 +69,7 @@ index e812993..e27bac4 100644
  pub extern "C" fn quiche_conn_stream_readable(
      conn: &Connection, stream_id: u64,
 diff --git a/quiche/src/lib.rs b/quiche/src/lib.rs
-index a93bfb5..b48bc4f 100644
+index a93bfb5..d37fb65 100644
 --- a/quiche/src/lib.rs
 +++ b/quiche/src/lib.rs
 @@ -595,6 +595,8 @@ pub struct Config {
@@ -323,7 +323,59 @@ index a93bfb5..b48bc4f 100644
  
                  let frame = frame::Frame::MaxData {
                      max: flow_control.max_data_next(),
-@@ -5936,6 +6060,26 @@ impl<F: BufFactory> Connection<F> {
+@@ -5848,6 +5972,8 @@ impl<F: BufFactory> Connection<F> {
+ 
+                 self.stopped_stream_local_count =
+                     self.stopped_stream_local_count.saturating_add(1);
++
++                self.collect_drained_stream(stream_id);
+             },
+ 
+             Shutdown::Write => {
+@@ -5896,6 +6022,42 @@ impl<F: BufFactory> Connection<F> {
+         Ok(())
+     }
+ 
++    /// Collects a stream whose receive side completed while draining after a
++    /// local read shutdown.
++    ///
++    /// A drained stream discards everything it receives, so it never becomes
++    /// readable again and no `stream_recv()` call can collect it. Without
++    /// this, a peer-initiated unidirectional stream that was shut down for
++    /// reading would be retained until the connection closes after the peer's
++    /// RESET_STREAM or FIN, and its MAX_STREAMS credit would never be
++    /// returned. Bidirectional streams still wait for their send side, and a
++    /// stopped send side that has yet to report `StreamStopped` keeps the
++    /// stream, exactly as the ACK-driven collection does.
++    fn collect_drained_stream(&mut self, stream_id: u64) {
++        let stream = match self.streams.get(stream_id) {
++            Some(v) => v,
++
++            None => return,
++        };
++
++        if !stream.recv.is_draining() ||
++            !stream.is_complete() ||
++            stream.is_readable()
++        {
++            return;
++        }
++
++        let is_writable = stream.priority_key.writable.is_linked() &&
++            stream.send.is_stopped();
++
++        if is_writable {
++            return;
++        }
++
++        let local = stream.local;
++        self.streams.collect(stream_id, local);
++    }
++
+     /// Returns the stream's send capacity in bytes.
+     ///
+     /// If the specified stream doesn't exist (including when it has already
+@@ -5936,6 +6098,26 @@ impl<F: BufFactory> Connection<F> {
          Err(Error::InvalidStreamState(stream_id))
      }
  
@@ -350,6 +402,24 @@ index a93bfb5..b48bc4f 100644
      /// Returns the next stream that has data to read.
      ///
      /// Note that once returned by this method, a stream ID will not be returned
+@@ -7951,6 +8133,8 @@ impl<F: BufFactory> Connection<F> {
+ 
+                 self.reset_stream_remote_count =
+                     self.reset_stream_remote_count.saturating_add(1);
++
++                self.collect_drained_stream(stream_id);
+             },
+ 
+             frame::Frame::StopSending {
+@@ -8123,6 +8307,8 @@ impl<F: BufFactory> Connection<F> {
+                     if self.should_update_max_data() {
+                         self.almost_full = true;
+                     }
++
++                    self.collect_drained_stream(stream_id);
+                 }
+             },
+ 
 diff --git a/quiche/src/stream/mod.rs b/quiche/src/stream/mod.rs
 index 6355285..e48e59f 100644
 --- a/quiche/src/stream/mod.rs
@@ -606,10 +676,10 @@ index fb1008b..600a0df 100644
 +    }
  }
 diff --git a/quiche/src/tests.rs b/quiche/src/tests.rs
-index 0944993..82500cd 100644
+index 0944993..d0124de 100644
 --- a/quiche/src/tests.rs
 +++ b/quiche/src/tests.rs
-@@ -991,6 +991,939 @@ fn streamio(#[values("cubic", "bbr2_gcongestion")] cc_algorithm_name: &str) {
+@@ -991,6 +991,1090 @@ fn streamio(#[values("cubic", "bbr2_gcongestion")] cc_algorithm_name: &str) {
      assert!(pipe.server.stream_finished(4));
  }
  
@@ -1524,6 +1594,157 @@ index 0944993..82500cd 100644
 +    assert!(saw_replacement);
 +    assert_eq!(pipe.client.stream_send(0, b"d", false), Ok(1));
 +    assert_eq!(pipe.client.stream_send(8, b"r", false), Ok(1));
++}
++
++/// A peer-initiated unidirectional stream that the application shut down for
++/// reading drains silently, so it never becomes readable again. The peer's
++/// RESET_STREAM (its mandatory reply to STOP_SENDING) completes the receive
++/// side; the stream must be collected right there, returning MAX_STREAMS
++/// credit without any further `stream_recv()` call.
++#[test]
++fn drained_uni_stream_is_collected_after_peer_reset() {
++    let mut config = paired_receive_credit_config();
++    config.set_pair_receive_credit(false);
++    let mut pipe = test_utils::Pipe::with_config(&mut config).unwrap();
++    assert_eq!(pipe.handshake(), Ok(()));
++
++    assert_eq!(pipe.client.stream_send(2, b"x", false), Ok(1));
++    assert_eq!(pipe.advance(), Ok(()));
++    assert_eq!(pipe.server.streams.len(), 1);
++    assert_eq!(pipe.client.peer_streams_left_uni(), 0);
++
++    // The application refuses the object without draining it itself.
++    assert_eq!(pipe.server.stream_shutdown(2, Shutdown::Read, 42), Ok(()));
++    let mut r = pipe.server.readable();
++    assert_eq!(r.next(), None);
++    assert_eq!(pipe.server.streams.len(), 1);
++
++    // STOP_SENDING reaches the client, which resets the stream.
++    assert_eq!(pipe.advance(), Ok(()));
++    assert_eq!(
++        pipe.client.stream_send(2, b"y", false),
++        Err(Error::StreamStopped(42))
++    );
++    assert_eq!(pipe.advance(), Ok(()));
++
++    assert_eq!(pipe.server.streams.len(), 0);
++    assert_eq!(
++        pipe.server.stream_shutdown(2, Shutdown::Read, 0),
++        Err(Error::Done)
++    );
++    assert_eq!(pipe.server.flow_control.consumed(), pipe.server.rx_data);
++    assert_eq!(pipe.client.peer_streams_left_uni(), 1);
++
++    // The replacement stream works end to end.
++    assert_eq!(pipe.client.stream_send(6, b"z", true), Ok(1));
++    assert_eq!(pipe.advance(), Ok(()));
++    let mut data = [0; 1];
++    assert_eq!(pipe.server.stream_recv(6, &mut data), Ok((1, true)));
++    assert_eq!(data, *b"z");
++    assert_eq!(pipe.server.streams.len(), 0);
++}
++
++/// The peer's FIN can already be in flight when the application shuts the
++/// stream down for reading. Completing a drained stream by FIN collects it too.
++#[test]
++fn drained_uni_stream_is_collected_after_late_fin() {
++    let mut config = paired_receive_credit_config();
++    config.set_pair_receive_credit(false);
++    let mut pipe = test_utils::Pipe::with_config(&mut config).unwrap();
++    assert_eq!(pipe.handshake(), Ok(()));
++
++    assert_eq!(pipe.client.stream_send(2, b"x", false), Ok(1));
++    assert_eq!(pipe.advance(), Ok(()));
++    assert_eq!(pipe.server.stream_shutdown(2, Shutdown::Read, 42), Ok(()));
++
++    // The FIN leaves before STOP_SENDING arrives.
++    assert_eq!(pipe.client.stream_send(2, b"yz", true), Ok(2));
++    let flight = test_utils::emit_flight(&mut pipe.client).unwrap();
++    test_utils::process_flight(&mut pipe.server, flight).unwrap();
++
++    assert_eq!(pipe.server.streams.len(), 0);
++    assert_eq!(pipe.server.flow_control.consumed(), pipe.server.rx_data);
++    assert_eq!(pipe.advance(), Ok(()));
++    assert_eq!(pipe.client.peer_streams_left_uni(), 1);
++    assert_eq!(pipe.client.stream_send(6, b"z", true), Ok(1));
++    assert_eq!(pipe.advance(), Ok(()));
++    let mut data = [0; 1];
++    assert_eq!(pipe.server.stream_recv(6, &mut data), Ok((1, true)));
++    assert_eq!(pipe.server.streams.len(), 0);
++}
++
++/// Shutting down reading on a unidirectional stream whose FIN was already
++/// buffered completes it immediately; nothing else would ever collect it.
++#[test]
++fn stream_shutdown_read_collects_finished_uni_stream() {
++    let mut config = paired_receive_credit_config();
++    config.set_pair_receive_credit(false);
++    let mut pipe = test_utils::Pipe::with_config(&mut config).unwrap();
++    assert_eq!(pipe.handshake(), Ok(()));
++
++    assert_eq!(pipe.client.stream_send(2, b"xyz", true), Ok(3));
++    assert_eq!(pipe.advance(), Ok(()));
++    let mut r = pipe.server.readable();
++    assert_eq!(r.next(), Some(2));
++    assert_eq!(pipe.server.streams.len(), 1);
++
++    assert_eq!(pipe.server.stream_shutdown(2, Shutdown::Read, 42), Ok(()));
++    assert_eq!(pipe.server.streams.len(), 0);
++    let mut r = pipe.server.readable();
++    assert_eq!(r.next(), None);
++    assert_eq!(pipe.server.flow_control.consumed(), pipe.server.rx_data);
++
++    // No STOP_SENDING is sent for a finished stream; credit is returned.
++    let mut buf = [0; 65535];
++    let (len, _) = pipe.server.send(&mut buf).unwrap();
++    let mut dummy = buf[..len].to_vec();
++    let frames =
++        test_utils::decode_pkt(&mut pipe.client, &mut dummy[..len]).unwrap();
++    assert!(!frames
++        .iter()
++        .any(|f| matches!(f, frame::Frame::StopSending { .. })));
++    assert!(frames
++        .iter()
++        .any(|f| matches!(f, frame::Frame::MaxStreamsUni { max: 2 })));
++    assert_eq!(pipe.client_recv(&mut buf[..len]), Ok(len));
++    assert_eq!(pipe.advance(), Ok(()));
++    assert_eq!(pipe.client.peer_streams_left_uni(), 1);
++}
++
++/// A bidirectional stream keeps upstream behavior: a drained receive side is
++/// collected only once its send side is also complete.
++#[test]
++fn drained_bidi_stream_waits_for_its_send_side() {
++    let mut config = paired_receive_credit_config();
++    config.set_pair_receive_credit(false);
++    config.set_initial_max_stream_data_bidi_local(128);
++    config.set_initial_max_stream_data_bidi_remote(128);
++    config.set_initial_max_streams_bidi(1);
++    let mut pipe = test_utils::Pipe::with_config(&mut config).unwrap();
++    assert_eq!(pipe.handshake(), Ok(()));
++
++    assert_eq!(pipe.client.stream_send(0, b"x", false), Ok(1));
++    assert_eq!(pipe.advance(), Ok(()));
++    assert_eq!(pipe.server.stream_shutdown(0, Shutdown::Read, 42), Ok(()));
++    assert_eq!(pipe.advance(), Ok(()));
++    assert_eq!(
++        pipe.client.stream_send(0, b"y", false),
++        Err(Error::StreamStopped(42))
++    );
++    assert_eq!(pipe.advance(), Ok(()));
++
++    // Peer reset arrived, but the server still owes its own FIN.
++    assert_eq!(pipe.server.streams.len(), 1);
++    assert_eq!(pipe.client.peer_streams_left_bidi(), 0);
++
++    assert_eq!(pipe.server.stream_send(0, b"done", true), Ok(4));
++    assert_eq!(pipe.advance(), Ok(()));
++    let mut data = [0; 4];
++    assert_eq!(pipe.client.stream_recv(0, &mut data), Ok((4, true)));
++    assert_eq!(pipe.advance(), Ok(()));
++    assert_eq!(pipe.server.streams.len(), 0);
++    assert_eq!(pipe.client.streams.len(), 0);
++    assert_eq!(pipe.client.peer_streams_left_bidi(), 1);
 +}
 +
 +fn paired_receive_credit_config() -> Config {

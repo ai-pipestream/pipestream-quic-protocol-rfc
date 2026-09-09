@@ -1,0 +1,147 @@
+PipeStream Java V2 drained-stream collection (transport pipestream.4), 2026-09-09
+================================================================================
+
+Status
+------
+COMPLETE. quiche unit tests, the fresh source-pinned native build with its
+297 Netty native tests (including the new credit test), and the full Java
+suite on the new artifacts (716 tests, 0 failures, 123 fresh XML reports) all
+pass. Results below.
+
+Product branch: agent/rfc-claude-java-v2 (base 8eb5a17 on feat/durable-work-results-v2)
+Product head when this file was started: 18f3728
+Source clones carrying the committed changes (not upstream publication targets):
+  quiche: scratchpad clone of /work/reference-code/quiche-pipestream
+    local commit 1251e10 "Collect drained receive streams on completion"
+    on top of 4850d6a (the .3 state), upstream base 4f347477006bf7f928335d28f05056013f70b87e
+  netty:  scratchpad clone of /work/reference-code/netty-quic-pipestream
+    local commit 729fe3e "Release drained receive streams in transport revision four"
+    on top of e282f13 (the .3 state), upstream base e0789d32c72f46fd2e7c99b6fdbbf7e2f4409e44
+Re-exporting each clone's diff against its upstream base reproduces the
+checked-in patches:
+  quiche.patch sha256 c338b7950b26f8423453e1736cb14e252652985d3bca0969024396c2f9ab5da6
+  netty.patch  sha256 9f27921f0b60de93f6ccf2a4ffe83f44c831031dec3ea1e855a59dd3122301d1
+  (SHA256SUMS in implementations/java-netty/transport regenerated accordingly;
+  quiche-Cargo.lock and licenses unchanged.)
+
+Defect
+------
+quiche drains a stream after a local stream_shutdown(Read): incoming data is
+discarded and the stream is removed from the readable set, so no later
+stream_recv() can touch it. When the peer then completes the stream with
+RESET_STREAM (its mandatory reply to STOP_SENDING) or a late FIN, the only
+collection paths are (a) stream_recv() on a readable stream, (b) the send-side
+ACK path, (c) stream_send()/stream_capacity() on a stopped send side. A
+peer-initiated unidirectional stream has no send side and is never readable
+again, so none applies: the stream stays in the map until the connection
+closes and its MAX_STREAMS credit is never returned (collect() is what
+increments local_max_streams_uni_next). Every refused or abandoned object
+stream therefore permanently consumed one of the peer's stream slots. The Java
+V2 server refuses inputs with shutdownInput (STOP_SENDING) at header, idle and
+lifetime deadlines and on replay, so a peer that exhausted dataStreams with
+refused inputs could never open another one.
+
+Bidirectional streams were not leaked in the common case because the local
+send side's FIN acknowledgment collects them, but the same leak applies when
+the send side completed before the peer's reset arrived.
+
+Fix (quiche/src/lib.rs, new Connection::collect_drained_stream)
+----------------------------------------------------------------
+After processing a received RESET_STREAM, after a STREAM frame written into a
+draining receive buffer, and at the end of stream_shutdown(Read), collect the
+stream when its receive side is draining, the stream is complete, it is not
+readable, and its send side is not a stopped side still owing StreamStopped to
+the application (the same rule the ACK-driven path uses). Bidirectional streams
+still wait for their own send side. No change to any other collection path,
+frame emission, or flow-control accounting.
+
+Rust regression tests (quiche/src/tests.rs)
+-------------------------------------------
+  drained_uni_stream_is_collected_after_peer_reset
+  drained_uni_stream_is_collected_after_late_fin
+  stream_shutdown_read_collects_finished_uni_stream
+  drained_bidi_stream_waits_for_its_send_side   (guards the bidi rule)
+
+Required RED before the fix (tests only, lib.rs unchanged):
+  scratchpad quiche-red.log
+  cargo test -j 12 --offline -p quiche --lib -- drained_ stream_shutdown_read_collects_finished_uni_stream
+  exit 101: 1 passed (bidi rule), 3 failed, each at `assert_eq!(pipe.server.streams.len(), 0)`
+  with left: 1 (the server still held the completed stream).
+Focused GREEN after the fix:
+  scratchpad quiche-green.log
+  same command, exit 0: 4 passed.
+Full quiche unit suite with the fix:
+  scratchpad quiche-full.log
+  cargo test -j 16 --offline --locked -p quiche --lib --features 'ffi qlog custom-client-dcid'
+  exit 0: 953 passed, 0 failed, 0 ignored (949 before + 4 new).
+Prebuilt BoringSSL from the retained .3 build directory was linked through
+QUICHE_BSSL_PATH for these unit runs; the transport bundle build compiles its
+own pinned BoringSSL as before.
+rustfmt (stable) reports only the pre-existing nightly-option differences
+that the unpatched checkout reports too; the new code follows the surrounding
+style.
+
+Netty change (codec-classes-quic QuicheQuicStreamChannel.removeStreamFromParent)
+--------------------------------------------------------------------------------
+A closed stream channel whose input was shut down locally is released from the
+parent's stream map (previously only after a received FIN). A drained native
+stream never becomes readable again, so the map entry could never be used; the
+native stream itself is collected by the quiche change above. New test
+codec-native-quic QuicStreamCreditTest.refusedPeerUnidirectionalStreamReturnsItsStreamCredit:
+a server with initial_max_streams_uni = 1 refuses three successive peer
+unidirectional streams with shutdownInput(42) + close(); after each refusal the
+client's peerAllowedStreams(UNIDIRECTIONAL) returns to 1 without any further
+read. This test fails on the .3 native library (credit never returns) and is
+run by the bundle build.
+
+Version bump: 4.2.17.Final-pipestream.3 -> 4.2.17.Final-pipestream.4 in both
+codec-classes-quic and codec-native-quic POMs; the library name
+netty_quiche42_pipestream is unchanged.
+
+Java regression
+---------------
+DurableWireNegativeTest.stalledInputsExpireWithoutBlockingAHealthyConnection
+(head-deadline refusal, idle refusal, two reset inputs, then a replacement
+input on the same connection) fails on .3 with STREAM_LIMIT retries until the
+client's idle timeout closes the connection (scratchpad wire-8.log), and is the
+Java-level check for the fix on .4.
+
+Native transport build (transport/build.sh, fresh clones from the pinned upstream revisions)
+--------------------------------------------------------------------------------------------
+Waited on BENCHMARK.lock (held by Meta's dt-full benchmark) from 00:20Z, acquired both
+locks 2026-09-09T05:11:09Z, finished 05:13Z with BUILD SUCCESS; wrapper and build.sh exit 0.
+Build directory: /work/reference-code/pipestream-quic-build.jJsCGdZV (verify.log retained there)
+Isolated repository: /work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository
+Netty native tests: 297 run, 0 failures, 0 errors, 0 skipped
+  (QuicStreamCreditTest: 2 run, 0 failures - both SSL task executors)
+Installed artifacts (sha256):
+  netty-codec-classes-quic-4.2.17.Final-pipestream.4.jar
+    87a3d581978b63085e5f52fc8dafe132eb81ddf86c180a87cf5461b126547105
+  netty-codec-native-quic-4.2.17.Final-pipestream.4-linux-x86_64.jar
+    e49d88b724cc79c936899542c1565a00454a93d512816de6e8cfefa637c51c50
+  netty-codec-native-quic-4.2.17.Final-pipestream.4.jar (no classifier)
+    f46725b5fa17933334b218d4f3bbd2e1d88b9ed90e441d18945ec25747dae751
+Raw log: conformance/results/async-java-v2/raw/transport-build-pipestream4-2026-09-09.log
+
+Java suite on pipestream.4
+--------------------------
+  cd implementations/java-netty && mvn -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository -Psealed-interop install
+  (online, so the non-transport dependencies were fetched into the new isolated repository;
+   run under BENCHMARK.lock 07:40:03Z-07:45:45Z after Meta released it)
+  Tests run: 716, Failures: 0, Errors: 0, Skipped: 0; BUILD SUCCESS
+  123 fresh surefire XML reports (716 testcases, none with failure/error elements);
+  their sha256 list: conformance/results/async-java-v2/raw/surefire-xml-pipestream4-2026-09-09.sha256
+  (list digest 633e0149f0f5745dae024888e032159303d7d9b8e3b73404e7311a58c2060f69)
+  Relevant suites: DurableWireNegativeTest 6/6 (stall test now green), TransportDependencyTest 1/1
+  (manifest: Quiche-Revision 4f34747..., BoringSSL-Revision 0226f30..., both patch hashes),
+  RustClientJavaServerTest 2/2 and JavaClientRustServerTest 1/1 (sealed-interop, real Rust peer),
+  V2MainProcessTest 1/1 (combined Java/Java processes), FixtureMainTest 5/5, DurableServerTest 4,
+  DurableClientTest 2, DurableBranchTest 4, DurableMutationTest 4, DurableAuthorizationTest 4,
+  DurableLifecycleTest 4.
+  Raw log: conformance/results/async-java-v2/raw/full-install-pipestream4-2026-09-09.log
+Java artifacts built in that run (sha256):
+  pipestream-quic-netty-0.1.0-SNAPSHOT.jar      52ef1077cc6b5f3727a489e1861cc02cf2f27b757468f38e6544892c65221ea7
+  pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar  6da5e9d08c6ccb39455557defaaf8ba043d7fc42cb547bc5c3be81ef17ad3de4
+  (the shaded jar is not timestamp-reproducible; the plain jar hash is the stable pin)
+
+Strict changed-type doclint (-package -Xdoclint:all -Werror) over the 21 changed V2 types: exit 0 at 18f3728.

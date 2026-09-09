@@ -1,0 +1,13 @@
+   Compiling quiche v0.25.0 (/tmp/claude-1000/-work-worktrees/96958866-c250-4b08-8b07-b8740e94b172/scratchpad/quiche-fix/quiche)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.69s
+     Running unittests src/lib.rs (/tmp/claude-1000/-work-worktrees/96958866-c250-4b08-8b07-b8740e94b172/scratchpad/quiche-target/debug/deps/quiche-76c55c4a93f0fe3c)
+
+running 4 tests
+test tests::stream_shutdown_read_collects_finished_uni_stream ... ok
+test tests::drained_uni_stream_is_collected_after_peer_reset ... ok
+test tests::drained_bidi_stream_waits_for_its_send_side ... ok
+test tests::drained_uni_stream_is_collected_after_late_fin ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 945 filtered out; finished in 0.01s
+
+exit=0
