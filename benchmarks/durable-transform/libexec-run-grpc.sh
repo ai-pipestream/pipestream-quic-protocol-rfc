@@ -15,6 +15,12 @@ sha256sum "$GRPC_WORKER" "$GRPC_COORD" > "$ART/bin.sha256"
 lo_before=$(awk -F: '/lo:/{split($2,f," "); print f[1]":"f[9]}' /proc/net/dev)
 
 PIDS=""
+SAMPLER=""
+cleanup() {
+  [ -n "$SAMPLER" ] && kill "$SAMPLER" 2>/dev/null || true
+  [ -n "$PIDS" ] && kill $PIDS 2>/dev/null || true
+}
+trap cleanup EXIT
 for i in 0 1 2; do
   w=$(printf '%s' abc | cut -c $((i + 1))); port=$((18443 + i))
   "$GRPC_WORKER" --bind "127.0.0.1:$port" --cert "$W/pki/grpc-server-$w.pem" \

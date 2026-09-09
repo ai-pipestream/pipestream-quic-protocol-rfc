@@ -263,10 +263,11 @@ async fn replay_unresolved(
             Mutation::Admit(params) => {
                 let ordinal = (params.work.entity.0 - 1) as u64;
                 let path = chunk_path(staging, ordinal);
-                FileInput::open(path, OBJECT_LIMIT)
-                    .await?
-                    .send(session.client.clone(), intent, declaration)
-                    .await?;
+                let replay_intent = journal::Intent {
+                    operation: intent.operation,
+                    mutation: Mutation::Admit(params.clone()),
+                };
+                send_admission(session, &path, &replay_intent, declaration, ordinal).await?;
                 session.log("replayed-admit", ordinal as i64, "");
             }
             _ => {
@@ -352,6 +353,58 @@ async fn fetch_verified(
     Ok(())
 }
 
+/// Admit one chunk, treating authority capacity refusals as backpressure.
+///
+/// A LIMIT_EXCEEDED refusal means the authority is healthy but full; the
+/// journaled intent is unchanged, so resending the SAME operation identity is
+/// safe and required for durable progress. Every refusal is recorded in the
+/// event stream with its named code; any other error fails fast. Bounded:
+/// 240 attempts, 100 ms doubling to 5 s (about 10 minutes worst case).
+async fn send_admission(
+    session: &Session,
+    chunk: &Path,
+    intent: &journal::Intent,
+    declaration: OperationId,
+    ordinal: u64,
+) -> Result<()> {
+    const MAX_ATTEMPTS: u32 = 240;
+    let mut wait_ms = 100u64;
+    for attempt in 0..MAX_ATTEMPTS {
+        let outcome = FileInput::open(chunk.to_path_buf(), OBJECT_LIMIT)
+            .await?
+            .send(session.client.clone(), intent.clone(), declaration)
+            .await;
+        match outcome {
+            Ok(_) => {
+                if attempt > 0 {
+                    session.log(
+                        "admit-retried",
+                        ordinal as i64,
+                        &format!("succeeded after {attempt} refusals"),
+                    );
+                }
+                return Ok(());
+            }
+            Err(e) => {
+                let backpressure = matches!(
+                    &e,
+                    session::Failure::Refused(r) if r.code == ErrorCode::LimitExceeded
+                );
+                if !backpressure {
+                    return Err(e.into());
+                }
+                session.log("admit-refused", ordinal as i64, "LIMIT_EXCEEDED");
+                if attempt + 1 >= MAX_ATTEMPTS {
+                    return Err(e.into());
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
+                wait_ms = (wait_ms * 2).min(5_000);
+            }
+        }
+    }
+    unreachable!("admit retry loop always returns");
+}
+
 fn sync_dir(path: &Path) -> Result<()> {
     let dir = OpenOptions::new().read(true).open(path)?;
     dir.sync_all()?;
@@ -431,10 +484,14 @@ async fn run_session(
                 },
             }),
         };
-        FileInput::open(chunk_path(staging, ordinal), OBJECT_LIMIT)
-            .await?
-            .send(session.client.clone(), intent, declaration)
-            .await?;
+        send_admission(
+            &session,
+            &chunk_path(staging, ordinal),
+            &intent,
+            declaration,
+            ordinal,
+        )
+        .await?;
         session.log("admitted", ordinal as i64, "");
     }
     // Watch, fetch, and verify each chunk.
