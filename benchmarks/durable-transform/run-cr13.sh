@@ -50,10 +50,11 @@ for _ in $(seq 1 300); do [ -f "$W/ps-a.ready" ] && break; sleep 0.1; done
 [ -f "$W/ps-a.ready" ] || { echo "probe worker did not start (see $W/ps-a.log)"; exit 1; }
 
 TLS=(--ca "$W/pki/ps-ca.pem" --cert "$W/pki/ps-client.pem" --key "$W/pki/ps-client.key")
-for arm in idle lifetime; do
+for arm in idle lifetime complete; do
   timeout 300 "$PS_COORD" probe "${TLS[@]}" --owner workload --authority workload-a \
     --connect "127.0.0.1:$port" --journal "$W/probe-$arm.sqlite" \
     --creation-sequence 1 --seed "$SEED" --arm "$arm" --events "$ART/probe-events.tsv" \
     || { echo "CR13 $arm arm FAILED ($MODE worker)"; exit 1; }
 done
-echo "CR13 PASS ($MODE worker): idle and lifetime deadlines observed"
+grep -q "probe-complete" "$ART/probe-events.tsv" || { echo "CR13: complete arm left no commit row"; exit 1; }
+echo "CR13 PASS ($MODE worker): idle/lifetime deadlines fingerprinted, complete control committed"

@@ -131,14 +131,20 @@ used 1.97.1 against that closure. `cargo build` on the host will confirm.
   fail the run when the metric sampler dies mid-run or any worker has
   no samples (proven: killed-sampler arm exits 1
   `metric sampler died mid-run`; clean arm passes).
-- CR13 arms (`run-cr13.sh`, new `probe` subcommand): idle arm proves a
-  3 s stall survives (boundary control) while a 7 s control-only stall
-  kills the stream despite 14 unrelated reads; lifetime arm proves
-  28 s of continuous progress still dies at the 30 s absolute cap.
-  Both PASS vs the Rust worker. Worker type is immaterial (deadlines
-  are client-enforced), so no Java duplication. Fidelity note for
-  transport owners: post-deadline writes surface Cancelled, not the
-  deadline that killed the stream.
+- CR13 arms (`run-cr13.sh`, new `probe` subcommand), reopened with
+  timing-window fingerprints: idle arm (3 s stall survives as boundary
+  control; 7 s stall under varied unrelated wire traffic — missing-work
+  reads, scope pages, watch polls — dies at ~7.1 s), lifetime arm
+  (28 s continuous progress dies at ~30.0 s), complete arm (in-cap
+  transfer commits cleanly, proving non-vacuity). PASS requires the
+  failure inside the window with a LimitExceeded/Cancelled code;
+  integrity/conflict/auth codes are explicitly rejected. PASS vs Rust
+  AND Java workers with identical fingerprints. Scoped claim: Rust
+  client upload path only; server-side enforcement and the download
+  direction are NOT covered. Fidelity note for transport owners:
+  post-deadline writes surface Cancelled, not the deadline that killed
+  the stream; a true disable-deadline negative control needs a client
+  idle/lifetime knob that does not exist in the current API.
 
 ## 9. Safe next actions
 

@@ -524,12 +524,18 @@ fn blake_of_chunk(seed: u64, total: u64, ordinal: u64) -> [u8; 32] {
     hash.finalize().into()
 }
 
-/// CR13 idle/lifetime probe: script a partial object upload and assert the
+/// CR13 idle/lifetime probe: script partial object uploads and assert the
 /// client-side stream deadlines fire. `idle` stalls all payload progress
-/// while issuing unrelated control reads (with a 3 s boundary control
-/// proving the stream was alive first); `lifetime` makes slow continuous
-/// progress past the absolute stream lifetime. Both arms PASS only when
-/// the post-stall payload step finds the stream dead.
+/// while issuing varied unrelated wire requests (with a 3 s boundary
+/// control proving the stream was alive first); `lifetime` makes slow
+/// continuous progress past the absolute stream lifetime; `complete`
+/// finishes valid transfers inside both caps as the non-vacuity control.
+/// Deadline arms PASS only when the post-stall payload step fails inside
+/// the expected time window with a deadline-adjacent code, which
+/// distinguishes the deadline from instant integrity errors (wrong window)
+/// and unrelated cancellation (wrong code or window). Scoped claim: this
+/// exercises the Rust client's upload path against the connected worker;
+/// server-side enforcement and the download direction are NOT covered.
 #[derive(Debug, Args)]
 struct Probe {
     #[command(flatten)]
@@ -546,7 +552,7 @@ struct Probe {
     creation_sequence: u64,
     #[arg(long)]
     seed: u64,
-    /// "idle" or "lifetime".
+    /// "idle", "lifetime", or "complete".
     #[arg(long)]
     arm: String,
     #[arg(long)]
@@ -630,27 +636,46 @@ async fn assemble_final(seed: u64, total: u64, staging: &Path, output: &Path, ev
     Ok(())
 }
 
-/// Assert a stalled upload stream is dead. The client enforces the idle and
-/// absolute stream deadlines inside its upload task (`bounded` in
-/// `v2_client::transport::objects`); by the time a post-stall payload step
-/// runs, the stream is already reset, so the step surfaces whatever
+/// Assert a stalled upload stream died AT the deadline. The client enforces
+/// the idle and absolute stream deadlines inside its upload task (`bounded`
+/// in `v2_client::transport::objects`); by the time a post-stall payload
+/// step runs, the stream is already reset, so the step surfaces whatever
 /// post-mortem error the writer reports rather than the deadline itself.
-/// The arm therefore asserts death (any error), not the code: the control
-/// write below proves the stream was alive first, so death after the stall
-/// is the deadline firing, not instant failure. The observed code is
-/// recorded in events for the record. Follow-up for the transport owners:
-/// post-deadline writes report Cancelled instead of the deadline that
-/// killed the stream.
-fn assert_stream_dead(
+/// The fingerprint is therefore code family AND time window: the failure
+/// must carry a deadline-adjacent code (LimitExceeded or Cancelled — the
+/// two this stack surfaces around stream death; integrity, conflict,
+/// authorization and not-found codes are explicitly rejected) and must
+/// land inside [floor, ceiling] measured from the given anchor instant.
+/// An instant integrity error fails the floor; an unrelated cancellation
+/// fails the code gate, the window, or both. Follow-up for the transport
+/// owners: post-deadline writes report Cancelled instead of the deadline
+/// that killed the stream.
+fn assert_deadline_fired(
     session: &Session,
     result: &std::result::Result<(), session::Failure>,
+    anchor: Instant,
+    floor_ms: u64,
+    ceiling_ms: u64,
+    what: &str,
 ) -> Result<()> {
+    let elapsed_ms = anchor.elapsed().as_millis() as u64;
     match result {
-        Err(e) => {
-            session.log("probe-stream-dead", -1, &format!("{e:?}"));
+        Err(session::Failure::Protocol(e))
+            if e.code == ErrorCode::LimitExceeded || e.code == ErrorCode::Cancelled =>
+        {
+            session.log(
+                "probe-stream-dead",
+                -1,
+                &format!("{what}: {e:?} at {elapsed_ms}ms"),
+            );
+            if elapsed_ms < floor_ms || elapsed_ms > ceiling_ms {
+                bail!(
+                    "{what}: failure at {elapsed_ms}ms outside deadline window [{floor_ms},{ceiling_ms}]ms"
+                );
+            }
             Ok(())
         }
-        Ok(()) => bail!("stalled upload stream survived: no deadline enforced"),
+        other => bail!("{what}: expected deadline-adjacent failure, got {other:?}"),
     }
 }
 
@@ -707,6 +732,30 @@ async fn open_probe_upload(
     Ok((admission, content))
 }
 
+/// Varied unrelated wire traffic: missing-work reads, scope pages, and
+/// watch polls. All read-only, all real round trips, none of them payload
+/// on any object stream, so none may renew object idle.
+async fn unrelated_traffic(session: &Session, ordinal: u64) -> Result<()> {
+    match ordinal % 3 {
+        0 => {
+            let _ = session.client.observed_work(work_key(900 + ordinal)).await?;
+        }
+        1 => {
+            let _ = session
+                .client
+                .scope_page(Number(0), Number(0), PageLimit(16))
+                .await?;
+        }
+        _ => {
+            let _ = session
+                .client
+                .watch(work_key(901 + ordinal), Number(0), WaitMs(100))
+                .await;
+        }
+    }
+    Ok(())
+}
+
 async fn probe_idle(session: &Session, seed: u64, worker: u64) -> Result<()> {
     let (mut admission, content) = open_probe_upload(session, seed, worker, "probe-idle").await?;
     admission.write(&content[..16]).await?;
@@ -715,27 +764,30 @@ async fn probe_idle(session: &Session, seed: u64, worker: u64) -> Result<()> {
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     admission.write(&content[16..32]).await?;
     session.log("probe-alive", -1, "idle arm: stream alive after 3 s stall");
-    // Real stall: 7 s of control-only reads that must NOT renew object idle.
-    session.log("probe-stalled", -1, "idle arm: payload stopped, control reads continue");
-    for _ in 0..14 {
+    // Real stall: 7 s of varied unrelated wire requests that must NOT
+    // renew object idle.
+    session.log("probe-stalled", -1, "idle arm: payload stopped, mixed control traffic continues");
+    let anchor = Instant::now();
+    for i in 0..14 {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        let _ = session.client.observed_work(work_key(999)).await?;
+        unrelated_traffic(session, i).await?;
     }
     // Idle cap (5 s from the last payload progress) has passed: the next
-    // payload step must find the stream dead.
+    // payload step must fail inside the deadline window.
     let outcome = match admission.write(&content[32..48]).await {
         Err(e) => Err(e),
         Ok(()) => admission.finish().await.map(|_| ()),
     };
     let _ = admission.abort().await;
     session.log("probe-deadline-observed", -1, "idle");
-    assert_stream_dead(session, &outcome)
+    assert_deadline_fired(session, &outcome, anchor, 4_000, 40_000, "idle")
 }
 
 async fn probe_lifetime(session: &Session, seed: u64, worker: u64) -> Result<()> {
     let (mut admission, content) = open_probe_upload(session, seed, worker, "probe-lifetime").await?;
     // Slow continuous progress (8 bytes / 2 s) past the 30 s absolute
     // lifetime: progress must NOT extend it.
+    let anchor = Instant::now();
     let mut outcome: std::result::Result<(), session::Failure> = Ok(());
     for i in 0..17 {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -753,7 +805,28 @@ async fn probe_lifetime(session: &Session, seed: u64, worker: u64) -> Result<()>
     }
     let _ = admission.abort().await;
     session.log("probe-deadline-observed", -1, "lifetime");
-    assert_stream_dead(session, &outcome)
+    assert_deadline_fired(session, &outcome, anchor, 25_000, 120_000, "lifetime")
+}
+
+/// Non-vacuity control: a transfer that stays inside both caps must
+/// commit cleanly. Progress over ~6 s also positively shows payload
+/// activity renewing idle (the complement of the idle arm).
+async fn probe_complete(session: &Session, seed: u64, worker: u64) -> Result<()> {
+    let (mut admission, content) = open_probe_upload(session, seed, worker, "probe-complete").await?;
+    for i in 0..4 {
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        let off = i * 256;
+        admission.write(&content[off..off + 256]).await?;
+        session.log("probe-progress", i as i64, "complete arm");
+    }
+    admission.finish().await?;
+    let receipt = admission.receipt().await?;
+    session.log(
+        "probe-complete",
+        -1,
+        &format!("committed operation {:02x?}", receipt.operation.0),
+    );
+    Ok(())
 }
 
 async fn run_probe(p: &Probe) -> Result<()> {
@@ -767,6 +840,7 @@ async fn run_probe(p: &Probe) -> Result<()> {
     match p.arm.as_str() {
         "idle" => probe_idle(&session, p.seed, 0).await?,
         "lifetime" => probe_lifetime(&session, p.seed, 0).await?,
+        "complete" => probe_complete(&session, p.seed, 0).await?,
         other => bail!("unknown probe arm: {other}"),
     }
     session.client.shutdown().await?;
