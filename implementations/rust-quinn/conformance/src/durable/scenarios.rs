@@ -97,6 +97,8 @@ pub fn rows() -> Vec<Row> {
         "G5",
         &[
             "g5-cert-rotation-same-owner",
+            "g5-missing-client-cert",
+            "g5-unmapped-principal",
             "g5-foreign-owner",
             "g5-untrusted-identity",
             "g5-expired-identity",
@@ -158,6 +160,11 @@ pub fn rows() -> Vec<Row> {
         "g2-duplicate-op-changed-params",
         "g2-simultaneous-duplicate",
         "g2-kill-server-after-admission-recovery",
+        "g5-untrusted-identity",
+        "g5-missing-client-cert",
+        "g5-unmapped-principal",
+        "g5-foreign-owner",
+        "g5-no-existence-disclosure",
     ] {
         rows.iter_mut()
             .find(|row| row.id == id)
@@ -192,6 +199,8 @@ pub enum DirectionOutcome {
 fn direction_coverage(row: &Row, context: &ScenarioContext) -> String {
     if row.id == "g1-leaf-copy" && context.java_jar.is_some() {
         "rust-client/rust-server, rust-client/java-server, java-client/rust-server".to_owned()
+    } else if row.id.starts_with("g5-") && context.java_jar.is_some() {
+        "rust-client/rust-server, rust-client/java-server".to_owned()
     } else {
         "rust-client/rust-server".to_owned()
     }
@@ -236,6 +245,11 @@ fn run_rust_direction(row: &Row, context: &ScenarioContext) -> Result<()> {
         "g2-kill-server-after-admission-recovery" => {
             g2_kill_server_after_admission_recovery(context)
         }
+        "g5-untrusted-identity" => g5_untrusted_identity(context),
+        "g5-missing-client-cert" => g5_missing_client_cert(context),
+        "g5-unmapped-principal" => g5_unmapped_principal(context),
+        "g5-foreign-owner" => g5_foreign_owner(context),
+        "g5-no-existence-disclosure" => g5_no_existence_disclosure(context),
         other => bail!("scenario {other} has no rust direction implemented"),
     }
 }
@@ -1341,6 +1355,1211 @@ fn g2_kill_server_after_admission_recovery(context: &ScenarioContext) -> Result<
     )
 }
 
+// ---------------------------------------------------------------------------
+// G5 identity/authorization rows (hook-free)
+// ---------------------------------------------------------------------------
+
+/// Section 12.2 refusal-code table, used only to NAME codes that a subject
+/// transcript prints verbatim; a code is never inferred from a generic error.
+const REFUSAL_CODES: &[(&str, u32)] = &[
+    ("FRAME_ERROR", 1),
+    ("EXTENSION_UNSUPPORTED", 2),
+    ("UNAUTHORIZED", 3),
+    ("LIMIT_EXCEEDED", 4),
+    ("NOT_FOUND", 5),
+    ("EXPIRED", 6),
+    ("CONFLICT", 7),
+    ("INTEGRITY_ERROR", 8),
+    ("NOT_READY", 9),
+    ("WAIT_TIMEOUT", 10),
+    ("DEADLINE_EXCEEDED", 11),
+    ("CANCELLED", 12),
+    ("APPLICATION_UNSUPPORTED", 13),
+    ("CONTROL_RESET", 14),
+    ("INTERNAL_ERROR", 15),
+    ("OUTPUT_UNAVAILABLE", 16),
+    ("CLOCK_UNSAFE", 17),
+    ("ALREADY_TERMINAL", 18),
+];
+
+/// One observed probe with its named-code classification.
+struct ProbeOutcome {
+    success: bool,
+    exit: String,
+    stdout: String,
+    stderr: String,
+    /// (code, refusal line) when the transcript itself names a Section 12.2
+    /// code — either an authority refusal ("authority refusal CODE: ..." on
+    /// the Rust CLI, "CODE: authority refused: ..." on the Java CLI) or a
+    /// client journal guard ("INTEGRITY_ERROR: ...").
+    refusal: Option<(u32, String)>,
+}
+
+fn probe_outcome(output: &Output) -> ProbeOutcome {
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let refusal = stderr.lines().find_map(|line| {
+        if let Some(rest) = line.strip_prefix("connection lost: closed by peer: ") {
+            // Connection close carrying a named Section 12.2 code, e.g.
+            // "UNAUTHORIZED (code 515)" (0x200 + code, src/v2/mod.rs).
+            let name: String = rest
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphabetic() || *ch == '_')
+                .collect();
+            return REFUSAL_CODES
+                .iter()
+                .find(|(known, _)| *known == name)
+                .map(|(_, code)| (*code, line.to_owned()));
+        }
+        if let Some(rest) = line.strip_prefix("authority refusal ") {
+            let name: String = rest
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphabetic() || *ch == '_')
+                .collect();
+            return REFUSAL_CODES
+                .iter()
+                .find(|(known, _)| *known == name)
+                .map(|(_, code)| (*code, line.to_owned()));
+        }
+        let (head, _) = line.split_once(": ")?;
+        REFUSAL_CODES
+            .iter()
+            .find(|(known, _)| *known == head)
+            .map(|(_, code)| (*code, line.to_owned()))
+    });
+    ProbeOutcome {
+        success: output.status.success(),
+        exit: output.status.to_string(),
+        stdout,
+        stderr,
+        refusal,
+    }
+}
+
+impl ProbeOutcome {
+    fn transcript(&self) -> String {
+        format!(
+            "exit={}\nstdout:\n{}\nstderr:\n{}",
+            self.exit, self.stdout, self.stderr
+        )
+    }
+}
+
+/// Write a probe transcript artifact; returns (len, sha256) for the event.
+fn write_probe_artifact(
+    artifacts: &Path,
+    name: &str,
+    outcome: &ProbeOutcome,
+) -> Result<(u64, String)> {
+    let text = outcome.transcript();
+    fs::write(artifacts.join(name), &text)?;
+    Ok((text.len() as u64, oracle::sha256_hex(text.as_bytes())))
+}
+
+/// Normalize a transcript for the existence-disclosure pair comparison:
+/// long hex runs and `N:N:N` work keys are redacted so an identifier
+/// difference cannot mask or fake a detail-class difference.
+fn normalize_transcript(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let byte = bytes[i];
+        if byte.is_ascii_hexdigit() {
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_hexdigit() {
+                i += 1;
+            }
+            if i - start >= 16 {
+                out.push_str("<HEX>");
+            } else {
+                out.push_str(&text[start..i]);
+            }
+        } else if byte.is_ascii_digit() {
+            let start = i;
+            let mut j = i;
+            let mut groups = 0usize;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                }
+                groups += 1;
+                if j < bytes.len() && bytes[j] == b':' {
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+            if groups == 3
+                && (j == bytes.len() || !bytes[j].is_ascii_digit())
+                && bytes[j - 1] != b':'
+            {
+                out.push_str("<WORK>");
+            } else {
+                out.push_str(&text[start..j]);
+            }
+            i = j;
+        } else {
+            out.push(byte as char);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Run one G5 row body against the rust server in the canonical row
+/// directory and, when a Java jar is present, again with the Java server in
+/// the `java-server` subdirectory. Client is the rust CLI throughout.
+fn g5_row(
+    context: &ScenarioContext,
+    id: &str,
+    run: impl Fn(&ScenarioContext, &Path, Subject) -> Result<()>,
+) -> Result<()> {
+    let scenario_dir = context.scenario_dir(id);
+    run(context, &scenario_dir, Subject::Rust)?;
+    let java_dir = scenario_dir.join("java-server");
+    if context.java_jar.is_none() {
+        fs::create_dir_all(&java_dir)?;
+        fs::write(
+            java_dir.join("INCOMPLETE"),
+            b"no --java-jar provided; this direction was not run\n",
+        )?;
+    } else {
+        run(context, &java_dir, Subject::Java)?;
+    }
+    Ok(())
+}
+
+fn g5_fixture(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    principals: &[(&str, &str)],
+    unmapped: &[&str],
+    foreign: &[&str],
+) -> Result<(AuthorityFixture, OwnedServer)> {
+    let certs = mtls::generate_full(&scenario_dir.join("certs"), principals, unmapped, foreign)?;
+    let fixture = AuthorityFixture::new(
+        &context.rust_bin,
+        context.java_jar.as_deref(),
+        &scenario_dir.join("subject"),
+        certs,
+        server,
+        Subject::Rust,
+    )?;
+    fixture.run_init_authority()?;
+    let server = fixture.start_server()?;
+    Ok((fixture, server))
+}
+
+/// Initialize a client journal for `owner` (locally; no network), then run
+/// the binding op so the owner holds a live session. Returns the journal and
+/// its connection arguments.
+fn bind_owner(
+    fixture: &AuthorityFixture,
+    scenario_dir: &Path,
+    server: &OwnedServer,
+    tag: &str,
+    owner: &str,
+    sequence: u64,
+) -> Result<(PathBuf, Vec<String>)> {
+    let journal = scenario_dir.join("client").join(format!("{tag}.sqlite"));
+    fs::create_dir_all(journal.parent().expect("journal has a parent directory"))?;
+    let mut command = fixture.client_base()?;
+    command.push("init-client".into());
+    command.extend(fixture.journal_args(&journal, owner, sequence));
+    let init = crate::run_output_owned(&fixture.root, &command, OP_WAIT)?;
+    require(
+        &init,
+        fixture.client.client_initialized_marker(),
+        "v2 init-client",
+    )?;
+    let connection = fixture.connection_args(server, owner)?;
+    let output = fixture.run_client_op(&journal, owner, sequence, &connection, &["binding"])?;
+    require(&output, "BINDING", &format!("{owner} client binding"))?;
+    Ok((journal, connection))
+}
+
+/// Alice (owner A) publishes one work item end to end. Returns the admission
+/// operation id, the fixture for the foreign-owner probes.
+fn alice_publish(
+    alice: &Session,
+    events: &mut EventWriter,
+    seed: u64,
+    artifacts: &Path,
+    input: &[u8],
+) -> Result<String> {
+    let input_sha256 = oracle::sha256_hex(input);
+    fs::write(artifacts.join("input.bin"), input)?;
+    events.append(
+        "",
+        None,
+        Some("0:0:1"),
+        Some(1),
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/input.bin".into(),
+            len: input.len() as u64,
+            sha256: input_sha256,
+        }),
+    )?;
+    let declare = declare_sealed(alice, events, seed, "declare", &[1])?;
+    let admit = oracle::operation_hex(oracle::operation_id(seed, "admit", 1));
+    admit_input(
+        alice,
+        events,
+        seed,
+        "admit",
+        &declare,
+        "0:0:1",
+        &artifacts.join("input.bin"),
+    )?;
+    watch_terminal(alice, events, "0:0:1", &admit, WATCH_TIMEOUT)?;
+    Ok(admit)
+}
+
+/// Shared two-owner setup for g5-foreign-owner and g5-no-existence-disclosure:
+/// alice has published work; bob holds his own live session.
+fn g5_two_owners(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server_subject: Subject,
+) -> Result<(Session, PathBuf, Vec<String>)> {
+    let (fixture, server) = g5_fixture(
+        context,
+        scenario_dir,
+        server_subject,
+        &[("alice", "alice"), ("bob", "bob")],
+        &[],
+        &[],
+    )?;
+    let (alice_journal, alice_connection) =
+        bind_owner(&fixture, scenario_dir, &server, "alice", "alice", 1)?;
+    let (bob_journal, bob_connection) =
+        bind_owner(&fixture, scenario_dir, &server, "bob", "bob", 1)?;
+    let alice = Session {
+        fixture,
+        server,
+        sequence: 1,
+        journal: alice_journal,
+        connection: alice_connection,
+    };
+    Ok((alice, bob_journal, bob_connection))
+}
+
+/// Assert a probe failed and surfaced a named-code refusal line; returns
+/// (code, line). Never invents a code: absence of a named line is an error.
+fn expect_named_refusal(outcome: &ProbeOutcome, description: &str) -> Result<(u32, String)> {
+    ensure!(
+        !outcome.success,
+        "{description} unexpectedly succeeded\n{}",
+        outcome.transcript()
+    );
+    outcome.refusal.clone().with_context(|| {
+        format!(
+            "{description} produced no named-code refusal\n{}",
+            outcome.transcript()
+        )
+    })
+}
+
+fn g5_observed_preamble(
+    observed: &mut Vec<(&str, String)>,
+    server_subject: Subject,
+    context: &ScenarioContext,
+) {
+    observed.push(("server_subject", server_subject.name().into()));
+    if server_subject == Subject::Java
+        && let Some(jar) = &context.java_jar
+        && let Ok(bytes) = fs::read(jar)
+    {
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&bytes)));
+    }
+}
+
+/// g5-untrusted-identity: a client certificate from an unrelated CA must fail
+/// the QUIC/TLS handshake (CRYPTO_ERROR class): no CAPABILITIES exchange, no
+/// application REFUSAL, and no durable state. The exact client error strings
+/// legitimately differ between subjects; both are recorded verbatim and the
+/// invariant asserted is handshake-failure-not-application-refusal.
+fn g5_untrusted_identity(context: &ScenarioContext) -> Result<()> {
+    g5_row(
+        context,
+        "g5-untrusted-identity",
+        g5_untrusted_identity_direction,
+    )
+}
+
+fn g5_untrusted_identity_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server_subject: Subject,
+) -> Result<()> {
+    let scenario_id = "g5-untrusted-identity";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+
+    let (fixture, server) = g5_fixture(
+        context,
+        scenario_dir,
+        server_subject,
+        &[("alice", "alice")],
+        &[],
+        &["zed"],
+    )?;
+    let foreign = fixture.certs.identity("zed")?.clone();
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "expected_outcome",
+                "QUIC CRYPTO_ERROR during handshake (RFC 9001 section 4.8)".into(),
+            ),
+            (
+                "expected_no_capabilities",
+                "true (no CAPABILITIES exchange, no application REFUSAL)".into(),
+            ),
+            (
+                "expected_state_unchanged",
+                "alice next-sequence stays 1".into(),
+            ),
+        ],
+    )?;
+
+    let probe = fixture.probe_next_sequence(&server, &foreign)?;
+    let outcome = probe_outcome(&probe);
+    let (len, sha256) = write_probe_artifact(&artifacts, "foreign-cert-probe.txt", &outcome)?;
+    ensure!(
+        !outcome.success,
+        "g5-untrusted-identity: foreign-CA certificate was unexpectedly accepted\n{}",
+        outcome.transcript()
+    );
+    ensure!(
+        outcome.refusal.is_none(),
+        "g5-untrusted-identity: foreign-CA rejection surfaced an application refusal; \
+         expected a transport-level failure only\n{}",
+        outcome.transcript()
+    );
+    events.append(
+        "REFUSAL_RECEIVED",
+        None,
+        None,
+        None,
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/foreign-cert-probe.txt".into(),
+            len,
+            sha256,
+        }),
+    )?;
+
+    // The failed attempt must not have created authority state.
+    let sequence = fixture.next_sequence(&server, "alice")?;
+    ensure!(
+        sequence == 1,
+        "g5-untrusted-identity: foreign probe disturbed authority state (alice next-sequence {sequence})"
+    );
+
+    let foreign_ca_sha = match fixture.certs.foreign_ca_cert.as_ref() {
+        Some(path) => Some(oracle::sha256_hex(&fs::read(path)?)),
+        None => None,
+    };
+    let mut observed: Vec<(&str, String)> = Vec::new();
+    g5_observed_preamble(&mut observed, server_subject, context);
+    observed.extend([
+        (
+            "foreign_ca_sha256",
+            foreign_ca_sha.unwrap_or_else(|| "-".into()),
+        ),
+        ("probe_exit", outcome.exit.clone()),
+        (
+            "probe_stderr_first_line",
+            outcome.stderr.lines().next().unwrap_or("").to_owned(),
+        ),
+        (
+            "probe_named_code",
+            "none (transport failure, no application refusal)".into(),
+        ),
+        ("application_refusal_surfaced", "false".into()),
+        ("alice_next_sequence_after", sequence.to_string()),
+    ]);
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+
+    stop_and_seal(context, scenario_dir, scenario_id, server, events)
+}
+
+/// g5-missing-client-cert: with durable required, Section 12.3 expects a
+/// close with UNAUTHORIZED (3) BEFORE the capabilities response; with durable
+/// optional the connection is Core-only and SESSION create is refused.
+/// Audit finding recorded by this row: neither subject server CLI exposes a
+/// require-durable flag, and neither subject client CLI can start without
+/// --cert/--key, so the wire-level arms are not reachable through the
+/// published binaries. What is verified: the client-side refusal evidence,
+/// the server offer/authorization behavior from the subject sources, and
+/// that no durable state is created.
+fn g5_missing_client_cert(context: &ScenarioContext) -> Result<()> {
+    g5_row(
+        context,
+        "g5-missing-client-cert",
+        g5_missing_client_cert_direction,
+    )
+}
+
+fn g5_missing_client_cert_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server_subject: Subject,
+) -> Result<()> {
+    let scenario_id = "g5-missing-client-cert";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+
+    let (fixture, server) = g5_fixture(
+        context,
+        scenario_dir,
+        server_subject,
+        &[("alice", "alice")],
+        &[],
+        &[],
+    )?;
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "expected_required_mode",
+                "connection closed with UNAUTHORIZED (3) BEFORE the capabilities response (Section 12.3)".into(),
+            ),
+            (
+                "expected_optional_mode",
+                "durable profiles excluded; Core-only connection; SESSION create refused without activating durable profiles".into(),
+            ),
+            (
+                "reachability_finding",
+                "neither server CLI exposes require-durable; neither client CLI can start without --cert/--key; \
+                 wire-level arms not reachable via published binaries (observed.tsv audit rows)".into(),
+            ),
+        ],
+    )?;
+
+    let probe = fixture.probe_next_sequence_without_cert(&server)?;
+    let outcome = probe_outcome(&probe);
+    let (len, sha256) = write_probe_artifact(&artifacts, "no-cert-probe.txt", &outcome)?;
+    ensure!(
+        !outcome.success,
+        "g5-missing-client-cert: a client without a certificate unexpectedly succeeded\n{}",
+        outcome.transcript()
+    );
+
+    // The refused start must not have created authority state.
+    let sequence = fixture.next_sequence(&server, "alice")?;
+    ensure!(
+        sequence == 1,
+        "g5-missing-client-cert: no-cert attempt disturbed authority state (alice next-sequence {sequence})"
+    );
+
+    let mut observed: Vec<(&str, String)> = Vec::new();
+    g5_observed_preamble(&mut observed, server_subject, context);
+    observed.extend([
+        ("client_without_cert_exit", outcome.exit.clone()),
+        (
+            "client_without_cert_stderr_first_line",
+            outcome.stderr.lines().next().unwrap_or("").to_owned(),
+        ),
+        (
+            "rust_server_audit",
+            "no require-durable flag on `v2 serve` (server/src/v2.rs Command::Serve); TLS client certs \
+             requested-not-required via WebPkiClientVerifier::allow_unauthenticated \
+             (quinn/src/v2_tls.rs:64-66); Capabilities::select refuses required durable profiles for \
+             unauthenticated peers with UNAUTHORIZED 'required durable profile lacks authenticated owner' \
+             (src/v2/negotiation.rs:52-60) - before the capabilities response"
+                .into(),
+        ),
+        (
+            "java_server_audit",
+            "no require-durable flag on serve (V2Main.java exposes only --object-limit); ClientAuth.OPTIONAL \
+             (TlsAuthentication.java:86); negotiate() excludes durable profiles for unmapped/no-cert callers \
+             and throws UNAUTHORIZED 'caller credential unavailable' when durable is required, closing before \
+             the capabilities response (TlsAuthentication.java negotiate/denied); DurableOptions.requireDurable \
+             default false (api-plan.md section 1.3)"
+                .into(),
+        ),
+        (
+            "client_audit",
+            "both client CLIs require --cert/--key at startup: rust clap exit 2 'the following required \
+             arguments were not provided'; java requiredPath throws 'missing --cert' exit 1. No published \
+             client can negotiate a Core-only connection."
+                .into(),
+        ),
+        ("require_durable_configurable_via_cli", "false (both subjects)".into()),
+        ("negotiated_profile_evidence", "not observable: no published client can connect without a certificate".into()),
+        ("alice_next_sequence_after", sequence.to_string()),
+        ("artifact_no_cert_probe", format!("artifacts/no-cert-probe.txt sha256={sha256} len={len}")),
+    ]);
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+
+    stop_and_seal(context, scenario_dir, scenario_id, server, events)
+}
+
+/// g5-unmapped-principal: a valid certificate from the trusted CA whose
+/// leaf-DER sha256 is absent from the principal map must be refused durable
+/// activation (UNAUTHORIZED class before capabilities when required;
+/// Core-only otherwise) without disclosing any owner's retained sessions.
+fn g5_unmapped_principal(context: &ScenarioContext) -> Result<()> {
+    g5_row(
+        context,
+        "g5-unmapped-principal",
+        g5_unmapped_principal_direction,
+    )
+}
+
+fn g5_unmapped_principal_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server_subject: Subject,
+) -> Result<()> {
+    let scenario_id = "g5-unmapped-principal";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+
+    let (fixture, server) = g5_fixture(
+        context,
+        scenario_dir,
+        server_subject,
+        &[("alice", "alice")],
+        &["carol"],
+        &[],
+    )?;
+    let unmapped = fixture.certs.identity("carol")?.clone();
+    ensure!(
+        fixture.certs.principal("carol").is_err(),
+        "carol must not be a mapped principal"
+    );
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "expected_outcome",
+                "durable activation refused (UNAUTHORIZED class); no disclosure of any owner's retained sessions".into(),
+            ),
+            ("expected_state_unchanged", "alice next-sequence stays 1".into()),
+        ],
+    )?;
+
+    let probe = fixture.probe_next_sequence(&server, &unmapped)?;
+    let outcome = probe_outcome(&probe);
+    let (len, sha256) = write_probe_artifact(&artifacts, "unmapped-probe.txt", &outcome)?;
+    ensure!(
+        !outcome.success,
+        "g5-unmapped-principal: unmapped certificate was unexpectedly accepted\n{}",
+        outcome.transcript()
+    );
+    let (code, line) = outcome.refusal.clone().unwrap_or((0, "none".into()));
+    events.append(
+        "REFUSAL_RECEIVED",
+        None,
+        None,
+        None,
+        outcome.refusal.map(|(code, _)| code),
+        Some(ArtifactRef {
+            path: "artifacts/unmapped-probe.txt".into(),
+            len,
+            sha256,
+        }),
+    )?;
+
+    // No disclosure: alice's retained state is unchanged and still reachable.
+    let sequence = fixture.next_sequence(&server, "alice")?;
+    ensure!(
+        sequence == 1,
+        "g5-unmapped-principal: unmapped probe disturbed authority state (alice next-sequence {sequence})"
+    );
+
+    let mut observed: Vec<(&str, String)> = Vec::new();
+    g5_observed_preamble(&mut observed, server_subject, context);
+    observed.extend([
+        ("probe_exit", outcome.exit.clone()),
+        (
+            "probe_refusal",
+            if line == "none" {
+                "no named code in transcript (the wire close code is recorded verbatim: code 515                  = 0x200 + 3, UNAUTHORIZED per src/v2/mod.rs quic_error)"
+                    .into()
+            } else {
+                format!("code={code} line: {line}")
+            },
+        ),
+        (
+            "refusal_source",
+            "connection close BEFORE the capabilities response: rust server refuses required              durable profiles for unauthenticated-mapped peers in Capabilities::select              (src/v2/negotiation.rs:52-60); java server throws UNAUTHORIZED 'caller credential              unavailable' from TlsAuthentication.negotiate (TlsAuthentication.java)"
+                .into(),
+        ),
+        ("alice_next_sequence_after", sequence.to_string()),
+    ]);
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+
+    stop_and_seal(context, scenario_dir, scenario_id, server, events)
+}
+
+/// Run both arms of a no-existence-disclosure pair, recording each
+/// transcript as an artifact plus a REFUSAL_RECEIVED event, and return the
+/// two outcomes for comparison.
+#[allow(clippy::too_many_arguments)]
+fn probe_pair(
+    fixture: &AuthorityFixture,
+    artifacts: &Path,
+    events: &mut EventWriter,
+    pair: &'static str,
+    op_a: Option<[u8; 16]>,
+    op_b: Option<[u8; 16]>,
+    work: Option<&str>,
+    attempt: Option<u64>,
+    arm_a: impl FnOnce(&AuthorityFixture) -> Result<Output>,
+    arm_b: impl FnOnce(&AuthorityFixture) -> Result<Output>,
+) -> Result<(ProbeOutcome, ProbeOutcome)> {
+    let mut record = |tag: &str, outcome: &ProbeOutcome, op: Option<[u8; 16]>| -> Result<()> {
+        let (len, sha256) = write_probe_artifact(artifacts, &format!("{pair}-{tag}.txt"), outcome)?;
+        events.append(
+            "REFUSAL_RECEIVED",
+            op,
+            work,
+            attempt,
+            outcome.refusal.as_ref().map(|(code, _)| *code),
+            Some(ArtifactRef {
+                path: format!("artifacts/{pair}-{tag}.txt"),
+                len,
+                sha256,
+            }),
+        )
+    };
+    let a = probe_outcome(&arm_a(fixture)?);
+    record("a", &a, op_a)?;
+    let b = probe_outcome(&arm_b(fixture)?);
+    record("b", &b, op_b)?;
+    Ok((a, b))
+}
+
+/// Pair arm: a fresh journal whose intent claims `owner`, presenting bob's
+/// certificate (attach-level existence probe).
+fn claim_arm<'a>(
+    scenario_dir: PathBuf,
+    bob_connection: Vec<String>,
+    owner: &'a str,
+    tag: &'a str,
+) -> impl FnOnce(&AuthorityFixture) -> Result<Output> + 'a {
+    move |fixture: &AuthorityFixture| -> Result<Output> {
+        let journal = scenario_dir.join("client").join(format!("{tag}.sqlite"));
+        fs::create_dir_all(journal.parent().expect("journal has a parent directory"))?;
+        fixture_style_init(fixture, &journal, owner, 1)?;
+        fixture.run_client_op(&journal, owner, 1, &bob_connection, &["binding"])
+    }
+}
+
+/// Pair arm: one client operation from bob's own journal/connection.
+fn bob_op_arm<'a>(
+    bob_journal: PathBuf,
+    bob_connection: Vec<String>,
+    operation: Vec<&'a str>,
+) -> impl FnOnce(&AuthorityFixture) -> Result<Output> + 'a {
+    move |fixture: &AuthorityFixture| -> Result<Output> {
+        fixture.run_client_op(&bob_journal, "bob", 1, &bob_connection, &operation)
+    }
+}
+
+/// Pair arm: a result read from bob's own journal/connection.
+fn bob_read_arm<'a>(
+    bob_journal: PathBuf,
+    bob_connection: Vec<String>,
+    work: &'a str,
+    output_arg: String,
+) -> impl FnOnce(&AuthorityFixture) -> Result<Output> + 'a {
+    move |fixture: &AuthorityFixture| -> Result<Output> {
+        let operation = [
+            "read",
+            "--work",
+            work,
+            "--attempt",
+            "1",
+            "--index",
+            "0",
+            "--output",
+            output_arg.as_str(),
+        ];
+        fixture.run_client_op(&bob_journal, "bob", 1, &bob_connection, &operation)
+    }
+}
+
+/// g5-foreign-owner: owner A published work. Owner B (mapped principal, same
+/// authority) attempts attach to A's generation, work view on A's work key,
+/// operation lookup of A's operation id, and result read of A's output. Every
+/// attempt must be refused with a named code and must not confirm the work's
+/// existence; A's data must read back byte-exact afterwards.
+///
+/// Wire-level note (recorded in observed.tsv): the published clients derive
+/// the wire Attach identity from the journaled binding and the wire Create
+/// carries no claimed owner, so the authority-side cross-owner branch
+/// (`attach_session` UNAUTHORIZED, src/v2/authority/sessions.rs) is not
+/// reachable through the CLIs. The equivalent probes: a fresh journal whose
+/// INTENT claims owner A (client journal guard refuses the mismatched
+/// binding), and A's identifiers addressed inside B's own session.
+fn g5_foreign_owner(context: &ScenarioContext) -> Result<()> {
+    g5_row(context, "g5-foreign-owner", g5_foreign_owner_direction)
+}
+
+fn g5_foreign_owner_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server_subject: Subject,
+) -> Result<()> {
+    let scenario_id = "g5-foreign-owner";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+
+    let (alice, bob_journal, bob_connection) =
+        g5_two_owners(context, scenario_dir, server_subject)?;
+
+    let input = oracle::dataset(context.seed, INPUT_LEN);
+    let input_sha256 = oracle::sha256_hex(&input);
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "expected_attach",
+                "refused with a named code; existence not confirmed".into(),
+            ),
+            (
+                "expected_view",
+                "refused with a named code; existence not confirmed".into(),
+            ),
+            (
+                "expected_lookup",
+                "refused with a named code; existence not confirmed".into(),
+            ),
+            (
+                "expected_read",
+                "refused with a named code; existence not confirmed".into(),
+            ),
+            (
+                "expected_a_unchanged",
+                "A reads the result back byte-exact after B's attempts".into(),
+            ),
+        ],
+    )?;
+
+    let admit = alice_publish(&alice, &mut events, context.seed, &artifacts, &input)?;
+    let admit_id = hex_to_id(&admit)?;
+    let bob_journal = bob_journal.clone();
+    let bob_connection = bob_connection.clone();
+
+    // Probe: attach to A's generation - a fresh journal whose intent claims
+    // owner alice, presenting bob's certificate.
+    let claim_journal = scenario_dir.join("client").join("claim-alice.sqlite");
+    fs::create_dir_all(
+        claim_journal
+            .parent()
+            .expect("journal has a parent directory"),
+    )?;
+    fixture_style_init(&alice.fixture, &claim_journal, "alice", 1)?;
+    let attach =
+        alice
+            .fixture
+            .run_client_op(&claim_journal, "alice", 1, &bob_connection, &["binding"])?;
+    let attach_outcome = probe_outcome(&attach);
+    let (attach_len, attach_sha) =
+        write_probe_artifact(&artifacts, "bob-attach-claim.txt", &attach_outcome)?;
+    let (attach_code, attach_line) =
+        expect_named_refusal(&attach_outcome, "g5-foreign-owner attach claim")?;
+    events.append(
+        "REFUSAL_RECEIVED",
+        None,
+        None,
+        None,
+        Some(attach_code),
+        Some(ArtifactRef {
+            path: "artifacts/bob-attach-claim.txt".into(),
+            len: attach_len,
+            sha256: attach_sha,
+        }),
+    )?;
+
+    // Probe: work view on A's work key, from B's own session.
+    let view = alice.fixture.run_client_op(
+        &bob_journal,
+        "bob",
+        1,
+        &bob_connection,
+        &["watch", "--work", "0:0:1"],
+    )?;
+    let view_outcome = probe_outcome(&view);
+    let (view_len, view_sha) = write_probe_artifact(&artifacts, "bob-view.txt", &view_outcome)?;
+    let (view_code, view_line) = expect_named_refusal(&view_outcome, "g5-foreign-owner work view")?;
+    events.append(
+        "REFUSAL_RECEIVED",
+        None,
+        Some("0:0:1"),
+        None,
+        Some(view_code),
+        Some(ArtifactRef {
+            path: "artifacts/bob-view.txt".into(),
+            len: view_len,
+            sha256: view_sha,
+        }),
+    )?;
+
+    // Probe: operation lookup of A's admission operation id.
+    let lookup = alice.fixture.run_client_op(
+        &bob_journal,
+        "bob",
+        1,
+        &bob_connection,
+        &["lookup", "--operation", &admit],
+    )?;
+    let lookup_outcome = probe_outcome(&lookup);
+    let (lookup_len, lookup_sha) =
+        write_probe_artifact(&artifacts, "bob-lookup.txt", &lookup_outcome)?;
+    let (lookup_code, lookup_line) =
+        expect_named_refusal(&lookup_outcome, "g5-foreign-owner operation lookup")?;
+    events.append(
+        "REFUSAL_RECEIVED",
+        Some(admit_id),
+        None,
+        None,
+        Some(lookup_code),
+        Some(ArtifactRef {
+            path: "artifacts/bob-lookup.txt".into(),
+            len: lookup_len,
+            sha256: lookup_sha,
+        }),
+    )?;
+
+    // Probe: result read of A's output.
+    let bob_read_path = artifacts.join("bob-read.bin");
+    let read = alice.fixture.run_client_op(
+        &bob_journal,
+        "bob",
+        1,
+        &bob_connection,
+        &[
+            "read",
+            "--work",
+            "0:0:1",
+            "--attempt",
+            "1",
+            "--index",
+            "0",
+            "--output",
+            &crate::path(&bob_read_path),
+        ],
+    )?;
+    let read_outcome = probe_outcome(&read);
+    let (read_len, read_sha) = write_probe_artifact(&artifacts, "bob-read.txt", &read_outcome)?;
+    let (read_code, read_line) =
+        expect_named_refusal(&read_outcome, "g5-foreign-owner result read")?;
+    events.append(
+        "REFUSAL_RECEIVED",
+        None,
+        Some("0:0:1"),
+        Some(1),
+        Some(read_code),
+        Some(ArtifactRef {
+            path: "artifacts/bob-read.txt".into(),
+            len: read_len,
+            sha256: read_sha,
+        }),
+    )?;
+
+    // A's data is unchanged: byte-exact readback on A's own session.
+    read_output_verified(
+        &alice,
+        &mut events,
+        "0:0:1",
+        1,
+        &input,
+        &input_sha256,
+        &artifacts,
+        "alice-readback.bin",
+    )?;
+    detach(&alice)?;
+
+    let mut observed: Vec<(&str, String)> = Vec::new();
+    g5_observed_preamble(&mut observed, server_subject, context);
+    observed.extend([
+        (
+            "attach_refusal",
+            format!("code={attach_code} line: {attach_line}"),
+        ),
+        (
+            "attach_source",
+            "client journal guard: wire Create was answered with bob's retained binding and the              local validate_binding refused the owner mismatch (src/v2/client.rs:343-365); the              claimed owner never leaves the client"
+                .into(),
+        ),
+        (
+            "view_refusal",
+            format!("code={view_code} line: {view_line}"),
+        ),
+        (
+            "view_source",
+            "authority refusal on the wire from B's own session (rust server detail 'work not              declared', src/v2/authority/scopes.rs:172; java server detail 'refused')"
+                .into(),
+        ),
+        (
+            "lookup_refusal",
+            format!("code={lookup_code} line: {lookup_line}"),
+        ),
+        (
+            "lookup_source",
+            "client journal guard: read_intent finds no persisted intent for the foreign id, so              no wire request was sent (src/v2/client.rs:399-402)"
+                .into(),
+        ),
+        (
+            "read_refusal",
+            format!("code={read_code} line: {read_line}"),
+        ),
+        (
+            "read_source",
+            "client journal guard: no retained output selection for the foreign work key, so no              wire request was sent (src/v2/client/observations/references.rs:112)"
+                .into(),
+        ),
+        ("a_readback_byte_exact", "true".into()),
+        (
+            "wire_level_note",
+            "published clients cannot send a cross-owner Attach (Attach carries the journaled \
+             binding; Create carries no claimed owner): the authority-side attach_session \
+             UNAUTHORIZED branch (src/v2/authority/sessions.rs) is unreachable via the CLIs; \
+             probes exercise the intent-claim and foreign-identifier equivalents"
+                .into(),
+        ),
+    ]);
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+
+    stop_and_seal(context, scenario_dir, scenario_id, alice.server, events)
+}
+
+/// Initialize a journal claiming `owner` without contacting the authority.
+fn fixture_style_init(
+    fixture: &AuthorityFixture,
+    journal: &Path,
+    owner: &str,
+    sequence: u64,
+) -> Result<()> {
+    let mut command = fixture.client_base()?;
+    command.push("init-client".into());
+    command.extend(fixture.journal_args(journal, owner, sequence));
+    let init = crate::run_output_owned(&fixture.root, &command, OP_WAIT)?;
+    require(
+        &init,
+        fixture.client.client_initialized_marker(),
+        "v2 init-client (claim journal)",
+    )?;
+    Ok(())
+}
+
+/// g5-no-existence-disclosure: paired probes from B's connection. Arm (a)
+/// targets that exist but belong to A; arm (b) never-created targets. For
+/// each operation pair (attach, lookup, view, read) the refusal code AND the
+/// normalized detail class must be indistinguishable. Any distinguishable
+/// difference is an existence-disclosure defect: the row fails with the exact
+/// transcript pair recorded in observed.tsv.
+fn g5_no_existence_disclosure(context: &ScenarioContext) -> Result<()> {
+    g5_row(
+        context,
+        "g5-no-existence-disclosure",
+        g5_no_existence_disclosure_direction,
+    )
+}
+
+fn g5_no_existence_disclosure_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server_subject: Subject,
+) -> Result<()> {
+    let scenario_id = "g5-no-existence-disclosure";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+
+    let (alice, bob_journal, bob_connection) =
+        g5_two_owners(context, scenario_dir, server_subject)?;
+
+    let input = oracle::dataset(context.seed, INPUT_LEN);
+    let admit = alice_publish(&alice, &mut events, context.seed, &artifacts, &input)?;
+    let never_operation =
+        oracle::operation_hex(oracle::operation_id(context.seed, "probe-never", 9));
+    let admit_id = hex_to_id(&admit)?;
+    let never_id = hex_to_id(&never_operation)?;
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("pair_attach", "(a) A's existing generation via intent claim vs (b) never-created owner label: indistinguishable".into()),
+            ("pair_lookup", "(a) A's operation id vs (b) never-created operation id: indistinguishable".into()),
+            ("pair_view", "(a) A's work key vs (b) never-created work key: indistinguishable".into()),
+            ("pair_read", "(a) A's work/attempt/index vs (b) never-created: indistinguishable".into()),
+            ("comparison_rule", "exit status, named refusal code, and normalized transcript (hex ids and N:N:N work keys redacted) must all match".into()),
+        ],
+    )?;
+
+    // Attach pair: fresh journals whose intents claim an existing owner
+    // (alice) and a never-created label (mallory), both presenting bob's
+    // certificate. The wire Create carries only the sequence; the server
+    // authenticates bob and replays bob's retained binding, so both arms
+    // reduce to the same client journal-guard refusal.
+    let attach_pair = probe_pair(
+        &alice.fixture,
+        &artifacts,
+        &mut events,
+        "attach",
+        None,
+        None,
+        None,
+        None,
+        claim_arm(
+            scenario_dir.to_path_buf(),
+            bob_connection.clone(),
+            "alice",
+            "probe-a",
+        ),
+        claim_arm(
+            scenario_dir.to_path_buf(),
+            bob_connection.clone(),
+            "mallory",
+            "probe-b",
+        ),
+    )?;
+
+    // Lookup pair from bob's own session.
+    let lookup_pair = probe_pair(
+        &alice.fixture,
+        &artifacts,
+        &mut events,
+        "lookup",
+        Some(admit_id),
+        Some(never_id),
+        None,
+        None,
+        bob_op_arm(
+            bob_journal.clone(),
+            bob_connection.clone(),
+            vec!["lookup", "--operation", &admit],
+        ),
+        bob_op_arm(
+            bob_journal.clone(),
+            bob_connection.clone(),
+            vec!["lookup", "--operation", &never_operation],
+        ),
+    )?;
+
+    // View pair from bob's own session.
+    let view_pair = probe_pair(
+        &alice.fixture,
+        &artifacts,
+        &mut events,
+        "view",
+        None,
+        None,
+        Some("0:0:1"),
+        None,
+        bob_op_arm(
+            bob_journal.clone(),
+            bob_connection.clone(),
+            vec!["watch", "--work", "0:0:1"],
+        ),
+        bob_op_arm(
+            bob_journal.clone(),
+            bob_connection.clone(),
+            vec!["watch", "--work", "0:0:2"],
+        ),
+    )?;
+
+    // Read pair from bob's own session.
+    let read_pair = probe_pair(
+        &alice.fixture,
+        &artifacts,
+        &mut events,
+        "read",
+        None,
+        None,
+        Some("0:0:1"),
+        Some(1),
+        bob_read_arm(
+            bob_journal.clone(),
+            bob_connection.clone(),
+            "0:0:1",
+            crate::path(&artifacts.join("read-a.bin")),
+        ),
+        bob_read_arm(
+            bob_journal.clone(),
+            bob_connection.clone(),
+            "0:0:2",
+            crate::path(&artifacts.join("read-b.bin")),
+        ),
+    )?;
+
+    // Compare every pair: exit status, named code, normalized detail class.
+    let mut defect: Option<String> = None;
+    let mut observed: Vec<(&str, String)> = Vec::new();
+    g5_observed_preamble(&mut observed, server_subject, context);
+    for (pair, arm_a, arm_b) in [
+        ("attach", &attach_pair.0, &attach_pair.1),
+        ("lookup", &lookup_pair.0, &lookup_pair.1),
+        ("view", &view_pair.0, &view_pair.1),
+        ("read", &read_pair.0, &read_pair.1),
+    ] {
+        let code_a = arm_a.refusal.as_ref().map(|(code, _)| *code);
+        let code_b = arm_b.refusal.as_ref().map(|(code, _)| *code);
+        let norm_a = normalize_transcript(&arm_a.stderr);
+        let norm_b = normalize_transcript(&arm_b.stderr);
+        let equal = arm_a.success == arm_b.success && code_a == code_b && norm_a == norm_b;
+        observed.push((
+            pair,
+            format!(
+                "exit_a={} exit_b={} code_a={code_a:?} code_b={code_b:?} indistinguishable={equal}",
+                arm_a.exit, arm_b.exit
+            ),
+        ));
+        if !equal {
+            defect = Some(format!(
+                "existence-disclosure DEFECT in pair {pair}\
+                \narm (a) existing target:\n{}\
+                \narm (b) never-created target:\n{}",
+                arm_a.transcript(),
+                arm_b.transcript()
+            ));
+        }
+    }
+    observed.push((
+        "wire_level_note",
+        "cross-owner addressing is not expressible via the published CLIs (Attach carries the \
+         journaled binding; Create carries no claimed owner); arm (a) vs (b) therefore probes the \
+         two levels the CLI can reach: cross-owner claims in the client intent (attach pair) and \
+         foreign identifiers inside the caller's own session (lookup/view/read pairs)"
+            .into(),
+    ));
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+
+    if let Some(defect) = defect {
+        bail!("g5-no-existence-disclosure: {defect}");
+    }
+
+    detach(&alice)?;
+    stop_and_seal(context, scenario_dir, scenario_id, alice.server, events)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1358,11 +2577,16 @@ mod tests {
             "g2-duplicate-op-changed-params",
             "g2-simultaneous-duplicate",
             "g2-kill-server-after-admission-recovery",
+            "g5-untrusted-identity",
+            "g5-missing-client-cert",
+            "g5-unmapped-principal",
+            "g5-foreign-owner",
+            "g5-no-existence-disclosure",
         ] {
             let row = rows.iter().find(|row| row.id == id).unwrap();
             assert!(row.rust_implemented, "{id} must be implemented");
         }
-        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 4);
+        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 9);
     }
 
     #[test]

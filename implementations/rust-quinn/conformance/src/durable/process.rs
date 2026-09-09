@@ -3,7 +3,7 @@
 //! ready file plus a successful authenticated client op — a live process
 //! alone is not readiness.
 
-use crate::durable::mtls::{AUTHORITY, Material};
+use crate::durable::mtls::{AUTHORITY, Identity, Material};
 use crate::{ensure_success, path, run_output_owned, unique_suffix, wait_output};
 use anyhow::{Context, Result, bail, ensure};
 use std::{
@@ -61,6 +61,7 @@ impl Subject {
 /// Everything one scenario needs to own a V2 authority: storage roots,
 /// credentials, and the subject entry points. `init-authority` has been run
 /// against these roots before `start_server` is used.
+#[derive(Clone)]
 pub struct AuthorityFixture {
     pub rust_bin: PathBuf,
     pub java_jar: Option<PathBuf>,
@@ -166,7 +167,17 @@ impl AuthorityFixture {
     }
 
     pub fn connection_args(&self, server: &OwnedServer, principal: &str) -> Result<Vec<String>> {
-        let identity = self.certs.principal(principal)?;
+        let identity = self.certs.principal(principal)?.clone();
+        self.connection_args_for(server, &identity)
+    }
+
+    /// Connection arguments presenting an explicit identity, mapped or not.
+    /// Used by G5 probes that must present an unmapped or foreign certificate.
+    pub fn connection_args_for(
+        &self,
+        server: &OwnedServer,
+        identity: &crate::durable::mtls::Identity,
+    ) -> Result<Vec<String>> {
         Ok(vec![
             "--connect".into(),
             server.address.clone(),
@@ -255,6 +266,35 @@ impl AuthorityFixture {
             .parse::<u64>()
             .context("next-sequence printed a non-decimal sequence")?;
         Ok(sequence)
+    }
+
+    /// Raw `next-sequence` probe presenting an explicit identity. Callers
+    /// assert the expected failure themselves and record the transcript; G5
+    /// rows never treat a probe failure as a fixture error.
+    pub fn probe_next_sequence(&self, server: &OwnedServer, identity: &Identity) -> Result<Output> {
+        let connection = self.connection_args_for(server, identity)?;
+        let mut command = self.client_base()?;
+        command.push("next-sequence".into());
+        command.extend(connection);
+        run_output_owned(&self.root, &command, OP_TIMEOUT)
+    }
+
+    /// Raw `next-sequence` attempt WITHOUT a client certificate. Both subject
+    /// CLIs require --cert/--key, so this documents the client-side refusal
+    /// (g5-missing-client-cert); the wire-level arms of that row are not
+    /// reachable through the published binaries.
+    pub fn probe_next_sequence_without_cert(&self, server: &OwnedServer) -> Result<Output> {
+        let mut command = self.client_base()?;
+        command.push("next-sequence".into());
+        command.extend([
+            "--connect".into(),
+            server.address.clone(),
+            "--server-name".into(),
+            "localhost".into(),
+            "--ca".into(),
+            path(&self.certs.ca_cert),
+        ]);
+        run_output_owned(&self.root, &command, OP_TIMEOUT)
     }
 
     /// Spawn `v2 serve`, wait for the ready file, then require one successful
