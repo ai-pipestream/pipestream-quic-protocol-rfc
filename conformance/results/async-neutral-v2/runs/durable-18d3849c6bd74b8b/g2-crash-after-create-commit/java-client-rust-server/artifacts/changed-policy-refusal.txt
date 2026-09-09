@@ -1,0 +1,5 @@
+exit=exit status: 0
+stdout:
+BINDING Binding[request=1, authority=issuer-a, owner=alice, generation=1, creationSequence=1, policy=Policy[executionLimit=60000, outputRetention=3600000, receiptRetention=86400000], limits=Limits[scopes=4096, entities=1000000, operations=1000000, inputBytes=1073741824, outputBytes=1073741824, activeJobs=16]]
+
+stderr:

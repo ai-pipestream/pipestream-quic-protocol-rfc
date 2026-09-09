@@ -68,9 +68,11 @@ event stream.
   restartable-job contract — expected behavior pinned per row evidence).
   No new wire attempt is created by the restart itself.
 
-## g2-drop-reply-publication
+## g2-kill-at-publication-commit
 
-- Schedule `drop-reply` at `PUBLICATION_COMMITTED`.
+- Schedule `kill` on server at `PUBLICATION_COMMITTED` (the terminal
+  commit is durable, then the subject exits before/while the reply is
+  delivered).
 - Expected: the terminal outcome + manifest committed exactly once;
   post-restart WORK view shows SUCCEEDED with the same attempt; result
   read returns the exact object (driver-verified SHA-256); a duplicate
@@ -78,6 +80,19 @@ event stream.
   terminal commit refuses ALREADY_TERMINAL (18) or CANCELLED (12) — the
   spec overlap is recorded, both accepted, determinism per implementation
   noted in evidence.
+- Implemented in milestone 6 (rust direction; java-client/rust-server
+  direction runs when the jar publishes the client ops). The matrix's
+  `g2-drop-reply-publication` variant (drop-reply at the same boundary)
+  is not implemented yet: the kill variant exercises the same durable
+  expectations, and the withheld-reply half is covered by the
+  declaration/admission drop-reply rows.
+
+## g2-drop-reply-publication
+
+- Schedule `drop-reply` at `PUBLICATION_COMMITTED`.
+- Same observable expectations as `g2-kill-at-publication-commit`; the
+  row is registered in the driver matrix but not implemented yet (the
+  kill variant above is the milestone-6 evidence for this boundary).
 
 ## g2-kill-client-after-request-sent
 

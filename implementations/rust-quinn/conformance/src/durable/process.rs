@@ -20,6 +20,19 @@ const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const OP_TIMEOUT: Duration = Duration::from_secs(30);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Test-only fixture-hook arming for one server process (milestone-5 subject
+/// flags). The driver writes the schedule TSV before starting the server;
+/// arming is per-process, so a restart re-arms with the rows it has not yet
+/// consumed. Rust server only: the Java server has no published fixture hook
+/// (Claude's FixtureMain), so arming a Java server is a fixture error.
+#[derive(Clone)]
+pub struct FixtureArming {
+    pub events: PathBuf,
+    pub run_id: String,
+    pub scenario_id: String,
+    pub schedule: Option<PathBuf>,
+}
+
 /// Which subject implementation a side of the pair runs. Everything is
 /// still driven by spawning published binaries; the driver never links
 /// against a subject.
@@ -300,6 +313,19 @@ impl AuthorityFixture {
     /// Spawn `v2 serve`, wait for the ready file, then require one successful
     /// authenticated op before declaring the server ready.
     pub fn start_server(&self) -> Result<OwnedServer> {
+        self.start_server_armed(None, true)
+    }
+
+    /// Spawn `v2 serve` with the milestone-5 `--fixture-*` arming. `probe`
+    /// controls the authenticated readiness op: a schedule that kills the
+    /// server at CONNECTION_AUTHENTICATED would kill the probe connection
+    /// itself, so that row starts ready-file-only (process liveness plus
+    /// marker, with the client op as the real readiness check).
+    pub fn start_server_armed(
+        &self,
+        arming: Option<&FixtureArming>,
+        probe: bool,
+    ) -> Result<OwnedServer> {
         let serial = unique_suffix();
         let ready = self.root.join(format!("ready-{serial:x}"));
         let log = self.root.join(format!("server-{serial:x}.log"));
@@ -319,6 +345,25 @@ impl AuthorityFixture {
             "--ready-file".into(),
             path(&ready),
         ]);
+        if let Some(arming) = arming {
+            ensure!(
+                self.server == Subject::Rust,
+                "fixture hooks (pause/drop-reply/kill schedules) need a hooked server: the \
+                 Java server gate (Claude's FixtureMain) is not published, so this direction \
+                 is INCOMPLETE"
+            );
+            command.extend([
+                "--fixture-events".into(),
+                path(&arming.events),
+                "--fixture-run".into(),
+                arming.run_id.clone(),
+                "--fixture-scenario".into(),
+                arming.scenario_id.clone(),
+            ]);
+            if let Some(schedule) = &arming.schedule {
+                command.extend(["--fixture-schedule".into(), path(schedule)]);
+            }
+        }
         let log_file = File::create(&log)?;
         let mut spawned = Command::new(&command[0]);
         spawned
@@ -353,7 +398,9 @@ impl AuthorityFixture {
         };
         // A live process plus a marker file is not readiness: an authenticated
         // op must succeed before the fixture counts the server as ready.
-        self.next_sequence(&server, "alice")?;
+        if probe {
+            self.next_sequence(&server, "alice")?;
+        }
         Ok(server)
     }
 
@@ -426,6 +473,17 @@ impl OwnedServer {
         child.kill().context("SIGKILL fixture-owned server")?;
         child.wait().context("reap killed server")?;
         Ok(())
+    }
+
+    /// Wait for a subject self-kill (a scheduled `kill` row exits 86 on its
+    /// own at the armed boundary). Returns the process output; the exit code
+    /// is the row's evidence.
+    pub fn wait_exit(mut self, timeout: Duration) -> Result<Output> {
+        let child = self
+            .child
+            .take()
+            .context("server process already consumed")?;
+        wait_output(child, timeout)
     }
 }
 

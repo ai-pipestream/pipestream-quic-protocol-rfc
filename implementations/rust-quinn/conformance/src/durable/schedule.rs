@@ -84,7 +84,10 @@ impl Action {
         }
     }
 
-    /// Actions that need a subject fixture hook and cannot run black-box.
+    /// Whether the action acts through a subject fixture hook (pause,
+    /// drop-reply) rather than the fixture's own process lifecycle.
+    /// Retained from the pre-hook milestone; no current caller filters on it.
+    #[allow(dead_code)]
     pub fn requires_hook(self) -> bool {
         matches!(self, Self::Pause | Self::DropReply)
     }
@@ -233,26 +236,23 @@ pub fn validate(rows: &[ScheduleRow]) -> Result<()> {
     Ok(())
 }
 
-/// Execute a schedule. Hook-dependent actions (`pause`, `drop-reply`) fail
-/// with an explicit UNSUPPORTED error in this milestone: subject hooks do not
-/// exist yet, and silently skipping them would corrupt the scenario. All
-/// other actions are delegated to `on_process_action`, which owns the live
-/// process lifecycle.
+/// Execute a schedule by delivering every row, in file order, to
+/// `on_process_action`. The handler owns the semantics: process-lifecycle
+/// actions (stop/kill/restart) drive the spawned process, and hook-dependent
+/// actions act through the milestone-5 subject hooks — `pause` rows are
+/// released by writing `<events dir>/release-<BOUNDARY>` at the scenario's
+/// chosen moment, `drop-reply` rows proceed once the client observes
+/// connection loss, and a scheduled server `kill` exits the subject itself
+/// (code 86) at the armed boundary, which the handler observes as process
+/// exit plus the subject's event record before restarting the same roots.
+/// Targets whose subject has no published hook (the Java server until
+/// Claude's FixtureMain lands) are the handler's job: those directions
+/// report INCOMPLETE with the named gate, never skip-pass.
 pub fn execute(
     rows: &[ScheduleRow],
     mut on_process_action: impl FnMut(&ScheduleRow) -> Result<()>,
 ) -> Result<()> {
     for row in rows {
-        if row.action.requires_hook() {
-            bail!(
-                "UNSUPPORTED schedule action '{}' at boundary '{}' on target '{}': subject \
-                 fixture hooks do not exist in this milestone (pause/drop-reply need a \
-                 fixture-owned boundary hook; see driver-design.md subject hooks)",
-                row.action.as_str(),
-                row.boundary,
-                row.target
-            );
-        }
         on_process_action(row)?;
     }
     Ok(())
@@ -367,29 +367,24 @@ mod tests {
     }
 
     #[test]
-    fn hook_actions_report_unsupported_not_silently_skipped() {
+    fn hook_actions_are_delivered_to_the_handler() {
+        // Milestone 5 landed the subject hooks; hook rows now reach the
+        // handler, which implements the driver-side semantics (release file,
+        // connection-loss observation, self-kill wait + restart).
         let rows = parse(
-            "1\trun-a\ts\tserver\tADMISSION_COMMITTED\tpause\t7\t1000\n",
+            "1\trun-a\ts\tserver\tADMISSION_COMMITTED\tpause\t7\t1000\n\
+             1\trun-a\ts\tserver\tPUBLICATION_COMMITTED\tdrop-reply\t7\t1000\n",
             "run-a",
             "s",
         )
         .unwrap();
-        let error = execute(&rows, |_| Ok(())).unwrap_err();
-        let message = format!("{error:#}");
-        assert!(message.contains("UNSUPPORTED"), "unexpected: {message}");
-        assert!(message.contains("pause"), "unexpected: {message}");
-    }
-
-    #[test]
-    fn drop_reply_reports_unsupported() {
-        let rows = parse(
-            "1\trun-a\ts\tserver\tPUBLICATION_COMMITTED\tdrop-reply\t7\t1000\n",
-            "run-a",
-            "s",
-        )
+        let mut seen = Vec::new();
+        execute(&rows, |row| {
+            seen.push(row.action);
+            Ok(())
+        })
         .unwrap();
-        let error = execute(&rows, |_| Ok(())).unwrap_err();
-        assert!(format!("{error:#}").contains("UNSUPPORTED"));
+        assert_eq!(seen, vec![Action::Pause, Action::DropReply]);
     }
 
     #[test]

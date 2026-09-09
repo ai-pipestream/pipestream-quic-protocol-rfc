@@ -19,6 +19,10 @@ use std::{
 
 const INPUT_LEN: usize = 64 * 1024;
 const RACE_INPUT_LEN: usize = 4 * 1024 * 1024;
+/// Client-kill row input: large enough that a loopback upload cannot finish
+/// inside the seeded kill delay (the 16 MiB object limit caps how large the
+/// admit input may be).
+const CLIENT_KILL_INPUT_LEN: usize = 12 * 1024 * 1024;
 const WATCH_TIMEOUT: Duration = Duration::from_secs(20);
 const RECOVERY_TIMEOUT: Duration = Duration::from_secs(60);
 const OP_WAIT: Duration = Duration::from_secs(30);
@@ -62,6 +66,7 @@ pub fn rows() -> Vec<Row> {
             "g2-drop-reply-declaration",
             "g2-drop-reply-admission",
             "g2-kill-after-admission-before-publication",
+            "g2-kill-at-publication-commit",
             "g2-drop-reply-publication",
             "g2-kill-client-after-request-sent",
             "g2-duplicate-op-changed-params",
@@ -157,6 +162,13 @@ pub fn rows() -> Vec<Row> {
     );
     for id in [
         "g1-leaf-copy",
+        "g2-crash-before-create-commit",
+        "g2-crash-after-create-commit",
+        "g2-drop-reply-declaration",
+        "g2-drop-reply-admission",
+        "g2-kill-after-admission-before-publication",
+        "g2-kill-at-publication-commit",
+        "g2-kill-client-after-request-sent",
         "g2-duplicate-op-changed-params",
         "g2-simultaneous-duplicate",
         "g2-kill-server-after-admission-recovery",
@@ -201,6 +213,8 @@ fn direction_coverage(row: &Row, context: &ScenarioContext) -> String {
         "rust-client/rust-server, rust-client/java-server, java-client/rust-server".to_owned()
     } else if row.id.starts_with("g5-") && context.java_jar.is_some() {
         "rust-client/rust-server, rust-client/java-server".to_owned()
+    } else if HOOKED_G2_ROWS.contains(&row.id) && context.java_jar.is_some() {
+        "rust-client/rust-server, java-client/rust-server".to_owned()
     } else {
         "rust-client/rust-server".to_owned()
     }
@@ -240,6 +254,15 @@ fn require(output: &Output, marker: &str, description: &str) -> Result<String> {
 fn run_rust_direction(row: &Row, context: &ScenarioContext) -> Result<()> {
     match row.id {
         "g1-leaf-copy" => g1_leaf_copy(context),
+        "g2-crash-before-create-commit" => g2_crash_before_create_commit(context),
+        "g2-crash-after-create-commit" => g2_crash_after_create_commit(context),
+        "g2-drop-reply-declaration" => g2_drop_reply_declaration(context),
+        "g2-drop-reply-admission" => g2_drop_reply_admission(context),
+        "g2-kill-after-admission-before-publication" => {
+            g2_kill_after_admission_before_publication(context)
+        }
+        "g2-kill-at-publication-commit" => g2_kill_at_publication_commit(context),
+        "g2-kill-client-after-request-sent" => g2_kill_client_after_request_sent(context),
         "g2-duplicate-op-changed-params" => g2_duplicate_op_changed_params(context),
         "g2-simultaneous-duplicate" => g2_simultaneous_duplicate(context),
         "g2-kill-server-after-admission-recovery" => {
@@ -798,6 +821,8 @@ fn refusal_conflict_line(stderr: &str) -> Option<String> {
 }
 
 /// Parse the SCOPE line of `page --scope 0`: declared count and member count.
+/// Members render as `ScopeMember { ... }` on the Rust CLI and
+/// `Entry[entity=N, state=...]` on the Java CLI; both are counted.
 fn parse_scope_page(stdout: &str) -> Result<(u64, u64)> {
     let declared = stdout
         .split_whitespace()
@@ -809,7 +834,8 @@ fn parse_scope_page(stdout: &str) -> Result<(u64, u64)> {
         .lines()
         .find(|line| line.starts_with("MEMBERS "))
         .context("page did not print a MEMBERS line")?;
-    let members = members_line.matches("ScopeMember {").count() as u64;
+    let members = (members_line.matches("ScopeMember {").count()
+        + members_line.matches("Entry[").count()) as u64;
     Ok((declared, members))
 }
 
@@ -1356,8 +1382,1769 @@ fn g2_kill_server_after_admission_recovery(context: &ScenarioContext) -> Result<
 }
 
 // ---------------------------------------------------------------------------
-// G5 identity/authorization rows (hook-free)
+// G2 lost-ACK and boundary-kill rows (milestone-5/6 fixture hooks)
 // ---------------------------------------------------------------------------
+
+/// Everything the hooked rows share: a live session plus the arming the
+/// server process was started with (same events file across restarts).
+struct Hooked {
+    session: Session,
+    events: PathBuf,
+}
+
+/// mTLS, init-authority, armed server start, fresh client journal. The
+/// schedule TSV is written before the server starts; `probe` controls the
+/// authenticated readiness op (a CONNECTION_AUTHENTICATED kill would kill
+/// the probe itself).
+#[allow(clippy::too_many_arguments)]
+fn setup_hooked(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    id: &str,
+    server: Subject,
+    client: Subject,
+    schedule_rows: &[schedule::ScheduleRow],
+    schedule_name: &str,
+    probe: bool,
+) -> Result<Hooked> {
+    let certs = mtls::generate(&scenario_dir.join("certs"), &[("alice", "alice")])?;
+    let fixture = AuthorityFixture::new(
+        &context.rust_bin,
+        context.java_jar.as_deref(),
+        &scenario_dir.join("subject"),
+        certs,
+        server,
+        client,
+    )?;
+    fixture.run_init_authority()?;
+    let events = scenario_dir.join("events.tsv");
+    let arming = write_arming(context, scenario_dir, id, schedule_rows, schedule_name)?;
+    if arming.is_some() && server != Subject::Rust {
+        bail!(
+            "{id} direction {}/{} needs subject fixture hooks the Java server does not \
+             publish yet (Claude's FixtureMain): INCOMPLETE, never skip-pass",
+            client.name(),
+            server.name()
+        );
+    }
+    let server = fixture.start_server_armed(arming.as_ref(), probe)?;
+    // The driver's own next-sequence op is an authenticated connection; with
+    // probe=false it would consume an armed CONNECTION_AUTHENTICATED kill row
+    // itself. Fresh roots bind their first creation at sequence 1, and the
+    // no-phantom rows re-probe after the restart.
+    let sequence = if probe {
+        let sequence = fixture.next_sequence(&server, "alice")?;
+        ensure!(
+            sequence == 1,
+            "fresh authority must report NEXT_SEQUENCE 1, got {sequence}"
+        );
+        sequence
+    } else {
+        1
+    };
+    let journal = scenario_dir.join("client").join("session.sqlite");
+    fs::create_dir_all(journal.parent().expect("journal has a parent directory"))?;
+    let mut command = fixture.client_base()?;
+    command.push("init-client".into());
+    command.extend(fixture.journal_args(&journal, "alice", sequence));
+    let init = crate::run_output_owned(&fixture.root, &command, OP_WAIT)?;
+    require(&init, client.client_initialized_marker(), "v2 init-client")?;
+    let connection = fixture.connection_args(&server, "alice")?;
+    Ok(Hooked {
+        session: Session {
+            fixture,
+            server,
+            sequence,
+            journal,
+            connection,
+        },
+        events,
+    })
+}
+
+/// Write the per-process schedule file and build the matching arming. An
+/// empty row set arms nothing (the events file is still shared when the
+/// caller passes rows on the first start).
+fn write_arming(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    id: &str,
+    schedule_rows: &[schedule::ScheduleRow],
+    schedule_name: &str,
+) -> Result<Option<crate::durable::process::FixtureArming>> {
+    if schedule_rows.is_empty() {
+        return Ok(None);
+    }
+    let schedule_path = scenario_dir.join(schedule_name);
+    fs::write(&schedule_path, schedule::render(schedule_rows)?)?;
+    Ok(Some(crate::durable::process::FixtureArming {
+        events: scenario_dir.join("events.tsv"),
+        run_id: context.run_id.clone(),
+        scenario_id: id.to_owned(),
+        schedule: Some(schedule_path),
+    }))
+}
+
+/// Restart the same roots against the same shared events file with a fresh
+/// per-process schedule (already-consumed kill rows are dropped by the row).
+#[allow(clippy::too_many_arguments)]
+fn restart_hooked(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    id: &str,
+    fixture: &AuthorityFixture,
+    sequence: u64,
+    journal: &Path,
+    schedule_rows: &[schedule::ScheduleRow],
+    schedule_name: &str,
+    probe: bool,
+) -> Result<Session> {
+    let arming = write_arming(context, scenario_dir, id, schedule_rows, schedule_name)?;
+    let server = fixture.start_server_armed(arming.as_ref(), probe)?;
+    let connection = fixture.connection_args(&server, "alice")?;
+    Ok(Session {
+        fixture: fixture.clone(),
+        server,
+        sequence,
+        journal: journal.to_path_buf(),
+        connection,
+    })
+}
+
+/// Subject-side (server) records for one boundary; a missing file is zero.
+fn subject_record_count(events: &Path, boundary: &str) -> Result<u64> {
+    let text = match fs::read_to_string(events) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(text
+        .lines()
+        .filter(|line| {
+            let columns: Vec<&str> = line.split('\t').collect();
+            columns.len() > 7 && columns[4] == "server" && columns[7] == boundary
+        })
+        .count() as u64)
+}
+
+/// A lost-ACK claim needs subject evidence the boundary was actually reached:
+/// wait for the server record before releasing, restarting or asserting.
+fn wait_subject_record(events: &Path, boundary: &str, timeout: Duration) -> Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if subject_record_count(events, boundary)? > 0 {
+            return Ok(());
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "subject did not reach boundary {boundary} within {timeout:?}; a guessed sleep is \
+             never boundary evidence"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Release a paused boundary by writing the release file the subject polls.
+/// No milestone-6 row schedules `pause` (the subject only accepts pause at
+/// reply-pair boundaries, and no row needs one); exercised by the unit tests
+/// below and kept for the pause rows to come.
+#[allow(dead_code)]
+fn write_release(events: &Path, boundary: &str) -> Result<()> {
+    let release = events
+        .parent()
+        .context("events path has a parent directory")?
+        .join(format!("release-{boundary}"));
+    fs::write(&release, b"released by the neutral driver\n")?;
+    Ok(())
+}
+
+/// Named-code refusal evidence for codes beyond CONFLICT: the transcript must
+/// name the code, never a generic error.
+fn refusal_named_line(stderr: &str, codes: &[&str]) -> Option<String> {
+    stderr
+        .lines()
+        .find(|line| {
+            codes.iter().any(|code| {
+                line.starts_with(&format!("authority refusal {code}:"))
+                    || line.starts_with(&format!("{code}:"))
+            })
+        })
+        .map(str::to_owned)
+}
+
+/// One expected-to-fail client op: require a nonzero exit and a transcript
+/// artifact; return the captured stdout/stderr text.
+fn expect_failure(
+    session: &Session,
+    artifacts: &Path,
+    name: &str,
+    operation: &[&str],
+) -> Result<String> {
+    let output = session.op(operation)?;
+    let text = format!(
+        "exit={}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    fs::write(artifacts.join(name), &text)?;
+    ensure!(
+        !output.status.success(),
+        "{name} was expected to fail (connection loss or named refusal) but exited zero\n{text}"
+    );
+    Ok(text)
+}
+
+/// Run the java-client/rust-server direction of a G2 row when a jar is
+/// present; a failure is recorded as an INCOMPLETE marker in the direction
+/// directory instead of failing the row (the rust direction is the evidence).
+fn run_hooked_direction(
+    context: &ScenarioContext,
+    row_id: &str,
+    direction: impl Fn(&ScenarioContext, &Path) -> Result<()>,
+) -> Result<()> {
+    let Some(jar) = &context.java_jar else {
+        return Ok(());
+    };
+    let direction_dir = context.scenario_dir(row_id).join("java-client-rust-server");
+    fs::create_dir_all(&direction_dir)?;
+    if let Err(error) = direction(context, &direction_dir) {
+        fs::write(
+            direction_dir.join("INCOMPLETE"),
+            format!(
+                "java-client/rust-server direction failed; the row evidence is the \
+                 rust-client/rust-server direction. Error:\n{error:#}\njava_jar_sha256={}\n",
+                oracle::sha256_hex(&fs::read(jar)?)
+            ),
+        )?;
+        println!("INCOMPLETE {row_id} java-client/rust-server: {error:#}");
+    }
+    Ok(())
+}
+
+fn g2_schedule_row(
+    context: &ScenarioContext,
+    id: &str,
+    boundary: &str,
+    action: schedule::Action,
+) -> schedule::ScheduleRow {
+    schedule::ScheduleRow {
+        run_id: context.run_id.clone(),
+        scenario_id: id.to_owned(),
+        target: "server".into(),
+        boundary: boundary.into(),
+        action,
+        seed: context.seed,
+        deadline_ms: 10_000,
+    }
+}
+
+/// How long the driver waits for a scheduled server kill to fire (the runtime
+/// worker must reach the armed commit) or for a released pause to proceed.
+const KILL_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// Consume a hooked session into its parts so the server handle can be
+/// stopped (drop-reply rows) or awaited (kill rows) before a restart.
+fn split_hooked(hooked: Hooked) -> (Session, PathBuf) {
+    (hooked.session, hooked.events)
+}
+
+/// Shared redispatch-or-retry wait used by the kill rows: after a restart the
+/// work must reach terminal success under its ORIGINAL attempt and deadline,
+/// never a fabricated failure and never a new wire attempt from the restart
+/// itself. `pre_deadline` is the deadline observed before the kill (from the
+/// admission receipt; `None` when the client receipt format does not expose
+/// it, in which case only the attempt and outcome are asserted).
+fn await_terminal_after_restart(
+    recovered: &Session,
+    events: &mut EventWriter,
+    context: &ScenarioContext,
+    work: &str,
+    admit_hex: &str,
+    pre_deadline: Option<u64>,
+    timeout: Duration,
+) -> Result<(String, String)> {
+    let deadline = Instant::now() + timeout;
+    let mut view = recovered.watch(work)?;
+    let mut recovery_path = "automatic-redispatch-under-attempt-1".to_owned();
+    let mut state = parse_state(&view)?;
+    let mut attempt = parse_attempt(&view)?;
+    let mut deadline_ms = parse_field_u64(&view, "deadline")?
+        .context("post-restart watch did not report a deadline")?;
+    while state != 5 {
+        ensure!(
+            state != 6,
+            "restart reconciliation fabricated a failure outcome: {view}"
+        );
+        ensure!(attempt == 1, "restart created a new wire attempt: {view}");
+        if Instant::now() >= deadline {
+            // Explicit retry per the restartable-job contract.
+            let retry = oracle::operation_hex(oracle::operation_id(context.seed, "retry", 2));
+            let retry_op = recovered.op(&[
+                "retry",
+                "--operation",
+                &retry,
+                "--work",
+                work,
+                "--expected-attempt",
+                "1",
+            ])?;
+            require(&retry_op, "RECEIPT", "explicit retry after restart")?;
+            recovery_path = "explicit-retry-required".to_owned();
+            events.append(
+                "REQUEST_SENT",
+                Some(hex_to_id(&retry)?),
+                Some(work),
+                Some(1),
+                None,
+                None,
+            )?;
+            events.append(
+                "RECEIPT_VALIDATED",
+                Some(hex_to_id(&retry)?),
+                Some(work),
+                Some(1),
+                None,
+                None,
+            )?;
+        }
+        thread::sleep(Duration::from_millis(200));
+        view = recovered.watch(work)?;
+        state = parse_state(&view)?;
+        attempt = parse_attempt(&view)?;
+        deadline_ms = parse_field_u64(&view, "deadline")?
+            .context("post-restart watch did not report a deadline")?;
+    }
+    ensure!(
+        attempt == 1,
+        "expected terminal success under the original attempt 1, got attempt={attempt}:\n{view}"
+    );
+    if let Some(pre_deadline) = pre_deadline
+        && deadline_ms != pre_deadline
+    {
+        bail!(
+            "expected the original deadline preserved across restart: expected \
+             {pre_deadline}, actual {deadline_ms}"
+        );
+    }
+    events.append(
+        "OBSERVATION_JOURNALED",
+        Some(hex_to_id(admit_hex)?),
+        Some(work),
+        Some(1),
+        None,
+        None,
+    )?;
+    Ok((recovery_path, view))
+}
+
+fn parse_attempt(stdout: &str) -> Result<u64> {
+    stdout
+        .split_whitespace()
+        .find_map(|token| token.strip_prefix("attempt="))
+        .context("watch did not report an attempt")?
+        .parse::<u64>()
+        .context("watch attempt is not decimal")
+}
+
+/// The seven lost-ACK / boundary-kill rows this milestone implements. Shared
+/// between `direction_coverage` and the row registry so the coverage string
+/// can never drift from the implemented set.
+const HOOKED_G2_ROWS: &[&str] = &[
+    "g2-crash-before-create-commit",
+    "g2-crash-after-create-commit",
+    "g2-drop-reply-declaration",
+    "g2-drop-reply-admission",
+    "g2-kill-after-admission-before-publication",
+    "g2-kill-at-publication-commit",
+    "g2-kill-client-after-request-sent",
+];
+
+/// Capture an op transcript the way `expect_failure` does, for ops the row
+/// drives directly.
+fn transcript(output: &Output) -> String {
+    format!(
+        "exit={}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    )
+}
+
+/// Pull the named Section 12.2 code out of a captured op transcript (the
+/// `exit=/stdout:/stderr:` text), without inferring codes from generic errors.
+fn transcript_named_code(text: &str) -> Option<u32> {
+    text.lines().find_map(|line| {
+        REFUSAL_CODES.iter().find_map(|(name, code)| {
+            let named = line.starts_with(&format!("authority refusal {name}:"))
+                || line.starts_with(&format!("{name}:"))
+                || line.starts_with(&format!("connection lost: closed by peer: {name} ("))
+                || line.starts_with(&format!("connection lost: closed by peer: {name} "));
+            named.then_some(*code)
+        })
+    })
+}
+
+/// Artifact reference for a transcript stored under the scenario's
+/// `artifacts/` directory.
+fn artifact_ref(name: &str, text: &str) -> ArtifactRef {
+    ArtifactRef {
+        path: format!("artifacts/{name}"),
+        len: text.len() as u64,
+        sha256: oracle::sha256_hex(text.as_bytes()),
+    }
+}
+
+/// A binding attempt from a fresh journal carrying an explicit creation
+/// policy and sequence. Used to prove that changed-policy and
+/// ahead-of-sequence creation replays refuse CONFLICT (7) as a named code.
+fn binding_attempt(
+    session: &Session,
+    journal: &Path,
+    creation_sequence: u64,
+    max_execution_ms: u64,
+) -> Result<Output> {
+    let mut init = session.fixture.client_base()?;
+    init.push("init-client".into());
+    init.extend(
+        session
+            .fixture
+            .journal_args(journal, "alice", creation_sequence),
+    );
+    init.extend(["--max-execution-ms".into(), max_execution_ms.to_string()]);
+    crate::run_output_owned(&session.fixture.root, &init, OP_WAIT)?;
+    let mut command = session.fixture.client_base()?;
+    command.push("client".into());
+    command.extend(
+        session
+            .fixture
+            .journal_args(journal, "alice", creation_sequence),
+    );
+    command.extend(["--max-execution-ms".into(), max_execution_ms.to_string()]);
+    command.extend(session.connection.iter().cloned());
+    command.push("binding".into());
+    crate::run_output_owned(&session.fixture.root, &command, OP_WAIT)
+}
+
+/// admit arguments shared by the admission rows (the replay re-sends the SAME
+/// operation: same id, declaration, work, input, application).
+fn admit_op_args(operation: &str, declaration: &str, input: &Path) -> Vec<String> {
+    vec![
+        "admit".into(),
+        "--operation".into(),
+        operation.into(),
+        "--declaration".into(),
+        declaration.into(),
+        "--work".into(),
+        "0:0:1".into(),
+        "--input".into(),
+        crate::path(input),
+        "--application".into(),
+        "copy/v2".into(),
+    ]
+}
+
+fn op_refs(args: &[String]) -> Vec<&str> {
+    args.iter().map(String::as_str).collect()
+}
+
+/// The deadline recorded in an admission receipt (`Outcome::Admitted`
+/// `deadline: Number(...)`): the durable pre-kill evidence of the original
+/// deadline for the boundary-kill rows, where a pre-kill watch would race
+/// the armed kill itself.
+fn parse_receipt_deadline(receipt: &str) -> Result<u64> {
+    let pattern = "deadline: Number(";
+    let start = receipt
+        .find(pattern)
+        .context("admission receipt did not carry a deadline")?;
+    let digits = &receipt[start + pattern.len()..];
+    let end = digits
+        .find(')')
+        .context("malformed deadline in admission receipt")?;
+    digits[..end]
+        .parse::<u64>()
+        .context("deadline decimal malformed in admission receipt")
+}
+
+/// g2-crash-after-create-commit: drop-reply at SESSION_COMMITTED. The create
+/// commits durably, the binding reply is withheld and the connection reset;
+/// the replay returns the identical first-generation binding, the high-water
+/// mark does not double-allocate, and changed-policy / ahead-of-sequence
+/// replays refuse CONFLICT (7) as named codes.
+fn g2_crash_after_create_commit(context: &ScenarioContext) -> Result<()> {
+    let id = "g2-crash-after-create-commit";
+    g2_crash_after_create_commit_direction(
+        context,
+        &context.scenario_dir(id),
+        Subject::Rust,
+        Subject::Rust,
+    )?;
+    run_hooked_direction(context, id, |context, direction_dir| {
+        g2_crash_after_create_commit_direction(context, direction_dir, Subject::Rust, Subject::Java)
+    })?;
+    Ok(())
+}
+
+fn g2_crash_after_create_commit_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g2-crash-after-create-commit";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    let rows = [g2_schedule_row(
+        context,
+        id,
+        "SESSION_COMMITTED",
+        schedule::Action::DropReply,
+    )];
+    let hooked = setup_hooked(
+        context,
+        scenario_dir,
+        id,
+        server,
+        client,
+        &rows,
+        "schedule.tsv",
+        true,
+    )?;
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "lost_ack_boundary",
+                "SESSION_COMMITTED: binding create durable, reply withheld, connection reset"
+                    .into(),
+            ),
+            ("expected_generation", "1".into()),
+            ("expected_creation_sequence", "1".into()),
+            (
+                "expected_next_sequence_after_restart",
+                "2 (one durable creation, no double alloc)".into(),
+            ),
+            ("changed_policy_replay", "named CONFLICT (7)".into()),
+            ("ahead_sequence_replay", "named CONFLICT (7)".into()),
+        ],
+    )?;
+
+    // Binding attempt: the create commits, the reply never arrives.
+    events.append("REQUEST_SENT", None, None, None, None, None)?;
+    let withheld = expect_failure(
+        &hooked.session,
+        &artifacts,
+        "binding-withheld.txt",
+        &["binding"],
+    )?;
+    events.append(
+        "REFUSAL_RECEIVED",
+        None,
+        None,
+        None,
+        transcript_named_code(&withheld),
+        Some(artifact_ref("binding-withheld.txt", &withheld)),
+    )?;
+    let (session, events_path) = split_hooked(hooked);
+    wait_subject_record(&events_path, "SESSION_COMMITTED", KILL_TIMEOUT)
+        .context("subject never reached the armed SESSION_COMMITTED boundary")?;
+    // The reply is already lost (connection reset); the process stop models
+    // the client-observed crash. It is process death, not power loss.
+    session.server.stop()?;
+
+    // Same roots, same arming: the replayed create is served from the durable
+    // journal, so the armed drop-reply must not fire a second time.
+    let restarted = restart_hooked(
+        context,
+        scenario_dir,
+        id,
+        &session.fixture,
+        session.sequence,
+        &session.journal,
+        &rows,
+        "schedule.tsv",
+        true,
+    )?;
+    let next = restarted
+        .fixture
+        .next_sequence(&restarted.server, "alice")?;
+    ensure!(
+        next == 2,
+        "g2-crash-after-create-commit expected NEXT_SEQUENCE 2 after the durable create (no \
+         double alloc), got {next}"
+    );
+    let replay = restarted.op(&["binding"])?;
+    let replay_stdout = require(&replay, "BINDING", "replayed binding after reply loss")?;
+    if client == Subject::Rust {
+        for needle in [
+            "generation: Id(1)",
+            "creation_sequence: Id(1)",
+            "execution_limit_ms: Duration(60000)",
+            "output_retention_ms: Duration(3600000)",
+            "receipt_retention_ms: Duration(86400000)",
+        ] {
+            ensure!(
+                replay_stdout.contains(needle),
+                "g2-crash-after-create-commit replayed binding must echo the original creation \
+                 intent ({needle}):\n{replay_stdout}"
+            );
+        }
+    }
+    events.append("RECEIPT_VALIDATED", None, None, None, None, None)?;
+
+    // Changed-policy replay of the same creation refuses named CONFLICT (7).
+    let changed_journal = scenario_dir.join("client").join("changed-policy.sqlite");
+    let changed = binding_attempt(&restarted, &changed_journal, 1, 120_000)?;
+    let changed_text = transcript(&changed);
+    fs::write(artifacts.join("changed-policy-refusal.txt"), &changed_text)?;
+    let changed_line = refusal_conflict_line(&String::from_utf8_lossy(&changed.stderr));
+    ensure!(
+        !changed.status.success() && changed_line.is_some(),
+        "g2-crash-after-create-commit changed-policy replay must refuse named CONFLICT:\n\
+         {changed_text}"
+    );
+    events.append(
+        "REFUSAL_RECEIVED",
+        None,
+        None,
+        None,
+        Some(7),
+        Some(artifact_ref("changed-policy-refusal.txt", &changed_text)),
+    )?;
+
+    // An ahead-of-sequence creation refuses named CONFLICT (7) as well.
+    let ahead_journal = scenario_dir.join("client").join("ahead-sequence.sqlite");
+    let ahead = binding_attempt(&restarted, &ahead_journal, 9, 60_000)?;
+    let ahead_text = transcript(&ahead);
+    fs::write(artifacts.join("ahead-sequence-refusal.txt"), &ahead_text)?;
+    let ahead_line = refusal_conflict_line(&String::from_utf8_lossy(&ahead.stderr));
+    ensure!(
+        !ahead.status.success() && ahead_line.is_some(),
+        "g2-crash-after-create-commit ahead-of-sequence creation must refuse named CONFLICT:\n\
+         {ahead_text}"
+    );
+    events.append(
+        "REFUSAL_RECEIVED",
+        None,
+        None,
+        None,
+        Some(7),
+        Some(artifact_ref("ahead-sequence-refusal.txt", &ahead_text)),
+    )?;
+
+    detach(&restarted)?;
+    write_kv(
+        scenario_dir,
+        "observed.tsv",
+        &[
+            (
+                "subject_boundary_record",
+                "SESSION_COMMITTED recorded before the reply was withheld".into(),
+            ),
+            ("next_sequence_after_restart", next.to_string()),
+            (
+                "replay_binding",
+                "generation Id(1), creation_sequence Id(1), original policy echoed".into(),
+            ),
+            (
+                "changed_policy_refusal",
+                changed_line.expect("checked above"),
+            ),
+            ("ahead_sequence_refusal", ahead_line.expect("checked above")),
+        ],
+    )?;
+    stop_and_seal(context, scenario_dir, id, restarted.server, events)
+}
+
+/// g2-crash-before-create-commit: the matrix's uncontrolled-crash variant is a
+/// scheduled kill at CONNECTION_AUTHENTICATED. No creation is durable; the
+/// restart reports NEXT_SEQUENCE 1 (no phantom session) and the identical
+/// replayed create binds generation 1.
+fn g2_crash_before_create_commit(context: &ScenarioContext) -> Result<()> {
+    let id = "g2-crash-before-create-commit";
+    g2_crash_before_create_commit_direction(
+        context,
+        &context.scenario_dir(id),
+        Subject::Rust,
+        Subject::Rust,
+    )?;
+    run_hooked_direction(context, id, |context, direction_dir| {
+        g2_crash_before_create_commit_direction(
+            context,
+            direction_dir,
+            Subject::Rust,
+            Subject::Java,
+        )
+    })?;
+    Ok(())
+}
+
+fn g2_crash_before_create_commit_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g2-crash-before-create-commit";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    let rows = [g2_schedule_row(
+        context,
+        id,
+        "CONNECTION_AUTHENTICATED",
+        schedule::Action::Kill,
+    )];
+    let hooked = setup_hooked(
+        context,
+        scenario_dir,
+        id,
+        server,
+        client,
+        &rows,
+        "schedule.tsv",
+        false,
+    )?;
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "kill_boundary",
+                "CONNECTION_AUTHENTICATED: kill before any create commits".into(),
+            ),
+            ("subject_exit", "86 after the boundary record".into()),
+            (
+                "expected_next_sequence_after_restart",
+                "1 (no phantom session)".into(),
+            ),
+            ("expected_generation", "1".into()),
+            (
+                "expected_next_sequence_after_replay",
+                "2 (exactly one durable creation)".into(),
+            ),
+        ],
+    )?;
+
+    events.append("REQUEST_SENT", None, None, None, None, None)?;
+    let binding_transcript = expect_failure(
+        &hooked.session,
+        &artifacts,
+        "binding-lost.txt",
+        &["binding"],
+    )?;
+    events.append(
+        "REFUSAL_RECEIVED",
+        None,
+        None,
+        None,
+        transcript_named_code(&binding_transcript),
+        Some(artifact_ref("binding-lost.txt", &binding_transcript)),
+    )?;
+    let (session, events_path) = split_hooked(hooked);
+    wait_subject_record(&events_path, "CONNECTION_AUTHENTICATED", KILL_TIMEOUT)
+        .context("subject never reached the armed CONNECTION_AUTHENTICATED boundary")?;
+    let output = session.server.wait_exit(KILL_TIMEOUT)?;
+    ensure!(
+        output.status.code() == Some(86),
+        "g2-crash-before-create-commit: the scheduled kill must exit 86 after the boundary \
+         record, got {}",
+        output.status
+    );
+    let recovered = restart_hooked(
+        context,
+        scenario_dir,
+        id,
+        &session.fixture,
+        session.sequence,
+        &session.journal,
+        &[],
+        "schedule-restart.tsv",
+        true,
+    )?;
+    let next = recovered
+        .fixture
+        .next_sequence(&recovered.server, "alice")?;
+    ensure!(
+        next == 1,
+        "g2-crash-before-create-commit expected no phantom session (NEXT_SEQUENCE 1) after the \
+         pre-create kill, got {next}"
+    );
+    let replay = recovered.op(&["binding"])?;
+    let replay_stdout = require(&replay, "BINDING", "replayed create after pre-create kill")?;
+    if client == Subject::Rust {
+        ensure!(
+            replay_stdout.contains("generation: Id(1)")
+                && replay_stdout.contains("creation_sequence: Id(1)"),
+            "g2-crash-before-create-commit replayed create must bind the first generation:\n\
+             {replay_stdout}"
+        );
+    }
+    let next = recovered
+        .fixture
+        .next_sequence(&recovered.server, "alice")?;
+    ensure!(
+        next == 2,
+        "g2-crash-before-create-commit expected exactly one durable creation after the replay, \
+         got NEXT_SEQUENCE {next}"
+    );
+    detach(&recovered)?;
+    write_kv(
+        scenario_dir,
+        "observed.tsv",
+        &[
+            ("subject_exit_code", "86".into()),
+            ("next_sequence_after_restart", "1".into()),
+            ("replay_binding", "generation 1".into()),
+            ("next_sequence_after_replay", next.to_string()),
+        ],
+    )?;
+    stop_and_seal(context, scenario_dir, id, recovered.server, events)
+}
+
+/// g2-drop-reply-declaration: drop-reply at DECLARATION_COMMITTED. The
+/// declaration commits durably; the identical replay returns the durable
+/// receipt, a changed membership under the same operation refuses CONFLICT
+/// (7), and each entity is paged exactly once.
+fn g2_drop_reply_declaration(context: &ScenarioContext) -> Result<()> {
+    let id = "g2-drop-reply-declaration";
+    g2_drop_reply_declaration_direction(
+        context,
+        &context.scenario_dir(id),
+        Subject::Rust,
+        Subject::Rust,
+    )?;
+    run_hooked_direction(context, id, |context, direction_dir| {
+        g2_drop_reply_declaration_direction(context, direction_dir, Subject::Rust, Subject::Java)
+    })?;
+    Ok(())
+}
+
+fn g2_drop_reply_declaration_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g2-drop-reply-declaration";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    let rows = [g2_schedule_row(
+        context,
+        id,
+        "DECLARATION_COMMITTED",
+        schedule::Action::DropReply,
+    )];
+    let hooked = setup_hooked(
+        context,
+        scenario_dir,
+        id,
+        server,
+        client,
+        &rows,
+        "schedule.tsv",
+        true,
+    )?;
+    let (session, events_path) = split_hooked(hooked);
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "client binding")?;
+    let declare_hex = oracle::operation_hex(oracle::operation_id(context.seed, "declare", 0));
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "lost_ack_boundary",
+                "DECLARATION_COMMITTED: declaration durable, receipt withheld".into(),
+            ),
+            (
+                "identical_replay",
+                "durable receipt returned unchanged".into(),
+            ),
+            ("changed_membership_same_op", "named CONFLICT (7)".into()),
+            (
+                "expected_page",
+                "declared=2 members=2 (entities 1 and 2)".into(),
+            ),
+        ],
+    )?;
+
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&declare_hex)?),
+        None,
+        None,
+        None,
+        None,
+    )?;
+    let withheld = expect_failure(
+        &session,
+        &artifacts,
+        "declare-withheld.txt",
+        &[
+            "declare",
+            "--operation",
+            &declare_hex,
+            "--entities",
+            "1,2",
+            "--seal",
+        ],
+    )?;
+    events.append(
+        "REFUSAL_RECEIVED",
+        Some(hex_to_id(&declare_hex)?),
+        None,
+        None,
+        transcript_named_code(&withheld),
+        Some(artifact_ref("declare-withheld.txt", &withheld)),
+    )?;
+    wait_subject_record(&events_path, "DECLARATION_COMMITTED", KILL_TIMEOUT)
+        .context("subject never reached the armed DECLARATION_COMMITTED boundary")?;
+
+    // Identical replay: the durable declaration receipt comes back.
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&declare_hex)?),
+        None,
+        None,
+        None,
+        None,
+    )?;
+    let replay = session.op(&[
+        "declare",
+        "--operation",
+        &declare_hex,
+        "--entities",
+        "1,2",
+        "--seal",
+    ])?;
+    let receipt = require(&replay, "RECEIPT", "replayed declare after reply loss")?;
+    if client == Subject::Rust {
+        for needle in [
+            "body: Declared {",
+            "scope: Number(0)",
+            "accepted_count: BatchCount(2)",
+            "seal: Some(",
+        ] {
+            ensure!(
+                receipt.contains(needle),
+                "g2-drop-reply-declaration replayed receipt must carry the durable declaration \
+                 ({needle}):\n{receipt}"
+            );
+        }
+    }
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(hex_to_id(&declare_hex)?),
+        None,
+        None,
+        None,
+        None,
+    )?;
+
+    // Changed membership under the same operation refuses named CONFLICT (7).
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&declare_hex)?),
+        None,
+        None,
+        None,
+        None,
+    )?;
+    let changed = session.op(&[
+        "declare",
+        "--operation",
+        &declare_hex,
+        "--entities",
+        "1,2,3",
+        "--seal",
+    ])?;
+    let changed_text = transcript(&changed);
+    fs::write(artifacts.join("changed-declare-refusal.txt"), &changed_text)?;
+    let changed_line = refusal_conflict_line(&String::from_utf8_lossy(&changed.stderr));
+    ensure!(
+        !changed.status.success() && changed_line.is_some(),
+        "g2-drop-reply-declaration changed-membership declare must refuse named CONFLICT:\n\
+         {changed_text}"
+    );
+    events.append(
+        "REFUSAL_RECEIVED",
+        Some(hex_to_id(&declare_hex)?),
+        None,
+        None,
+        Some(7),
+        Some(artifact_ref("changed-declare-refusal.txt", &changed_text)),
+    )?;
+
+    let page = session.op(&["page", "--scope", "0"])?;
+    let page_stdout = require(&page, "SCOPE", "scope page")?;
+    let (declared, members) = parse_scope_page(&page_stdout)?;
+    ensure!(
+        declared == 2 && members == 2,
+        "g2-drop-reply-declaration expected each entity paged exactly once (declared=2, \
+         members=2), got declared={declared} members={members}:\n{page_stdout}"
+    );
+    detach(&session)?;
+    write_kv(
+        scenario_dir,
+        "observed.tsv",
+        &[
+            (
+                "subject_boundary_record",
+                "DECLARATION_COMMITTED recorded before the reply was withheld".into(),
+            ),
+            (
+                "changed_membership_refusal",
+                changed_line.expect("checked above"),
+            ),
+            ("page_declared", declared.to_string()),
+            ("page_members", members.to_string()),
+        ],
+    )?;
+    stop_and_seal(context, scenario_dir, id, session.server, events)
+}
+
+/// g2-drop-reply-admission: drop-reply at ADMISSION_COMMITTED. The admission
+/// commits durably; the identical replay returns the attempt-1 receipt with
+/// no re-execution, and a changed input under the same operation refuses
+/// CONFLICT (7).
+fn g2_drop_reply_admission(context: &ScenarioContext) -> Result<()> {
+    let id = "g2-drop-reply-admission";
+    g2_drop_reply_admission_direction(
+        context,
+        &context.scenario_dir(id),
+        Subject::Rust,
+        Subject::Rust,
+    )?;
+    run_hooked_direction(context, id, |context, direction_dir| {
+        g2_drop_reply_admission_direction(context, direction_dir, Subject::Rust, Subject::Java)
+    })?;
+    Ok(())
+}
+
+fn g2_drop_reply_admission_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g2-drop-reply-admission";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    let rows = [g2_schedule_row(
+        context,
+        id,
+        "ADMISSION_COMMITTED",
+        schedule::Action::DropReply,
+    )];
+    let hooked = setup_hooked(
+        context,
+        scenario_dir,
+        id,
+        server,
+        client,
+        &rows,
+        "schedule.tsv",
+        true,
+    )?;
+    let (session, events_path) = split_hooked(hooked);
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "client binding")?;
+    let declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
+    let admit_hex = oracle::operation_hex(oracle::operation_id(context.seed, "admit", 1));
+    let input = oracle::dataset(context.seed, INPUT_LEN);
+    let input_sha256 = oracle::sha256_hex(&input);
+    let input_path = artifacts.join("input.bin");
+    fs::write(&input_path, &input)?;
+    let changed = oracle::dataset(context.seed ^ 0x5a5a_5a5a_5a5a_5a5a, INPUT_LEN / 2);
+    let changed_path = artifacts.join("input-changed.bin");
+    fs::write(&changed_path, &changed)?;
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("input_len", input.len().to_string()),
+            ("input_sha256", input_sha256.clone()),
+            (
+                "lost_ack_boundary",
+                "ADMISSION_COMMITTED: admission durable, receipt withheld".into(),
+            ),
+            (
+                "identical_replay",
+                "attempt-1 receipt returned unchanged; terminal success under attempt 1 (no \
+                 re-execution)"
+                    .into(),
+            ),
+            ("changed_input_same_op", "named CONFLICT (7)".into()),
+            ("expected_page_members", "1".into()),
+        ],
+    )?;
+
+    let args = admit_op_args(&admit_hex, &declare, &input_path);
+    let arg_refs = op_refs(&args);
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&admit_hex)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let withheld = expect_failure(&session, &artifacts, "admit-withheld.txt", &arg_refs)?;
+    events.append(
+        "REFUSAL_RECEIVED",
+        Some(hex_to_id(&admit_hex)?),
+        Some("0:0:1"),
+        Some(1),
+        transcript_named_code(&withheld),
+        Some(artifact_ref("admit-withheld.txt", &withheld)),
+    )?;
+    wait_subject_record(&events_path, "ADMISSION_COMMITTED", KILL_TIMEOUT)
+        .context("subject never reached the armed ADMISSION_COMMITTED boundary")?;
+
+    // Identical replay: the durable attempt-1 admission receipt comes back.
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&admit_hex)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let replay = session.op(&arg_refs)?;
+    let replay_receipt = require(&replay, "RECEIPT", "replayed admit after reply loss")?;
+    if client == Subject::Rust {
+        ensure!(
+            replay_receipt.contains("attempt: Id(1)"),
+            "g2-drop-reply-admission replayed receipt must carry the original attempt 1:\n\
+             {replay_receipt}"
+        );
+    }
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(hex_to_id(&admit_hex)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let terminal = watch_terminal(&session, &mut events, "0:0:1", &admit_hex, WATCH_TIMEOUT)?;
+    ensure!(
+        parse_attempt(&terminal)? == 1,
+        "g2-drop-reply-admission expected the terminal success under the original attempt 1 \
+         (no re-execution):\n{terminal}"
+    );
+
+    // Changed input under the same operation refuses named CONFLICT (7).
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&admit_hex)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let changed_args = admit_op_args(&admit_hex, &declare, &changed_path);
+    let changed_refs = op_refs(&changed_args);
+    let duplicate = session.op(&changed_refs)?;
+    let duplicate_text = transcript(&duplicate);
+    fs::write(artifacts.join("changed-admit-refusal.txt"), &duplicate_text)?;
+    let duplicate_line = refusal_conflict_line(&String::from_utf8_lossy(&duplicate.stderr));
+    ensure!(
+        !duplicate.status.success() && duplicate_line.is_some(),
+        "g2-drop-reply-admission changed-input admit must refuse named CONFLICT:\n\
+         {duplicate_text}"
+    );
+    events.append(
+        "REFUSAL_RECEIVED",
+        Some(hex_to_id(&admit_hex)?),
+        Some("0:0:1"),
+        Some(1),
+        Some(7),
+        Some(artifact_ref("changed-admit-refusal.txt", &duplicate_text)),
+    )?;
+    let page = session.op(&["page", "--scope", "0"])?;
+    let page_stdout = require(&page, "SCOPE", "scope page")?;
+    let (declared, members) = parse_scope_page(&page_stdout)?;
+    ensure!(
+        members == 1,
+        "g2-drop-reply-admission expected exactly one admitted entity, got members={members}:\n\
+         {page_stdout}"
+    );
+    detach(&session)?;
+    write_kv(
+        scenario_dir,
+        "observed.tsv",
+        &[
+            (
+                "subject_boundary_record",
+                "ADMISSION_COMMITTED recorded before the reply was withheld".into(),
+            ),
+            (
+                "changed_input_refusal",
+                duplicate_line.expect("checked above"),
+            ),
+            ("page_declared", declared.to_string()),
+            ("page_members", members.to_string()),
+        ],
+    )?;
+    stop_and_seal(context, scenario_dir, id, session.server, events)
+}
+
+/// g2-kill-after-admission-before-publication: kill at EXECUTION_CLAIMED. The
+/// claim commits durably and the subject exits 86; after the restart the work
+/// reaches terminal success under its original attempt and deadline, via
+/// automatic redispatch or an explicit retry (recorded), and the result reads
+/// back byte-exact.
+fn g2_kill_after_admission_before_publication(context: &ScenarioContext) -> Result<()> {
+    let id = "g2-kill-after-admission-before-publication";
+    g2_kill_after_admission_before_publication_direction(
+        context,
+        &context.scenario_dir(id),
+        Subject::Rust,
+        Subject::Rust,
+    )?;
+    run_hooked_direction(context, id, |context, direction_dir| {
+        g2_kill_after_admission_before_publication_direction(
+            context,
+            direction_dir,
+            Subject::Rust,
+            Subject::Java,
+        )
+    })?;
+    Ok(())
+}
+
+fn g2_kill_after_admission_before_publication_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g2-kill-after-admission-before-publication";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    let rows = [g2_schedule_row(
+        context,
+        id,
+        "EXECUTION_CLAIMED",
+        schedule::Action::Kill,
+    )];
+    let hooked = setup_hooked(
+        context,
+        scenario_dir,
+        id,
+        server,
+        client,
+        &rows,
+        "schedule.tsv",
+        true,
+    )?;
+    let (session, events_path) = split_hooked(hooked);
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "client binding")?;
+    let declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
+    let admit_hex = oracle::operation_hex(oracle::operation_id(context.seed, "admit", 1));
+    let input = oracle::dataset(context.seed, INPUT_LEN);
+    let input_sha256 = oracle::sha256_hex(&input);
+    let input_path = artifacts.join("input.bin");
+    fs::write(&input_path, &input)?;
+    let receipt = admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "admit",
+        &declare,
+        "0:0:1",
+        &input_path,
+    )?;
+    // The pre-kill deadline comes from the durable receipt: a pre-kill watch
+    // would race the armed kill itself (the subject may already be gone).
+    let pre_deadline = if client == Subject::Rust {
+        Some(parse_receipt_deadline(&receipt)?)
+    } else {
+        None
+    };
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("input_len", input.len().to_string()),
+            ("input_sha256", input_sha256.clone()),
+            (
+                "kill_boundary",
+                "EXECUTION_CLAIMED: claim durable, then the subject exits 86".into(),
+            ),
+            ("expected_attempt", "1".into()),
+            ("expected_deadline", "original deadline preserved".into()),
+            ("expected_terminal_state", "5".into()),
+            (
+                "expected_recovery",
+                "automatic redispatch or explicit retry (recorded)".into(),
+            ),
+        ],
+    )?;
+
+    wait_subject_record(&events_path, "EXECUTION_CLAIMED", KILL_TIMEOUT)
+        .context("subject never reached the armed EXECUTION_CLAIMED boundary")?;
+    let output = session.server.wait_exit(KILL_TIMEOUT)?;
+    ensure!(
+        output.status.code() == Some(86),
+        "g2-kill-after-admission-before-publication: the scheduled kill must exit 86 after \
+         the boundary record, got {}",
+        output.status
+    );
+    let recovered = restart_hooked(
+        context,
+        scenario_dir,
+        id,
+        &session.fixture,
+        session.sequence,
+        &session.journal,
+        &[],
+        "schedule-restart.tsv",
+        true,
+    )?;
+    let (recovery_path, terminal_view) = await_terminal_after_restart(
+        &recovered,
+        &mut events,
+        context,
+        "0:0:1",
+        &admit_hex,
+        pre_deadline,
+        RECOVERY_TIMEOUT,
+    )?;
+    let terminal_state = parse_state(&terminal_view)?;
+    let terminal_attempt = parse_attempt(&terminal_view)?;
+    read_output_verified(
+        &recovered,
+        &mut events,
+        "0:0:1",
+        1,
+        &input,
+        &input_sha256,
+        &artifacts,
+        "output.bin",
+    )?;
+    detach(&recovered)?;
+    write_kv(
+        scenario_dir,
+        "observed.tsv",
+        &[
+            ("subject_exit_code", "86".into()),
+            (
+                "subject_boundary_record",
+                "EXECUTION_CLAIMED recorded before the exit".into(),
+            ),
+            ("terminal_state", terminal_state.to_string()),
+            ("terminal_attempt", terminal_attempt.to_string()),
+            ("recovery_path", recovery_path),
+        ],
+    )?;
+    stop_and_seal(context, scenario_dir, id, recovered.server, events)
+}
+
+/// g2-kill-at-publication-commit: kill at PUBLICATION_COMMITTED. Exactly one
+/// terminal commit is durable; the restart converges to terminal success
+/// under the original attempt with a byte-exact result; a post-terminal retry
+/// refuses ALREADY_TERMINAL (18) or CANCELLED (12), whichever the subject
+/// names.
+fn g2_kill_at_publication_commit(context: &ScenarioContext) -> Result<()> {
+    let id = "g2-kill-at-publication-commit";
+    g2_kill_at_publication_commit_direction(
+        context,
+        &context.scenario_dir(id),
+        Subject::Rust,
+        Subject::Rust,
+    )?;
+    run_hooked_direction(context, id, |context, direction_dir| {
+        g2_kill_at_publication_commit_direction(
+            context,
+            direction_dir,
+            Subject::Rust,
+            Subject::Java,
+        )
+    })?;
+    Ok(())
+}
+
+fn g2_kill_at_publication_commit_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g2-kill-at-publication-commit";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    let rows = [g2_schedule_row(
+        context,
+        id,
+        "PUBLICATION_COMMITTED",
+        schedule::Action::Kill,
+    )];
+    let hooked = setup_hooked(
+        context,
+        scenario_dir,
+        id,
+        server,
+        client,
+        &rows,
+        "schedule.tsv",
+        true,
+    )?;
+    let (session, events_path) = split_hooked(hooked);
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "client binding")?;
+    let declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
+    let admit_hex = oracle::operation_hex(oracle::operation_id(context.seed, "admit", 1));
+    let input = oracle::dataset(context.seed, INPUT_LEN);
+    let input_sha256 = oracle::sha256_hex(&input);
+    let input_path = artifacts.join("input.bin");
+    fs::write(&input_path, &input)?;
+    let receipt = admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "admit",
+        &declare,
+        "0:0:1",
+        &input_path,
+    )?;
+    // The pre-kill deadline comes from the durable receipt: a pre-kill watch
+    // would race the armed kill itself (the subject may already be gone).
+    let pre_deadline = if client == Subject::Rust {
+        Some(parse_receipt_deadline(&receipt)?)
+    } else {
+        None
+    };
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("input_len", input.len().to_string()),
+            ("input_sha256", input_sha256.clone()),
+            (
+                "kill_boundary",
+                "PUBLICATION_COMMITTED: terminal commit durable, then exit 86".into(),
+            ),
+            ("expected_terminal_commits", "exactly 1".into()),
+            ("expected_result", "byte-exact under attempt 1".into()),
+            (
+                "post_terminal_retry",
+                "named ALREADY_TERMINAL (18) or CANCELLED (12)".into(),
+            ),
+        ],
+    )?;
+
+    wait_subject_record(&events_path, "PUBLICATION_COMMITTED", KILL_TIMEOUT)
+        .context("subject never reached the armed PUBLICATION_COMMITTED boundary")?;
+    let output = session.server.wait_exit(KILL_TIMEOUT)?;
+    ensure!(
+        output.status.code() == Some(86),
+        "g2-kill-at-publication-commit: the scheduled kill must exit 86 after the boundary \
+         record, got {}",
+        output.status
+    );
+    let recovered = restart_hooked(
+        context,
+        scenario_dir,
+        id,
+        &session.fixture,
+        session.sequence,
+        &session.journal,
+        &[],
+        "schedule-restart.tsv",
+        true,
+    )?;
+    let (recovery_path, terminal_view) = await_terminal_after_restart(
+        &recovered,
+        &mut events,
+        context,
+        "0:0:1",
+        &admit_hex,
+        pre_deadline,
+        RECOVERY_TIMEOUT,
+    )?;
+    read_output_verified(
+        &recovered,
+        &mut events,
+        "0:0:1",
+        1,
+        &input,
+        &input_sha256,
+        &artifacts,
+        "output.bin",
+    )?;
+    let publication_commits = subject_record_count(&events_path, "PUBLICATION_COMMITTED")?;
+    ensure!(
+        publication_commits == 1,
+        "g2-kill-at-publication-commit expected exactly one durable terminal commit, got \
+         {publication_commits}"
+    );
+
+    // Post-terminal retry of a NEW operation against the terminal work must
+    // refuse, naming ALREADY_TERMINAL (18) or CANCELLED (12).
+    let retry_hex = oracle::operation_hex(oracle::operation_id(context.seed, "retry", 3));
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&retry_hex)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let retry = recovered.op(&[
+        "retry",
+        "--operation",
+        &retry_hex,
+        "--work",
+        "0:0:1",
+        "--expected-attempt",
+        "1",
+    ])?;
+    let retry_text = transcript(&retry);
+    fs::write(artifacts.join("post-terminal-retry.txt"), &retry_text)?;
+    let retry_line = refusal_named_line(
+        &String::from_utf8_lossy(&retry.stderr),
+        &["ALREADY_TERMINAL", "CANCELLED"],
+    );
+    ensure!(
+        !retry.status.success(),
+        "g2-kill-at-publication-commit post-terminal retry must refuse, got exit \
+         {}\n{retry_text}",
+        retry.status
+    );
+    let retry_line = retry_line.context(
+        "g2-kill-at-publication-commit post-terminal retry must name ALREADY_TERMINAL or \
+         CANCELLED on stderr",
+    )?;
+    let retry_code = if retry_line.starts_with("authority refusal ALREADY_TERMINAL:")
+        || retry_line.starts_with("ALREADY_TERMINAL:")
+    {
+        18
+    } else {
+        12
+    };
+    events.append(
+        "REFUSAL_RECEIVED",
+        Some(hex_to_id(&retry_hex)?),
+        Some("0:0:1"),
+        Some(1),
+        Some(retry_code),
+        Some(artifact_ref("post-terminal-retry.txt", &retry_text)),
+    )?;
+    detach(&recovered)?;
+    write_kv(
+        scenario_dir,
+        "observed.tsv",
+        &[
+            ("subject_exit_code", "86".into()),
+            (
+                "publication_committed_records",
+                publication_commits.to_string(),
+            ),
+            ("recovery_path", recovery_path),
+            ("terminal_view", terminal_view.trim().to_owned()),
+            ("post_terminal_retry_refusal", retry_line),
+            ("post_terminal_retry_code", retry_code.to_string()),
+        ],
+    )?;
+    stop_and_seal(context, scenario_dir, id, recovered.server, events)
+}
+
+/// g2-kill-client-after-request-sent: SIGKILL the one-shot client process
+/// mid-admission at a seeded delay. The journal replay either adopts the
+/// durable admission receipt (authority committed it) or observes NOT_FOUND
+/// and re-sends the SAME operation; either way exactly one admission exists.
+fn g2_kill_client_after_request_sent(context: &ScenarioContext) -> Result<()> {
+    let id = "g2-kill-client-after-request-sent";
+    g2_kill_client_after_request_sent_direction(
+        context,
+        &context.scenario_dir(id),
+        Subject::Rust,
+        Subject::Rust,
+    )?;
+    run_hooked_direction(context, id, |context, direction_dir| {
+        g2_kill_client_after_request_sent_direction(
+            context,
+            direction_dir,
+            Subject::Rust,
+            Subject::Java,
+        )
+    })?;
+    Ok(())
+}
+
+fn g2_kill_client_after_request_sent_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g2-kill-client-after-request-sent";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    // The server is unarmed: the fault is the client process dying, not a
+    // server-side schedule. The input is large enough that the upload cannot
+    // finish inside the seeded kill delay on loopback.
+    let hooked = setup_hooked(
+        context,
+        scenario_dir,
+        id,
+        server,
+        client,
+        &[],
+        "schedule.tsv",
+        true,
+    )?;
+    let (session, _events_path) = split_hooked(hooked);
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "client binding")?;
+    let declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
+    let admit_hex = oracle::operation_hex(oracle::operation_id(context.seed, "admit", 1));
+    let input = oracle::dataset(context.seed, CLIENT_KILL_INPUT_LEN);
+    let input_sha256 = oracle::sha256_hex(&input);
+    let input_path = artifacts.join("input.bin");
+    fs::write(&input_path, &input)?;
+    let delay_ms = 10 + (context.seed % 23);
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("input_len", input.len().to_string()),
+            ("input_sha256", input_sha256.clone()),
+            ("kill_delay_ms", delay_ms.to_string()),
+            (
+                "kill_label",
+                "SIGKILL to the one-shot client after the request was sent, mid-admission".into(),
+            ),
+            (
+                "journal_replay",
+                "adopt the durable receipt, or on NOT_FOUND re-send the SAME operation".into(),
+            ),
+            (
+                "expected_admissions",
+                "exactly 1 (page members + subject records)".into(),
+            ),
+            ("expected_attempt", "1".into()),
+        ],
+    )?;
+
+    let args = admit_op_args(&admit_hex, &declare, &input_path);
+    let arg_refs = op_refs(&args);
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&admit_hex)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let mut child = session.fixture.spawn_client_op(
+        &session.journal,
+        "alice",
+        session.sequence,
+        &session.connection,
+        &arg_refs,
+    )?;
+    thread::sleep(Duration::from_millis(delay_ms));
+    ensure!(
+        child.try_wait()?.is_none(),
+        "g2-kill-client-after-request-sent: the admit op finished in {delay_ms}ms before the \
+         kill; the input is not large enough to keep it genuinely in flight"
+    );
+    child.kill().context("SIGKILL the in-flight client op")?;
+    let killed = AuthorityFixture::wait_client_op(child, OP_WAIT)?;
+    ensure!(
+        !killed.status.success(),
+        "g2-kill-client-after-request-sent: the killed client op must not exit zero:\n{}",
+        transcript(&killed)
+    );
+
+    // Journal replay: adopt the durable receipt if the authority committed
+    // the admission; otherwise the lookup names NOT_FOUND and the SAME
+    // operation is re-sent (same id, input, declaration).
+    let lookup = session.op(&["lookup", "--operation", &admit_hex])?;
+    let recovery_path = if lookup.status.success()
+        && String::from_utf8_lossy(&lookup.stdout).contains("RECEIPT")
+    {
+        let adopted = transcript(&lookup);
+        fs::write(artifacts.join("adopted-receipt.txt"), &adopted)?;
+        events.append(
+            "RECEIPT_VALIDATED",
+            Some(hex_to_id(&admit_hex)?),
+            Some("0:0:1"),
+            Some(1),
+            None,
+            None,
+        )?;
+        "receipt-adopted".to_owned()
+    } else {
+        let lookup_text = transcript(&lookup);
+        fs::write(artifacts.join("lookup-not-found.txt"), &lookup_text)?;
+        ensure!(
+            refusal_named_line(&String::from_utf8_lossy(&lookup.stderr), &["NOT_FOUND"]).is_some(),
+            "g2-kill-client-after-request-sent: lookup after the client kill must return the \
+             receipt or name NOT_FOUND:\n{lookup_text}"
+        );
+        events.append(
+            "REQUEST_SENT",
+            Some(hex_to_id(&admit_hex)?),
+            Some("0:0:1"),
+            Some(1),
+            None,
+            None,
+        )?;
+        let replay = session.op(&arg_refs)?;
+        let replay_receipt = require(&replay, "RECEIPT", "re-sent admit after NOT_FOUND")?;
+        fs::write(artifacts.join("resent-receipt.txt"), &replay_receipt)?;
+        events.append(
+            "RECEIPT_VALIDATED",
+            Some(hex_to_id(&admit_hex)?),
+            Some("0:0:1"),
+            Some(1),
+            None,
+            None,
+        )?;
+        "resent-after-not-found".to_owned()
+    };
+
+    // Exactly one admission: one scope member, one attempt, one subject commit.
+    let page = session.op(&["page", "--scope", "0"])?;
+    let page_stdout = require(&page, "SCOPE", "scope page")?;
+    let (declared, members) = parse_scope_page(&page_stdout)?;
+    ensure!(
+        members == 1,
+        "g2-kill-client-after-request-sent expected exactly one admitted entity after the \
+         client death, got members={members}:\n{page_stdout}"
+    );
+    let terminal = watch_terminal(&session, &mut events, "0:0:1", &admit_hex, WATCH_TIMEOUT)?;
+    ensure!(
+        parse_attempt(&terminal)? == 1,
+        "g2-kill-client-after-request-sent expected the work under attempt 1 after the client \
+         death:\n{terminal}"
+    );
+    detach(&session)?;
+    write_kv(
+        scenario_dir,
+        "observed.tsv",
+        &[
+            ("kill_delay_ms", delay_ms.to_string()),
+            ("recovery_path", recovery_path),
+            ("page_declared", declared.to_string()),
+            ("page_members", members.to_string()),
+        ],
+    )?;
+    stop_and_seal(context, scenario_dir, id, session.server, events)
+}
 
 /// Section 12.2 refusal-code table, used only to NAME codes that a subject
 /// transcript prints verbatim; a code is never inferred from a generic error.
@@ -2574,6 +4361,13 @@ mod tests {
         assert!(rows.len() >= 40);
         for id in [
             "g1-leaf-copy",
+            "g2-crash-before-create-commit",
+            "g2-crash-after-create-commit",
+            "g2-drop-reply-declaration",
+            "g2-drop-reply-admission",
+            "g2-kill-after-admission-before-publication",
+            "g2-kill-at-publication-commit",
+            "g2-kill-client-after-request-sent",
             "g2-duplicate-op-changed-params",
             "g2-simultaneous-duplicate",
             "g2-kill-server-after-admission-recovery",
@@ -2586,7 +4380,62 @@ mod tests {
             let row = rows.iter().find(|row| row.id == id).unwrap();
             assert!(row.rust_implemented, "{id} must be implemented");
         }
-        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 9);
+        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 16);
+    }
+
+    #[test]
+    fn subject_record_count_reads_server_boundary_rows() {
+        let dir = std::env::temp_dir().join(format!(
+            "pipestream-subject-records-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let events = dir.join("events.tsv");
+        fs::write(
+            &events,
+            "v1\trun\tscenario\trust\tserver\tpid-1\t1\tSESSION_COMMITTED\t\t\t\t\t\t\t\t\n\
+             v1\trun\tscenario\trust\tclient\tpid-2\t1\tREQUEST_SENT\t\t\t\t\t\t\t\t\n",
+        )
+        .unwrap();
+        assert_eq!(
+            subject_record_count(&events, "SESSION_COMMITTED").unwrap(),
+            1
+        );
+        assert_eq!(
+            subject_record_count(&events, "ADMISSION_COMMITTED").unwrap(),
+            0
+        );
+        // A missing events file is zero records, not an error.
+        assert_eq!(
+            subject_record_count(&dir.join("absent.tsv"), "X").unwrap(),
+            0
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn release_file_targets_the_events_directory() {
+        let dir =
+            std::env::temp_dir().join(format!("pipestream-release-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let events = dir.join("events.tsv");
+        write_release(&events, "SESSION_COMMITTED").unwrap();
+        assert!(dir.join("release-SESSION_COMMITTED").is_file());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn transcript_named_code_only_matches_named_codes() {
+        let text = "exit=exit status: 1\nstdout:\nstderr:\nconnection lost: closed by peer: CONTROL_RESET (code 526)\n";
+        assert_eq!(transcript_named_code(text), Some(14));
+        assert_eq!(
+            transcript_named_code("stderr:\nauthority refusal CONFLICT: immutable intent"),
+            Some(7)
+        );
+        assert_eq!(
+            transcript_named_code("stderr:\ntimed out waiting for reply"),
+            None
+        );
     }
 
     #[test]
@@ -2594,6 +4443,9 @@ mod tests {
         let stdout = "SCOPE scope=0 producer=0 declared=2 membership_verified=true seal=abcd\n\
                       MEMBERS [ScopeMember { work: WorkKey { scope: Number(0), producer: Producer(0), entity: Id(1) }, terminal: Some(State(5)) }, ScopeMember { work: WorkKey { scope: Number(0), producer: Producer(0), entity: Id(2) }, terminal: None }]\n";
         assert_eq!(parse_scope_page(stdout).unwrap(), (2, 2));
+        let java = "SCOPE scope=0 producer=0 declared=2 membership_verified=true seal=abcd\n\
+                    MEMBERS [Entry[entity=1, state=DECLARED], Entry[entity=2, state=SUCCEEDED]] more=false\n";
+        assert_eq!(parse_scope_page(java).unwrap(), (2, 2));
         assert!(parse_scope_page("SCOPE declared=1\n").is_err());
     }
 

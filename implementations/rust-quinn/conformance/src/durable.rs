@@ -41,6 +41,11 @@ pub struct DurableArgs {
     /// unmet gate; in --dev the Java-direction rows report INCOMPLETE.
     #[arg(long)]
     java_jar: Option<PathBuf>,
+    /// After the run, copy the run directory into <archive>/<run_id> and write
+    /// a MANIFEST.sha256 over every archived file. Large files (>2 MiB) are
+    /// represented by a hash-and-length note, never copied byte-for-byte.
+    #[arg(long)]
+    archive: Option<PathBuf>,
 }
 
 const JAVA_DIRECTIONS: &[&str] = &["java-client/rust-server", "rust-client/java-server"];
@@ -160,7 +165,97 @@ pub fn run(args: DurableArgs) -> Result<()> {
     if failed {
         bail!("durable run recorded FAIL rows; see {run_root:?}");
     }
+    if let Some(archive) = &args.archive {
+        archive_run(&run_root, archive, &run_id)?;
+        println!("archived run {run_id}: {}", archive.join(&run_id).display());
+    }
     Ok(())
+}
+
+/// Copy one run directory into <archive>/<run_id>. Files larger than 2 MiB
+/// are not copied: a `<name>.LARGE.txt` note records the sha256, length and
+/// the fact the bytes were elided. A MANIFEST.sha256 listing every archived
+/// file (sha256, sorted relative paths, the manifest itself excluded) is
+/// written last.
+fn archive_run(
+    run_root: &std::path::Path,
+    archive_dir: &std::path::Path,
+    run_id: &str,
+) -> Result<()> {
+    const LARGE_LIMIT: u64 = 2 * 1024 * 1024;
+    let destination = archive_dir.join(run_id);
+    fs::create_dir_all(&destination)?;
+    let mut copied: Vec<PathBuf> = Vec::new();
+    for entry in walk_sorted(run_root)? {
+        let relative = entry
+            .strip_prefix(run_root)
+            .expect("walk root is a prefix of every walked path")
+            .to_path_buf();
+        let target = destination.join(&relative);
+        let length = fs::metadata(&entry)?.len();
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        if length > LARGE_LIMIT {
+            let digest = oracle::sha256_hex(
+                &fs::read(&entry)
+                    .with_context(|| format!("hash large run file {}", entry.display()))?,
+            );
+            let note = format!(
+                "sha256={digest}\nlen={length}\nThis file exceeded the {LARGE_LIMIT}-byte archive \
+                 limit; its bytes were not archived.\n"
+            );
+            let note_path = destination.join(large_note_name(&relative));
+            fs::write(&note_path, note)?;
+            copied.push(note_path);
+        } else {
+            fs::copy(&entry, &target)
+                .with_context(|| format!("archive {} -> {}", entry.display(), target.display()))?;
+            copied.push(target);
+        }
+    }
+    let mut manifest = String::new();
+    copied.sort();
+    for file in &copied {
+        let relative = file
+            .strip_prefix(&destination)
+            .expect("archive root is a prefix of every archived path");
+        let digest = oracle::sha256_hex(
+            &fs::read(file).with_context(|| format!("hash archived file {}", file.display()))?,
+        );
+        manifest.push_str(&format!("{digest}\t{}\n", path(relative)));
+    }
+    fs::write(destination.join("MANIFEST.sha256"), manifest)?;
+    Ok(())
+}
+
+/// `<relative>.LARGE.txt`, with the path rendered the way the manifest
+/// renders it (forward slashes on every platform).
+fn large_note_name(relative: &std::path::Path) -> PathBuf {
+    let mut text = path(relative);
+    text.push_str(".LARGE.txt");
+    PathBuf::from(text)
+}
+
+/// Every file under `root`, sorted so the archive is deterministic.
+fn walk_sorted(root: &std::path::Path) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    let mut directories = vec![root.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        for entry in fs::read_dir(&directory)
+            .with_context(|| format!("read run directory {}", directory.display()))?
+        {
+            let entry = entry?;
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                directories.push(entry_path);
+            } else {
+                files.push(entry_path);
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
 }
 
 fn hash_file(path: &std::path::Path) -> Result<String> {
