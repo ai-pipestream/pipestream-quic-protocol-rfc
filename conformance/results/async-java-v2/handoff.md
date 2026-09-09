@@ -6,13 +6,14 @@ Owner: Claude (A). Branch `agent/rfc-claude-java-v2`, worktree
 
 ## Status
 
-State on the board: DEPENDENCY_READY (provisional SERVER_READY + CLIENT_READY
-pins consumed by Kimi at `5e3138a`). **Not REVIEW_READY yet.** The remaining
-gates are the ones that need the `pipestream.4` transport build: the full
-Java install on it, the sealed-interop suites on it, the combined Java/Java
-run on it, and its source-pinned artifact hashes. Everything else below is
-committed and green on the `pipestream.3` transport except one test that
-documents the transport defect fixed by `.4` (section 5).
+State on the board: REVIEW_READY. Every assigned gate passed on the
+`pipestream.4` transport at `e1533d3`: focused and full Java install (716
+tests, 0 failures, 123 fresh XML reports), strict changed-type doclint (21
+types, exit 0), fresh source-pinned native build (297 native tests), real
+opposite-Rust integration in both directions, combined Java/Java process run,
+source-pinned artifact hashes, raw logs and checksums preserved under
+`conformance/results/async-java-v2/raw/`. SERVER_READY and CLIENT_READY pins
+are final at this head (section 2).
 
 Commits (all plain author identity, no generated attribution):
 
@@ -25,12 +26,12 @@ Commits (all plain author identity, no generated attribution):
 | `9dfcfc6` | client-death fixture scenario |
 | `723629e` | live revocation, control FIN before detach, expiry under a pinned read |
 | `18f3728` | package-private javadoc for the strict doclint gate |
-| pending | transport bundle `pipestream.4` (quiche drained-stream collection, Netty parent-map release, credit test) with its evidence file |
+| `53aaadb` | Java README V2 section, storage-worker exhaustion row |
+| `e1533d3` | transport bundle `pipestream.4` (quiche drained-stream collection, Netty parent-map release, native credit test), POM pin, manifest hashes, evidence file and raw logs |
 
-Working tree at `18f3728`: dirty only with the uncommitted `.4` bundle
-(`transport/*`, `pom.xml` pin, `README.md` line, `TransportDependencyTest`
-hashes). Nothing pushed; no CI exists for this branch; no draft/deploy action
-taken.
+Working tree at `e1533d3`: clean. Nothing pushed (no push authorization was
+given); no CI exists for this branch; no draft/deploy action taken; the
+shared feature branch and main were not merged.
 
 ## 1. Contract to source to tests to evidence
 
@@ -54,12 +55,19 @@ evidence files under `conformance/results/` are committed).
 | Separate V2 launchers, public application registration, SIGTERM drain with `DRAINED`, `READY host:port`, Rust-compatible principal map, journal args identical to the Rust CLI | `V2Main`, `ClientCommands`, `PrincipalMap`, `DurableHost.Application` | `V2MainProcessTest` (1), `RustClientJavaServerTest` (2), `JavaClientRustServerTest` (1) | `combined-1.log`, `interop-rc3.log`, `interop-jc1.log` |
 | Test-only fixture adapter: interface-v1 events for both roles, pause/drop-reply/kill, runtime and client boundaries, parser rejections | `FixtureMain`, `FixtureEvents`, `Boundaries`, hooks in `DurableServer`/`ExecutionRuntime`/`ExecutionScheduler`/`DurableClient` | `FixtureMainTest` (5) | `fixture-test-2.log`, `fixture-test-3.log` |
 
-Focused run counts at `723629e` on transport `.3` (one JVM per suite):
+Full-suite counts at `e1533d3` on transport `.4` (`mvn -Psealed-interop
+install`, 716 tests, 0 failures, raw log and XML checksums in `raw/`):
 `DurableServerTest` 4, `DurableClientTest` 2, `DurableBranchTest` 4,
 `DurableMutationTest` 4, `DurableAuthorizationTest` 4, `DurableLifecycleTest`
-4, `DurableWireNegativeTest` 5 of 6 (see section 5), `V2MainProcessTest` 1,
-`FixtureMainTest` 5, `RustClientJavaServerTest` 2 and
-`JavaClientRustServerTest` 1 (sealed-interop, last run at `5e3138a`).
+4, `DurableWireNegativeTest` 6, `V2MainProcessTest` 1, `FixtureMainTest` 5,
+`TransportDependencyTest` 1, `RustClientJavaServerTest` 2 and
+`JavaClientRustServerTest` 1 (real Rust peer), plus the 682 pre-existing
+tests of the reference. Artifact hashes at this head: library jar
+`52ef1077cc6b5f3727a489e1861cc02cf2f27b757468f38e6544892c65221ea7`, shaded
+all-jar `6da5e9d08c6ccb39455557defaaf8ba043d7fc42cb547bc5c3be81ef17ad3de4`
+(not timestamp-reproducible), transport classes jar
+`87a3d581978b63085e5f52fc8dafe132eb81ddf86c180a87cf5461b126547105`, transport
+native jar `e49d88b724cc79c936899542c1565a00454a93d512816de6e8cfefa637c51c50`.
 
 ## 2. Pins accepted by peers
 
@@ -81,16 +89,13 @@ Focused run counts at `723629e` on transport `.3` (one JVM per suite):
   through `DurableHost.initialize/open`; Rust `RestartSafety::Pure` maps to
   Java `IDEMPOTENT`.
 
-## 3. Gates still missing
+## 3. Gates and remaining gaps
 
-1. Full `mvn -Psealed-interop install` on the `.4` transport with fresh XML
-   reports and counts.
-2. Real opposite-Rust integration (both directions) rerun on `.4`.
-3. Combined Java/Java process run on `.4`.
-4. Source-pinned native artifact hashes for `.4` and the evidence file
-   `durable-work-v2-java-drained-streams-2026-09-09.txt` (quiche and Netty
-   results are already recorded there; the Java build/test results are not).
-5. Client-side negative result streams (oversize or duplicate result headers
+All assigned gates passed on `.4` (see Status and
+`conformance/results/durable-work-v2-java-drained-streams-2026-09-09.txt`).
+Remaining gap, listed and not waived:
+
+1. Client-side negative result streams (oversize or duplicate result headers
    from a misbehaving authority): there is no raw *server* peer harness, so the
    client's header bounds are covered only by unit-level decoding and by the
    Rust authority interop; listed as a gap, not waived.
@@ -134,7 +139,7 @@ Focused run counts at `723629e` on transport `.3` (one JVM per suite):
    parent's stream map; a Netty credit test drives the whole path). Also
    affects Rust client → Java server after `dataStreams` refusals.
    `DurableWireNegativeTest.stalledInputsExpireWithoutBlockingAHealthyConnection`
-   is red on `.3` and is the Java-level regression for it.
+   was red on `.3` and is green on `.4`; it is the Java-level regression for it.
 2. **Java: finished input and result stream channels were never closed** after
    release, which kept Netty channel state alive per transfer; fixed in
    `b13995b` (`stream.close()` after release in server input and client result
