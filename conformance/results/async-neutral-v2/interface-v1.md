@@ -102,6 +102,12 @@ Rows apply in file order. A boundary that never arrives before the
 scenario's overall deadline fails the run; it is never silently skipped.
 No arbitrary shell commands anywhere in a schedule.
 
+A schedule file MAY begin with one header line naming the columns
+verbatim (`version	run_id	scenario_id	target	boundary	action	seed	deadline_ms`);
+parsers MUST accept and skip it. Event files carry NO header — every line
+is a record, and a header-shaped line in an event file fails validation
+(unknown boundary).
+
 ### 3.1 Actions
 
 - `pause` — hold the target at the boundary until a matching `release` row
