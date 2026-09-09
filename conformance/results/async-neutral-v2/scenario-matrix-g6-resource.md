@@ -20,9 +20,15 @@ subset only, kept distinct from the real client/server directions).
 - Server-direction message from the client, second CAPABILITIES,
   unsolicited selection, increased limits in a capabilities response,
   duplicate/unsolicited control response, response kind/identity
-  mismatch, repeated or decreasing request IDs.
+  mismatch, repeated or decreasing request IDs, a bare control FIN
+  before any detach (FRAME_ERROR, QUIC application error 0x201).
 - Expected: FRAME_ERROR / EXTENSION_UNSUPPORTED per the negotiation
-  rules; a second client bidirectional stream is refused.
+  rules. Stream-COUNT ceilings (a second client bidirectional stream;
+  more than `dataStreams` concurrent unidirectional streams) are
+  enforced by QUIC transport parameters, not application refusals: the
+  driver asserts the transport error class (client observes
+  STREAM_LIMIT_ERROR locally) and never waits for a LIMIT_EXCEEDED
+  frame there (normative-clarifications-review.md item 4).
 
 ### g6-stream-identity-and-fin
 - Input header naming the wrong stream geometry (admission headers must

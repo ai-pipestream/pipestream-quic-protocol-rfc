@@ -100,12 +100,17 @@ the row uses short policy durations and real elapsed time, and records
   a fresh attach).
 
 ### g8-half-close-preserves-responses
-- Client sends requests, half-closes (FIN) its control send direction
-  before the responses arrive.
-- Expected: pre-FIN responses are still delivered in full; if the
-  server closes gracefully it finishes its control send direction and
-  observes QUIC ACK of bytes+FIN within a bounded wait; abrupt
-  disconnect has the same non-effect on durable work.
+- Client sends requests, then requests detach, THEN half-closes (FIN) its
+  control send direction before the remaining responses arrive (the §12.8
+  MAY is scoped to "after requesting detach" — see
+  normative-clarifications-review.md item 5).
+- Expected: pre-FIN responses — including post-detach correlated
+  refusals — are still delivered in full within their bounded delivery
+  attempt; if the server closes gracefully it first finishes its control
+  send direction and observes QUIC ACK of bytes+FIN (bounded, never
+  extending the detach lifetime); abrupt disconnect has the same
+  non-effect on durable work. A bare control FIN BEFORE detach is instead
+  a g6 framing row expecting FRAME_ERROR (0x201).
 
 ### g8-timeout-no-completion-claim
 - Kill the connection mid-complete (drop-reply at the reply stage or
