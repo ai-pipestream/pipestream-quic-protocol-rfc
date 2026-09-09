@@ -165,6 +165,8 @@ pub fn rows() -> Vec<Row> {
         "g1-leaf-copy",
         "g1-empty-input",
         "g1-zero-output",
+        "g1-mode1-branch",
+        "g1-mode2-descendants",
         "g1-oversize-payload",
         "g1-out-of-order-pages",
         "g1-declaration-capacity",
@@ -215,7 +217,10 @@ pub enum DirectionOutcome {
 
 /// Directions a passing row actually executed, for the run summary line.
 fn direction_coverage(row: &Row, context: &ScenarioContext) -> String {
-    if (row.id == "g1-leaf-copy" || G1_BATCH_A_ROWS.contains(&row.id)) && context.java_jar.is_some()
+    if (row.id == "g1-leaf-copy"
+        || G1_BATCH_A_ROWS.contains(&row.id)
+        || G1_BATCH_B_ROWS.contains(&row.id))
+        && context.java_jar.is_some()
     {
         "rust-client/rust-server, rust-client/java-server, java-client/rust-server".to_owned()
     } else if row.id.starts_with("g5-") && context.java_jar.is_some() {
@@ -265,6 +270,8 @@ fn run_rust_direction(row: &Row, context: &ScenarioContext) -> Result<()> {
         "g1-leaf-copy" => g1_leaf_copy(context),
         "g1-empty-input" => g1_empty_input(context),
         "g1-zero-output" => g1_zero_output(context),
+        "g1-mode1-branch" => g1_mode1_branch(context),
+        "g1-mode2-descendants" => g1_mode2_descendants(context),
         "g1-oversize-payload" => g1_oversize_payload(context),
         "g1-out-of-order-pages" => g1_out_of_order_pages(context),
         "g1-declaration-capacity" => g1_declaration_capacity(context),
@@ -409,6 +416,21 @@ fn declare_batch(
     entities: &[u64],
     seal: bool,
 ) -> Result<(String, String)> {
+    declare_scoped_batch(session, events, seed, domain, index, 0, entities, seal)
+}
+
+/// A declare batch into an explicit scope (nonzero for branch child scopes).
+#[allow(clippy::too_many_arguments)]
+fn declare_scoped_batch(
+    session: &Session,
+    events: &mut EventWriter,
+    seed: u64,
+    domain: &str,
+    index: u32,
+    scope: u64,
+    entities: &[u64],
+    seal: bool,
+) -> Result<(String, String)> {
     let declare = oracle::operation_hex(oracle::operation_id(seed, domain, index));
     events.append(
         "REQUEST_SENT",
@@ -423,7 +445,12 @@ fn declare_batch(
         .map(|entity| entity.to_string())
         .collect::<Vec<_>>()
         .join(",");
+    let scope_text = scope.to_string();
     let mut operation = vec!["declare", "--operation", &declare];
+    if scope != 0 {
+        operation.push("--scope");
+        operation.push(&scope_text);
+    }
     if !entities.is_empty() {
         operation.push("--entities");
         operation.push(&entities_text);
@@ -491,6 +518,37 @@ fn admit_application(
     application: &str,
     output_count: u64,
 ) -> Result<String> {
+    admit_modeled(
+        session,
+        events,
+        seed,
+        domain,
+        declaration,
+        work,
+        input,
+        application,
+        0,
+        output_count,
+    )
+}
+
+/// Admission with an explicit application mode: mode 1 (reassemble/v2)
+/// allocates a producer-0 child scope; mode 2 (chunk-copy/v2) a producer-1
+/// child scope. The admission receipt names the allocated scope in the
+/// subsequent watch view (`child=S:P`).
+#[allow(clippy::too_many_arguments)]
+fn admit_modeled(
+    session: &Session,
+    events: &mut EventWriter,
+    seed: u64,
+    domain: &str,
+    declaration: &str,
+    work: &str,
+    input: &Path,
+    application: &str,
+    mode: u64,
+    output_count: u64,
+) -> Result<String> {
     let admit = oracle::operation_hex(oracle::operation_id(seed, domain, 1));
     events.append(
         "REQUEST_SENT",
@@ -512,6 +570,8 @@ fn admit_application(
         &crate::path(input),
         "--application",
         application,
+        "--mode",
+        &mode.to_string(),
         "--output-count",
         &output_count.to_string(),
     ])?;
@@ -876,6 +936,18 @@ const G1_BATCH_A_ROWS: &[&str] = &[
     "g1-out-of-order-pages",
     "g1-declaration-capacity",
 ];
+
+/// Branch-mode rows (milestone 9): reassemble/v2 mode 1 (caller-expanded)
+/// and chunk-copy/v2 mode 2 (authority-expanded), three directions each.
+const G1_BATCH_B_ROWS: &[&str] = &["g1-mode1-branch", "g1-mode2-descendants"];
+
+/// Mode-1 row: two caller-supplied child parts, deliberately uneven.
+const MODE1_PART_ONE_LEN: usize = 40_000;
+const MODE1_PART_TWO_LEN: usize = 25_000;
+/// Mode-2 row: 200,000 bytes = four 65,536-byte chunks (the last partial).
+const MODE2_INPUT_LEN: usize = 200_000;
+const MODE2_CHUNK_LEN: usize = 65_536;
+const MODE2_CHILDREN: u64 = 4;
 
 /// Oversize-payload input: 8 MiB, two orders of magnitude over the subjects'
 /// 64 KiB-class default stream receive window (v2_flow::Limits default 65536;
@@ -1510,10 +1582,21 @@ fn parse_page_members(line: &str) -> Result<Vec<(u64, String)>> {
 
 /// Page scope 0 and parse the SCOPE/MEMBERS rendering.
 fn observe_page(session: &Session, after: u64, limit: u64) -> Result<(String, PageObservation)> {
+    observe_scope_page(session, 0, after, limit)
+}
+
+/// Page an explicit scope and parse the shared SCOPE/MEMBERS rendering both
+/// subject CLIs print, including the scope/producer identity fields.
+fn observe_scope_page(
+    session: &Session,
+    scope: u64,
+    after: u64,
+    limit: u64,
+) -> Result<(String, PageObservation)> {
     let output = session.op(&[
         "page",
         "--scope",
-        "0",
+        &scope.to_string(),
         "--after",
         &after.to_string(),
         "--limit",
@@ -1544,7 +1627,34 @@ fn observe_page(session: &Session, after: u64, limit: u64) -> Result<(String, Pa
             .nth(1)
             .and_then(|token| token.trim_end_matches(';').parse::<bool>().ok()),
     };
+    ensure!(
+        parse_token_u64(scope_line, "scope=")? == scope,
+        "page answered scope {} for a request on scope {scope}",
+        parse_token_u64(scope_line, "scope=")?
+    );
     Ok((stdout, observation))
+}
+
+/// Parse the `child=S:P` token of a watch WORK line; `None` for `child=none`.
+fn parse_child_scope(stdout: &str) -> Result<Option<(u64, u64)>> {
+    let line = stdout
+        .lines()
+        .find(|line| line.starts_with("WORK "))
+        .context("watch did not print a WORK line")?;
+    let token = line
+        .split_whitespace()
+        .find_map(|token| token.strip_prefix("child="))
+        .context("watch WORK line did not report child=")?;
+    if token == "none" {
+        return Ok(None);
+    }
+    let (scope, producer) = token
+        .split_once(':')
+        .context("child token must render as scope:producer")?;
+    Ok(Some((
+        scope.parse().context("child scope is not decimal")?,
+        producer.parse().context("child producer is not decimal")?,
+    )))
 }
 
 /// Assert one page's shape against the driver's own declared-ids model.
@@ -2347,6 +2457,844 @@ fn g1_declaration_capacity_direction(
         (committed == expected_seal).to_string(),
     ));
     observed.push(("membership_verified", membership_verified));
+
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+
+    detach(&session)?;
+    stop_and_seal(context, scenario_dir, scenario_id, session.server, events)
+}
+
+// ---------------------------------------------------------------------------
+// G1 branch-mode rows, batch B (milestone 9): reassemble/v2 mode 1 and
+// chunk-copy/v2 mode 2, no fixture hooks, three directions each
+// ---------------------------------------------------------------------------
+
+/// g1-mode1-branch: caller-expanded branch. The parent is admitted to
+/// reassemble/v2 mode 1, which allocates a producer-0 child scope named in
+/// the watch view (`child=1:0`). The parent cannot complete while the child
+/// scope is open; the caller declares and admits the child parts; the
+/// application reassembles them byte-exact against the parent input; the
+/// session settles bottom-up (child checkpoint, root checkpoint, complete).
+fn g1_mode1_branch(context: &ScenarioContext) -> Result<()> {
+    run_three_directions(context, "g1-mode1-branch", g1_mode1_branch_direction)
+}
+
+fn g1_mode1_branch_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let scenario_id = "g1-mode1-branch";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, client)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+
+    let session = setup_session(context, scenario_dir, server, client)?;
+
+    // The parent input is the expected complete object; reassemble/v2
+    // concatenates child output index 0 in increasing entity order and
+    // requires the result to match the parent input's length and hash. The
+    // two child parts are an uneven split of the same seeded bytes.
+    let parent_bytes = oracle::dataset(context.seed, MODE1_PART_ONE_LEN + MODE1_PART_TWO_LEN);
+    let part_one = &parent_bytes[..MODE1_PART_ONE_LEN];
+    let part_two = &parent_bytes[MODE1_PART_ONE_LEN..];
+    let parent_sha256 = oracle::sha256_hex(&parent_bytes);
+    // Child scope 1 (producer 0, parent work 0:0:1) sealed over ids [1,2];
+    // root scope 0 sealed over [1].
+    let child_seal = oracle::scope_seal_hex("issuer-a", "alice", 1, 1, 0, Some([0, 0, 1]), &[1, 2]);
+    let root_seal = oracle::scope_seal_hex("issuer-a", "alice", 1, 0, 0, None, &[1]);
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("application", "reassemble/v2".into()),
+            ("mode", "1".into()),
+            ("parent_work", "0:0:1".into()),
+            ("parent_input_len", parent_bytes.len().to_string()),
+            ("parent_input_sha256", parent_sha256.clone()),
+            ("child_scope", "1:0".into()),
+            ("child_ids", "1,2".into()),
+            ("child_part_lens", format!("{MODE1_PART_ONE_LEN},{MODE1_PART_TWO_LEN}")),
+            ("expected_output_sha256", parent_sha256.clone()),
+            ("expected_child_seal_sha256", child_seal.clone()),
+            ("expected_root_seal_sha256", root_seal.clone()),
+            (
+                "open_child_completion",
+                "complete/checkpoint refuse while the child scope is open (actual codes recorded)".into(),
+            ),
+            (
+                "child_scope_replacement",
+                "declare into the sealed child scope refuses CONFLICT (7)".into(),
+            ),
+            (
+                "leaf_children",
+                "named gap: neither CLI can attach children to an existing leaf work; children attach only via branch admission".into(),
+            ),
+            (
+                "settlement",
+                "child checkpoint, root checkpoint, complete (bottom-up)".into(),
+            ),
+        ],
+    )?;
+    let parent_path = artifacts.join("parent-input.bin");
+    fs::write(&parent_path, &parent_bytes)?;
+    events.append(
+        "",
+        None,
+        Some("0:0:1"),
+        Some(1),
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/parent-input.bin".into(),
+            len: parent_bytes.len() as u64,
+            sha256: parent_sha256.clone(),
+        }),
+    )?;
+    let part_one_path = artifacts.join("child-part-1.bin");
+    fs::write(&part_one_path, part_one)?;
+    let part_two_path = artifacts.join("child-part-2.bin");
+    fs::write(&part_two_path, part_two)?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("alpn", "pipestream/2".into()),
+    ];
+
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "client binding")?;
+
+    let declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
+    let receipt = admit_modeled(
+        &session,
+        &mut events,
+        context.seed,
+        "admit",
+        &declare,
+        "0:0:1",
+        &parent_path,
+        "reassemble/v2",
+        1,
+        1,
+    )?;
+    fs::write(artifacts.join("parent-admit-receipt.txt"), &receipt)?;
+
+    // The admission receipt is the operation receipt; the allocated child
+    // scope identity is named by the watch view's child= field.
+    let view = session.watch("0:0:1")?;
+    let child = parse_child_scope(&view)?
+        .context("mode-1 admission must allocate a child scope (child=S:P)")?;
+    ensure!(
+        child == (1, 0),
+        "reassemble/v2 must allocate child scope 1:0 (producer 0), got {child:?}"
+    );
+    let parent_open_state = parse_state(&view)?;
+    ensure!(
+        parent_open_state != 5,
+        "parent must not be terminal before children are supplied (state {parent_open_state})"
+    );
+    observed.push(("child_scope", "1:0".into()));
+    observed.push(("parent_state_children_open", parent_open_state.to_string()));
+    fs::write(artifacts.join("parent-admit-watch.txt"), &view)?;
+
+    // Parent completion while the child scope is open: every completion
+    // surface must refuse. The child scope row exists (allocated at
+    // admission) but is unsealed; the root is sealed but has open
+    // obligations. Record the actual named codes.
+    let child_checkpoint = expect_failure(
+        &session,
+        &artifacts,
+        "child-checkpoint-open-refusal.txt",
+        &["checkpoint", "--scope", "1", "--seal", &"0".repeat(64)],
+    )?;
+    let named = refusal_named_line(&child_checkpoint, &["NOT_READY", "NOT_FOUND", "CONFLICT"])
+        .context("child checkpoint while open must refuse with a named code\n{child_checkpoint}")?;
+    observed.push(("child_checkpoint_open", named));
+
+    let complete_open = expect_failure(
+        &session,
+        &artifacts,
+        "complete-open-refusal.txt",
+        &["complete"],
+    )?;
+    let named = refusal_named_line(&complete_open, &["NOT_READY", "CONFLICT", "WAIT_TIMEOUT"])
+        .context(
+            "complete while the child scope is open must refuse with a named code\n{complete_open}",
+        )?;
+    observed.push(("complete_open", named));
+
+    // The exact committed root seal is known from the driver's own oracle;
+    // checkpointing the sealed-but-open root must not yield coverage.
+    let (_stdout, root_page) = observe_page(&session, 0, 256)?;
+    let committed_root_seal = root_page
+        .seal
+        .clone()
+        .context("root scope was declared sealed and must carry a seal")?;
+    ensure!(
+        committed_root_seal == root_seal,
+        "committed root seal {committed_root_seal} != oracle {root_seal}"
+    );
+    let root_checkpoint_open = expect_failure(
+        &session,
+        &artifacts,
+        "root-checkpoint-open-refusal.txt",
+        &["checkpoint", "--scope", "0", "--seal", &committed_root_seal],
+    )?;
+    let named = refusal_named_line(
+        &root_checkpoint_open,
+        &["NOT_READY", "WAIT_TIMEOUT", "CONFLICT"],
+    )
+    .context("root checkpoint while the parent is open must refuse with a named code\n{root_checkpoint_open}")?;
+    observed.push(("root_checkpoint_open", named));
+
+    // The caller supplies children under the allocated child scope and seals
+    // it; a further declare into the sealed scope refuses (the child scope
+    // cannot be replaced or grown).
+    let (child_declare, _receipt) = declare_scoped_batch(
+        &session,
+        &mut events,
+        context.seed,
+        "declare-child",
+        0,
+        1,
+        &[1, 2],
+        true,
+    )?;
+    let replace = oracle::operation_hex(oracle::operation_id(context.seed, "declare-replace", 0));
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&replace)?),
+        None,
+        None,
+        None,
+        None,
+    )?;
+    let replace_text = expect_failure(
+        &session,
+        &artifacts,
+        "child-scope-replacement-refusal.txt",
+        &[
+            "declare",
+            "--operation",
+            &replace,
+            "--scope",
+            "1",
+            "--entities",
+            "3",
+            "--seal",
+        ],
+    )?;
+    let named = refusal_named_line(&replace_text, &["CONFLICT"])
+        .context("declaring into the sealed child scope must name CONFLICT (7)\n{replace_text}")?;
+    events.append("", Some(hex_to_id(&replace)?), None, None, Some(7), None)?;
+    observed.push(("child_scope_replacement", named));
+
+    // Admit the two child parts; the parent must stay nonterminal until both
+    // children have closed successful.
+    admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-child-1",
+        &child_declare,
+        "1:0:1",
+        &part_one_path,
+    )?;
+    watch_terminal(
+        &session,
+        &mut events,
+        "1:0:1",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit-child-1", 1)),
+        WATCH_TIMEOUT,
+    )?;
+    let mid_state = parse_state(&session.watch("0:0:1")?)?;
+    ensure!(
+        mid_state != 5,
+        "parent must not settle after only one of two children (state {mid_state})"
+    );
+    observed.push(("parent_state_one_child_terminal", mid_state.to_string()));
+    admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-child-2",
+        &child_declare,
+        "1:0:2",
+        &part_two_path,
+    )?;
+    watch_terminal(
+        &session,
+        &mut events,
+        "1:0:2",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit-child-2", 1)),
+        WATCH_TIMEOUT,
+    )?;
+    let terminal = watch_terminal(
+        &session,
+        &mut events,
+        "0:0:1",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit", 1)),
+        WATCH_TIMEOUT,
+    )?;
+    ensure!(
+        parse_state(&terminal)? == 5,
+        "reassembled parent must settle terminal success:\n{terminal}"
+    );
+
+    // Byte-exact reassembly against the driver's own expected bytes.
+    let output_sha256 = read_output_verified(
+        &session,
+        &mut events,
+        "0:0:1",
+        1,
+        &parent_bytes,
+        &parent_sha256,
+        &artifacts,
+        "parent-output.bin",
+    )?;
+    observed.push(("output_sha256", output_sha256.clone()));
+    observed.push(("output_matches_input", "true".into()));
+
+    // Descendant membership: the child scope page names producer 0, both
+    // children terminal, and the seal the driver computed independently.
+    let (child_page_text, child_page) = observe_scope_page(&session, 1, 0, 256)?;
+    fs::write(artifacts.join("child-scope-page.txt"), &child_page_text)?;
+    ensure!(
+        child_page.producer == 0,
+        "mode-1 child scope producer must be 0, got {}",
+        child_page.producer
+    );
+    ensure!(
+        child_page.declared == 2,
+        "child scope must declare 2 entities, got {}",
+        child_page.declared
+    );
+    ensure!(
+        child_page.members == vec![(1, "SUCCEEDED".into()), (2, "SUCCEEDED".into())],
+        "both children must be terminal successful: {:?}",
+        child_page.members
+    );
+    ensure!(
+        child_page.membership_verified,
+        "sealed child scope page must verify membership"
+    );
+    let committed_child_seal = child_page
+        .seal
+        .clone()
+        .context("sealed child scope must carry the seal digest")?;
+    ensure!(
+        committed_child_seal == child_seal,
+        "committed child seal {committed_child_seal} != oracle {child_seal}"
+    );
+    observed.push((
+        "child_page",
+        "producer=0 declared=2 members SUCCEEDED,SUCCEEDED".into(),
+    ));
+    observed.push(("child_seal_matches_oracle", "true".into()));
+
+    // Settlement bottom-up: child checkpoint, root checkpoint, complete.
+    let child_coverage = session.op(&[
+        "checkpoint",
+        "--scope",
+        "1",
+        "--seal",
+        &committed_child_seal,
+    ])?;
+    require(&child_coverage, "COVERAGE", "child checkpoint")?;
+    fs::write(
+        artifacts.join("child-coverage.txt"),
+        String::from_utf8_lossy(&child_coverage.stdout).into_owned(),
+    )?;
+    let root_coverage =
+        session.op(&["checkpoint", "--scope", "0", "--seal", &committed_root_seal])?;
+    require(&root_coverage, "COVERAGE", "root checkpoint")?;
+    fs::write(
+        artifacts.join("root-coverage.txt"),
+        String::from_utf8_lossy(&root_coverage.stdout).into_owned(),
+    )?;
+    let completed = session.op(&["complete"])?;
+    require(&completed, "COMPLETED", "complete operation")?;
+    fs::write(
+        artifacts.join("complete.txt"),
+        String::from_utf8_lossy(&completed.stdout).into_owned(),
+    )?;
+    observed.push((
+        "settlement",
+        "child COVERAGE, root COVERAGE, COMPLETED".into(),
+    ));
+
+    // The settled parent's output stays pinned and byte-exact.
+    let pinned_sha256 = read_output_verified(
+        &session,
+        &mut events,
+        "0:0:1",
+        1,
+        &parent_bytes,
+        &parent_sha256,
+        &artifacts,
+        "parent-output-pinned.bin",
+    )?;
+    ensure!(
+        pinned_sha256 == output_sha256,
+        "post-settlement parent output changed: {pinned_sha256} != {output_sha256}"
+    );
+    observed.push(("post_settlement_output", "VERIFIED byte-exact".into()));
+    observed.push((
+        "leaf_children",
+        "named gap: neither CLI expresses attaching children to an existing leaf; children attach only via branch admission".into(),
+    ));
+
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+
+    detach(&session)?;
+    stop_and_seal(context, scenario_dir, scenario_id, session.server, events)
+}
+
+/// g1-mode2-descendants: authority-expanded branch. A 200,000-byte input to
+/// chunk-copy/v2 mode 2 becomes four 65,536-byte-class children declared,
+/// admitted and settled by the authority itself inside a producer-1 child
+/// scope named in the watch view (`child=1:1`). External clients cannot
+/// declare or admit into that scope (UNAUTHORIZED, code 3); the parent
+/// settles only after every child is terminal; the aggregate output is
+/// byte-exact against the driver's own input bytes.
+fn g1_mode2_descendants(context: &ScenarioContext) -> Result<()> {
+    run_three_directions(
+        context,
+        "g1-mode2-descendants",
+        g1_mode2_descendants_direction,
+    )
+}
+
+fn g1_mode2_descendants_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let scenario_id = "g1-mode2-descendants";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, client)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+
+    let session = setup_session(context, scenario_dir, server, client)?;
+
+    let input = oracle::dataset(context.seed, MODE2_INPUT_LEN);
+    let input_sha256 = oracle::sha256_hex(&input);
+    let last_chunk = (MODE2_INPUT_LEN % MODE2_CHUNK_LEN) as u64;
+    let child_ids: Vec<u64> = (1..=MODE2_CHILDREN).collect();
+    // Producer-1 child scope 1 (parent work 0:0:1) sealed over ids [1..=4].
+    let child_seal =
+        oracle::scope_seal_hex("issuer-a", "alice", 1, 1, 1, Some([0, 0, 1]), &child_ids);
+    let root_seal = oracle::scope_seal_hex("issuer-a", "alice", 1, 0, 0, None, &[1]);
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("application", "chunk-copy/v2".into()),
+            ("mode", "2".into()),
+            ("parent_work", "0:0:1".into()),
+            ("input_len", MODE2_INPUT_LEN.to_string()),
+            ("input_sha256", input_sha256.clone()),
+            ("child_scope", "1:1".into()),
+            (
+                "child_chunk_lens",
+                format!("{MODE2_CHUNK_LEN},{MODE2_CHUNK_LEN},{MODE2_CHUNK_LEN},{last_chunk}"),
+            ),
+            ("expected_output_sha256", input_sha256.clone()),
+            ("expected_child_seal_sha256", child_seal.clone()),
+            ("expected_root_seal_sha256", root_seal.clone()),
+            (
+                "external_fencing",
+                "external declare into the producer-1 scope refuses UNAUTHORIZED (3) at the wire; external admit is refused by a client-side named guard on both CLIs (rust: NOT_READY covering-declaration guard; java: FRAME_ERROR authority-producer validation) — wire UNAUTHORIZED unreachable (named gap, transcripts recorded)".into(),
+            ),
+            (
+                "parent_settle_order",
+                "parent terminal only after every child is terminal (mid-flight samples recorded)"
+                    .into(),
+            ),
+            (
+                "child_output_pinning",
+                "external child select recorded; named gaps noted from the actual CLI surfaces"
+                    .into(),
+            ),
+        ],
+    )?;
+    let input_path = artifacts.join("input.bin");
+    fs::write(&input_path, &input)?;
+    events.append(
+        "",
+        None,
+        Some("0:0:1"),
+        Some(1),
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/input.bin".into(),
+            len: input.len() as u64,
+            sha256: input_sha256.clone(),
+        }),
+    )?;
+    let probe_path = artifacts.join("probe-input.bin");
+    fs::write(&probe_path, oracle::dataset(context.seed ^ 0x9e3779b9, 64))?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("alpn", "pipestream/2".into()),
+    ];
+
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "client binding")?;
+
+    let declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
+    let receipt = admit_modeled(
+        &session,
+        &mut events,
+        context.seed,
+        "admit",
+        &declare,
+        "0:0:1",
+        &input_path,
+        "chunk-copy/v2",
+        2,
+        1,
+    )?;
+    fs::write(artifacts.join("parent-admit-receipt.txt"), &receipt)?;
+    let view = session.watch("0:0:1")?;
+    let child = parse_child_scope(&view)?
+        .context("mode-2 admission must allocate a child scope (child=S:P)")?;
+    ensure!(
+        child == (1, 1),
+        "chunk-copy/v2 must allocate child scope 1:1 (producer 1), got {child:?}"
+    );
+    observed.push(("child_scope", "1:1".into()));
+    fs::write(artifacts.join("parent-admit-watch.txt"), &view)?;
+
+    // External fencing: neither a declare nor an admission into the
+    // producer-1 child scope is owned by the external client.
+    let probe_declare =
+        oracle::operation_hex(oracle::operation_id(context.seed, "probe-declare", 0));
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&probe_declare)?),
+        None,
+        None,
+        None,
+        None,
+    )?;
+    let probe_declare_text = expect_failure(
+        &session,
+        &artifacts,
+        "external-child-declare-refusal.txt",
+        &[
+            "declare",
+            "--operation",
+            &probe_declare,
+            "--scope",
+            "1",
+            "--entities",
+            "9",
+            "--seal",
+        ],
+    )?;
+    let named = refusal_named_line(&probe_declare_text, &["UNAUTHORIZED"]).context(
+        "external declare into the producer-1 scope must name UNAUTHORIZED (3)\n{probe_declare_text}",
+    )?;
+    events.append(
+        "",
+        Some(hex_to_id(&probe_declare)?),
+        None,
+        None,
+        Some(3),
+        None,
+    )?;
+    observed.push(("external_child_declare", named));
+
+    let probe_admit = oracle::operation_hex(oracle::operation_id(context.seed, "probe-admit", 1));
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&probe_admit)?),
+        Some("1:1:9"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let probe_admit_text = expect_failure(
+        &session,
+        &artifacts,
+        "external-child-admit-refusal.txt",
+        &[
+            "admit",
+            "--operation",
+            &probe_admit,
+            "--declaration",
+            &declare,
+            "--work",
+            "1:1:9",
+            "--input",
+            &crate::path(&probe_path),
+            "--application",
+            "copy/v2",
+        ],
+    )?;
+    // The wire-level refusal is UNAUTHORIZED (3), but neither published
+    // client can express producer-1 targeting to the wire: the rust client
+    // pre-empts with its covering-declaration journal guard (NOT_READY) and
+    // the java client with `external input uses authority producer`
+    // (FRAME_ERROR). Both client-side guards are named refusals recorded
+    // here; the wire code 3 event is journaled only when the refusal
+    // actually reached the authority. The declare path above is the
+    // wire-level UNAUTHORIZED evidence.
+    let named = refusal_named_line(&probe_admit_text, &["UNAUTHORIZED", "NOT_READY", "FRAME_ERROR"]).context(
+        "external admit into the producer-1 scope must refuse with a named code\n{probe_admit_text}",
+    )?;
+    if named.starts_with("UNAUTHORIZED") {
+        events.append(
+            "",
+            Some(hex_to_id(&probe_admit)?),
+            None,
+            None,
+            Some(3),
+            None,
+        )?;
+    }
+    observed.push(("external_child_admit", named));
+
+    // Wait for the authority expansion to declare and seal the four children.
+    let mut expansion = None;
+    for _ in 0..300 {
+        let (text, page) = observe_scope_page(&session, 1, 0, 256)?;
+        if page.declared == MODE2_CHILDREN {
+            expansion = Some((text, page));
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    let (expansion_text, expansion_page) =
+        expansion.context("authority expansion did not declare the four children within 15s")?;
+    fs::write(
+        artifacts.join("child-scope-page-midflight.txt"),
+        &expansion_text,
+    )?;
+    ensure!(
+        expansion_page.producer == 1,
+        "mode-2 child scope producer must be 1, got {}",
+        expansion_page.producer
+    );
+    let committed_child_seal = expansion_page
+        .seal
+        .clone()
+        .context("authority expansion must seal the child scope at declaration")?;
+    ensure!(
+        committed_child_seal == child_seal,
+        "committed child seal {committed_child_seal} != oracle {child_seal}"
+    );
+    observed.push((
+        "expansion_declared",
+        format!(
+            "declared={} seal_matches_oracle=true",
+            expansion_page.declared
+        ),
+    ));
+
+    // Parent settles only after every child is terminal. Sample the children
+    // before the parent each round; when the parent is first seen terminal,
+    // all children must already be terminal.
+    let mut samples = String::new();
+    let mut mid_flight = false;
+    let mut rounds = 0;
+    let terminal = loop {
+        rounds += 1;
+        let mut child_states = Vec::new();
+        let mut children_terminal = true;
+        for entity in 1..=MODE2_CHILDREN {
+            let stdout = session.watch(&format!("1:1:{entity}"))?;
+            let state = parse_state(&stdout)?;
+            if state != 5 {
+                children_terminal = false;
+            }
+            child_states.push(state);
+        }
+        let parent_state = parse_state(&session.watch("0:0:1")?)?;
+        samples.push_str(&format!(
+            "round={rounds} children={child_states:?} parent={parent_state}\n"
+        ));
+        if parent_state == 5 {
+            ensure!(
+                children_terminal,
+                "parent settled while children were nonterminal: {child_states:?}"
+            );
+            break session.watch("0:0:1")?;
+        }
+        if !children_terminal {
+            mid_flight = true;
+        }
+        ensure!(
+            rounds < 600,
+            "parent did not settle within the polling window\n{samples}"
+        );
+        thread::sleep(Duration::from_millis(100));
+    };
+    fs::write(artifacts.join("settle-samples.txt"), &samples)?;
+    ensure!(
+        parse_state(&terminal)? == 5,
+        "expanded parent must settle terminal success:\n{terminal}"
+    );
+    observed.push((
+        "settle_order",
+        format!(
+            "parent terminal after all children terminal; mid_flight_sample={mid_flight}; rounds={rounds}"
+        ),
+    ));
+
+    // Descendant membership after settlement.
+    let (child_page_text, child_page) = observe_scope_page(&session, 1, 0, 256)?;
+    fs::write(artifacts.join("child-scope-page.txt"), &child_page_text)?;
+    let expected_members: Vec<(u64, String)> = child_ids
+        .iter()
+        .map(|id| (*id, "SUCCEEDED".into()))
+        .collect();
+    ensure!(
+        child_page.producer == 1,
+        "mode-2 child scope producer must be 1, got {}",
+        child_page.producer
+    );
+    ensure!(
+        child_page.members == expected_members,
+        "all four children must be terminal successful: {:?}",
+        child_page.members
+    );
+    ensure!(
+        child_page.membership_verified,
+        "sealed child scope page must verify membership"
+    );
+    ensure!(
+        child_page.seal.as_deref() == Some(committed_child_seal.as_str()),
+        "child scope seal changed after settlement"
+    );
+    observed.push((
+        "child_page",
+        "producer=1 declared=4 members SUCCEEDED×4".into(),
+    ));
+
+    // Aggregate output byte-exact against the driver's own input bytes.
+    let output_sha256 = read_output_verified(
+        &session,
+        &mut events,
+        "0:0:1",
+        1,
+        &input,
+        &input_sha256,
+        &artifacts,
+        "output.bin",
+    )?;
+    observed.push(("output_sha256", output_sha256.clone()));
+    observed.push(("output_matches_input", "true".into()));
+
+    // Child outputs pinned through parent settlement: record exactly what the
+    // external CLI surface exposes for an authority-side child result.
+    let child_select = session.op(&[
+        "select",
+        "--work",
+        "1:1:1",
+        "--attempt",
+        "1",
+        "--index",
+        "0",
+    ])?;
+    let child_select_text = transcript(&child_select);
+    fs::write(
+        artifacts.join("external-child-select.txt"),
+        &child_select_text,
+    )?;
+    if child_select.status.success() {
+        require(&child_select, "REFERENCE", "external child select")?;
+        observed.push((
+            "child_output_select",
+            "exit 0: external child select succeeded (REFERENCE retained)".into(),
+        ));
+    } else {
+        let named = refusal_named_line(
+            &child_select_text,
+            &["NOT_FOUND", "UNAUTHORIZED", "CONFLICT"],
+        )
+        .unwrap_or_else(|| "refusal without a named code (transcript recorded)".into());
+        observed.push(("child_output_select", format!("refused: {named}")));
+    }
+
+    // Settlement bottom-up; the parent's output stays pinned afterwards.
+    let child_coverage = session.op(&[
+        "checkpoint",
+        "--scope",
+        "1",
+        "--seal",
+        &committed_child_seal,
+    ])?;
+    require(&child_coverage, "COVERAGE", "child checkpoint")?;
+    fs::write(
+        artifacts.join("child-coverage.txt"),
+        String::from_utf8_lossy(&child_coverage.stdout).into_owned(),
+    )?;
+    let (_stdout, root_page) = observe_page(&session, 0, 256)?;
+    let committed_root_seal = root_page
+        .seal
+        .clone()
+        .context("root scope was declared sealed and must carry a seal")?;
+    ensure!(
+        committed_root_seal == root_seal,
+        "committed root seal {committed_root_seal} != oracle {root_seal}"
+    );
+    let root_coverage =
+        session.op(&["checkpoint", "--scope", "0", "--seal", &committed_root_seal])?;
+    require(&root_coverage, "COVERAGE", "root checkpoint")?;
+    fs::write(
+        artifacts.join("root-coverage.txt"),
+        String::from_utf8_lossy(&root_coverage.stdout).into_owned(),
+    )?;
+    let completed = session.op(&["complete"])?;
+    require(&completed, "COMPLETED", "complete operation")?;
+    fs::write(
+        artifacts.join("complete.txt"),
+        String::from_utf8_lossy(&completed.stdout).into_owned(),
+    )?;
+    observed.push((
+        "settlement",
+        "child COVERAGE, root COVERAGE, COMPLETED".into(),
+    ));
+
+    let pinned_sha256 = read_output_verified(
+        &session,
+        &mut events,
+        "0:0:1",
+        1,
+        &input,
+        &input_sha256,
+        &artifacts,
+        "output-pinned.bin",
+    )?;
+    ensure!(
+        pinned_sha256 == output_sha256,
+        "post-settlement parent output changed: {pinned_sha256} != {output_sha256}"
+    );
+    observed.push(("post_settlement_output", "VERIFIED byte-exact".into()));
 
     if server == Subject::Java || client == Subject::Java {
         let jar = context
@@ -6065,7 +7013,7 @@ mod tests {
             let row = rows.iter().find(|row| row.id == id).unwrap();
             assert!(row.rust_implemented, "{id} must be implemented");
         }
-        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 21);
+        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 23);
     }
 
     #[test]

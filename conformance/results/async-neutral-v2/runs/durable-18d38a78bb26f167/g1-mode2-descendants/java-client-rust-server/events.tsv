@@ -1,0 +1,12 @@
+1	durable-18d38a78bb26f167	g1-mode2-descendants	java	client	2052428-18d38a83d5496872	1			0:0:1	1		artifacts/input.bin	200000	1dedf2209c2609cd80437d911867f75214bbc91c384c7a53b10d6a16fc53fd34
+1	durable-18d38a78bb26f167	g1-mode2-descendants	java	client	2052428-18d38a83d5496872	2	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d38a78bb26f167	g1-mode2-descendants	java	client	2052428-18d38a83d5496872	3	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d38a78bb26f167	g1-mode2-descendants	java	client	2052428-18d38a83d5496872	4	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d38a78bb26f167	g1-mode2-descendants	java	client	2052428-18d38a83d5496872	5	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d38a78bb26f167	g1-mode2-descendants	java	client	2052428-18d38a83d5496872	6	REQUEST_SENT	5b301422fcc603c4017646b08e534d10						
+1	durable-18d38a78bb26f167	g1-mode2-descendants	java	client	2052428-18d38a83d5496872	7		5b301422fcc603c4017646b08e534d10			3			
+1	durable-18d38a78bb26f167	g1-mode2-descendants	java	client	2052428-18d38a83d5496872	8	REQUEST_SENT	235e54ac49b999b96a168f0ccd6603ea	1:1:9	1				
+1	durable-18d38a78bb26f167	g1-mode2-descendants	java	client	2052428-18d38a83d5496872	9	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d38a78bb26f167	g1-mode2-descendants	java	client	2052428-18d38a83d5496872	10	RESULT_INSTALLED		0:0:1	1		artifacts/output.bin	200000	1dedf2209c2609cd80437d911867f75214bbc91c384c7a53b10d6a16fc53fd34
+1	durable-18d38a78bb26f167	g1-mode2-descendants	java	client	2052428-18d38a83d5496872	11	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d38a78bb26f167	g1-mode2-descendants	java	client	2052428-18d38a83d5496872	12	RESULT_INSTALLED		0:0:1	1		artifacts/output-pinned.bin	200000	1dedf2209c2609cd80437d911867f75214bbc91c384c7a53b10d6a16fc53fd34
