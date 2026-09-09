@@ -46,6 +46,7 @@ public final class ResultFiles {
     private final MessageDigest digest = Commitments.sha256();
     private long written;
     private boolean installed;
+    private Records.Digest verified;
 
     Staging(Destination destination) throws IOException {
       this.destination = destination.path().toAbsolutePath().normalize();
@@ -73,6 +74,20 @@ public final class ResultFiles {
     }
 
     /**
+     * Verify the staged bytes against the selected commitment without installing them.
+     *
+     * @param expectedLength committed length
+     * @param expected committed digest
+     * @throws ProtocolError when the staged bytes differ from the commitment
+     */
+    void verify(long expectedLength, Records.Digest expected) {
+      if (verified == null) verified = new Records.Digest(digest.digest());
+      if (written != expectedLength || !verified.equals(expected))
+        throw new ProtocolError(
+            ProtocolError.Code.INTEGRITY_ERROR, "staged result differs from commitment");
+    }
+
+    /**
      * Verify and install after transport FIN was validated by the caller.
      *
      * @param expectedLength committed length
@@ -81,10 +96,8 @@ public final class ResultFiles {
      * @throws IOException mismatch or filesystem failure
      */
     Delivered install(long expectedLength, Records.Digest expected) throws IOException {
-      Records.Digest actual = new Records.Digest(digest.digest());
-      if (written != expectedLength || !actual.equals(expected))
-        throw new ProtocolError(
-            ProtocolError.Code.INTEGRITY_ERROR, "staged result differs from commitment");
+      verify(expectedLength, expected);
+      Records.Digest actual = verified;
       channel.force(true);
       channel.close();
       Files.createLink(destination, staging);

@@ -59,6 +59,17 @@ final class ControlWrites {
     return sendEncoded(frame, null);
   }
 
+  /** Native write settlement: success means Netty accepted the write, never peer receipt. */
+  @FunctionalInterface
+  interface Settlement {
+    /**
+     * Observe one settled frame.
+     *
+     * @param success whether the local transport accepted the write
+     */
+    void settled(boolean success);
+  }
+
   /**
    * Queue one encoded frame and observe its native write settlement. Settlement means Netty
    * accepted or failed the write, never peer receipt; the callback runs on the event loop exactly
@@ -68,7 +79,7 @@ final class ControlWrites {
    * @param settled callback after the write future completes, or null
    * @return false when the connection already ended or the write was refused
    */
-  boolean sendEncoded(byte[] frame, Runnable settled) {
+  boolean sendEncoded(byte[] frame, Settlement settled) {
     if (ended) return false;
     if (pending.size() >= countLimit || frame.length > limit + 5) {
       failure.accept(ProtocolError.limit("control write count or frame ceiling exhausted"));
@@ -89,7 +100,7 @@ final class ControlWrites {
             result -> {
               if (pending.remove(write)) bytes -= write.bytes();
               try {
-                if (settled != null) settled.run();
+                if (settled != null) settled.settled(result.isSuccess());
               } finally {
                 if (!ended) {
                   if (!result.isSuccess())

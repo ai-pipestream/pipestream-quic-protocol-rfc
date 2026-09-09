@@ -589,7 +589,7 @@ public final class DurableServer implements AutoCloseable {
         respondRefusal(ticket, oversized);
         return;
       }
-      if (!control.writes.sendEncoded(frame, ticket::close)) ticket.close();
+      if (!control.writes.sendEncoded(frame, success -> ticket.close())) ticket.close();
     }
 
     void respondRefusal(DurableRequests.Ticket ticket, ProtocolError failure) {
@@ -603,10 +603,15 @@ public final class DurableServer implements AutoCloseable {
         return;
       }
       Refusal refusal = new Refusal(new Records.RequestTag(false, id), failure.code(), "refused");
-      boundaries.sent(
-          Boundaries.Boundary.REFUSAL_SENT, Boundaries.Details.NONE.refusal(failure.code()));
-      if (!control.writes.sendEncoded(Wire.encode(refusal, selected.controlLimit()), ticket::close))
-        ticket.close();
+      if (!control.writes.sendEncoded(
+          Wire.encode(refusal, selected.controlLimit()),
+          success -> {
+            ticket.close();
+            if (success)
+              boundaries.sent(
+                  Boundaries.Boundary.REFUSAL_SENT,
+                  Boundaries.Details.NONE.refusal(failure.code()));
+          })) ticket.close();
     }
 
     private void dispatch(DurableRequests.Ticket ticket) {
@@ -768,12 +773,13 @@ public final class DurableServer implements AutoCloseable {
                                 Wire.encode(new Detached(r.request()), selected.controlLimit());
                             if (!control.writes.sendEncoded(
                                 frame,
-                                () -> {
+                                success -> {
                                   detachAcknowledged = true;
                                   ticket.close();
-                                  boundaries.sent(
-                                      Boundaries.Boundary.DETACH_ACKNOWLEDGED,
-                                      Boundaries.Details.NONE);
+                                  if (success)
+                                    boundaries.sent(
+                                        Boundaries.Boundary.DETACH_ACKNOWLEDGED,
+                                        Boundaries.Details.NONE);
                                   control.finishOutput();
                                 })) ticket.close();
                           }));
@@ -803,9 +809,9 @@ public final class DurableServer implements AutoCloseable {
       }
       if (!control.writes.sendEncoded(
           frame,
-          () -> {
+          success -> {
             ticket.close();
-            boundaries.sent(boundary, Boundaries.Details.NONE);
+            if (success) boundaries.sent(boundary, Boundaries.Details.NONE);
           })) ticket.close();
     }
 
@@ -913,10 +919,14 @@ public final class DurableServer implements AutoCloseable {
         }
         DurableRequests.Acceptance acceptance = requests.accept(message);
         if (acceptance.refusal() != null) {
-          boundaries.sent(
-              Boundaries.Boundary.REFUSAL_SENT,
-              Boundaries.Details.NONE.refusal(acceptance.refusal().code()));
-          writes.send(acceptance.refusal());
+          ProtocolError.Code code = acceptance.refusal().code();
+          writes.sendEncoded(
+              Wire.encode(acceptance.refusal(), selected.controlLimit()),
+              success -> {
+                if (success)
+                  boundaries.sent(
+                      Boundaries.Boundary.REFUSAL_SENT, Boundaries.Details.NONE.refusal(code));
+              });
           return;
         }
         dispatch(acceptance.ticket());
@@ -1115,18 +1125,30 @@ public final class DurableServer implements AutoCloseable {
       }
 
       private void replay(Records.OperationReceipt receipt) {
-        boundaries.sent(
-            Boundaries.Boundary.ADMISSION_RESPONSE_SENT,
-            Boundaries.Details.NONE.operation(header.operation()).work(header.parameters().work()));
         responded = true;
         AdmissionResponse response =
             new AdmissionResponse(new Records.RequestTag(true, streamId), receipt);
         data.stopReplayed();
         data.release();
+        stream.close();
         done = true;
         inputs.remove(this);
+        if (boundaries.withhold(Boundaries.Boundary.ADMISSION_RESPONSE_SENT)) {
+          ticket.close();
+          fail(new ProtocolError(CONTROL_RESET, "fixture withheld reply"));
+          return;
+        }
         if (!control.writes.sendEncoded(
-            Wire.encode(response, selected.controlLimit()), ticket::close)) ticket.close();
+            Wire.encode(response, selected.controlLimit()),
+            success -> {
+              ticket.close();
+              if (success)
+                boundaries.sent(
+                    Boundaries.Boundary.ADMISSION_RESPONSE_SENT,
+                    Boundaries.Details.NONE
+                        .operation(header.operation())
+                        .work(header.parameters().work()));
+            })) ticket.close();
       }
 
       private void write(byte[] chunk, boolean fin) {
@@ -1182,6 +1204,7 @@ public final class DurableServer implements AutoCloseable {
         inputs.remove(this);
         receiver = null;
         data.release();
+        stream.close();
         if (boundaries.withhold(Boundaries.Boundary.ADMISSION_RESPONSE_SENT)) {
           ticket.close();
           fail(new ProtocolError(CONTROL_RESET, "fixture withheld reply"));
@@ -1190,14 +1213,15 @@ public final class DurableServer implements AutoCloseable {
         byte[] frame = Wire.encode(response, selected.controlLimit());
         if (!control.writes.sendEncoded(
             frame,
-            () -> {
+            success -> {
               ticket.close();
-              boundaries.sent(
-                  Boundaries.Boundary.ADMISSION_RESPONSE_SENT,
-                  Boundaries.Details.NONE
-                      .operation(header.operation())
-                      .work(header.parameters().work())
-                      .attempt(1));
+              if (success)
+                boundaries.sent(
+                    Boundaries.Boundary.ADMISSION_RESPONSE_SENT,
+                    Boundaries.Details.NONE
+                        .operation(header.operation())
+                        .work(header.parameters().work())
+                        .attempt(1));
             })) ticket.close();
       }
 
@@ -1210,6 +1234,7 @@ public final class DurableServer implements AutoCloseable {
         if (data != null) {
           data.abort(failure);
           data.release();
+          stream.close();
         }
         if (open != null) closeReceiver(open);
         if (ticket == null) {
@@ -1230,10 +1255,15 @@ public final class DurableServer implements AutoCloseable {
         }
         Refusal refusal =
             new Refusal(new Records.RequestTag(true, streamId), failure.code(), "input refused");
-        boundaries.sent(
-            Boundaries.Boundary.REFUSAL_SENT, Boundaries.Details.NONE.refusal(failure.code()));
-        Runnable settle = owner == null ? null : owner::close;
-        if (!control.writes.sendEncoded(Wire.encode(refusal, selected.controlLimit()), settle)
+        if (!control.writes.sendEncoded(
+                Wire.encode(refusal, selected.controlLimit()),
+                success -> {
+                  if (owner != null) owner.close();
+                  if (success)
+                    boundaries.sent(
+                        Boundaries.Boundary.REFUSAL_SENT,
+                        Boundaries.Details.NONE.refusal(failure.code()));
+                })
             && owner != null) owner.close();
       }
 
@@ -1283,14 +1313,16 @@ public final class DurableServer implements AutoCloseable {
 
       @Override
       public void channelInactive(ChannelHandlerContext ctx) {
+        // An interrupted input has invalid FIN geometry (Section 12.5): INTEGRITY_ERROR for that
+        // input only, discarding partial reception and never its declaration.
         if (!done && !finished)
-          refuse(new ProtocolError(CONTROL_RESET, "input stream ended before FIN"));
+          refuse(new ProtocolError(INTEGRITY_ERROR, "input stream interrupted before FIN"));
         ctx.fireChannelInactive();
       }
 
       @Override
       public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        refuse(new ProtocolError(CONTROL_RESET, "input stream reset"));
+        refuse(new ProtocolError(INTEGRITY_ERROR, "input stream interrupted"));
       }
     }
 

@@ -51,11 +51,25 @@ final class ClientCommands {
   }
 
   static boolean run(String command, String[] arguments) throws Exception {
+    return run(command, arguments, Boundaries.NONE);
+  }
+
+  /**
+   * Run one client command with test-only boundary hooks; the shipped launcher passes {@link
+   * Boundaries#NONE}.
+   *
+   * @param command command name
+   * @param arguments full argument vector
+   * @param hooks client boundary hooks
+   * @return whether the command was recognised
+   * @throws Exception command failure
+   */
+  static boolean run(String command, String[] arguments, Boundaries hooks) throws Exception {
     Map<String, String> options = V2Main.options(arguments, 1);
     switch (command) {
       case "next-sequence" -> nextSequence(options);
       case "init-client" -> initClient(options);
-      case "client" -> client(arguments, options);
+      case "client" -> client(arguments, options, hooks);
       default -> {
         return false;
       }
@@ -177,7 +191,8 @@ final class ClientCommands {
     return HexFormat.of().formatHex(bytes);
   }
 
-  private static void client(String[] arguments, Map<String, String> options) throws Exception {
+  private static void client(String[] arguments, Map<String, String> options, Boundaries hooks)
+      throws Exception {
     String operation = operationName(arguments);
     ClientJournal.Intent intent = intent(options);
     Path journalFile = V2Main.requiredPath(options, "journal");
@@ -187,7 +202,7 @@ final class ClientCommands {
             ProtocolError.Code.CONFLICT, "journal intent differs from the supplied arguments");
       try (DurableClient client =
           DurableClient.connect(
-              connect(options), authentication(options), journal, clientOptions(options))) {
+              connect(options), authentication(options), journal, clientOptions(options), hooks)) {
         get(client.ready());
         Messages.Binding binding = get(client.binding());
         switch (operation) {

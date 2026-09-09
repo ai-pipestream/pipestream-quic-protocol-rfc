@@ -128,6 +128,7 @@ public final class V2Main {
             DurableHost.OwnerPolicy.fromPrincipals(
                 () -> principals, options.containsKey("allow-skip")),
             DurableHost.UtcClock.system(true));
+    if (boundaries != null) host.boundaries(boundaries);
     DurableServer server;
     try {
       server =

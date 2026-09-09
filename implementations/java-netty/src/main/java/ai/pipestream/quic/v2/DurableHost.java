@@ -940,6 +940,19 @@ public final class DurableHost implements AutoCloseable {
   private final InputStore inputs;
   private final ExecutionRuntime runtime;
   private final ExecutionScheduler scheduler;
+
+  /**
+   * Install test-only durability hooks on the execution runtime and scheduler. Shipped launchers
+   * never call this; hooks observe or hold committed boundaries and cannot forge them.
+   *
+   * @param hooks boundary hooks
+   */
+  void boundaries(Boundaries hooks) {
+    Objects.requireNonNull(hooks);
+    runtime.boundaries(hooks);
+    scheduler.boundaries(hooks);
+  }
+
   private final RetentionService retention;
   private final ResultService results;
   private final ControlWaitService waits;

@@ -218,6 +218,19 @@ final class ExecutionRuntime {
   private final Map<String, Integer> owners = new HashMap<>();
   private int active;
 
+  /** Trusted local durability hooks; {@link Boundaries#NONE} in shipped launchers. */
+  private volatile Boundaries boundaries = Boundaries.NONE;
+
+  /**
+   * Install test-only boundary hooks. They observe or hold committed boundaries and never act as
+   * application callbacks.
+   *
+   * @param hooks boundary hooks
+   */
+  void boundaries(Boundaries hooks) {
+    boundaries = Objects.requireNonNull(hooks);
+  }
+
   /**
    * Construct a runner for an already initialized paired authority.
    *
@@ -398,6 +411,10 @@ final class ExecutionRuntime {
       release(access.owner());
       throw failure;
     }
+    // The claim is committed and no callback has run; hooks observe outside the storage monitor.
+    boundaries.committed(
+        Boundaries.Boundary.EXECUTION_CLAIMED,
+        Boundaries.Details.NONE.work(work).attempt(context.lease.attempt()));
     try (Invocation invocation = new Invocation(context)) {
       return invocation.context.execute();
     }
@@ -994,7 +1011,11 @@ final class ExecutionRuntime {
             if (pending == null) throw error(ProtocolError.Code.CONFLICT, "no output open");
             pending.finish();
             pending = null;
-            return produced++;
+            int index = produced++;
+            boundaries.committed(
+                Boundaries.Boundary.OUTPUT_INSTALLED,
+                Boundaries.Details.NONE.work(lease.work()).attempt(lease.attempt()));
+            return index;
           });
     }
 
@@ -1036,11 +1057,16 @@ final class ExecutionRuntime {
       }
       if (sticky != null) outcome = Outcome.failed(sticky);
       check();
-      if (outcome.success())
-        return sessions.succeedExecution(
-            access, lease, inputs, produced, endpoint, checkedClock, gate);
-      return sessions.failExecution(
-          access, lease, outcome.diagnostic(), outcome.retryable(), checkedClock, gate);
+      WorkView published =
+          outcome.success()
+              ? sessions.succeedExecution(
+                  access, lease, inputs, produced, endpoint, checkedClock, gate)
+              : sessions.failExecution(
+                  access, lease, outcome.diagnostic(), outcome.retryable(), checkedClock, gate);
+      boundaries.committed(
+          Boundaries.Boundary.PUBLICATION_COMMITTED,
+          Boundaries.Details.NONE.work(lease.work()).attempt(lease.attempt()));
+      return published;
     }
 
     private WorkView expand() throws IOException, SQLException {
@@ -1083,21 +1109,26 @@ final class ExecutionRuntime {
               && outcome.disposition() == ExpansionDisposition.YIELD))
         outcome = ExpansionOutcome.failed(sticky);
       check();
-      if (outcome.disposition() == ExpansionDisposition.COMPLETE
-          || outcome.disposition() == ExpansionDisposition.YIELD)
-        return sessions.finishExpansion(
-            access,
-            lease,
-            outcome.disposition() == ExpansionDisposition.COMPLETE,
-            checkedClock,
-            gate);
-      return sessions.failExecution(
-          access,
-          lease,
-          outcome.diagnostic(),
-          outcome.disposition() == ExpansionDisposition.RETRYABLE,
-          checkedClock,
-          gate);
+      WorkView published =
+          outcome.disposition() == ExpansionDisposition.COMPLETE
+                  || outcome.disposition() == ExpansionDisposition.YIELD
+              ? sessions.finishExpansion(
+                  access,
+                  lease,
+                  outcome.disposition() == ExpansionDisposition.COMPLETE,
+                  checkedClock,
+                  gate)
+              : sessions.failExecution(
+                  access,
+                  lease,
+                  outcome.diagnostic(),
+                  outcome.disposition() == ExpansionDisposition.RETRYABLE,
+                  checkedClock,
+                  gate);
+      boundaries.committed(
+          Boundaries.Boundary.PUBLICATION_COMMITTED,
+          Boundaries.Details.NONE.work(lease.work()).attempt(lease.attempt()));
+      return published;
     }
 
     private <T> T io(IoAction<T> action) throws IOException, SQLException {
