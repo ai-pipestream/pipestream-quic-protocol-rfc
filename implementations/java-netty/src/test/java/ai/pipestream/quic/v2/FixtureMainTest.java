@@ -523,4 +523,68 @@ final class FixtureMainTest {
     assertEquals(1, FixtureMain.schedule(schedule, "r", "s", "server").size());
     assertEquals(1, FixtureMain.schedule(schedule, "r", "s", "client").size());
   }
+
+  @Test
+  void clientDeathAfterJournalBoundariesIsRecoveredByTheJournalAlone() throws Exception {
+    Path root = authority("client-kill");
+    Path serverEvents = directory.resolve("client-kill-fixture/server-events.tsv");
+    Path clientEvents = directory.resolve("client-kill-fixture/client-events.tsv");
+    Path intentSchedule = directory.resolve("client-kill-intent.tsv");
+    Path receiptSchedule = directory.resolve("client-kill-receipt.tsv");
+    Files.writeString(
+        intentSchedule, "1\trun-ck\tclient-death\tclient\tINTENT_JOURNALED\tkill\t0\t0\n");
+    Files.writeString(
+        receiptSchedule, "1\trun-ck\tclient-death\tclient\tRECEIPT_VALIDATED\tkill\t0\t0\n");
+    try (FixtureServer server =
+        new FixtureServer(
+            root, "client-kill", fixture(serverEvents, null, "run-ck", "client-death"))) {
+      Path journal = journal("client-kill", server.address);
+      String[] declare = {"declare", "--operation", hexOperation(1), "--entities", "1", "--seal"};
+
+      // Death right after the intent commit: the request never left; the journal replays it.
+      List<String> args = client(journal, server.address, declare);
+      args.addAll(fixture(clientEvents, intentSchedule, "run-ck", "client-death"));
+      Run beforeSend = java("ai.pipestream.quic.v2.FixtureMain", args, 120);
+      assertEquals(137, beforeSend.exit(), beforeSend.output());
+      List<String> afterIntent = boundaries(clientEvents);
+      assertEquals(
+          "INTENT_JOURNALED", afterIntent.get(afterIntent.size() - 1), afterIntent.toString());
+      assertFalse(boundaries(serverEvents).contains("DECLARATION_COMMITTED"));
+
+      // Death after validation but before the receipt commit: the server's committed declaration
+      // is replayed to the reopened journal, which then commits the receipt exactly once.
+      args = client(journal, server.address, declare);
+      args.addAll(fixture(clientEvents, receiptSchedule, "run-ck", "client-death"));
+      Run beforeReceipt = java("ai.pipestream.quic.v2.FixtureMain", args, 120);
+      assertEquals(137, beforeReceipt.exit(), beforeReceipt.output());
+      List<String> afterValidation = boundaries(clientEvents);
+      assertEquals(
+          "RECEIPT_VALIDATED",
+          afterValidation.get(afterValidation.size() - 1),
+          afterValidation.toString());
+      assertFalse(afterValidation.contains("RECEIPT_JOURNALED"));
+      assertEquals(
+          1, boundaries(serverEvents).stream().filter("DECLARATION_COMMITTED"::equals).count());
+
+      Run recovered =
+          fixtureClient(journal, server.address, clientEvents, "run-ck", "client-death", declare);
+      assertEquals(0, recovered.exit(), recovered.output());
+      assertTrue(recovered.output().contains("RECEIPT"), recovered.output());
+      List<String> clientAll = boundaries(clientEvents);
+      assertEquals(
+          1, clientAll.stream().filter("RECEIPT_JOURNALED"::equals).count(), clientAll.toString());
+      Run again =
+          fixtureClient(journal, server.address, clientEvents, "run-ck", "client-death", declare);
+      assertEquals(0, again.exit(), again.output());
+      assertEquals(
+          1,
+          boundaries(clientEvents).stream().filter("RECEIPT_JOURNALED"::equals).count(),
+          "a retained receipt is answered from the journal without a request");
+      assertEquals(
+          clientAll.stream().filter("REQUEST_SENT"::equals).count() + 2,
+          boundaries(clientEvents).stream().filter("REQUEST_SENT"::equals).count(),
+          "only the session create and detach requests leave for a retained receipt");
+      shipped(client(journal, server.address, "detach").toArray(String[]::new));
+    }
+  }
 }
