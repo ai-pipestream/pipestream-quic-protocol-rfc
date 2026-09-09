@@ -86,6 +86,7 @@ pub fn rows() -> Vec<Row> {
             "g3-partial-retirement",
             "g3-restart-same-roots",
             "g3-store-ownership",
+            "g3-nonreusable-history",
         ],
     );
     push(
@@ -136,6 +137,7 @@ pub fn rows() -> Vec<Row> {
             "g7-unsafe-clock-refusal",
             "g7-deadline-queue-time",
             "g7-cleanup-interrupted-refund",
+            "g7-no-deadline-extension",
         ],
     );
     push(
@@ -185,6 +187,12 @@ pub fn rows() -> Vec<Row> {
         "g3-orphan-cleanup",
         "g3-restart-same-roots",
         "g3-store-ownership",
+        "g3-terminal-cleanup",
+        "g3-partial-retirement",
+        "g3-nonreusable-history",
+        "g7-receipt-before-output-expiry",
+        "g7-output-before-receipt-expiry",
+        "g7-no-deadline-extension",
         "g5-untrusted-identity",
         "g5-missing-client-cert",
         "g5-unmapped-principal",
@@ -232,7 +240,11 @@ fn direction_coverage(row: &Row, context: &ScenarioContext) -> String {
         "rust-client/rust-server, rust-client/java-server".to_owned()
     } else if G3_BATCH_A_ROWS.contains(&row.id) && context.java_jar.is_some() {
         "rust-client/rust-server, rust-client/java-server, java-client/rust-server".to_owned()
-    } else if row.id.starts_with("g5-") && context.java_jar.is_some() {
+    } else if (G3_BATCH_B_ROWS.contains(&row.id)
+        || G7_EXPIRY_ROWS.contains(&row.id)
+        || row.id.starts_with("g5-"))
+        && context.java_jar.is_some()
+    {
         "rust-client/rust-server, rust-client/java-server".to_owned()
     } else if JAVA_SERVER_HOOKED_ROWS.contains(&row.id) && context.java_jar.is_some() {
         "rust-client/rust-server, java-client/rust-server, rust-client/java-server".to_owned()
@@ -302,6 +314,12 @@ fn run_rust_direction(row: &Row, context: &ScenarioContext) -> Result<()> {
         "g3-orphan-cleanup" => g3_orphan_cleanup(context),
         "g3-restart-same-roots" => g3_restart_same_roots(context),
         "g3-store-ownership" => g3_store_ownership(context),
+        "g3-terminal-cleanup" => g3_terminal_cleanup(context),
+        "g3-partial-retirement" => g3_partial_retirement(context),
+        "g3-nonreusable-history" => g3_nonreusable_history(context),
+        "g7-receipt-before-output-expiry" => g7_receipt_before_output_expiry(context),
+        "g7-output-before-receipt-expiry" => g7_output_before_receipt_expiry(context),
+        "g7-no-deadline-extension" => g7_no_deadline_extension(context),
         "g5-untrusted-identity" => g5_untrusted_identity(context),
         "g5-missing-client-cert" => g5_missing_client_cert(context),
         "g5-unmapped-principal" => g5_unmapped_principal(context),
@@ -322,14 +340,18 @@ struct Session {
     sequence: u64,
     journal: PathBuf,
     connection: Vec<String>,
+    /// Short-session-policy triple redeclared on every client invocation
+    /// (empty for default-policy sessions).
+    policy_args: Vec<String>,
 }
 
 impl Session {
     fn op(&self, operation: &[&str]) -> Result<Output> {
-        self.fixture.run_client_op(
+        self.fixture.run_client_op_with(
             &self.journal,
             "alice",
             self.sequence,
+            &self.policy_args,
             &self.connection,
             operation,
         )
@@ -404,6 +426,85 @@ fn setup_session(
         sequence,
         journal,
         connection,
+        policy_args: Vec::new(),
+    })
+}
+
+/// Policy flag spelling per client subject. The Java client spells the
+/// execution limit `--execution-ms` (ClientCommands.java usage); the Rust
+/// client spells it `--max-execution-ms` (server/src/v2.rs ClientJournal).
+/// Both take the two retention flags identically.
+fn policy_args(
+    client: Subject,
+    max_execution_ms: u64,
+    output_retention_ms: u64,
+    receipt_retention_ms: u64,
+) -> Vec<String> {
+    let execution_flag = match client {
+        Subject::Rust => "--max-execution-ms",
+        Subject::Java => "--execution-ms",
+    };
+    vec![
+        execution_flag.to_owned(),
+        max_execution_ms.to_string(),
+        "--output-retention-ms".to_owned(),
+        output_retention_ms.to_string(),
+        "--receipt-retention-ms".to_owned(),
+        receipt_retention_ms.to_string(),
+    ]
+}
+
+/// `setup_session` with an explicit short-session policy [execution-limit-ms,
+/// output-retention-ms, receipt-retention-ms] set at client init/create. The
+/// triple is redeclared on every op through `Session.policy_args` (the Java
+/// client refuses CONFLICT when an op's flags differ from its journal).
+fn setup_session_policy(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+    max_execution_ms: u64,
+    output_retention_ms: u64,
+    receipt_retention_ms: u64,
+) -> Result<Session> {
+    let policy_args = policy_args(
+        client,
+        max_execution_ms,
+        output_retention_ms,
+        receipt_retention_ms,
+    );
+    let certs = mtls::generate(&scenario_dir.join("certs"), &[("alice", "alice")])?;
+    let fixture = AuthorityFixture::new(
+        &context.rust_bin,
+        context.java_jar.as_deref(),
+        &scenario_dir.join("subject"),
+        certs,
+        server,
+        client,
+    )?;
+    fixture.run_init_authority()?;
+    let server = fixture.start_server()?;
+    let sequence = fixture.next_sequence(&server, "alice")?;
+    ensure!(
+        sequence == 1,
+        "fresh authority must report NEXT_SEQUENCE 1, got {sequence}"
+    );
+    let journal = scenario_dir.join("client").join("session.sqlite");
+    fs::create_dir_all(journal.parent().expect("journal has a parent directory"))?;
+    let mut command = fixture.client_base()?;
+    command.push("init-client".into());
+    command.extend(fixture.journal_args(&journal, "alice", sequence));
+    command.extend(policy_args.iter().cloned());
+    let init = crate::run_output_owned(&fixture.root, &command, OP_WAIT)?;
+    require(&init, client.client_initialized_marker(), "v2 init-client")?;
+    let connection = fixture.connection_args(&server, "alice")?;
+    Ok(Session {
+        fixture,
+        server,
+        sequence,
+        journal,
+        connection,
+        policy_args,
     })
 }
 
@@ -3773,6 +3874,7 @@ fn g2_kill_server_after_admission_recovery(context: &ScenarioContext) -> Result<
         sequence: session.sequence,
         journal: session.journal,
         connection: recovery_connection,
+        policy_args: session.policy_args,
     };
 
     // Immediately after restart, before any retry: no fabricated outcome and
@@ -3970,6 +4072,7 @@ fn setup_hooked(
             sequence,
             journal,
             connection,
+            policy_args: Vec::new(),
         },
         events,
     })
@@ -4021,6 +4124,7 @@ fn restart_hooked(
         sequence,
         journal: journal.to_path_buf(),
         connection,
+        policy_args: Vec::new(),
     })
 }
 
@@ -6824,6 +6928,7 @@ fn g3_restart_same_roots_direction(
         server: restarted_process,
         sequence: session.sequence,
         journal: session.journal,
+        policy_args: session.policy_args,
     };
 
     let mut observed: Vec<(&str, String)> = Vec::new();
@@ -7248,6 +7353,7 @@ fn g3_store_ownership_direction(
         server: second,
         sequence: session.sequence,
         journal: session.journal,
+        policy_args: session.policy_args,
     };
     let retained_view = retained.watch("0:0:1")?;
     ensure!(
@@ -7294,6 +7400,1306 @@ fn g3_store_ownership_direction(
         ],
     )?;
     stop_and_seal(context, scenario_dir, id, retained.server, events)
+}
+
+// ---------------------------------------------------------------------------
+// G3 batch B + G7 expiry rows (milestone 11)
+// ---------------------------------------------------------------------------
+
+/// The three G3 batch-B rows: short-session-policy retirement rows, two
+/// directions each (rust-client/rust-server plus rust-client/java-server).
+const G3_BATCH_B_ROWS: &[&str] = &[
+    "g3-terminal-cleanup",
+    "g3-partial-retirement",
+    "g3-nonreusable-history",
+];
+
+/// The three G7 rows this milestone implements. Like the batch-B rows they
+/// run the canonical direction plus the rust-client/java-server direction;
+/// the client subject cannot influence server-side expiry.
+const G7_EXPIRY_ROWS: &[&str] = &[
+    "g7-receipt-before-output-expiry",
+    "g7-output-before-receipt-expiry",
+    "g7-no-deadline-extension",
+];
+
+/// Retirement surface per subject, recorded in every retirement row:
+/// neither CLI exposes an operator retirement command (the Rust `v2` Command
+/// enum has none; Java V2Main/ClientCommands have none); both servers retire
+/// automatically once the root is closed and every promise expired — the
+/// Rust runtime's maintenance loop (quinn v2_authority/runtime.rs,
+/// 20 ms interval, batch 32) and the Java RetentionService (1 s poll,
+/// DurableHost RetentionLimits(64, 1000)).
+const RETIREMENT_MECHANISM: &str = "operator retirement command: named gap on both CLIs; \
+                                    both servers retire automatically (rust: v2_authority \
+                                    runtime maintenance, 20ms interval; java: \
+                                    RetentionService, 1s poll)";
+
+fn utc_now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("host clock precedes the Unix epoch")
+        .as_millis() as u64
+}
+
+/// Real-elapsed wait until host UTC passes `when_ms` + `margin`
+/// (clock_mode=real-short-policy; both subjects run --trust-system-clock).
+fn sleep_until_utc(when_ms: u64, margin: Duration) {
+    let target = when_ms + margin.as_millis() as u64;
+    let now = utc_now_millis();
+    if now < target {
+        thread::sleep(Duration::from_millis(target - now));
+    }
+}
+
+/// The VIEW line of a watch stdout (subject-agnostic; both clients print
+/// `VIEW <work view>` after the WORK summary line).
+fn view_line(stdout: &str) -> Result<&str> {
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("VIEW "))
+        .context("watch did not print a VIEW line")
+}
+
+/// Declare one sealed entity, admit the deterministic copy/v2 input, and
+/// watch to terminal success. Writes `input.bin` and returns
+/// (declaration, admit hex, terminal watch stdout, receipt).
+fn publish_copy_work(
+    session: &Session,
+    events: &mut EventWriter,
+    context: &ScenarioContext,
+    artifacts: &Path,
+) -> Result<(String, String, String, String)> {
+    let input = oracle::dataset(context.seed, INPUT_LEN);
+    let input_sha256 = oracle::sha256_hex(&input);
+    fs::write(artifacts.join("input.bin"), &input)?;
+    events.append(
+        "",
+        None,
+        Some("0:0:1"),
+        Some(1),
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/input.bin".into(),
+            len: input.len() as u64,
+            sha256: input_sha256,
+        }),
+    )?;
+    let declare = declare_sealed(session, events, context.seed, "declare", &[1])?;
+    let admit = oracle::operation_hex(oracle::operation_id(context.seed, "admit", 1));
+    let receipt = admit_input(
+        session,
+        events,
+        context.seed,
+        "admit",
+        &declare,
+        "0:0:1",
+        &artifacts.join("input.bin"),
+    )?;
+    let terminal = watch_terminal(session, events, "0:0:1", &admit, WATCH_TIMEOUT)?;
+    Ok((declare, admit, terminal, receipt))
+}
+
+/// A result read that must refuse the NAMED EXPIRED code after output
+/// availability passes: never OUTPUT_UNAVAILABLE, never a silent failure.
+fn expect_expired_read(
+    session: &Session,
+    artifacts: &Path,
+    name: &str,
+    output_name: &str,
+) -> Result<String> {
+    let output_path = artifacts.join(output_name);
+    let text = expect_failure(
+        session,
+        artifacts,
+        name,
+        &[
+            "read",
+            "--work",
+            "0:0:1",
+            "--attempt",
+            "1",
+            "--index",
+            "0",
+            "--output",
+            &crate::path(&output_path),
+        ],
+    )?;
+    let code = transcript_named_code(&text);
+    ensure!(
+        code == Some(6),
+        "{name} must refuse the named EXPIRED (6) code, got {code:?}\n{text}"
+    );
+    ensure!(
+        !text.contains("OUTPUT_UNAVAILABLE"),
+        "{name} must never name OUTPUT_UNAVAILABLE for an expired read\n{text}"
+    );
+    Ok(text)
+}
+
+/// Creation probe from a fresh journal carrying an explicit sequence and the
+/// session's short policy, via `init-client` + `client binding`. Returns the
+/// raw output so the caller can record a named refusal or a successful
+/// replay binding; never asserts.
+fn creation_probe(session: &Session, journal: &Path, sequence: u64) -> Result<Output> {
+    let mut init = session.fixture.client_base()?;
+    init.push("init-client".into());
+    init.extend(session.fixture.journal_args(journal, "alice", sequence));
+    init.extend(session.policy_args.iter().cloned());
+    crate::run_output_owned(&session.fixture.root, &init, OP_WAIT)?;
+    let mut command = session.fixture.client_base()?;
+    command.push("client".into());
+    command.extend(session.fixture.journal_args(journal, "alice", sequence));
+    command.extend(session.policy_args.iter().cloned());
+    command.extend(session.connection.iter().cloned());
+    command.push("binding".into());
+    crate::run_output_owned(&session.fixture.root, &command, OP_WAIT)
+}
+
+/// Root-close a session the way the completion protocol requires: record
+/// root coverage with the committed (oracle-verified) root seal, then
+/// complete. `complete` refuses NOT_READY without the coverage checkpoint.
+fn root_close(session: &Session) -> Result<()> {
+    let (_stdout, root_page) = observe_page(session, 0, 256)?;
+    let committed = root_page
+        .seal
+        .clone()
+        .context("sealed root scope must carry a committed seal")?;
+    let expected = oracle::scope_seal_hex("issuer-a", "alice", 1, 0, 0, None, &[1]);
+    ensure!(
+        committed == expected,
+        "committed root seal {committed} != oracle {expected}"
+    );
+    let checkpoint = session.op(&["checkpoint", "--scope", "0", "--seal", &committed])?;
+    require(&checkpoint, "COVERAGE", "root checkpoint")?;
+    let completed = session.op(&["complete"])?;
+    require(&completed, "COMPLETED", "complete operation")?;
+    Ok(())
+}
+
+/// One retirement-window observation: after a root close, poll the (terminal)
+/// work until the session refuses access or host UTC passes `until_ms`.
+/// Both servers retire automatically (rust runtime maintenance, Java
+/// RetentionService) so a refusal is expected well inside the window; while
+/// serving, the terminal view must never change (no re-execution, no
+/// deadline drift).
+struct RetirementObservation {
+    refused: bool,
+    code: Option<u32>,
+    line: String,
+}
+
+fn observe_retirement_window(
+    session: &Session,
+    work: &str,
+    until_ms: u64,
+) -> Result<RetirementObservation> {
+    let baseline = view_line(&session.watch(work)?)?.to_owned();
+    let mut serving_views = 0u64;
+    loop {
+        let output = session.op(&["watch", "--work", work])?;
+        if !output.status.success() {
+            let outcome = probe_outcome(&output);
+            let (code, line) = outcome
+                .refusal
+                .unwrap_or((u32::MAX, "unnamed refusal".to_owned()));
+            ensure!(
+                code != 16,
+                "retirement must never surface OUTPUT_UNAVAILABLE (16): {line}"
+            );
+            return Ok(RetirementObservation {
+                refused: true,
+                code: Some(code),
+                line,
+            });
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        ensure!(
+            parse_state(&stdout)? == 5 && parse_attempt(&stdout)? == 1,
+            "terminal work changed during the retirement window: {stdout}"
+        );
+        ensure!(
+            view_line(&stdout)? == baseline,
+            "terminal view drifted during the retirement window:\n\
+             baseline: {baseline}\nactual: {stdout}"
+        );
+        serving_views += 1;
+        if utc_now_millis() >= until_ms {
+            return Ok(RetirementObservation {
+                refused: false,
+                code: None,
+                line: format!("serving_views={serving_views}"),
+            });
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
+}
+
+/// Post-retirement probes shared by the retirement rows: operation lookup,
+/// creation replay with the retired sequence, and the owner creation
+/// high-water. Both servers retire automatically, so every probe must
+/// refuse: the session-scoped lookup names EXPIRED (6) or NOT_FOUND (5) —
+/// the matrix sanctions NOT_FOUND once metadata removal completes — and the
+/// creation replay names EXPIRED (6) ("creation receipt retired"), proving
+/// the retired sequence was never reissued. The high-water read answers on
+/// both subjects.
+fn retired_access_probes(
+    session: &Session,
+    scenario_dir: &Path,
+    artifacts: &Path,
+    admit: &str,
+) -> Result<Vec<(&'static str, String)>> {
+    let mut observed: Vec<(&'static str, String)> = Vec::new();
+    let lookup = session.op(&["lookup", "--operation", admit])?;
+    let lookup_text = transcript(&lookup);
+    fs::write(artifacts.join("retired-lookup.txt"), &lookup_text)?;
+    let outcome = probe_outcome(&lookup);
+    let (code, line) = outcome.refusal.unwrap_or((u32::MAX, String::new()));
+    let success = lookup.status.success();
+    ensure!(
+        !success && (code == 6 || code == 5),
+        "operation lookup on the retired session must refuse a named EXPIRED (6) or \
+         NOT_FOUND (5) code, got success={success} code={code:?} line={line}\n{lookup_text}"
+    );
+    observed.push((
+        "retired_operation_lookup",
+        format!(
+            "refused {} ({code})",
+            if code == 6 { "EXPIRED" } else { "NOT_FOUND" }
+        ),
+    ));
+
+    let replay_journal = scenario_dir.join("client").join("probe-replay.sqlite");
+    let replay = creation_probe(session, &replay_journal, 1)?;
+    let replay_text = transcript(&replay);
+    fs::write(artifacts.join("retired-creation-replay.txt"), &replay_text)?;
+    let outcome = probe_outcome(&replay);
+    let (code, line) = outcome.refusal.unwrap_or((u32::MAX, String::new()));
+    let success = replay.status.success();
+    ensure!(
+        !success && code == 6,
+        "creation replay with the retired sequence must refuse named EXPIRED (6), \
+         got success={success} code={code:?} line={line}\n{replay_text}"
+    );
+    observed.push(("retired_creation_replay", "refused EXPIRED (6)".into()));
+
+    let high_water = session.fixture.next_sequence(&session.server, "alice")?;
+    ensure!(
+        high_water == 2,
+        "owner creation high-water must be preserved at 2 after retirement, got {high_water}"
+    );
+    observed.push((
+        "owner_high_water",
+        format!("next-sequence={high_water} (never reissued)"),
+    ));
+    Ok(observed)
+}
+
+/// Both servers retire automatically once the root is closed and every
+/// promise expired: an unrefused retirement window is a defect, and the
+/// refusal must name EXPIRED (6) or NOT_FOUND (5) — the matrix sanctions
+/// NOT_FOUND once metadata removal completes.
+fn require_retired(observation: &RetirementObservation, what: &str) -> Result<String> {
+    ensure!(
+        observation.refused,
+        "{what}: session kept serving past the retirement window ({})",
+        observation.line
+    );
+    ensure!(
+        observation.code == Some(6) || observation.code == Some(5),
+        "{what}: refusal must name EXPIRED (6) or NOT_FOUND (5), got {:?}: {}",
+        observation.code,
+        observation.line
+    );
+    Ok(format!("refused: {}", observation.line))
+}
+
+/// Run one expiry row: canonical rust/rust direction in the row directory,
+/// rust-client/java-server in a subdirectory (INCOMPLETE marker instead of a
+/// failure, per the cross-implementation gap policy).
+fn run_expiry_row(
+    context: &ScenarioContext,
+    row_id: &str,
+    direction: fn(&ScenarioContext, &Path, Subject, Subject) -> Result<()>,
+) -> Result<()> {
+    direction(
+        context,
+        &context.scenario_dir(row_id),
+        Subject::Rust,
+        Subject::Rust,
+    )?;
+    run_hooked_direction(
+        context,
+        row_id,
+        "rust-client-java-server",
+        |context, dir| direction(context, dir, Subject::Java, Subject::Rust),
+    )?;
+    Ok(())
+}
+
+/// Shared expiry-row preamble: events, no-fault enforcement, short-policy
+/// session, expected.tsv with the policy triple (written BEFORE any wait),
+/// and the published copy/v2 work. Returns the pieces every expiry row needs.
+#[allow(clippy::too_many_arguments)]
+fn expiry_preamble(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    id: &str,
+    server: Subject,
+    client: Subject,
+    policy: (u64, u64, u64),
+    expected_extra: &[(&str, String)],
+) -> Result<(
+    Session,
+    EventWriter,
+    PathBuf,
+    String,
+    String,
+    String,
+    String,
+)> {
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    enforce_no_fault_schedule(context, id)?;
+    let session = setup_session_policy(
+        context,
+        scenario_dir,
+        server,
+        client,
+        policy.0,
+        policy.1,
+        policy.2,
+    )?;
+    let input = oracle::dataset(context.seed, INPUT_LEN);
+    let input_sha256 = oracle::sha256_hex(&input);
+    let mut expected: Vec<(&str, String)> = vec![
+        ("policy_execution_limit_ms", policy.0.to_string()),
+        ("policy_output_retention_ms", policy.1.to_string()),
+        ("policy_receipt_retention_ms", policy.2.to_string()),
+        ("clock_mode", "real-short-policy".into()),
+        ("work", "0:0:1".into()),
+        ("attempt", "1".into()),
+        ("input_len", INPUT_LEN.to_string()),
+        ("input_sha256", input_sha256.clone()),
+        ("expected_output_sha256", input_sha256.clone()),
+    ];
+    expected.extend(
+        expected_extra
+            .iter()
+            .map(|(key, value)| (*key, value.clone())),
+    );
+    write_kv(scenario_dir, "expected.tsv", &expected)?;
+    let (declare, admit, terminal, _receipt) =
+        publish_copy_work(&session, &mut events, context, &artifacts)?;
+    Ok((
+        session,
+        events,
+        artifacts,
+        declare,
+        admit,
+        terminal,
+        input_sha256,
+    ))
+}
+
+/// Rust-client-only field checks proving the policy triple was honored:
+/// deadline = admitted + execution limit; receipt/output until = terminal +
+/// retention. Java view rendering differs, so the mixed direction relies on
+/// the behavioral expiry timings instead.
+fn check_policy_offsets(terminal_view: &str, policy: (u64, u64, u64)) -> Result<()> {
+    let admitted_at = parse_field_u64(terminal_view, "admitted_at")?
+        .context("terminal view did not report admitted_at")?;
+    let deadline = parse_field_u64(terminal_view, "deadline")?
+        .context("terminal view did not report a deadline")?;
+    let terminal_at = parse_field_u64(terminal_view, "terminal_at")?
+        .context("terminal view did not report terminal_at")?;
+    let receipt_until = parse_field_u64(terminal_view, "receipt_until")?
+        .context("terminal view did not report receipt_until")?;
+    let output_until = parse_field_u64(terminal_view, "output_until")?
+        .context("terminal view did not report output_until")?;
+    ensure!(
+        deadline == admitted_at + policy.0,
+        "execution deadline {deadline} != admitted_at {admitted_at} + {}ms",
+        policy.0
+    );
+    ensure!(
+        receipt_until == terminal_at + policy.2,
+        "receipt deadline {receipt_until} != terminal_at {terminal_at} + {}ms",
+        policy.2
+    );
+    ensure!(
+        output_until == terminal_at + policy.1,
+        "output deadline {output_until} != terminal_at {terminal_at} + {}ms",
+        policy.1
+    );
+    Ok(())
+}
+
+/// g7-receipt-before-output-expiry: policy output-retention (5s) <
+/// receipt-retention (20s). Publish, read inside availability, then wait
+/// past output availability while the receipt still holds: the fresh result
+/// read refuses the named EXPIRED (6) code, never OUTPUT_UNAVAILABLE; the
+/// manifest and work view stay readable; the terminal outcome never flips
+/// (no re-execution on read); the operation lookup still answers.
+fn g7_receipt_before_output_expiry(context: &ScenarioContext) -> Result<()> {
+    run_expiry_row(
+        context,
+        "g7-receipt-before-output-expiry",
+        g7_receipt_before_output_expiry_direction,
+    )
+}
+
+fn g7_receipt_before_output_expiry_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g7-receipt-before-output-expiry";
+    let policy = (60_000u64, 5_000u64, 20_000u64);
+    let (session, mut events, artifacts, _declare, admit, terminal, input_sha256) =
+        expiry_preamble(
+            context,
+            scenario_dir,
+            id,
+            server,
+            client,
+            policy,
+            &[(
+                "expected_read_after_output_expiry",
+                "named EXPIRED (6), never OUTPUT_UNAVAILABLE (16)".into(),
+            )],
+        )?;
+    if client == Subject::Rust {
+        check_policy_offsets(&terminal, policy)
+            .context("g7-receipt-before-output-expiry policy offsets")?;
+    }
+    let terminal_view = view_line(&terminal)?.to_owned();
+    let output_until = parse_field_u64(&terminal, "output_until")?
+        .context("terminal view did not report output_until")?;
+    let receipt_until = parse_field_u64(&terminal, "receipt_until")?
+        .context("terminal view did not report receipt_until")?;
+    if client == Subject::Rust {
+        ensure!(
+            output_until < receipt_until,
+            "policy order requires output availability to expire before the receipt"
+        );
+    }
+    let input = oracle::dataset(context.seed, INPUT_LEN);
+    read_output_verified(
+        &session,
+        &mut events,
+        "0:0:1",
+        1,
+        &input,
+        &input_sha256,
+        &artifacts,
+        "output-before-expiry.bin",
+    )?;
+
+    // Wait past output availability (still inside receipt retention).
+    sleep_until_utc(output_until, Duration::from_secs(2));
+    expect_expired_read(
+        &session,
+        &artifacts,
+        "read-after-output-expiry.txt",
+        "expired-read.bin",
+    )?;
+
+    // Manifest and work view remain readable; the terminal outcome is frozen.
+    let manifest = session.op(&["manifest", "--work", "0:0:1", "--attempt", "1"])?;
+    require(&manifest, "MANIFEST", "manifest after output expiry")?;
+    let after_view = session.watch("0:0:1")?;
+    ensure!(
+        parse_state(&after_view)? == 5 && parse_attempt(&after_view)? == 1,
+        "terminal outcome must not flip after output expiry: {after_view}"
+    );
+    ensure!(
+        view_line(&after_view)? == terminal_view,
+        "terminal view changed after output expiry (re-execution on read?)"
+    );
+    let lookup = session.op(&["lookup", "--operation", &admit])?;
+    require(&lookup, "RECEIPT", "operation lookup after output expiry")?;
+    detach(&session)?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("clock_mode", "real-short-policy".into()),
+        (
+            "read_after_output_expiry",
+            "named EXPIRED (6), never OUTPUT_UNAVAILABLE (16) \
+             (artifacts/read-after-output-expiry.txt)"
+                .into(),
+        ),
+        ("manifest_after_output_expiry", "readable (MANIFEST)".into()),
+        (
+            "work_view_after_output_expiry",
+            "state=5 attempt=1, view unchanged".into(),
+        ),
+        ("lookup_after_output_expiry", "RECEIPT answers".into()),
+        ("receipt_until", receipt_until.to_string()),
+    ];
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+
+    stop_and_seal(context, scenario_dir, id, session.server, events)
+}
+
+/// g3-terminal-cleanup: the full cleanup sequence. Phase 1 repeats the
+/// g7-receipt-before-output-expiry probes (output 5s < receipt 20s). Phase 2
+/// root-closes the session (complete) and waits past the receipt retention:
+/// automatic retirement then refuses session access with a named code on
+/// both servers (EXPIRED (6) while the retiring flag fences access, NOT_FOUND
+/// (5) once metadata removal completes). The owner creation high-water is
+/// preserved on both subjects.
+fn g3_terminal_cleanup(context: &ScenarioContext) -> Result<()> {
+    run_expiry_row(
+        context,
+        "g3-terminal-cleanup",
+        g3_terminal_cleanup_direction,
+    )
+}
+
+fn g3_terminal_cleanup_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g3-terminal-cleanup";
+    let policy = (60_000u64, 5_000u64, 20_000u64);
+    let (session, mut events, artifacts, _declare, admit, terminal, input_sha256) =
+        expiry_preamble(
+            context,
+            scenario_dir,
+            id,
+            server,
+            client,
+            policy,
+            &[
+                (
+                    "expected_read_after_output_expiry",
+                    "named EXPIRED (6), never OUTPUT_UNAVAILABLE (16)".into(),
+                ),
+                (
+                    "expected_after_receipt_expiry",
+                    "both servers: session retired, access refuses named EXPIRED (6) or \
+                     NOT_FOUND (5); creation replay refuses EXPIRED (6)"
+                        .into(),
+                ),
+            ],
+        )?;
+    if client == Subject::Rust {
+        check_policy_offsets(&terminal, policy).context("g3-terminal-cleanup policy offsets")?;
+    }
+    let terminal_view = view_line(&terminal)?.to_owned();
+    let output_until = parse_field_u64(&terminal, "output_until")?
+        .context("terminal view did not report output_until")?;
+    let receipt_until = parse_field_u64(&terminal, "receipt_until")?
+        .context("terminal view did not report receipt_until")?;
+    let input = oracle::dataset(context.seed, INPUT_LEN);
+    read_output_verified(
+        &session,
+        &mut events,
+        "0:0:1",
+        1,
+        &input,
+        &input_sha256,
+        &artifacts,
+        "output-before-expiry.bin",
+    )?;
+
+    // Phase 1: past output availability, inside receipt retention.
+    sleep_until_utc(output_until, Duration::from_secs(2));
+    expect_expired_read(
+        &session,
+        &artifacts,
+        "read-after-output-expiry.txt",
+        "expired-read.bin",
+    )?;
+    let manifest = session.op(&["manifest", "--work", "0:0:1", "--attempt", "1"])?;
+    require(&manifest, "MANIFEST", "manifest after output expiry")?;
+    let after_view = session.watch("0:0:1")?;
+    ensure!(
+        parse_state(&after_view)? == 5 && parse_attempt(&after_view)? == 1,
+        "terminal outcome must not flip after output expiry: {after_view}"
+    );
+    ensure!(
+        view_line(&after_view)? == terminal_view,
+        "terminal view changed after output expiry (re-execution on read?)"
+    );
+    let lookup = session.op(&["lookup", "--operation", &admit])?;
+    require(&lookup, "RECEIPT", "operation lookup after output expiry")?;
+    detach(&session)?;
+
+    // Phase 2: root-close, then wait past the receipt retention.
+    root_close(&session)?;
+    let observation = observe_retirement_window(
+        &session,
+        "0:0:1",
+        receipt_until + Duration::from_secs(15).as_millis() as u64,
+    )?;
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("clock_mode", "real-short-policy".into()),
+        ("retirement_mechanism", RETIREMENT_MECHANISM.into()),
+        (
+            "read_after_output_expiry",
+            "named EXPIRED (6), never OUTPUT_UNAVAILABLE (16)".into(),
+        ),
+        ("manifest_after_output_expiry", "readable (MANIFEST)".into()),
+        (
+            "work_view_after_output_expiry",
+            "state=5 attempt=1, view unchanged".into(),
+        ),
+        ("lookup_after_output_expiry", "RECEIPT answers".into()),
+    ];
+    observed.push((
+        "session_after_receipt_expiry",
+        require_retired(
+            &observation,
+            "g3-terminal-cleanup session after receipt expiry",
+        )?,
+    ));
+    observed.extend(retired_access_probes(
+        &session,
+        scenario_dir,
+        &artifacts,
+        &admit,
+    )?);
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+
+    stop_and_seal(context, scenario_dir, id, session.server, events)
+}
+
+/// g7-output-before-receipt-expiry: the inverse policy (receipt 5s <
+/// output 20s); both subjects accept it at create (only upper bounds are
+/// validated). After the receipt deadline the operation lookup still answers
+/// on both subjects (named gap: neither enforces lazy receipt expiry; the
+/// Java server defers retirement until the root closes and every promise
+/// resolves), the retained output still reads byte-exact while its own
+/// availability holds, identity/digest are retained, and replays never
+/// reapply. The row then root-closes and waits out the output promise to
+/// observe the retired-session refusals.
+fn g7_output_before_receipt_expiry(context: &ScenarioContext) -> Result<()> {
+    run_expiry_row(
+        context,
+        "g7-output-before-receipt-expiry",
+        g7_output_before_receipt_expiry_direction,
+    )
+}
+
+fn g7_output_before_receipt_expiry_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g7-output-before-receipt-expiry";
+    let policy = (60_000u64, 20_000u64, 5_000u64);
+    let (session, mut events, artifacts, declare, admit, terminal, input_sha256) = expiry_preamble(
+        context,
+        scenario_dir,
+        id,
+        server,
+        client,
+        policy,
+        &[
+            (
+                "policy_accepted_at_create",
+                "both subjects (upper-bound validation only)".into(),
+            ),
+            (
+                "expected_lookup_after_receipt_expiry",
+                "actual recorded: receipt retained until retirement (named gap, no lazy \
+                     receipt-expiry refusal)"
+                    .into(),
+            ),
+            (
+                "expected_read_inside_output_availability",
+                "byte-exact VERIFIED".into(),
+            ),
+        ],
+    )?;
+    if client == Subject::Rust {
+        check_policy_offsets(&terminal, policy)
+            .context("g7-output-before-receipt-expiry policy offsets")?;
+        let receipt_until = parse_field_u64(&terminal, "receipt_until")?
+            .context("terminal view did not report receipt_until")?;
+        let output_until = parse_field_u64(&terminal, "output_until")?
+            .context("terminal view did not report output_until")?;
+        ensure!(
+            receipt_until < output_until,
+            "inverse policy requires the receipt to expire before output availability"
+        );
+    }
+    let terminal_view = view_line(&terminal)?.to_owned();
+    let receipt_until = parse_field_u64(&terminal, "receipt_until")?
+        .context("terminal view did not report receipt_until")?;
+    let output_until = parse_field_u64(&terminal, "output_until")?
+        .context("terminal view did not report output_until")?;
+    let input = oracle::dataset(context.seed, INPUT_LEN);
+
+    // Sanity read inside both promises.
+    read_output_verified(
+        &session,
+        &mut events,
+        "0:0:1",
+        1,
+        &input,
+        &input_sha256,
+        &artifacts,
+        "output-before-receipt-expiry.bin",
+    )?;
+
+    // After the receipt deadline, inside output availability.
+    sleep_until_utc(receipt_until, Duration::from_secs(2));
+    let lookup = session.op(&["lookup", "--operation", &admit])?;
+    let lookup_ok =
+        lookup.status.success() && String::from_utf8_lossy(&lookup.stdout).contains("RECEIPT");
+    if !lookup_ok {
+        let text = transcript(&lookup);
+        fs::write(artifacts.join("lookup-after-receipt-expiry.txt"), &text)?;
+        let code = transcript_named_code(&text);
+        ensure!(
+            code == Some(6),
+            "if lookup refuses after the receipt deadline it must name EXPIRED (6), \
+             got {code:?}\n{text}"
+        );
+    }
+    let retained_read = read_output_verified(
+        &session,
+        &mut events,
+        "0:0:1",
+        1,
+        &input,
+        &input_sha256,
+        &artifacts,
+        "output-after-receipt-expiry.bin",
+    )?;
+    let manifest = session.op(&["manifest", "--work", "0:0:1", "--attempt", "1"])?;
+    require(&manifest, "MANIFEST", "manifest after receipt expiry")?;
+    // The replay never reapplies: the scope page still holds exactly one
+    // admitted member and the terminal view is unchanged.
+    let input_path = crate::path(&artifacts.join("input.bin"));
+    let replay_args: Vec<&str> = if client == Subject::Rust {
+        vec![
+            "replay",
+            "--operation",
+            &admit,
+            "--input",
+            &input_path,
+            "--declaration",
+            &declare,
+        ]
+    } else {
+        vec!["replay", "--operation", &admit, "--input", &input_path]
+    };
+    let replay = session.op(&replay_args)?;
+    let replay_text = transcript(&replay);
+    fs::write(
+        artifacts.join("replay-after-receipt-expiry.txt"),
+        &replay_text,
+    )?;
+    ensure!(
+        replay.status.success() && replay_text.contains("RECEIPT"),
+        "admission replay after receipt expiry must not reapply or vanish:\n{replay_text}"
+    );
+    let page = session.op(&["page", "--scope", "0"])?;
+    let page_stdout = require(&page, "SCOPE", "scope page after replay")?;
+    let (declared, members) = parse_scope_page(&page_stdout)?;
+    ensure!(
+        declared == 1 && members == 1,
+        "replay must never create new work: declared={declared} members={members}:\n{page_stdout}"
+    );
+    let after_view = session.watch("0:0:1")?;
+    ensure!(
+        parse_state(&after_view)? == 5 && parse_attempt(&after_view)? == 1,
+        "terminal outcome must not flip: {after_view}"
+    );
+    ensure!(
+        view_line(&after_view)? == terminal_view,
+        "terminal view changed"
+    );
+    detach(&session)?;
+
+    // Root-close and wait out the output promise to reach retirement.
+    root_close(&session)?;
+    let observation = observe_retirement_window(
+        &session,
+        "0:0:1",
+        output_until + Duration::from_secs(15).as_millis() as u64,
+    )?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("clock_mode", "real-short-policy".into()),
+        ("policy_accepted_at_create", "true (both subjects)".into()),
+        (
+            "lookup_after_receipt_expiry",
+            if lookup_ok {
+                "RECEIPT answers (named gap: no lazy receipt-expiry refusal; receipts are \
+                 retained until retirement)"
+                    .into()
+            } else {
+                "refused named EXPIRED (6)".into()
+            },
+        ),
+        (
+            "output_read_after_receipt_expiry",
+            format!("VERIFIED byte-exact sha256={retained_read}"),
+        ),
+        (
+            "manifest_after_receipt_expiry",
+            "readable (MANIFEST)".into(),
+        ),
+        (
+            "replay_after_receipt_expiry",
+            "RECEIPT idempotent, no new work (page 1/1)".into(),
+        ),
+        ("retirement_mechanism", RETIREMENT_MECHANISM.into()),
+    ];
+    observed.push((
+        "session_after_output_expiry",
+        require_retired(&observation, "g7-output-before-receipt-expiry session")?,
+    ));
+    observed.extend(retired_access_probes(
+        &session,
+        scenario_dir,
+        &artifacts,
+        &admit,
+    )?);
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+
+    stop_and_seal(context, scenario_dir, id, session.server, events)
+}
+
+/// g7-no-deadline-extension: for one admitted work, reconnect, re-read the
+/// manifest, replay the admission operation, and (only if retryable) retry —
+/// then compare every deadline field. The explicit retry leg is skipped with
+/// a note: the settled copy/v2 work is terminal-success, not retryable. The
+/// full rendered view must be byte-identical after every leg and the
+/// rust-client direction additionally checks deadline = admitted +
+/// execution-ms and receipt/output until = terminal + policy.
+fn g7_no_deadline_extension(context: &ScenarioContext) -> Result<()> {
+    run_expiry_row(
+        context,
+        "g7-no-deadline-extension",
+        g7_no_deadline_extension_direction,
+    )
+}
+
+fn g7_no_deadline_extension_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g7-no-deadline-extension";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    enforce_no_fault_schedule(context, id)?;
+    let session = setup_session(context, scenario_dir, server, client)?;
+    let input = oracle::dataset(context.seed, INPUT_LEN);
+    let input_sha256 = oracle::sha256_hex(&input);
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("execution_limit_ms", "60000".into()),
+            ("output_retention_ms", "3600000".into()),
+            ("receipt_retention_ms", "86400000".into()),
+            ("input_sha256", input_sha256),
+            (
+                "expected_deadline_relation",
+                "deadline = admitted_at + execution_limit; receipt_until/output_until = \
+                 terminal_at + retention; identical after every leg"
+                    .into(),
+            ),
+            (
+                "retry_leg",
+                "skipped: settled copy/v2 work is terminal-success, not retryable".into(),
+            ),
+        ],
+    )?;
+    let (declare, admit, terminal, receipt) =
+        publish_copy_work(&session, &mut events, context, &artifacts)?;
+    let terminal_view = view_line(&terminal)?.to_owned();
+    if client == Subject::Rust {
+        check_policy_offsets(&terminal, (60_000, 3_600_000, 86_400_000))
+            .context("g7-no-deadline-extension policy offsets")?;
+    }
+    let manifest = session.op(&["manifest", "--work", "0:0:1", "--attempt", "1"])?;
+    require(&manifest, "MANIFEST", "manifest operation")?;
+
+    // Leg 1: reconnect (a fresh authenticated binding on a new connection).
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "reconnect binding")?;
+    let leg_view = session.watch("0:0:1")?;
+    ensure!(
+        view_line(&leg_view)? == terminal_view,
+        "reconnect changed the work view:\n{leg_view}\nbaseline:\n{terminal_view}"
+    );
+
+    // Leg 2: re-read the manifest.
+    let reread = session.op(&["manifest", "--work", "0:0:1", "--attempt", "1"])?;
+    require(&reread, "MANIFEST", "manifest re-read")?;
+    let leg_view = session.watch("0:0:1")?;
+    ensure!(
+        view_line(&leg_view)? == terminal_view,
+        "manifest re-read changed the work view:\n{leg_view}"
+    );
+
+    // Leg 3: replay the admission operation; the receipt is identical.
+    let leg_input_path = crate::path(&artifacts.join("input.bin"));
+    let replay_args: Vec<&str> = if client == Subject::Rust {
+        vec![
+            "replay",
+            "--operation",
+            &admit,
+            "--input",
+            &leg_input_path,
+            "--declaration",
+            &declare,
+        ]
+    } else {
+        vec!["replay", "--operation", &admit, "--input", &leg_input_path]
+    };
+    let replay = session.op(&replay_args)?;
+    let replay_stdout = require(&replay, "RECEIPT", "admission replay")?;
+    ensure!(
+        replay_stdout.trim() == receipt.trim(),
+        "replayed admission returned a different receipt:\n{}\noriginal:\n{}",
+        replay_stdout.trim(),
+        receipt.trim()
+    );
+    let leg_view = session.watch("0:0:1")?;
+    ensure!(
+        view_line(&leg_view)? == terminal_view,
+        "admission replay changed the work view:\n{leg_view}"
+    );
+    detach(&session)?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("reconnect_leg", "BINDING ok, view identical".into()),
+        ("manifest_reread_leg", "MANIFEST ok, view identical".into()),
+        (
+            "admission_replay_leg",
+            "identical RECEIPT, view identical".into(),
+        ),
+        (
+            "retry_leg",
+            "skipped with note: work is terminal-success, not retryable".into(),
+        ),
+        (
+            "deadline_fields_after_all_legs",
+            "deadline/terminal_at/receipt_until/output_until unchanged".into(),
+        ),
+    ];
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+
+    stop_and_seal(context, scenario_dir, id, session.server, events)
+}
+
+/// Shared g3-partial-retirement / g3-nonreusable-history build-up:
+/// short promises (6s/6s), publish, root-close, wait out every promise, and
+/// observe the retirement window. Returns the observation plus the object
+/// metrics delta (supplementary private-storage evidence).
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn retire_session_buildup(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    id: &str,
+    server: Subject,
+    client: Subject,
+) -> Result<(
+    Session,
+    EventWriter,
+    PathBuf,
+    String,
+    String,
+    String,
+    RetirementObservation,
+    String,
+)> {
+    let policy = (60_000u64, 6_000u64, 6_000u64);
+    let (session, events, artifacts, declare, admit, terminal, _input_sha256) = expiry_preamble(
+        context,
+        scenario_dir,
+        id,
+        server,
+        client,
+        policy,
+        &[(
+            "expected_after_promises_expire",
+            "authorized requests refuse named EXPIRED (6) or NOT_FOUND (5) once retired \
+                 (both servers automatic); creation replay refuses EXPIRED (6); high-water \
+                 preserved on both"
+                .into(),
+        )],
+    )?;
+    if client == Subject::Rust {
+        check_policy_offsets(&terminal, policy).context(format!("{id} policy offsets"))?;
+    }
+    let receipt_until = parse_field_u64(&terminal, "receipt_until")?
+        .context("terminal view did not report receipt_until")?;
+    let output_until = parse_field_u64(&terminal, "output_until")?
+        .context("terminal view did not report output_until")?;
+    let metrics_before = metrics_text(storage_metrics(&session.fixture.object_dir)?);
+    root_close(&session)?;
+    detach(&session)?;
+    let wait_until = receipt_until.max(output_until) + Duration::from_secs(15).as_millis() as u64;
+    let observation = observe_retirement_window(&session, "0:0:1", wait_until)?;
+    let metrics_after = metrics_text(storage_metrics(&session.fixture.object_dir)?);
+    Ok((
+        session,
+        events,
+        artifacts,
+        declare,
+        admit,
+        metrics_before,
+        observation,
+        metrics_after,
+    ))
+}
+
+/// g3-partial-retirement: root-close a session, wait out the short
+/// receipt+output promises, and observe what actually happens. Neither CLI
+/// exposes a retirement operator command (named gap); both servers retire
+/// automatically (rust runtime maintenance, Java RetentionService) with the
+/// lifecycle transition durably recorded before metadata removal: authorized
+/// requests refuse a named code, never partial replay. Object-store metrics
+/// before/after are recorded as supplementary private-storage evidence.
+fn g3_partial_retirement(context: &ScenarioContext) -> Result<()> {
+    run_expiry_row(
+        context,
+        "g3-partial-retirement",
+        g3_partial_retirement_direction,
+    )
+}
+
+fn g3_partial_retirement_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g3-partial-retirement";
+    let (session, events, artifacts, _declare, admit, metrics_before, observation, metrics_after) =
+        retire_session_buildup(context, scenario_dir, id, server, client)?;
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("clock_mode", "real-short-policy".into()),
+        ("retirement_mechanism", RETIREMENT_MECHANISM.into()),
+        ("object_metrics_before", metrics_before),
+        ("object_metrics_after", metrics_after),
+    ];
+    observed.push((
+        "authorized_requests_after_promises",
+        require_retired(&observation, "g3-partial-retirement authorized requests")?,
+    ));
+    observed.extend(retired_access_probes(
+        &session,
+        scenario_dir,
+        &artifacts,
+        &admit,
+    )?);
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+
+    stop_and_seal(context, scenario_dir, id, session.server, events)
+}
+
+/// g3-nonreusable-history: after full retirement/expiry, history must be
+/// non-reusable. Probes: creation replay with the retired sequence (named
+/// EXPIRED (6) on both servers), operation replay with the retired operation
+/// id (a named refusal, never reapplied), attach to the retired generation
+/// (named EXPIRED (6); the never-created sequence refuses CONFLICT (7)
+/// instead, so retired history is not conflated with nonexistence), and
+/// owner creation high-water preserved (the next creation binds sequence 2 —
+/// never a reissued sequence 1).
+fn g3_nonreusable_history(context: &ScenarioContext) -> Result<()> {
+    run_expiry_row(
+        context,
+        "g3-nonreusable-history",
+        g3_nonreusable_history_direction,
+    )
+}
+
+fn g3_nonreusable_history_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g3-nonreusable-history";
+    let (session, events, artifacts, declare, admit, metrics_before, observation, metrics_after) =
+        retire_session_buildup(context, scenario_dir, id, server, client)?;
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("clock_mode", "real-short-policy".into()),
+        ("retirement_mechanism", RETIREMENT_MECHANISM.into()),
+        ("object_metrics_before", metrics_before),
+        ("object_metrics_after", metrics_after),
+    ];
+    observed.push((
+        "retirement_window",
+        require_retired(&observation, "g3-nonreusable-history retirement window")?,
+    ));
+    observed.extend(retired_access_probes(
+        &session,
+        scenario_dir,
+        &artifacts,
+        &admit,
+    )?);
+
+    // Operation replay with the retired operation id: a named refusal on both
+    // servers, never reapplied.
+    let retired_input_path = crate::path(&artifacts.join("input.bin"));
+    let replay_args: Vec<&str> = if client == Subject::Rust {
+        vec![
+            "replay",
+            "--operation",
+            &admit,
+            "--input",
+            &retired_input_path,
+            "--declaration",
+            &declare,
+        ]
+    } else {
+        vec![
+            "replay",
+            "--operation",
+            &admit,
+            "--input",
+            &retired_input_path,
+        ]
+    };
+    let replay = session.op(&replay_args)?;
+    let replay_text = transcript(&replay);
+    fs::write(artifacts.join("retired-operation-replay.txt"), &replay_text)?;
+    let outcome = probe_outcome(&replay);
+    let (code, line) = outcome.refusal.unwrap_or((u32::MAX, String::new()));
+    let success = replay.status.success();
+    ensure!(
+        !success && (code == 6 || code == 5),
+        "operation replay on the retired session must refuse a named EXPIRED (6) or \
+         NOT_FOUND (5) code, got success={success} code={code:?} line={line}\n{replay_text}"
+    );
+    observed.push((
+        "retired_operation_replay",
+        "refused, never reapplied".into(),
+    ));
+
+    // Attach to a retired generation vs a never-created generation: the
+    // refusal classes differ by design (existence rules) and the retired
+    // attach never succeeds.
+    let attach_journal = scenario_dir.join("client").join("probe-attach.sqlite");
+    let attach = creation_probe(&session, &attach_journal, 1)?;
+    let attach_text = transcript(&attach);
+    fs::write(
+        artifacts.join("attach-retired-generation.txt"),
+        &attach_text,
+    )?;
+    let outcome = probe_outcome(&attach);
+    let (code, line) = outcome.refusal.unwrap_or((u32::MAX, String::new()));
+    let success = attach.status.success();
+    ensure!(
+        !success && code == 6,
+        "attach to the retired generation must refuse named EXPIRED (6), \
+         got success={success} code={code:?} line={line}\n{attach_text}"
+    );
+    observed.push(("attach_retired_generation", "refused EXPIRED (6)".into()));
+    let never_journal = scenario_dir.join("client").join("probe-never.sqlite");
+    let never = creation_probe(&session, &never_journal, 99)?;
+    let never_text = transcript(&never);
+    fs::write(
+        artifacts.join("attach-never-created-generation.txt"),
+        &never_text,
+    )?;
+    let never_code = transcript_named_code(&never_text);
+    let never_success = never.status.success();
+    ensure!(
+        !never_success && never_code == Some(7),
+        "attach to a never-created generation must refuse named CONFLICT (7), \
+         got success={never_success} code={never_code:?}\n{never_text}"
+    );
+    observed.push((
+        "attach_never_created_generation",
+        "refused CONFLICT (7)".into(),
+    ));
+
+    // Owner creation high-water preserved: the next creation binds sequence 2
+    // (never a reissued sequence 1) and the high-water advances past it.
+    let next_journal = scenario_dir.join("client").join("probe-next.sqlite");
+    let next = creation_probe(&session, &next_journal, 2)?;
+    let next_text = transcript(&next);
+    ensure!(
+        next.status.success() && next_text.contains("BINDING"),
+        "creation with the next sequence must succeed after retirement:\n{next_text}"
+    );
+    let high_water = session.fixture.next_sequence(&session.server, "alice")?;
+    ensure!(
+        high_water == 3,
+        "owner creation high-water must advance to 3 after binding sequence 2, got {high_water}"
+    );
+    observed.push((
+        "high_water_create_after_retirement",
+        "sequence 2 bound; next-sequence=3".into(),
+    ));
+
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+
+    stop_and_seal(context, scenario_dir, id, session.server, events)
 }
 
 /// Section 12.2 refusal-code table, used only to NAME codes that a subject
@@ -7580,6 +8986,7 @@ fn g5_two_owners(
         sequence: 1,
         journal: alice_journal,
         connection: alice_connection,
+        policy_args: Vec::new(),
     };
     Ok((alice, bob_journal, bob_connection))
 }
@@ -8530,6 +9937,12 @@ mod tests {
             "g3-orphan-cleanup",
             "g3-restart-same-roots",
             "g3-store-ownership",
+            "g3-terminal-cleanup",
+            "g3-partial-retirement",
+            "g3-nonreusable-history",
+            "g7-receipt-before-output-expiry",
+            "g7-output-before-receipt-expiry",
+            "g7-no-deadline-extension",
             "g5-untrusted-identity",
             "g5-missing-client-cert",
             "g5-unmapped-principal",
@@ -8539,7 +9952,7 @@ mod tests {
             let row = rows.iter().find(|row| row.id == id).unwrap();
             assert!(row.rust_implemented, "{id} must be implemented");
         }
-        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 27);
+        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 33);
     }
 
     #[test]

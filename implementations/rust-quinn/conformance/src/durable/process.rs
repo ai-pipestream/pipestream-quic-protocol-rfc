@@ -227,8 +227,34 @@ impl AuthorityFixture {
         connection: &[String],
         operation: &[&str],
     ) -> Result<Output> {
+        self.run_client_op_with(
+            journal,
+            owner,
+            creation_sequence,
+            &[],
+            connection,
+            operation,
+        )
+    }
+
+    /// One client op carrying additional per-invocation arguments between the
+    /// journal args and the connection. Short-session-policy rows use this to
+    /// redeclare the policy triple on every op: the Java client rebuilds its
+    /// intent from the CLI flags and refuses CONFLICT when they differ from
+    /// the initialized journal, and the Rust client flattens the same policy
+    /// flags into every `client` invocation.
+    pub fn run_client_op_with(
+        &self,
+        journal: &Path,
+        owner: &str,
+        creation_sequence: u64,
+        extra: &[String],
+        connection: &[String],
+        operation: &[&str],
+    ) -> Result<Output> {
         let mut command = with_owned(&self.client_base()?, &["client".into()]);
         command.extend(self.journal_args(journal, owner, creation_sequence));
+        command.extend(extra.iter().cloned());
         command.extend(connection.iter().cloned());
         command.extend(operation.iter().map(|value| (*value).to_owned()));
         run_output_owned(&self.root, &command, OP_TIMEOUT)
