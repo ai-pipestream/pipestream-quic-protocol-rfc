@@ -17,7 +17,7 @@ advertises V2 Core only.
   `f1c75347daa2ea81a941e953f2263e0a4d970c8d`; tests using the latter are not
   tests of the exact Netty native TLS build.
 - Modified classes/native artifacts use the group `ai.pipestream.transport`
-  and version `4.2.17.Final-pipestream.3`. Other Netty modules remain official
+  and version `4.2.17.Final-pipestream.4`. Other Netty modules remain official
   `io.netty` 4.2.17.Final dependencies. The native library name uses
   `netty_quiche42_pipestream`, not the official library's name.
 
@@ -135,4 +135,6 @@ remain open. The `.2` FIN correction and stream-owner verification are recorded
 in the [subsequent milestone evidence](../../../conformance/results/durable-work-v2-java-stream-owner-2026-09-07.txt).
 The `.3` paired-credit and MAX_STREAMS recovery changes have separate
 [verification evidence](../../../conformance/results/durable-work-v2-java-paired-credit-2026-09-07.txt);
-the older `.2` build is not evidence for the new revision.
+the older `.2` build is not evidence for the new revision. The `.4` drained-stream
+collection change has its own
+[verification evidence](../../../conformance/results/durable-work-v2-java-drained-streams-2026-09-09.txt).

@@ -357,4 +357,110 @@ final class DurableLifecycleTest {
       DurableClientTest.get(back.detach());
     }
   }
+
+  @Test
+  void storageWorkerExhaustionRefusesRequestsInsteadOfBlockingTheLoop() throws Exception {
+    Path root = directory.resolve("workers");
+    java.util.concurrent.CountDownLatch paused = new java.util.concurrent.CountDownLatch(1);
+    java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+    Boundaries stuck =
+        new Boundaries() {
+          @Override
+          public void committed(Boundary boundary, Details details) {
+            if (boundary != Boundary.DECLARATION_COMMITTED || paused.getCount() == 0) return;
+            paused.countDown();
+            try {
+              release.await(30, TimeUnit.SECONDS);
+            } catch (InterruptedException interrupted) {
+              Thread.currentThread().interrupt();
+            }
+          }
+
+          @Override
+          public void sent(Boundary boundary, Details details) {}
+
+          @Override
+          public boolean withhold(Boundary boundary) {
+            return false;
+          }
+        };
+    DurableHost.Configuration defaults =
+        DurableHost.Configuration.defaults("issuer-a", "localhost:7443");
+    DurableHost.Configuration tight =
+        new DurableHost.Configuration(
+            defaults.authority(),
+            defaults.resultAuthority(),
+            defaults.sessionLimits(),
+            defaults.maximumPolicy(),
+            defaults.maxOwners(),
+            defaults.maxSessions(),
+            defaults.maxSessionsPerOwner(),
+            defaults.files(),
+            defaults.objects(),
+            defaults.maxJobs(),
+            defaults.maxJobsPerOwner(),
+            defaults.execution(),
+            defaults.scheduler(),
+            defaults.retention(),
+            defaults.results(),
+            defaults.waits(),
+            new DurableHost.WorkerLimits(1, 3, 3),
+            defaults.producer());
+    DurableHost.OwnerPolicy owners = DurableHost.OwnerPolicy.fromPrincipals(() -> principals, true);
+    try (DurableHost host =
+            DurableHost.initialize(
+                root,
+                tight,
+                ReferenceApplications.all(),
+                owners,
+                DurableHost.UtcClock.system(true));
+        DurableServer server =
+            DurableServer.start(
+                new InetSocketAddress("127.0.0.1", 0),
+                pki.server(principals),
+                host,
+                DurableOptions.defaults(),
+                stuck);
+        RawDurablePeer peer = new RawDurablePeer(server.address(), pki.client("alice"), 65_536)) {
+      peer.negotiate(
+          RawDurablePeer.offer(List.of(Messages.DURABLE_WORK, Messages.RESULT_DELIVERY), 1 << 20));
+      assertInstanceOf(
+          Messages.Binding.class, peer.call(new Messages.Create(peer.request(), 1, POLICY)));
+      // The only storage worker commits a declaration and then blocks inside the hook.
+      long first = peer.request();
+      peer.send(new Messages.Declare(first, DurableClientTest.operation(1), 0, List.of(1L), false));
+      assertTrue(paused.await(10, TimeUnit.SECONDS), "worker never reached the paused boundary");
+      // Two more requests fill the bounded queue; the next one is refused on the event loop
+      // immediately, with the connection intact, instead of stalling behind the stuck worker.
+      long second = peer.request();
+      long third = peer.request();
+      long fourth = peer.request();
+      peer.send(
+          new Messages.Declare(second, DurableClientTest.operation(2), 0, List.of(2L), false));
+      peer.send(new Messages.Declare(third, DurableClientTest.operation(3), 0, List.of(3L), false));
+      peer.send(
+          new Messages.Declare(fourth, DurableClientTest.operation(4), 0, List.of(4L), false));
+      Messages.Refusal refused = assertInstanceOf(Messages.Refusal.class, peer.next());
+      assertEquals(new Records.RequestTag(false, fourth), refused.request(), refused.toString());
+      assertEquals(ProtocolError.Code.LIMIT_EXCEEDED, refused.code(), refused.toString());
+      assertFalse(peer.closed.isDone(), "a capacity refusal is not a connection failure");
+      release.countDown();
+      java.util.Set<Long> answered = new java.util.HashSet<>();
+      List<Message> replies = new java.util.ArrayList<>();
+      for (int i = 0; i < 3; i++) replies.add(peer.next());
+      for (Message reply : replies) {
+        DeclarationResponse response =
+            assertInstanceOf(DeclarationResponse.class, reply, replies::toString);
+        answered.add(response.request());
+      }
+      assertEquals(java.util.Set.of(first, second, third), answered);
+      // The fourth declaration is simply retried once capacity exists.
+      assertInstanceOf(
+          Messages.DeclarationResponse.class,
+          peer.call(
+              new Messages.Declare(
+                  peer.request(), DurableClientTest.operation(4), 0, List.of(4L), true)));
+      assertInstanceOf(Messages.Detached.class, peer.call(new Messages.Detach(peer.request())));
+    }
+  }
 }
