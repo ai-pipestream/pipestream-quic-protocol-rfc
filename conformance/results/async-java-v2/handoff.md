@@ -29,6 +29,9 @@ Commits (all plain author identity, no generated attribution):
 | `53aaadb` | Java README V2 section, storage-worker exhaustion row |
 | `8fee938` | `RawDurableAuthority` harness and `DurableClientResultNegativeTest` (client-side malformed result streams) |
 | `e1533d3` | transport bundle `pipestream.4` (quiche drained-stream collection, Netty parent-map release, native credit test), POM pin, manifest hashes, evidence file and raw logs |
+| `63d03a0`, `afd15dd`, `417ba83` | final handoff (REVIEW_READY), closed client result-stream gap |
+| `b5a3a91` | review of the spec branch `docs/client-recovery-guidance-2026-09` (7315713) against the Java endpoints: `spec-review-client-recovery-2026-09-09.md` |
+| head | client recovery after the spec hardening: `--retry-budget`/`--retry-backoff-ms`, `REFUSED`/`UNRESOLVED`/`CAPABILITIES` launcher output, REFUSAL details naming the local bound, stream-credit observation on both stacks (`RawPeerRustAuthorityTest`, `ClientRecoveryTest`); evidence `conformance/results/durable-work-v2-java-client-recovery-2026-09-09.txt` |
 
 Working tree at `e1533d3`: clean. Nothing pushed (no push authorization was
 given); no CI exists for this branch; no draft/deploy action taken; the
@@ -104,6 +107,28 @@ The gap listed in the first handoff is now closed at `8fee938`:
    `RawDurableAuthority` harness in `DurableClientResultNegativeTest`; no gap
    remains open.
 
+Client recovery after the spec hardening (`docs/client-recovery-guidance-2026-09`,
+reviewed at `b5a3a91`, implemented at the head of this branch; evidence in
+`conformance/results/durable-work-v2-java-client-recovery-2026-09-09.txt`):
+
+- Covered now against the new CR rows: CR01 in both documented modes (driver
+  re-invocation of the one-shot launcher, and `--retry-budget`), against real
+  pre-commit capacity refusals and real reply loss; CR09 for CONTROL_RESET and
+  budget exhaustion; CR14 with the explicit stream-credit observation on both
+  stacks (Rust authority measured by `RawPeerRustAuthorityTest`, Java by
+  `DurableWireNegativeTest`); Section 12.1 diagnostics (`REFUSED code=…
+  detail=…`, `client capabilities`, REFUSAL details naming the local bound).
+- Still open from the review's delta list, not claimed: CR04's
+  lookup-while-in-flight shape, CR06 (authorization restore, CLOCK_UNSAFE),
+  CR10 (journal I/O fault injection), CR11/CR12 (pacing measurements, Meta's
+  workload territory), CR13 over the wire (keepalives during a stalled
+  transfer). None of these changes a wire behaviour.
+- The three spec-text resolutions (12.1 credit replenishment sentence, 12.1
+  local-diagnostic sentence, 12.2.1 one-shot paragraph, test-plan preamble and
+  CR01/CR14 rows, disposition note outcome) are applied as uncommitted edits
+  in the guidance worktree `/work/worktrees/pipestream-rfc-client-guidance`
+  on the spec branch; the coordinating owner commits that branch.
+
 ## 4. Proposed normative corrections and clarifications
 
 1. **Declaring into a cancelled scope.** Section 12.5 says a late declaration
@@ -161,8 +186,10 @@ The gap listed in the first handoff is now closed at `8fee938`:
 ```
 # Java (focused), against the isolated transport repository
 mvn -o -Dmaven.repo.local=<transport repo> -Dtest='Durable*Test,FixtureMainTest,V2MainProcessTest' test
-# Rust-peer suites
-mvn -o -Dmaven.repo.local=<transport repo> -Psealed-interop -Dtest='RustClientJavaServerTest,JavaClientRustServerTest' test
+# Rust-peer suites (RawPeerRustAuthorityTest writes target/rust-stream-credit-observations.tsv)
+mvn -o -Dmaven.repo.local=<transport repo> -Psealed-interop -Dtest='RustClientJavaServerTest,JavaClientRustServerTest,RawPeerRustAuthorityTest' test
+# Client recovery modes through the launcher
+mvn -o -Dmaven.repo.local=<transport repo> -Dtest=ClientRecoveryTest test
 # Strict changed-type doclint (exit 0 at 18f3728, 21 types)
 javadoc -quiet -package -Xdoclint:all -Werror -sourcepath implementations/java-netty/src/main/java \
   -classpath "$(mvn -o -Dmaven.repo.local=<transport repo> dependency:build-classpath -Dmdep.outputFile=/dev/stdout -q)" \

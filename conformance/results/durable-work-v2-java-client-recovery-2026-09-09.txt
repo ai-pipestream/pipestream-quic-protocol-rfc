@@ -1,0 +1,142 @@
+PipeStream Java V2 client recovery and cross-stack stream credit, 2026-09-09
+============================================================================
+
+Scope
+-----
+Closes the three merge points raised in the review of the spec branch
+docs/client-recovery-guidance-2026-09 (7315713), recorded in
+conformance/results/async-java-v2/spec-review-client-recovery-2026-09-09.md,
+and the Java deltas D1, D2, D3 and D9 from that review. Spec text changes are
+on the guidance worktree of that branch (uncommitted at the time of writing;
+see the handoff). Nothing here relabels earlier evidence.
+
+Product branch: agent/rfc-claude-java-v2 (base 8eb5a17), transport pipestream.4.
+Rust authority under test: implementations/rust-quinn/target/release/pipestream-quinn
+  built from this tree (cargo build --release --locked -p pipestream-server),
+  sha256 0a6c49e550be63e35e46f2846ea4e106de109b5cdee2612fd25109a67a56f174
+  (the same binary pinned on the board since 5e3138a).
+
+1. Section 12.1 refused-stream rule measured as stream credit on both stacks (CR14)
+-----------------------------------------------------------------------------------
+New RawDurablePeer.streamCredit()/awaitStreamCredit(): the peer's remaining
+unidirectional stream allowance (Netty QuicChannel.peerAllowedStreams, read on
+the connection's event loop), i.e. QUIC MAX_STREAMS credit minus open streams.
+
+Rust authority: RawPeerRustAuthorityTest.refusedInputsReturnStreamCreditOnTheRustAuthority
+(sealed-interop). Rust default offer selects stream-limit 4. Twelve inputs
+(three times the allowance) are refused alternately as truncated-with-FIN
+(digest/length contradiction) and reset-after-partial-payload; each refusal is
+correlated to its stream with INTEGRITY_ERROR and a named detail; after each
+one the allowance is back at 4 with zero wait; the connection stays open; a
+valid transfer then admits and reaches SUCCEEDED; DETACH acknowledged; the
+server drains on SIGTERM with DRAINED. Observations (written by the test):
+  raw/rust-stream-credit-observations-2026-09-09.tsv
+  ordinal shape                stream code             detail                    before at-refusal after wait-ms
+  0       truncated-fin        2      INTEGRITY_ERROR  truncated payload         4      4          4     0
+  1       reset-after-partial  6      INTEGRITY_ERROR  input stream interrupted  4      4          4     0
+  ...     (12 rows, every one 4/4/4/0)
+  Test log: raw/rust-stream-credit-2026-09-09.log (Tests run: 1, Failures: 0).
+
+Java authority: DurableWireNegativeTest.sequentialInputsBeyondTheConcurrentLimitReplenishStreamCredit
+now asserts peer.awaitStreamCredit(2) right after every refused input (stream
+limit 2, seven inputs, every third one corrupt) before the next stream is
+opened. Green on pipestream.4 (raw/wire-credit-observation-2026-09-09.log,
+6/6). On the .3 transport this assertion cannot hold: quiche never collected
+a locally stopped peer-unidirectional stream (see
+durable-work-v2-java-drained-streams-2026-09-09.txt).
+
+Both stacks are therefore held to the identical observation the amended CR14
+row requires.
+
+2. Local diagnostics for the bound that ended a transfer (D1, Section 12.1)
+---------------------------------------------------------------------------
+ProtocolError now keeps its bounded detail (detail()) and whether the peer
+authority named it (fromAuthority(); ProtocolError.refused(code, detail) is
+used for correlated REFUSALs and coded application closes). DurableServer
+puts the local label into the REFUSAL detail (respondRefusal and
+sendInputRefusal: e.g. "input receive deadline", "owner connection ceiling",
+"truncated payload") instead of the constants "refused"/"input refused", the
+same practice as the Rust authority (quinn/src/v2_authority/input.rs puts
+error.detail into Refusal.detail). The detail is capped at 120 characters,
+never parsed by the client, and carries no state.
+V2Main prints "REFUSED code=<CODE> detail=<peer text>" on stdout for any
+authority refusal (local failures reach stderr only; every failure exits 1),
+and the new "client capabilities" operation prints the offered and selected
+stream idle/lifetime deadlines and the selected limits.
+Checked by V2MainProcessTest (a stale expected-attempt retry from the launcher
+process prints REFUSED code=...; a local INTEGRITY_ERROR does not) and
+ClientRecoveryTest (CAPABILITIES line).
+
+3. Client recovery modes (D2/D3, Section 12.2.1, CR01/CR09)
+-----------------------------------------------------------
+ClientCommands: --retry-budget N (default 0 = one-shot) and
+--retry-backoff-ms M (default 200; doubling, capped at 30 s, plus jitter).
+Recoverable: authority LIMIT_EXCEEDED/NOT_READY/WAIT_TIMEOUT/INTERNAL_ERROR,
+CONTROL_RESET, IOException (transport loss), TimeoutException (local request
+deadline). Never: local validation, journal (SQLException) failures, CONFLICT,
+UNAUTHORIZED, framing/integrity codes, terminal outcomes. Every attempt is a
+new connection with fresh request numbers; the journal supplies the original
+identity and parameters (journalMutation/journalInput are idempotent for equal
+requests and CONFLICT for different ones). Output: RECOVERING attempt=..
+budget=.. code=.. wait-ms=.. per retry; UNRESOLVED attempts=.. last=..
+budget-exhausted|not-recoverable then the last failure (exit 1). The intent
+stays journaled and "unresolved" lists it; no outcome is manufactured.
+
+ClientRecoveryTest (2 tests, in-process, through ClientCommands.run with
+captured stdout; raw/client-recovery-2026-09-09.log):
+  budgetedInvocationRecoversFromPreAdmissionCapacityRefusals
+    Real pre-commit refusal: a second owner parks the only storage worker
+    inside a declaration commit (test hook) and fills the two-deep queue, so
+    the authority answers LIMIT_EXCEEDED before any commit. The budgeted
+    "admit" (budget 12, backoff 100 ms) is refused at least twice on fresh
+    connections (RECOVERING ... code=LIMIT_EXCEEDED), the hook releases the
+    worker after the second refusal, the next attempt admits: exactly one
+    RECEIPT, exactly one ADMISSION_COMMITTED, journal receipt Admitted attempt
+    1, nothing unresolved; the other owner's queued declarations complete.
+  lostRepliesAreRecoveredByReplayInBothModesAndBudgetExhaustionStaysUnresolved
+    Real reply loss after a real commit (withhold ADMISSION_RESPONSE_SENT):
+    with every reply withheld, budget 2 gives three attempts (commit, replay,
+    replay), prints "UNRESOLVED attempts=3 last=CONTROL_RESET
+    budget-exhausted", exits with CONTROL_RESET, one ADMISSION_COMMITTED, the
+    operation listed by "unresolved" with no receipt. Then the one-shot
+    "replay" invocation (with a budget of 5 while two more replies are
+    withheld) recovers the same operation: 2 RECOVERING lines, 1 RECEIPT,
+    still one commit; a one-shot "lookup" resolves it with no retry; the
+    journal shows Admitted attempt 1 and nothing unresolved. A CONFLICT
+    (changed parameters under the reused identity) stops at once even with a
+    budget ("UNRESOLVED attempts=1 last=CONFLICT not-recoverable").
+    Finally "capabilities" prints the offered/selected deadlines.
+
+The test plan now states the CR01 recovery mode (driver re-invocation of the
+one-shot client, plus the client's own budget option where it exists); both
+modes are exercised above. CR09 is covered for CONTROL_RESET; disconnect and
+process death remain covered by DurableLifecycleTest/FixtureMainTest.
+
+4. Verification
+---------------
+Targeted (offline, pipestream.4 repository):
+  ClientRecoveryTest 2/2 (raw/client-recovery-2026-09-09.log)
+  DurableWireNegativeTest 6/6 (raw/wire-credit-observation-2026-09-09.log)
+  V2MainProcessTest 1/1 (raw/process-refused-output-2026-09-09.log)
+  -Psealed-interop RawPeerRustAuthorityTest 1/1, JavaClientRustServerTest 1/1
+    (raw/rust-stream-credit-2026-09-09.log; the interop test now uses the
+    shared RustAuthorityProcess helper)
+Strict changed-type doclint (-package -Xdoclint:all -Werror) over the 22
+changed main types since 8eb5a17: exit 0.
+google-java-format 1.28.0 dry run over every changed/new Java file: clean.
+Full install (offline, pipestream.4 repository, under BENCHMARK.lock
+11:46:05Z-11:51:40Z):
+  cd implementations/java-netty && mvn -o -Dmaven.repo.local=/work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository -Psealed-interop install
+  Tests run: 725, Failures: 0, Errors: 0, Skipped: 0; BUILD SUCCESS
+  (716 at e1533d3 + 6 DurableClientResultNegativeTest at 8fee938 + 2
+   ClientRecoveryTest + 1 RawPeerRustAuthorityTest; per-class diff against
+   raw/full-install-pipestream4-2026-09-09.log shows exactly those additions)
+  126 fresh surefire XML reports (725 testcases, none with failure/error);
+  sha256 list raw/surefire-xml-client-recovery-2026-09-09.sha256
+  (list digest 36609115bbffa53260f5b8051fcb08ad71c81b134cdabfad78243e5db1f08a92)
+  Raw log: raw/full-install-client-recovery-2026-09-09.log
+Java artifacts built in that run (sha256):
+  pipestream-quic-netty-0.1.0-SNAPSHOT.jar      ab3c3c78ac8d43e18da638b7d3d8dc3ba6572b06d77974da3a873f9d0c503553
+  pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar  527ae36e2434392de27bb49f9a4af756760c4ad25947cb47d8d56768358a6cc5
+  (the shaded jar is not timestamp-reproducible; the plain jar hash is the pin)
+Transport jars unchanged from durable-work-v2-java-drained-streams-2026-09-09.txt.

@@ -345,6 +345,9 @@ final class DurableWireNegativeTest {
           Refusal refused = assertInstanceOf(Refusal.class, response);
           assertEquals(new Records.RequestTag(true, stream.streamId()), refused.request());
           assertEquals(ProtocolError.Code.INTEGRITY_ERROR, refused.code());
+          // The refused stream's slot returns as credit before anything else happens: the
+          // Section 12.1 refused-stream rule, measured the same way against the Rust authority.
+          peer.awaitStreamCredit(2);
         } else {
           assertEquals(
               new Records.RequestTag(true, stream.streamId()),

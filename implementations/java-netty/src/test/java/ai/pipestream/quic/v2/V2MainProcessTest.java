@@ -413,6 +413,25 @@ final class V2MainProcessTest {
               60);
       assertNotEquals(0, changed.exit(), changed.output());
       assertTrue(changed.output().contains("INTEGRITY_ERROR"), changed.output());
+      assertFalse(
+          changed.output().contains("REFUSED"), "a local check is not an authority refusal");
+      // An authority refusal is named on stdout for the driver, with its code and diagnostic.
+      Run stale =
+          java(
+              client(
+                  journal,
+                  server.address,
+                  "retry",
+                  "--operation",
+                  hexOperation(7),
+                  "--work",
+                  "0:0:1",
+                  "--expected-attempt",
+                  "9"),
+              60);
+      assertNotEquals(0, stale.exit(), stale.output());
+      assertTrue(stale.output().contains("REFUSED code="), stale.output());
+      assertTrue(stale.output().contains(" detail="), stale.output());
       assertTrue(
           ok(client(journal, server.address, "checkpoint", "--scope", "0", "--seal", seal))
               .output()

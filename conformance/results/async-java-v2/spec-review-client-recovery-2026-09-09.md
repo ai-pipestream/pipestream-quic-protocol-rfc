@@ -87,3 +87,27 @@ CR11/CR12 pacing measurements, CLOCK_UNSAFE.
 
 None of these are claimed as passed for the new plan; the existing evidence
 keeps its original scope.
+
+## 4. Resolution (later on 2026-09-09)
+
+The three merge points were resolved as follows. Spec text: on the guidance
+worktree of `docs/client-recovery-guidance-2026-09` (edits left uncommitted
+for the coordinating owner), Section 12.1 now says the refused-stream rule
+includes replenishing the peer's concurrent-stream allowance once the
+reset/FIN exchange completes and that the "bound that ended a transfer"
+diagnostic is local with no wire carrier (a REFUSAL detail MAY name it, a
+peer MUST NOT depend on it); Section 12.2.1 says a one-shot client that
+reopens its journal on the next invocation is a conforming recovery mode with
+the waiting bounds on the driver; the test plan states the CR01 recovery
+mode(s) and the CR14 stream-credit observation; the disposition note records
+this outcome.
+
+Java (head of `agent/rfc-claude-java-v2`, evidence in
+`conformance/results/durable-work-v2-java-client-recovery-2026-09-09.txt`):
+D1 closed (REFUSAL details name the local bound; `REFUSED code= detail=` and
+`client capabilities` output), D2 closed (`--retry-budget`/`--retry-backoff-ms`
+with `RECOVERING`/`UNRESOLVED` reporting; both modes tested against real
+refusals in `ClientRecoveryTest`), D3 closed (driver-readable refusal line),
+D9 extended to the Rust authority (`RawPeerRustAuthorityTest`: twelve refused
+inputs, credit back to the selected limit after each, valid transfer after).
+D4-D8 and D10 stand as recorded above.

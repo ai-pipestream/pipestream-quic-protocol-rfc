@@ -1081,3 +1081,25 @@ under `-Psealed-interop`. The transport pin `4.2.17.Final-pipestream.4`
 carries the drained-stream collection fix described in
 [transport/README.md](transport/README.md); refused input streams return
 their MAX_STREAMS credit only on that revision.
+
+Client recovery (Section 12.2.1) has two documented modes. The default is
+one-shot: `V2Main client` exits after one attempt, and recovery is the next
+invocation, which reopens the journal and replays the original intent under
+the original operation identity with fresh transport correlation.
+`--retry-budget N [--retry-backoff-ms M]` is the in-process mode: the same
+journaled operation is re-invoked on a fresh connection after an authority
+`LIMIT_EXCEEDED`, `NOT_READY`, `WAIT_TIMEOUT` or `INTERNAL_ERROR`, a
+`CONTROL_RESET`, transport loss or the local request deadline, with doubling
+backoff and jitter; `CONFLICT`, `UNAUTHORIZED`, framing and integrity codes,
+terminal outcomes and every local or journal failure stop immediately.
+Exhausting the budget prints `UNRESOLVED` and exits 1 with the intent still
+journaled; no outcome is ever manufactured. Authority refusals are named on
+stdout as `REFUSED code=… detail=…`, and `client capabilities` prints the
+offered and selected stream deadlines (Section 12.1 diagnostics). REFUSAL
+details carry the authority's local bound or check label, as the Rust
+authority's do; they are bounded and never parsed. `ClientRecoveryTest`
+drives both modes through the launcher against real refusals (a saturated
+storage-worker pool and withheld replies after real commits), and
+`RawPeerRustAuthorityTest` (`-Psealed-interop`) measures the Section 12.1
+refused-stream rule as returned stream credit against the Rust authority,
+the counterpart of the Java-side check in `DurableWireNegativeTest`.

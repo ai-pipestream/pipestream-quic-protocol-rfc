@@ -338,6 +338,15 @@ public final class DurableServer implements AutoCloseable {
     if (force && listener != null) listener.close();
   }
 
+  /**
+   * The bounded diagnostic carried in a REFUSAL: the local label that named the bound or check (for
+   * example the header, idle or lifetime deadline), never state the peer may act on.
+   */
+  private static String diagnostic(ProtocolError failure) {
+    String detail = failure.detail();
+    return detail.length() <= 120 ? detail : detail.substring(0, 120);
+  }
+
   private static ProtocolError named(Throwable failure) {
     Throwable cause = failure;
     while (cause != null) {
@@ -602,7 +611,8 @@ public final class DurableServer implements AutoCloseable {
         ticket.close();
         return;
       }
-      Refusal refusal = new Refusal(new Records.RequestTag(false, id), failure.code(), "refused");
+      Refusal refusal =
+          new Refusal(new Records.RequestTag(false, id), failure.code(), diagnostic(failure));
       if (!control.writes.sendEncoded(
           Wire.encode(refusal, selected.controlLimit()),
           success -> {
@@ -1254,7 +1264,8 @@ public final class DurableServer implements AutoCloseable {
           return;
         }
         Refusal refusal =
-            new Refusal(new Records.RequestTag(true, streamId), failure.code(), "input refused");
+            new Refusal(
+                new Records.RequestTag(true, streamId), failure.code(), diagnostic(failure));
         if (!control.writes.sendEncoded(
                 Wire.encode(refusal, selected.controlLimit()),
                 success -> {

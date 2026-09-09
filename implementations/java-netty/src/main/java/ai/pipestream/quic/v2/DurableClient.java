@@ -500,7 +500,7 @@ public final class DurableClient implements AutoCloseable {
   }
 
   private static ProtocolError refused(Refusal refusal) {
-    return new ProtocolError(refusal.code(), "authority refused: " + refusal.detail());
+    return ProtocolError.refused(refusal.code(), refusal.detail());
   }
 
   // ---------------------------------------------------------------- session
@@ -1741,7 +1741,7 @@ public final class DurableClient implements AutoCloseable {
       if (!stopping && event instanceof QuicConnectionCloseEvent closed) {
         if (closed.isApplicationClose() && closed.error() > 0x200 && closed.error() <= 0x212)
           fail(
-              new ProtocolError(
+              ProtocolError.refused(
                   ProtocolError.Code.from(closed.error() - 0x200L), "peer closed connection"));
         else
           fail(

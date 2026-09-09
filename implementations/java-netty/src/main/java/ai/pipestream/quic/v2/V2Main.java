@@ -32,6 +32,10 @@ public final class V2Main {
     try {
       run(arguments);
     } catch (Exception failure) {
+      // A driver reads stdout: an authority refusal is named there with its code and the peer's
+      // bounded diagnostic; local failures only reach stderr. Every failure exits 1.
+      if (failure instanceof ProtocolError error && error.fromAuthority())
+        System.out.println("REFUSED code=" + error.code() + " detail=" + error.detail());
       System.err.println(
           failure instanceof ProtocolError error
               ? error.code() + ": " + error.getMessage()
