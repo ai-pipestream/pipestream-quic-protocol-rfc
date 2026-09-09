@@ -98,10 +98,11 @@ All assigned gates passed on `.4` (see Status and
 `conformance/results/durable-work-v2-java-drained-streams-2026-09-09.txt`).
 The gap listed in the first handoff is now closed at `8fee938`:
 
-1. Client-side negative result streams (oversize or duplicate result headers
-   from a misbehaving authority): there is no raw *server* peer harness, so the
-   client's header bounds are covered only by unit-level decoding and by the
-   Rust authority interop; listed as a gap, not waived.
+1. Client-side negative result streams (oversize, undecodable, contradicting
+   or duplicate result headers and truncated, over-long, corrupted or reset
+   payloads from a misbehaving authority) are now driven by the test-only
+   `RawDurableAuthority` harness in `DurableClientResultNegativeTest`; no gap
+   remains open.
 
 ## 4. Proposed normative corrections and clarifications
 
