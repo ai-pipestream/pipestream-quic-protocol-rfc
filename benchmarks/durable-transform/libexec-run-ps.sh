@@ -13,7 +13,7 @@ W="$REP/work"; mkdir -p "$W"
 sha256sum "$PS_AUTH" "$PS_COORD" > "$ART/bin.sha256"
 
 [ -d "$W/pki" ] || "$HERE/mk-test-pki.sh" "$W/pki"
-lo_before=$(awk -F'[: ]+' '/^lo:/{print $3":"$11}' /proc/net/dev)
+lo_before=$(awk -F: '/lo:/{split($2,f," "); print f[1]":"f[9]}' /proc/net/dev)
 
 PIDS=""
 for i in 0 1 2; do
@@ -35,18 +35,19 @@ for i in 0 1 2; do
 done
 "$HERE/sample.sh" "$ART/ps-sample.tsv" $PIDS &
 SAMPLER=$!
-START_MS=$(date +%s%3N)
+ms_now() { date +%s%N | cut -c1-13; }
+START_MS=$(ms_now)
 "$PS_COORD" run --ca "$W/pki/ps-ca.pem" --cert "$W/pki/ps-client.pem" \
   --key "$W/pki/ps-client.key" --owner workload \
   --journal-a "$W/ps-j0.sqlite" --journal-b "$W/ps-j1.sqlite" --journal-c "$W/ps-j2.sqlite" \
   --connect-a 127.0.0.1:17443 --connect-b 127.0.0.1:17444 --connect-c 127.0.0.1:17445 \
   --seed "$SEED" --size "$SIZE" --staging "$W/ps-staging" \
   --output "$ART/ps-final.bin" --events "$ART/ps-events.tsv"
-END_MS=$(date +%s%3N)
+END_MS=$(ms_now)
 kill "$SAMPLER" 2>/dev/null || true
 kill $PIDS 2>/dev/null || true
 wait 2>/dev/null || true
-lo_after=$(awk -F'[: ]+' '/^lo:/{print $3":"$11}' /proc/net/dev)
+lo_after=$(awk -F: '/lo:/{split($2,f," "); print f[1]":"f[9]}' /proc/net/dev)
 echo -e "wall_ms=$((END_MS - START_MS))\nlo_rx_tx_before=$lo_before\nlo_rx_tx_after=$lo_after" > "$ART/ps-net.txt"
 echo -e "restart-safety: Pure (deterministic re-execution, no external effects)\nfixture-schedule-schema: kimi interface-v1 1452f60 (c566751a...)" > "$ART/run-record.txt"
 grep -q "first-usable-output" "$ART/ps-events.tsv" || { echo "PS: no first-usable"; exit 1; }

@@ -4,9 +4,10 @@
 set -euo pipefail
 OUT="$1"; shift
 echo -e "t_ms\tpid\tcomm\trss_kb\tvsz_kb\tfds\trchar\twchar\tread_bytes\twrite_bytes" > "$OUT"
-START=$(date +%s%3N)
+ms_now() { date +%s%N | cut -c1-13; }
+START=$(ms_now)
 while true; do
-  NOW=$(date +%s%3N)
+  NOW=$(ms_now)
   for pid in "$@"; do
     if [ -d "/proc/$pid" ]; then
       COMM=$(tr '\0' ' ' < "/proc/$pid/comm" 2>/dev/null || echo "?")

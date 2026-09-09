@@ -12,7 +12,7 @@ W="$REP/work"; mkdir -p "$W"
 sha256sum "$GRPC_WORKER" "$GRPC_COORD" > "$ART/bin.sha256"
 
 [ -d "$W/pki" ] || "$HERE/mk-test-pki.sh" "$W/pki"
-lo_before=$(awk -F'[: ]+' '/^lo:/{print $3":"$11}' /proc/net/dev)
+lo_before=$(awk -F: '/lo:/{split($2,f," "); print f[1]":"f[9]}' /proc/net/dev)
 
 PIDS=""
 for i in 0 1 2; do
@@ -30,18 +30,19 @@ for i in 0 1 2; do
 done
 "$HERE/sample.sh" "$ART/grpc-sample.tsv" $PIDS &
 SAMPLER=$!
-START_MS=$(date +%s%3N)
+ms_now() { date +%s%N | cut -c1-13; }
+START_MS=$(ms_now)
 "$GRPC_COORD" run --ca "$W/pki/grpc-ca.pem" --cert "$W/pki/grpc-client.pem" \
   --key "$W/pki/grpc-client.key" --owner workload --db "$W/grpc-coord.sqlite" \
   --endpoint-a https://127.0.0.1:18443 --endpoint-b https://127.0.0.1:18444 \
   --endpoint-c https://127.0.0.1:18445 \
   --seed "$SEED" --size "$SIZE" --staging "$W/grpc-staging" \
   --output "$ART/grpc-final.bin" --events "$ART/grpc-events.tsv"
-END_MS=$(date +%s%3N)
+END_MS=$(ms_now)
 kill "$SAMPLER" 2>/dev/null || true
 kill $PIDS 2>/dev/null || true
 wait 2>/dev/null || true
-lo_after=$(awk -F'[: ]+' '/^lo:/{print $3":"$11}' /proc/net/dev)
+lo_after=$(awk -F: '/lo:/{split($2,f," "); print f[1]":"f[9]}' /proc/net/dev)
 echo -e "wall_ms=$((END_MS - START_MS))\nlo_rx_tx_before=$lo_before\nlo_rx_tx_after=$lo_after" > "$ART/grpc-net.txt"
 echo -e "restart-safety: Pure (deterministic re-execution, no external effects)\nfixture-schedule-schema: kimi interface-v1 1452f60 (c566751a...)" > "$ART/run-record.txt"
 grep -q "first-usable-output" "$ART/grpc-events.tsv" || { echo "gRPC: no first-usable"; exit 1; }
