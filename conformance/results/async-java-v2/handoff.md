@@ -47,7 +47,7 @@ evidence files under `conformance/results/` are committed).
 | Execution modes 0/1/2 (leaf, caller-expanded, authority-expanded chunking), STRICT closure, empty and zero-output cases, undeclared/wrong-scope refusals | `ExecutionRuntime`, `ReferenceApplications` (copy, consume, retry-copy, reassemble, chunk-copy, transform) | `DurableBranchTest` (4) | `branch-test3.log` |
 | Retry/cancel/skip/scope-cancel semantics, skip authorization, deadline expiry, watch CONFLICT, transform/v2 oracle | `SessionStore` fences, `DurableHost.fenceAuthorization`, `DurableClient.retry/cancel/skip/cancelScope` | `DurableMutationTest` (4) | `mut-auth-1.log` |
 | Owner authorization: rotation, remap, removal, cross-owner refusal without disclosure, offline and live revocation, untrusted credentials fail the handshake | `TlsAuthentication.Guard`, `DurableHost.OwnerPolicy`, `SessionStore.Access` | `DurableAuthorizationTest` (4) | `wire-more-1.log` |
-| Lost-ACK recovery for create/declare/admit (real commit, withheld reply, replay), disconnect releases only connection state, shutdown waits for a paused callback | `Boundaries.withhold`, `DurableServer.close` drain, `DurableRequests.refuseNew` | `DurableLifecycleTest` (3) | `java-hooks-1.log` |
+| Lost-ACK recovery for create/declare/admit (real commit, withheld reply, replay), disconnect releases only connection state, shutdown waits for a paused callback, storage-worker exhaustion answers LIMIT_EXCEEDED on the loop instead of stalling | `Boundaries.withhold`, `DurableServer.close` drain, `DurableRequests.refuseNew` | `DurableLifecycleTest` (4) | `java-hooks-1.log` |
 | Framing/correlation violations fatal, refused requests consume ids, stream credit replenishment after sequential inputs, stalled inputs expire without blocking others, control FIN before DETACH is a framing failure, output expiry while a read pins it | `DurableServer`, `ControlWrites`, `ClientCorrelation`, `ResultService`, `RetentionService` | `DurableWireNegativeTest` (6) | `wire-more-1.log`, `wire-more-2.log` |
 | Result delivery: header, chunks, FIN, client verification and hard-link install, same-output re-read, local verification without network | `DurableServer.ResultTransfer`, `DurableClient.read`, `ResultFiles` | `DurableServerTest`, `DurableClientTest`, `V2MainProcessTest` | `client-test*.log`, `combined-1.log` |
 | Detach and FIN rules: server FIN only after all preceding responses and the detach acknowledgement; client owns graceful close | `DurableServer.Control.finishOutput`, `DurableClient.detach` | `DurableServerTest`, `DurableClientTest`, `V2MainProcessTest` | `combined-1.log` |
@@ -57,7 +57,7 @@ evidence files under `conformance/results/` are committed).
 Focused run counts at `723629e` on transport `.3` (one JVM per suite):
 `DurableServerTest` 4, `DurableClientTest` 2, `DurableBranchTest` 4,
 `DurableMutationTest` 4, `DurableAuthorizationTest` 4, `DurableLifecycleTest`
-3, `DurableWireNegativeTest` 5 of 6 (see section 5), `V2MainProcessTest` 1,
+4, `DurableWireNegativeTest` 5 of 6 (see section 5), `V2MainProcessTest` 1,
 `FixtureMainTest` 5, `RustClientJavaServerTest` 2 and
 `JavaClientRustServerTest` 1 (sealed-interop, last run at `5e3138a`).
 
