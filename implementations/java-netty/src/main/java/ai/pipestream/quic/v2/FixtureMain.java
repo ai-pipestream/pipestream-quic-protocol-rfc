@@ -30,7 +30,15 @@ public final class FixtureMain {
 
   private FixtureMain() {}
 
-  /** One schedule row. */
+  /**
+   * One schedule row.
+   *
+   * @param target fixture target
+   * @param boundary armed boundary
+   * @param action action name
+   * @param seed row seed
+   * @param deadlineMs pause deadline in milliseconds
+   */
   record Row(
       String target, Boundaries.Boundary boundary, String action, long seed, long deadlineMs) {}
 
@@ -147,6 +155,13 @@ public final class FixtureMain {
         Executors.newSingleThreadExecutor(
             Thread.ofPlatform().daemon().name("pipestream-v2-fixture-events").factory());
 
+    /**
+     * Create hooks.
+     *
+     * @param recorder event recorder
+     * @param rows applicable schedule rows
+     * @param target fixture target
+     */
     Hooks(FixtureEvents recorder, List<Row> rows, String target) {
       this.recorder = Objects.requireNonNull(recorder);
       this.pending = new ArrayList<>(rows);

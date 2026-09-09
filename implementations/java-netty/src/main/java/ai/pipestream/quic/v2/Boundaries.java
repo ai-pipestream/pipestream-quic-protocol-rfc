@@ -97,26 +97,62 @@ interface Boundaries {
       Objects.requireNonNull(owner);
     }
 
+    /**
+     * Copy with the owner label.
+     *
+     * @param value owner label
+     * @return copy
+     */
     Details owner(String value) {
       return new Details(value, generation, operation, work, attempt, refusal);
     }
 
+    /**
+     * Copy with the generation.
+     *
+     * @param value generation
+     * @return copy
+     */
     Details generation(long value) {
       return new Details(owner, value, operation, work, attempt, refusal);
     }
 
+    /**
+     * Copy with the operation identity.
+     *
+     * @param value operation identifier
+     * @return copy
+     */
     Details operation(Records.OperationId value) {
       return new Details(owner, generation, value, work, attempt, refusal);
     }
 
+    /**
+     * Copy with the work key.
+     *
+     * @param value work key
+     * @return copy
+     */
     Details work(Records.WorkKey value) {
       return new Details(owner, generation, operation, value, attempt, refusal);
     }
 
+    /**
+     * Copy with the attempt number.
+     *
+     * @param value attempt
+     * @return copy
+     */
     Details attempt(long value) {
       return new Details(owner, generation, operation, work, value, refusal);
     }
 
+    /**
+     * Copy with the refusal code.
+     *
+     * @param value refusal code
+     * @return copy
+     */
     Details refusal(ProtocolError.Code value) {
       return new Details(owner, generation, operation, work, attempt, value);
     }

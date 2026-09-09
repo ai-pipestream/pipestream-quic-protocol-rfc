@@ -25,6 +25,14 @@ final class ControlWrites {
   private int peakFrames;
   private boolean ended;
 
+  /**
+   * Own the control stream's writes.
+   *
+   * @param channel control stream
+   * @param options core ceilings
+   * @param failure fatal write failure sink
+   * @param drained callback when no write is pending
+   */
   ControlWrites(
       QuicStreamChannel channel,
       CoreOptions options,
@@ -40,11 +48,22 @@ final class ControlWrites {
     countLimit = options.pendingLimit();
   }
 
+  /**
+   * Apply negotiated control ceilings.
+   *
+   * @param selected negotiated capabilities
+   */
   void selected(Messages.Capabilities selected) {
     limit = selected.controlLimit();
     countLimit = selected.pendingLimit();
   }
 
+  /**
+   * Encode and queue one message.
+   *
+   * @param message control message
+   * @return false when the connection ended or the write was refused
+   */
   boolean send(Messages.Message message) {
     if (ended) return false;
     if (pending.size() >= countLimit) {
@@ -54,7 +73,12 @@ final class ControlWrites {
     return sendEncoded(Wire.encode(message, limit));
   }
 
-  /** Accept a frame already encoded and registered by the connection's correlation owner. */
+  /**
+   * Accept a frame already encoded and registered by the connection's correlation owner.
+   *
+   * @param frame encoded control frame
+   * @return false when the connection already ended or the write was refused
+   */
   boolean sendEncoded(byte[] frame) {
     return sendEncoded(frame, null);
   }
@@ -113,6 +137,11 @@ final class ControlWrites {
     return !ended;
   }
 
+  /**
+   * Enforce the control write deadline.
+   *
+   * @param now monotonic nanoseconds
+   */
   void check(long now) {
     if (!ended && !pending.isEmpty()) {
       ObjectStream.before(now, pending.getFirst().start(), options.controlTimeoutMs() * 1000000L);
@@ -122,18 +151,34 @@ final class ControlWrites {
     }
   }
 
+  /**
+   * Whether no write is pending.
+   *
+   * @return true when idle
+   */
   boolean empty() {
     return pending.isEmpty();
   }
 
+  /**
+   * Peak queued bytes.
+   *
+   * @return bytes
+   */
   int peakBytes() {
     return peakBytes;
   }
 
+  /**
+   * Peak queued frames.
+   *
+   * @return frames
+   */
   int peakFrames() {
     return peakFrames;
   }
 
+  /** Stop accepting writes. */
   void end() {
     ended = true;
     // Netty owns and releases the actual ByteBufs when their futures terminate.

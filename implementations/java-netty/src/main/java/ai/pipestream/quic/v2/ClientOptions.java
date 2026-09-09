@@ -52,6 +52,11 @@ public record ClientOptions(
         core.controlTimeoutMs());
   }
 
+  /**
+   * Local transport ceilings derived from these options.
+   *
+   * @return limits
+   */
   StreamTransport.Limits transportLimits() {
     return transportLimits(
         core, dataStreams, maxDataStreams, dataSendBytes, streamWindowBytes, chunkBytes);

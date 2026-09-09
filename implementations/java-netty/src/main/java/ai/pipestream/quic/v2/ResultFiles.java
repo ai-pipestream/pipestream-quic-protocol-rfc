@@ -30,7 +30,11 @@ public final class ResultFiles {
    */
   public record Delivered(Path path, long length, Records.Digest sha256, boolean local) {}
 
-  /** A new destination file; the parent directory must exist and the file must not. */
+  /**
+   * A new destination file; the parent directory must exist and the file must not.
+   *
+   * @param path destination path
+   */
   public record Destination(Path path) {
     /** Validate the destination. */
     public Destination {
@@ -48,6 +52,12 @@ public final class ResultFiles {
     private boolean installed;
     private Records.Digest verified;
 
+    /**
+     * Open a staging file beside the destination.
+     *
+     * @param destination final path
+     * @throws IOException creation failure
+     */
     Staging(Destination destination) throws IOException {
       this.destination = destination.path().toAbsolutePath().normalize();
       Path parent = this.destination.getParent();
@@ -64,11 +74,22 @@ public final class ResultFiles {
               StandardOpenOption.READ);
     }
 
+    /**
+     * Append received bytes.
+     *
+     * @param bytes chunk
+     * @throws IOException write failure
+     */
     void write(ByteBuffer bytes) throws IOException {
       digest.update(bytes.duplicate());
       while (bytes.hasRemaining()) written += channel.write(bytes);
     }
 
+    /**
+     * Bytes staged so far.
+     *
+     * @return count
+     */
     long written() {
       return written;
     }

@@ -80,6 +80,12 @@ final class FixtureEvents implements AutoCloseable {
     return directory;
   }
 
+  /**
+   * Escape a label for one TSV column.
+   *
+   * @param label raw text
+   * @return escaped text
+   */
   static String escape(String label) {
     StringBuilder out = new StringBuilder(label.length());
     for (int i = 0; i < label.length(); i++) {

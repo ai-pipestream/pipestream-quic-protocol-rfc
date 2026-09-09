@@ -23,6 +23,11 @@ final class ClientCommands {
 
   private ClientCommands() {}
 
+  /**
+   * Usage lines for the client commands.
+   *
+   * @return usage text lines
+   */
   static List<String> usage() {
     return List.of(
         "  next-sequence <connection>",
@@ -50,6 +55,14 @@ final class ClientCommands {
         "      complete | detach");
   }
 
+  /**
+   * Run one client command without hooks.
+   *
+   * @param command command name
+   * @param arguments full argument vector
+   * @return whether the command was recognised
+   * @throws Exception command failure
+   */
   static boolean run(String command, String[] arguments) throws Exception {
     return run(command, arguments, Boundaries.NONE);
   }
@@ -434,6 +447,12 @@ final class ClientCommands {
             + receipt.outcome());
   }
 
+  /**
+   * Join arguments for diagnostics.
+   *
+   * @param arguments values
+   * @return space-joined text
+   */
   static String join(String[] arguments) {
     return String.join(" ", Arrays.asList(arguments));
   }
