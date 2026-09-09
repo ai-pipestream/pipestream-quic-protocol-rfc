@@ -106,6 +106,10 @@ public final class DurableClient implements AutoCloseable {
   private final Set<ResultTransfer> incomingResults = new HashSet<>();
   private final AtomicBoolean closeRequested = new AtomicBoolean();
   private final long started = System.nanoTime();
+
+  /** Trusted local durability hooks; {@link Boundaries#NONE} in shipped launchers. */
+  private volatile Boundaries boundaries = Boundaries.NONE;
+
   private CompletableFuture<Binding> bindingStage;
   private long lastFrame = started;
   private long nextRequest = 1;
@@ -159,10 +163,35 @@ public final class DurableClient implements AutoCloseable {
       ClientJournal journal,
       ClientOptions options)
       throws InterruptedException {
+    return connect(remote, authentication, journal, options, Boundaries.NONE);
+  }
+
+  /**
+   * Connect with test-only boundary hooks. Hooks observe or hold reached boundaries on the journal
+   * worker and the event loop; they cannot forge receipts, journal entries or results. Shipped
+   * launchers never use this overload.
+   *
+   * @param remote resolved remote address with a nonzero port
+   * @param authentication client trust, service identity and caller credentials
+   * @param journal open exclusive journal
+   * @param options bounded policy
+   * @param hooks boundary hooks
+   * @return owned client; await {@link #ready()} before operations
+   * @throws InterruptedException if binding is interrupted
+   */
+  static DurableClient connect(
+      InetSocketAddress remote,
+      TlsAuthentication authentication,
+      ClientJournal journal,
+      ClientOptions options,
+      Boundaries hooks)
+      throws InterruptedException {
     Objects.requireNonNull(remote);
+    Objects.requireNonNull(hooks);
     if (remote.isUnresolved() || remote.getPort() == 0)
       throw new IllegalArgumentException("resolved remote with nonzero port required");
     DurableClient client = new DurableClient(authentication, journal, options);
+    client.boundaries = hooks;
     boolean success = false;
     try {
       var codec =
@@ -444,10 +473,23 @@ public final class DurableClient implements AutoCloseable {
       ClientCorrelation.ResultCommitment commitment,
       CompletableFuture<?> result,
       Consumer<Message> response) {
+    send(request, commitment, result, response, Boundaries.Details.NONE);
+  }
+
+  private void send(
+      Message request,
+      ClientCorrelation.ResultCommitment commitment,
+      CompletableFuture<?> result,
+      Consumer<Message> response,
+      Boundaries.Details details) {
     long id = ClientCorrelation.requestId(request);
     byte[] frame = correlation.register(request, commitment);
     controls.put(id, new Continuation(response, result));
-    if (!control.writes.sendEncoded(frame)) {
+    if (!control.writes.sendEncoded(
+        frame,
+        success -> {
+          if (success) boundaries.sent(Boundaries.Boundary.REQUEST_SENT, details);
+        })) {
       controls.remove(id);
       throw new ProtocolError(CONTROL_RESET, "control write refused");
     }
@@ -564,6 +606,8 @@ public final class DurableClient implements AutoCloseable {
           blocking(
               () -> {
                 journal.journalMutation(template);
+                boundaries.committed(
+                    Boundaries.Boundary.INTENT_JOURNALED, Boundaries.Details.NONE.operation(id));
                 Optional<Records.OperationReceipt> retained = journal.receipt(id);
                 return retained;
               },
@@ -577,7 +621,12 @@ public final class DurableClient implements AutoCloseable {
                   return;
                 }
                 Message request = ClientJournal.withRequest(template, allocate());
-                send(request, null, result, response -> receipt(result, id, response));
+                send(
+                    request,
+                    null,
+                    result,
+                    response -> receipt(result, id, response),
+                    Boundaries.Details.NONE.operation(id));
               },
               failure -> result.completeExceptionally(named(failure)));
         });
@@ -618,7 +667,11 @@ public final class DurableClient implements AutoCloseable {
                   ? Commitments.operation(context(), 0, pending.input())
                   : Commitments.operation(context(), 0, pending.mutation());
           ClientValidation.receipt(pending, expected, receipt);
+          boundaries.committed(
+              Boundaries.Boundary.RECEIPT_VALIDATED, Boundaries.Details.NONE.operation(id));
           journal.journalReceipt(receipt);
+          boundaries.committed(
+              Boundaries.Boundary.RECEIPT_JOURNALED, Boundaries.Details.NONE.operation(id));
           return receipt;
         },
         result::complete,
@@ -743,6 +796,9 @@ public final class DurableClient implements AutoCloseable {
           blocking(
               () -> {
                 journal.journalInput(header, declaration);
+                boundaries.committed(
+                    Boundaries.Boundary.INTENT_JOURNALED,
+                    Boundaries.Details.NONE.operation(operation).work(parameters.work()));
                 return journal.receipt(operation);
               },
               retained -> {
@@ -897,6 +953,9 @@ public final class DurableClient implements AutoCloseable {
       inputTransfers.remove(streamId);
       releaseData();
       if (message instanceof Refusal refusal) {
+        boundaries.sent(
+            Boundaries.Boundary.REFUSAL_RECEIVED,
+            Boundaries.Details.NONE.operation(header.operation()).refusal(refusal.code()));
         closeSource(source);
         result.completeExceptionally(refused(refusal));
         return;
@@ -910,7 +969,13 @@ public final class DurableClient implements AutoCloseable {
                     .orElseThrow(() -> new ProtocolError(CONFLICT, "unjournaled input"));
             ClientValidation.receipt(
                 pending, Commitments.operation(context(), 0, header), admission.receipt());
+            Boundaries.Details details =
+                Boundaries.Details.NONE
+                    .operation(header.operation())
+                    .work(header.parameters().work());
+            boundaries.committed(Boundaries.Boundary.RECEIPT_VALIDATED, details);
             journal.journalReceipt(admission.receipt());
+            boundaries.committed(Boundaries.Boundary.RECEIPT_JOURNALED, details);
             source.close();
             return admission.receipt();
           },
@@ -979,6 +1044,9 @@ public final class DurableClient implements AutoCloseable {
                       view.work().validateProfiles(journal.intent().results());
                       relationships(view.work());
                       journal.observeWork(view.revision(), view.work());
+                      boundaries.committed(
+                          Boundaries.Boundary.OBSERVATION_JOURNALED,
+                          Boundaries.Details.NONE.work(work));
                       return new ClientJournal.Observed(view.revision(), view.work());
                     },
                     result::complete,
@@ -1050,6 +1118,8 @@ public final class DurableClient implements AutoCloseable {
                           && !page.more())
                         throw new ProtocolError(INTEGRITY_ERROR, "sealed page without seal");
                       journal.observePage(page);
+                      boundaries.committed(
+                          Boundaries.Boundary.OBSERVATION_JOURNALED, Boundaries.Details.NONE);
                       ClientJournal.ScopeEvidence evidence = journal.scope(scope).orElseThrow();
                       if (evidence.parent() != null) {
                         Optional<ClientJournal.Observed> parent =
@@ -1133,6 +1203,8 @@ public final class DurableClient implements AutoCloseable {
                               throw new ProtocolError(
                                   INTEGRITY_ERROR, "summary contradicts retained member evidence");
                             journal.observeSummary(summary);
+                            boundaries.committed(
+                                Boundaries.Boundary.OBSERVATION_JOURNALED, Boundaries.Details.NONE);
                             return summary;
                           },
                           result::complete,
@@ -1208,6 +1280,9 @@ public final class DurableClient implements AutoCloseable {
                           journal.observedWork(work).map(ClientJournal.Observed::view).orElse(null),
                           manifest);
                       journal.observeManifest(manifest);
+                      boundaries.committed(
+                          Boundaries.Boundary.OBSERVATION_JOURNALED,
+                          Boundaries.Details.NONE.work(work).attempt(attempt));
                       return manifest;
                     },
                     result::complete,
@@ -1365,9 +1440,20 @@ public final class DurableClient implements AutoCloseable {
       controls.remove(request);
       incomingResults.remove(this);
       data.release();
+      stream.close();
       Records.Output output = selection.output();
+      Boundaries.Details details =
+          Boundaries.Details.NONE
+              .work(selection.manifest().work())
+              .attempt(selection.manifest().attempt());
       blocking(
-          () -> staging.install(output.length(), output.sha256()),
+          () -> {
+            staging.verify(output.length(), output.sha256());
+            boundaries.committed(Boundaries.Boundary.RESULT_VERIFIED, details);
+            ResultFiles.Delivered delivered = staging.install(output.length(), output.sha256());
+            boundaries.committed(Boundaries.Boundary.RESULT_INSTALLED, details);
+            return delivered;
+          },
           result::complete,
           failure -> {
             closeStaging();
@@ -1401,6 +1487,7 @@ public final class DurableClient implements AutoCloseable {
       if (data != null) {
         data.abort(failure);
         data.release();
+        if (stream != null) stream.close();
       }
       closeStaging();
       result.completeExceptionally(failure);
@@ -1717,6 +1804,10 @@ public final class DurableClient implements AutoCloseable {
             if (transfer != null) transfer.response(completion.response());
           } else {
             Continuation continuation = controls.remove(tag.id());
+            if (continuation != null && completion.response() instanceof Refusal refusal)
+              boundaries.sent(
+                  Boundaries.Boundary.REFUSAL_RECEIVED,
+                  Boundaries.Details.NONE.refusal(refusal.code()));
             if (continuation != null) continuation.response.accept(completion.response());
           }
         }

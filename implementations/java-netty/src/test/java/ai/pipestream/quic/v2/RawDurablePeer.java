@@ -58,6 +58,21 @@ final class RawDurablePeer implements AutoCloseable {
   Capabilities selected;
   long nextRequest = 1;
 
+  /** When set, new incoming streams are not read until {@link #resumeIncoming()}. */
+  volatile boolean holdIncoming;
+
+  final java.util.List<QuicStreamChannel> held = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+  /** Read every held incoming stream from now on. */
+  void resumeIncoming() {
+    holdIncoming = false;
+    for (QuicStreamChannel stream : held) {
+      stream.config().setAutoRead(true);
+      stream.read();
+    }
+    held.clear();
+  }
+
   RawDurablePeer(InetSocketAddress remote, TlsAuthentication authentication, int window)
       throws Exception {
     guard = authentication.guard();
@@ -115,6 +130,10 @@ final class RawDurablePeer implements AutoCloseable {
                     Incoming record = new Incoming();
                     record.streamId = stream.streamId();
                     stream.config().setOption(QuicChannelOption.READ_FRAMES, true);
+                    if (holdIncoming) {
+                      stream.config().setAutoRead(false);
+                      held.add(stream);
+                    }
                     stream
                         .pipeline()
                         .addLast(

@@ -51,6 +51,11 @@ public final class DurableHost implements AutoCloseable {
       new InputStore.Limits(bytes, files, objectBytes, handles);
     }
 
+    /**
+     * Store-level limits.
+     *
+     * @return limits
+     */
     InputStore.Limits toStore() {
       return new InputStore.Limits(bytes, files, objectBytes, handles);
     }
@@ -188,6 +193,11 @@ public final class DurableHost implements AutoCloseable {
           streamLifetimeMs);
     }
 
+    /**
+     * Producer ceilings as negotiated capabilities.
+     *
+     * @return capabilities
+     */
     Messages.Capabilities capabilities() {
       return toCapabilities(
           controlLimit, streamLimit, pendingLimit, objectLimit, streamIdleMs, streamLifetimeMs);
@@ -300,6 +310,11 @@ public final class DurableHost implements AutoCloseable {
     /** Effects participate in an application-defined transactional protocol. */
     TRANSACTIONAL;
 
+    /**
+     * Store representation.
+     *
+     * @return internal safety
+     */
     AdmissionStore.RestartSafety internal() {
       return AdmissionStore.RestartSafety.values()[ordinal()];
     }
@@ -349,6 +364,11 @@ public final class DurableHost implements AutoCloseable {
       return new Result(false, true, new Records.Diagnostic(code, detail));
     }
 
+    /**
+     * Runtime representation.
+     *
+     * @return internal outcome
+     */
     ExecutionRuntime.Outcome internal() {
       return new ExecutionRuntime.Outcome(success, retryable, diagnostic);
     }
@@ -426,6 +446,11 @@ public final class DurableHost implements AutoCloseable {
       return new Expansion(Disposition.RETRYABLE, new Records.Diagnostic(code, detail));
     }
 
+    /**
+     * Runtime representation.
+     *
+     * @return internal expansion outcome
+     */
     ExecutionRuntime.ExpansionOutcome internal() {
       return internal(disposition, diagnostic);
     }
@@ -721,10 +746,20 @@ public final class DurableHost implements AutoCloseable {
           label, modes, Objects.requireNonNull(safety).internal());
     }
 
+    /**
+     * Store contract for this application.
+     *
+     * @return contract
+     */
     AdmissionStore.Application contract() {
       return contract(label, modes, safety);
     }
 
+    /**
+     * Runtime registration for this application.
+     *
+     * @return registration
+     */
     ExecutionRuntime.Registration registration() {
       ExecutionRuntime.Callback callback =
           context -> processor.process(new WorkAdapter(context)).internal();
@@ -867,6 +902,11 @@ public final class DurableHost implements AutoCloseable {
     private int queued;
     private boolean stopped;
 
+    /**
+     * Create the bounded pool.
+     *
+     * @param limits pool ceilings
+     */
     Workers(WorkerLimits limits) {
       this.limits = limits;
       executor =
@@ -915,10 +955,16 @@ public final class DurableHost implements AutoCloseable {
       owners.compute(owner, (key, count) -> count == null || count == 1 ? null : count - 1);
     }
 
+    /**
+     * Queued task count.
+     *
+     * @return tasks waiting for a worker
+     */
     synchronized int queued() {
       return queued;
     }
 
+    /** Stop accepting tasks. */
     void stop() {
       synchronized (this) {
         stopped = true;
@@ -926,6 +972,13 @@ public final class DurableHost implements AutoCloseable {
       executor.shutdown();
     }
 
+    /**
+     * Await termination.
+     *
+     * @param millis bound in milliseconds
+     * @return whether the pool terminated
+     * @throws InterruptedException if interrupted while waiting
+     */
     boolean awaitStopped(long millis) throws InterruptedException {
       return executor.awaitTermination(millis, TimeUnit.MILLISECONDS);
     }
@@ -940,6 +993,19 @@ public final class DurableHost implements AutoCloseable {
   private final InputStore inputs;
   private final ExecutionRuntime runtime;
   private final ExecutionScheduler scheduler;
+
+  /**
+   * Install test-only durability hooks on the execution runtime and scheduler. Shipped launchers
+   * never call this; hooks observe or hold committed boundaries and cannot forge them.
+   *
+   * @param hooks boundary hooks
+   */
+  void boundaries(Boundaries hooks) {
+    Objects.requireNonNull(hooks);
+    runtime.boundaries(hooks);
+    scheduler.boundaries(hooks);
+  }
+
   private final RetentionService retention;
   private final ResultService results;
   private final ControlWaitService waits;
@@ -1201,42 +1267,92 @@ public final class DurableHost implements AutoCloseable {
     if (stopping) throw new ProtocolError(ProtocolError.Code.CANCELLED, "host stopping");
   }
 
+  /**
+   * Authority metadata store.
+   *
+   * @return store
+   */
   SessionStore sessions() {
     return sessions;
   }
 
+  /**
+   * Input and output payload store.
+   *
+   * @return store
+   */
   InputStore inputs() {
     return inputs;
   }
 
+  /**
+   * Result delivery service.
+   *
+   * @return service
+   */
   ResultService results() {
     return results;
   }
 
+  /**
+   * Control wait service.
+   *
+   * @return service
+   */
   ControlWaitService waits() {
     return waits;
   }
 
+  /**
+   * Bounded storage worker pool.
+   *
+   * @return pool
+   */
   Workers workers() {
     return workers;
   }
 
+  /**
+   * Trusted storage clock.
+   *
+   * @return clock
+   */
   AdmissionStore.Clock storageClock() {
     return storageClock;
   }
 
+  /**
+   * Owner policy.
+   *
+   * @return policy
+   */
   OwnerPolicy owners() {
     return owners;
   }
 
+  /**
+   * Result endpoint.
+   *
+   * @return endpoint
+   */
   PublicationStore.Endpoint endpoint() {
     return endpoint;
   }
 
+  /**
+   * Configured clock.
+   *
+   * @return clock
+   */
   UtcClock clock() {
     return clock;
   }
 
+  /**
+   * Whether close has begun.
+   *
+   * @return true once closing
+   */
   boolean stopping() {
     return stopping;
   }
@@ -1273,6 +1389,11 @@ public final class DurableHost implements AutoCloseable {
         });
   }
 
+  /**
+   * Live application grant check.
+   *
+   * @return authorization
+   */
   AdmissionStore.Authorization applicationAuthorization() {
     return (binding, parameters) -> {
       if (!owners.applicationPermitted(binding.owner(), parameters.application()))
@@ -1280,6 +1401,11 @@ public final class DurableHost implements AutoCloseable {
     };
   }
 
+  /**
+   * Live fence grant check.
+   *
+   * @return authorization
+   */
   FenceStore.Authorization fenceAuthorization() {
     return (binding, request) -> {
       if (!owners.authorized(binding.owner()))
@@ -1289,6 +1415,11 @@ public final class DurableHost implements AutoCloseable {
     };
   }
 
+  /**
+   * Live result grant check.
+   *
+   * @return authorization
+   */
   ResultStore.Authorization resultAuthorization() {
     return (binding, work) -> {
       if (!owners.authorized(binding.owner()))

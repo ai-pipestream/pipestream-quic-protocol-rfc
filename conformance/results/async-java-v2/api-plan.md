@@ -353,3 +353,48 @@ Cross-language runs so far: Rust CLI client ↔ Java `DurableServer` (library
 and `V2Main serve` process), Java `DurableClient` ↔ Rust `pipestream-quinn v2
 serve`, Java ↔ Java (library and processes), each with an authority restart and
 exact original-operation replay.
+
+### 6.3 Fixture adapter as implemented (supersedes the section 3 sketch where they differ)
+
+- Entry point is `ai.pipestream.quic.v2.FixtureMain` (same package as the
+  launcher, not a `fixture` subpackage). `FixtureMain serve <V2Main serve
+  options> --fixture-events FILE [--fixture-schedule FILE] --fixture-run ID
+  --fixture-scenario ID [--fixture-target NAME]` and `FixtureMain client <V2Main
+  client options> <operation> --fixture-events FILE [--fixture-schedule FILE]
+  --fixture-run ID --fixture-scenario ID [--fixture-target NAME]`. The default
+  target is the role (`server` or `client`). Hooks reach `DurableServer`,
+  `DurableHost` (execution runtime and closure scheduler) and `DurableClient`
+  through package-private overloads only; `V2Main` installs `Boundaries.NONE`.
+- Event columns and escaping are exactly Kimi's interface-v1 sections 2-3
+  (schema hash on the board). `subject_role` is `server` or `client`.
+- `*_COMMITTED` records are written on the storage worker after the SQLite
+  COMMIT (or fsync'd install) returns and before any reply is queued.
+  `*_SENT` records are written only after Netty reports the write settled
+  successfully; a failed write records nothing. Runtime boundaries
+  `EXECUTION_CLAIMED` (after the claim commit, outside the storage monitor,
+  before any callback), `OUTPUT_INSTALLED` (after the output payload install
+  and fsync), `PUBLICATION_COMMITTED` (after success, failure or expansion
+  commit) and `CLOSURE_COMMITTED` (after each closure summary commit) are
+  recorded by the host runtime; they carry `work_key`/`attempt`.
+- Client boundaries: `INTENT_JOURNALED` after `journalMutation`/`journalInput`
+  commit; `REQUEST_SENT` after the control write settled; `RECEIPT_VALIDATED`
+  after digest/outcome validation on the journal worker; `RECEIPT_JOURNALED`
+  after the receipt commit; `OBSERVATION_JOURNALED` after view/page/summary/
+  manifest commits; `RESULT_VERIFIED` after the staged bytes match the manifest
+  digest and `RESULT_INSTALLED` after the fsync'd hard-link install;
+  `REFUSAL_RECEIVED` when a correlated refusal is dispatched.
+- Actions: `pause` blocks the committed boundary on the storage/journal worker
+  until `<events dir>/release-<target>-<BOUNDARY>` exists or `deadline_ms`
+  elapses (the pooled worker stays occupied while paused). `drop-reply` and
+  `disconnect` are accepted only at `SESSION_COMMITTED`,
+  `DECLARATION_COMMITTED` or `ADMISSION_COMMITTED` (the boundaries with a
+  pending reply, including the replay path); the parser rejects other rows.
+  The reply is withheld and the connection closed with `CONTROL_RESET`; the
+  subject records a pure observation (empty `boundary`, `refusal_code` =
+  CONTROL_RESET) and never a `REFUSAL_SENT` for a frame it did not write.
+  `kill`/`exit` call `Runtime.halt(137)` right after the committed boundary's
+  record is fsynced. `stop`, `restart` and `clock-set` rows are rejected as
+  fixture-driven. Rows naming another run or scenario are rejected.
+- Evidence: `FixtureMainTest` (four process-level scenarios: drop-reply then
+  replay, kill at `ADMISSION_COMMITTED` then restart/replay with runtime
+  boundaries observed, pause until release, parser rejections).

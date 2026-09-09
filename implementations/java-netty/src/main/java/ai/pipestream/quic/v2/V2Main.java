@@ -40,6 +40,12 @@ public final class V2Main {
     }
   }
 
+  /**
+   * Run one command.
+   *
+   * @param arguments full argument vector
+   * @throws Exception command failure
+   */
   static void run(String[] arguments) throws Exception {
     if (arguments.length == 0 || "--help".equals(arguments[0])) {
       usage();
@@ -59,6 +65,12 @@ public final class V2Main {
     }
   }
 
+  /**
+   * Host configuration from options.
+   *
+   * @param options parsed options
+   * @return configuration
+   */
   static DurableHost.Configuration configuration(Map<String, String> options) {
     DurableHost.Configuration defaults =
         DurableHost.Configuration.defaults(
@@ -66,6 +78,12 @@ public final class V2Main {
     return defaults;
   }
 
+  /**
+   * Initialize a new authority root.
+   *
+   * @param options parsed options
+   * @throws Exception initialization failure
+   */
   static void initAuthority(Map<String, String> options) throws Exception {
     Path root = requiredPath(options, "root");
     DurableHost host =
@@ -128,6 +146,7 @@ public final class V2Main {
             DurableHost.OwnerPolicy.fromPrincipals(
                 () -> principals, options.containsKey("allow-skip")),
             DurableHost.UtcClock.system(true));
+    if (boundaries != null) host.boundaries(boundaries);
     DurableServer server;
     try {
       server =
@@ -221,6 +240,13 @@ public final class V2Main {
     signal.getMethod("handle", signal, handler).invoke(null, instance, proxy);
   }
 
+  /**
+   * Parse {@code --name value} options.
+   *
+   * @param arguments argument vector
+   * @param from first index to scan
+   * @return options in order
+   */
   static Map<String, String> options(String[] arguments, int from) {
     Map<String, String> options = new LinkedHashMap<>();
     for (int i = from; i < arguments.length; i++) {
@@ -234,16 +260,36 @@ public final class V2Main {
     return options;
   }
 
+  /**
+   * Required option value.
+   *
+   * @param options parsed options
+   * @param name option name
+   * @return value
+   */
   static String required(Map<String, String> options, String name) {
     String value = options.get(name);
     if (value == null || value.isEmpty()) throw new IllegalArgumentException("missing --" + name);
     return value;
   }
 
+  /**
+   * Required path option.
+   *
+   * @param options parsed options
+   * @param name option name
+   * @return path
+   */
   static Path requiredPath(Map<String, String> options, String name) {
     return Path.of(required(options, name));
   }
 
+  /**
+   * Parse {@code host:port}.
+   *
+   * @param value text
+   * @return address
+   */
   static InetSocketAddress address(String value) {
     int colon = value.lastIndexOf(':');
     if (colon <= 0) throw new IllegalArgumentException("expected host:port, got " + value);
@@ -251,6 +297,7 @@ public final class V2Main {
         value.substring(0, colon), Integer.parseInt(value.substring(colon + 1)));
   }
 
+  /** Print usage. */
   static void usage() {
     List<String> lines = new ArrayList<>();
     lines.add("PipeStream V2 durable endpoints (Java/Netty)");

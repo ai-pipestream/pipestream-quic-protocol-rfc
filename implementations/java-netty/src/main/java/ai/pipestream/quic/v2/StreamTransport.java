@@ -31,7 +31,17 @@ final class StreamTransport {
   private static final AttributeKey<Boolean> CLAIMED =
       AttributeKey.valueOf(StreamTransport.class, "claimed");
 
-  /** Explicit local ceilings, independent of negotiated durable admission promises. */
+  /**
+   * Explicit local ceilings, independent of negotiated durable admission promises.
+   *
+   * @param dataStreams concurrent data streams accepted per connection
+   * @param maxDataStreams highest data stream ordinal accepted
+   * @param dataSendBytes native send allowance shared by data streams
+   * @param controlSendBytes native send allowance reserved for the control stream
+   * @param streamWindowBytes receive window per stream
+   * @param chunkBytes largest single native write
+   * @param writeTimeoutMs deadline for one native write to settle
+   */
   record Limits(
       int dataStreams,
       int maxDataStreams,
@@ -40,6 +50,7 @@ final class StreamTransport {
       int streamWindowBytes,
       int chunkBytes,
       long writeTimeoutMs) {
+    /** Validate the ceilings. */
     Limits {
       if (dataStreams < 0
           || dataStreams > 128
@@ -61,6 +72,12 @@ final class StreamTransport {
       }
     }
 
+    /**
+     * Core-only limits with no data streams.
+     *
+     * @param options core options
+     * @return limits
+     */
     static Limits core(CoreOptions options) {
       return new Limits(
           0,
@@ -72,14 +89,32 @@ final class StreamTransport {
           options.controlTimeoutMs());
     }
 
+    /**
+     * Native send allowance.
+     *
+     * @return limits
+     */
     QuicStreamSendBufferLimits nativeSendLimits() {
       return new QuicStreamSendBufferLimits(dataSendBytes + controlSendBytes, controlSendBytes);
     }
 
+    /**
+     * Receive window per stream.
+     *
+     * @return bytes
+     */
     long receiveWindowBytes() {
       return 2L * (dataStreams + 1) * streamWindowBytes;
     }
 
+    /**
+     * Apply transport parameters.
+     *
+     * @param builder codec builder
+     * @param server whether configuring the server side
+     * @param <B> builder type
+     * @return the builder
+     */
     <B extends QuicCodecBuilder<B>> B configure(B builder, boolean server) {
       // The explicit replenishment window avoids quiche's unrelated default 48 KiB cap.
       // Fixing both maxima prevents autotuning from invalidating these configured ceilings.
@@ -98,6 +133,17 @@ final class StreamTransport {
     }
   }
 
+  /**
+   * Point-in-time stream counters.
+   *
+   * @param incoming claimed peer data streams
+   * @param outgoing owned local data streams
+   * @param opening local data streams still being created
+   * @param queuedBytes bytes queued for native writes
+   * @param peakQueuedBytes highest queued byte count observed
+   * @param localStreams local data streams ever opened
+   * @param peerStreams peer data streams ever claimed
+   */
   record Snapshot(
       int incoming,
       int outgoing,
@@ -122,6 +168,13 @@ final class StreamTransport {
   private long peerStreams;
   private boolean closed;
 
+  /**
+   * Own one connection's streams.
+   *
+   * @param channel connection
+   * @param limits ceilings
+   * @param server whether this is the server side
+   */
   StreamTransport(QuicChannel channel, Limits limits, boolean server) {
     this.channel = Objects.requireNonNull(channel);
     this.limits = Objects.requireNonNull(limits);
@@ -155,6 +208,11 @@ final class StreamTransport {
     if (closed) throw new IllegalStateException("stream transport closed");
   }
 
+  /**
+   * Bind the control stream.
+   *
+   * @param stream control stream
+   */
   void bindControl(QuicStreamChannel stream) {
     live();
     if (stream.parent() != channel
@@ -169,6 +227,12 @@ final class StreamTransport {
     control = stream;
   }
 
+  /**
+   * Open one outgoing data stream.
+   *
+   * @param handler stream handler
+   * @return the owned stream once created
+   */
   CompletionStage<Data> openData(ChannelHandler handler) {
     live();
     Objects.requireNonNull(handler);
@@ -226,6 +290,12 @@ final class StreamTransport {
     return request.result.minimalCompletionStage();
   }
 
+  /**
+   * Claim one incoming data stream.
+   *
+   * @param stream peer stream
+   * @return owned lease
+   */
   Data claimIncoming(QuicStreamChannel stream) {
     live();
     if (stream.parent() != channel
@@ -257,6 +327,11 @@ final class StreamTransport {
             new FixedRecvByteBufAllocator(limits.chunkBytes()).maxMessagesPerRead(1));
   }
 
+  /**
+   * Current counters.
+   *
+   * @return snapshot
+   */
   Snapshot snapshot() {
     confined();
     return new Snapshot(
@@ -340,6 +415,11 @@ final class StreamTransport {
       this.local = local;
     }
 
+    /**
+     * Underlying stream.
+     *
+     * @return stream
+     */
     QuicStreamChannel stream() {
       confined();
       return stream;
@@ -351,6 +431,12 @@ final class StreamTransport {
         throw new IllegalStateException("object output is not writable");
     }
 
+    /**
+     * Write one chunk.
+     *
+     * @param bytes chunk
+     * @return completion of the native write
+     */
     CompletionStage<Void> write(byte[] bytes) {
       writable();
       Objects.requireNonNull(bytes);
@@ -383,6 +469,11 @@ final class StreamTransport {
       return write.result.minimalCompletionStage();
     }
 
+    /**
+     * Send FIN.
+     *
+     * @return completion of the FIN write
+     */
     CompletionStage<Void> finish() {
       confined();
       if (finish != null) return finish.minimalCompletionStage();
@@ -409,6 +500,11 @@ final class StreamTransport {
               });
     }
 
+    /**
+     * Abort the stream with the cause's application error.
+     *
+     * @param cause failure
+     */
     void abort(ProtocolError cause) {
       confined();
       Objects.requireNonNull(cause);
@@ -434,6 +530,7 @@ final class StreamTransport {
       else stream.shutdownInput(applicationError);
     }
 
+    /** Settle and release the lease. */
     void release() {
       confined();
       if (released) return;

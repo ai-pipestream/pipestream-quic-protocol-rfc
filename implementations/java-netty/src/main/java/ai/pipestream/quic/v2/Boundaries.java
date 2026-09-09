@@ -30,10 +30,18 @@ interface Boundaries {
     ADMISSION_COMMITTED,
     /** Admission response accepted by the transport. */
     ADMISSION_RESPONSE_SENT,
+    /** Execution claim committed; no application callback has run. */
+    EXECUTION_CLAIMED,
+    /** Output payload installed and synchronized, not yet published. */
+    OUTPUT_INSTALLED,
+    /** Attempt outcome (success, failure or expansion) committed. */
+    PUBLICATION_COMMITTED,
     /** Explicit retry committed. */
     RETRY_COMMITTED,
     /** Cancellation, skip or scope-cancellation fence committed. */
     FENCE_COMMITTED,
+    /** Scope closure summary committed by the authority runtime. */
+    CLOSURE_COMMITTED,
     /** Result header accepted by the transport. */
     RESULT_HEADER_SENT,
     /** Result FIN accepted by the transport. */
@@ -45,7 +53,23 @@ interface Boundaries {
     /** A correlated refusal accepted by the transport. */
     REFUSAL_SENT,
     /** Listener drained its local owners. */
-    SHUTDOWN_DRAINED
+    SHUTDOWN_DRAINED,
+    /** Client: intent journaled before the request leaves. */
+    INTENT_JOURNALED,
+    /** Client: request accepted by the local transport. */
+    REQUEST_SENT,
+    /** Client: receipt validated against the journaled intent. */
+    RECEIPT_VALIDATED,
+    /** Client: receipt journaled. */
+    RECEIPT_JOURNALED,
+    /** Client: observation (view, page, summary or manifest) journaled. */
+    OBSERVATION_JOURNALED,
+    /** Client: result bytes verified against the manifest. */
+    RESULT_VERIFIED,
+    /** Client: verified result installed at its destination. */
+    RESULT_INSTALLED,
+    /** Client: correlated refusal received. */
+    REFUSAL_RECEIVED
   }
 
   /**
@@ -73,26 +97,62 @@ interface Boundaries {
       Objects.requireNonNull(owner);
     }
 
+    /**
+     * Copy with the owner label.
+     *
+     * @param value owner label
+     * @return copy
+     */
     Details owner(String value) {
       return new Details(value, generation, operation, work, attempt, refusal);
     }
 
+    /**
+     * Copy with the generation.
+     *
+     * @param value generation
+     * @return copy
+     */
     Details generation(long value) {
       return new Details(owner, value, operation, work, attempt, refusal);
     }
 
+    /**
+     * Copy with the operation identity.
+     *
+     * @param value operation identifier
+     * @return copy
+     */
     Details operation(Records.OperationId value) {
       return new Details(owner, generation, value, work, attempt, refusal);
     }
 
+    /**
+     * Copy with the work key.
+     *
+     * @param value work key
+     * @return copy
+     */
     Details work(Records.WorkKey value) {
       return new Details(owner, generation, operation, value, attempt, refusal);
     }
 
+    /**
+     * Copy with the attempt number.
+     *
+     * @param value attempt
+     * @return copy
+     */
     Details attempt(long value) {
       return new Details(owner, generation, operation, work, value, refusal);
     }
 
+    /**
+     * Copy with the refusal code.
+     *
+     * @param value refusal code
+     * @return copy
+     */
     Details refusal(ProtocolError.Code value) {
       return new Details(owner, generation, operation, work, attempt, value);
     }

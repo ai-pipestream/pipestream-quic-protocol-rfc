@@ -78,6 +78,18 @@ final class ExecutionScheduler implements AutoCloseable {
   private long refused;
   private Failure lastFailure;
 
+  /** Trusted local durability hooks; {@link Boundaries#NONE} in shipped launchers. */
+  private volatile Boundaries boundaries = Boundaries.NONE;
+
+  /**
+   * Install test-only boundary hooks observed at closure commits.
+   *
+   * @param hooks boundary hooks
+   */
+  void boundaries(Boundaries hooks) {
+    boundaries = Objects.requireNonNull(hooks);
+  }
+
   /**
    * Configure an inactive scheduler for an already initialized and verified paired authority.
    * Grants are resolved on worker threads from retained principal identity, never a captured
@@ -183,7 +195,15 @@ final class ExecutionScheduler implements AutoCloseable {
         }
         if (!stopped()) {
           try {
-            sessions.reconcileClosures(closures, limits.pageSize(), clock);
+            sessions.reconcileClosures(
+                closures,
+                limits.pageSize(),
+                clock,
+                phase -> {
+                  if (phase == ClosureStore.Phase.AFTER_COMMIT)
+                    boundaries.committed(
+                        Boundaries.Boundary.CLOSURE_COMMITTED, Boundaries.Details.NONE);
+                });
           } catch (SQLException | RuntimeException failure) {
             record(null, failure, "closure reconciliation unavailable");
           }

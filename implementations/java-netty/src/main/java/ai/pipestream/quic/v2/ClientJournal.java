@@ -1150,6 +1150,13 @@ public final class ClientJournal implements AutoCloseable {
     }
   }
 
+  /**
+   * Copy a mutation template with a fresh request identifier.
+   *
+   * @param message template
+   * @param request request identifier
+   * @return correlated message
+   */
   static Messages.Message withRequest(Messages.Message message, long request) {
     return switch (message) {
       case Messages.Declare m ->
@@ -1163,6 +1170,12 @@ public final class ClientJournal implements AutoCloseable {
     };
   }
 
+  /**
+   * Operation identity of a mutation template.
+   *
+   * @param message template
+   * @return operation identifier
+   */
   static Records.OperationId operationOf(Messages.Message message) {
     return switch (message) {
       case Messages.Declare m -> m.operation();

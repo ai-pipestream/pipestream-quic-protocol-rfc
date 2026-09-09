@@ -27,10 +27,41 @@ public final class ReferenceApplications {
   /**
    * Every reference contract.
    *
-   * @return copy, consume, retry-copy, reassemble and chunk-copy
+   * @return copy, consume, retry-copy, reassemble, chunk-copy and transform
    */
   public static List<DurableHost.Application> all() {
-    return List.of(copy(), consume(), retryCopy(), reassemble(), chunkCopy());
+    return List.of(copy(), consume(), retryCopy(), reassemble(), chunkCopy(), transform());
+  }
+
+  /**
+   * {@code transform/v2}, mode 0: the frozen external-workload byte transform, {@code out[i] =
+   * rotate_left_8(b, 1) XOR (i mod 251)} over chunk-relative offsets, output length equal to input
+   * length. Deterministic and side-effect free, so its restart contract is IDEMPOTENT.
+   *
+   * @return contract
+   */
+  public static DurableHost.Application transform() {
+    return new DurableHost.Application(
+        "transform/v2",
+        Set.of(0),
+        DurableHost.RestartSafety.IDEMPOTENT,
+        work -> {
+          byte[] buffer = new byte[work.bufferLimit()];
+          work.beginOutput(work.input().length(), OCTET_STREAM);
+          long offset = 0;
+          for (int read; (read = work.readInput(buffer, 0, buffer.length)) != -1; ) {
+            for (int i = 0; i < read; i++) {
+              int b = buffer[i] & 0xff;
+              int rotated = ((b << 1) | (b >>> 7)) & 0xff;
+              buffer[i] = (byte) (rotated ^ (int) ((offset + i) % 251));
+            }
+            work.writeOutput(ByteBuffer.wrap(buffer, 0, read));
+            offset += read;
+          }
+          work.finishOutput();
+          return DurableHost.Result.succeeded();
+        },
+        null);
   }
 
   /**
