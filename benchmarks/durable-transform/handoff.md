@@ -89,9 +89,37 @@ used 1.97.1 against that closure. `cargo build` on the host will confirm.
 - Host was shared (another agent building concurrently); these are
   correctness results, no performance claim.
 
-## 7. Safe next actions
+## 8. Full execution evidence (2026-09-09, seed 6, 8 MiB corpus, 128 chunks)
 
-1. Remaining: `run-full.sh` repeats + fault demonstrations on a quiet host.
+- `run-full.sh /tmp/dt-full 5`: 10/10 arms green (5 ps + 5 grpc),
+  every final SHA-256
+  `b3dd5e34376dba8b6042c99fea2ab6e821045305e7ed00ff9a0cecfe92b0160b`
+  (8,388,608 bytes, byte-identical across all arms and both fault
+  recoveries). Milestones (`first-usable-output`, `final-verified`)
+  present in all 12 event streams.
+- Fault 1 (PipeStream, SIGKILL worker b mid-run + restart): coordinator
+  rode through on transport reconnect with same-identity resends (no
+  resume needed, no refusal rows); final byte-identical.
+- Fault 2 (gRPC, SIGKILL coordinator + `--resume`): journal replay
+  recovery (2nd `final-verified` row); final byte-identical, cross-arm
+  `cmp` clean. **FAULTS PASS.**
+- Bugs found by the pilot (fixed at C5-C7, proven by rerun, never
+  committed broken): `date +%s%3N` emits nanoseconds here (wall_ms
+  mislabeled; fixed with 13-digit truncation); `/^lo:/` never matches
+  indented `/proc/net/dev` (loopback counters empty; fixed); authority
+  capacity refusal killed the coordinator mid-burst (new
+  `send_admission` same-identity backpressure retry, 240 attempts
+  capped backoff, named codes in events; proven with throwaway
+  ceiling=1 authority: 119 refusals, byte-identical final);
+  `run-full.sh` never exported runner env to the faults phase (fixed)
+  and now truly alternates A/B/B/A.
+- Coordinator binary with retry: `ac94b2f1…` (full hash in run
+  artifacts `bin.sha256`). Timing still shared-host; no performance
+  claim.
+
+## 9. Safe next actions
+
+1. DONE: repeats + fault demonstrations (see §8).
 2. When Claude publishes Java transform availability: add one mixed worker
    to the quick gate, labelled separately.
 3. When Kimi publishes driver checkpoints: run full comparative labels.
