@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.handler.codec.quic.QuicConnectionCloseEvent;
 import io.netty.handler.codec.quic.QuicStreamChannel;
 import io.netty.handler.codec.quic.QuicStreamType;
 import java.net.InetSocketAddress;
@@ -461,6 +462,96 @@ final class DurableWireNegativeTest {
       assertEquals(0, authority.host.inputs().usage().handles());
       stalled.call(new Detach(stalled.request()));
       healthy.call(new Detach(healthy.request()));
+    }
+  }
+
+  @Test
+  void controlFinBeforeDetachFailsTheConnectionAndDropsOnlyThePendingResponse() throws Exception {
+    try (Authority authority = new Authority("fin", DurableOptions.defaults())) {
+      long pending;
+      try (RawDurablePeer peer = authority.peer("alice")) {
+        assertInstanceOf(Binding.class, peer.call(new Create(peer.request(), 1, POLICY)));
+        assertInstanceOf(
+            DeclarationResponse.class,
+            peer.call(
+                new Declare(peer.request(), DurableServerTest.operation(1), 0, List.of(1L), true)));
+        WatchResponse current =
+            assertInstanceOf(WatchResponse.class, peer.call(new Watch(peer.request(), WORK, 0, 0)));
+        pending = peer.request();
+        peer.send(new Watch(pending, WORK, current.revision(), 5_000));
+        // A client FIN without DETACH is a framing failure: the server fails the connection and
+        // the parked watch never gets a response; nothing durable changes.
+        peer.control.shutdownOutput().sync();
+        QuicConnectionCloseEvent close = peer.closed.get(10, TimeUnit.SECONDS);
+        assertEquals(
+            ProtocolError.Code.FRAME_ERROR.applicationError(), close.error(), close.toString());
+        assertNull(peer.messages.poll(), "no response may follow the failure");
+      }
+      try (RawDurablePeer again = authority.peer("alice")) {
+        assertInstanceOf(
+            Binding.class, again.call(new Attach(again.request(), "issuer-a", "alice", 1)));
+        WatchResponse view =
+            assertInstanceOf(
+                WatchResponse.class, again.call(new Watch(again.request(), WORK, 0, 0)));
+        assertEquals(Records.State.DECLARED, view.work().state());
+        assertInstanceOf(Detached.class, again.call(new Detach(again.request())));
+      }
+    }
+  }
+
+  @Test
+  void outputRetentionExpiryWhilePinnedByAReadCompletesTheTransferThenExpires() throws Exception {
+    byte[] input = DurableServerTest.payload(200_000, 8);
+    Records.Policy brief = new Records.Policy(30_000, 2_000, 120_000);
+    try (Authority authority = new Authority("pinned", DurableOptions.defaults());
+        RawDurablePeer peer = authority.peer("alice")) {
+      assertInstanceOf(Binding.class, peer.call(new Create(peer.request(), 1, brief)));
+      assertInstanceOf(
+          DeclarationResponse.class,
+          peer.call(
+              new Declare(peer.request(), DurableServerTest.operation(1), 0, List.of(1L), true)));
+      peer.sendInput(DurableServerTest.header(1, 2, WORK, input, "copy/v2", 0), input, true);
+      assertInstanceOf(AdmissionResponse.class, peer.next());
+      Records.WorkView view = DurableServerTest.awaitTerminal(peer, WORK);
+      assertEquals(Records.State.SUCCEEDED, view.state());
+      Records.Output output = view.manifest().outputs().get(0);
+      InputStore.Usage retained = authority.host.inputs().usage();
+      // Open the read but do not consume it: the transfer pins the output across its retention.
+      peer.holdIncoming = true;
+      long readRequest = peer.request();
+      peer.send(new Read(readRequest, WORK, 1, 0, output.sha256()));
+      Thread.sleep(3_500);
+      InputStore.Usage whilePinned = authority.host.inputs().usage();
+      peer.resumeIncoming();
+      byte[] object = peer.nextObject();
+      assertEquals(readRequest, DurableServerTest.decodeResultHeader(object).request());
+      assertArrayEquals(
+          input,
+          Arrays.copyOfRange(object, DurableServerTest.headerLength(object), object.length),
+          () -> "pinned output must stay readable; usage " + retained + " -> " + whilePinned);
+      // Once released, the expired output is retired: later reads are refused and storage shrinks.
+      Refusal expired = null;
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+      while (expired == null && System.nanoTime() < deadline) {
+        long request = peer.request();
+        Message reply = peer.call(new Read(request, WORK, 1, 0, output.sha256()));
+        if (reply instanceof Refusal refusal) expired = refusal;
+        else {
+          peer.nextObject();
+          Thread.sleep(250);
+        }
+      }
+      assertNotNull(expired, "output never expired after release");
+      assertTrue(
+          expired.code() == ProtocolError.Code.EXPIRED
+              || expired.code() == ProtocolError.Code.NOT_FOUND,
+          expired.toString());
+      deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+      while (authority.host.inputs().usage().files() >= retained.files()
+          && System.nanoTime() < deadline) Thread.sleep(100);
+      assertTrue(authority.host.inputs().usage().files() < retained.files(), "output file retired");
+      assertEquals(Records.State.SUCCEEDED, DurableServerTest.awaitTerminal(peer, WORK).state());
+      peer.call(new Detach(peer.request()));
     }
   }
 }

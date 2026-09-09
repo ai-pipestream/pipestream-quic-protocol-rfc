@@ -271,4 +271,50 @@ final class DurableAuthorizationTest {
       assertEquals(0, snapshot.inputs());
     }
   }
+
+  @Test
+  void revocationOnALiveConnectionDeniesTheNextRequestsWithoutClosingIt() throws Exception {
+    Map<Records.Digest, String> live = new HashMap<>(principals);
+    Path root = directory.resolve("live-revoke");
+    byte[] bytes = new byte[1500];
+    Records.WorkKey work = new Records.WorkKey(0, 0, 1);
+    try (DurableHost host = host(root, true, live);
+        DurableServer server =
+            DurableServer.start(
+                new InetSocketAddress("127.0.0.1", 0),
+                pki.server(live),
+                host,
+                DurableOptions.defaults());
+        RawDurablePeer alice = new RawDurablePeer(server.address(), pki.client("alice"), 65_536)) {
+      alice.negotiate(RawDurablePeer.offer(List.of(DURABLE_WORK, RESULT_DELIVERY), 1 << 20));
+      assertInstanceOf(Binding.class, alice.call(new Create(alice.request(), 1, POLICY)));
+      assertInstanceOf(
+          DeclarationResponse.class,
+          alice.call(
+              new Declare(
+                  alice.request(), DurableServerTest.operation(1), 0, List.of(1L, 2L), true)));
+      alice.sendInput(header(1, 2, work, bytes), bytes, true);
+      assertInstanceOf(AdmissionResponse.class, alice.next());
+      assertEquals(Records.State.SUCCEEDED, DurableServerTest.awaitTerminal(alice, work).state());
+      host.revoke(1);
+      // The connection stays open; every session-scoped request is now denied without disclosure,
+      // including an input for still-declared work, and detach is still acknowledged.
+      Refusal declare =
+          assertInstanceOf(
+              Refusal.class,
+              alice.call(
+                  new Declare(
+                      alice.request(), DurableServerTest.operation(3), 1, List.of(1L), true)));
+      assertEquals(ProtocolError.Code.UNAUTHORIZED, declare.code(), declare.toString());
+      Refusal watch =
+          assertInstanceOf(Refusal.class, alice.call(new Watch(alice.request(), work, 0, 0)));
+      assertEquals(ProtocolError.Code.UNAUTHORIZED, watch.code(), watch.toString());
+      Records.WorkKey second = new Records.WorkKey(0, 0, 2);
+      alice.sendInput(header(1, 4, second, bytes), bytes, true);
+      Refusal input = assertInstanceOf(Refusal.class, alice.next());
+      assertTrue(input.request().input(), input.toString());
+      assertEquals(ProtocolError.Code.UNAUTHORIZED, input.code(), input.toString());
+      assertInstanceOf(Detached.class, alice.call(new Detach(alice.request())));
+    }
+  }
 }
