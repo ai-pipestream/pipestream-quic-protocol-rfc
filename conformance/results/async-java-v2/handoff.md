@@ -27,6 +27,7 @@ Commits (all plain author identity, no generated attribution):
 | `723629e` | live revocation, control FIN before detach, expiry under a pinned read |
 | `18f3728` | package-private javadoc for the strict doclint gate |
 | `53aaadb` | Java README V2 section, storage-worker exhaustion row |
+| `8fee938` | `RawDurableAuthority` harness and `DurableClientResultNegativeTest` (client-side malformed result streams) |
 | `e1533d3` | transport bundle `pipestream.4` (quiche drained-stream collection, Netty parent-map release, native credit test), POM pin, manifest hashes, evidence file and raw logs |
 
 Working tree at `e1533d3`: clean. Nothing pushed (no push authorization was
@@ -53,6 +54,7 @@ evidence files under `conformance/results/` are committed).
 | Result delivery: header, chunks, FIN, client verification and hard-link install, same-output re-read, local verification without network | `DurableServer.ResultTransfer`, `DurableClient.read`, `ResultFiles` | `DurableServerTest`, `DurableClientTest`, `V2MainProcessTest` | `client-test*.log`, `combined-1.log` |
 | Detach and FIN rules: server FIN only after all preceding responses and the detach acknowledgement; client owns graceful close | `DurableServer.Control.finishOutput`, `DurableClient.detach` | `DurableServerTest`, `DurableClientTest`, `V2MainProcessTest` | `combined-1.log` |
 | Separate V2 launchers, public application registration, SIGTERM drain with `DRAINED`, `READY host:port`, Rust-compatible principal map, journal args identical to the Rust CLI | `V2Main`, `ClientCommands`, `PrincipalMap`, `DurableHost.Application` | `V2MainProcessTest` (1), `RustClientJavaServerTest` (2), `JavaClientRustServerTest` (1) | `combined-1.log`, `interop-rc3.log`, `interop-jc1.log` |
+| Client result-stream negatives from a raw authority: headers contradicting the selection (length, digest, attempt), truncated/over-long/corrupted/reset payloads fail only that delivery; unsolicited or duplicate deliveries and oversized or undecodable headers fail the connection; nothing installed, no staging leftovers | `DurableClient.incomingStream`/`ResultTransfer`, `ClientCorrelation.beginResult/resultBytes/finishResult`, `ObjectStream.HeaderReader/Payload`, `ResultFiles.Staging` | `DurableClientResultNegativeTest` (6) with the test-only `RawDurableAuthority` | `raw/client-result-negative-2026-09-09.log` |
 | Test-only fixture adapter: interface-v1 events for both roles, pause/drop-reply/kill, runtime and client boundaries, parser rejections | `FixtureMain`, `FixtureEvents`, `Boundaries`, hooks in `DurableServer`/`ExecutionRuntime`/`ExecutionScheduler`/`DurableClient` | `FixtureMainTest` (5) | `fixture-test-2.log`, `fixture-test-3.log` |
 
 Full-suite counts at `e1533d3` on transport `.4` (`mvn -Psealed-interop
@@ -62,7 +64,8 @@ install`, 716 tests, 0 failures, raw log and XML checksums in `raw/`):
 4, `DurableWireNegativeTest` 6, `V2MainProcessTest` 1, `FixtureMainTest` 5,
 `TransportDependencyTest` 1, `RustClientJavaServerTest` 2 and
 `JavaClientRustServerTest` 1 (real Rust peer), plus the 682 pre-existing
-tests of the reference. Artifact hashes at this head: library jar
+tests of the reference. `DurableClientResultNegativeTest` 6 was added after
+that run at `8fee938` (log in `raw/`). Artifact hashes at this head: library jar
 `52ef1077cc6b5f3727a489e1861cc02cf2f27b757468f38e6544892c65221ea7`, shaded
 all-jar `6da5e9d08c6ccb39455557defaaf8ba043d7fc42cb547bc5c3be81ef17ad3de4`
 (not timestamp-reproducible), transport classes jar
@@ -93,7 +96,7 @@ native jar `e49d88b724cc79c936899542c1565a00454a93d512816de6e8cfefa637c51c50`.
 
 All assigned gates passed on `.4` (see Status and
 `conformance/results/durable-work-v2-java-drained-streams-2026-09-09.txt`).
-Remaining gap, listed and not waived:
+The gap listed in the first handoff is now closed at `8fee938`:
 
 1. Client-side negative result streams (oversize or duplicate result headers
    from a misbehaving authority): there is no raw *server* peer harness, so the
