@@ -1,0 +1,394 @@
+waiting for BENCHMARK.lock at 2026-09-09T12:48:01Z
+lock acquired at 2026-09-09T12:48:01Z
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] ----------------< ai.pipestream:pipestream-quic-netty >-----------------
+[INFO] Building PipeStream QUIC Netty reference implementation 0.1.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (default) @ pipestream-quic-netty ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireMavenVersion passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+[INFO] Rule 2: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- exec:3.6.3:exec (configure-sqlite-guard) @ pipestream-quic-netty ---
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /work/worktrees/pipestream-rfc-claude/implementations/java-netty/target/native
+[INFO] 
+[INFO] --- exec:3.6.3:exec (build-sqlite-guard) @ pipestream-quic-netty ---
+[ 33%] Built target pipestream_sqlite
+[ 66%] Built target sqlite_test_engine
+[100%] Built target sqlite_guard_test
+[INFO] 
+[INFO] --- resources:3.4.0:resources (default-resources) @ pipestream-quic-netty ---
+[INFO] skip non existing resourceDirectory /work/worktrees/pipestream-rfc-claude/implementations/java-netty/src/main/resources
+[INFO] 
+[INFO] --- compiler:3.16.0:compile (default-compile) @ pipestream-quic-netty ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- resources:3.4.0:testResources (default-testResources) @ pipestream-quic-netty ---
+[INFO] skip non existing resourceDirectory /work/worktrees/pipestream-rfc-claude/implementations/java-netty/src/test/resources
+[INFO] 
+[INFO] --- compiler:3.16.0:testCompile (default-testCompile) @ pipestream-quic-netty ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 135 source files with javac [debug parameters release 21] to target/test-classes
+[INFO] 
+[INFO] --- surefire:3.6.0:test (default-test) @ pipestream-quic-netty ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running ai.pipestream.quic.SealedJobsTest
+Pinned Java WAL: declarations=6 bytes=152496 cap=524288
+[INFO] Tests run: 23, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 114.0 s -- in ai.pipestream.quic.SealedJobsTest
+[INFO] Running ai.pipestream.quic.SealedProducerInputsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in ai.pipestream.quic.SealedProducerInputsTest
+[INFO] Running ai.pipestream.quic.SealedProducerJournalTest
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.121 s -- in ai.pipestream.quic.SealedProducerJournalTest
+[INFO] Running ai.pipestream.quic.SealedReconciliationTest
+[INFO] Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.030 s -- in ai.pipestream.quic.SealedReconciliationTest
+[INFO] Running ai.pipestream.quic.SealedServerTest
+[INFO] Tests run: 26, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 22.20 s -- in ai.pipestream.quic.SealedServerTest
+[INFO] Running ai.pipestream.quic.SealedSessionStoreTest
+[INFO] Tests run: 16, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 19.59 s -- in ai.pipestream.quic.SealedSessionStoreTest
+[INFO] Running ai.pipestream.quic.SealedSqliteFilesTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.921 s -- in ai.pipestream.quic.SealedSqliteFilesTest
+[INFO] Running ai.pipestream.quic.SealedSqliteImagesTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.070 s -- in ai.pipestream.quic.SealedSqliteImagesTest
+[INFO] Running ai.pipestream.quic.SealedTransportTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in ai.pipestream.quic.SealedTransportTest
+[INFO] Running ai.pipestream.quic.SealedWorkTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in ai.pipestream.quic.SealedWorkTest
+[INFO] Running ai.pipestream.quic.WireTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.023 s -- in ai.pipestream.quic.WireTest
+[INFO] Running ai.pipestream.quic.v2.AdmissionCapacityTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.298 s -- in ai.pipestream.quic.v2.AdmissionCapacityTest
+[INFO] Running ai.pipestream.quic.v2.AdmissionPolicyTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.136 s -- in ai.pipestream.quic.v2.AdmissionPolicyTest
+[INFO] Running ai.pipestream.quic.v2.AdmissionStoreRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.569 s -- in ai.pipestream.quic.v2.AdmissionStoreRecoveryTest
+[INFO] Running ai.pipestream.quic.v2.AdmissionStoreTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.180 s -- in ai.pipestream.quic.v2.AdmissionStoreTest
+[INFO] Running ai.pipestream.quic.v2.AuthorityExpansionRuntimeFailureTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.303 s -- in ai.pipestream.quic.v2.AuthorityExpansionRuntimeFailureTest
+[INFO] Running ai.pipestream.quic.v2.AuthorityExpansionRuntimeTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.228 s -- in ai.pipestream.quic.v2.AuthorityExpansionRuntimeTest
+[INFO] Running ai.pipestream.quic.v2.AuthorityExpansionSchedulingTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.320 s -- in ai.pipestream.quic.v2.AuthorityExpansionSchedulingTest
+[INFO] Running ai.pipestream.quic.v2.AuthorizationClockRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.396 s -- in ai.pipestream.quic.v2.AuthorizationClockRecoveryTest
+[INFO] Running ai.pipestream.quic.v2.BranchExecutionCapacityTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.353 s -- in ai.pipestream.quic.v2.BranchExecutionCapacityTest
+[INFO] Running ai.pipestream.quic.v2.BranchExecutionRecoveryTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.509 s -- in ai.pipestream.quic.v2.BranchExecutionRecoveryTest
+[INFO] Running ai.pipestream.quic.v2.BranchExecutionTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.571 s -- in ai.pipestream.quic.v2.BranchExecutionTest
+[INFO] Running ai.pipestream.quic.v2.BranchSchedulerTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.109 s -- in ai.pipestream.quic.v2.BranchSchedulerTest
+[INFO] Running ai.pipestream.quic.v2.CancellationReconciliationTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.166 s -- in ai.pipestream.quic.v2.CancellationReconciliationTest
+[INFO] Running ai.pipestream.quic.v2.CheckpointObservationTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.060 s -- in ai.pipestream.quic.v2.CheckpointObservationTest
+[INFO] Running ai.pipestream.quic.v2.ClientJournalFaultTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.219 s -- in ai.pipestream.quic.v2.ClientJournalFaultTest
+[INFO] Running ai.pipestream.quic.v2.ClientRecoveryTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.112 s -- in ai.pipestream.quic.v2.ClientRecoveryTest
+[INFO] Running ai.pipestream.quic.v2.ClosureReconciliationCapacityTest
+closure WAL cap=8388608 renewals=297 before=420272 saturated=4100096 after=4115912 rootCredits=4->3 childCredits=4->3 parentWork=4->3 parentJob=8->7
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.297 s -- in ai.pipestream.quic.v2.ClosureReconciliationCapacityTest
+[INFO] Running ai.pipestream.quic.v2.ClosureReconciliationRecoveryTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.275 s -- in ai.pipestream.quic.v2.ClosureReconciliationRecoveryTest
+[INFO] Running ai.pipestream.quic.v2.ClosureReconciliationTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.223 s -- in ai.pipestream.quic.v2.ClosureReconciliationTest
+[INFO] Running ai.pipestream.quic.v2.CompletedSessionObservationTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.093 s -- in ai.pipestream.quic.v2.CompletedSessionObservationTest
+[INFO] Running ai.pipestream.quic.v2.ControlWaitServiceTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.145 s -- in ai.pipestream.quic.v2.ControlWaitServiceTest
+[INFO] Running ai.pipestream.quic.v2.DeclarationStoreTest
+declaration physical-full initialPages=28 initialBytes=114688 committed=4
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.195 s -- in ai.pipestream.quic.v2.DeclarationStoreTest
+[INFO] Running ai.pipestream.quic.v2.DurableAuthorizationTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 10.41 s -- in ai.pipestream.quic.v2.DurableAuthorizationTest
+[INFO] Running ai.pipestream.quic.v2.DurableBranchTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.955 s -- in ai.pipestream.quic.v2.DurableBranchTest
+[INFO] Running ai.pipestream.quic.v2.DurableClientResultNegativeTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.170 s -- in ai.pipestream.quic.v2.DurableClientResultNegativeTest
+[INFO] Running ai.pipestream.quic.v2.DurableClientTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.334 s -- in ai.pipestream.quic.v2.DurableClientTest
+[INFO] Running ai.pipestream.quic.v2.DurableLifecycleTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.157 s -- in ai.pipestream.quic.v2.DurableLifecycleTest
+[INFO] Running ai.pipestream.quic.v2.DurableMutationTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.596 s -- in ai.pipestream.quic.v2.DurableMutationTest
+[INFO] Running ai.pipestream.quic.v2.DurableRequestsTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.058 s -- in ai.pipestream.quic.v2.DurableRequestsTest
+[INFO] Running ai.pipestream.quic.v2.DurableServerTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.412 s -- in ai.pipestream.quic.v2.DurableServerTest
+[INFO] Running ai.pipestream.quic.v2.DurableWireNegativeTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 8.241 s -- in ai.pipestream.quic.v2.DurableWireNegativeTest
+[INFO] Running ai.pipestream.quic.v2.ExecutionClosureTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.114 s -- in ai.pipestream.quic.v2.ExecutionClosureTest
+[INFO] Running ai.pipestream.quic.v2.ExecutionDiscoverySuffixTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.039 s -- in ai.pipestream.quic.v2.ExecutionDiscoverySuffixTest
+[INFO] Running ai.pipestream.quic.v2.ExecutionDiscoveryTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.144 s -- in ai.pipestream.quic.v2.ExecutionDiscoveryTest
+[INFO] Running ai.pipestream.quic.v2.ExecutionRuntimeCreditTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.070 s -- in ai.pipestream.quic.v2.ExecutionRuntimeCreditTest
+[INFO] Running ai.pipestream.quic.v2.ExecutionRuntimeResourceTest
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by org.sqlite.SQLiteJDBCLoader in an unnamed module (file:/work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository/org/xerial/sqlite-jdbc/3.53.4.0/sqlite-jdbc-3.53.4.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+bytes=67108864 digest=eeeea29f19e99097aff081c75a85115c7732967d5824201ddba0d2d1f6202723 buffer=8192 heapMax=33554432 observedRssKiB=161440 elapsedMillis=9194
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 9.240 s -- in ai.pipestream.quic.v2.ExecutionRuntimeResourceTest
+[INFO] Running ai.pipestream.quic.v2.ExecutionRuntimeTest
+[INFO] Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.915 s -- in ai.pipestream.quic.v2.ExecutionRuntimeTest
+[INFO] Running ai.pipestream.quic.v2.ExecutionSchedulerRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.346 s -- in ai.pipestream.quic.v2.ExecutionSchedulerRecoveryTest
+[INFO] Running ai.pipestream.quic.v2.ExecutionSchedulerTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.365 s -- in ai.pipestream.quic.v2.ExecutionSchedulerTest
+[INFO] Running ai.pipestream.quic.v2.ExecutionStoreCapacityTest
+execution WAL renewals=42 before=82432 saturated=605696 afterSettlement=618032
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.061 s -- in ai.pipestream.quic.v2.ExecutionStoreCapacityTest
+[INFO] Running ai.pipestream.quic.v2.ExecutionStorePolicyTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.050 s -- in ai.pipestream.quic.v2.ExecutionStorePolicyTest
+[INFO] Running ai.pipestream.quic.v2.ExecutionStoreRecoveryTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.621 s -- in ai.pipestream.quic.v2.ExecutionStoreRecoveryTest
+[INFO] Running ai.pipestream.quic.v2.ExecutionStoreTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.158 s -- in ai.pipestream.quic.v2.ExecutionStoreTest
+[INFO] Running ai.pipestream.quic.v2.ExpansionTransitionTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.225 s -- in ai.pipestream.quic.v2.ExpansionTransitionTest
+[INFO] Running ai.pipestream.quic.v2.FenceStoreTest
+[INFO] Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.261 s -- in ai.pipestream.quic.v2.FenceStoreTest
+[INFO] Running ai.pipestream.quic.v2.FixedRecordsTest
+fixed-record saturation writes=77 beforeWal=0 saturatedWal=960016 afterWal=960016 remainingCredit=0
+fixed-record page=512 capacity=1 pages=2 walDelta=4320 cost=68640
+fixed-record page=512 capacity=127 pages=2 walDelta=4320 cost=68640
+fixed-record page=512 capacity=128 pages=2 walDelta=4320 cost=68640
+fixed-record page=512 capacity=2048 pages=6 walDelta=4320 cost=70784
+fixed-record page=512 capacity=65536 pages=131 walDelta=74000 cost=137784
+fixed-record page=512 capacity=1048576 pages=2066 walDelta=1110088 cost=1174944
+fixed-record page=4096 capacity=1 pages=2 walDelta=8272 cost=86552
+fixed-record page=4096 capacity=127 pages=2 walDelta=8272 cost=86552
+fixed-record page=4096 capacity=128 pages=2 walDelta=8272 cost=86552
+fixed-record page=4096 capacity=2048 pages=2 walDelta=8272 cost=86552
+fixed-record page=4096 capacity=65536 pages=18 walDelta=74192 cost=152472
+fixed-record page=4096 capacity=1048576 pages=258 walDelta=1062992 cost=1141272
+fixed-record page=65536 capacity=1 pages=2 walDelta=131152 cost=393392
+fixed-record page=65536 capacity=127 pages=2 walDelta=131152 cost=393392
+fixed-record page=65536 capacity=128 pages=2 walDelta=131152 cost=393392
+fixed-record page=65536 capacity=2048 pages=2 walDelta=131152 cost=393392
+fixed-record page=65536 capacity=65536 pages=3 walDelta=196712 cost=458952
+fixed-record page=65536 capacity=1048576 pages=18 walDelta=1180112 cost=1442352
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.196 s -- in ai.pipestream.quic.v2.FixedRecordsTest
+[INFO] Running ai.pipestream.quic.v2.FixtureMainTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 51.62 s -- in ai.pipestream.quic.v2.FixtureMainTest
+[INFO] Running ai.pipestream.quic.v2.InputReceiverCreditTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.018 s -- in ai.pipestream.quic.v2.InputReceiverCreditTest
+[INFO] Running ai.pipestream.quic.v2.InputRetirementGateTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.013 s -- in ai.pipestream.quic.v2.InputRetirementGateTest
+[INFO] Running ai.pipestream.quic.v2.InputStoreFundingRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.220 s -- in ai.pipestream.quic.v2.InputStoreFundingRecoveryTest
+[INFO] Running ai.pipestream.quic.v2.InputStoreFundingTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.015 s -- in ai.pipestream.quic.v2.InputStoreFundingTest
+[INFO] Running ai.pipestream.quic.v2.InputStoreReaderPinsTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.020 s -- in ai.pipestream.quic.v2.InputStoreReaderPinsTest
+[INFO] Running ai.pipestream.quic.v2.InputStoreReceiverPinsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.011 s -- in ai.pipestream.quic.v2.InputStoreReceiverPinsTest
+[INFO] Running ai.pipestream.quic.v2.InputStoreRecoverySyncTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.033 s -- in ai.pipestream.quic.v2.InputStoreRecoverySyncTest
+[INFO] Running ai.pipestream.quic.v2.InputStoreRecoveryTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.009 s -- in ai.pipestream.quic.v2.InputStoreRecoveryTest
+[INFO] Running ai.pipestream.quic.v2.InputStoreResourceTest
+bytes=67108864 digest=eeeea29f19e99097aff081c75a85115c7732967d5824201ddba0d2d1f6202723 heapMax=33554432 observedRssKiB=277576
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.395 s -- in ai.pipestream.quic.v2.InputStoreResourceTest
+[INFO] Running ai.pipestream.quic.v2.InputStoreTest
+[INFO] Tests run: 13, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.363 s -- in ai.pipestream.quic.v2.InputStoreTest
+[INFO] Running ai.pipestream.quic.v2.JavaClientRustServerTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.350 s -- in ai.pipestream.quic.v2.JavaClientRustServerTest
+[INFO] Running ai.pipestream.quic.v2.OrphanRetainedReleaseTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.105 s -- in ai.pipestream.quic.v2.OrphanRetainedReleaseTest
+[INFO] Running ai.pipestream.quic.v2.OrphanScanTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.058 s -- in ai.pipestream.quic.v2.OrphanScanTest
+[INFO] Running ai.pipestream.quic.v2.OrphanStoreTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.126 s -- in ai.pipestream.quic.v2.OrphanStoreTest
+[INFO] Running ai.pipestream.quic.v2.OrphanStoreRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.140 s -- in ai.pipestream.quic.v2.OrphanStoreRecoveryTest
+[INFO] Running ai.pipestream.quic.v2.OutputRetentionDependencyTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.071 s -- in ai.pipestream.quic.v2.OutputRetentionDependencyTest
+[INFO] Running ai.pipestream.quic.v2.RetryStoreTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.303 s -- in ai.pipestream.quic.v2.RetryStoreTest
+[INFO] Running ai.pipestream.quic.v2.OutputRetentionGeometryTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.099 s -- in ai.pipestream.quic.v2.OutputRetentionGeometryTest
+[INFO] Running ai.pipestream.quic.v2.OutputRetentionStoreRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.004 s -- in ai.pipestream.quic.v2.OutputRetentionStoreRecoveryTest
+[INFO] Running ai.pipestream.quic.v2.OutputRetentionStoreTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.371 s -- in ai.pipestream.quic.v2.OutputRetentionStoreTest
+[INFO] Running ai.pipestream.quic.v2.OutputStoreReclaimRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.318 s -- in ai.pipestream.quic.v2.OutputStoreReclaimRecoveryTest
+[INFO] Running ai.pipestream.quic.v2.OutputStoreReclaimTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.031 s -- in ai.pipestream.quic.v2.OutputStoreReclaimTest
+[INFO] Running ai.pipestream.quic.v2.OutputStoreRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.304 s -- in ai.pipestream.quic.v2.OutputStoreRecoveryTest
+[INFO] Running ai.pipestream.quic.v2.OutputStoreResourceTest
+bytes=67108864 digest=eeeea29f19e99097aff081c75a85115c7732967d5824201ddba0d2d1f6202723 buffer=8192 heapMax=33554432 observedRssKiB=226916 fundedBytes=134234404 fundedFiles=3 managedBytes=67109345 managedFiles=2
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.433 s -- in ai.pipestream.quic.v2.OutputStoreResourceTest
+[INFO] Running ai.pipestream.quic.v2.OutputStoreTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.020 s -- in ai.pipestream.quic.v2.OutputStoreTest
+[INFO] Running ai.pipestream.quic.v2.ProducedAdmissionTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.259 s -- in ai.pipestream.quic.v2.ProducedAdmissionTest
+[INFO] Running ai.pipestream.quic.v2.ProducedDeclarationTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.126 s -- in ai.pipestream.quic.v2.ProducedDeclarationTest
+[INFO] Running ai.pipestream.quic.v2.ProducedInputOrphanRaceTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.045 s -- in ai.pipestream.quic.v2.ProducedInputOrphanRaceTest
+[INFO] Running ai.pipestream.quic.v2.ProducedRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.726 s -- in ai.pipestream.quic.v2.ProducedRecoveryTest
+[INFO] Running ai.pipestream.quic.v2.PublicationStoreCapacityTest
+publication WAL renewals=35 before=98912 saturated=540672 after=564472 payloadBytes=16 manifestEncodedBytes=2710
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.101 s -- in ai.pipestream.quic.v2.PublicationStoreCapacityTest
+[INFO] Running ai.pipestream.quic.v2.PublicationStoreRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.705 s -- in ai.pipestream.quic.v2.PublicationStoreRecoveryTest
+[INFO] Running ai.pipestream.quic.v2.PublicationStoreTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.160 s -- in ai.pipestream.quic.v2.PublicationStoreTest
+[INFO] Running ai.pipestream.quic.v2.RawPeerRustAuthorityTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.205 s -- in ai.pipestream.quic.v2.RawPeerRustAuthorityTest
+[INFO] Running ai.pipestream.quic.v2.ResultServiceTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.283 s -- in ai.pipestream.quic.v2.ResultServiceTest
+[INFO] Running ai.pipestream.quic.v2.ResultStoreTest
+[INFO] Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.326 s -- in ai.pipestream.quic.v2.ResultStoreTest
+[INFO] Running ai.pipestream.quic.v2.RetentionServiceTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.313 s -- in ai.pipestream.quic.v2.RetentionServiceTest
+[INFO] Running ai.pipestream.quic.v2.RetentionStoreRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.507 s -- in ai.pipestream.quic.v2.RetentionStoreRecoveryTest
+[INFO] Running ai.pipestream.quic.v2.RetentionStoreTest
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.498 s -- in ai.pipestream.quic.v2.RetentionStoreTest
+[INFO] Running ai.pipestream.quic.v2.RetirementChildScopeTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.127 s -- in ai.pipestream.quic.v2.RetirementChildScopeTest
+[INFO] Running ai.pipestream.quic.v2.RetirementIntegrityTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.107 s -- in ai.pipestream.quic.v2.RetirementIntegrityTest
+[INFO] Running ai.pipestream.quic.v2.RetirementRecordTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in ai.pipestream.quic.v2.RetirementRecordTest
+[INFO] Running ai.pipestream.quic.v2.RetirementServiceTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.119 s -- in ai.pipestream.quic.v2.RetirementServiceTest
+[INFO] Running ai.pipestream.quic.v2.RetryStoreFailureTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.257 s -- in ai.pipestream.quic.v2.RetryStoreFailureTest
+[INFO] Running ai.pipestream.quic.v2.RustClientJavaServerTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.295 s -- in ai.pipestream.quic.v2.RustClientJavaServerTest
+[INFO] Running ai.pipestream.quic.v2.SessionRetirementCrashTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.964 s -- in ai.pipestream.quic.v2.SessionRetirementCrashTest
+[INFO] Running ai.pipestream.quic.v2.SessionRetirementTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.115 s -- in ai.pipestream.quic.v2.SessionRetirementTest
+[INFO] Running ai.pipestream.quic.v2.SessionStoreTest
+session physical-full initialPages=28 initialBytes=114688 committed=12
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.611 s -- in ai.pipestream.quic.v2.SessionStoreTest
+[INFO] Running ai.pipestream.quic.v2.StoreBindingRecoveryTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.478 s -- in ai.pipestream.quic.v2.StoreBindingRecoveryTest
+[INFO] Running ai.pipestream.quic.v2.StoreBindingTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.072 s -- in ai.pipestream.quic.v2.StoreBindingTest
+[INFO] Running ai.pipestream.quic.v2.StreamTransportTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.321 s -- in ai.pipestream.quic.v2.StreamTransportTest
+[INFO] Running ai.pipestream.quic.v2.TransportDependencyTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in ai.pipestream.quic.v2.TransportDependencyTest
+[INFO] Running ai.pipestream.quic.v2.V2ObjectStreamTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in ai.pipestream.quic.v2.V2ObjectStreamTest
+[INFO] Running ai.pipestream.quic.v2.V2ClientCorrelationTest
+[INFO] Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in ai.pipestream.quic.v2.V2ClientCorrelationTest
+[INFO] Running ai.pipestream.quic.v2.V2CommitmentResourceTest
+members=4000003 primitiveMembershipBytes=32000024 maxHeapBytes=24379392 largestFrontierBytes=672 elapsedMs=1689 seal=ec5bfa7db4b7c4160ba514a35f642d6502697b28e748b85aae580b73f5cd0def status=14bfe4d1564c7dee064633c55a0ee92784bf5589c5f36963a98b6c2e410b7d36
+VmHWM:	  394624 kB
+VmRSS:	  394624 kB
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.740 s -- in ai.pipestream.quic.v2.V2CommitmentResourceTest
+[INFO] Running ai.pipestream.quic.v2.V2CommitmentsTest
+[INFO] Tests run: 16, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.407 s -- in ai.pipestream.quic.v2.V2CommitmentsTest
+[INFO] Running ai.pipestream.quic.v2.V2CoreClientTest
+[INFO] Tests run: 14, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.338 s -- in ai.pipestream.quic.v2.V2CoreClientTest
+[INFO] Running ai.pipestream.quic.v2.V2CoreServerTest
+[INFO] Tests run: 13, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.324 s -- in ai.pipestream.quic.v2.V2CoreServerTest
+[INFO] Running ai.pipestream.quic.v2.V2MainProcessTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 23.41 s -- in ai.pipestream.quic.v2.V2MainProcessTest
+[INFO] Running ai.pipestream.quic.v2.V2ObjectResourceTest
+payloadBytes=67108864 chunkBytes=8192 verified=true maxHeapBytes=24379392 elapsedMs=51
+VmHWM:	  136128 kB
+VmRSS:	  136128 kB
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.084 s -- in ai.pipestream.quic.v2.V2ObjectResourceTest
+[INFO] Running ai.pipestream.quic.v2.V2TlsTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.376 s -- in ai.pipestream.quic.v2.V2TlsTest
+[INFO] Running ai.pipestream.quic.v2.V2WireTest
+[INFO] Tests run: 77, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.020 s -- in ai.pipestream.quic.v2.V2WireTest
+[INFO] Running ai.pipestream.quic.SealedCheckpointStoreTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.054 s -- in ai.pipestream.quic.SealedCheckpointStoreTest
+[INFO] Running ai.pipestream.quic.SealedCompletionReservationsTest
+Java completion cost: scenarios=54 whole transactions=378
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 16.51 s -- in ai.pipestream.quic.SealedCompletionReservationsTest
+[INFO] Running ai.pipestream.quic.SealedExecutorTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.475 s -- in ai.pipestream.quic.SealedExecutorTest
+[INFO] Running ai.pipestream.quic.SealedInteropTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.959 s -- in ai.pipestream.quic.SealedInteropTest
+[INFO] Running ai.pipestream.quic.SealedPayloadStoreTest
+[INFO] Tests run: 15, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.633 s -- in ai.pipestream.quic.SealedPayloadStoreTest
+[INFO] Running ai.pipestream.quic.SealedScopeTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in ai.pipestream.quic.SealedScopeTest
+[INFO] Running ai.pipestream.quic.SealedStateImagesTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.067 s -- in ai.pipestream.quic.SealedStateImagesTest
+[INFO] Running ai.pipestream.quic.SealedStoreBindingTest
+[INFO] Tests run: 14, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.457 s -- in ai.pipestream.quic.SealedStoreBindingTest
+[INFO] Running ai.pipestream.quic.TlsPeerIdentityTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in ai.pipestream.quic.TlsPeerIdentityTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[INFO] Tests run: 728, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] 
+[INFO] --- exec:3.6.3:exec (test-sqlite-guard) @ pipestream-quic-netty ---
+Test project /work/worktrees/pipestream-rfc-claude/implementations/java-netty/target/native
+    Start 1: sqlite-file-growth
+1/1 Test #1: sqlite-file-growth ...............   Passed    0.01 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   0.01 sec
+[INFO] 
+[INFO] --- jar:3.5.1:jar (default-jar) @ pipestream-quic-netty ---
+[INFO] 
+[INFO] --- shade:3.6.2:shade (default) @ pipestream-quic-netty ---
+[WARNING] Discovered module-info.class. Shading will break its strong encapsulation.
+[WARNING] jackson-core-2.22.2.jar, jackson-dataformat-cbor-2.22.2.jar define 1 overlapping resource: 
+[WARNING]   - META-INF/services/com.fasterxml.jackson.core.JsonFactory
+[WARNING] netty-codec-classes-quic-4.2.17.Final-pipestream.4.jar, netty-codec-native-quic-4.2.17.Final-pipestream.4-linux-x86_64.jar define 1 overlapping resource: 
+[WARNING]   - META-INF/ai.pipestream.transport.versions.properties
+[WARNING] netty-buffer-4.2.17.Final.jar, netty-codec-base-4.2.17.Final.jar, netty-codec-classes-quic-4.2.17.Final-pipestream.4.jar, netty-codec-native-quic-4.2.17.Final-pipestream.4-linux-x86_64.jar, netty-common-4.2.17.Final.jar, netty-handler-4.2.17.Final.jar, netty-resolver-4.2.17.Final.jar, netty-transport-4.2.17.Final.jar, netty-transport-native-unix-common-4.2.17.Final.jar define 1 overlapping classes: 
+[WARNING]   - META-INF.versions.11.module-info
+[WARNING] jackson-annotations-2.22.jar, jackson-core-2.22.2.jar, jackson-databind-2.22.2.jar, jackson-dataformat-cbor-2.22.2.jar, netty-buffer-4.2.17.Final.jar, netty-codec-base-4.2.17.Final.jar, netty-codec-classes-quic-4.2.17.Final-pipestream.4.jar, netty-codec-native-quic-4.2.17.Final-pipestream.4-linux-x86_64.jar, netty-common-4.2.17.Final.jar, netty-handler-4.2.17.Final.jar, netty-resolver-4.2.17.Final.jar, netty-transport-4.2.17.Final.jar, netty-transport-native-unix-common-4.2.17.Final.jar, pipestream-quic-netty-0.1.0-SNAPSHOT.jar, sqlite-jdbc-3.53.4.0.jar define 1 overlapping resource: 
+[WARNING]   - META-INF/MANIFEST.MF
+[WARNING] netty-buffer-4.2.17.Final.jar, netty-codec-base-4.2.17.Final.jar, netty-common-4.2.17.Final.jar, netty-handler-4.2.17.Final.jar, netty-resolver-4.2.17.Final.jar, netty-transport-4.2.17.Final.jar, netty-transport-native-unix-common-4.2.17.Final.jar define 1 overlapping resource: 
+[WARNING]   - META-INF/io.netty.versions.properties
+[WARNING] jackson-core-2.22.2.jar, jackson-databind-2.22.2.jar, jackson-dataformat-cbor-2.22.2.jar, sqlite-jdbc-3.53.4.0.jar define 1 overlapping classes: 
+[WARNING]   - META-INF.versions.9.module-info
+[WARNING] jackson-annotations-2.22.jar, jackson-core-2.22.2.jar, jackson-databind-2.22.2.jar, jackson-dataformat-cbor-2.22.2.jar define 2 overlapping resources: 
+[WARNING]   - META-INF/LICENSE
+[WARNING]   - META-INF/NOTICE
+[WARNING] maven-shade-plugin has detected that some files are
+[WARNING] present in two or more JARs. When this happens, only one
+[WARNING] single version of the file is copied to the uber jar.
+[WARNING] Usually this is not harmful and you can skip these warnings,
+[WARNING] otherwise try to manually exclude artifacts based on
+[WARNING] mvn dependency:tree -Ddetail=true and the above output.
+[WARNING] See https://maven.apache.org/plugins/maven-shade-plugin/
+[INFO] Attaching shaded artifact.
+[INFO] 
+[INFO] --- install:3.1.4:install (default-install) @ pipestream-quic-netty ---
+[INFO] Installing /work/worktrees/pipestream-rfc-claude/implementations/java-netty/pom.xml to /work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository/ai/pipestream/pipestream-quic-netty/0.1.0-SNAPSHOT/pipestream-quic-netty-0.1.0-SNAPSHOT.pom
+[INFO] Installing /work/worktrees/pipestream-rfc-claude/implementations/java-netty/target/pipestream-quic-netty-0.1.0-SNAPSHOT.jar to /work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository/ai/pipestream/pipestream-quic-netty/0.1.0-SNAPSHOT/pipestream-quic-netty-0.1.0-SNAPSHOT.jar
+[INFO] Installing /work/worktrees/pipestream-rfc-claude/implementations/java-netty/target/pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar to /work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository/ai/pipestream/pipestream-quic-netty/0.1.0-SNAPSHOT/pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  05:43 min
+[INFO] Finished at: 2026-09-09T08:53:45-04:00
+[INFO] ------------------------------------------------------------------------
+mvn exit=0 at 2026-09-09T12:53:45Z
+wrapper done 2026-09-09T12:53:45Z

@@ -1103,3 +1103,10 @@ storage-worker pool and withheld replies after real commits), and
 `RawPeerRustAuthorityTest` (`-Psealed-interop`) measures the Section 12.1
 refused-stream rule as returned stream credit against the Rust authority,
 the counterpart of the Java-side check in `DurableWireNegativeTest`.
+`ClientJournalFaultTest` injects real journal I/O failures (a read-only
+journal directory under SQLite's rollback-journal mode) before transmission,
+while saving a receipt and while saving a verified selection;
+`AuthorizationClockRecoveryTest` withdraws and restores the owner policy,
+makes the host clock untrusted or regressed, and finally revokes the session
+durably, showing that only the temporary conditions are resolved by the next
+invocation and that none of them is retried by the budget.

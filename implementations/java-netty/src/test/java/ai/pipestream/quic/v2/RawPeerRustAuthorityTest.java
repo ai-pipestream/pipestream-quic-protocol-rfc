@@ -15,10 +15,14 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The raw Java peer against the Rust authority CLI: the Section 12.1 refused-stream rule measured
- * as stream credit. Every refused input must hand its concurrent-stream slot back before the next
- * one is opened, over several times the negotiated allowance, and a valid transfer must then
- * succeed on the same connection. This is the Rust-side counterpart of {@code
+ * The raw Java peer against the Rust authority CLI: the Section 12.1 refused-stream rule, which is
+ * PipeStream's own requirement that refused streams advance the peer's cumulative MAX_STREAMS limit
+ * (RFC 9000 leaves that policy to implementations). The normative observation is that replacement
+ * streams keep opening over several times the initial allowance and a valid transfer then succeeds
+ * on the same connection. The stricter reading that the remaining allowance returns to the selected
+ * limit after every refusal is fixture evidence of how this authority behaves, not a protocol
+ * constant; a batching implementation could pass the first observation and not the second.
+ * Rust-side counterpart of {@code
  * DurableWireNegativeTest.sequentialInputsBeyondTheConcurrentLimitReplenishStreamCredit}.
  */
 @Tag("sealed-interop")

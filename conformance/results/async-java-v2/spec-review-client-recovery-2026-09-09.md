@@ -92,9 +92,11 @@ keeps its original scope.
 
 The three merge points were resolved as follows. Spec text: on the guidance
 worktree of `docs/client-recovery-guidance-2026-09` (edits left uncommitted
-for the coordinating owner), Section 12.1 now says the refused-stream rule
-includes replenishing the peer's concurrent-stream allowance once the
-reset/FIN exchange completes and that the "bound that ended a transfer"
+for the coordinating owner), Section 12.1 now states, as PipeStream's own
+requirement layered on RFC 9000 Section 4.6, that refused or abandoned peer
+streams count toward advancing the cumulative MAX_STREAMS limit once their
+reset/FIN exchange completes (batching permitted, never advancing not), and
+that the "bound that ended a transfer"
 diagnostic is local with no wire carrier (a REFUSAL detail MAY name it, a
 peer MUST NOT depend on it); Section 12.2.1 says a one-shot client that
 reopens its journal on the next invocation is a conforming recovery mode with
@@ -109,5 +111,16 @@ D1 closed (REFUSAL details name the local bound; `REFUSED code= detail=` and
 with `RECOVERING`/`UNRESOLVED` reporting; both modes tested against real
 refusals in `ClientRecoveryTest`), D3 closed (driver-readable refusal line),
 D9 extended to the Rust authority (`RawPeerRustAuthorityTest`: twelve refused
-inputs, credit back to the selected limit after each, valid transfer after).
-D4-D8 and D10 stand as recorded above.
+inputs beyond an allowance of four, a valid transfer after; the remaining
+allowance returning to four after each refusal is fixture evidence, since
+MAX_STREAMS is cumulative and Section 12.1 states the advancement rule as
+PipeStream's own requirement with batching permitted).
+Later the same day, on the Java authority: D5 closed (CR04, lookup NOT_FOUND
+while the original admission is parked before commit, one effect, identical
+receipts; `ClientRecoveryTest`), D6 closed (CR10, real journal I/O faults at
+three persistence points; `ClientJournalFaultTest`), D10 closed for CR06
+(temporary owner-policy withdrawal and restoration, untrusted and regressed
+clock, durable revocation kept distinct; `AuthorizationClockRecoveryTest`).
+D4, D7 and D8 stand as recorded above; the Rust-authority side of CR04, CR06
+and CR10 is not measured (the Rust CLI has no commit-time hooks or injectable
+clock).

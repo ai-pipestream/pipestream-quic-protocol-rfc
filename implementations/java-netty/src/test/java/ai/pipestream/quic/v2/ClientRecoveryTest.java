@@ -1,17 +1,16 @@
 package ai.pipestream.quic.v2;
 
+import static ai.pipestream.quic.v2.LauncherInvocation.code;
+import static ai.pipestream.quic.v2.LauncherInvocation.hex;
 import static org.junit.jupiter.api.Assertions.*;
 
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
+import ai.pipestream.quic.v2.LauncherInvocation.Run;
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -33,79 +32,22 @@ final class ClientRecoveryTest {
   static Map<Records.Digest, String> principals;
   static final Records.Policy POLICY = new Records.Policy(30_000, 60_000, 120_000);
 
-  /** The launcher's default session policy (its {@code --execution-ms} and retention defaults). */
-  static final Records.Policy LAUNCHER_POLICY = new Records.Policy(60_000, 3_600_000, 86_400_000);
-
   @BeforeAll
   static void certificates() throws Exception {
     pki = DurableTestPki.generate(directory, List.of("alice", "bob"));
     principals = pki.principals(List.of("alice", "bob"));
   }
 
-  private record Run(String output, Exception failure) {}
-
-  /** One launcher invocation in this JVM, with its stdout captured. */
   private static Run invoke(Path journal, InetSocketAddress address, String... operation) {
-    List<String> args =
-        new ArrayList<>(
-            List.of(
-                "client",
-                "--journal",
-                journal.toString(),
-                "--authority",
-                "issuer-a",
-                "--owner",
-                "alice",
-                "--creation-sequence",
-                "1",
-                "--connect",
-                address.getHostString() + ":" + address.getPort(),
-                "--server-name",
-                "localhost",
-                "--ca",
-                pki.path("ca.crt").toString(),
-                "--cert",
-                pki.path("alice.crt").toString(),
-                "--key",
-                pki.path("alice.key").toString()));
-    args.addAll(Arrays.asList(operation));
-    ByteArrayOutputStream captured = new ByteArrayOutputStream();
-    PrintStream original = System.out;
-    Exception failure = null;
-    System.setOut(new PrintStream(captured, true, StandardCharsets.UTF_8));
-    try {
-      assertTrue(ClientCommands.run("client", args.toArray(new String[0])));
-    } catch (Exception thrown) {
-      failure = thrown;
-    } finally {
-      System.setOut(original);
-    }
-    return new Run(captured.toString(StandardCharsets.UTF_8), failure);
+    return LauncherInvocation.invoke(pki, "alice", journal, address, Boundaries.NONE, operation);
   }
 
   private static long count(String output, String prefix) {
     return output.lines().filter(line -> line.startsWith(prefix)).count();
   }
 
-  private static ProtocolError.Code code(Exception failure) {
-    Throwable cause = failure;
-    while (cause != null && !(cause instanceof ProtocolError)) cause = cause.getCause();
-    assertNotNull(cause, String.valueOf(failure));
-    return ((ProtocolError) cause).code();
-  }
-
-  private static String hex(int operation) {
-    return String.format("%032x", operation);
-  }
-
   private static Path initJournal(String name) throws Exception {
-    Path journal = directory.resolve(name);
-    ClientJournal.initialize(
-            journal,
-            new ClientJournal.Intent("issuer-a", "alice", 1, LAUNCHER_POLICY, true),
-            ClientJournal.Limits.defaults())
-        .close();
-    return journal;
+    return LauncherInvocation.initJournal(directory.resolve(name), "alice");
   }
 
   private static Path file(String name, int length, long seed) throws Exception {
@@ -157,18 +99,33 @@ final class ClientRecoveryTest {
     final AtomicInteger withheld = new AtomicInteger();
     final CountDownLatch paused = new CountDownLatch(1);
     final CountDownLatch release = new CountDownLatch(1);
+    final CountDownLatch installed = new CountDownLatch(1);
+    final CountDownLatch releaseInput = new CountDownLatch(1);
     volatile int releaseAfterRefusals = Integer.MAX_VALUE;
     volatile int withholdAdmissionReplies;
+
+    /** When set, this operation's admission parks after its input is installed, before commit. */
+    volatile Records.OperationId parkBeforeAdmissionCommit;
 
     @Override
     public void committed(Boundary boundary, Details details) {
       if (boundary == Boundary.ADMISSION_COMMITTED) admissionCommits.incrementAndGet();
+      if (boundary == Boundary.INPUT_INSTALLED
+          && details.operation().equals(parkBeforeAdmissionCommit)
+          && installed.getCount() > 0) {
+        installed.countDown();
+        await(releaseInput);
+      }
       if (boundary != Boundary.DECLARATION_COMMITTED
           || !PARKED.equals(details.operation())
           || paused.getCount() == 0) return;
       paused.countDown();
+      await(release);
+    }
+
+    private static void await(CountDownLatch latch) {
       try {
-        release.await(60, TimeUnit.SECONDS);
+        latch.await(60, TimeUnit.SECONDS);
       } catch (InterruptedException interrupted) {
         Thread.currentThread().interrupt();
       }
@@ -387,6 +344,106 @@ final class ClientRecoveryTest {
       assertTrue(
           capabilities.output().contains("CAPABILITIES offered-idle-ms="), capabilities.output());
       assertTrue(capabilities.output().contains(" selected-lifetime-ms="), capabilities.output());
+    }
+  }
+
+  @Test
+  void lookupDuringAPendingAdmissionReportsAbsenceAndTheOriginalIdentityCommitsOnce()
+      throws Exception {
+    Hooks hooks = new Hooks();
+    Records.OperationId pending = DurableServerTest.operation(2);
+    hooks.parkBeforeAdmissionCommit = pending;
+    Path journal = initJournal("pending.sqlite");
+    Path input = file("pending.bin", 50_000, 13);
+    Records.WorkKey work = new Records.WorkKey(0, 0, 1);
+    try (DurableHost host =
+            DurableHost.initialize(
+                directory.resolve("pending"),
+                DurableHost.Configuration.defaults("issuer-a", "localhost:7443"),
+                ReferenceApplications.all(),
+                owners(),
+                DurableHost.UtcClock.system(true));
+        DurableServer server =
+            DurableServer.start(
+                new InetSocketAddress("127.0.0.1", 0),
+                pki.server(principals),
+                host,
+                DurableOptions.defaults(),
+                hooks)) {
+      assertNull(
+          invoke(journal, server.address(), "declare", "--operation", hex(1), "--entities", "1")
+              .failure());
+      Records.OperationReceipt admitted;
+      try (ClientJournal opened = ClientJournal.open(journal, ClientJournal.Limits.defaults());
+          DurableClient client =
+              DurableClient.connect(
+                  server.address(), pki.client("alice"), opened, ClientOptions.defaults());
+          InputSource source = InputSource.file(input, "application/octet-stream", 16L << 20);
+          RawDurablePeer other =
+              new RawDurablePeer(server.address(), pki.client("alice"), 65_536)) {
+        DurableClientTest.get(client.ready());
+        DurableClientTest.get(client.binding());
+        // The original admission: journaled, transmitted, its input installed, its commit
+        // parked. Nothing about it is visible to anyone yet.
+        Records.AdmitParameters parameters =
+            new Records.AdmitParameters(
+                work, source.input(), "copy/v2", 0, 60_000, new Records.OutputBudget(1, 50_000));
+        CompletionStage<Records.OperationReceipt> original =
+            client.admit(pending, parameters, DurableServerTest.operation(1), source);
+        assertTrue(hooks.installed.await(20, TimeUnit.SECONDS), "input never installed");
+        assertEquals(0, hooks.admissionCommits.get());
+        // A second connection of the same owner asks for it and is told NOT_FOUND: absence,
+        // not proof that the in-flight request will never commit.
+        other.negotiate(
+            RawDurablePeer.offer(
+                List.of(Messages.DURABLE_WORK, Messages.RESULT_DELIVERY), 1 << 20));
+        assertInstanceOf(
+            Messages.Binding.class,
+            other.call(new Messages.Attach(other.request(), "issuer-a", "alice", 1)));
+        Messages.Refusal absent =
+            assertInstanceOf(
+                Messages.Refusal.class,
+                other.call(new Messages.LookupOperation(other.request(), pending)));
+        assertEquals(ProtocolError.Code.NOT_FOUND, absent.code(), absent.toString());
+        // The library client itself refuses to look up an identity it never journaled, without
+        // sending anything: a new identity is never inferred from absence.
+        ProtocolError local =
+            DurableClientTest.refusal(client.lookup(DurableServerTest.operation(9)));
+        assertEquals(ProtocolError.Code.NOT_FOUND, local.code());
+        assertFalse(local.fromAuthority(), local.toString());
+        // The original commits; the other connection now finds the very same receipt.
+        hooks.releaseInput.countDown();
+        admitted = DurableClientTest.get(original);
+        assertEquals(1, assertInstanceOf(Records.Admitted.class, admitted.outcome()).attempt());
+        assertEquals(1, hooks.admissionCommits.get());
+        Messages.OperationResponse found =
+            assertInstanceOf(
+                Messages.OperationResponse.class,
+                other.call(new Messages.LookupOperation(other.request(), pending)));
+        assertEquals(admitted, found.receipt());
+        other.call(new Messages.Detach(other.request()));
+        DurableClientTest.get(client.detach());
+      }
+      // The launcher's replay of the same journaled identity is answered from retained state:
+      // same receipt, still one admission effect; the work completes once.
+      Run replay =
+          invoke(
+              journal,
+              server.address(),
+              "replay",
+              "--operation",
+              hex(2),
+              "--input",
+              input.toString());
+      assertNull(replay.failure(), replay.output() + replay.failure());
+      assertEquals(1, count(replay.output(), "RECEIPT"), replay.output());
+      assertEquals(1, hooks.admissionCommits.get(), "replay never commits a second admission");
+      Run lookup = invoke(journal, server.address(), "lookup", "--operation", hex(2));
+      assertNull(lookup.failure(), lookup.output());
+      try (ClientJournal reopened = ClientJournal.open(journal, ClientJournal.Limits.defaults())) {
+        assertEquals(admitted, reopened.receipt(pending).orElseThrow());
+        assertTrue(reopened.unresolved(0, 16).isEmpty());
+      }
     }
   }
 }

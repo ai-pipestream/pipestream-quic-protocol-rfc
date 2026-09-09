@@ -46,7 +46,15 @@ a locally stopped peer-unidirectional stream (see
 durable-work-v2-java-drained-streams-2026-09-09.txt).
 
 Both stacks are therefore held to the identical observation the amended CR14
-row requires.
+row requires. Reading of the numbers: QUIC MAX_STREAMS is a cumulative limit
+and RFC 9000 Section 4.6 leaves its advancement policy to implementations;
+the Section 12.1 rule is PipeStream's own requirement that refused streams
+advance it. The normative observation is that replacement streams keep
+opening beyond the initial allowance (twelve refusals against an allowance of
+four, then a valid transfer). "Back at 4 after each refusal with 0 ms wait"
+is fixture evidence about these two implementations, not a QUIC rule; an
+implementation that batched its MAX_STREAMS advances could satisfy the rule
+without matching that value.
 
 2. Local diagnostics for the bound that ended a transfer (D1, Section 12.1)
 ---------------------------------------------------------------------------
@@ -112,10 +120,87 @@ one-shot client, plus the client's own budget option where it exists); both
 modes are exercised above. CR09 is covered for CONTROL_RESET; disconnect and
 process death remain covered by DurableLifecycleTest/FixtureMainTest.
 
-4. Verification
+4. Lookup during a pending admission (CR04)
+-------------------------------------------
+ClientRecoveryTest.lookupDuringAPendingAdmissionReportsAbsenceAndTheOriginalIdentityCommitsOnce
+(raw/client-recovery-cr04-2026-09-09.log). The library client journals and
+transmits an admission; the authority installs its input and a test hook
+parks the storage worker between INPUT_INSTALLED and the admission commit,
+so the request is genuinely pending and uncommitted (ADMISSION_COMMITTED
+count 0). A second connection of the same owner attaches to the session and
+asks LookupOperation for that identity: NOT_FOUND. The library client itself
+refuses to look up an identity it never journaled, locally, without sending
+(NOT_FOUND, not from the authority): a new identity is never inferred from
+absence. The hook releases; the original completes with Admitted attempt 1;
+the second connection's lookup now returns the identical receipt. Then the
+launcher's one-shot "replay" of the same journaled identity returns the
+retained receipt with no second commit (count stays 1), "lookup" agrees, and
+the journal holds one receipt and nothing unresolved.
+
+5. Local journal I/O failures (CR10)
+------------------------------------
+ClientJournalFaultTest.journalFaultsAreSurfacedAtEveryPersistencePointAndResolvedByTheNextInvocation
+(raw/client-journal-fault-2026-09-09.log). The client journal runs in
+SQLite rollback-journal mode, so a read-only journal directory makes the
+next write transaction fail with a real SQLITE_CANTOPEN from the VFS, as an
+unwritable disk would; no mock and no process kill. Three injection points,
+each through the launcher with client boundary hooks recording what happened:
+  (a) before transmission: the admission intent cannot be journaled ->
+      local INTERNAL_ERROR ("client storage failed"), not from the authority,
+      "UNRESOLVED attempts=1 last=INTERNAL_ERROR not-recoverable" even with a
+      budget; no INTENT_JOURNALED and no REQUEST_SENT for that operation (the
+      session attach was sent; it is not a mutation); zero commits at the
+      authority; after the directory is writable again the journal holds no
+      trace of the operation.
+  (b) while saving the received receipt: the fault is armed at the client's
+      own INTENT_JOURNALED boundary for the declaration, so the intent is
+      journaled and sent, the authority commits, RECEIPT_VALIDATED fires, and
+      journaling the receipt fails -> local INTERNAL_ERROR, no RECEIPT line,
+      no RECEIPT_JOURNALED, the operation listed by "unresolved" with no
+      receipt. Writable again, the one-shot "replay" resolves the same
+      identity from retained state (RECEIPT), and "page --scope 0" shows
+      exactly the two declared entities (one effect). Note: the authority
+      reports DECLARATION_COMMITTED for the replay's idempotent transaction
+      too, so that boundary counts transactions, not effects, for declares.
+  (c) while saving a verified output selection: after a completed admission
+      and a retained manifest, "select" fails locally (INTERNAL_ERROR) while
+      the journal is unwritable; writable again, "select" succeeds and "read"
+      installs the digest-verified output (VERIFIED, bytes identical).
+
+6. Temporary authorization withdrawal, unsafe clock, durable revocation (CR06)
+------------------------------------------------------------------------------
+AuthorizationClockRecoveryTest.temporaryWithdrawalUnsafeClockAndDurableRevocationAreDistinctAndNeverRetried
+(raw/authorization-clock-recovery-2026-09-09.log). The host's OwnerPolicy
+reads a live principal map and the host clock is a test-controlled UtcClock.
+  (a) withdrawal: alice is removed from the owner policy while her credential
+      still maps; the launcher's admission is refused UNAUTHORIZED by the
+      authority; "--retry-budget 3" makes no retry ("UNRESOLVED attempts=1
+      last=UNAUTHORIZED not-recoverable"); a lookup of an earlier receipt on a
+      fresh connection is refused too (reconnecting with a cached receipt
+      grants nothing); no admission effect. Restored, the same journaled
+      identity commits once (Admitted attempt 1, nothing unresolved).
+  (b) unsafe clock: with the clock untrusted, the admission is refused
+      CLOCK_UNSAFE from the authority and never retried; result delivery is
+      refused CLOCK_UNSAFE as well (retention is evaluated against UTC; no
+      output file is left behind), while lookup, watch and manifest keep
+      working under current authorization. A clock one hour behind the
+      durable watermark is refused the same way ("UTC precedes durable
+      watermark"). Trusted again, the same journaled admission commits once
+      and the read installs the verified output.
+  (c) durable revocation: host.revoke(generation) with the owner fully
+      authorized and the clock trusted leaves every session-scoped request
+      UNAUTHORIZED (lookup, admission), with no retry and no restoration.
+      Temporary authorization failure and durable session revocation are
+      thus distinct at the client: the first is resolved by the next
+      invocation after legitimate restoration, the second is not.
+
+7. Verification
 ---------------
 Targeted (offline, pipestream.4 repository):
-  ClientRecoveryTest 2/2 (raw/client-recovery-2026-09-09.log)
+  ClientRecoveryTest 2/2 (raw/client-recovery-2026-09-09.log), then 3/3 with
+    the CR04 scenario (raw/client-recovery-cr04-2026-09-09.log)
+  ClientJournalFaultTest 1/1 (raw/client-journal-fault-2026-09-09.log)
+  AuthorizationClockRecoveryTest 1/1 (raw/authorization-clock-recovery-2026-09-09.log)
   DurableWireNegativeTest 6/6 (raw/wire-credit-observation-2026-09-09.log)
   V2MainProcessTest 1/1 (raw/process-refused-output-2026-09-09.log)
   -Psealed-interop RawPeerRustAuthorityTest 1/1, JavaClientRustServerTest 1/1
@@ -140,3 +225,14 @@ Java artifacts built in that run (sha256):
   pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar  527ae36e2434392de27bb49f9a4af756760c4ad25947cb47d8d56768358a6cc5
   (the shaded jar is not timestamp-reproducible; the plain jar hash is the pin)
 Transport jars unchanged from durable-work-v2-java-drained-streams-2026-09-09.txt.
+
+Second full install after sections 4-6 (tests only; offline, pipestream.4
+repository, under BENCHMARK.lock 12:48:01Z-12:53:45Z):
+  Tests run: 728, Failures: 0, Errors: 0, Skipped: 0; BUILD SUCCESS
+  (725 above + 1 more ClientRecoveryTest + ClientJournalFaultTest 1 +
+   AuthorizationClockRecoveryTest 1)
+  128 fresh surefire XML reports (728 testcases, none with failure/error);
+  sha256 list raw/surefire-xml-client-recovery-2-2026-09-09.sha256
+  (list digest 45752ff990f01fc7fa51cccb7b86be4e25e7b5c0535fc5193dcb7d0e77b1b32c)
+  Raw log: raw/full-install-client-recovery-2-2026-09-09.log
+  Library jar unchanged (ab3c3c78...): no main source changed in this step.

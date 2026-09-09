@@ -118,11 +118,17 @@ reviewed at `b5a3a91`, implemented at the head of this branch; evidence in
   stacks (Rust authority measured by `RawPeerRustAuthorityTest`, Java by
   `DurableWireNegativeTest`); Section 12.1 diagnostics (`REFUSED code=…
   detail=…`, `client capabilities`, REFUSAL details naming the local bound).
-- Still open from the review's delta list, not claimed: CR04's
-  lookup-while-in-flight shape, CR06 (authorization restore, CLOCK_UNSAFE),
-  CR10 (journal I/O fault injection), CR11/CR12 (pacing measurements, Meta's
-  workload territory), CR13 over the wire (keepalives during a stalled
-  transfer). None of these changes a wire behaviour.
+- Covered after that, on the Java authority: CR04 (lookup NOT_FOUND while
+  the original admission is genuinely pending before commit, then one effect
+  and identical receipts; `ClientRecoveryTest`), CR10 (real journal I/O
+  failures before transmission, while saving a receipt and while saving a
+  verified selection; `ClientJournalFaultTest`), CR06 (temporary owner-policy
+  withdrawal and restoration, untrusted and regressed clock, durable
+  revocation kept distinct; `AuthorizationClockRecoveryTest`).
+- Still open, not claimed: CR11/CR12 (pacing measurements, Meta's workload
+  territory), CR13 over the wire (keepalives during a stalled transfer), and
+  the Rust-authority side of CR04/CR06/CR10 (the Rust CLI has no commit-time
+  hooks or injectable clock). None of these changes a wire behaviour.
 - The three spec-text resolutions (12.1 credit replenishment sentence, 12.1
   local-diagnostic sentence, 12.2.1 one-shot paragraph, test-plan preamble and
   CR01/CR14 rows, disposition note outcome) are applied as uncommitted edits
@@ -188,8 +194,8 @@ reviewed at `b5a3a91`, implemented at the head of this branch; evidence in
 mvn -o -Dmaven.repo.local=<transport repo> -Dtest='Durable*Test,FixtureMainTest,V2MainProcessTest' test
 # Rust-peer suites (RawPeerRustAuthorityTest writes target/rust-stream-credit-observations.tsv)
 mvn -o -Dmaven.repo.local=<transport repo> -Psealed-interop -Dtest='RustClientJavaServerTest,JavaClientRustServerTest,RawPeerRustAuthorityTest' test
-# Client recovery modes through the launcher
-mvn -o -Dmaven.repo.local=<transport repo> -Dtest=ClientRecoveryTest test
+# Client recovery modes, journal faults, authorization/clock recovery through the launcher
+mvn -o -Dmaven.repo.local=<transport repo> -Dtest='ClientRecoveryTest,ClientJournalFaultTest,AuthorizationClockRecoveryTest' test
 # Strict changed-type doclint (exit 0 at 18f3728, 21 types)
 javadoc -quiet -package -Xdoclint:all -Werror -sourcepath implementations/java-netty/src/main/java \
   -classpath "$(mvn -o -Dmaven.repo.local=<transport repo> dependency:build-classpath -Dmdep.outputFile=/dev/stdout -q)" \
