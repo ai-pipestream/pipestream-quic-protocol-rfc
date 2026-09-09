@@ -148,8 +148,8 @@ pub fn rows() -> Vec<Row> {
         &[
             "g8-exact-root-complete",
             "g8-child-cut-conflict",
+            "g8-complete-with-pending",
             "g8-detach-drains",
-            "g8-refusals-after-detach",
             "g8-half-close-preserves-responses",
             "g8-timeout-no-completion-claim",
         ],
@@ -207,6 +207,12 @@ pub fn rows() -> Vec<Row> {
         "g5-unmapped-principal",
         "g5-foreign-owner",
         "g5-no-existence-disclosure",
+        "g8-exact-root-complete",
+        "g8-child-cut-conflict",
+        "g8-complete-with-pending",
+        "g8-detach-drains",
+        "g8-half-close-preserves-responses",
+        "g8-timeout-no-completion-claim",
     ] {
         rows.iter_mut()
             .find(|row| row.id == id)
@@ -253,6 +259,14 @@ fn direction_coverage(row: &Row, context: &ScenarioContext) -> String {
         "rust-client/rust-server (rust-client/java-server: named gap — the Java subject \
          exposes no operator revoke command)"
             .to_owned()
+    } else if row.id.starts_with("g8-") && context.java_jar.is_some() {
+        if row.id == "g8-timeout-no-completion-claim" {
+            "rust-client/rust-server (kill variants: lost-reply outcome recording and strict \
+             restart-sequence assertions), rust-client/java-server (kill variant)"
+                .to_owned()
+        } else {
+            "rust-client/rust-server, rust-client/java-server, java-client/rust-server".to_owned()
+        }
     } else if (G3_BATCH_B_ROWS.contains(&row.id)
         || G7_EXPIRY_ROWS.contains(&row.id)
         || G4_ROWS.contains(&row.id)
@@ -346,6 +360,12 @@ fn run_rust_direction(row: &Row, context: &ScenarioContext) -> Result<()> {
         "g5-unmapped-principal" => g5_unmapped_principal(context),
         "g5-foreign-owner" => g5_foreign_owner(context),
         "g5-no-existence-disclosure" => g5_no_existence_disclosure(context),
+        "g8-exact-root-complete" => g8_exact_root_complete(context),
+        "g8-child-cut-conflict" => g8_child_cut_conflict(context),
+        "g8-complete-with-pending" => g8_complete_with_pending(context),
+        "g8-detach-drains" => g8_detach_drains(context),
+        "g8-half-close-preserves-responses" => g8_half_close_preserves_responses(context),
+        "g8-timeout-no-completion-claim" => g8_timeout_no_completion_claim(context),
         other => bail!("scenario {other} has no rust direction implemented"),
     }
 }
@@ -1332,6 +1352,7 @@ fn g1_zero_output_direction(
             ),
         ],
     )?;
+    let input_sha256 = oracle::sha256_hex(&input);
     let input_path = artifacts.join("input.bin");
     fs::write(&input_path, &input)?;
     events.append(
@@ -1502,6 +1523,7 @@ fn g1_oversize_payload_direction(
             ("concurrent_control_op", "next-sequence".into()),
         ],
     )?;
+    let input_sha256 = oracle::sha256_hex(&input);
     let input_path = artifacts.join("input.bin");
     fs::write(&input_path, &input)?;
     events.append(
@@ -3087,6 +3109,7 @@ fn g1_mode2_descendants_direction(
             ),
         ],
     )?;
+    let input_sha256 = oracle::sha256_hex(&input);
     let input_path = artifacts.join("input.bin");
     fs::write(&input_path, &input)?;
     events.append(
@@ -12638,6 +12661,2696 @@ fn g5_no_existence_disclosure_direction(
     stop_and_seal(context, scenario_dir, scenario_id, alice.server, events)
 }
 
+// ---------------------------------------------------------------------------
+// G8: completion/detach rows (milestone 13)
+// ---------------------------------------------------------------------------
+
+/// The exact `ScopeSummary` a COVERAGE/COMPLETED observation commits to,
+/// decoded subject-agnostically (rust Debug `ScopeSummary { .. }`, Java
+/// record `ScopeSummary[..]`).
+#[derive(Debug, PartialEq, Eq)]
+struct G8SummaryView {
+    scope: u64,
+    producer: u64,
+    parent: Option<[u64; 3]>,
+    seal: [u8; 32],
+    declared: u64,
+    counts: [u64; 4],
+    status_root: [u8; 32],
+    closed_at: u64,
+}
+
+/// Remainder of `text` after `marker`, for strictly sequential decoding.
+fn g8_after<'a>(text: &'a str, marker: &str) -> Result<&'a str> {
+    text.split_once(marker)
+        .map(|(_, rest)| rest)
+        .with_context(|| format!("observation lacks {marker:?}:\n{text}"))
+}
+
+fn g8_take_u64(rest: &str) -> Result<(u64, &str)> {
+    let len = rest.bytes().take_while(u8::is_ascii_digit).count();
+    ensure!(len > 0, "expected a decimal in {rest:?}");
+    let value = rest[..len].parse().context("decimal overflows u64")?;
+    Ok((value, &rest[len..]))
+}
+
+/// Decode a rust Debug `Digest([b, b, ..])` decimal byte array.
+fn g8_take_decimal_digest(rest: &str) -> Result<([u8; 32], &str)> {
+    let rest = rest
+        .strip_prefix("Digest([")
+        .context("expected a rust Debug Digest([..])")?;
+    let mut digest = [0u8; 32];
+    let mut cursor = rest;
+    for (index, byte) in digest.iter_mut().enumerate() {
+        let (value, next) = g8_take_u64(cursor)?;
+        ensure!(value <= u64::from(u8::MAX), "digest byte {index} overflows");
+        *byte = value as u8;
+        cursor = next
+            .strip_prefix(if index == 31 { "])" } else { ", " })
+            .with_context(|| format!("digest byte {index} lacks its separator"))?;
+    }
+    Ok((digest, cursor))
+}
+
+/// Decode a bare 64-digit hex digest (the Java rendering of `Digest`).
+fn g8_take_hex_digest(rest: &str) -> Result<([u8; 32], &str)> {
+    let len = rest.bytes().take_while(u8::is_ascii_hexdigit).count();
+    ensure!(
+        len == 64,
+        "expected 64 hex digest digits, got {len} in {rest:?}"
+    );
+    let mut digest = [0u8; 32];
+    for (index, pair) in rest.as_bytes()[..64].chunks_exact(2).enumerate() {
+        digest[index] = u8::from_str_radix(std::str::from_utf8(pair)?, 16)?;
+    }
+    Ok((digest, &rest[64..]))
+}
+
+fn g8_take_until<'a>(rest: &'a str, end: &str) -> Result<(&'a str, &'a str)> {
+    let index = rest
+        .find(end)
+        .with_context(|| format!("observation lacks {end:?} in {rest:?}"))?;
+    Ok((&rest[..index], &rest[index + end.len()..]))
+}
+
+/// Split a rendered record list into per-entry windows: each window runs
+/// from one `marker` to the next (or to the end of the rendering), which is
+/// safe because no field value can contain the marker.
+fn g8_split_blocks<'a>(text: &'a str, marker: &str) -> Vec<&'a str> {
+    let mut blocks = Vec::new();
+    let mut rest = text;
+    while let Some(index) = rest.find(marker) {
+        let after = &rest[index + marker.len()..];
+        let end = after.find(marker).unwrap_or(after.len());
+        blocks.push(&after[..end]);
+        rest = &after[end..];
+    }
+    blocks
+}
+
+fn g8_parse_summary(text: &str) -> Result<G8SummaryView> {
+    if text.contains("ScopeSummary {") {
+        g8_parse_summary_rust(text)
+    } else if text.contains("ScopeSummary[") {
+        g8_parse_summary_java(text)
+    } else {
+        bail!("no ScopeSummary rendering in:\n{text}")
+    }
+}
+
+fn g8_parse_summary_rust(text: &str) -> Result<G8SummaryView> {
+    let rest = g8_after(text, "ScopeSummary {")?;
+    let rest = g8_after(rest, "scope: Number(")?;
+    let (scope, rest) = g8_take_u64(rest)?;
+    let rest = g8_after(rest, "), producer: Producer(")?;
+    let (producer, rest) = g8_take_u64(rest)?;
+    let rest = g8_after(rest, "), parent: ")?;
+    let (parent, rest) = if let Some(rest) = rest.strip_prefix("None") {
+        (None, rest)
+    } else {
+        let rest = g8_after(rest, "Some(WorkKey { scope: Number(")?;
+        let (a, rest) = g8_take_u64(rest)?;
+        let rest = g8_after(rest, "), producer: Producer(")?;
+        let (b, rest) = g8_take_u64(rest)?;
+        let rest = g8_after(rest, "), entity: Id(")?;
+        let (c, rest) = g8_take_u64(rest)?;
+        let rest = g8_after(rest, ") })")?;
+        (Some([a, b, c]), rest)
+    };
+    let rest = g8_after(rest, ", seal: ")?;
+    let (seal, rest) = g8_take_decimal_digest(rest)?;
+    let rest = g8_after(rest, ", declared: Number(")?;
+    let (declared, rest) = g8_take_u64(rest)?;
+    let rest = g8_after(rest, "), counts: Counts { success: Number(")?;
+    let (success, rest) = g8_take_u64(rest)?;
+    let rest = g8_after(rest, "), failure: Number(")?;
+    let (failure, rest) = g8_take_u64(rest)?;
+    let rest = g8_after(rest, "), cancelled: Number(")?;
+    let (cancelled, rest) = g8_take_u64(rest)?;
+    let rest = g8_after(rest, "), skipped: Number(")?;
+    let (skipped, rest) = g8_take_u64(rest)?;
+    let rest = g8_after(rest, ") }, status_root: ")?;
+    let (status_root, rest) = g8_take_decimal_digest(rest)?;
+    let rest = g8_after(rest, ", closed_at: Number(")?;
+    let (closed_at, _rest) = g8_take_u64(rest)?;
+    Ok(G8SummaryView {
+        scope,
+        producer,
+        parent,
+        seal,
+        declared,
+        counts: [success, failure, cancelled, skipped],
+        status_root,
+        closed_at,
+    })
+}
+
+fn g8_parse_summary_java(text: &str) -> Result<G8SummaryView> {
+    let rest = g8_after(text, "ScopeSummary[")?;
+    let rest = g8_after(rest, "scope=")?;
+    let (scope, rest) = g8_take_u64(rest)?;
+    let rest = g8_after(rest, ", producer=")?;
+    let (producer, rest) = g8_take_u64(rest)?;
+    let rest = g8_after(rest, ", parent=")?;
+    let (parent, rest) = if let Some(rest) = rest.strip_prefix("null") {
+        (None, rest)
+    } else {
+        let rest = g8_after(rest, "WorkKey[scope=")?;
+        let (a, rest) = g8_take_u64(rest)?;
+        let rest = g8_after(rest, ", producer=")?;
+        let (b, rest) = g8_take_u64(rest)?;
+        let rest = g8_after(rest, ", entity=")?;
+        let (c, rest) = g8_take_u64(rest)?;
+        let rest = g8_after(rest, "]")?;
+        (Some([a, b, c]), rest)
+    };
+    let rest = g8_after(rest, ", seal=")?;
+    let (seal, rest) = g8_take_hex_digest(rest)?;
+    let rest = g8_after(rest, ", declared=")?;
+    let (declared, rest) = g8_take_u64(rest)?;
+    let rest = g8_after(rest, ", counts=Counts[success=")?;
+    let (success, rest) = g8_take_u64(rest)?;
+    let rest = g8_after(rest, ", failure=")?;
+    let (failure, rest) = g8_take_u64(rest)?;
+    let rest = g8_after(rest, ", cancelled=")?;
+    let (cancelled, rest) = g8_take_u64(rest)?;
+    let rest = g8_after(rest, ", skipped=")?;
+    let (skipped, rest) = g8_take_u64(rest)?;
+    let rest = g8_after(rest, "], statusRoot=")?;
+    let (status_root, rest) = g8_take_hex_digest(rest)?;
+    let rest = g8_after(rest, ", closedAt=")?;
+    let (closed_at, _rest) = g8_take_u64(rest)?;
+    Ok(G8SummaryView {
+        scope,
+        producer,
+        parent,
+        seal,
+        declared,
+        counts: [success, failure, cancelled, skipped],
+        status_root,
+        closed_at,
+    })
+}
+
+/// Decode one MANIFEST observation into the fields the driver's independent
+/// hand-encoding needs. Rust renders `Manifest { .. }` Debug, Java the
+/// `Manifest[..]` record form; both are decoded here.
+fn g8_parse_manifest(text: &str) -> Result<oracle::ManifestView<'_>> {
+    if text.contains("Manifest {") {
+        g8_manifest_rust(text)
+    } else if text.contains("Manifest[") {
+        g8_manifest_java(text)
+    } else {
+        bail!("no Manifest rendering in:\n{text}")
+    }
+}
+
+fn g8_manifest_rust(text: &str) -> Result<oracle::ManifestView<'_>> {
+    let (authority, _) = g8_take_until(g8_after(text, "authority: IdentityLabel(\"")?, "\")")?;
+    let (owner, _) = g8_take_until(g8_after(text, "owner: IdentityLabel(\"")?, "\")")?;
+    let (generation, _) = g8_take_u64(g8_after(text, "generation: Id(")?)?;
+    let rest = g8_after(text, "work: WorkKey {")?;
+    let rest = g8_after(rest, "scope: Number(")?;
+    let (scope, rest) = g8_take_u64(rest)?;
+    let rest = g8_after(rest, "), producer: Producer(")?;
+    let (producer, rest) = g8_take_u64(rest)?;
+    let rest = g8_after(rest, "), entity: Id(")?;
+    let (entity, _) = g8_take_u64(rest)?;
+    let (attempt, _) = g8_take_u64(g8_after(text, "attempt: Id(")?)?;
+    let (input_sha256, _) = g8_take_decimal_digest(g8_after(text, "input_sha256: ")?)?;
+    let (committed_at, _) = g8_take_u64(g8_after(text, "committed_at: Number(")?)?;
+    let (available_until, _) = g8_take_u64(g8_after(text, "available_until: Number(")?)?;
+    let mut outputs = Vec::new();
+    for block in g8_split_blocks(text, "Output {") {
+        let (index, _) = g8_take_u64(g8_after(block, "index: OutputIndex(")?)?;
+        let (length, _) = g8_take_u64(g8_after(block, "length: Number(")?)?;
+        let (sha256, _) = g8_take_decimal_digest(g8_after(block, "sha256: ")?)?;
+        let content = g8_after(block, "content_type: ")?;
+        let content = content.strip_prefix("ApplicationLabel(").unwrap_or(content);
+        let (content_type, _) = g8_take_until(content, "\")")?;
+        let content_type = content_type
+            .strip_prefix('"')
+            .context("rust content_type must be quoted")?;
+        let (locator, _) = g8_take_until(g8_after(block, "locator: ResultLocator(\"")?, "\")")?;
+        outputs.push(oracle::OutputView {
+            index,
+            length,
+            sha256,
+            content_type,
+            locator,
+        });
+    }
+    ensure!(!outputs.is_empty(), "manifest renders no outputs:\n{text}");
+    Ok(oracle::ManifestView {
+        authority,
+        owner,
+        generation,
+        work: [scope, producer, entity],
+        attempt,
+        input_sha256,
+        committed_at,
+        available_until,
+        outputs,
+    })
+}
+
+fn g8_manifest_java(text: &str) -> Result<oracle::ManifestView<'_>> {
+    let (authority, _) = g8_take_until(g8_after(text, "authority=")?, ",")?;
+    let (owner, _) = g8_take_until(g8_after(text, "owner=")?, ",")?;
+    let (generation, _) = g8_take_u64(g8_after(text, "generation=")?)?;
+    let rest = g8_after(text, "work=WorkKey[scope=")?;
+    let (scope, rest) = g8_take_u64(rest)?;
+    let rest = g8_after(rest, ", producer=")?;
+    let (producer, rest) = g8_take_u64(rest)?;
+    let rest = g8_after(rest, ", entity=")?;
+    let (entity, _) = g8_take_u64(rest)?;
+    let (attempt, _) = g8_take_u64(g8_after(text, "attempt=")?)?;
+    let (input_sha256, _) = g8_take_hex_digest(g8_after(text, "inputSha256=")?)?;
+    let (committed_at, _) = g8_take_u64(g8_after(text, "committedAt=")?)?;
+    let (available_until, _) = g8_take_u64(g8_after(text, "availableUntil=")?)?;
+    let mut outputs = Vec::new();
+    for block in g8_split_blocks(text, "Output[") {
+        let (index, rest) = g8_take_u64(g8_after(block, "index=")?)?;
+        let (length, rest) = g8_take_u64(g8_after(rest, ", length=")?)?;
+        let (sha256, rest) = g8_take_hex_digest(g8_after(rest, ", sha256=")?)?;
+        let (content_type, rest) = g8_take_until(g8_after(rest, ", contentType=")?, ", locator=")?;
+        let (locator, _) = g8_take_until(g8_after(rest, "Locator[value=")?, "]")?;
+        outputs.push(oracle::OutputView {
+            index,
+            length,
+            sha256,
+            content_type,
+            locator,
+        });
+    }
+    ensure!(!outputs.is_empty(), "manifest renders no outputs:\n{text}");
+    Ok(oracle::ManifestView {
+        authority,
+        owner,
+        generation,
+        work: [scope, producer, entity],
+        attempt,
+        input_sha256,
+        committed_at,
+        available_until,
+        outputs,
+    })
+}
+
+/// Assert the committed summary fields the driver can independently recompute
+/// (`closed_at` is the subject's own clock and is never asserted here).
+#[allow(clippy::too_many_arguments)]
+fn g8_summary_matches(
+    view: &G8SummaryView,
+    scope: u64,
+    producer: u64,
+    parent: Option<[u64; 3]>,
+    declared: u64,
+    counts: [u64; 4],
+    seal: [u8; 32],
+    status_root: [u8; 32],
+) -> Result<()> {
+    ensure!(
+        view.scope == scope
+            && view.producer == producer
+            && view.parent == parent
+            && view.declared == declared
+            && view.counts == counts
+            && view.seal == seal
+            && view.status_root == status_root,
+        "committed summary does not match the driver's independent recomputation:\n\
+         observed: {view:?}\n\
+         expected: scope={scope} producer={producer} parent={parent:?} declared={declared} \
+         counts={counts:?} seal={} status_root={}",
+        hex(&seal),
+        hex(&status_root)
+    );
+    Ok(())
+}
+
+/// Observe one settled work's MANIFEST print and recompute the digest the
+/// subject committed, verifying every driver-known field first.
+fn g8_manifest_digest(
+    session: &Session,
+    artifacts: &Path,
+    work: &str,
+    expected_input_sha256: &str,
+    expected_len: usize,
+) -> Result<[u8; 32]> {
+    let output = session.op(&["manifest", "--work", work, "--attempt", "1"])?;
+    let stdout = require(&output, "MANIFEST", "manifest operation")?;
+    fs::write(artifacts.join(format!("manifest-{work}.txt")), &stdout)?;
+    let view = g8_parse_manifest(&stdout)?;
+    let mut key = [0u64; 3];
+    let parts: Vec<&str> = work.split(':').collect();
+    ensure!(
+        parts.len() == 3,
+        "work key {work} does not render as scope:producer:entity"
+    );
+    for (index, part) in parts.iter().enumerate() {
+        key[index] = part.parse().context("work key decimal")?;
+    }
+    ensure!(
+        view.work == key,
+        "manifest work {:?} != requested {work}",
+        view.work
+    );
+    ensure!(
+        view.authority == "issuer-a" && view.owner == "alice",
+        "manifest identity {} / {} != issuer-a / alice",
+        view.authority,
+        view.owner
+    );
+    ensure!(
+        view.generation == 1 && view.attempt == 1,
+        "manifest generation/attempt {}/{:?} != 1/1",
+        view.generation,
+        view.attempt
+    );
+    ensure!(
+        hex(&view.input_sha256) == expected_input_sha256,
+        "manifest input sha256 {} != driver {}",
+        hex(&view.input_sha256),
+        expected_input_sha256
+    );
+    ensure!(
+        view.outputs.len() == 1,
+        "settled copy-family work must commit a one-object manifest: {stdout}"
+    );
+    let object = &view.outputs[0];
+    ensure!(
+        object.index == 0 && object.length == expected_len as u64,
+        "manifest output index/length {}/{} != 0/{}",
+        object.index,
+        object.length,
+        expected_len
+    );
+    ensure!(
+        hex(&object.sha256) == expected_input_sha256,
+        "manifest output sha256 {} != driver {}",
+        hex(&object.sha256),
+        expected_input_sha256
+    );
+    ensure!(
+        !object.content_type.is_empty() && object.locator.starts_with("pipestream://"),
+        "manifest output descriptor is not printable: {stdout}"
+    );
+    Ok(oracle::manifest_digest(&view))
+}
+
+/// Checkpoint one scope and verify the committed summary against the driver's
+/// independent recomputation. Returns the decoded summary.
+fn g8_checkpoint_verified(
+    session: &Session,
+    artifacts: &Path,
+    name: &str,
+    scope: u64,
+    seal_hex: &str,
+    expected: &G8SummaryView,
+) -> Result<G8SummaryView> {
+    // The client journal only accepts a coverage validation for a scope it has
+    // observed (membership must be verified client-side before the returned
+    // summary is trusted); page the scope first, like g1-mode1-branch.
+    let (_page_stdout, page) = observe_scope_page(session, scope, 0, 256)?;
+    ensure!(
+        page.seal.as_deref() == Some(seal_hex),
+        "checkpoint scope {scope}: committed seal {:?} != oracle {seal_hex}",
+        page.seal
+    );
+    let output = session.op(&[
+        "checkpoint",
+        "--scope",
+        &scope.to_string(),
+        "--seal",
+        seal_hex,
+    ])?;
+    let stdout = require(&output, "COVERAGE", "checkpoint operation")?;
+    fs::write(artifacts.join(name), &stdout)?;
+    let view = g8_parse_summary(&stdout)?;
+    g8_summary_matches(
+        &view,
+        expected.scope,
+        expected.producer,
+        expected.parent,
+        expected.declared,
+        expected.counts,
+        expected.seal,
+        expected.status_root,
+    )?;
+    Ok(view)
+}
+
+/// Hex-decode a 64-digit oracle digest string into bytes for summary
+/// comparison.
+fn g8_hex_digest(digest: &str) -> Result<[u8; 32]> {
+    let (bytes, rest) = g8_take_hex_digest(digest)?;
+    ensure!(rest.is_empty(), "trailing data after digest {digest}");
+    Ok(bytes)
+}
+
+// ---------------------------------------------------------------------------
+// Row 1: g8-exact-root-complete
+// ---------------------------------------------------------------------------
+
+/// g8-exact-root-complete: a session holding a leaf copy, a reassemble/v2
+/// mode-1 branch and a chunk-copy/v2 mode-2 branch settles bottom-up; the
+/// driver checkpoints the child scopes then the root and completes. Every
+/// committed field of every COVERAGE/COMPLETED summary — counters, seal,
+/// status root — is recomputed independently from the MANIFEST prints
+/// (hand-encoded CBOR, oracle.rs) and must match byte for byte.
+fn g8_exact_root_complete(context: &ScenarioContext) -> Result<()> {
+    run_three_directions(
+        context,
+        "g8-exact-root-complete",
+        g8_exact_root_complete_direction,
+    )
+}
+
+fn g8_exact_root_complete_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let scenario_id = "g8-exact-root-complete";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, client)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+    let session = setup_session(context, scenario_dir, server, client)?;
+
+    let leaf_bytes = oracle::dataset(context.seed ^ 0x1eaf, G8_LEAF_INPUT_LEN);
+    let mode1_bytes = oracle::dataset(context.seed, MODE1_PART_ONE_LEN + MODE1_PART_TWO_LEN);
+    let part_one = &mode1_bytes[..MODE1_PART_ONE_LEN];
+    let part_two = &mode1_bytes[MODE1_PART_ONE_LEN..];
+    // 256 KiB divides into exactly four 64 KiB mode-2 chunks.
+    let mode2_bytes = oracle::dataset(context.seed ^ 0x2bad, G8_MODE2_INPUT_LEN);
+    let leaf_sha256 = oracle::sha256_hex(&leaf_bytes);
+    let mode1_sha256 = oracle::sha256_hex(&mode1_bytes);
+    let mode2_sha256 = oracle::sha256_hex(&mode2_bytes);
+    let mode2_ids: Vec<u64> = (1..=4).collect();
+    let scope1_seal =
+        oracle::scope_seal_hex("issuer-a", "alice", 1, 1, 0, Some([0, 0, 2]), &[1, 2]);
+    let scope2_seal =
+        oracle::scope_seal_hex("issuer-a", "alice", 1, 2, 1, Some([0, 0, 3]), &mode2_ids);
+    let root_seal = oracle::scope_seal_hex("issuer-a", "alice", 1, 0, 0, None, &[1, 2, 3]);
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "root_members",
+                "0:0:1 copy/v2 mode 0, 0:0:2 reassemble/v2 mode 1, 0:0:3 chunk-copy/v2 mode 2"
+                    .into(),
+            ),
+            (
+                "child_scope_1",
+                "1:0 over [1,2] (mode-1, parent 0:0:2)".into(),
+            ),
+            (
+                "child_scope_2",
+                "2:1 over [1,2,3,4] (mode-2, parent 0:0:3)".into(),
+            ),
+            ("expected_child_1_seal_sha256", scope1_seal.clone()),
+            ("expected_child_2_seal_sha256", scope2_seal.clone()),
+            ("expected_root_seal_sha256", root_seal.clone()),
+            (
+                "expected_root_counts",
+                "declared=3 success=3 failure=0 cancelled=0 skipped=0".into(),
+            ),
+            (
+                "expected_child_1_counts",
+                "declared=2 success=2 failure=0 cancelled=0 skipped=0".into(),
+            ),
+            (
+                "expected_child_2_counts",
+                "declared=4 success=4 failure=0 cancelled=0 skipped=0".into(),
+            ),
+            (
+                "status_root",
+                "driver recomputes every manifest digest from the MANIFEST prints and folds \
+                 status leaves entity-ascending (oracle::status_root); committed COVERAGE and \
+                 COMPLETED status roots must match"
+                    .into(),
+            ),
+        ],
+    )?;
+    let leaf_path = artifacts.join("leaf-input.bin");
+    fs::write(&leaf_path, &leaf_bytes)?;
+    let mode1_path = artifacts.join("mode1-input.bin");
+    fs::write(&mode1_path, &mode1_bytes)?;
+    let part_one_path = artifacts.join("child-part-1.bin");
+    fs::write(&part_one_path, part_one)?;
+    let part_two_path = artifacts.join("child-part-2.bin");
+    fs::write(&part_two_path, part_two)?;
+    let mode2_path = artifacts.join("mode2-input.bin");
+    fs::write(&mode2_path, &mode2_bytes)?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("alpn", "pipestream/2".into()),
+    ];
+
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "client binding")?;
+
+    let root_declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1, 2, 3])?;
+    admit_modeled(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-leaf",
+        &root_declare,
+        "0:0:1",
+        &leaf_path,
+        "copy/v2",
+        0,
+        1,
+    )?;
+    admit_modeled(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-mode1",
+        &root_declare,
+        "0:0:2",
+        &mode1_path,
+        "reassemble/v2",
+        1,
+        1,
+    )?;
+    admit_modeled(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-mode2",
+        &root_declare,
+        "0:0:3",
+        &mode2_path,
+        "chunk-copy/v2",
+        2,
+        1,
+    )?;
+    observed.push((
+        "root_admissions",
+        "0:0:1 copy/v2 mode 0, 0:0:2 reassemble/v2 mode 1, 0:0:3 chunk-copy/v2 mode 2".into(),
+    ));
+
+    // Leaf settles on its own.
+    watch_terminal(
+        &session,
+        &mut events,
+        "0:0:1",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit-leaf", 1)),
+        WATCH_TIMEOUT,
+    )?;
+
+    // Mode-1 branch: the caller declares and admits the child parts.
+    let (child_declare, _receipt) = declare_scoped_batch(
+        &session,
+        &mut events,
+        context.seed,
+        "declare-child",
+        0,
+        1,
+        &[1, 2],
+        true,
+    )?;
+    admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-child-1",
+        &child_declare,
+        "1:0:1",
+        &part_one_path,
+    )?;
+    watch_terminal(
+        &session,
+        &mut events,
+        "1:0:1",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit-child-1", 1)),
+        WATCH_TIMEOUT,
+    )?;
+    admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-child-2",
+        &child_declare,
+        "1:0:2",
+        &part_two_path,
+    )?;
+    watch_terminal(
+        &session,
+        &mut events,
+        "1:0:2",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit-child-2", 1)),
+        WATCH_TIMEOUT,
+    )?;
+    watch_terminal(
+        &session,
+        &mut events,
+        "0:0:2",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit-mode1", 1)),
+        WATCH_TIMEOUT,
+    )?;
+    observed.push((
+        "mode1_branch",
+        "1:0:1, 1:0:2 settled; 0:0:2 settled after both".into(),
+    ));
+
+    // Mode-2 branch: the authority declares and executes the four chunks.
+    let mut expansion = None;
+    for _ in 0..300 {
+        let (text, page) = observe_scope_page(&session, 2, 0, 256)?;
+        if page.declared == 4 && page.seal.as_deref() == Some(scope2_seal.as_str()) {
+            expansion = Some((text, page));
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    let (expansion_text, expansion_page) = expansion
+        .context("authority expansion did not declare the four mode-2 children within 15s")?;
+    fs::write(artifacts.join("child-scope-2-page.txt"), &expansion_text)?;
+    ensure!(
+        expansion_page.producer == 1,
+        "mode-2 child scope producer must be 1, got {}",
+        expansion_page.producer
+    );
+    ensure!(
+        expansion_page.membership_verified,
+        "sealed mode-2 child scope page must verify membership"
+    );
+    observed.push((
+        "mode2_expansion",
+        format!(
+            "scope 2:1 declared={} seal_matches_oracle=true",
+            expansion_page.declared
+        ),
+    ));
+    let mode2_children = expansion_page.declared;
+    let mut samples = String::new();
+    let mut rounds = 0;
+    loop {
+        rounds += 1;
+        let mut child_states = Vec::new();
+        let mut children_terminal = true;
+        for entity in 1..=mode2_children {
+            let stdout = session.watch(&format!("2:1:{entity}"))?;
+            let state = parse_state(&stdout)?;
+            if state != 5 {
+                children_terminal = false;
+            }
+            child_states.push(state);
+        }
+        let parent_state = parse_state(&session.watch("0:0:3")?)?;
+        samples.push_str(&format!(
+            "round={rounds} children={child_states:?} parent={parent_state}\n"
+        ));
+        if parent_state == 5 {
+            ensure!(
+                children_terminal,
+                "mode-2 parent settled while children were nonterminal: {child_states:?}"
+            );
+            break;
+        }
+        ensure!(
+            rounds < 600,
+            "mode-2 parent did not settle within the polling window\n{samples}"
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+    fs::write(artifacts.join("mode2-settle-samples.txt"), &samples)?;
+    watch_terminal(
+        &session,
+        &mut events,
+        "0:0:3",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit-mode2", 1)),
+        WATCH_TIMEOUT,
+    )?;
+    observed.push((
+        "mode2_settle_order",
+        format!("0:0:3 terminal after all 2:1 children terminal; rounds={rounds}"),
+    ));
+
+    // Independent recomputation: decode every committed manifest and fold the
+    // status leaves entity-ascending exactly like the subject's StatusRoot.
+    let leaf_digest = g8_manifest_digest(
+        &session,
+        &artifacts,
+        "0:0:1",
+        &leaf_sha256,
+        G8_LEAF_INPUT_LEN,
+    )?;
+    let mode1_digest = g8_manifest_digest(
+        &session,
+        &artifacts,
+        "0:0:2",
+        &mode1_sha256,
+        mode1_bytes.len(),
+    )?;
+    let mode2_digest = g8_manifest_digest(
+        &session,
+        &artifacts,
+        "0:0:3",
+        &mode2_sha256,
+        G8_MODE2_INPUT_LEN,
+    )?;
+    let child1_digest = g8_manifest_digest(
+        &session,
+        &artifacts,
+        "1:0:1",
+        &oracle::sha256_hex(part_one),
+        part_one.len(),
+    )?;
+    let child2_digest = g8_manifest_digest(
+        &session,
+        &artifacts,
+        "1:0:2",
+        &oracle::sha256_hex(part_two),
+        part_two.len(),
+    )?;
+    let scope1_root = oracle::status_root(&[
+        oracle::status_leaf([1, 0, 1], 5, 1, Some(child1_digest), None),
+        oracle::status_leaf([1, 0, 2], 5, 1, Some(child2_digest), None),
+    ]);
+    let mut scope2_leaves = Vec::new();
+    for (index, entity) in mode2_ids.iter().enumerate() {
+        let start = index * MODE2_CHUNK_LEN;
+        let end = ((index + 1) * MODE2_CHUNK_LEN).min(G8_MODE2_INPUT_LEN);
+        let digest = g8_manifest_digest(
+            &session,
+            &artifacts,
+            &format!("2:1:{entity}"),
+            &oracle::sha256_hex(&mode2_bytes[start..end]),
+            end - start,
+        )?;
+        scope2_leaves.push(oracle::status_leaf(
+            [2, 1, *entity],
+            5,
+            1,
+            Some(digest),
+            None,
+        ));
+    }
+    let scope2_root = oracle::status_root(&scope2_leaves);
+    let scope0_root = oracle::status_root(&[
+        oracle::status_leaf([0, 0, 1], 5, 1, Some(leaf_digest), None),
+        oracle::status_leaf([0, 0, 2], 5, 1, Some(mode1_digest), Some(scope1_root)),
+        oracle::status_leaf([0, 0, 3], 5, 1, Some(mode2_digest), Some(scope2_root)),
+    ]);
+    observed.push((
+        "status_tree",
+        "manifest digests recomputed from MANIFEST prints; scope 1 (2 leaves), scope 2 (4 \
+         leaves), scope 0 (3 leaves with child_status_root folds) folded driver-side"
+            .into(),
+    ));
+
+    // Settlement bottom-up: child checkpoints, root checkpoint, complete.
+    // Every committed field is verified against the recomputation above.
+    let scope1_expectation = G8SummaryView {
+        scope: 1,
+        producer: 0,
+        parent: Some([0, 0, 2]),
+        seal: g8_hex_digest(&scope1_seal)?,
+        declared: 2,
+        counts: [2, 0, 0, 0],
+        status_root: scope1_root,
+        closed_at: 0,
+    };
+    g8_checkpoint_verified(
+        &session,
+        &artifacts,
+        "coverage-scope-1.txt",
+        1,
+        &scope1_seal,
+        &scope1_expectation,
+    )?;
+    observed.push((
+        "coverage_scope_1",
+        "declared=2 counts=[2,0,0,0] seal+status_root match driver recomputation".into(),
+    ));
+    let scope2_expectation = G8SummaryView {
+        scope: 2,
+        producer: 1,
+        parent: Some([0, 0, 3]),
+        seal: g8_hex_digest(&scope2_seal)?,
+        declared: mode2_children,
+        counts: [mode2_children, 0, 0, 0],
+        status_root: scope2_root,
+        closed_at: 0,
+    };
+    g8_checkpoint_verified(
+        &session,
+        &artifacts,
+        "coverage-scope-2.txt",
+        2,
+        &scope2_seal,
+        &scope2_expectation,
+    )?;
+    observed.push((
+        "coverage_scope_2",
+        "declared=4 counts=[4,0,0,0] seal+status_root match driver recomputation".into(),
+    ));
+    let root_expectation = G8SummaryView {
+        scope: 0,
+        producer: 0,
+        parent: None,
+        seal: g8_hex_digest(&root_seal)?,
+        declared: 3,
+        counts: [3, 0, 0, 0],
+        status_root: scope0_root,
+        closed_at: 0,
+    };
+    let root_coverage = g8_checkpoint_verified(
+        &session,
+        &artifacts,
+        "coverage-root.txt",
+        0,
+        &root_seal,
+        &root_expectation,
+    )?;
+    observed.push((
+        "coverage_root",
+        "declared=3 counts=[3,0,0,0] seal+status_root match driver recomputation".into(),
+    ));
+
+    let completed = session.op(&["complete"])?;
+    let completed_stdout = require(&completed, "COMPLETED", "complete operation")?;
+    fs::write(artifacts.join("complete.txt"), &completed_stdout)?;
+    let completed_view = g8_parse_summary(&completed_stdout)?;
+    g8_summary_matches(
+        &completed_view,
+        0,
+        0,
+        None,
+        3,
+        [3, 0, 0, 0],
+        g8_hex_digest(&root_seal)?,
+        scope0_root,
+    )?;
+    ensure!(
+        completed_view == root_coverage,
+        "COMPLETED summary must replay the exact durable root coverage:\n\
+         completed: {completed_view:?}\n coverage: {root_coverage:?}"
+    );
+    observed.push((
+        "completed",
+        "COMPLETED replays the exact root coverage (all fields equal)".into(),
+    ));
+
+    // The settled aggregate outputs stay byte-exact.
+    let mode1_out = read_output_verified(
+        &session,
+        &mut events,
+        "0:0:2",
+        1,
+        &mode1_bytes,
+        &mode1_sha256,
+        &artifacts,
+        "mode1-output.bin",
+    )?;
+    let mode2_out = read_output_verified(
+        &session,
+        &mut events,
+        "0:0:3",
+        1,
+        &mode2_bytes,
+        &mode2_sha256,
+        &artifacts,
+        "mode2-output.bin",
+    )?;
+    ensure!(mode1_out == mode1_sha256 && mode2_out == mode2_sha256);
+
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+
+    detach(&session)?;
+    stop_and_seal(context, scenario_dir, scenario_id, session.server, events)
+}
+
+// ---------------------------------------------------------------------------
+// Row 2: g8-child-cut-conflict
+// ---------------------------------------------------------------------------
+
+/// g8-child-cut-conflict: completion must cut the exact committed root. The
+/// published CLIs submit only the journaled root coverage — neither can send
+/// a child, altered or arbitrary summary (named CLI-surface gap; the server's
+/// Conflict arms are documented from src/v2/authority/scopes.rs). The row
+/// exercises every refusal layer the surface can reach: a checkpoint under a
+/// wrong seal refuses INTEGRITY_ERROR at the authority; a complete with only
+/// child coverage saved refuses in the client journal; the correct root
+/// coverage completes exactly once and a second complete refuses.
+fn g8_child_cut_conflict(context: &ScenarioContext) -> Result<()> {
+    run_three_directions(
+        context,
+        "g8-child-cut-conflict",
+        g8_child_cut_conflict_direction,
+    )
+}
+
+fn g8_child_cut_conflict_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let scenario_id = "g8-child-cut-conflict";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, client)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+    let session = setup_session(context, scenario_dir, server, client)?;
+
+    let parent_bytes = oracle::dataset(context.seed, MODE1_PART_ONE_LEN + MODE1_PART_TWO_LEN);
+    let part_one = &parent_bytes[..MODE1_PART_ONE_LEN];
+    let part_two = &parent_bytes[MODE1_PART_ONE_LEN..];
+    let parent_sha256 = oracle::sha256_hex(&parent_bytes);
+    let child_seal = oracle::scope_seal_hex("issuer-a", "alice", 1, 1, 0, Some([0, 0, 1]), &[1, 2]);
+    let root_seal = oracle::scope_seal_hex("issuer-a", "alice", 1, 0, 0, None, &[1]);
+    let mut altered_seal = g8_hex_digest(&root_seal)?;
+    altered_seal[0] ^= 0xff;
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("parent_work", "0:0:1 reassemble/v2 mode 1".into()),
+            ("child_scope", "1:0 over [1,2]".into()),
+            ("expected_child_seal_sha256", child_seal.clone()),
+            ("expected_root_seal_sha256", root_seal.clone()),
+            (
+                "submitted_summary_surface",
+                "named gap: neither published CLI accepts a submitted ScopeSummary; the rust \
+                 client replays the journaled root coverage (operations.rs cut()) and the java \
+                 client its saved coverage; the authority Conflict arms (drain does not name \
+                 attached root / root summary changed, scopes.rs complete_session) are not \
+                 reachable through the CLIs — documented from code inspection"
+                    .into(),
+            ),
+            (
+                "wrong_seal_checkpoint",
+                "named refusal of the wrong-seal checkpoint: INTEGRITY_ERROR (8) at the \
+                 authority (rust client submits the cut), or NOT_READY at the java client \
+                 journal (pre-submit seal-vs-membership check) — the request must never \
+                 validate"
+                    .into(),
+            ),
+            (
+                "child_only_complete",
+                "client-journal refusal: root coverage is the only submittable cut".into(),
+            ),
+            (
+                "correct_complete",
+                "COMPLETED once; a second complete replays the identical durable completion or \
+                 refuses named — both prove no second completion claim"
+                    .into(),
+            ),
+        ],
+    )?;
+    let parent_path = artifacts.join("parent-input.bin");
+    fs::write(&parent_path, &parent_bytes)?;
+    let part_one_path = artifacts.join("child-part-1.bin");
+    fs::write(&part_one_path, part_one)?;
+    let part_two_path = artifacts.join("child-part-2.bin");
+    fs::write(&part_two_path, part_two)?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("alpn", "pipestream/2".into()),
+    ];
+
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "client binding")?;
+    let root_declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
+    admit_modeled(
+        &session,
+        &mut events,
+        context.seed,
+        "admit",
+        &root_declare,
+        "0:0:1",
+        &parent_path,
+        "reassemble/v2",
+        1,
+        1,
+    )?;
+    let (child_declare, _receipt) = declare_scoped_batch(
+        &session,
+        &mut events,
+        context.seed,
+        "declare-child",
+        0,
+        1,
+        &[1, 2],
+        true,
+    )?;
+    admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-child-1",
+        &child_declare,
+        "1:0:1",
+        &part_one_path,
+    )?;
+    watch_terminal(
+        &session,
+        &mut events,
+        "1:0:1",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit-child-1", 1)),
+        WATCH_TIMEOUT,
+    )?;
+    admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-child-2",
+        &child_declare,
+        "1:0:2",
+        &part_two_path,
+    )?;
+    watch_terminal(
+        &session,
+        &mut events,
+        "1:0:2",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit-child-2", 1)),
+        WATCH_TIMEOUT,
+    )?;
+    watch_terminal(
+        &session,
+        &mut events,
+        "0:0:1",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit", 1)),
+        WATCH_TIMEOUT,
+    )?;
+    observed.push(("settled", "0:0:1 over 1:0:1 + 1:0:2".into()));
+
+    // Record the sealed root membership in the journal first: the java client
+    // refuses a checkpoint for a scope its journal has not observed, and the
+    // wrong-seal probe below must reach the authority (named INTEGRITY_ERROR)
+    // in every direction.
+    let (_root_page, root_page) = observe_page(&session, 0, 256)?;
+    ensure!(
+        root_page.seal.as_deref() == Some(root_seal.as_str()),
+        "committed root seal {:?} != oracle {root_seal}",
+        root_page.seal
+    );
+
+    // Probe (a): checkpoint under an altered seal refuses named. The rust
+    // client submits the cut and the authority answers INTEGRITY_ERROR; the
+    // java journal pre-validates the submitted seal against its observed
+    // membership and refuses NOT_READY before anything reaches the wire.
+    // Both are named refusals of the wrong-seal checkpoint.
+    let wrong = expect_failure(
+        &session,
+        &artifacts,
+        "checkpoint-wrong-seal-refusal.txt",
+        &["checkpoint", "--scope", "0", "--seal", &hex(&altered_seal)],
+    )?;
+    let named = refusal_named_line(&wrong, &["INTEGRITY_ERROR"])
+        .map(|line| format!("authority: {line}"))
+        .or_else(|| {
+            refusal_named_line(&wrong, &["NOT_READY"])
+                .map(|line| format!("client journal pre-submit: {line}"))
+        })
+        .with_context(|| {
+            format!(
+                "checkpoint under an altered seal must refuse named (authority \
+                 INTEGRITY_ERROR or client-journal NOT_READY):\n{wrong}"
+            )
+        })?;
+    observed.push(("checkpoint_wrong_seal", named));
+
+    // Probe (b): saving only the child coverage, then complete, must refuse —
+    // the client can only submit the journaled ROOT cut. The journal accepts
+    // the child coverage only after observing the sealed child scope page
+    // (membership verification, like g3-restart-same-roots).
+    let (_child_page, child_page) = observe_scope_page(&session, 1, 0, 256)?;
+    ensure!(
+        child_page.seal.as_deref() == Some(child_seal.as_str()),
+        "committed child seal {:?} != oracle {child_seal}",
+        child_page.seal
+    );
+    let child_coverage = session.op(&["checkpoint", "--scope", "1", "--seal", &child_seal])?;
+    require(&child_coverage, "COVERAGE", "child checkpoint")?;
+    fs::write(
+        artifacts.join("coverage-child-only.txt"),
+        String::from_utf8_lossy(&child_coverage.stdout).into_owned(),
+    )?;
+    let child_only = expect_failure(
+        &session,
+        &artifacts,
+        "complete-child-only-refusal.txt",
+        &["complete"],
+    )?;
+    observed.push((
+        "complete_child_only_coverage",
+        format!(
+            "refused before any completion claim (client journal layer): {}",
+            child_only
+                .lines()
+                .find(|line| !line.is_empty())
+                .unwrap_or("no output")
+        ),
+    ));
+    // The refusals must not have disturbed the session.
+    let view = session.watch("0:0:1")?;
+    ensure!(
+        parse_state(&view)? == 5,
+        "session must still answer with the settled parent after the refusals"
+    );
+    observed.push(("session_open_after_refusals", "true".into()));
+
+    // Correct settlement: root coverage, complete exactly once.
+    let root_coverage = session.op(&["checkpoint", "--scope", "0", "--seal", &root_seal])?;
+    let root_stdout = require(&root_coverage, "COVERAGE", "root checkpoint")?;
+    fs::write(artifacts.join("coverage-root.txt"), &root_stdout)?;
+    let root_view = g8_parse_summary(&root_stdout)?;
+    g8_summary_matches(
+        &root_view,
+        0,
+        0,
+        None,
+        1,
+        [1, 0, 0, 0],
+        g8_hex_digest(&root_seal)?,
+        root_view.status_root,
+    )?;
+    let completed = session.op(&["complete"])?;
+    let completed_stdout = require(&completed, "COMPLETED", "complete operation")?;
+    fs::write(artifacts.join("complete.txt"), &completed_stdout)?;
+    let completed_view = g8_parse_summary(&completed_stdout)?;
+    ensure!(
+        completed_view == root_view,
+        "COMPLETED must replay the exact durable root coverage:\n\
+         completed: {completed_view:?}\n coverage: {root_view:?}"
+    );
+    observed.push((
+        "complete",
+        "COMPLETED equals the saved root coverage".into(),
+    ));
+
+    // A second complete: the session is durably complete. The published
+    // surface answers with the durable completion itself (the client replays
+    // its journaled cut; the authority's idempotent replay echoes it) or
+    // refuses named — either proves no second completion is claimed.
+    let second = session.op(&["complete"])?;
+    let second_text = transcript(&second);
+    fs::write(artifacts.join("complete-second.txt"), &second_text)?;
+    if second.status.success() {
+        let stdout = require(&second, "COMPLETED", "second complete replay")?;
+        let second_view = g8_parse_summary(&stdout)?;
+        ensure!(
+            second_view == completed_view,
+            "a replayed second complete must equal the first completion:\n\
+             second: {second_view:?}\n first: {completed_view:?}"
+        );
+        observed.push((
+            "complete_second",
+            "replayed the durable completion identical to the first COMPLETED — no second \
+             claim"
+                .into(),
+        ));
+    } else {
+        let probe = probe_outcome(&second);
+        ensure!(
+            !probe.stdout.contains("COMPLETED"),
+            "a refused second complete must never print a completion claim:\n{second_text}"
+        );
+        observed.push((
+            "complete_second",
+            format!(
+                "refused without a completion claim: exit={} refusal={:?}",
+                probe.exit, probe.refusal
+            ),
+        ));
+    }
+
+    let output_sha256 = read_output_verified(
+        &session,
+        &mut events,
+        "0:0:1",
+        1,
+        &parent_bytes,
+        &parent_sha256,
+        &artifacts,
+        "parent-output.bin",
+    )?;
+    ensure!(output_sha256 == parent_sha256);
+
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+
+    stop_and_seal(context, scenario_dir, scenario_id, session.server, events)
+}
+
+/// Wrap one captured `expect_failure` transcript (the `exit=/stdout:/stderr:`
+/// text) into a ProbeOutcome for classification.
+fn probe_outcome_from_transcript(text: &str) -> ProbeOutcome {
+    let exit = text
+        .lines()
+        .find_map(|line| line.strip_prefix("exit="))
+        .unwrap_or("unknown")
+        .to_owned();
+    let stdout = text
+        .split_once("stdout:\n")
+        .map(|(_, rest)| rest.split_once("stderr:\n").map_or(rest, |(out, _)| out))
+        .unwrap_or_default()
+        .to_owned();
+    let stderr = text
+        .split_once("stderr:\n")
+        .map(|(_, rest)| rest)
+        .unwrap_or_default()
+        .to_owned();
+    let refusal = stderr.lines().find_map(|line| {
+        if let Some(rest) = line.strip_prefix("connection lost: closed by peer: ") {
+            let name: String = rest
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphabetic() || *ch == '_')
+                .collect();
+            return REFUSAL_CODES
+                .iter()
+                .find(|(known, _)| *known == name)
+                .map(|(_, code)| (*code, line.to_owned()));
+        }
+        if let Some(rest) = line.strip_prefix("authority refusal ") {
+            let name: String = rest
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphabetic() || *ch == '_')
+                .collect();
+            return REFUSAL_CODES
+                .iter()
+                .find(|(known, _)| *known == name)
+                .map(|(_, code)| (*code, line.to_owned()));
+        }
+        let (head, _) = line.split_once(": ")?;
+        REFUSAL_CODES
+            .iter()
+            .find(|(known, _)| *known == head)
+            .map(|(_, code)| (*code, line.to_owned()))
+    });
+    ProbeOutcome {
+        success: exit == "exit status: 0",
+        exit,
+        stdout,
+        stderr,
+        refusal,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Row 3: g8-complete-with-pending
+// ---------------------------------------------------------------------------
+
+/// g8-complete-with-pending: completion while obligations are open must
+/// refuse without claiming completion. (a) A mode-1 parent held in
+/// WAITING_CHILDREN refuses `complete` (client journal layer — no root
+/// coverage saved) and refuses a root checkpoint at the authority (named
+/// wire code); nothing settles early. After bottom-up settlement the same
+/// checkpoint + complete succeed. (b) A live transfer on the completing
+/// connection is not expressible through the single-shot CLIs (named gap:
+/// each op is its own connection and the client journal lease serializes a
+/// journal to one process); the row approximates with a large result
+/// download in flight on a second journal while `complete` runs.
+fn g8_complete_with_pending(context: &ScenarioContext) -> Result<()> {
+    run_three_directions(
+        context,
+        "g8-complete-with-pending",
+        g8_complete_with_pending_direction,
+    )
+}
+
+fn g8_complete_with_pending_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let scenario_id = "g8-complete-with-pending";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, client)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+    let session = setup_session(context, scenario_dir, server, client)?;
+
+    let leaf_bytes = oracle::dataset(context.seed ^ 0x5eed, G8_LEAF_INPUT_LEN);
+    let leaf_sha256 = oracle::sha256_hex(&leaf_bytes);
+    let parent_bytes = oracle::dataset(context.seed, MODE1_PART_ONE_LEN + MODE1_PART_TWO_LEN);
+    let part_one = &parent_bytes[..MODE1_PART_ONE_LEN];
+    let part_two = &parent_bytes[MODE1_PART_ONE_LEN..];
+    let root_seal = oracle::scope_seal_hex("issuer-a", "alice", 1, 0, 0, None, &[1, 2]);
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "root_members",
+                "0:0:1 copy/v2 (settled first), 0:0:2 reassemble/v2 mode 1 (held)".into(),
+            ),
+            ("expected_root_seal_sha256", root_seal.clone()),
+            (
+                "complete_pending_parent",
+                "refusal, never a COMPLETED claim; parent must stay nonterminal".into(),
+            ),
+            (
+                "checkpoint_open_root",
+                "named wire refusal while obligations are open (actual code recorded)".into(),
+            ),
+            (
+                "live_transfer_same_connection",
+                "named gap: single-shot CLI ops each own a connection; approximated by a \
+                 concurrent download on a second journal"
+                    .into(),
+            ),
+            (
+                "child_checkpoint",
+                "descendant COVERAGE before root COVERAGE (bottom-up settlement; the authority \
+                 refuses a root checkpoint while descendant coverage is missing)"
+                    .into(),
+            ),
+            ("settled_complete", "root COVERAGE then COMPLETED".into()),
+        ],
+    )?;
+    let leaf_path = artifacts.join("leaf-input.bin");
+    fs::write(&leaf_path, &leaf_bytes)?;
+    let parent_path = artifacts.join("parent-input.bin");
+    fs::write(&parent_path, &parent_bytes)?;
+    let part_one_path = artifacts.join("child-part-1.bin");
+    fs::write(&part_one_path, part_one)?;
+    let part_two_path = artifacts.join("child-part-2.bin");
+    fs::write(&part_two_path, part_two)?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("alpn", "pipestream/2".into()),
+    ];
+
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "client binding")?;
+    let root_declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1, 2])?;
+    admit_modeled(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-leaf",
+        &root_declare,
+        "0:0:1",
+        &leaf_path,
+        "copy/v2",
+        0,
+        1,
+    )?;
+    watch_terminal(
+        &session,
+        &mut events,
+        "0:0:1",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit-leaf", 1)),
+        WATCH_TIMEOUT,
+    )?;
+    admit_modeled(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-parent",
+        &root_declare,
+        "0:0:2",
+        &parent_path,
+        "reassemble/v2",
+        1,
+        1,
+    )?;
+    let held = session.watch("0:0:2")?;
+    let held_state = parse_state(&held)?;
+    ensure!(
+        held_state == 3,
+        "mode-1 parent with an un-admitted child scope must sit in WAITING_CHILDREN (3), got {held_state}"
+    );
+    observed.push(("parent_held_state", held_state.to_string()));
+
+    // Record the sealed root membership in the journal up front: the open-root
+    // checkpoint refusal below must come from the authority (named wire code),
+    // not from the client-side membership check, and the settled checkpoint at
+    // the end validates the returned summary against this observation.
+    let (_root_page, root_page) = observe_page(&session, 0, 256)?;
+    ensure!(
+        root_page.seal.as_deref() == Some(root_seal.as_str()),
+        "committed root seal {:?} != oracle {root_seal}",
+        root_page.seal
+    );
+
+    // (a) complete against pending obligations: refusal, no completion claim.
+    let complete_pending = expect_failure(
+        &session,
+        &artifacts,
+        "complete-pending-refusal.txt",
+        &["complete"],
+    )?;
+    let complete_probe = probe_outcome_from_transcript(&complete_pending);
+    ensure!(
+        !complete_probe.stdout.contains("COMPLETED"),
+        "complete against pending obligations must never print a completion claim:\n{complete_pending}"
+    );
+    observed.push((
+        "complete_pending",
+        format!(
+            "refused without a completion claim: refusal={:?}",
+            complete_probe.refusal
+        ),
+    ));
+    // The pending parent must not have moved.
+    let after = parse_state(&session.watch("0:0:2")?)?;
+    ensure!(
+        after == 3,
+        "complete refusal must not settle the pending parent (state {after})"
+    );
+    observed.push(("parent_state_after_refusal", after.to_string()));
+
+    // A root checkpoint against the same open obligations refuses at the wire.
+    let checkpoint_open = expect_failure(
+        &session,
+        &artifacts,
+        "checkpoint-open-root-refusal.txt",
+        &[
+            "checkpoint",
+            "--scope",
+            "0",
+            "--seal",
+            &root_seal,
+            "--wait-ms",
+            "0",
+        ],
+    )?;
+    let named = refusal_named_line(&checkpoint_open, &["NOT_READY", "WAIT_TIMEOUT", "CONFLICT"])
+        .context("checkpoint of the open root must refuse with a named code\n{checkpoint_open}")?;
+    observed.push(("checkpoint_open_root", named));
+    ensure!(
+        parse_state(&session.watch("0:0:2")?)? == 3,
+        "checkpoint refusal must not settle the pending parent"
+    );
+
+    // Settle bottom-up; the same settlement path now succeeds.
+    let (child_declare, _receipt) = declare_scoped_batch(
+        &session,
+        &mut events,
+        context.seed,
+        "declare-child",
+        0,
+        1,
+        &[1, 2],
+        true,
+    )?;
+    admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-child-1",
+        &child_declare,
+        "1:0:1",
+        &part_one_path,
+    )?;
+    watch_terminal(
+        &session,
+        &mut events,
+        "1:0:1",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit-child-1", 1)),
+        WATCH_TIMEOUT,
+    )?;
+    admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-child-2",
+        &child_declare,
+        "1:0:2",
+        &part_two_path,
+    )?;
+    watch_terminal(
+        &session,
+        &mut events,
+        "1:0:2",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit-child-2", 1)),
+        WATCH_TIMEOUT,
+    )?;
+    watch_terminal(
+        &session,
+        &mut events,
+        "0:0:2",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit-parent", 1)),
+        WATCH_TIMEOUT,
+    )?;
+    // Settlement is bottom-up: descendant coverage before root coverage (the
+    // authority refuses a root checkpoint while descendant coverage is
+    // missing), then the same checkpoint + complete that refused while
+    // obligations were open now succeed.
+    let child_seal = oracle::scope_seal_hex("issuer-a", "alice", 1, 1, 0, Some([0, 0, 2]), &[1, 2]);
+    let (_child_page, child_page) = observe_scope_page(&session, 1, 0, 256)?;
+    ensure!(
+        child_page.seal.as_deref() == Some(child_seal.as_str()),
+        "committed child seal {:?} != oracle {child_seal}",
+        child_page.seal
+    );
+    let child_coverage = session.op(&["checkpoint", "--scope", "1", "--seal", &child_seal])?;
+    require(&child_coverage, "COVERAGE", "child checkpoint after settle")?;
+    fs::write(
+        artifacts.join("coverage-child.txt"),
+        String::from_utf8_lossy(&child_coverage.stdout).into_owned(),
+    )?;
+    observed.push((
+        "child_checkpoint_after_settle",
+        "scope 1 COVERAGE (descendant coverage committed bottom-up)".into(),
+    ));
+    let root_coverage = session.op(&["checkpoint", "--scope", "0", "--seal", &root_seal])?;
+    let root_stdout = require(&root_coverage, "COVERAGE", "root checkpoint")?;
+    fs::write(artifacts.join("coverage-root.txt"), &root_stdout)?;
+    let root_view = g8_parse_summary(&root_stdout)?;
+    g8_summary_matches(
+        &root_view,
+        0,
+        0,
+        None,
+        2,
+        [2, 0, 0, 0],
+        g8_hex_digest(&root_seal)?,
+        root_view.status_root,
+    )?;
+    observed.push((
+        "settled_coverage",
+        "root COVERAGE after bottom-up settlement".into(),
+    ));
+
+    // (b) A large download in flight on a second journal while complete runs
+    // on the main journal: both must succeed (the named same-connection gap
+    // is recorded in expected.tsv).
+    let select = session.op(&[
+        "select",
+        "--work",
+        "0:0:1",
+        "--attempt",
+        "1",
+        "--index",
+        "0",
+    ])?;
+    require(&select, "REFERENCE", "select operation")?;
+    let second_journal = scenario_dir.join("client").join("session-b.sqlite");
+    {
+        let mut command = session.fixture.client_base()?;
+        command.push("init-client".into());
+        command.extend(session.fixture.journal_args(&second_journal, "alice", 1));
+        let init = crate::run_output_owned(&session.fixture.root, &command, OP_WAIT)?;
+        require(
+            &init,
+            client.client_initialized_marker(),
+            "v2 init-client (second journal)",
+        )?;
+    }
+    // A retained reference is per-journal: journal-b must select the output
+    // itself before its read, or the read refuses NOT_FOUND.
+    let second_select = session.fixture.run_client_op_with(
+        &second_journal,
+        "alice",
+        1,
+        &[],
+        &session.connection,
+        &[
+            "select",
+            "--work",
+            "0:0:1",
+            "--attempt",
+            "1",
+            "--index",
+            "0",
+        ],
+    )?;
+    require(
+        &second_select,
+        "REFERENCE",
+        "select operation (second journal)",
+    )?;
+    let read_args: Vec<String> = [
+        "read",
+        "--work",
+        "0:0:1",
+        "--attempt",
+        "1",
+        "--index",
+        "0",
+        "--output",
+        &crate::path(&artifacts.join("concurrent-read.bin")),
+    ]
+    .iter()
+    .map(|value| (*value).to_owned())
+    .collect();
+    let mut download = session.fixture.spawn_client_op(
+        &second_journal,
+        "alice",
+        1,
+        &session.connection,
+        &op_refs(&read_args),
+    )?;
+    thread::sleep(Duration::from_millis(50));
+    let in_flight = download
+        .try_wait()
+        .context("poll concurrent download")?
+        .is_none();
+    let completed = session.op(&["complete"])?;
+    let completed_stdout = require(&completed, "COMPLETED", "complete with download in flight")?;
+    fs::write(artifacts.join("complete.txt"), &completed_stdout)?;
+    let completed_view = g8_parse_summary(&completed_stdout)?;
+    ensure!(
+        completed_view == root_view,
+        "COMPLETED must replay the exact durable root coverage:\n\
+         completed: {completed_view:?}\n coverage: {root_view:?}"
+    );
+    let download_output = AuthorityFixture::wait_client_op(download, RECOVERY_TIMEOUT)?;
+    let download_text = transcript(&download_output);
+    fs::write(artifacts.join("concurrent-read.txt"), &download_text)?;
+    ensure!(
+        download_output.status.success()
+            && String::from_utf8_lossy(&download_output.stdout).contains("VERIFIED"),
+        "concurrent download must finish byte-exact across the complete\n{download_text}"
+    );
+    let received = fs::read(artifacts.join("concurrent-read.bin"))?;
+    ensure!(
+        received == leaf_bytes,
+        "concurrent download is not byte-exact: {} != {leaf_sha256}",
+        hex(&Sha256::digest(&received))
+    );
+    observed.push((
+        "concurrent_download_during_complete",
+        format!("download_in_flight_at_complete={in_flight}; download VERIFIED byte-exact; complete COMPLETED"),
+    ));
+
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+
+    stop_and_seal(context, scenario_dir, scenario_id, session.server, events)
+}
+
+// ---------------------------------------------------------------------------
+// Row 4: g8-detach-drains
+// ---------------------------------------------------------------------------
+
+const G8_LEAF_INPUT_LEN: usize = 4 * 1024;
+const G8_MODE2_INPUT_LEN: usize = 256 * 1024;
+const G8_DETACH_INPUT_LEN: usize = 12 * 1024 * 1024;
+
+/// g8-detach-drains: detach is a barrier over the connection's accepted
+/// facade ops. A 12 MiB download in flight on a second journal completes
+/// byte-exact while the main journal detaches (detach wall time recorded);
+/// the same-journal variant is refused client-side by the journal lease
+/// (recorded as the surface evidence). Durable work keeps settling after
+/// detach: a work admitted and detached unsettled keeps settling and is
+/// watched to terminal success by the same journal reattached on a fresh
+/// connection (a new session creation binds its own scope tree, so
+/// cross-session observation is not the published surface).
+fn g8_detach_drains(context: &ScenarioContext) -> Result<()> {
+    run_three_directions(context, "g8-detach-drains", g8_detach_drains_direction)
+}
+
+fn g8_detach_drains_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let scenario_id = "g8-detach-drains";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, client)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+    let session = setup_session(context, scenario_dir, server, client)?;
+
+    let big_bytes = oracle::dataset(context.seed, G8_DETACH_INPUT_LEN);
+    let big_sha256 = oracle::sha256_hex(&big_bytes);
+    let cont_bytes = oracle::dataset(context.seed ^ 0xc0ffee, INPUT_LEN);
+    let cont_sha256 = oracle::sha256_hex(&cont_bytes);
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("big_result", "0:0:1 copy/v2 12 MiB, settled".into()),
+            (
+                "detach_barrier",
+                "detach prints DETACHED only after the connection's accepted ops drain; a \
+                 concurrent download on a second journal completes byte-exact"
+                    .into(),
+            ),
+            (
+                "same_journal_concurrency",
+                "client journal lease refuses a concurrent same-journal op (CONFLICT, \
+                 ownership.rs) — recorded as the published-surface evidence"
+                    .into(),
+            ),
+            (
+                "durable_continuation",
+                "0:0:2 admitted then detached unsettled keeps settling; the same journal \
+                 reattaches on a fresh connection and watches it to terminal success (a new \
+                 session creation would bind its own scope tree — scopes are per session \
+                 generation — so cross-session observation is not the published surface)"
+                    .into(),
+            ),
+        ],
+    )?;
+    let big_path = artifacts.join("big-input.bin");
+    fs::write(&big_path, &big_bytes)?;
+    let cont_path = artifacts.join("continuation-input.bin");
+    fs::write(&cont_path, &cont_bytes)?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("alpn", "pipestream/2".into()),
+    ];
+
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "client binding")?;
+    let root_declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1, 2])?;
+    admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-big",
+        &root_declare,
+        "0:0:1",
+        &big_path,
+    )?;
+    watch_terminal(
+        &session,
+        &mut events,
+        "0:0:1",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit-big", 1)),
+        RECOVERY_TIMEOUT,
+    )?;
+    let select = session.op(&[
+        "select",
+        "--work",
+        "0:0:1",
+        "--attempt",
+        "1",
+        "--index",
+        "0",
+    ])?;
+    require(&select, "REFERENCE", "select operation")?;
+
+    // Concurrent download on a second journal, then detach on the main one.
+    let second_journal = scenario_dir.join("client").join("session-b.sqlite");
+    {
+        let mut command = session.fixture.client_base()?;
+        command.push("init-client".into());
+        command.extend(session.fixture.journal_args(&second_journal, "alice", 1));
+        let init = crate::run_output_owned(&session.fixture.root, &command, OP_WAIT)?;
+        require(
+            &init,
+            client.client_initialized_marker(),
+            "v2 init-client (second journal)",
+        )?;
+    }
+    // A retained reference is per-journal: journal-b must select the output
+    // itself before its read, or the read refuses NOT_FOUND.
+    let second_select = session.fixture.run_client_op_with(
+        &second_journal,
+        "alice",
+        1,
+        &[],
+        &session.connection,
+        &[
+            "select",
+            "--work",
+            "0:0:1",
+            "--attempt",
+            "1",
+            "--index",
+            "0",
+        ],
+    )?;
+    require(
+        &second_select,
+        "REFERENCE",
+        "select operation (second journal)",
+    )?;
+    let read_args: Vec<String> = [
+        "read",
+        "--work",
+        "0:0:1",
+        "--attempt",
+        "1",
+        "--index",
+        "0",
+        "--output",
+        &crate::path(&artifacts.join("detach-read.bin")),
+    ]
+    .iter()
+    .map(|value| (*value).to_owned())
+    .collect();
+    let mut download = session.fixture.spawn_client_op(
+        &second_journal,
+        "alice",
+        1,
+        &session.connection,
+        &op_refs(&read_args),
+    )?;
+    thread::sleep(Duration::from_millis(50));
+    let in_flight = download
+        .try_wait()
+        .context("poll concurrent download")?
+        .is_none();
+    let detach_start = Instant::now();
+    let detached = session.op(&["detach"])?;
+    let detach_ms = detach_start.elapsed();
+    require(&detached, "DETACHED", "detach operation")?;
+    let download_output = AuthorityFixture::wait_client_op(download, RECOVERY_TIMEOUT)?;
+    let download_text = transcript(&download_output);
+    fs::write(artifacts.join("detach-read.txt"), &download_text)?;
+    ensure!(
+        download_output.status.success()
+            && String::from_utf8_lossy(&download_output.stdout).contains("VERIFIED"),
+        "download concurrent with detach must complete byte-exact\n{download_text}"
+    );
+    let received = fs::read(artifacts.join("detach-read.bin"))?;
+    ensure!(
+        hex(&Sha256::digest(&received)) == big_sha256,
+        "download concurrent with detach is not byte-exact"
+    );
+    observed.push((
+        "detach_barrier",
+        format!(
+            "detach_wall_ms={} download_in_flight_at_detach={} download VERIFIED byte-exact",
+            detach_ms.as_millis(),
+            in_flight
+        ),
+    ));
+
+    // Same-journal concurrency: while the read holds the journal lease (an
+    // exclusive flock sidecar, ownership.rs), a second same-journal op
+    // refuses CONFLICT client-side — the published surface serializes a
+    // journal to one process at a time. The read needs a moment to open the
+    // journal, so poll a watch probe until it names the lease refusal while
+    // the read is still in flight.
+    // A probe can occasionally win the flock before the read opens the
+    // journal (the read then dies CONFLICT at startup), and the read refuses
+    // to overwrite an existing output file, so each round gets its own file.
+    let mut lease_evidence: Option<String> = None;
+    let mut verified_round: Option<usize> = None;
+    let mut verified_any: Option<usize> = None;
+    let mut probe_count = 0u32;
+    for round in 1..=4 {
+        let read_name = format!("lease-read-round{round}.bin");
+        let lease_read_args: Vec<String> = [
+            "read",
+            "--work",
+            "0:0:1",
+            "--attempt",
+            "1",
+            "--index",
+            "0",
+            "--output",
+            &crate::path(&artifacts.join(&read_name)),
+        ]
+        .iter()
+        .map(|value| (*value).to_owned())
+        .collect();
+        let mut lease_read = session.fixture.spawn_client_op(
+            &session.journal,
+            "alice",
+            session.sequence,
+            &session.connection,
+            &op_refs(&lease_read_args),
+        )?;
+        // Grace for the read to open the journal and take the lease before
+        // any probe contends with it (the read opens its journal within
+        // ~100ms; the transfer itself may finish in under a second on a fast
+        // direction, so probes start early and poll tightly).
+        thread::sleep(Duration::from_millis(150));
+        let probe_deadline = Instant::now() + Duration::from_secs(10);
+        while lease_read
+            .try_wait()
+            .context("poll concurrent read for the lease probe")?
+            .is_none()
+            && Instant::now() < probe_deadline
+        {
+            let probe_output = session.op(&["watch", "--work", "0:0:1"])?;
+            let probe = probe_outcome(&probe_output);
+            probe_count += 1;
+            fs::write(
+                artifacts.join(format!("lease-probe-round{round}.txt")),
+                probe.transcript(),
+            )?;
+            if !probe.success {
+                let transcript = probe.transcript();
+                let named = refusal_named_line(&transcript, &["CONFLICT"]).with_context(|| {
+                    format!(
+                        "a same-journal op while the lease is held must refuse named \
+                             CONFLICT:\n{transcript}"
+                    )
+                })?;
+                lease_evidence = Some(format!("{named} (watch probe refused while the read ran)"));
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        let lease_read_output = AuthorityFixture::wait_client_op(lease_read, RECOVERY_TIMEOUT)?;
+        fs::write(
+            artifacts.join(format!("lease-read-round{round}.txt")),
+            transcript(&lease_read_output),
+        )?;
+        let read_verified = lease_read_output.status.success()
+            && String::from_utf8_lossy(&lease_read_output.stdout).contains("VERIFIED");
+        if lease_evidence.is_some() && read_verified {
+            verified_round = Some(round);
+            break;
+        }
+        if read_verified && verified_any.is_none() {
+            verified_any = Some(round);
+        }
+        lease_evidence = None;
+    }
+    // Direction-honest outcome: the rust client takes an exclusive flock
+    // lease on its journal and refuses a concurrent same-journal op named
+    // CONFLICT; the java client exposes no client-side lease, so probes run
+    // alongside the read and all answer. Both are recorded; the read itself
+    // must always verify byte-exact.
+    let verified_round = verified_round
+        .or(verified_any)
+        .context("no lease-probe round produced a verified read")?;
+    let lease_received = fs::read(artifacts.join(format!("lease-read-round{verified_round}.bin")))?;
+    ensure!(
+        hex(&Sha256::digest(&lease_received)) == big_sha256,
+        "same-journal reattach read is not byte-exact"
+    );
+    let lease_note = match lease_evidence {
+        Some(evidence) => format!("{evidence}; the read itself VERIFIED byte-exact"),
+        None => format!(
+            "no client-side journal lease on this client: {probe_count} same-journal watch \
+             probes ran concurrently with the read and all answered; the read itself VERIFIED \
+             byte-exact (the rust client refuses a concurrent same-journal op named CONFLICT — \
+             exclusive flock sidecar, ownership.rs)"
+        ),
+    };
+    observed.push(("same_journal_concurrent_op", lease_note));
+
+    // Durable continuation: admit 0:0:2 unsettled, detach, then reattach the
+    // same journal on a fresh connection: the work keeps settling after
+    // detach and the reattached session watches it to terminal success and
+    // reads it byte-exact. (A new session creation would bind its own scope
+    // tree — scopes are per session generation — so it cannot name this work;
+    // the reattach is the published continuation surface.)
+    admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-continuation",
+        &root_declare,
+        "0:0:2",
+        &cont_path,
+    )?;
+    let detached_again = session.op(&["detach"])?;
+    require(&detached_again, "DETACHED", "second detach operation")?;
+    let sequence = session.fixture.next_sequence(&session.server, "alice")?;
+    ensure!(
+        sequence == 2,
+        "one durable creation must bind sequence 1; the next session binds 2, got {sequence}"
+    );
+    watch_terminal(
+        &session,
+        &mut events,
+        "0:0:2",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit-continuation", 1)),
+        RECOVERY_TIMEOUT,
+    )?;
+    let continuation_sha256 = read_output_verified(
+        &session,
+        &mut events,
+        "0:0:2",
+        1,
+        &cont_bytes,
+        &cont_sha256,
+        &artifacts,
+        "continuation-read.bin",
+    )?;
+    ensure!(continuation_sha256 == cont_sha256);
+    observed.push((
+        "durable_continuation",
+        "0:0:2 settled after detach; same journal reattached, watched state 5, read byte-exact; \
+         the authority offers sequence 2 (detach consumed nothing)"
+            .into(),
+    ));
+
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+
+    stop_and_seal(context, scenario_dir, scenario_id, session.server, events)
+}
+
+// ---------------------------------------------------------------------------
+// Row 5: g8-half-close-preserves-responses
+// ---------------------------------------------------------------------------
+
+/// g8-half-close-preserves-responses: FIN on the request direction with
+/// responses still pending must not strand committed responses (matrix row,
+/// normative-clarifications item 5: FIN AFTER requesting detach; pre-FIN
+/// responses including post-detach correlated refusals are delivered in
+/// full). NAMED CLI-SURFACE/RAW-PROBE GAP: no raw v2 session client exists
+/// in this tree — `conformance/src/extensions.rs` speaks only the
+/// CAPABILITIES exchange over frozen bytes (no session binding, no CBOR
+/// control frames, no detach) — and the single-shot CLIs model detach as a
+/// single blocking op, so the FIN direction is not expressible. The row
+/// records what the published surface CAN observe (the detach ack delivered
+/// in full, post-detach op behavior) and defers the wire-level FIN probe to
+/// the G6 raw-probe milestone.
+fn g8_half_close_preserves_responses(context: &ScenarioContext) -> Result<()> {
+    run_three_directions(
+        context,
+        "g8-half-close-preserves-responses",
+        g8_half_close_preserves_responses_direction,
+    )
+}
+
+fn g8_half_close_preserves_responses_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let scenario_id = "g8-half-close-preserves-responses";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, client)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+    let session = setup_session(context, scenario_dir, server, client)?;
+
+    let input = oracle::dataset(context.seed, INPUT_LEN);
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("work", "0:0:1 copy/v2 settled".into()),
+            (
+                "half_close_surface",
+                "named gap: no raw v2 session client exists (conformance/src/extensions.rs \
+                 probes only the CAPABILITIES exchange); the single-shot CLIs cannot send FIN \
+                 on the request direction while responses are pending; the wire-level FIN \
+                 probe is deferred to the G6 raw-probe milestone"
+                    .into(),
+            ),
+            (
+                "detach_ack_full_delivery",
+                "DETACHED marker and exit 0: the ack (and everything committed before it) is \
+                 delivered in full"
+                    .into(),
+            ),
+            (
+                "post_detach_op",
+                "a post-detach op on the same journal is a fresh attach attempt; the actual \
+                 outcome is recorded"
+                    .into(),
+            ),
+        ],
+    )?;
+    let input_sha256 = oracle::sha256_hex(&input);
+    let input_path = artifacts.join("input.bin");
+    fs::write(&input_path, &input)?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("alpn", "pipestream/2".into()),
+        (
+            "cli_surface_gap",
+            "FIN-on-request-direction with pending responses is not expressible through the \
+             published CLIs; recorded for the G6 raw-probe milestone"
+                .into(),
+        ),
+    ];
+
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "client binding")?;
+    let declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
+    admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "admit",
+        &declare,
+        "0:0:1",
+        &input_path,
+    )?;
+    watch_terminal(
+        &session,
+        &mut events,
+        "0:0:1",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit", 1)),
+        WATCH_TIMEOUT,
+    )?;
+    let output_sha256 = read_output_verified(
+        &session,
+        &mut events,
+        "0:0:1",
+        1,
+        &input,
+        &input_sha256,
+        &artifacts,
+        "output.bin",
+    )?;
+    ensure!(output_sha256 == input_sha256);
+
+    // The detach ack is delivered in full: the op exits zero and prints
+    // DETACHED only after the server acknowledged the drain.
+    let detached = session.op(&["detach"])?;
+    let detached_text = transcript(&detached);
+    fs::write(artifacts.join("detach.txt"), &detached_text)?;
+    require(&detached, "DETACHED", "detach operation")?;
+    observed.push(("detach_ack", "DETACHED delivered in full (exit 0)".into()));
+
+    // Post-detach op on the same journal: a fresh attach attempt — the
+    // closest the published surface gets to "responses after FIN".
+    let post = session.op(&["watch", "--work", "0:0:1"])?;
+    let post_probe = probe_outcome(&post);
+    fs::write(
+        artifacts.join("post-detach-watch.txt"),
+        post_probe.transcript(),
+    )?;
+    observed.push((
+        "post_detach_op",
+        format!(
+            "exit={} answered={} refusal={:?}",
+            post_probe.exit, post_probe.success, post_probe.refusal
+        ),
+    ));
+
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+
+    stop_and_seal(context, scenario_dir, scenario_id, session.server, events)
+}
+
+// ---------------------------------------------------------------------------
+// Row 6: g8-timeout-no-completion-claim
+// ---------------------------------------------------------------------------
+
+/// g8-timeout-no-completion-claim: a lost complete reply must never produce
+/// a client-side completion claim. Shape A (rust server, lost-reply variant):
+/// the subject fixture gates drop-reply/pause/disconnect to the three
+/// committed reply pairs, so a completion reply cannot be withheld without
+/// process death (named surface gap, recorded in expected.tsv); the lost
+/// reply is armed as a kill at COMPLETE_RESPONSE_SENT, the withheld op's
+/// outcome is recorded honestly (a raced reply is possible; only the
+/// no-false-claim invariant is asserted), and after a restart the re-driven
+/// complete either replays the durable completion or refuses with a named
+/// code — both prove no second completion is claimed. Shape B (kill variant,
+/// rust and java servers): the same scheduled kill; the restart binds the
+/// next sequence; the re-drive is classified the same dual way.
+fn g8_timeout_no_completion_claim(context: &ScenarioContext) -> Result<()> {
+    let id = "g8-timeout-no-completion-claim";
+    g8_timeout_lost_reply_direction(
+        context,
+        &context.scenario_dir(id),
+        Subject::Rust,
+        Subject::Rust,
+    )?;
+    g8_timeout_kill_direction(
+        context,
+        &context.scenario_dir(id).join("kill-variant"),
+        Subject::Rust,
+        Subject::Rust,
+    )?;
+    run_hooked_direction(
+        context,
+        id,
+        "kill-variant-rust-client-java-server",
+        |context, direction_dir| {
+            g8_timeout_kill_direction(context, direction_dir, Subject::Java, Subject::Rust)
+        },
+    )?;
+    Ok(())
+}
+
+/// Settle one copy work and save the exact root coverage; shared prologue of
+/// both timeout shapes.
+fn g8_timeout_settle(
+    context: &ScenarioContext,
+    session: &Session,
+    events: &mut EventWriter,
+    artifacts: &Path,
+) -> Result<(String, String)> {
+    let declare = declare_sealed(session, events, context.seed, "declare", &[1])?;
+    let input = oracle::dataset(context.seed, INPUT_LEN);
+    let input_path = artifacts.join("input.bin");
+    fs::write(&input_path, &input)?;
+    admit_input(
+        session,
+        events,
+        context.seed,
+        "admit",
+        &declare,
+        "0:0:1",
+        &input_path,
+    )?;
+    watch_terminal(
+        session,
+        events,
+        "0:0:1",
+        &oracle::operation_hex(oracle::operation_id(context.seed, "admit", 1)),
+        WATCH_TIMEOUT,
+    )?;
+    let root_seal = oracle::scope_seal_hex("issuer-a", "alice", 1, 0, 0, None, &[1]);
+    // The journal accepts the saved coverage only for an observed scope
+    // (membership verification); page the sealed root before checkpointing.
+    let (_root_page, root_page) = observe_page(session, 0, 256)?;
+    ensure!(
+        root_page.seal.as_deref() == Some(root_seal.as_str()),
+        "committed root seal {:?} != oracle {root_seal}",
+        root_page.seal
+    );
+    let coverage = session.op(&["checkpoint", "--scope", "0", "--seal", &root_seal])?;
+    let coverage_stdout = require(&coverage, "COVERAGE", "root checkpoint")?;
+    fs::write(artifacts.join("coverage-root.txt"), &coverage_stdout)?;
+    Ok((root_seal, coverage_stdout))
+}
+
+/// Classify the re-driven complete after a lost reply: either the durable
+/// completion replays (success, must equal the saved coverage) or the
+/// authority refuses with a named code. Both prove the session was not
+/// double-completed.
+fn g8_classify_redrive(
+    output: &Output,
+    coverage_stdout: &str,
+    artifacts: &Path,
+    name: &str,
+) -> Result<String> {
+    let text = transcript(output);
+    fs::write(artifacts.join(name), &text)?;
+    let probe = probe_outcome(output);
+    if probe.success {
+        let stdout = require(output, "COMPLETED", "re-driven complete after a lost reply")?;
+        let replayed = g8_parse_summary(&stdout)?;
+        let saved = g8_parse_summary(coverage_stdout)?;
+        ensure!(
+            replayed == saved,
+            "replayed COMPLETED must equal the saved root coverage:\n\
+             replayed: {replayed:?}\n saved: {saved:?}"
+        );
+        Ok("idempotent replay of the durable completion (equals saved coverage)".to_owned())
+    } else {
+        ensure!(
+            !text.contains("COMPLETED"),
+            "a refused re-drive must never print a completion claim:\n{text}"
+        );
+        let (code, _line) = probe
+            .refusal
+            .with_context(|| format!("refused re-drive must name a Section 12.2 code:\n{text}"))?;
+        Ok(format!(
+            "session durably completed; re-drive refuses named {} ({code})",
+            refusal_code_name(u64::from(code))
+        ))
+    }
+}
+
+/// Run one client op with a bounded wait that tolerates a hang: a lost
+/// complete reply leaves the client drain-waiting with no connection death
+/// to observe (a hard kill sends no CONNECTION_CLOSE), which can outlive the
+/// driver op bound. On timeout the child is terminated and `hung` is
+/// reported — a hung op prints nothing, so it never claims completion.
+fn g8_bounded_op(
+    session: &Session,
+    operation: &[&str],
+    wait: Duration,
+) -> Result<(ProbeOutcome, bool)> {
+    use std::io::Read as _;
+    let args: Vec<String> = operation.iter().map(|value| (*value).to_owned()).collect();
+    let mut child = session.fixture.spawn_client_op(
+        &session.journal,
+        "alice",
+        session.sequence,
+        &session.connection,
+        &op_refs(&args),
+    )?;
+    let deadline = Instant::now() + wait;
+    let mut hung = false;
+    let status = loop {
+        if let Some(status) = child.try_wait().context("poll bounded op")? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            hung = true;
+            child.kill().context("terminate the hung op")?;
+            break child.wait().context("reap the hung op")?;
+        }
+        thread::sleep(Duration::from_millis(25));
+    };
+    let mut stdout = Vec::new();
+    if let Some(mut pipe) = child.stdout.take() {
+        pipe.read_to_end(&mut stdout)
+            .context("drain bounded op stdout")?;
+    }
+    let mut stderr = Vec::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        pipe.read_to_end(&mut stderr)
+            .context("drain bounded op stderr")?;
+    }
+    let output = Output {
+        status,
+        stdout,
+        stderr,
+    };
+    Ok((probe_outcome(&output), hung))
+}
+
+/// Lost-reply leg (rust server, row directory). The fixture only arms
+/// drop-reply/pause/disconnect at the three committed reply pairs, so the
+/// lost completion reply is modelled with the scheduled kill at
+/// COMPLETE_RESPONSE_SENT: the completion is committed before the reply
+/// boundary, the process dies right after the reply write is accepted by the
+/// transport, and the client's op outcome (lost reply, or a raced-through
+/// reply) is recorded honestly — only the no-false-claim invariant is
+/// asserted. After a restart the re-driven complete must replay the durable
+/// completion or refuse named.
+fn g8_timeout_lost_reply_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g8-timeout-no-completion-claim";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    let rows = [g2_schedule_row(
+        context,
+        id,
+        "COMPLETE_RESPONSE_SENT",
+        schedule::Action::Kill,
+    )];
+    let hooked = setup_hooked(
+        context,
+        scenario_dir,
+        id,
+        server,
+        client,
+        &rows,
+        "schedule.tsv",
+        true,
+    )?;
+    let (session, events_path) = split_hooked(hooked);
+    let (_root_seal, coverage_stdout) =
+        g8_timeout_settle(context, &session, &mut events, &artifacts)?;
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "lost_reply_surface",
+                "named gap: the subject fixture gates drop-reply/pause/disconnect to the three \
+                 committed reply pairs (SESSION/DECLARATION/ADMISSION_COMMITTED; fixture.rs \
+                 REPLY_PAIRS) and completion replies never gate, so a complete reply cannot be \
+                 withheld without process death; the lost reply is armed as a kill at \
+                 COMPLETE_RESPONSE_SENT, committed before the reply boundary"
+                    .into(),
+            ),
+            (
+                "withheld_op",
+                "outcome recorded honestly: a failed or hung op must not print COMPLETED; the \
+                 reply write was accepted by the transport before the kill, so a raced-through \
+                 reply printing COMPLETED is recorded, never asserted away; a lost reply can \
+                 leave the client drain-waiting past the op bound — the driver then terminates \
+                 the still-waiting client"
+                    .into(),
+            ),
+            (
+                "redrive",
+                "post-restart watch answers; re-driven complete replays the durable completion \
+                 or refuses named — either proves no second completion claim"
+                    .into(),
+            ),
+        ],
+    )?;
+
+    let (withheld_probe, withheld_hung) = g8_bounded_op(&session, &["complete"], KILL_TIMEOUT)?;
+    fs::write(
+        artifacts.join("complete-withheld.txt"),
+        withheld_probe.transcript(),
+    )?;
+    ensure!(
+        !withheld_probe.success || withheld_probe.stdout.contains("COMPLETED"),
+        "a complete that exited zero must print its completion claim:\n{}",
+        withheld_probe.transcript()
+    );
+    ensure!(
+        withheld_probe.success || !withheld_probe.stdout.contains("COMPLETED"),
+        "a failed or hung complete must never print a completion claim:\n{}",
+        withheld_probe.transcript()
+    );
+    wait_subject_record(&events_path, "COMPLETE_RESPONSE_SENT", KILL_TIMEOUT)
+        .context("subject never reached the armed COMPLETE_RESPONSE_SENT boundary")?;
+    let exit = session.server.wait_exit(KILL_TIMEOUT)?;
+    let restarted = restart_hooked(
+        context,
+        scenario_dir,
+        id,
+        &session.fixture,
+        session.sequence,
+        &session.journal,
+        &[],
+        "schedule-restart.tsv",
+        true,
+    )?;
+    let watch = restarted.op(&["watch", "--work", "0:0:1"])?;
+    let watch_probe = probe_outcome(&watch);
+    fs::write(
+        artifacts.join("post-restart-watch.txt"),
+        watch_probe.transcript(),
+    )?;
+    let redrive = restarted.op(&["complete"])?;
+    let redrive_outcome = g8_classify_redrive(
+        &redrive,
+        &coverage_stdout,
+        &artifacts,
+        "complete-redrive.txt",
+    )?;
+    write_kv(
+        scenario_dir,
+        "observed.tsv",
+        &[
+            ("server_subject", server.name().into()),
+            ("client_subject", client.name().into()),
+            ("alpn", "pipestream/2".into()),
+            (
+                "subject_exit_code",
+                exit.status
+                    .code()
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "terminated by signal".into()),
+            ),
+            (
+                "subject_boundary_record",
+                "COMPLETE_RESPONSE_SENT recorded before the exit".into(),
+            ),
+            (
+                "withheld_op",
+                if withheld_hung {
+                    format!(
+                        "hung awaiting the lost reply (terminated by the driver after the {}s \
+                         bound); no completion claim printed; exit={}",
+                        KILL_TIMEOUT.as_secs(),
+                        withheld_probe.exit
+                    )
+                } else {
+                    format!(
+                        "exit={} answered={} refusal={:?}",
+                        withheld_probe.exit, withheld_probe.success, withheld_probe.refusal
+                    )
+                },
+            ),
+            (
+                "post_restart_watch",
+                format!(
+                    "exit={} answered={} refusal={:?}",
+                    watch_probe.exit, watch_probe.success, watch_probe.refusal
+                ),
+            ),
+            ("redrive_complete", redrive_outcome),
+        ],
+    )?;
+    stop_and_seal(context, scenario_dir, id, restarted.server, events)
+}
+
+fn g8_timeout_kill_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g8-timeout-no-completion-claim";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    let rows = [g2_schedule_row(
+        context,
+        id,
+        "COMPLETE_RESPONSE_SENT",
+        schedule::Action::Kill,
+    )];
+    let hooked = setup_hooked(
+        context,
+        scenario_dir,
+        id,
+        server,
+        client,
+        &rows,
+        "schedule.tsv",
+        true,
+    )?;
+    let (session, events_path) = split_hooked(hooked);
+    let (_root_seal, coverage_stdout) =
+        g8_timeout_settle(context, &session, &mut events, &artifacts)?;
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "kill_boundary",
+                format!(
+                    "COMPLETE_RESPONSE_SENT: the subject exits {} right after the reply \
+                     boundary",
+                    kill_exit_code(server)
+                ),
+            ),
+            (
+                "withheld_op",
+                "outcome recorded honestly: a failed or hung op must not print COMPLETED; the \
+                 reply write was accepted by the transport before the kill, so a raced-through \
+                 reply is recorded, never asserted away; a lost reply can leave the client \
+                 drain-waiting past the op bound — the driver then terminates the still-waiting \
+                 client"
+                    .into(),
+            ),
+            (
+                "restart",
+                "NEXT_SEQUENCE 2 (the creation is durable, no double alloc); re-driven \
+                 complete replays or refuses named"
+                    .into(),
+            ),
+        ],
+    )?;
+
+    let (lost_probe, lost_hung) = g8_bounded_op(&session, &["complete"], KILL_TIMEOUT)?;
+    fs::write(artifacts.join("complete-lost.txt"), lost_probe.transcript())?;
+    ensure!(
+        !lost_probe.success || lost_probe.stdout.contains("COMPLETED"),
+        "a complete that exited zero must print its completion claim:\n{}",
+        lost_probe.transcript()
+    );
+    ensure!(
+        lost_probe.success || !lost_probe.stdout.contains("COMPLETED"),
+        "a failed or hung complete must never print a completion claim:\n{}",
+        lost_probe.transcript()
+    );
+    wait_subject_record(&events_path, "COMPLETE_RESPONSE_SENT", KILL_TIMEOUT)
+        .context("subject never reached the armed COMPLETE_RESPONSE_SENT boundary")?;
+    let exit = session.server.wait_exit(KILL_TIMEOUT)?;
+    ensure!(
+        exit.status.code() == Some(kill_exit_code(server)),
+        "the scheduled kill must exit with the subject kill code after the boundary record, \
+         got {}",
+        exit.status
+    );
+    let restarted = restart_hooked(
+        context,
+        scenario_dir,
+        id,
+        &session.fixture,
+        session.sequence,
+        &session.journal,
+        &[],
+        "schedule-restart.tsv",
+        true,
+    )?;
+    let next = restarted
+        .fixture
+        .next_sequence(&restarted.server, "alice")?;
+    ensure!(
+        next == 2,
+        "the durable creation must bind sequence 1 and offer 2 after the restart, got {next}"
+    );
+    let redrive = restarted.op(&["complete"])?;
+    let redrive_outcome = g8_classify_redrive(
+        &redrive,
+        &coverage_stdout,
+        &artifacts,
+        "complete-redrive.txt",
+    )?;
+    write_kv(
+        scenario_dir,
+        "observed.tsv",
+        &[
+            ("server_subject", server.name().into()),
+            ("client_subject", client.name().into()),
+            ("alpn", "pipestream/2".into()),
+            ("subject_exit_code", kill_exit_code(server).to_string()),
+            (
+                "subject_boundary_record",
+                "COMPLETE_RESPONSE_SENT recorded before the exit".into(),
+            ),
+            (
+                "withheld_op",
+                if lost_hung {
+                    format!(
+                        "hung awaiting the lost reply (terminated by the driver after the {}s \
+                         bound); no completion claim printed; exit={}",
+                        KILL_TIMEOUT.as_secs(),
+                        lost_probe.exit
+                    )
+                } else {
+                    format!(
+                        "exit={} answered={} refusal={:?}",
+                        lost_probe.exit, lost_probe.success, lost_probe.refusal
+                    )
+                },
+            ),
+            ("next_sequence_after_restart", next.to_string()),
+            ("redrive_complete", redrive_outcome),
+        ],
+    )?;
+    stop_and_seal(context, scenario_dir, id, restarted.server, events)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -12649,7 +15362,7 @@ mod tests {
         for row in &rows {
             assert!(seen.insert(row.id), "duplicate row id {}", row.id);
         }
-        assert!(rows.len() >= 40);
+        assert!(rows.len() >= 46);
         for id in [
             "g1-leaf-copy",
             "g1-empty-input",
@@ -12689,11 +15402,17 @@ mod tests {
             "g5-unmapped-principal",
             "g5-foreign-owner",
             "g5-no-existence-disclosure",
+            "g8-exact-root-complete",
+            "g8-child-cut-conflict",
+            "g8-complete-with-pending",
+            "g8-detach-drains",
+            "g8-half-close-preserves-responses",
+            "g8-timeout-no-completion-claim",
         ] {
             let row = rows.iter().find(|row| row.id == id).unwrap();
             assert!(row.rust_implemented, "{id} must be implemented");
         }
-        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 40);
+        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 46);
     }
 
     #[test]
