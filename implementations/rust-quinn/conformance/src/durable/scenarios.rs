@@ -213,6 +213,8 @@ fn direction_coverage(row: &Row, context: &ScenarioContext) -> String {
         "rust-client/rust-server, rust-client/java-server, java-client/rust-server".to_owned()
     } else if row.id.starts_with("g5-") && context.java_jar.is_some() {
         "rust-client/rust-server, rust-client/java-server".to_owned()
+    } else if JAVA_SERVER_HOOKED_ROWS.contains(&row.id) && context.java_jar.is_some() {
+        "rust-client/rust-server, java-client/rust-server, rust-client/java-server".to_owned()
     } else if HOOKED_G2_ROWS.contains(&row.id) && context.java_jar.is_some() {
         "rust-client/rust-server, java-client/rust-server".to_owned()
     } else {
@@ -1419,14 +1421,6 @@ fn setup_hooked(
     fixture.run_init_authority()?;
     let events = scenario_dir.join("events.tsv");
     let arming = write_arming(context, scenario_dir, id, schedule_rows, schedule_name)?;
-    if arming.is_some() && server != Subject::Rust {
-        bail!(
-            "{id} direction {}/{} needs subject fixture hooks the Java server does not \
-             publish yet (Claude's FixtureMain): INCOMPLETE, never skip-pass",
-            client.name(),
-            server.name()
-        );
-    }
     let server = fixture.start_server_armed(arming.as_ref(), probe)?;
     // The driver's own next-sequence op is an authenticated connection; with
     // probe=false it would consume an armed CONNECTION_AUTHENTICATED kill row
@@ -1595,29 +1589,31 @@ fn expect_failure(
     Ok(text)
 }
 
-/// Run the java-client/rust-server direction of a G2 row when a jar is
+/// Run one cross-implementation direction of a hooked G2 row when a jar is
 /// present; a failure is recorded as an INCOMPLETE marker in the direction
-/// directory instead of failing the row (the rust direction is the evidence).
+/// directory (named `label`) instead of failing the row — the
+/// rust-client/rust-server direction is the row evidence.
 fn run_hooked_direction(
     context: &ScenarioContext,
     row_id: &str,
+    label: &str,
     direction: impl Fn(&ScenarioContext, &Path) -> Result<()>,
 ) -> Result<()> {
     let Some(jar) = &context.java_jar else {
         return Ok(());
     };
-    let direction_dir = context.scenario_dir(row_id).join("java-client-rust-server");
+    let direction_dir = context.scenario_dir(row_id).join(label);
     fs::create_dir_all(&direction_dir)?;
     if let Err(error) = direction(context, &direction_dir) {
         fs::write(
             direction_dir.join("INCOMPLETE"),
             format!(
-                "java-client/rust-server direction failed; the row evidence is the \
-                 rust-client/rust-server direction. Error:\n{error:#}\njava_jar_sha256={}\n",
+                "{label} direction failed; the row evidence is the rust-client/rust-server \
+                 direction. Error:\n{error:#}\njava_jar_sha256={}\n",
                 oracle::sha256_hex(&fs::read(jar)?)
             ),
         )?;
-        println!("INCOMPLETE {row_id} java-client/rust-server: {error:#}");
+        println!("INCOMPLETE {row_id} {label}: {error:#}");
     }
     Ok(())
 }
@@ -1760,6 +1756,27 @@ const HOOKED_G2_ROWS: &[&str] = &[
     "g2-kill-client-after-request-sent",
 ];
 
+/// The hooked rows whose Java-server direction Claude's FixtureMain supports
+/// (drop-reply at the session/declaration/admission reply pairs, kill at the
+/// execution/publication commit boundaries).
+const JAVA_SERVER_HOOKED_ROWS: &[&str] = &[
+    "g2-crash-after-create-commit",
+    "g2-drop-reply-declaration",
+    "g2-drop-reply-admission",
+    "g2-kill-after-admission-before-publication",
+    "g2-kill-at-publication-commit",
+];
+
+/// The process exit code a scheduled server kill produces: 86 on the Rust
+/// subject (interface-v1), 137 on Claude's Java FixtureMain
+/// (Runtime.halt(137), FixtureMain.java).
+fn kill_exit_code(server: Subject) -> i32 {
+    match server {
+        Subject::Rust => 86,
+        Subject::Java => 137,
+    }
+}
+
 /// Capture an op transcript the way `expect_failure` does, for ops the row
 /// drives directly.
 fn transcript(output: &Output) -> String {
@@ -1879,9 +1896,32 @@ fn g2_crash_after_create_commit(context: &ScenarioContext) -> Result<()> {
         Subject::Rust,
         Subject::Rust,
     )?;
-    run_hooked_direction(context, id, |context, direction_dir| {
-        g2_crash_after_create_commit_direction(context, direction_dir, Subject::Rust, Subject::Java)
-    })?;
+    run_hooked_direction(
+        context,
+        id,
+        "java-client-rust-server",
+        |context, direction_dir| {
+            g2_crash_after_create_commit_direction(
+                context,
+                direction_dir,
+                Subject::Rust,
+                Subject::Java,
+            )
+        },
+    )?;
+    run_hooked_direction(
+        context,
+        id,
+        "rust-client-java-server",
+        |context, direction_dir| {
+            g2_crash_after_create_commit_direction(
+                context,
+                direction_dir,
+                Subject::Java,
+                Subject::Rust,
+            )
+        },
+    )?;
     Ok(())
 }
 
@@ -2070,14 +2110,19 @@ fn g2_crash_before_create_commit(context: &ScenarioContext) -> Result<()> {
         Subject::Rust,
         Subject::Rust,
     )?;
-    run_hooked_direction(context, id, |context, direction_dir| {
-        g2_crash_before_create_commit_direction(
-            context,
-            direction_dir,
-            Subject::Rust,
-            Subject::Java,
-        )
-    })?;
+    run_hooked_direction(
+        context,
+        id,
+        "java-client-rust-server",
+        |context, direction_dir| {
+            g2_crash_before_create_commit_direction(
+                context,
+                direction_dir,
+                Subject::Rust,
+                Subject::Java,
+            )
+        },
+    )?;
     Ok(())
 }
 
@@ -2148,8 +2193,8 @@ fn g2_crash_before_create_commit_direction(
         .context("subject never reached the armed CONNECTION_AUTHENTICATED boundary")?;
     let output = session.server.wait_exit(KILL_TIMEOUT)?;
     ensure!(
-        output.status.code() == Some(86),
-        "g2-crash-before-create-commit: the scheduled kill must exit 86 after the boundary \
+        output.status.code() == Some(kill_exit_code(server)),
+        "g2-crash-before-create-commit: the scheduled kill must exit with the subject kill code after the boundary \
          record, got {}",
         output.status
     );
@@ -2195,7 +2240,7 @@ fn g2_crash_before_create_commit_direction(
         scenario_dir,
         "observed.tsv",
         &[
-            ("subject_exit_code", "86".into()),
+            ("subject_exit_code", kill_exit_code(server).to_string()),
             ("next_sequence_after_restart", "1".into()),
             ("replay_binding", "generation 1".into()),
             ("next_sequence_after_replay", next.to_string()),
@@ -2216,9 +2261,32 @@ fn g2_drop_reply_declaration(context: &ScenarioContext) -> Result<()> {
         Subject::Rust,
         Subject::Rust,
     )?;
-    run_hooked_direction(context, id, |context, direction_dir| {
-        g2_drop_reply_declaration_direction(context, direction_dir, Subject::Rust, Subject::Java)
-    })?;
+    run_hooked_direction(
+        context,
+        id,
+        "java-client-rust-server",
+        |context, direction_dir| {
+            g2_drop_reply_declaration_direction(
+                context,
+                direction_dir,
+                Subject::Rust,
+                Subject::Java,
+            )
+        },
+    )?;
+    run_hooked_direction(
+        context,
+        id,
+        "rust-client-java-server",
+        |context, direction_dir| {
+            g2_drop_reply_declaration_direction(
+                context,
+                direction_dir,
+                Subject::Java,
+                Subject::Rust,
+            )
+        },
+    )?;
     Ok(())
 }
 
@@ -2419,9 +2487,22 @@ fn g2_drop_reply_admission(context: &ScenarioContext) -> Result<()> {
         Subject::Rust,
         Subject::Rust,
     )?;
-    run_hooked_direction(context, id, |context, direction_dir| {
-        g2_drop_reply_admission_direction(context, direction_dir, Subject::Rust, Subject::Java)
-    })?;
+    run_hooked_direction(
+        context,
+        id,
+        "java-client-rust-server",
+        |context, direction_dir| {
+            g2_drop_reply_admission_direction(context, direction_dir, Subject::Rust, Subject::Java)
+        },
+    )?;
+    run_hooked_direction(
+        context,
+        id,
+        "rust-client-java-server",
+        |context, direction_dir| {
+            g2_drop_reply_admission_direction(context, direction_dir, Subject::Java, Subject::Rust)
+        },
+    )?;
     Ok(())
 }
 
@@ -2608,14 +2689,32 @@ fn g2_kill_after_admission_before_publication(context: &ScenarioContext) -> Resu
         Subject::Rust,
         Subject::Rust,
     )?;
-    run_hooked_direction(context, id, |context, direction_dir| {
-        g2_kill_after_admission_before_publication_direction(
-            context,
-            direction_dir,
-            Subject::Rust,
-            Subject::Java,
-        )
-    })?;
+    run_hooked_direction(
+        context,
+        id,
+        "java-client-rust-server",
+        |context, direction_dir| {
+            g2_kill_after_admission_before_publication_direction(
+                context,
+                direction_dir,
+                Subject::Rust,
+                Subject::Java,
+            )
+        },
+    )?;
+    run_hooked_direction(
+        context,
+        id,
+        "rust-client-java-server",
+        |context, direction_dir| {
+            g2_kill_after_admission_before_publication_direction(
+                context,
+                direction_dir,
+                Subject::Java,
+                Subject::Rust,
+            )
+        },
+    )?;
     Ok(())
 }
 
@@ -2694,8 +2793,8 @@ fn g2_kill_after_admission_before_publication_direction(
         .context("subject never reached the armed EXECUTION_CLAIMED boundary")?;
     let output = session.server.wait_exit(KILL_TIMEOUT)?;
     ensure!(
-        output.status.code() == Some(86),
-        "g2-kill-after-admission-before-publication: the scheduled kill must exit 86 after \
+        output.status.code() == Some(kill_exit_code(server)),
+        "g2-kill-after-admission-before-publication: the scheduled kill must exit with the subject kill code after \
          the boundary record, got {}",
         output.status
     );
@@ -2736,7 +2835,7 @@ fn g2_kill_after_admission_before_publication_direction(
         scenario_dir,
         "observed.tsv",
         &[
-            ("subject_exit_code", "86".into()),
+            ("subject_exit_code", kill_exit_code(server).to_string()),
             (
                 "subject_boundary_record",
                 "EXECUTION_CLAIMED recorded before the exit".into(),
@@ -2762,14 +2861,32 @@ fn g2_kill_at_publication_commit(context: &ScenarioContext) -> Result<()> {
         Subject::Rust,
         Subject::Rust,
     )?;
-    run_hooked_direction(context, id, |context, direction_dir| {
-        g2_kill_at_publication_commit_direction(
-            context,
-            direction_dir,
-            Subject::Rust,
-            Subject::Java,
-        )
-    })?;
+    run_hooked_direction(
+        context,
+        id,
+        "java-client-rust-server",
+        |context, direction_dir| {
+            g2_kill_at_publication_commit_direction(
+                context,
+                direction_dir,
+                Subject::Rust,
+                Subject::Java,
+            )
+        },
+    )?;
+    run_hooked_direction(
+        context,
+        id,
+        "rust-client-java-server",
+        |context, direction_dir| {
+            g2_kill_at_publication_commit_direction(
+                context,
+                direction_dir,
+                Subject::Java,
+                Subject::Rust,
+            )
+        },
+    )?;
     Ok(())
 }
 
@@ -2847,8 +2964,8 @@ fn g2_kill_at_publication_commit_direction(
         .context("subject never reached the armed PUBLICATION_COMMITTED boundary")?;
     let output = session.server.wait_exit(KILL_TIMEOUT)?;
     ensure!(
-        output.status.code() == Some(86),
-        "g2-kill-at-publication-commit: the scheduled kill must exit 86 after the boundary \
+        output.status.code() == Some(kill_exit_code(server)),
+        "g2-kill-at-publication-commit: the scheduled kill must exit with the subject kill code after the boundary \
          record, got {}",
         output.status
     );
@@ -2945,7 +3062,7 @@ fn g2_kill_at_publication_commit_direction(
         scenario_dir,
         "observed.tsv",
         &[
-            ("subject_exit_code", "86".into()),
+            ("subject_exit_code", kill_exit_code(server).to_string()),
             (
                 "publication_committed_records",
                 publication_commits.to_string(),
@@ -2971,14 +3088,19 @@ fn g2_kill_client_after_request_sent(context: &ScenarioContext) -> Result<()> {
         Subject::Rust,
         Subject::Rust,
     )?;
-    run_hooked_direction(context, id, |context, direction_dir| {
-        g2_kill_client_after_request_sent_direction(
-            context,
-            direction_dir,
-            Subject::Rust,
-            Subject::Java,
-        )
-    })?;
+    run_hooked_direction(
+        context,
+        id,
+        "java-client-rust-server",
+        |context, direction_dir| {
+            g2_kill_client_after_request_sent_direction(
+                context,
+                direction_dir,
+                Subject::Rust,
+                Subject::Java,
+            )
+        },
+    )?;
     Ok(())
 }
 

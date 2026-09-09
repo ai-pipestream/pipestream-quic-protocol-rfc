@@ -316,11 +316,31 @@ impl AuthorityFixture {
         self.start_server_armed(None, true)
     }
 
+    /// Entry-point prefix for one server process. The Java fixture hooks live
+    /// in the separate `FixtureMain` launcher (never `V2Main`); the Rust hooks
+    /// are `--fixture-*` flags on the normal `v2 serve`.
+    fn serve_base(&self, hooked: bool) -> Result<Vec<String>> {
+        match (self.server, hooked) {
+            (Subject::Java, true) => {
+                let mut base = self.subject_base(Subject::Java)?;
+                let main = base
+                    .last_mut()
+                    .expect("the Java base ends in the main class name");
+                *main = "ai.pipestream.quic.v2.FixtureMain".into();
+                base.push("serve".into());
+                Ok(base)
+            }
+            _ => Ok(with_owned(&self.base()?, &["serve".into()])),
+        }
+    }
+
     /// Spawn `v2 serve` with the milestone-5 `--fixture-*` arming. `probe`
     /// controls the authenticated readiness op: a schedule that kills the
     /// server at CONNECTION_AUTHENTICATED would kill the probe connection
     /// itself, so that row starts ready-file-only (process liveness plus
-    /// marker, with the client op as the real readiness check).
+    /// marker, with the client op as the real readiness check). Both hooked
+    /// subjects are supported: the Rust server takes the flags directly, the
+    /// Java server runs Claude's FixtureMain with the same flags.
     pub fn start_server_armed(
         &self,
         arming: Option<&FixtureArming>,
@@ -329,7 +349,7 @@ impl AuthorityFixture {
         let serial = unique_suffix();
         let ready = self.root.join(format!("ready-{serial:x}"));
         let log = self.root.join(format!("server-{serial:x}.log"));
-        let mut command = with_owned(&self.base()?, &["serve".into()]);
+        let mut command = self.serve_base(arming.is_some())?;
         command.extend(self.storage_args());
         command.extend([
             "--bind".into(),
@@ -346,12 +366,6 @@ impl AuthorityFixture {
             path(&ready),
         ]);
         if let Some(arming) = arming {
-            ensure!(
-                self.server == Subject::Rust,
-                "fixture hooks (pause/drop-reply/kill schedules) need a hooked server: the \
-                 Java server gate (Claude's FixtureMain) is not published, so this direction \
-                 is INCOMPLETE"
-            );
             command.extend([
                 "--fixture-events".into(),
                 path(&arming.events),
