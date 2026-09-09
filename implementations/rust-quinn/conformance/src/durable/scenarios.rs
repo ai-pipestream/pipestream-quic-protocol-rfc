@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},
     path::{Path, PathBuf},
-    process::Output,
+    process::{Command, Output, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -85,6 +85,7 @@ pub fn rows() -> Vec<Row> {
             "g3-terminal-cleanup",
             "g3-partial-retirement",
             "g3-restart-same-roots",
+            "g3-store-ownership",
         ],
     );
     push(
@@ -180,6 +181,10 @@ pub fn rows() -> Vec<Row> {
         "g2-duplicate-op-changed-params",
         "g2-simultaneous-duplicate",
         "g2-kill-server-after-admission-recovery",
+        "g3-input-before-metadata",
+        "g3-orphan-cleanup",
+        "g3-restart-same-roots",
+        "g3-store-ownership",
         "g5-untrusted-identity",
         "g5-missing-client-cert",
         "g5-unmapped-principal",
@@ -222,6 +227,10 @@ fn direction_coverage(row: &Row, context: &ScenarioContext) -> String {
         || G1_BATCH_B_ROWS.contains(&row.id))
         && context.java_jar.is_some()
     {
+        "rust-client/rust-server, rust-client/java-server, java-client/rust-server".to_owned()
+    } else if row.id == "g3-store-ownership" && context.java_jar.is_some() {
+        "rust-client/rust-server, rust-client/java-server".to_owned()
+    } else if G3_BATCH_A_ROWS.contains(&row.id) && context.java_jar.is_some() {
         "rust-client/rust-server, rust-client/java-server, java-client/rust-server".to_owned()
     } else if row.id.starts_with("g5-") && context.java_jar.is_some() {
         "rust-client/rust-server, rust-client/java-server".to_owned()
@@ -289,6 +298,10 @@ fn run_rust_direction(row: &Row, context: &ScenarioContext) -> Result<()> {
         "g2-kill-server-after-admission-recovery" => {
             g2_kill_server_after_admission_recovery(context)
         }
+        "g3-input-before-metadata" => g3_input_before_metadata(context),
+        "g3-orphan-cleanup" => g3_orphan_cleanup(context),
+        "g3-restart-same-roots" => g3_restart_same_roots(context),
+        "g3-store-ownership" => g3_store_ownership(context),
         "g5-untrusted-identity" => g5_untrusted_identity(context),
         "g5-missing-client-cert" => g5_missing_client_cert(context),
         "g5-unmapped-principal" => g5_unmapped_principal(context),
@@ -5774,6 +5787,1515 @@ fn g2_kill_client_after_request_sent_direction(
     stop_and_seal(context, scenario_dir, id, session.server, events)
 }
 
+// ---------------------------------------------------------------------------
+// G3 storage rows batch A (milestone 10)
+// ---------------------------------------------------------------------------
+
+/// The three batch-A rows that run every direction when a jar is provided.
+/// g3-store-ownership lists its own coverage: it is a per-server row, so the
+/// java-client direction is a named gap rather than a third run.
+const G3_BATCH_A_ROWS: &[&str] = &[
+    "g3-input-before-metadata",
+    "g3-orphan-cleanup",
+    "g3-restart-same-roots",
+];
+
+/// Object-directory metrics for the private-storage supplementary probes:
+/// (file count, content bytes, allocated 512-byte blocks). The walk never
+/// mutates the store; every probe is recorded next to the black-box network
+/// observation it pairs with, labelled `scope=private-storage-supplementary`.
+fn storage_metrics(object_dir: &Path) -> Result<(u64, u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+
+    let mut files = 0u64;
+    let mut bytes = 0u64;
+    let mut blocks = 0u64;
+    let mut stack = vec![object_dir.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        for entry in fs::read_dir(&directory)
+            .with_context(|| format!("read object dir {}", directory.display()))?
+        {
+            let entry = entry?;
+            let metadata = entry
+                .metadata()
+                .with_context(|| format!("stat {}", entry.path().display()))?;
+            if metadata.is_dir() {
+                stack.push(entry.path());
+                continue;
+            }
+            files += 1;
+            bytes += metadata.len();
+            blocks += metadata.blocks();
+        }
+    }
+    Ok((files, bytes, blocks))
+}
+
+fn metrics_text(metrics: (u64, u64, u64)) -> String {
+    format!(
+        "files={} bytes={} allocated_blocks={}",
+        metrics.0, metrics.1, metrics.2
+    )
+}
+
+/// g3-input-before-metadata: kill the server after the payload is staged but
+/// before the admission commits, then restart. The black-box operation lookup
+/// names NOT_FOUND (the admission never committed) and the SAME immutable
+/// operation re-admits cleanly through the journaled replay. The armed
+/// `:after` window at the staging boundary exists only on the Java subject
+/// (INPUT_INSTALLED, emitted between payload staging and the admission
+/// commit); the Rust subject deliberately keeps supplementary commit keys
+/// (`prepare-input`) unarmable (milestone 5), so the rust-server directions
+/// use an uncontrolled SIGKILL mid-input-stream and record that named gap.
+/// The armed `admit-input:after` lost-reply arm is g2-drop-reply-admission,
+/// referenced here rather than redone. A private-storage supplementary probe
+/// (object-dir file count/bytes before and after the re-admission) pairs
+/// with the lookup/replay network observation.
+fn g3_input_before_metadata(context: &ScenarioContext) -> Result<()> {
+    let id = "g3-input-before-metadata";
+    g3_input_before_metadata_direction(
+        context,
+        &context.scenario_dir(id),
+        Subject::Rust,
+        Subject::Rust,
+    )?;
+    run_hooked_direction(
+        context,
+        id,
+        "rust-client-java-server",
+        |context, direction_dir| {
+            g3_input_before_metadata_direction(context, direction_dir, Subject::Java, Subject::Rust)
+        },
+    )?;
+    run_hooked_direction(
+        context,
+        id,
+        "java-client-rust-server",
+        |context, direction_dir| {
+            g3_input_before_metadata_direction(context, direction_dir, Subject::Rust, Subject::Java)
+        },
+    )?;
+    Ok(())
+}
+
+fn g3_input_before_metadata_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g3-input-before-metadata";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    let rows = if server == Subject::Java {
+        vec![g2_schedule_row(
+            context,
+            id,
+            "INPUT_INSTALLED",
+            schedule::Action::Kill,
+        )]
+    } else {
+        Vec::new()
+    };
+    let hooked = setup_hooked(
+        context,
+        scenario_dir,
+        id,
+        server,
+        client,
+        &rows,
+        "schedule.tsv",
+        true,
+    )?;
+    let (session, events_path) = split_hooked(hooked);
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "client binding")?;
+    let declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
+    let admit_hex = oracle::operation_hex(oracle::operation_id(context.seed, "admit", 1));
+    let input = oracle::dataset(context.seed, CLIENT_KILL_INPUT_LEN);
+    let input_sha256 = oracle::sha256_hex(&input);
+    let input_path = artifacts.join("input.bin");
+    fs::write(&input_path, &input)?;
+    let args = admit_op_args(&admit_hex, &declare, &input_path);
+    let arg_refs = op_refs(&args);
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("input_len", input.len().to_string()),
+            ("input_sha256", input_sha256.clone()),
+            (
+                "fault_window",
+                if server == Subject::Java {
+                    "armed kill at INPUT_INSTALLED: payload staged, admission NOT committed".into()
+                } else {
+                    "uncontrolled SIGKILL mid-input-stream; named gap: the rust hook cannot arm \
+                     the supplementary prepare-input commit key (milestone 5)"
+                        .into()
+                },
+            ),
+            (
+                "lookup_after_restart",
+                "named NOT_FOUND (the admission never committed)".into(),
+            ),
+            (
+                "same_op_readmission",
+                "journaled replay of the SAME operation id succeeds".into(),
+            ),
+            (
+                "g2_reference",
+                "g2-drop-reply-admission covers the armed admit-input:after lost-reply arm".into(),
+            ),
+            (
+                "storage_probe_scope",
+                "private-storage-supplementary (object-dir metrics; paired with the \
+                 lookup/replay network observation)"
+                    .into(),
+            ),
+        ],
+    )?;
+
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&admit_hex)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let attempted = if server == Subject::Java {
+        // The armed kill halts the server between payload staging and the
+        // admission commit. Drive the admit as a spawned op, wait for the
+        // boundary record and the subject's own exit, then retire the
+        // stranded transport process (the fault under test is the server
+        // death, never the client's reply wait).
+        let mut child = session.fixture.spawn_client_op(
+            &session.journal,
+            "alice",
+            session.sequence,
+            &session.connection,
+            &arg_refs,
+        )?;
+        wait_subject_record(&events_path, "INPUT_INSTALLED", KILL_TIMEOUT)
+            .context("subject never reached the armed INPUT_INSTALLED boundary")?;
+        let output = session.server.wait_exit(KILL_TIMEOUT)?;
+        ensure!(
+            output.status.code() == Some(kill_exit_code(server)),
+            "g3-input-before-metadata: the scheduled kill must exit {} after the boundary \
+             record, got {}",
+            kill_exit_code(server),
+            output.status
+        );
+        child.kill().context("SIGKILL the stranded client op")?;
+        let killed = AuthorityFixture::wait_client_op(child, OP_WAIT)?;
+        ensure!(
+            !killed.status.success(),
+            "g3-input-before-metadata: the interrupted client op must not exit zero:\n{}",
+            transcript(&killed)
+        );
+        killed
+    } else {
+        let mut child = session.fixture.spawn_client_op(
+            &session.journal,
+            "alice",
+            session.sequence,
+            &session.connection,
+            &arg_refs,
+        )?;
+        let delay_ms = 10 + (context.seed % 23);
+        thread::sleep(Duration::from_millis(delay_ms));
+        ensure!(
+            child.try_wait()?.is_none(),
+            "g3-input-before-metadata: the admit op finished in {delay_ms}ms before the kill; \
+             the input is not genuinely in flight"
+        );
+        session
+            .server
+            .kill()
+            .context("SIGKILL the server mid-input-stream")?;
+        // The fault under test is the server death. A client whose upload
+        // fits the transport buffers before the kill can outlive the server
+        // blocked on the lost reply; that stranded transport process is
+        // killed too, never reaped as if it were subject evidence.
+        child.kill().context("SIGKILL the stranded client op")?;
+        let killed = AuthorityFixture::wait_client_op(child, OP_WAIT)?;
+        ensure!(
+            !killed.status.success(),
+            "g3-input-before-metadata: the interrupted client op must not exit zero:\n{}",
+            transcript(&killed)
+        );
+        killed
+    };
+    let attempted_text = transcript(&attempted);
+    fs::write(artifacts.join("admit-interrupted.txt"), &attempted_text)?;
+    events.append("", None, Some("0:0:1"), Some(1), None, None)?;
+
+    let recovered = restart_hooked(
+        context,
+        scenario_dir,
+        id,
+        &session.fixture,
+        session.sequence,
+        &session.journal,
+        &[],
+        "schedule-restart.tsv",
+        true,
+    )?;
+
+    // Black-box observation: the interrupted operation must not resolve.
+    let lookup = recovered.op(&["lookup", "--operation", &admit_hex])?;
+    let lookup_text = transcript(&lookup);
+    fs::write(artifacts.join("lookup-after-restart.txt"), &lookup_text)?;
+    ensure!(
+        !lookup.status.success(),
+        "g3-input-before-metadata: lookup of the interrupted operation must not succeed:\n\
+         {lookup_text}"
+    );
+    let named = refusal_named_line(&String::from_utf8_lossy(&lookup.stderr), &["NOT_FOUND"])
+        .with_context(|| {
+            format!(
+                "g3-input-before-metadata: lookup after the pre-admission kill must name \
+                 NOT_FOUND:\n{lookup_text}"
+            )
+        })?;
+    events.append(
+        "",
+        Some(hex_to_id(&admit_hex)?),
+        None,
+        None,
+        Some(5),
+        Some(artifact_ref("lookup-after-restart.txt", &lookup_text)),
+    )?;
+
+    // Supplementary storage probe #1: right after the restart, before the
+    // re-admission, so the replay's footprint is measured against it.
+    let before = storage_metrics(&recovered.fixture.object_dir)?;
+
+    // The SAME immutable operation re-admits: the journaled replay first,
+    // then the identical admit arguments when the interrupted op never
+    // journaled its intent.
+    let mut replay_args = vec![
+        "replay".to_owned(),
+        "--operation".to_owned(),
+        admit_hex.clone(),
+        "--input".to_owned(),
+        crate::path(&input_path),
+    ];
+    if client == Subject::Rust {
+        replay_args.push("--declaration".into());
+        replay_args.push(declare.clone());
+    }
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&admit_hex)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let replay = recovered.op(&op_refs(&replay_args))?;
+    let recovery_path =
+        if replay.status.success() && String::from_utf8_lossy(&replay.stdout).contains("RECEIPT") {
+            "journaled-replay".to_owned()
+        } else {
+            let replay_text = transcript(&replay);
+            fs::write(artifacts.join("replay-fallback.txt"), &replay_text)?;
+            let resend = recovered.op(&arg_refs)?;
+            require(
+                &resend,
+                "RECEIPT",
+                "re-sent identical admit after the interrupted admission",
+            )?;
+            "identical-op-resent".to_owned()
+        };
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(hex_to_id(&admit_hex)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+
+    let terminal = watch_terminal(
+        &recovered,
+        &mut events,
+        "0:0:1",
+        &admit_hex,
+        RECOVERY_TIMEOUT,
+    )?;
+    ensure!(
+        parse_attempt(&terminal)? == 1,
+        "g3-input-before-metadata: the re-admitted work must settle under its original \
+         attempt:\n{terminal}"
+    );
+    read_output_verified(
+        &recovered,
+        &mut events,
+        "0:0:1",
+        1,
+        &input,
+        &input_sha256,
+        &artifacts,
+        "output.bin",
+    )?;
+
+    // Supplementary storage probe #2: the re-admission must not leak payload
+    // bytes without bound. The bound covers the committed input object plus
+    // the copy/v2 result object of equal length and per-object metadata files.
+    let after = storage_metrics(&recovered.fixture.object_dir)?;
+    ensure!(
+        after.1 <= before.1 + 2 * input.len() as u64 + 64 * 1024,
+        "g3-input-before-metadata: object-dir bytes grew without bound across the \
+         re-admission: before={} after={}",
+        before.1,
+        after.1
+    );
+    detach(&recovered)?;
+    write_kv(
+        scenario_dir,
+        "observed.tsv",
+        &[
+            (
+                "fault_window",
+                if server == Subject::Java {
+                    "armed INPUT_INSTALLED kill (payload staged, admission not committed)".into()
+                } else {
+                    "uncontrolled SIGKILL mid-input-stream (rust staging boundary not armable)"
+                        .into()
+                },
+            ),
+            ("subject_exit_code", kill_exit_code(server).to_string()),
+            ("lookup_after_restart", named),
+            ("same_op_readmission", recovery_path),
+            ("terminal_attempt", "1".into()),
+            ("output_matches_input", "true".into()),
+            (
+                "storage_probe_scope",
+                "private-storage-supplementary".into(),
+            ),
+            ("object_dir_after_restart", metrics_text(before)),
+            ("object_dir_after_readmission", metrics_text(after)),
+        ],
+    )?;
+    stop_and_seal(context, scenario_dir, id, recovered.server, events)
+}
+
+/// g3-orphan-cleanup: several kill/restart iterations orphan staged payloads
+/// (each with a FRESH operation id), then the row verifies the committed
+/// objects are untouched (the known-good result re-reads byte-exact after
+/// every restart), capacity stays consistent (a subsequent admission
+/// succeeds), and records the orphan-reclaim behavior actually observed.
+/// Where a subject runs no orphan cleanup on restart, the row records that
+/// behavior and whether an operator command exists; it never deletes store
+/// files itself. The rust store library exposes `collect_payload_orphans`
+/// but `v2 serve` startup does not run it and the v2 CLI has no operator
+/// cleanup command; the Java behavior is measured, not assumed.
+fn g3_orphan_cleanup(context: &ScenarioContext) -> Result<()> {
+    let id = "g3-orphan-cleanup";
+    g3_orphan_cleanup_direction(
+        context,
+        &context.scenario_dir(id),
+        Subject::Rust,
+        Subject::Rust,
+    )?;
+    run_hooked_direction(
+        context,
+        id,
+        "rust-client-java-server",
+        |context, direction_dir| {
+            g3_orphan_cleanup_direction(context, direction_dir, Subject::Java, Subject::Rust)
+        },
+    )?;
+    run_hooked_direction(
+        context,
+        id,
+        "java-client-rust-server",
+        |context, direction_dir| {
+            g3_orphan_cleanup_direction(context, direction_dir, Subject::Rust, Subject::Java)
+        },
+    )?;
+    Ok(())
+}
+
+fn g3_orphan_cleanup_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g3-orphan-cleanup";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    let armed_rows = |context: &ScenarioContext| {
+        vec![g2_schedule_row(
+            context,
+            id,
+            "INPUT_INSTALLED",
+            schedule::Action::Kill,
+        )]
+    };
+    // The server starts unarmed: the known-good admission below must commit.
+    // Each orphan attempt restarts the server fresh, armed at the staging
+    // boundary for the Java subject.
+    let hooked = setup_hooked(
+        context,
+        scenario_dir,
+        id,
+        server,
+        client,
+        &[],
+        "schedule.tsv",
+        true,
+    )?;
+    let (mut session, events_path) = split_hooked(hooked);
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "client binding")?;
+    let (declare, _receipt) = declare_batch(
+        &session,
+        &mut events,
+        context.seed,
+        "declare",
+        0,
+        &[1, 2, 3, 4],
+        true,
+    )?;
+
+    // The known-good committed object: re-read byte-exact after every kill.
+    let good_input = oracle::dataset(context.seed, INPUT_LEN);
+    let good_sha256 = oracle::sha256_hex(&good_input);
+    let good_path = artifacts.join("known-good-input.bin");
+    fs::write(&good_path, &good_input)?;
+    let good_admit = oracle::operation_hex(oracle::operation_id(context.seed, "admit", 1));
+    admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "admit",
+        &declare,
+        "0:0:1",
+        &good_path,
+    )?;
+    watch_terminal(&session, &mut events, "0:0:1", &good_admit, WATCH_TIMEOUT)?;
+    read_output_verified(
+        &session,
+        &mut events,
+        "0:0:1",
+        1,
+        &good_input,
+        &good_sha256,
+        &artifacts,
+        "known-good-output.bin",
+    )?;
+    let baseline = storage_metrics(&session.fixture.object_dir)?;
+
+    let orphan_input = oracle::dataset(context.seed.wrapping_add(1), OVERSIZE_INPUT_LEN);
+    let orphan_path = artifacts.join("orphan-input.bin");
+    fs::write(&orphan_path, &orphan_input)?;
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("known_good_input_len", good_input.len().to_string()),
+            ("known_good_input_sha256", good_sha256.clone()),
+            (
+                "orphan_fault",
+                "kill between payload staging and the admission commit, one FRESH operation \
+                 id per iteration"
+                    .into(),
+            ),
+            ("iterations", "2".into()),
+            (
+                "expected_committed",
+                "known-good result byte-exact after every restart".into(),
+            ),
+            (
+                "expected_capacity",
+                "subsequent admission succeeds after the kills".into(),
+            ),
+            (
+                "expected_reclaim",
+                "orphan bytes reclaimed where the subject cleans up on restart; otherwise the \
+                 actual behavior and operator-command surface are recorded"
+                    .into(),
+            ),
+            (
+                "storage_probe_scope",
+                "private-storage-supplementary (object-dir metrics; paired with the \
+                 known-good read and liveness admission)"
+                    .into(),
+            ),
+        ],
+    )?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        (
+            "fault_window",
+            "kill between payload staging and admission commit".into(),
+        ),
+        (
+            "storage_probe_scope",
+            "private-storage-supplementary".into(),
+        ),
+        ("object_dir_baseline", metrics_text(baseline)),
+    ];
+    // The initial server retires before the iteration restarts; each fresh
+    // process reopens the same roots.
+    session
+        .server
+        .kill()
+        .context("retire the initial server before the orphan iterations")?;
+    for iteration in 0..2u32 {
+        // A fresh server per attempt: armed at the staging boundary for the
+        // Java subject (its hook kills exactly at INPUT_INSTALLED), a plain
+        // restart for the rust subjects (the kill there is uncontrolled).
+        let rows = if server == Subject::Java {
+            armed_rows(context)
+        } else {
+            Vec::new()
+        };
+        let schedule_name = format!("schedule-iteration-{iteration}.tsv");
+        let fixture = session.fixture.clone();
+        let sequence = session.sequence;
+        let journal = session.journal.clone();
+        session = restart_hooked(
+            context,
+            scenario_dir,
+            id,
+            &fixture,
+            sequence,
+            &journal,
+            &rows,
+            &schedule_name,
+            true,
+        )?;
+        let work = format!("0:0:{}", 2 + iteration);
+        let domain = format!("orphan-{iteration}");
+        let op_hex = oracle::operation_hex(oracle::operation_id(context.seed, &domain, 1));
+        let args = vec![
+            "admit".to_owned(),
+            "--operation".to_owned(),
+            op_hex.clone(),
+            "--declaration".to_owned(),
+            declare.clone(),
+            "--work".to_owned(),
+            work.clone(),
+            "--input".to_owned(),
+            crate::path(&orphan_path),
+            "--application".to_owned(),
+            "copy/v2".to_owned(),
+        ];
+        let arg_refs = op_refs(&args);
+        events.append(
+            "REQUEST_SENT",
+            Some(hex_to_id(&op_hex)?),
+            Some(work.as_str()),
+            Some(1),
+            None,
+            None,
+        )?;
+        let mut child = session.fixture.spawn_client_op(
+            &session.journal,
+            "alice",
+            session.sequence,
+            &session.connection,
+            &arg_refs,
+        )?;
+        if server == Subject::Java {
+            wait_subject_record(&events_path, "INPUT_INSTALLED", KILL_TIMEOUT).with_context(
+                || {
+                    format!(
+                        "subject never reached the armed INPUT_INSTALLED boundary (iteration {iteration})"
+                    )
+                },
+            )?;
+            let output = session.server.wait_exit(KILL_TIMEOUT)?;
+            ensure!(
+                output.status.code() == Some(kill_exit_code(server)),
+                "g3-orphan-cleanup: the scheduled kill must exit {} after the boundary record, \
+                 got {}",
+                kill_exit_code(server),
+                output.status
+            );
+        } else {
+            // Long enough that genuine payload bytes are staged before the
+            // kill (an 8 MiB loopback upload cannot finish inside this
+            // window), short enough that the admission never commits.
+            let delay_ms = 100 + (context.seed % 300);
+            thread::sleep(Duration::from_millis(delay_ms));
+            ensure!(
+                child.try_wait()?.is_none(),
+                "g3-orphan-cleanup: the orphaned admit op finished in {delay_ms}ms before the \
+                 kill; the input is not genuinely in flight"
+            );
+            session
+                .server
+                .kill()
+                .context("SIGKILL the server mid-input-stream")?;
+        }
+        // The fault under test is the server death; a client whose upload
+        // fits the transport buffers can outlive the server blocked on the
+        // lost reply, so the stranded transport process is killed too, never
+        // reaped as if it were subject evidence.
+        child.kill().context("SIGKILL the stranded client op")?;
+        let killed = AuthorityFixture::wait_client_op(child, OP_WAIT)?;
+        ensure!(
+            !killed.status.success(),
+            "g3-orphan-cleanup: the interrupted client op must not exit zero:\n{}",
+            transcript(&killed)
+        );
+        events.append("", None, Some(work.as_str()), Some(1), None, None)?;
+    }
+
+    // Plain restart after the last kill: allow a cleanup pass to run, then
+    // measure, prove capacity with a fresh admission, and re-read the
+    // committed object byte-exact.
+    let fixture = session.fixture.clone();
+    let sequence = session.sequence;
+    let journal = session.journal.clone();
+    session = restart_hooked(
+        context,
+        scenario_dir,
+        id,
+        &fixture,
+        sequence,
+        &journal,
+        &[],
+        "schedule-final.tsv",
+        true,
+    )?;
+    let post_restart = storage_metrics(&session.fixture.object_dir)?;
+    thread::sleep(Duration::from_millis(500));
+    let post_cleanup = storage_metrics(&session.fixture.object_dir)?;
+    observed.push(("object_dir_after_final_restart", metrics_text(post_restart)));
+    observed.push((
+        "object_dir_after_cleanup_window",
+        metrics_text(post_cleanup),
+    ));
+    observed.push((
+        "restart_cleanup",
+        if post_cleanup.1 < post_restart.1 {
+            format!(
+                "orphan bytes reclaimed at restart ({} -> {})",
+                post_restart.1, post_cleanup.1
+            )
+        } else {
+            format!(
+                "no restart-time cleanup observed ({} -> {}); rust operator command: none in \
+                 the v2 CLI (collect_payload_orphans is library-only, not run by serve startup)",
+                post_restart.1, post_cleanup.1
+            )
+        },
+    ));
+
+    // Capacity consistency: a fresh admission succeeds after all the kills.
+    let live_input = oracle::dataset(context.seed, 4096);
+    let live_sha256 = oracle::sha256_hex(&live_input);
+    let live_path = artifacts.join("liveness-input.bin");
+    fs::write(&live_path, &live_input)?;
+    let live_admit = oracle::operation_hex(oracle::operation_id(context.seed, "liveness", 1));
+    admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "liveness",
+        &declare,
+        "0:0:4",
+        &live_path,
+    )?;
+    watch_terminal(&session, &mut events, "0:0:4", &live_admit, WATCH_TIMEOUT)?;
+    read_output_verified(
+        &session,
+        &mut events,
+        "0:0:4",
+        1,
+        &live_input,
+        &live_sha256,
+        &artifacts,
+        "liveness-output.bin",
+    )?;
+    let final_metrics = storage_metrics(&session.fixture.object_dir)?;
+    observed.push(("object_dir_final", metrics_text(final_metrics)));
+    observed.push((
+        "reclaim",
+        if final_metrics.1 < post_cleanup.1 {
+            format!(
+                "orphan bytes reclaimed during subsequent store operations ({} -> {})",
+                post_cleanup.1, final_metrics.1
+            )
+        } else {
+            format!(
+                "orphan bytes retained across subsequent admissions ({} -> {})",
+                post_cleanup.1, final_metrics.1
+            )
+        },
+    ));
+    observed.push((
+        "capacity_after_kills",
+        "liveness admission succeeded".into(),
+    ));
+
+    // The committed object is untouched: byte-exact against the oracle.
+    read_output_verified(
+        &session,
+        &mut events,
+        "0:0:1",
+        1,
+        &good_input,
+        &good_sha256,
+        &artifacts,
+        "known-good-output-after-kills.bin",
+    )?;
+    observed.push((
+        "committed_untouched",
+        "known-good result byte-exact after every restart".into(),
+    ));
+    detach(&session)?;
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    stop_and_seal(context, scenario_dir, id, session.server, events)
+}
+
+/// g3-restart-same-roots: build a loaded session (a sealed root declaration
+/// with one entity admitted and published in mode 0, a mode-1 branch with a
+/// sealed child scope and both children settled, a mode-2 authority expansion
+/// in flight, a real fence via the child-scope checkpoint, and one declared
+/// but unadmitted entity), kill the server uncontrolled at a seeded delay,
+/// and restart against the same roots. Readiness must serve an op
+/// immediately, the work views must come back with identical attempts and
+/// deadlines (never a fabricated outcome), the sealed scope seals must still
+/// match the independent oracle, the in-flight expansion must settle after
+/// the restart, and only then does new capacity admit. All three directions.
+fn g3_restart_same_roots(context: &ScenarioContext) -> Result<()> {
+    run_three_directions(
+        context,
+        "g3-restart-same-roots",
+        g3_restart_same_roots_direction,
+    )
+}
+
+fn g3_restart_same_roots_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g3-restart-same-roots";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    let session = setup_session(context, scenario_dir, server, client)?;
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "client binding")?;
+
+    // Sealed root over four entities: 0:0:1 publishes before the kill, 0:0:2
+    // runs the mode-1 branch, 0:0:3 the mode-2 expansion, and 0:0:4 stays
+    // declared-but-unadmitted for the post-restart admission.
+    let root_seal = oracle::scope_seal_hex("issuer-a", "alice", 1, 0, 0, None, &[1, 2, 3, 4]);
+    let child_seal = oracle::scope_seal_hex("issuer-a", "alice", 1, 1, 0, Some([0, 0, 2]), &[1, 2]);
+    let leaf_input = oracle::dataset(context.seed, INPUT_LEN);
+    let leaf_sha256 = oracle::sha256_hex(&leaf_input);
+    let leaf_path = artifacts.join("leaf-input.bin");
+    fs::write(&leaf_path, &leaf_input)?;
+    let parent_bytes = oracle::dataset(context.seed, MODE1_PART_ONE_LEN + MODE1_PART_TWO_LEN);
+    let parent_sha256 = oracle::sha256_hex(&parent_bytes);
+    let parent_path = artifacts.join("parent-input.bin");
+    fs::write(&parent_path, &parent_bytes)?;
+    let part_one_path = artifacts.join("child-part-1.bin");
+    fs::write(&part_one_path, &parent_bytes[..MODE1_PART_ONE_LEN])?;
+    let part_two_path = artifacts.join("child-part-2.bin");
+    fs::write(&part_two_path, &parent_bytes[MODE1_PART_ONE_LEN..])?;
+    let mode2_input = oracle::dataset(context.seed, MODE2_INPUT_LEN);
+    let mode2_sha256 = oracle::sha256_hex(&mode2_input);
+    let mode2_path = artifacts.join("mode2-input.bin");
+    fs::write(&mode2_path, &mode2_input)?;
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("root_seal_sha256", root_seal.clone()),
+            ("mode1_child_seal_sha256", child_seal.clone()),
+            ("leaf_input_sha256", leaf_sha256.clone()),
+            ("mode1_parent_sha256", parent_sha256.clone()),
+            ("mode2_input_sha256", mode2_sha256.clone()),
+            (
+                "loaded_session",
+                "mode 0 published; mode 1 child scope sealed, both children settled; mode 2 \
+                 expansion in flight; child-scope checkpoint fenced; 0:0:4 declared but unadmitted"
+                    .into(),
+            ),
+            (
+                "crash_label",
+                "seeded uncontrolled SIGKILL after the fence - process death, not power loss, not a boundary test"
+                    .into(),
+            ),
+            (
+                "expected_readiness",
+                "an op is served immediately after the restart is ready (recorded)".into(),
+            ),
+            (
+                "expected_views",
+                "identical attempts and deadlines across the restart; in-flight expansion settles"
+                    .into(),
+            ),
+            (
+                "expected_seals",
+                "sealed scope seals still match the oracle after the restart".into(),
+            ),
+            (
+                "expected_new_capacity",
+                "0:0:4 (declared before the kill) admits only after reconciliation".into(),
+            ),
+        ],
+    )?;
+
+    let declare = declare_sealed(
+        &session,
+        &mut events,
+        context.seed,
+        "declare",
+        &[1, 2, 3, 4],
+    )?;
+    let leaf_admit = oracle::operation_hex(oracle::operation_id(context.seed, "admit", 1));
+    admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "admit",
+        &declare,
+        "0:0:1",
+        &leaf_path,
+    )?;
+    watch_terminal(&session, &mut events, "0:0:1", &leaf_admit, WATCH_TIMEOUT)?;
+    let published_sha256 = read_output_verified(
+        &session,
+        &mut events,
+        "0:0:1",
+        1,
+        &leaf_input,
+        &leaf_sha256,
+        &artifacts,
+        "leaf-output.bin",
+    )?;
+
+    // Mode-1 branch: parent admits, child scope 1:0 seals over [1,2], both
+    // children settle, the parent follows, and the child-scope checkpoint is
+    // the real fence committed before the crash.
+    admit_modeled(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-m1",
+        &declare,
+        "0:0:2",
+        &parent_path,
+        "reassemble/v2",
+        1,
+        1,
+    )?;
+    let view = session.watch("0:0:2")?;
+    let child = parse_child_scope(&view)?
+        .context("mode-1 admission must allocate a child scope (child=S:P)")?;
+    ensure!(
+        child == (1, 0),
+        "g3-restart-same-roots: reassemble/v2 must allocate child scope 1:0, got {child:?}"
+    );
+    let (child_declare, _receipt) = declare_scoped_batch(
+        &session,
+        &mut events,
+        context.seed,
+        "declare-child",
+        0,
+        1,
+        &[1, 2],
+        true,
+    )?;
+    let child_one_admit =
+        oracle::operation_hex(oracle::operation_id(context.seed, "admit-child-1", 1));
+    admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-child-1",
+        &child_declare,
+        "1:0:1",
+        &part_one_path,
+    )?;
+    watch_terminal(
+        &session,
+        &mut events,
+        "1:0:1",
+        &child_one_admit,
+        WATCH_TIMEOUT,
+    )?;
+    let child_two_admit =
+        oracle::operation_hex(oracle::operation_id(context.seed, "admit-child-2", 1));
+    admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-child-2",
+        &child_declare,
+        "1:0:2",
+        &part_two_path,
+    )?;
+    watch_terminal(
+        &session,
+        &mut events,
+        "1:0:2",
+        &child_two_admit,
+        WATCH_TIMEOUT,
+    )?;
+    let mode1_admit = oracle::operation_hex(oracle::operation_id(context.seed, "admit-m1", 1));
+    watch_terminal(&session, &mut events, "0:0:2", &mode1_admit, WATCH_TIMEOUT)?;
+    let (_stdout, child_page) = observe_scope_page(&session, 1, 0, 256)?;
+    ensure!(
+        child_page.seal.as_deref() == Some(child_seal.as_str()),
+        "g3-restart-same-roots: committed child seal {:?} != oracle {child_seal}",
+        child_page.seal
+    );
+    let fence = session.op(&["checkpoint", "--scope", "1", "--seal", &child_seal])?;
+    require(&fence, "COVERAGE", "pre-crash child-scope checkpoint fence")?;
+    fs::write(
+        artifacts.join("fence-coverage.txt"),
+        String::from_utf8_lossy(&fence.stdout).into_owned(),
+    )?;
+
+    // Mode-2 authority expansion: admitted last so it is in flight when the
+    // seeded kill lands.
+    admit_modeled(
+        &session,
+        &mut events,
+        context.seed,
+        "admit-m2",
+        &declare,
+        "0:0:3",
+        &mode2_path,
+        "chunk-copy/v2",
+        2,
+        1,
+    )?;
+    let mode2_view = session.watch("0:0:3")?;
+    let mode2_child = parse_child_scope(&mode2_view)?
+        .context("mode-2 admission must allocate a child scope (child=S:P)")?;
+
+    // Pre-crash durable observations: per-work views and the sealed pages.
+    let pre_views = [
+        ("0:0:1", session.watch("0:0:1")?),
+        ("0:0:2", session.watch("0:0:2")?),
+        ("0:0:3", mode2_view),
+    ];
+    let mut pre = Vec::new();
+    for (work, view) in &pre_views {
+        // Terminal views retire the deadline (None); in-flight views carry
+        // it. Both must come back identical after the restart.
+        pre.push((
+            *work,
+            parse_state(view)?,
+            parse_attempt(view)?,
+            parse_field_u64(view, "deadline")?,
+        ));
+    }
+    let (_stdout, root_page) = observe_page(&session, 0, 256)?;
+    let committed_root_seal = root_page
+        .seal
+        .clone()
+        .context("sealed root scope must carry the seal digest")?;
+    ensure!(
+        committed_root_seal == root_seal,
+        "g3-restart-same-roots: committed root seal {committed_root_seal} != oracle {root_seal}"
+    );
+    let delay_ms = 20 + (context.seed % 481);
+    thread::sleep(Duration::from_millis(delay_ms));
+    session.server.kill()?;
+    events.append("", None, Some("0:0:3"), Some(1), None, None)?;
+
+    // Same roots, fresh process. A live process plus ready file plus one
+    // authenticated op (inside start_server) is the only readiness accepted;
+    // the first watch below is the recorded immediate-op probe.
+    let restarted_process = session.fixture.start_server()?;
+    let connection = session
+        .fixture
+        .connection_args(&restarted_process, "alice")?;
+    let recovered = Session {
+        fixture: session.fixture,
+        connection,
+        server: restarted_process,
+        sequence: session.sequence,
+        journal: session.journal,
+    };
+
+    let mut observed: Vec<(&str, String)> = Vec::new();
+
+    // Readiness probe: the first op right after ready is served.
+    let first_watch = recovered.watch("0:0:1")?;
+    fs::write(
+        artifacts.join("first-watch-after-restart.txt"),
+        &first_watch,
+    )?;
+    let first_state = parse_state(&first_watch)?;
+    let first_attempt = parse_attempt(&first_watch)?;
+    let first_deadline = parse_field_u64(&first_watch, "deadline")?;
+    let pre_leaf = pre[0];
+    ensure!(
+        first_state == pre_leaf.1 && first_attempt == pre_leaf.2 && first_deadline == pre_leaf.3,
+        "g3-restart-same-roots: the published work must come back intact immediately after \
+         the restart: expected state={} attempt={} deadline={:?}, got state={first_state} \
+         attempt={first_attempt} deadline={first_deadline:?}",
+        pre_leaf.1,
+        pre_leaf.2,
+        pre_leaf.3
+    );
+
+    // Work views intact: identical attempts and deadlines per work; the
+    // in-flight mode-2 expansion settles under its original attempt.
+    for (work, pre_state, pre_attempt, pre_deadline) in &pre {
+        let settle_deadline = Instant::now() + RECOVERY_TIMEOUT;
+        let mut view = recovered.watch(work)?;
+        let mut state = parse_state(&view)?;
+        let mut attempt = parse_attempt(&view)?;
+        let mut deadline_ms = parse_field_u64(&view, "deadline")?;
+        while state != 5 {
+            ensure!(
+                state != 6,
+                "g3-restart-same-roots: restart fabricated a failure outcome for {work}: {view}"
+            );
+            ensure!(
+                attempt == *pre_attempt,
+                "g3-restart-same-roots: restart created a new wire attempt for {work}: {view}"
+            );
+            if let Some(pre_deadline) = pre_deadline {
+                ensure!(
+                    deadline_ms == Some(*pre_deadline),
+                    "g3-restart-same-roots: {work} changed its deadline while nonterminal: \
+                     expected {pre_deadline}, got {deadline_ms:?}:\n{view}"
+                );
+            }
+            ensure!(
+                Instant::now() < settle_deadline,
+                "g3-restart-same-roots: {work} did not settle within {RECOVERY_TIMEOUT:?} \
+                 after the restart\nlast view:\n{view}"
+            );
+            thread::sleep(Duration::from_millis(200));
+            view = recovered.watch(work)?;
+            state = parse_state(&view)?;
+            attempt = parse_attempt(&view)?;
+            deadline_ms = parse_field_u64(&view, "deadline")?;
+        }
+        ensure!(
+            attempt == *pre_attempt,
+            "g3-restart-same-roots: {work} changed its attempt across the restart: expected \
+             {pre_attempt}, got {attempt}:\n{view}"
+        );
+        if let (Some(pre_deadline), Some(deadline_ms)) = (pre_deadline, deadline_ms) {
+            ensure!(
+                deadline_ms == *pre_deadline,
+                "g3-restart-same-roots: {work} changed its deadline across the restart: \
+                 expected {pre_deadline}, got {deadline_ms}"
+            );
+        }
+        observed.push((
+            Box::leak(format!("view_{work}").into_boxed_str()),
+            format!(
+                "state=5 attempt={attempt} deadline={deadline_ms:?} (pre-crash state={pre_state})"
+            ),
+        ));
+    }
+
+    // Sealed scope seals still match the independent oracle after the crash.
+    let (_stdout, root_page) = observe_page(&recovered, 0, 256)?;
+    ensure!(
+        root_page.seal.as_deref() == Some(root_seal.as_str()),
+        "g3-restart-same-roots: root seal after restart {:?} != oracle {root_seal}",
+        root_page.seal
+    );
+    let (_stdout, child_page) = observe_scope_page(&recovered, 1, 0, 256)?;
+    ensure!(
+        child_page.seal.as_deref() == Some(child_seal.as_str()),
+        "g3-restart-same-roots: child seal after restart {:?} != oracle {child_seal}",
+        child_page.seal
+    );
+    observed.push(("root_seal_matches_oracle_after_restart", "true".into()));
+    observed.push(("child_seal_matches_oracle_after_restart", "true".into()));
+
+    // Publications stay pinned and byte-exact across the restart.
+    let republished = read_output_verified(
+        &recovered,
+        &mut events,
+        "0:0:1",
+        1,
+        &leaf_input,
+        &leaf_sha256,
+        &artifacts,
+        "leaf-output-after-restart.bin",
+    )?;
+    ensure!(
+        republished == published_sha256,
+        "g3-restart-same-roots: the published output changed across the restart"
+    );
+    read_output_verified(
+        &recovered,
+        &mut events,
+        "0:0:2",
+        1,
+        &parent_bytes,
+        &parent_sha256,
+        &artifacts,
+        "parent-output-after-restart.bin",
+    )?;
+    read_output_verified(
+        &recovered,
+        &mut events,
+        "0:0:3",
+        1,
+        &mode2_input,
+        &mode2_sha256,
+        &artifacts,
+        "mode2-output-after-restart.bin",
+    )?;
+
+    // New capacity: the entity declared before the kill admits only after
+    // reconciliation has settled the retained work.
+    let late_input = oracle::dataset(context.seed, 8192);
+    let late_sha256 = oracle::sha256_hex(&late_input);
+    let late_path = artifacts.join("late-input.bin");
+    fs::write(&late_path, &late_input)?;
+    let late_admit = oracle::operation_hex(oracle::operation_id(context.seed, "admit-late", 1));
+    admit_input(
+        &recovered,
+        &mut events,
+        context.seed,
+        "admit-late",
+        &declare,
+        "0:0:4",
+        &late_path,
+    )?;
+    watch_terminal(&recovered, &mut events, "0:0:4", &late_admit, WATCH_TIMEOUT)?;
+    read_output_verified(
+        &recovered,
+        &mut events,
+        "0:0:4",
+        1,
+        &late_input,
+        &late_sha256,
+        &artifacts,
+        "late-output.bin",
+    )?;
+    observed.push((
+        "new_capacity_after_reconcile",
+        "0:0:4 admitted and settled".into(),
+    ));
+
+    // Settlement of the expansion's child scope, then the root, then
+    // complete. Every child's terminal work view must be materialized by
+    // watching it (g1-mode2-descendants settles the same way) before the
+    // scope checkpoint yields coverage.
+    let (mode2_page_text, mode2_page) = observe_scope_page(&recovered, mode2_child.0, 0, 256)?;
+    fs::write(artifacts.join("mode2-scope-page.txt"), &mode2_page_text)?;
+    for (entity, _state) in &mode2_page.members {
+        let child_work = format!("{}:{}:{}", mode2_child.0, mode2_child.1, entity);
+        let settle_deadline = Instant::now() + WATCH_TIMEOUT;
+        loop {
+            let view = recovered.watch(&child_work)?;
+            let state = parse_state(&view)?;
+            if state == 5 {
+                break;
+            }
+            ensure!(
+                state != 6,
+                "g3-restart-same-roots: expanded child {child_work} fabricated a failure \
+                 outcome: {view}"
+            );
+            ensure!(
+                Instant::now() < settle_deadline,
+                "g3-restart-same-roots: expanded child {child_work} did not settle within \
+                 {WATCH_TIMEOUT:?}\nlast view:\n{view}"
+            );
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+    let mode2_child_seal = mode2_page
+        .seal
+        .clone()
+        .context("settled mode-2 child scope must carry the seal digest")?;
+    let mode2_checkpoint = recovered.op(&[
+        "checkpoint",
+        "--scope",
+        &mode2_child.0.to_string(),
+        "--seal",
+        &mode2_child_seal,
+    ])?;
+    require(&mode2_checkpoint, "COVERAGE", "mode-2 child checkpoint")?;
+    let root_checkpoint = recovered.op(&["checkpoint", "--scope", "0", "--seal", &root_seal])?;
+    require(&root_checkpoint, "COVERAGE", "root checkpoint")?;
+    let completed = recovered.op(&["complete"])?;
+    require(&completed, "COMPLETED", "complete operation")?;
+    observed.push((
+        "settlement",
+        "mode-2 child COVERAGE, root COVERAGE, COMPLETED".into(),
+    ));
+
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .context("a Java direction requires --java-jar")?;
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    detach(&recovered)?;
+    stop_and_seal(context, scenario_dir, id, recovered.server, events)
+}
+
+/// g3-store-ownership: a live server owns its roots exclusively. A second
+/// server process against the SAME roots must fail its startup (the exact
+/// exit and message are recorded); the first server keeps serving; after a
+/// graceful stop the second starts cleanly against the retained roots and
+/// serves the retained session. Per-server row: the rust client runs against
+/// both server subjects; the java-client direction is a named gap (the client
+/// subject never owns the store). The duplicate-startup capture is a
+/// private-storage supplementary probe paired with the black-box "first
+/// server unaffected" observation.
+fn g3_store_ownership(context: &ScenarioContext) -> Result<()> {
+    let id = "g3-store-ownership";
+    g3_store_ownership_direction(
+        context,
+        &context.scenario_dir(id),
+        Subject::Rust,
+        Subject::Rust,
+    )?;
+    run_hooked_direction(
+        context,
+        id,
+        "rust-client-java-server",
+        |context, direction_dir| {
+            g3_store_ownership_direction(context, direction_dir, Subject::Java, Subject::Rust)
+        },
+    )?;
+    let gap_dir = context.scenario_dir(id).join("java-client-rust-server");
+    fs::create_dir_all(&gap_dir)?;
+    fs::write(
+        gap_dir.join("INCOMPLETE"),
+        b"named gap: g3-store-ownership is a per-server storage row; the \
+          java-client/rust-server direction differs only in the client subject, which never \
+          owns the store. Primary directions: rust-client on both server subjects.\n",
+    )?;
+    Ok(())
+}
+
+/// Spawn a second server against the same roots while the first is live and
+/// capture its startup refusal: (exit status text, server log text). An
+/// unexpected readiness or a hang is a row failure, never a silent skip.
+fn g3_duplicate_server_probe(fixture: &AuthorityFixture) -> Result<(String, String)> {
+    let serial = unique_suffix();
+    let ready = fixture.root.join(format!("ready-dup-{serial:x}"));
+    let log_path = fixture.root.join(format!("server-dup-{serial:x}.log"));
+    let mut command = fixture.base()?;
+    command.push("serve".into());
+    command.extend(fixture.storage_args());
+    command.extend([
+        "--bind".into(),
+        "127.0.0.1:0".into(),
+        "--cert".into(),
+        crate::path(&fixture.certs.server.cert),
+        "--key".into(),
+        crate::path(&fixture.certs.server.key),
+        "--client-ca".into(),
+        crate::path(&fixture.certs.ca_cert),
+        "--result-authority".into(),
+        "localhost:7443".into(),
+        "--ready-file".into(),
+        crate::path(&ready),
+    ]);
+    let log_file = File::create(&log_path)?;
+    let mut child = Command::new(&command[0])
+        .args(&command[1..])
+        .current_dir(&fixture.root)
+        .stdout(Stdio::from(log_file.try_clone()?))
+        .stderr(Stdio::from(log_file))
+        .spawn()
+        .with_context(|| format!("start duplicate {}", command.join(" ")))?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Ok(text) = fs::read_to_string(&ready)
+            && text.trim().parse::<std::net::SocketAddr>().is_ok()
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!(
+                "the duplicate server became ready against live roots; expected an ownership \
+                 refusal\nlog:\n{}",
+                fs::read_to_string(&log_path).unwrap_or_default()
+            );
+        }
+        if let Some(status) = child.try_wait()? {
+            ensure!(
+                !status.success(),
+                "the duplicate server exited zero against live roots; expected an ownership \
+                 refusal\nlog:\n{}",
+                fs::read_to_string(&log_path).unwrap_or_default()
+            );
+            return Ok((
+                status.to_string(),
+                fs::read_to_string(&log_path).unwrap_or_default(),
+            ));
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "the duplicate server neither refused nor became ready within 30s\nlog:\n{}",
+            fs::read_to_string(&log_path).unwrap_or_default()
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn g3_store_ownership_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g3-store-ownership";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    let session = setup_session(context, scenario_dir, server, client)?;
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "client binding")?;
+    let declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
+    let admit_hex = oracle::operation_hex(oracle::operation_id(context.seed, "admit", 1));
+    let input = oracle::dataset(context.seed, INPUT_LEN);
+    let input_sha256 = oracle::sha256_hex(&input);
+    let input_path = artifacts.join("input.bin");
+    fs::write(&input_path, &input)?;
+    admit_input(
+        &session,
+        &mut events,
+        context.seed,
+        "admit",
+        &declare,
+        "0:0:1",
+        &input_path,
+    )?;
+    watch_terminal(&session, &mut events, "0:0:1", &admit_hex, WATCH_TIMEOUT)?;
+    read_output_verified(
+        &session,
+        &mut events,
+        "0:0:1",
+        1,
+        &input,
+        &input_sha256,
+        &artifacts,
+        "output.bin",
+    )?;
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("live_server", server.name().into()),
+            (
+                "expected_duplicate",
+                "second server against the same roots refuses startup (exact exit recorded)".into(),
+            ),
+            (
+                "expected_first_unaffected",
+                "subsequent op on the first server succeeds".into(),
+            ),
+            (
+                "expected_after_stop",
+                "after SIGTERM on the first, the second starts cleanly and serves the retained \
+                 session"
+                    .into(),
+            ),
+            (
+                "storage_probe_scope",
+                "private-storage-supplementary (duplicate-server startup capture; paired with \
+                 the first-server op observation)"
+                    .into(),
+            ),
+        ],
+    )?;
+
+    // Supplementary probe: the duplicate startup refusal.
+    let (dup_status, dup_log) = g3_duplicate_server_probe(&session.fixture)?;
+    let dup_text = format!("exit={dup_status}\nlog:\n{dup_log}");
+    fs::write(artifacts.join("duplicate-server-refusal.txt"), &dup_text)?;
+
+    // Black-box pairing: the first server is unaffected.
+    let view = session.watch("0:0:1")?;
+    ensure!(
+        parse_state(&view)? == 5,
+        "g3-store-ownership: the first server must keep serving after the duplicate refusal:\n\
+         {view}"
+    );
+    events.append(
+        "OBSERVATION_JOURNALED",
+        Some(hex_to_id(&admit_hex)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+
+    // Graceful stop of the owner, then the duplicate starts cleanly.
+    session.server.stop()?;
+    let second = session.fixture.start_server()?;
+    let connection = session.fixture.connection_args(&second, "alice")?;
+    let retained = Session {
+        fixture: session.fixture,
+        connection,
+        server: second,
+        sequence: session.sequence,
+        journal: session.journal,
+    };
+    let retained_view = retained.watch("0:0:1")?;
+    ensure!(
+        parse_state(&retained_view)? == 5,
+        "g3-store-ownership: the retained session must be served by the second server:\n\
+         {retained_view}"
+    );
+    read_output_verified(
+        &retained,
+        &mut events,
+        "0:0:1",
+        1,
+        &input,
+        &input_sha256,
+        &artifacts,
+        "output-second-server.bin",
+    )?;
+    let lookup = retained.op(&["lookup", "--operation", &admit_hex])?;
+    require(
+        &lookup,
+        "RECEIPT",
+        "retained operation lookup on the second server",
+    )?;
+    detach(&retained)?;
+    write_kv(
+        scenario_dir,
+        "observed.tsv",
+        &[
+            ("live_server", server.name().into()),
+            ("duplicate_startup", format!("refused: {dup_status}")),
+            (
+                "duplicate_refusal_log",
+                dup_log.lines().next().unwrap_or("").to_owned(),
+            ),
+            (
+                "storage_probe_scope",
+                "private-storage-supplementary".into(),
+            ),
+            ("first_server_unaffected", "watch state=5".into()),
+            (
+                "second_server_after_stop",
+                "started cleanly; retained session served".into(),
+            ),
+        ],
+    )?;
+    stop_and_seal(context, scenario_dir, id, retained.server, events)
+}
+
 /// Section 12.2 refusal-code table, used only to NAME codes that a subject
 /// transcript prints verbatim; a code is never inferred from a generic error.
 const REFUSAL_CODES: &[(&str, u32)] = &[
@@ -7004,6 +8526,10 @@ mod tests {
             "g2-duplicate-op-changed-params",
             "g2-simultaneous-duplicate",
             "g2-kill-server-after-admission-recovery",
+            "g3-input-before-metadata",
+            "g3-orphan-cleanup",
+            "g3-restart-same-roots",
+            "g3-store-ownership",
             "g5-untrusted-identity",
             "g5-missing-client-cert",
             "g5-unmapped-principal",
@@ -7013,7 +8539,7 @@ mod tests {
             let row = rows.iter().find(|row| row.id == id).unwrap();
             assert!(row.rust_implemented, "{id} must be implemented");
         }
-        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 23);
+        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 27);
     }
 
     #[test]

@@ -1,0 +1,5 @@
+exit=exit status: 1
+stdout:
+
+stderr:
+NOT_FOUND: NOT_FOUND: operation not journaled
