@@ -116,6 +116,29 @@ used 1.97.1 against that closure. `cargo build` on the host will confirm.
 - Coordinator binary with retry: `ac94b2f1…` (full hash in run
   artifacts `bin.sha256`). Timing still shared-host; no performance
   claim.
+- CR mapping (Kimi `cr-mapping.md` @ `50c1871`): CR11 (pacing) STRONG —
+  `579defe` is exactly "admission receipts don't replenish executor
+  credit": the coordinator rides finite capacity refusals with the same
+  identity (ceiling=1 proof: 119 refusals, byte-identical final;
+  rep-4-ps took 1 natural refusal the same way). Terminal-status vs
+  retained-byte release PARTIAL: `watch_terminal` + `fetch_verified`
+  read outputs only after terminal states and verify bytes, but nothing
+  here measures release timing. CR12 (healthy progress under shared
+  contention) WEAK: all repeats progressed to byte-identical finals on
+  a loaded host, which is consistent with but not a measurement of
+  per-principal progress guarantees.
+- Contract §6 dead-collector control enforced: all three runners now
+  fail the run when the metric sampler dies mid-run or any worker has
+  no samples (proven: killed-sampler arm exits 1
+  `metric sampler died mid-run`; clean arm passes).
+- CR13 arms (`run-cr13.sh`, new `probe` subcommand): idle arm proves a
+  3 s stall survives (boundary control) while a 7 s control-only stall
+  kills the stream despite 14 unrelated reads; lifetime arm proves
+  28 s of continuous progress still dies at the 30 s absolute cap.
+  Both PASS vs the Rust worker. Worker type is immaterial (deadlines
+  are client-enforced), so no Java duplication. Fidelity note for
+  transport owners: post-deadline writes surface Cancelled, not the
+  deadline that killed the stream.
 
 ## 9. Safe next actions
 

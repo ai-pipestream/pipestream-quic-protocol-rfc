@@ -74,6 +74,18 @@ START_MS=$(ms_now)
   --seed "$SEED" --size "$SIZE" --staging "$W/ps-staging" \
   --output "$ART/mixed-final.bin" --events "$ART/mixed-events.tsv"
 END_MS=$(ms_now)
+# Contract §6 negative controls: a dead metric collector or missing
+# per-worker samples fails the run instead of passing silently.
+check_samples() {
+  local f="$1"; shift
+  kill -0 "$SAMPLER" 2>/dev/null || { echo "metric sampler died mid-run"; return 1; }
+  [ -s "$f" ] || { echo "metric sample file empty: $f"; return 1; }
+  local pid
+  for pid in "$@"; do
+    grep -q -m1 "[[:space:]]$pid[[:space:]]" "$f" || { echo "missing metric samples for worker $pid"; return 1; }
+  done
+}
+check_samples "$ART/mixed-sample.tsv" $PIDS || exit 1
 kill "$SAMPLER" 2>/dev/null || true
 kill $PIDS 2>/dev/null || true
 wait 2>/dev/null || true

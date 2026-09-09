@@ -176,7 +176,9 @@ fn endpoint(tls: &Tls, connect: SocketAddr) -> Result<session::Endpoint> {
 }
 
 async fn open_session(
-    run: &Run,
+    tls: &Tls,
+    owner: &str,
+    execution_ms: u64,
     worker: u64,
     authority: &str,
     connect: SocketAddr,
@@ -188,10 +190,10 @@ async fn open_session(
 ) -> Result<Session> {
     let creation = journal::Creation {
         authority: IdentityLabel(authority.into()),
-        owner: IdentityLabel(run.owner.clone()),
+        owner: IdentityLabel(owner.into()),
         creation_sequence: Id(creation_sequence),
         policy: Policy {
-            execution_limit_ms: Duration(run.execution_ms),
+            execution_limit_ms: Duration(execution_ms),
             output_retention_ms: Duration(3_600_000),
             receipt_retention_ms: Duration(86_400_000),
         },
@@ -227,7 +229,7 @@ async fn open_session(
     // than failing a healthy run on a transient refusal.
     let mut client = None;
     for _ in 0..60 {
-        match Client::connect(endpoint(&run.tls, connect)?, journal.clone(), session::Options::default()).await {
+        match Client::connect(endpoint(tls, connect)?, journal.clone(), session::Options::default()).await {
             Ok(c) => {
                 client = Some(c);
                 break;
@@ -429,8 +431,8 @@ async fn run_session(
         .collect();
     let fresh = !run.resume;
     let session = open_session(
-        run, worker, authority, connect, journal_path, creation_sequence,
-        fresh, events, started,
+        &run.tls, &run.owner, run.execution_ms, worker, authority, connect,
+        journal_path, creation_sequence, fresh, events, started,
     )
     .await?;
     session.log("session-open", -1, authority);
@@ -522,9 +524,41 @@ fn blake_of_chunk(seed: u64, total: u64, ordinal: u64) -> [u8; 32] {
     hash.finalize().into()
 }
 
+/// CR13 idle/lifetime probe: script a partial object upload and assert the
+/// client-side stream deadlines fire. `idle` stalls all payload progress
+/// while issuing unrelated control reads (with a 3 s boundary control
+/// proving the stream was alive first); `lifetime` makes slow continuous
+/// progress past the absolute stream lifetime. Both arms PASS only when
+/// the post-stall payload step finds the stream dead.
+#[derive(Debug, Args)]
+struct Probe {
+    #[command(flatten)]
+    tls: Tls,
+    #[arg(long)]
+    owner: String,
+    #[arg(long)]
+    authority: String,
+    #[arg(long)]
+    connect: SocketAddr,
+    #[arg(long)]
+    journal: PathBuf,
+    #[arg(long, default_value_t = 1)]
+    creation_sequence: u64,
+    #[arg(long)]
+    seed: u64,
+    /// "idle" or "lifetime".
+    #[arg(long)]
+    arm: String,
+    #[arg(long)]
+    events: PathBuf,
+    #[arg(long, default_value_t = 60000)]
+    execution_ms: u64,
+}
+
 #[derive(Debug, Subcommand)]
 enum Command {
     Run(Run),
+    Probe(Probe),
 }
 
 #[derive(Debug, Parser)]
@@ -596,9 +630,160 @@ async fn assemble_final(seed: u64, total: u64, staging: &Path, output: &Path, ev
     Ok(())
 }
 
+/// Assert a stalled upload stream is dead. The client enforces the idle and
+/// absolute stream deadlines inside its upload task (`bounded` in
+/// `v2_client::transport::objects`); by the time a post-stall payload step
+/// runs, the stream is already reset, so the step surfaces whatever
+/// post-mortem error the writer reports rather than the deadline itself.
+/// The arm therefore asserts death (any error), not the code: the control
+/// write below proves the stream was alive first, so death after the stall
+/// is the deadline firing, not instant failure. The observed code is
+/// recorded in events for the record. Follow-up for the transport owners:
+/// post-deadline writes report Cancelled instead of the deadline that
+/// killed the stream.
+fn assert_stream_dead(
+    session: &Session,
+    result: &std::result::Result<(), session::Failure>,
+) -> Result<()> {
+    match result {
+        Err(e) => {
+            session.log("probe-stream-dead", -1, &format!("{e:?}"));
+            Ok(())
+        }
+        Ok(()) => bail!("stalled upload stream survived: no deadline enforced"),
+    }
+}
+
+/// Open one declared entity and return an upload handle plus the full
+/// deterministic content (only a prefix is ever written: the stream must
+/// die by deadline before FIN, so no digest is ever verified).
+async fn open_probe_upload(
+    session: &Session,
+    seed: u64,
+    worker: u64,
+    arm: &str,
+) -> Result<(session::Admission, Vec<u8>)> {
+    let declaration = operation_id(seed, worker, "probe-declare", 0);
+    session
+        .client
+        .mutate(journal::Intent {
+            operation: declaration,
+            mutation: Mutation::Declare {
+                scope: Number(0),
+                entity_ids: vec![Id(1)],
+                seal: true,
+            },
+        })
+        .await?;
+    session.log("probe-declared", -1, arm);
+    let mut content = generate_chunk(seed, 424242, 1024);
+    content.truncate(1024);
+    let mut hash = Sha256::new();
+    hash.update(&content);
+    let digest: [u8; 32] = hash.finalize().into();
+    let intent = journal::Intent {
+        operation: operation_id(seed, worker, arm, 0),
+        mutation: Mutation::Admit(AdmitParameters {
+            work: WorkKey {
+                scope: Number(0),
+                producer: Producer(0),
+                entity: Id(1),
+            },
+            input: Input {
+                length: Number(content.len() as u64),
+                sha256: Digest(digest),
+                content_type: ApplicationLabel(CONTENT_TYPE.into()),
+            },
+            application: ApplicationLabel(TRANSFORM_LABEL.into()),
+            mode: Mode(0),
+            execution_ms: Duration(60_000),
+            outputs: OutputBudget {
+                count: BatchCount(1),
+                total_bytes: Number(content.len() as u64),
+            },
+        }),
+    };
+    let admission = session.client.input(intent, declaration).await?;
+    Ok((admission, content))
+}
+
+async fn probe_idle(session: &Session, seed: u64, worker: u64) -> Result<()> {
+    let (mut admission, content) = open_probe_upload(session, seed, worker, "probe-idle").await?;
+    admission.write(&content[..16]).await?;
+    // Boundary control: a 3 s stall must NOT kill the stream (idle cap is
+    // 5 s). This write must succeed, proving liveness before the real stall.
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    admission.write(&content[16..32]).await?;
+    session.log("probe-alive", -1, "idle arm: stream alive after 3 s stall");
+    // Real stall: 7 s of control-only reads that must NOT renew object idle.
+    session.log("probe-stalled", -1, "idle arm: payload stopped, control reads continue");
+    for _ in 0..14 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let _ = session.client.observed_work(work_key(999)).await?;
+    }
+    // Idle cap (5 s from the last payload progress) has passed: the next
+    // payload step must find the stream dead.
+    let outcome = match admission.write(&content[32..48]).await {
+        Err(e) => Err(e),
+        Ok(()) => admission.finish().await.map(|_| ()),
+    };
+    let _ = admission.abort().await;
+    session.log("probe-deadline-observed", -1, "idle");
+    assert_stream_dead(session, &outcome)
+}
+
+async fn probe_lifetime(session: &Session, seed: u64, worker: u64) -> Result<()> {
+    let (mut admission, content) = open_probe_upload(session, seed, worker, "probe-lifetime").await?;
+    // Slow continuous progress (8 bytes / 2 s) past the 30 s absolute
+    // lifetime: progress must NOT extend it.
+    let mut outcome: std::result::Result<(), session::Failure> = Ok(());
+    for i in 0..17 {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        let off = (i * 8) % (content.len() - 8);
+        match admission.write(&content[off..off + 8]).await {
+            Ok(()) => session.log("probe-progress", i as i64, "lifetime arm"),
+            Err(e) => {
+                outcome = Err(e);
+                break;
+            }
+        }
+    }
+    if outcome.is_ok() {
+        outcome = admission.finish().await.map(|_| ());
+    }
+    let _ = admission.abort().await;
+    session.log("probe-deadline-observed", -1, "lifetime");
+    assert_stream_dead(session, &outcome)
+}
+
+async fn run_probe(p: &Probe) -> Result<()> {
+    let started = Instant::now();
+    let session = open_session(
+        &p.tls, &p.owner, p.execution_ms, 0, &p.authority, p.connect,
+        &p.journal, p.creation_sequence, true, &p.events, started,
+    )
+    .await?;
+    session.log("probe-arm-start", -1, &p.arm);
+    match p.arm.as_str() {
+        "idle" => probe_idle(&session, p.seed, 0).await?,
+        "lifetime" => probe_lifetime(&session, p.seed, 0).await?,
+        other => bail!("unknown probe arm: {other}"),
+    }
+    session.client.shutdown().await?;
+    session.log("probe-pass", -1, &p.arm);
+    println!("PROBE PASS: {} deadline observed", p.arm);
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let Command::Run(run) = Cli::parse().command;
+    let command = Cli::parse().command;
+    if let Command::Probe(p) = command {
+        return run_probe(&p).await;
+    }
+    let Command::Run(run) = command else {
+        bail!("unreachable: command dispatch exhausted")
+    };
     let started = Instant::now();
     let staging = run.staging.clone();
     materialize_chunks(run.seed, run.size, &staging)?;

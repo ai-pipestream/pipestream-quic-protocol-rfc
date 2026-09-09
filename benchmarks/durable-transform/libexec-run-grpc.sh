@@ -46,6 +46,18 @@ START_MS=$(ms_now)
   --seed "$SEED" --size "$SIZE" --staging "$W/grpc-staging" \
   --output "$ART/grpc-final.bin" --events "$ART/grpc-events.tsv"
 END_MS=$(ms_now)
+# Contract §6 negative controls: a dead metric collector or missing
+# per-worker samples fails the run instead of passing silently.
+check_samples() {
+  local f="$1"; shift
+  kill -0 "$SAMPLER" 2>/dev/null || { echo "metric sampler died mid-run"; return 1; }
+  [ -s "$f" ] || { echo "metric sample file empty: $f"; return 1; }
+  local pid
+  for pid in "$@"; do
+    grep -q -m1 "[[:space:]]$pid[[:space:]]" "$f" || { echo "missing metric samples for worker $pid"; return 1; }
+  done
+}
+check_samples "$ART/grpc-sample.tsv" $PIDS || exit 1
 kill "$SAMPLER" 2>/dev/null || true
 kill $PIDS 2>/dev/null || true
 wait 2>/dev/null || true
