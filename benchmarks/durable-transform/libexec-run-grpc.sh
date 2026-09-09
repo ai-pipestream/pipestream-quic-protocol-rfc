@@ -33,6 +33,7 @@ done
 for i in 0 1 2; do
   w=$(printf '%s' abc | cut -c $((i + 1)))
   for _ in $(seq 1 100); do [ -f "$W/grpc-$w.ready" ] && break; sleep 0.1; done
+  [ -f "$W/grpc-$w.ready" ] || { echo "worker $w did not start (see $W/grpc-$w.log)"; exit 1; }
 done
 "$HERE/sample.sh" "$ART/grpc-sample.tsv" $PIDS &
 SAMPLER=$!

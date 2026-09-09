@@ -38,6 +38,7 @@ done
 for i in 0 1 2; do
   w=$(printf '%s' abc | cut -c $((i + 1)))
   for _ in $(seq 1 100); do [ -f "$W/ps-$w.ready" ] && break; sleep 0.1; done
+  [ -f "$W/ps-$w.ready" ] || { echo "worker $w did not start (see $W/ps-$w.log)"; exit 1; }
 done
 "$HERE/sample.sh" "$ART/ps-sample.tsv" $PIDS &
 SAMPLER=$!

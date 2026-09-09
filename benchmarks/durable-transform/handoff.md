@@ -120,7 +120,10 @@ used 1.97.1 against that closure. `cargo build` on the host will confirm.
 ## 9. Safe next actions
 
 1. DONE: repeats + fault demonstrations (see §8).
-2. When Claude publishes Java transform availability: add one mixed worker
-   to the quick gate, labelled separately.
+2. DONE 2026-09-09: mixed run against Claude `63d03a0` (.4 transport,
+   jar `6da5e9d0…` hash-verified, no rebuild): `run-mixed.sh` with Java
+   worker c + Rust a/b, seed 6, 8 MiB — Java admitted and executed 42
+   chunks, final `sha256sum -c` OK against the all-Rust pin `b3dd5e34…`,
+   all milestones present, no refusals, no mismatch to report.
 3. When Kimi publishes driver checkpoints: run full comparative labels.
 4. Propose spec improvements (if any) in a separate note, not in this file.
