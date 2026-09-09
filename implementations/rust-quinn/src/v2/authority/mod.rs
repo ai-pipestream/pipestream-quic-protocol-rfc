@@ -576,7 +576,7 @@ fn commit(tx: Transaction<'_>, boundary: &'static str) -> Result<()> {
     tx.commit()?;
     #[cfg(test)]
     tests::crash_boundary(boundary, "after");
-    let _ = boundary;
+    crate::v2::fixture::commit_boundary(boundary);
     Ok(())
 }
 

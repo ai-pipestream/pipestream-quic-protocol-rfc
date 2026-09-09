@@ -5,10 +5,12 @@ use super::*;
 use crate::{v2_core::framing, v2_flow};
 use anyhow::Result as NetResult;
 use pipestream_core::v2::authority::{execution::ResultEndpoint, ingress::Applications};
+use pipestream_core::v2::fixture;
 use std::{
     collections::BTreeMap,
     future::Future,
     net::SocketAddr,
+    path::PathBuf,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use tokio::{
@@ -307,6 +309,7 @@ impl Server {
                     let connection_tasks = self.connection_tasks.clone();
                     tasks.spawn(async move {
                         if let Ok(peer) = security.accept(incoming, options.handshake_timeout).await {
+                            fixture::connection_authenticated();
                             let peer = Arc::new(peer);
                             let _close = Close(peer.connection().clone());
                             let result = async {
@@ -535,6 +538,64 @@ async fn queue(
     Ok(())
 }
 
+/// Classifies a queued control reply by the committed, reply-bearing boundary
+/// its operation reached. Refusals, detach/completion replies and result
+/// deliveries have no committed reply-pair boundary and never gate.
+fn committed_boundary(value: &mut Outbound) -> Option<&'static str> {
+    let control = value.control().ok()??;
+    match control {
+        Control::Session(Session::Binding { .. }) => Some("SESSION_COMMITTED"),
+        Control::Scope(Scope::Declared { .. }) => Some("DECLARATION_COMMITTED"),
+        Control::Work(Work::Admitted { .. }) => Some("ADMISSION_COMMITTED"),
+        _ => None,
+    }
+}
+
+/// Holds a paused reply gate until the release file (or `release-all`) appears
+/// in the events directory or the schedule deadline elapses, then lets the
+/// reply queue. Async polling only; no std sleep on a runtime worker.
+async fn hold(release: PathBuf, deadline: Elapsed) {
+    let release_all = release.with_file_name("release-all");
+    let poll = Elapsed::from_millis(50);
+    let started = Instant::now();
+    loop {
+        if release.exists() || release_all.exists() {
+            return;
+        }
+        let Some(remaining) = deadline.checked_sub(started.elapsed()) else {
+            // Bounded hold expired; the committed operation is untouched and
+            // the pending reply proceeds.
+            return;
+        };
+        tokio::time::sleep(poll.min(remaining)).await;
+    }
+}
+
+/// Runs the pre-queue fixture gate for a committed, reply-bearing boundary:
+/// pauses hold the reply until release, drop-reply/disconnect withhold the
+/// reply and reset the connection (lost-ACK shape). Unarmed boundaries pass.
+async fn reply_gate(value: &mut Outbound, gate_conn: &quinn::Connection) -> NetResult<()> {
+    let Some(boundary) = committed_boundary(value) else {
+        return Ok(());
+    };
+    match fixture::reply_gate(boundary) {
+        fixture::Gate::Pass => Ok(()),
+        fixture::Gate::Hold { release, deadline } => {
+            hold(release, deadline).await;
+            Ok(())
+        }
+        fixture::Gate::Drop => {
+            // Never merely skip the queue: the peer must observe a reset.
+            close(gate_conn, ErrorCode::ControlReset);
+            Err(error(
+                ErrorCode::ControlReset,
+                "fixture drop-reply withheld the reply",
+            )
+            .into())
+        }
+    }
+}
+
 async fn connection(
     peer: Arc<Peer>,
     security: Arc<ServerSecurity>,
@@ -664,6 +725,9 @@ async fn connection(
                     );
                     return Err(failure);
                 }
+                // Fixture evidence for the reply the transport just accepted.
+                // Never emitted from the job after queue().
+                fixture::sent_boundary(control);
                 if drain {
                     finished.store(true, Ordering::Release);
                 }
@@ -735,9 +799,21 @@ async fn connection(
                                     if detach { drain = Some(pending.accepted + Elapsed::from_millis(selected.stream_lifetime_ms.0)); }
                                     let responses = responses.clone();
                                     let outputs = outputs.clone();
+                                    let gate_conn = raw.clone();
                                     jobs.spawn(async move {
+                                        let boundary = pending.gate_boundary();
+                                        let reached_before = boundary.map_or(0, fixture::reached);
                                         let response = if output { Outbound::Output(outputs.request(pending)?.run().await) }
                                             else { Outbound::Response(pending.run().await?) };
+                                        // The gate sits after execute() and before queue():
+                                        // the writer's control_frame_timeout is computed at
+                                        // queue time, and only this connection's drain stalls.
+                                        // It acts only when the request committed freshly in
+                                        // this process; replayed receipts pass untouched.
+                                        let mut response = response;
+                                        if boundary.is_some_and(|boundary| fixture::reached(boundary) > reached_before) {
+                                            reply_gate(&mut response, &gate_conn).await?;
+                                        }
                                         queue(&responses, response, timeout, drain).await
                                     });
                                 }
@@ -758,7 +834,20 @@ async fn connection(
                 if !finishing && durable.is_some() && input_jobs.len() < selected.stream_limit.0 as usize => {
                 let input = input?;
                 let responses = responses.clone();
-                input_jobs.spawn(async move { queue(&responses, Outbound::Input(input.run().await), timeout, drain).await });
+                let gate_conn = raw.clone();
+                input_jobs.spawn(async move {
+                    let reply = input.run().await;
+                    // run() already stopped the receive stream (replay refusal:
+                    // stop(0); error: stop(code)), keeping that ordering ahead
+                    // of any armed hold. A replayed admission reached no
+                    // boundary in this process and never gates.
+                    let replay = reply.replay();
+                    let mut value = Outbound::Input(reply);
+                    if !replay {
+                        reply_gate(&mut value, &gate_conn).await?;
+                    }
+                    queue(&responses, value, timeout, drain).await
+                });
             },
             input = raw.accept_uni(), if !finishing && durable.is_none() => {
                 let mut input = input?;

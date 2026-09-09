@@ -265,6 +265,64 @@ An operator can revoke a generation offline, **after stopping its listener**:
 "${cli[@]}" revoke "${authority_args[@]}" --owner alice --generation 1
 ```
 
+## Test-only fixture hooks (neutral conformance driver)
+
+`v2 serve` additionally accepts four explicit fixture flags:
+
+```bash
+"${cli[@]}" serve "${authority_args[@]}" \
+  --bind 127.0.0.1:7443 \
+  --cert /etc/pipestream/server.pem --key /etc/pipestream/server.key \
+  --client-ca /etc/pipestream/client-ca.pem \
+  --result-authority localhost:7443 \
+  --fixture-events /srv/fixture/runs/run-7/scen-3/events.tsv \
+  --fixture-run run-7 \
+  --fixture-scenario scen-3 \
+  --fixture-schedule /srv/fixture/runs/run-7/scen-3/schedule.tsv
+```
+
+`--fixture-events`, `--fixture-run` and `--fixture-scenario` must be set
+together; `--fixture-schedule` is optional and additionally requires them.
+These hooks exist only for the neutral conformance driver (interface-v1 event
+records and fault schedules, see `conformance/results/async-neutral-v2/`).
+They are not a production admin API, have no effect on durable semantics, and
+every one of them is inert when the flags are absent. Arming is process-local:
+the flags set no environment variable and no child process inherits the hook.
+
+With the flags present the server appends one interface-v1 15-column event
+record per reached armed boundary to the events file (append plus fsync per
+record) and acts on an 8-column schedule TSV (`version, run_id, scenario_id,
+target, boundary, action, seed, deadline_ms`):
+
+- Rows for targets other than `server` and `release` rows are driver-side and
+  ignored. `stop`, `restart` and `clock-set` rows on the `server` target are
+  rejected at startup.
+- `pause` at `SESSION_COMMITTED`, `DECLARATION_COMMITTED` or
+  `ADMISSION_COMMITTED` holds that connection's pending reply before it is
+  queued until the driver creates `release-<BOUNDARY>` (or `release-all`) in
+  the events directory, or `deadline_ms` elapses; the commit stands untouched.
+  The gate acts only when the operation committed freshly in this process: a
+  replayed receipt (session attach, idempotent operation or admission replay)
+  reached no boundary here and passes without holding.
+- `drop-reply` or `disconnect` at those same three committed reply-pair
+  boundaries withholds the pending reply and resets the connection with the
+  CONTROL_RESET application error, a lost-ACK shape; the commit stands. The
+  same fresh-commit rule applies, so replayed receipts are answered normally.
+- `kill` at a reached boundary appends the boundary's event record, fsyncs,
+  then exits the process with code 86 without running destructors, abandoning
+  SQLite state exactly like process death.
+
+Startup rejects unknown versions, columns, boundaries and actions, a schedule
+whose `run_id`/`scenario_id` does not match the flags, and `pause`/
+`drop-reply`/`disconnect` outside the three committed reply pairs. The
+commit-funnel keys `work-fence`/`scope-fence` report `FENCE_COMMITTED`;
+supplementary storage probes (`prepare-input`, `worker-renew`,
+`worker-expansion`, `settlement-work`, `session-revoke`, `result-read`,
+`retention-*`, `retirement-*`) have no interface-v1 boundary and cannot be
+armed. Hooks report, hold, withhold or hard-exit only at boundaries the
+production code actually reached; they never forge commits, replies or
+protocol results and never pause inside a SQLite transaction.
+
 ## Limits and remaining work
 
 Defaults include 16 MiB per transferred object, 1,024 sessions (at most 64 per

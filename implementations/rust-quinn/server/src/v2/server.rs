@@ -1,5 +1,6 @@
 use super::*;
 use pipestream_quic::{
+    v2::fixture,
     v2_authority::{
         Authority,
         server::{Options, Server},
@@ -16,11 +17,37 @@ pub struct Network {
     pub result_authority: String,
     pub ready_file: Option<PathBuf>,
     pub object_limit: u64,
+    pub fixture_events: Option<PathBuf>,
+    pub fixture_run: Option<String>,
+    pub fixture_scenario: Option<String>,
+    pub fixture_schedule: Option<PathBuf>,
 }
 pub async fn serve(storage: configuration::Storage, network: Network) -> Result<()> {
     // Register signals before accepting work, including process-test shutdown.
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    match (
+        &network.fixture_events,
+        &network.fixture_run,
+        &network.fixture_scenario,
+    ) {
+        (Some(events), Some(run), Some(scenario)) => {
+            // Arming is process-local and happens before any connection is
+            // accepted; a malformed schedule fails startup instead of a run.
+            let arms = match &network.fixture_schedule {
+                Some(path) => {
+                    fixture::parse_schedule(path, run, scenario).map_err(anyhow::Error::msg)?
+                }
+                None => Vec::new(),
+            };
+            fixture::arm(events, run, scenario, arms).map_err(anyhow::Error::msg)?;
+        }
+        (None, None, None) if network.fixture_schedule.is_none() => {}
+        _ => bail!(
+            "--fixture-events, --fixture-run and --fixture-scenario must be set together; \
+             --fixture-schedule additionally requires them"
+        ),
+    }
     let (store, payloads, principals) = storage.open(false)?;
     let authentication = ClientAuthentication::new(
         IdentityLabel(storage.authority),
@@ -56,6 +83,7 @@ pub async fn serve(storage: configuration::Storage, network: Network) -> Result<
         file.sync_all()?;
     }
     println!("LISTENING {address}");
+    fixture::listening();
     let report = server
         .run(async {
             tokio::select! { _ = terminate.recv() => {}, _ = interrupt.recv() => {} }
