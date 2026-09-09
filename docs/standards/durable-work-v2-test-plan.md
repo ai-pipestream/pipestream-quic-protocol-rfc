@@ -19,6 +19,59 @@ sufficient. Storage families require actual restart/crash evidence and measured
 resource gates, not only mocks or an in-memory state model. Keep test names and
 logs traceable to these stable family IDs as implementation proceeds.
 
+## V2-CLIENT-RECOVERY: refusal, pacing and restart guidance (2026-09-09)
+
+Normative source: Section 12.1, 12.2.1, 12.3 and the existing operation,
+execution and result rules. Appendix G is informative application guidance.
+**Status: required scenarios specified; no new implementation or passing
+evidence is claimed by this documentation change.** Existing evidence below
+retains its original scope. There are no new wire fields or frozen wire bytes.
+
+Run each applicable scenario with the Rust and Java public clients against
+both authorities. Name the client, server, transport dependency and binary
+hashes in every result; a server-only or mocked-client test does not establish
+client recovery. Record code, request kind, error scope, original operation or
+creation identity, attempts, authoritative effects, final result and resource
+measurements. Keep request completion, job settlement and storage reclamation
+as separate observations.
+
+| ID | Scenario | Required observation |
+| --- | --- | --- |
+| CR01 | Refuse a mutation N times at the pre-admission boundary, then allow it. | A recovering client uses the same operation and immutable parameters with bounded waits and fresh transport correlation; at most one admission effect. A client stopping at its documented budget preserves resumable intent and reports unresolved work. |
+| CR02 | Fixed oversize request, transient executor contention, retained-output saturation and stream deadline all use LIMIT_EXCEEDED. | The client does not treat the code as proof of temporary executor saturation. It honors its retry budget and reports the limiting context; no silent identity replacement, output truncation or attempt increment. Retained promises survive saturation. |
+| CR03 | NOT_READY on a progressing work prerequisite and on control after detach; WAIT_TIMEOUT on a watch. | Bounded observation/backoff for the prerequisite; reconnect/attach after detach; another watch after timeout if desired. No busy loop or new work attempt. |
+| CR04 | Lose a mutation reply, return NOT_FOUND while an earlier transmission is still in flight, then complete that transmission. | The client resolves the same immutable operation; one effect and one matching receipt. A new identity is never inferred from absence. Include lost session-creation replies with the original sequence and policy. |
+| CR05 | Same operation ID with different parameters, and a stale expected-attempt action, each returning CONFLICT. | Preserve the original intent and diagnose/reconcile. No automatic identity cycling; any corrected new action has an explicit application decision and cannot overwrite the old operation. |
+| CR06 | Revoke authorization, then restore it; separately inject CLOCK_UNSAFE. | No cached receipt or reconnect grants rights. Time-issuing operations suspend or refuse under the unsafe clock; permitted evidence reads retain current authorization. |
+| CR07 | EXPIRED, OUTPUT_UNAVAILABLE, DEADLINE_EXCEEDED, CANCELLED and ALREADY_TERMINAL on their applicable requests. | The client preserves the distinction between evidence availability, delivery failure and authoritative work outcome. It does not recreate work or invent an attempt; saved verified copies are identified as local evidence. |
+| CR08 | FRAME_ERROR, EXTENSION_UNSUPPORTED, APPLICATION_UNSUPPORTED and INTEGRITY_ERROR at their specified scopes. | No downgrade, acceptance of unverified data or endless invalid-request replay. Connection-fatal and delivery-local cases affect only their documented scopes. |
+| CR09 | CONTROL_RESET, INTERNAL_ERROR, disconnect, caller cancellation and local request deadline during unobserved admission. | Persisted intent remains recoverable with its original identity. Transport failure or cancellation alone never becomes authoritative work cancellation. Retry budget exhaustion is explicit. |
+| CR10 | Fail the client journal before intent transmission, and while saving a received receipt or verified output selection. | No send before required intent persistence, no false durable-success return, and restart resolves the original operation without discarding uncertainty. |
+| CR11 | Read session limits, admit up to a controlled active-job budget, then delay job completion and retained-byte cleanup independently. | Admission receipts do not replenish executor credit; terminal status does not imply retained-byte release. Recovery/control and descendants still progress. In a frozen exclusive-capacity fixture, measure pacing and refusals; zero refusals is not a universal conformance condition. |
+| CR12 | Apply shared owner/global contention while the client stays below its session ceilings. | Refusals remain valid, client state stays bounded, existing promises survive, and capacity recovery permits resumed work. Advertised ceilings are never treated as guaranteed free capacity. |
+| CR13 | Stall one object while sending keepalives, empty progress and unrelated traffic; separately make genuine payload progress until absolute lifetime. | Unrelated activity never renews object idle time. Payload progress never extends absolute lifetime. Offered/selected limits and the triggered bound are diagnosable; no late FIN revives an expired transfer. |
+| CR14 | Repeated refused/redundant inputs, result aborts and abandoned streams, followed by a valid transfer on the same usable connection. | Control and replacement streams progress within documented connection limits; pending state, handles, buffers and staging remain bounded. Do not refund still-owned transport bytes or retained promises. Exercise packet loss/reordering and terminal/reset handling on both stacks. |
+
+Fault fixtures must bind the target request and pre-commit boundary, refusal
+code, finite refusal count, seed and overall deadline. Do not synthesize a
+pre-commit refusal after an operation already committed. Specify such actions
+in a reviewed version of the neutral fixture interface; this document does
+not silently change that interface or authorize arbitrary shell commands.
+
+Use small quotas and enough repeated streams to exceed the initial stream
+allowance and expose leaks. Measure application-owned and transport-owned
+resources separately; completion of an application write does not prove
+transport release. Connection termination at a documented finite lifetime or
+stream-history ceiling is distinct from a leak. A conforming bounded client
+may stop and report uncertainty; successful completion expectations apply only
+to a fixture whose explicitly chosen recovery policy and budget permit it.
+
+Appendix G recipes need separate application/sink evidence: crash around the
+actual external-effect commit, conflicting idempotence keys, stale fences,
+same-generation duplicates and retention expiry. These are not universal
+exactly-once or fencing certification labels. Driver output must distinguish
+physical callback invocations, committed authority outcomes and sink effects.
+
 ## Rust library evidence, 2026-09-06
 
 Source: `implementations/rust-quinn/src/v2/`; tests in its `tests.rs`.

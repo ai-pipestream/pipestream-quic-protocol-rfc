@@ -123,6 +123,13 @@ Stream idle time runs between payload-progress observations. Stream lifetime
 runs from accepting its header, without extension by progress. Reaching or
 exceeding either bound aborts that stream with LIMIT_EXCEEDED as defined in
 Section 12.2; progress or FIN at that deadline does not renew the stream.
+Payload progress is progress on that object's transfer, not activity elsewhere
+on the connection. Keepalives, unrelated control or object traffic, and empty
+progress notifications MUST NOT renew its idle deadline. Implementations
+SHOULD expose the offered and selected deadlines and the local bound that
+ended a transfer, without treating diagnostic text as machine-readable protocol
+state. A client may enforce a shorter local wait, but that does not change the
+selected peer limits or the durable work outcome.
 Implementations MUST
 also bound the time and bytes spent receiving headers, pending result-stream
 creation, per-principal connections, staging files, metadata, queued work,
@@ -136,6 +143,17 @@ as specified in {{RFC9000}}, Section 5.2.2, not a fabricated authenticated
 application REFUSAL. This transport rejection does not report a durable work
 outcome. Implementations MUST account for incomplete handshakes and temporary
 refusal state in their documented connection resource bounds.
+
+Refused, redundant and abandoned object streams remain subject to the same
+transport and resource accounting as successful streams. Endpoints MUST
+complete the applicable FIN/reset/stop handling and retire stream-owned state
+when the transport no longer owns it. They MUST NOT leak stream slots, pending
+correlation entries, buffers, handles or staging charges merely because a
+stream was refused. Nor may they refund resources still owned by the transport
+or required by a retained promise. Repeated refusals MUST preserve bounded
+resource use and continued control and replacement-stream progress within the
+connection's documented limits. This does not recycle QUIC stream identifiers
+or require unlimited use of one connection.
 
 ## Correlation and Error Scope
 
@@ -201,6 +219,49 @@ unless a more specific refusal is defined below. Identity or commitment
 failures MUST NOT be disguised as successful empty results. Authentication
 and authorization are checked before any refusal that would reveal retained
 existence, state or commitments.
+
+### Client Recovery After Refusal or Transport Loss
+
+A client that performs automatic recovery MUST distinguish a rejected request,
+an uncertain mutation, an authoritative work outcome, and a failed object
+delivery. These are not interchangeable. The request kind, error scope and
+retained operation/work evidence determine the next action; the code alone
+does not establish whether a condition is temporary. The diagnostic string is
+for explanation, not a grammar for deciding safe replay.
+
+For an uncertain mutation, persist and reuse the original operation ID and all
+immutable parameters under the original authenticated session binding, as
+specified in Section 12.4. Use a fresh connection request number or input stream
+as required by transport correlation. Replay is not WORK's explicit retry
+operation and MUST NOT create a new attempt. An uncertain session creation
+likewise retains its original creation sequence and policy. A failed result
+delivery retries only the same retained object selection while authorized and
+available, as specified in Section 12.7; it does not re-admit work.
+
+The following rules constrain recovery, without requiring a client to retry
+until success:
+
+| Condition | Client recovery rule |
+| --- | --- |
+| LIMIT_EXCEEDED | Determine whether the request exceeds a fixed bound or may succeed after capacity/progress changes. A client MAY retry the same immutable mutation with bounded backoff; it MUST NOT assume that this code means temporary executor saturation. A stream deadline is a delivery failure, and retained-byte exhaustion need not end when a job finishes. |
+| NOT_READY | Wait or observe the prerequisite when it can still progress. Do not busy-loop. After detach, use a new connection and attachment rather than retrying on the drained connection. |
+| WAIT_TIMEOUT | A bounded observation wait ended; issue another observation if desired. Do not create a new work attempt. |
+| CONFLICT | Inspect the original intent and authorized retained state. Do not change parameters under the same operation ID or cycle identities to bypass the conflict. A corrected new action requires an explicit application decision after reconciliation. |
+| NOT_FOUND | Interpret it in the request's namespace. An operation lookup does not exclude a concurrent older request committing later. Preserve the original mutation identity when resolving that uncertainty. |
+| EXPIRED or OUTPUT_UNAVAILABLE | Do not infer permission to recreate work, extend retention, or treat a partial file as complete. Report which evidence or output is unavailable; recovery is limited to separately retained, verified evidence or an explicit application decision. |
+| UNAUTHORIZED | Stop requests requiring the denied right until authorization is legitimately restored. Reconnection, a cached receipt or another operation ID does not restore permission. |
+| CLOCK_UNSAFE | Suspend operations that require safe time until the authority recovers it. Read-only evidence access remains subject to Section 12.9 and current authorization. |
+| DEADLINE_EXCEEDED, CANCELLED or ALREADY_TERMINAL | Reconcile with an authorized WORK view or retained receipt. The refusal itself does not establish a different authoritative outcome or authorize another attempt. |
+| FRAME_ERROR, EXTENSION_UNSUPPORTED, APPLICATION_UNSUPPORTED or INTEGRITY_ERROR | Respect the error scope and diagnose the incompatible or invalid request/data. Do not silently downgrade required profiles or accept unverified output. Repeating an unchanged invalid request is not a recovery policy. |
+| CONTROL_RESET, INTERNAL_ERROR, connection loss or a local request deadline | Treat any unobserved mutation outcome as uncertain. Reconnect when appropriate and resolve the original operation; a transport failure does not prove rollback or cancel accepted work. |
+
+Automatic recovery MUST bound elapsed waiting, outstanding requests and retained
+client state, honor caller cancellation, and preserve resumable intent when it
+stops. It SHOULD use backoff with jitter under contention. Exhausting that budget
+reports an unresolved or unavailable operation/delivery to the application; it
+MUST NOT manufacture a terminal work failure or success. Local journal failures
+MUST be surfaced: no retry policy may acknowledge durable client recovery while
+required intent, receipts or verified selections could not be persisted.
 
 ## Authenticated Sessions and Non-Reusable Identity
 
@@ -269,6 +330,23 @@ LIMIT_EXCEEDED, without changing the session. A connection binds to at most
 one session and cannot create or attach a second one. Core-only connections
 cannot use SESSION. Mutation requires the durable profile; output access also
 requires the result profile retained by that session.
+
+The session response's `v2-limits` already advertises retained input/output byte
+ceilings and an active-job ceiling, alongside scope, entity and operation
+limits. Clients SHOULD use these values to pace admissions and budget declared
+maximum outputs. They describe ceilings, not currently free capacity or an
+exclusive reservation; other sessions, principals and deployment-wide quotas
+can still cause refusal. No new limits query is required to obtain these
+session ceilings.
+
+Keep unresolved-request concurrency, active execution and retained bytes as
+separate budgets. An admission receipt resolves its request but is not evidence
+that its job released an executor slot. A terminal outcome does not release
+retained input, output or receipt storage while their promises or dependencies
+remain live. A client MUST NOT infer those releases solely from an admission
+receipt or terminal status. Pacing must also leave room for control observations
+and required descendant progress. A zero-refusal run under exclusive, sufficient
+capacity is useful measurement evidence, not a general protocol guarantee.
 
 A logical work identity is `(authority, owner, generation, scope, producer,
 entity)`. Wire `v2-work-key` carries its last three fields; the connection
@@ -481,6 +559,7 @@ If it cannot, refuse that application contract. Multiple physical callback
 invocations are possible: this protocol does not promise exactly-once external
 effects. Callbacks run outside metadata transactions and cannot occupy the
 control reader while waiting for I/O or computation.
+Appendix G gives informative restart-safety patterns and their evidence limits.
 
 The authority MUST recheck the original execution deadline and the worker's
 pre-transition lease after storage work and final authorization, immediately
