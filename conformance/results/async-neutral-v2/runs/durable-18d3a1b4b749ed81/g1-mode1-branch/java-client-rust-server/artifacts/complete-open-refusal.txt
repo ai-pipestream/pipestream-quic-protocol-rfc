@@ -1,0 +1,5 @@
+exit=exit status: 1
+stdout:
+
+stderr:
+NOT_READY: NOT_READY: root summary not yet verified

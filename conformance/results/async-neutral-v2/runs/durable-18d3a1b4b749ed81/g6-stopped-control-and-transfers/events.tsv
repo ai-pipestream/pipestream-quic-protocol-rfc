@@ -1,0 +1,11 @@
+1	durable-18d3a1b4b749ed81	g6-stopped-control-and-transfers	rust	client	1022440-18d3a263b4e37200	1	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a1b4b749ed81	g6-stopped-control-and-transfers	rust	server	1022440-18d3a263b4e37200	2	CONNECTION_CLOSED				526			
+1	durable-18d3a1b4b749ed81	g6-stopped-control-and-transfers	rust	client	1022440-18d3a263b4e37200	3	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a1b4b749ed81	g6-stopped-control-and-transfers	rust	server	1022440-18d3a263b4e37200	4	CONNECTION_CLOSED				526			
+1	durable-18d3a1b4b749ed81	g6-stopped-control-and-transfers	rust	client	1022440-18d3a263b4e37200	5	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a1b4b749ed81	g6-stopped-control-and-transfers	rust	server	1022440-18d3a263b4e37200	6	REFUSAL				8			
+1	durable-18d3a1b4b749ed81	g6-stopped-control-and-transfers	rust	client	1022440-18d3a263b4e37200	7	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a1b4b749ed81	g6-stopped-control-and-transfers	rust	client	1022440-18d3a263b4e37200	8	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a1b4b749ed81	g6-stopped-control-and-transfers	rust	server	1022440-18d3a263b4e37200	9	CONNECTION_CLOSED				0			
+1	durable-18d3a1b4b749ed81	g6-stopped-control-and-transfers	rust	client	1022440-18d3a263b4e37200	10	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a1b4b749ed81	g6-stopped-control-and-transfers	rust	server	1022440-18d3a263b4e37200	11	REFUSAL				8			

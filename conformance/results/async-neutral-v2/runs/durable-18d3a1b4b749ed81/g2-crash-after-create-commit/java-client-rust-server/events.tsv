@@ -1,0 +1,4 @@
+1	durable-18d3a1b4b749ed81	g2-crash-after-create-commit	java	client	1022440-18d3a1ecc7696879	1	REQUEST_SENT							
+1	durable-18d3a1b4b749ed81	g2-crash-after-create-commit	rust	server	1047598-18d3a1ecc8fd3e5b	1	SESSION_COMMITTED							
+1	durable-18d3a1b4b749ed81	g2-crash-after-create-commit	java	client	1022440-18d3a1ecc7696879	2	REFUSAL_RECEIVED				14	artifacts/binding-withheld.txt	90	d64f93e724ec42286af97557d70167ea1c7bb118a712d63362113bd018c341c7
+1	durable-18d3a1b4b749ed81	g2-crash-after-create-commit	java	client	1022440-18d3a1ecc7696879	3	RECEIPT_VALIDATED							

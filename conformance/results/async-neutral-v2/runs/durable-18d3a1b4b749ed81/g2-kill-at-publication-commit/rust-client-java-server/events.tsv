@@ -1,0 +1,27 @@
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	java	server	1064608-18d3a20f66da2380	1	LISTENING							
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	java	server	1064608-18d3a20f66da2380	2	CONNECTION_AUTHENTICATED							
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	java	server	1064608-18d3a20f66da2380	3	CONNECTION_AUTHENTICATED							
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	java	server	1064608-18d3a20f66da2380	4	CONNECTION_AUTHENTICATED							
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	java	server	1064608-18d3a20f66da2380	5	SESSION_COMMITTED							
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	java	server	1064608-18d3a20f66da2380	6	SESSION_RESPONSE_SENT							
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	rust	client	1022440-18d3a20f7f05963c	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	java	server	1064608-18d3a20f66da2380	7	CONNECTION_AUTHENTICATED							
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	java	server	1064608-18d3a20f66da2380	8	SESSION_RESPONSE_SENT							
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	java	server	1064608-18d3a20f66da2380	9	DECLARATION_COMMITTED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	java	server	1064608-18d3a20f66da2380	10	DECLARATION_RESPONSE_SENT							
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	rust	client	1022440-18d3a20f7f05963c	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	rust	client	1022440-18d3a20f7f05963c	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	java	server	1064608-18d3a20f66da2380	11	CONNECTION_AUTHENTICATED							
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	java	server	1064608-18d3a20f66da2380	12	SESSION_RESPONSE_SENT							
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	java	server	1064608-18d3a20f66da2380	13	INPUT_INSTALLED	d82b4f0e9f3814f1161c84240d038f52	0:0:1					
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	java	server	1064608-18d3a20f66da2380	14	ADMISSION_COMMITTED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	java	server	1064608-18d3a20f66da2380	15	ADMISSION_RESPONSE_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	java	server	1064608-18d3a20f66da2380	16	EXECUTION_CLAIMED		0:0:1	1				
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	java	server	1064608-18d3a20f66da2380	17	OUTPUT_INSTALLED		0:0:1	1				
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	java	server	1064608-18d3a20f66da2380	18	PUBLICATION_COMMITTED		0:0:1	1				
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	rust	client	1022440-18d3a20f7f05963c	4	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	rust	client	1022440-18d3a20f7f05963c	5	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	rust	client	1022440-18d3a20f7f05963c	6	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	rust	client	1022440-18d3a20f7f05963c	7	RESULT_INSTALLED		0:0:1	1		artifacts/output.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	rust	client	1022440-18d3a20f7f05963c	8	REQUEST_SENT	6ba0a160173156dc1d6aad583477d576	0:0:1	1				
+1	durable-18d3a1b4b749ed81	g2-kill-at-publication-commit	rust	client	1022440-18d3a20f7f05963c	9	REFUSAL_RECEIVED	6ba0a160173156dc1d6aad583477d576	0:0:1	1	18	artifacts/post-terminal-retry.txt	81	ec42928c2dadaab4462e48b840721e7be3ec135f67f4a18e250394106ec6d2b7

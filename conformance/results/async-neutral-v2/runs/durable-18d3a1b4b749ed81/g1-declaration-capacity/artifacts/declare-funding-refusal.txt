@@ -1,0 +1,5 @@
+exit=exit status: 1
+stdout:
+
+stderr:
+authority refusal LIMIT_EXCEEDED: authority record completion capacity exhausted

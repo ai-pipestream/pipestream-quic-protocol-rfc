@@ -1,0 +1,9 @@
+fault_window	armed INPUT_INSTALLED kill (payload staged, admission not committed)
+subject_exit_code	137
+lookup_after_restart	authority refusal NOT_FOUND: refused
+same_op_readmission	journaled-replay
+terminal_attempt	1
+output_matches_input	true
+storage_probe_scope	private-storage-supplementary
+object_dir_after_restart	files=3 bytes=12583222 allocated_blocks=24592
+object_dir_after_readmission	files=5 bytes=25166617 allocated_blocks=49184

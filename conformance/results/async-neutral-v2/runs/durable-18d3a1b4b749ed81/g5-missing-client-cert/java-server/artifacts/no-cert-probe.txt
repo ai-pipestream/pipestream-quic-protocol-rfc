@@ -1,0 +1,11 @@
+exit=exit status: 2
+stdout:
+
+stderr:
+error: the following required arguments were not provided:
+  --cert <CERT>
+  --key <KEY>
+
+Usage: pipestream-quinn v2 next-sequence --connect <CONNECT> --ca <CA> --cert <CERT> --key <KEY> --server-name <SERVER_NAME>
+
+For more information, try '--help'.

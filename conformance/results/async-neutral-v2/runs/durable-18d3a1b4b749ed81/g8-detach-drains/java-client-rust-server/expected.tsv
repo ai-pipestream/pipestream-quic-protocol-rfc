@@ -1,0 +1,4 @@
+big_result	0:0:1 copy/v2 12 MiB, settled
+detach_barrier	detach prints DETACHED only after the connection's accepted ops drain; a concurrent download on a second journal completes byte-exact
+same_journal_concurrency	client journal lease refuses a concurrent same-journal op (CONFLICT, ownership.rs) — recorded as the published-surface evidence
+durable_continuation	0:0:2 admitted then detached unsettled keeps settling; the same journal reattaches on a fresh connection and watches it to terminal success (a new session creation would bind its own scope tree — scopes are per session generation — so cross-session observation is not the published surface)

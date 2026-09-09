@@ -1,0 +1,5 @@
+pair_attach	(a) A's existing generation via intent claim vs (b) never-created owner label: indistinguishable
+pair_lookup	(a) A's operation id vs (b) never-created operation id: indistinguishable
+pair_view	(a) A's work key vs (b) never-created work key: indistinguishable
+pair_read	(a) A's work/attempt/index vs (b) never-created: indistinguishable
+comparison_rule	exit status, named refusal code, and normalized transcript (hex ids and N:N:N work keys redacted) must all match

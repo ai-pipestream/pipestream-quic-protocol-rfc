@@ -1,0 +1,9 @@
+server_subject	java
+client_subject	rust (raw probe)
+alpn	pipestream/2
+transport_pin	java server: QUIC stack ships inside the jar (netty-based); the exact transport pin is not black-box introspectable — named gap, behavior recorded instead
+reset_stream_on_control	APPLICATION_CLOSE code=0x20e reason=""
+stop_sending_on_control_responses	DEVIATION (potential defect): the connection stayed open for the full window after STOP_SENDING on the control response direction; an unusable Control Stream terminates the connection (CONTROL_RESET class) — observed: the server finished its control send direction but left the connection open
+abort_mid_input	refusal code=8 (INTEGRITY_ERROR) tagged [1, 2]; scope page lookup: declared=1, entries=[(entity 1, state 0 DECLARED)] — no admission receipt, no obligation change
+connection_loss_mid_session	replacement connection attached generation 1 (receipt validated); next_creation_sequence=2 (exactly one creation); scope page declared=1 entries=[(1, 0)] — no obligation changed by the loss; clean close after detach: server left connection close to the client (MAY, Section 12.8); probe closed the connection with application code 0
+stream_credit	held concurrent unidirectional opens: 8 (further opens blocked at the peer's transport ceiling: false); refused input on stream 2 answered INTEGRITY_ERROR and released its credit — a replacement open succeeded while 7 streams stay held; MAX_STREAMS credit is released by refusals

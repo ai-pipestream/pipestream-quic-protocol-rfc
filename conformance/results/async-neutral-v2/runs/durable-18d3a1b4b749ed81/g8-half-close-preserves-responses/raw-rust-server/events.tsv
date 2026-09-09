@@ -1,0 +1,5 @@
+1	durable-18d3a1b4b749ed81	g8-half-close-preserves-responses	rust	client	1022440-18d3a2aac7b9b6ab	1	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3a1b4b749ed81	g8-half-close-preserves-responses	rust	client	1022440-18d3a2aac7b9b6ab	2	CONTROL_FIN_SENT							
+1	durable-18d3a1b4b749ed81	g8-half-close-preserves-responses	rust	client	1022440-18d3a2aac7b9b6ab	3	BINDING_RECEIVED							
+1	durable-18d3a1b4b749ed81	g8-half-close-preserves-responses	rust	server	1022440-18d3a2aac7b9b6ab	4	DETACH_ACKNOWLEDGED							
+1	durable-18d3a1b4b749ed81	g8-half-close-preserves-responses	rust	server	1022440-18d3a2aac7b9b6ab	5	CONNECTION_CLOSED				0			
