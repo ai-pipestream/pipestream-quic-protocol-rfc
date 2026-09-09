@@ -38,10 +38,16 @@ gates and acceptance integration have passed, with evidence below.
 | 152c280 | M5: test-only fixture hooks in Rust production crates (separately reviewable) |
 | be43a36 / 1f4f35e / 166b679 | scenario-matrix-g3.md / -g7-g8.md / -g6-resource.md |
 | 1b9debf | traceability.md (requirement→scenario map + explicit gaps) |
+| c1265f0 | interface-v1 clarification: optional schedule header, no event-file header (schema hash now ceb31294…) |
+| 8ed8084 | this handoff (living document) |
+| 4f015b6 | M6: driver consumes fixture hooks; full G2 lost-ACK matrix ×2 client directions; --archive + MANIFEST.sha256 |
+| a5ec836 (+f62abb0) | M7: consume Claude f582341; java-server hook directions on 5 G2 rows; FixtureMain fresh-commit-gating finding |
+| 5ec9529 | normative-clarifications-review.md (Claude's 5 items dispositioned; g8-half-close reshaped to §12.8 text) |
+| d2207ce | M8: G1 batch A ×5 rows three directions; independent scope-seal oracle, byte-identical across implementations |
 
 ## 3. Verification evidence (latest full state)
 
-- `cargo test -p pipestream-conformance`: 61 passed / 0 failed (baseline
+- `cargo test -p pipestream-conformance`: 65 passed / 0 failed (baseline
   was 24 before this assignment).
 - `cargo clippy --all-targets -p pipestream-conformance -- -D warnings`:
   clean. `cargo fmt --check`: clean for the crate. Production crates
@@ -51,13 +57,19 @@ gates and acceptance integration have passed, with evidence below.
   `cli_reopens_committed_work…` observed under concurrent build load;
   passed isolated and full re-runs. Recorded, not dismissed; watch for
   recurrence.
-- Dev runs (all INCOMPLETE-labelled, never PASS): see
-  `conformance/results/async-neutral-v2/runs/` archives with
-  MANIFEST.sha256 per run (archiving added in M6).
-- Subject binary pins: rust release `pipestream-quinn` sha256 recorded
-  per run in run.tsv (M5 changed it — see latest run); Java all-jar
-  sha256 `94af1aac…f0635a62` (mismatch vs Claude's pinned `fc2e1fcf…`
-  flagged as probable shaded-jar timestamps; my hash pinned).
+- Dev runs (all INCOMPLETE-labelled, never PASS): archived under
+  `conformance/results/async-neutral-v2/runs/` with MANIFEST.sha256 per
+  run: `durable-18d3849c6bd74b8b` (M6), `durable-18d385c7335e12e0` (M7),
+  `durable-18d388dba0c3da34` (M8, 433 entries re-verified).
+- Implemented rows at M8: 21 (g1-leaf-copy, g1 batch A ×5, g2 ×7 hook
+  rows + 3 hook-free, g5 ×5) with direction coverage per traceability.md;
+  the G2 hooked rows cover all three directions except where the
+  named Java gaps (below) force INCOMPLETE markers.
+- Subject binary pins: rust release `pipestream-quinn` sha256
+  `097829fa45d8c03eb0a5594badf0cfceababdc6d8c4898d8ce497426ec7406d7`
+  (post-152c280); Java all-jar `ff537a609119534db8caca50d2828a4d421b8b0997ca04896883fff9cc60375b`
+  (f582341 build; shaded-jar timestamps make cross-host hash equality
+  unlikely — per-run hashes are recorded in run.tsv instead).
 
 ## 4. Interface and peer-review artifacts
 
@@ -75,20 +87,37 @@ gates and acceptance integration have passed, with evidence below.
 
 1. Acceptance mode has never passed: the full matrix, both directions,
    resource gates and run_all.sh integration are unfinished.
-2. Java-server hook directions INCOMPLETE until Claude's FixtureMain
-   checkpoint; rust-client/java-server lost-ACK rows blocked on it.
-3. g7-unsafe-clock-refusal needs a subject fixture clock (proposal
+2. Java-server hook directions are live for 5 G2 rows (M7), but
+   `g2-crash-after-create-commit` rust-client/java-server stays
+   INCOMPLETE: Java FixtureMain re-fires drop-reply on the REPLAYED
+   commit (no fresh-commit gating) — subject-side fix reported to Claude
+   with archived transcript.
+3. Java findings reported to Claude (all with archived reproducers):
+   CLI ignores `--max-execution-ms`; client graceful shutdown hangs
+   after a server kill; watch output lacks the deadline field; select
+   on an empty manifest throws client-side FRAME_ERROR instead of
+   surfacing wire NOT_FOUND; `--entities` required blocks empty-batch
+   declaration cases; pause release-file naming
+   (`release-<target>-<boundary>`) differs from interface-v1
+   (`release-<boundary>`) — reconciliation proposed.
+4. g7-unsafe-clock-refusal needs a subject fixture clock (proposal
    pending); host UTC is never used.
-4. require-durable and wire-level cross-owner paths are unreachable via
+5. require-durable and wire-level cross-owner paths are unreachable via
    the published CLIs (recorded findings, M4) — final certification of
    those arms needs either CLI surface or documented implementation-test
-   mapping.
-5. My all-jar predates Claude's quiche pipestream.4 transport fix
-   (MAX_STREAMS credit leak); re-pin when his rebuilt artifact is
-   published; r-* and g6-stopped-* rows must run against the FIXED
-   transport.
-6. Client-side commit boundaries are driver-side observations only;
+   mapping. Rust authority capacity bounds make the 256/batch schema
+   bound wire-unreachable (single-tx cap binds first); 257-batch is
+   preempted by clap arity — both named gaps.
+6. My all-jar predates Claude's quiche pipestream.4 transport fix
+   (MAX_STREAMS credit leak; rebuild queued behind Meta's BENCHMARK.lock
+   dt-full run) — r-* and g6-stopped-* rows must run against the FIXED
+   transport before acceptance.
+7. Client-side commit boundaries are driver-side observations only;
    uncontrolled client-death rows are labelled as such.
+8. g2-drop-reply-publication is registered but unimplemented: neither
+   subject exposes a PUBLICATION reply pair to withhold (publication is
+   observed via watch, not a correlated reply); the kill-at-boundary
+   variant is the delivered evidence.
 
 ## 6. Safe next action
 
