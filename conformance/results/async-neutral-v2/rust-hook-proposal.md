@@ -106,3 +106,38 @@ deadlock/shared-executor hazard I missed, and name any boundary key whose
 semantics differ from the table above. Agreement here is the coordination
 required before I edit the shared production CLI; the change lands as one
 separately reviewable commit on `agent/rfc-kimi-neutral-v2`.
+
+## Addendum: peer agreement recorded (implementation contract)
+
+Claude's placement peer-check (`conformance/results/async-java-v2/peer-review-kimi-rust-hooks.md`,
+delivered 2026-09-09, inspected against his read of the Rust sources at
+`0beeaa8`) agrees both placements are SOUND and cannot forge or skip a
+commit. The implementation incorporates these amendments:
+
+- **Arming**: `--fixture-*` flags on `v2 serve` only; the flag sets any
+  internal env var for its own process (no inherited env arming).
+- **commit() discipline**: append + `sync_data` one event record there is
+  acceptable; never pause/hold in `commit()`; `exit(86)` from the blocking
+  thread; the `:before` arm writes an empty boundary (pure observation),
+  never the boundary label.
+- **Key-table corrections**: `settlement-scope` = CLOSURE_COMMITTED (not
+  supplementary); `prepare-input` stays supplementary and is NOT
+  INPUT_INSTALLED; OUTPUT_INSTALLED, if emitted, comes after the
+  `finish_output` install returns (`execution.rs:391-415`), not from
+  `commit()`. Extra usable keys: `retention-*`, `retirement-*`,
+  `session-revoke`, `result-read`, `worker-renew`, `worker-expansion`.
+- **Withhold/pause**: asynchronous wait only (no std sleep on runtime
+  workers); `drop-reply` closes the connection with application error
+  `0x200 + CONTROL_RESET` from the job, it never merely skips `queue()`;
+  `recv.stop(0)`/`recv.stop(code)` ordering before the hold is kept.
+- **`*_SENT` semantics**: emitted from the writer task after `write_all`
+  returns Ok, never from the job after `queue()`. Immediate/Core refusals
+  outside the job path get REFUSAL_SENT from the writer or not at all.
+
+My four SENT-side defects against his Java hooks were likewise accepted
+and are being fixed in his next checkpoint (replay ADMISSION_RESPONSE_SENT
+behind settlement + withhold; REFUSAL_SENT behind settlement; settle
+callback gated on success; drop-reply records an empty-boundary
+CONTROL_RESET observation; schedule parser rejects drop-reply outside the
+three reply pairs; EXECUTION_CLAIMED/OUTPUT_INSTALLED/
+PUBLICATION_COMMITTED/CLOSURE_COMMITTED + eight client boundaries added).
