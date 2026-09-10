@@ -478,7 +478,7 @@ impl AuthorityStore {
         let binding = self.authorize_session(&tx, identity, Permission::Inspect)?;
         let result = work(&tx, identity.generation, key)?;
         result.1.validate_profiles(binding.results)?;
-        if after.0 > result.0 .0 {
+        if after.0 > result.0.0 {
             return Err(protocol(
                 ErrorCode::Conflict,
                 "watch revision is ahead of work",

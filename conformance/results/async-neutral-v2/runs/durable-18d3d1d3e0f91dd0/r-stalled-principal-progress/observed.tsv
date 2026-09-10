@@ -1,0 +1,10 @@
+server_subject	rust
+client_subject	alice = rust raw peer (stalls); bob = rust CLI (healthy principal)
+stalls	3 partial inputs (no FIN), pending watch on 0:0:6, result stream for 0:0:1 unread
+bob_ops	23 rounds x 5 ops, worst latency 150.544196ms
+stall_enforcement	negotiated idle 5s / lifetime 30s; transport abort observed for 3/3 streams by idle+10s and 3/3 by lifetime+10s (3/3 distinct); LIMIT_EXCEEDED input refusals on control at window end: 3/3
+collector	924 ticks, 924 sample lines, 0 error lines
+rss_plateau_kib	baseline_median=20276 tail_p90=21496 growth=1220
+fd_plateau	baseline_median=12 tail_p90=15
+heap_scope	not applicable: no JVM in the subject process group. Rust heap is a named gap (no black-box allocator counter); RSS/HWM is a separate scope and is never substituted for it
+store_checkpoints	94 records across start/stalls-established/mid-window/end

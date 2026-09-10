@@ -489,6 +489,15 @@ pub struct OwnedServer {
 }
 
 impl OwnedServer {
+    /// Fixture-owned pid for resource-collector anchoring.
+    pub fn pid(&self) -> Result<u32> {
+        let child = self
+            .child
+            .as_ref()
+            .context("server process already consumed")?;
+        Ok(child.id())
+    }
+
     /// Graceful stop: SIGTERM, then require a drained, zero exit.
     pub fn stop(mut self) -> Result<Output> {
         let mut child = self

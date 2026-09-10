@@ -101,6 +101,58 @@ subset only, kept distinct from the real client/server directions).
   (wrapper counters are not a substitute). Pairs with g6-stopped-*
   observations of MAX_STREAMS/flow-credit release.
 
+## Group R status (milestone 16 — batch A)
+
+Implemented and green in dev (INCOMPLETE-labelled, run
+`durable-18d3d1d3e0f91dd0`): `r-capability-manifest`,
+`r-connection-ceiling` (rust-raw-client/rust-server and
+rust-raw-client/java-server), `r-stalled-principal-progress`
+(rust-cli-client(bob) + rust-raw-client(alice) against both servers).
+Collectors live in `conformance/src/durable/resources.rs`:
+
+- Process scopes at 100 ms over the anchor pid plus every transitive
+  ppid descendant (`/proc/<pid>/status` VmRSS/VmHWM/Threads,
+  `/proc/<pid>/fd` count, `/proc/<pid>/io` read/write bytes) into a
+  per-direction `resources.tsv`.
+- Java heap at a 1000 ms cadence (`jstat -gc`, S0U+S1U+EU+OU; each probe
+  is itself a JVM launch, so it deliberately runs slower than the /proc
+  scopes). Ticks that collected it carry a `heap:jstat` method note;
+  ticks that did not leave the column absent (`-`), never zero.
+- The Rust heap scope has no black-box collector and is a NAMED GAP;
+  RSS/HWM is a separate scope and is never reported as either heap.
+- Store scopes (`st_size` and `st_blocks*512` per file) at named
+  scenario checkpoints into `store.tsv`.
+
+Still SPEC: `r-memory-ladder`, `r-staging-and-journal-bounds`,
+`r-network-bytes`, `r-native-credit`.
+
+Observed in batch A (see the archived run, not quoted as acceptance):
+
+- Connection bounds. rust: 4 admitted per principal, refusal on attempt
+  5; 16 admitted globally; both refusals post-authentication
+  (APPLICATION_CLOSE 0x204 `LIMIT_EXCEEDED`). java: 8 per principal,
+  refusal on attempt 9; 32 globally; the per-principal refusal is a
+  post-auth APPLICATION_CLOSE 0x204 with an empty reason and the global
+  refusal is a transport-level close ("the server refused to accept a
+  new connection"). Capacity recovered from the first (rust) and second
+  (java) attempt after every held connection closed. Incomplete-handshake
+  accounting is a NAMED GAP: the quinn client completes handshakes
+  atomically, so half-open attempts are not observable black-box.
+- Stall enforcement differs in KIND between subjects and both are
+  recorded: the rust server aborts each stalled input stream individually
+  (STOP_SENDING 0x204) and additionally queues a per-stream
+  LIMIT_EXCEEDED Refusal ("input receive deadline") on the control
+  stream, leaving the connection usable; the java server enforces at the
+  CONNECTION level, closing the whole connection with APPLICATION_CLOSE
+  0x204 at its idle bound, so no per-stream refusal is readable
+  afterwards. A row asserts enforcement per stream through either
+  channel and records which one fired.
+- Measuring transport-level enforcement requires driving the client
+  runtime before judging a write: a quinn write can be accepted into an
+  undriven connection whose CONNECTION_CLOSE has not been processed yet,
+  which reads as "still open" when the peer closed seconds earlier. The
+  probe therefore polls connection liveness first and records it.
+
 ## Measurement-scope rules (all R rows)
 - Rust heap, Java heap, whole-process RSS/HWM, native/direct, threads,
   FDs, file lengths, allocated filesystem blocks, actual disk I/O, and

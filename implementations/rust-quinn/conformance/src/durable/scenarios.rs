@@ -6,15 +6,16 @@ use crate::durable::mtls;
 use crate::durable::oracle;
 use crate::durable::process::{AuthorityFixture, OwnedServer, Subject};
 use crate::durable::rawclient::{
-    self, CODE_INTEGRITY_ERROR, Close, FRAME_CAPABILITIES, FRAME_DRAIN, FRAME_REFUSAL, FRAME_SCOPE,
-    FRAME_SESSION, FRAME_WORK, Frame, Peer, QUIC_CONTROL_RESET, QUIC_EXTENSION_UNSUPPORTED,
-    QUIC_FRAME_ERROR, RawConn, Reader,
+    self, CODE_INTEGRITY_ERROR, Close, FRAME_CAPABILITIES, FRAME_DRAIN, FRAME_REFUSAL,
+    FRAME_RESULT, FRAME_SCOPE, FRAME_SESSION, FRAME_WORK, Frame, Peer, QUIC_CONTROL_RESET,
+    QUIC_EXTENSION_UNSUPPORTED, QUIC_FRAME_ERROR, RawConn,
 };
 use crate::durable::schedule;
 use crate::{hex, unique_suffix};
 use anyhow::{Context, Result, bail, ensure};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeSet,
     fs::{self, File},
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
@@ -161,6 +162,7 @@ pub fn rows() -> Vec<Row> {
         &mut rows,
         "R",
         &[
+            "r-capability-manifest",
             "r-connection-ceiling",
             "r-pending-ceiling",
             "r-stalled-principal-progress",
@@ -178,6 +180,9 @@ pub fn rows() -> Vec<Row> {
         "g1-oversize-payload",
         "g1-out-of-order-pages",
         "g1-declaration-capacity",
+        "r-capability-manifest",
+        "r-connection-ceiling",
+        "r-stalled-principal-progress",
         "g2-crash-before-create-commit",
         "g2-crash-after-create-commit",
         "g2-drop-reply-declaration",
@@ -280,6 +285,16 @@ fn direction_coverage(row: &Row, context: &ScenarioContext) -> String {
         }
     } else if row.id.starts_with("g6-") && context.java_jar.is_some() {
         "rust-probe/rust-server, rust-probe/java-server".to_owned()
+    } else if row.id.starts_with("r-") && context.java_jar.is_some() {
+        if row.id == "r-capability-manifest" {
+            "host-capability measurement (no subject direction; informs every R row)".to_owned()
+        } else if row.id == "r-connection-ceiling" {
+            "rust-raw-client/rust-server, rust-raw-client/java-server".to_owned()
+        } else {
+            "rust-cli-client(bob)+rust-raw-client(alice)/rust-server, \
+             rust-cli-client(bob)+rust-raw-client(alice)/java-server"
+                .to_owned()
+        }
     } else if (G3_BATCH_B_ROWS.contains(&row.id)
         || G7_EXPIRY_ROWS.contains(&row.id)
         || G4_ROWS.contains(&row.id)
@@ -383,6 +398,9 @@ fn run_rust_direction(row: &Row, context: &ScenarioContext) -> Result<()> {
         "g6-direction-and-correlation" => g6_direction_and_correlation(context),
         "g6-stream-identity-and-fin" => g6_stream_identity_and_fin(context),
         "g6-stopped-control-and-transfers" => g6_stopped_control_and_transfers(context),
+        "r-capability-manifest" => r_capability_manifest(context),
+        "r-connection-ceiling" => r_connection_ceiling(context),
+        "r-stalled-principal-progress" => r_stalled_principal_progress(context),
         other => bail!("scenario {other} has no rust direction implemented"),
     }
 }
@@ -15560,15 +15578,17 @@ fn setup_raw_probe(
     Ok((fixture, server))
 }
 
-/// Connect, offer the frozen capabilities vector, and read the selection.
-fn raw_negotiate(
+/// Connect as `principal`, offer the frozen capabilities vector, and read
+/// the selection.
+fn raw_negotiate_as(
     peer: &Peer,
     fixture: &AuthorityFixture,
     server: &OwnedServer,
     events: &mut EventWriter,
     scenario_artifacts: &Path,
+    principal: &str,
 ) -> Result<RawConn> {
-    let mut conn = peer.connect(&fixture.certs, "alice", &server.address)?;
+    let mut conn = peer.connect(&fixture.certs, principal, &server.address)?;
     let offer = rawclient::frozen("capabilities-offer")?;
     let offer_hex: String = offer.frame.iter().map(|b| format!("{b:02x}")).collect();
     let artifact = scenario_artifacts.join("capabilities-offer.hex");
@@ -15591,13 +15611,20 @@ fn raw_negotiate(
     let body = conn
         .expect_control(FRAME_CAPABILITIES)
         .context("negotiate stage: capabilities selection read")?;
-    let mut reader = Reader::new(&body);
-    reader.array_len().context("selection body")?;
-    ensure!(
-        reader.uint().context("selection response flag")? == 1,
-        "capability selection is not a response"
-    );
+    let caps = rawclient::parse_capabilities(&body).context("capabilities selection parse")?;
+    conn.set_caps(caps);
     Ok(conn)
+}
+
+/// Connect as the canonical alice principal.
+fn raw_negotiate(
+    peer: &Peer,
+    fixture: &AuthorityFixture,
+    server: &OwnedServer,
+    events: &mut EventWriter,
+    scenario_artifacts: &Path,
+) -> Result<RawConn> {
+    raw_negotiate_as(peer, fixture, server, events, scenario_artifacts, "alice")
 }
 
 /// Session create as request 1 on an open connection; returns the binding.
@@ -16863,6 +16890,1332 @@ fn g6_stopped_control_and_transfers_direction(
     stop_and_seal(context, scenario_dir, scenario_id, owned_server, events)
 }
 
+// ---------------------------------------------------------------------------
+// Group R: resource boundaries — batch A (milestone 16)
+// ---------------------------------------------------------------------------
+//
+// Measurement-scope rules (scenario-matrix-g6-resource.md) are binding here:
+// RSS/HWM, threads, FDs, actual disk I/O, Java heap, file lengths, and
+// allocated blocks are SEPARATE scopes recorded per sample; the collection
+// method is recorded on every line; an unavailable MANDATORY metric fails the
+// row (never recorded as zero); the optional Java-heap scope degrades to a
+// named gap (RSS still collected); dead collectors and truncated records are
+// detected by the validating readers in `resources`.
+use crate::durable::resources;
+
+/// Documented per-subject connection ceilings (reviewed subject source, run
+/// with server defaults): rust `v2 serve` =
+/// quinn/src/v2_authority/server.rs Options::default (connections 16,
+/// connections_per_principal 4); java V2Main serve = DurableOptions.defaults
+/// → CoreOptions (connections 32, connectionsPerOwner 8).
+fn documented_connection_ceilings(server: Subject) -> (u64, u64) {
+    match server {
+        Subject::Rust => (16, 4),
+        Subject::Java => (32, 8),
+    }
+}
+
+fn r_capability_manifest(context: &ScenarioContext) -> Result<()> {
+    let scenario_id = "r-capability-manifest";
+    let scenario_dir = context.scenario_dir(scenario_id);
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, &scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+
+    let facts = resources::host_facts(&scenario_dir)?;
+    let permissions = resources::proc_permissions(std::process::id());
+    let jstat = resources::tool_on_path("jstat");
+    let jstat_text = jstat
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "absent (java heap scope = named gap where needed)".to_owned());
+    let jcmd = resources::tool_on_path("jcmd");
+    let calibration = resources::calibrate(std::process::id(), 20)?;
+
+    let permission_text = format!(
+        "io={} status={} fd={} net_dev={}",
+        permissions.io, permissions.status, permissions.fd, permissions.net_dev
+    );
+    let manifest: Vec<(&str, String)> = vec![
+        ("schema", "pipestream-resource-manifest-v1".into()),
+        ("os_type", facts.os_type.clone()),
+        ("kernel_release", facts.kernel_release.clone()),
+        ("cpu_count", facts.cpu_count.to_string()),
+        ("mem_total_kb", facts.mem_total_kb.to_string()),
+        ("fixture_fs_type", facts.fixture_fs_type.clone()),
+        ("fixture_mount", facts.fixture_mount.clone()),
+        ("fixture_device", facts.fixture_device.clone()),
+        ("proc_permissions_self", permission_text.clone()),
+        ("tool_jstat", jstat_text.clone()),
+        (
+            "tool_jcmd",
+            jcmd.map(|path| path.display().to_string())
+                .unwrap_or_else(|| "absent".into()),
+        ),
+        ("calibration_samples", calibration.samples.to_string()),
+        ("calibration_total_ns", calibration.total_ns.to_string()),
+        (
+            "calibration_per_sample_ns",
+            calibration.per_sample_ns.to_string(),
+        ),
+        (
+            "calibration_scope",
+            "process scopes only (status/io/fd of one pid); the optional \
+             java-heap probe is a separate jstat process on its own cadence \
+             and is not included in this figure"
+                .into(),
+        ),
+        (
+            "scope_rss_hwm",
+            "/proc/<pid>/status VmRSS+VmHWM; whole-process; per sample".into(),
+        ),
+        (
+            "scope_threads",
+            "/proc/<pid>/status Threads; per sample".into(),
+        ),
+        ("scope_fds", "/proc/<pid>/fd entry count; per sample".into()),
+        (
+            "scope_disk_io",
+            "/proc/<pid>/io read_bytes/write_bytes (actual disk I/O where the \
+             kernel permits); per sample"
+                .into(),
+        ),
+        (
+            "scope_java_heap",
+            format!(
+                "jstat -gc <pid> 1 1 (S0U+S1U+EU+OU), JVM pids only, sampled \
+                 every {}ms (each probe is itself a JVM launch, so it runs at \
+                 a slower cadence than the /proc scopes); ticks that collected \
+                 it carry a heap:jstat method note and ticks that did not \
+                 leave the column absent, never zero; named gap when jstat \
+                 reports nothing — the RSS scope is never substituted for it",
+                resources::HEAP_SAMPLE_INTERVAL.as_millis()
+            ),
+        ),
+        (
+            "scope_rust_heap",
+            "named gap: no black-box Rust heap collector exists for the \
+             subject binary (no allocator instrumentation is exposed); RSS/HWM \
+             is a separate scope and is never reported as Rust heap"
+                .into(),
+        ),
+        (
+            "scope_file_lengths",
+            "stat(2) st_size per fixture-root file at named checkpoints".into(),
+        ),
+        (
+            "scope_allocated_blocks",
+            "stat(2) st_blocks*512 per fixture-root file at named checkpoints".into(),
+        ),
+        (
+            "mandatory_scopes",
+            "rss,hwm,threads,fd,disk_io (unavailable => the dependent row fails, \
+             never zero); java_heap optional (named gap)"
+                .into(),
+        ),
+    ];
+    let mut manifest_text = String::new();
+    for (key, value) in &manifest {
+        manifest_text.push_str(&format!("{key}\t{value}\n"));
+    }
+    let manifest_path = artifacts.join("manifest.tsv");
+    fs::write(&manifest_path, &manifest_text)?;
+
+    write_kv(
+        &scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "contract",
+                "the capability manifest records host facts, selected collectors, \
+                 /proc permissions, tool availability and collector-overhead \
+                 calibration BEFORE any measurement row"
+                    .into(),
+            ),
+            (
+                "mandatory_metric_rule",
+                "an unavailable MANDATORY metric fails its row; it is never \
+                 recorded as zero"
+                    .into(),
+            ),
+            (
+                "dead_collector_rule",
+                "a sampling error mid-run is recorded and fails the row; \
+                 truncated records are rejected by the validating reader"
+                    .into(),
+            ),
+        ],
+    )?;
+    write_kv(
+        &scenario_dir,
+        "observed.tsv",
+        &[
+            ("os_type", facts.os_type),
+            ("kernel_release", facts.kernel_release),
+            ("cpu_count", facts.cpu_count.to_string()),
+            ("mem_total_kb", facts.mem_total_kb.to_string()),
+            ("fixture_fs_type", facts.fixture_fs_type),
+            ("fixture_mount", facts.fixture_mount),
+            ("proc_permissions_self", permission_text),
+            ("jstat", jstat_text),
+            (
+                "calibration_per_sample_ns",
+                calibration.per_sample_ns.to_string(),
+            ),
+        ],
+    )?;
+
+    events.append(
+        "COLLECTOR_MANIFEST",
+        None,
+        None,
+        None,
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/manifest.tsv".into(),
+            len: manifest_text.len() as u64,
+            sha256: oracle::sha256_hex(manifest_text.as_bytes()),
+        }),
+    )?;
+    events.append("CALIBRATION_RECORDED", None, None, None, None, None)?;
+    seal(context, &scenario_dir, scenario_id, events)
+}
+
+/// How one counted connection attempt ended.
+enum OpenOutcome {
+    Held(RawConn),
+    Refused(String),
+}
+
+/// Open one counted connection and classify the refusal class when the server
+/// turns it away: pre-authentication transport refusal (connect error) or a
+/// post-authentication refusal (the connection dies right after the
+/// handshake).
+fn open_counted(
+    peer: &Peer,
+    fixture: &AuthorityFixture,
+    server: &OwnedServer,
+    principal: &str,
+) -> Result<OpenOutcome> {
+    match peer.connect(&fixture.certs, principal, &server.address) {
+        Ok(conn) => match conn.try_wait_closed(Duration::from_millis(800))? {
+            Some(close) => Ok(OpenOutcome::Refused(format!(
+                "post-auth refusal (connection closed after handshake): {}",
+                close_text(&close)
+            ))),
+            None => Ok(OpenOutcome::Held(conn)),
+        },
+        Err(error) => Ok(OpenOutcome::Refused(format!(
+            "pre-auth transport refusal (connect failed): {error:#}"
+        ))),
+    }
+}
+
+fn r_connection_ceiling(context: &ScenarioContext) -> Result<()> {
+    run_raw_directions(
+        context,
+        "r-connection-ceiling",
+        r_connection_ceiling_direction,
+    )
+}
+
+fn r_connection_ceiling_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+) -> Result<()> {
+    let scenario_id = "r-connection-ceiling";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+    let certs = mtls::generate(
+        &scenario_dir.join("certs"),
+        &[
+            ("alice", "alice"),
+            ("bob", "bob"),
+            ("carol", "carol"),
+            ("dave", "dave"),
+            ("erin", "erin"),
+            ("frank", "frank"),
+            ("grace", "grace"),
+        ],
+    )?;
+    let fixture = AuthorityFixture::new(
+        &context.rust_bin,
+        context.java_jar.as_deref(),
+        &scenario_dir.join("subject"),
+        certs,
+        server,
+        Subject::Rust,
+    )?;
+    fixture.run_init_authority()?;
+    let owned = fixture.start_server()?;
+    let sequence = fixture.next_sequence(&owned, "alice")?;
+    ensure!(
+        sequence == 1,
+        "fresh authority must report NEXT_SEQUENCE 1, got {sequence}"
+    );
+    let (global_bound, per_principal_bound) = documented_connection_ceilings(server);
+    // One principal cannot reach the global bound on its own: the per-principal
+    // ceiling (4 rust / 8 java) refuses it first. Phase B therefore opens from
+    // several extra principals until the GLOBAL refusal lands: global 16 with
+    // per-principal 4 needs 4 principals (rust); global 32 with 8 needs 4
+    // principals (java). Six extras cover both with margin.
+    let extra_principals = ["bob", "carol", "dave", "erin", "frank", "grace"];
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "documented_global_bound",
+                format!("{global_bound} ({})", server.name()),
+            ),
+            (
+                "documented_per_principal_bound",
+                format!("{per_principal_bound} ({})", server.name()),
+            ),
+            (
+                "boundedness",
+                "a refusal is observed at a finite connection count from one \
+                 principal and from a second principal while the first holds; \
+                 the observed admitted counts never exceed the documented bounds"
+                    .into(),
+            ),
+            (
+                "refusal_class",
+                "pre-auth CONNECTION_REFUSED (transport refusal) or post-auth \
+                 refusal — the observed class is recorded per subject"
+                    .into(),
+            ),
+            (
+                "recovery",
+                "after every held connection closes, a fresh connection from the \
+                 first principal succeeds"
+                    .into(),
+            ),
+            (
+                "incomplete_handshake_accounting",
+                "named gap: the quinn client completes handshakes atomically; \
+                 half-open handshake counts are not observable black-box"
+                    .into(),
+            ),
+        ],
+    )?;
+
+    let peer = Peer::new()?;
+    let mut log = String::from("phase\tattempt\tprincipal\toutcome\tdetail\n");
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        (
+            "client_subject",
+            "rust (raw probe, one held connection per attempt)".into(),
+        ),
+        ("documented_global_bound", global_bound.to_string()),
+        (
+            "documented_per_principal_bound",
+            per_principal_bound.to_string(),
+        ),
+    ];
+
+    // Phase A: one principal up to its per-principal refusal.
+    let mut held_a: Vec<RawConn> = Vec::new();
+    let mut refusal_a: Option<(u64, String)> = None;
+    for attempt in 1..=per_principal_bound + 4 {
+        match open_counted(&peer, &fixture, &owned, "alice")? {
+            OpenOutcome::Held(conn) => {
+                log.push_str(&format!("per-principal\t{attempt}\talice\theld\t-\n"));
+                held_a.push(conn);
+            }
+            OpenOutcome::Refused(class) => {
+                log.push_str(&format!(
+                    "per-principal\t{attempt}\talice\trefused\t{class}\n"
+                ));
+                refusal_a = Some((attempt, class));
+                break;
+            }
+        }
+    }
+    let (refusal_a_attempt, refusal_a_class) = refusal_a.with_context(|| {
+        format!(
+            "{scenario_id} {}: no per-principal ceiling observed from alice \
+                 after {} attempts; BOUNDEDNESS fails",
+            server.name(),
+            per_principal_bound + 4
+        )
+    })?;
+    ensure!(
+        held_a.len() as u64 == per_principal_bound && refusal_a_attempt == per_principal_bound + 1,
+        "{scenario_id} {}: per-principal observations (held {}, refusal at \
+         attempt {refusal_a_attempt}) contradict the documented bound \
+         {per_principal_bound}",
+        server.name(),
+        held_a.len()
+    );
+    observed.push(("per_principal_admitted", held_a.len().to_string()));
+    observed.push((
+        "per_principal_refusal_attempt",
+        refusal_a_attempt.to_string(),
+    ));
+    observed.push(("per_principal_refusal_class", refusal_a_class.clone()));
+    events.append("CONNECTION_REFUSAL_OBSERVED", None, None, None, None, None)?;
+    fs::write(artifacts.join("connections.tsv"), &log)?;
+
+    // Phase B: walk the extra principals while alice holds, until the GLOBAL
+    // refusal lands. One principal cannot reach the global bound on its own —
+    // the per-principal ceiling refuses it first — so each extra principal is
+    // held up to its own refusal; a refusal is classified GLOBAL only once
+    // total_held reaches the documented global bound.
+    let mut held_b: Vec<RawConn> = Vec::new();
+    let mut global_refusal: Option<(String, u64, String)> = None;
+    let mut per_principal_refusals: Vec<(String, u64)> = Vec::new();
+    'principals: for principal in extra_principals {
+        for attempt in 1..=per_principal_bound + 1 {
+            match open_counted(&peer, &fixture, &owned, principal)? {
+                OpenOutcome::Held(conn) => {
+                    log.push_str(&format!("global\t{attempt}\t{principal}\theld\t-\n"));
+                    held_b.push(conn);
+                }
+                OpenOutcome::Refused(class) => {
+                    let total_held = (held_a.len() + held_b.len()) as u64;
+                    log.push_str(&format!(
+                        "global\t{attempt}\t{principal}\trefused\ttotal_held={total_held} {class}\n"
+                    ));
+                    if total_held >= global_bound {
+                        global_refusal = Some((principal.to_string(), total_held, class));
+                        break 'principals;
+                    }
+                    per_principal_refusals.push((principal.to_string(), attempt));
+                    continue 'principals;
+                }
+            }
+        }
+        bail!(
+            "{scenario_id} {}: principal {principal} held {} connections from \
+             alice's refusal without being refused; the documented per-principal \
+             bound {per_principal_bound} is contradicted",
+            server.name(),
+            per_principal_bound + 1
+        );
+    }
+    let (global_refusal_principal, global_admitted_total, global_refusal_class) = global_refusal
+        .with_context(|| {
+            format!(
+                "{scenario_id} {}: no global ceiling observed from {} extra \
+                 principals while alice holds {}; BOUNDEDNESS fails",
+                server.name(),
+                extra_principals.len(),
+                held_a.len()
+            )
+        })?;
+    ensure!(
+        global_admitted_total == global_bound,
+        "{scenario_id} {}: global refusal landed at total_held \
+         {global_admitted_total}, contradicting the documented global bound \
+         {global_bound}",
+        server.name()
+    );
+    for (principal, attempt) in &per_principal_refusals {
+        ensure!(
+            *attempt == per_principal_bound + 1,
+            "{scenario_id} {}: principal {principal} was refused at attempt \
+             {attempt}, contradicting the documented per-principal bound \
+             {per_principal_bound}",
+            server.name()
+        );
+    }
+    observed.push(("global_admitted_total", global_admitted_total.to_string()));
+    observed.push(("global_refusal_principal", global_refusal_principal.clone()));
+    observed.push((
+        "per_principal_refusals_before_global",
+        per_principal_refusals.len().to_string(),
+    ));
+    observed.push(("global_refusal_class", global_refusal_class.clone()));
+    events.append("CONNECTION_REFUSAL_OBSERVED", None, None, None, None, None)?;
+    // Evidence is written per phase so a later failure never loses it.
+    fs::write(artifacts.join("connections.tsv"), &log)?;
+
+    // Phase C: recovery — close everything; capacity must come back. The
+    // close is reaped asynchronously, so poll with backoff before judging
+    // non-recovery; every attempt is logged.
+    drop(held_b);
+    drop(held_a);
+    let mut recovery: Option<String> = None;
+    for attempt in 1..=6u64 {
+        thread::sleep(Duration::from_millis(2_500));
+        match open_counted(&peer, &fixture, &owned, "alice")? {
+            OpenOutcome::Held(conn) => {
+                conn.close_application(b"ceiling row complete")?;
+                recovery = Some(format!("held on attempt {attempt}"));
+                log.push_str(&format!(
+                    "recovery\t{attempt}\talice\theld\tnew connection after full close\n"
+                ));
+                break;
+            }
+            OpenOutcome::Refused(class) => {
+                log.push_str(&format!("recovery\t{attempt}\talice\trefused\t{class}\n"));
+            }
+        }
+    }
+    fs::write(artifacts.join("connections.tsv"), &log)?;
+    let recovery = recovery.with_context(|| {
+        format!(
+            "{scenario_id} {}: capacity did not recover within 15s of closing \
+             every connection; see artifacts/connections.tsv",
+            server.name()
+        )
+    })?;
+    observed.push(("recovery_after_close", recovery));
+    observed.push((
+        "incomplete_handshake_accounting",
+        "named gap: not observable through the quinn client (handshakes complete \
+         atomically)"
+            .into(),
+    ));
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    events.append(
+        "CEILING_EVIDENCE",
+        None,
+        None,
+        None,
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/connections.tsv".into(),
+            len: log.len() as u64,
+            sha256: oracle::sha256_hex(log.as_bytes()),
+        }),
+    )?;
+    stop_and_seal(context, scenario_dir, scenario_id, owned, events)
+}
+
+/// Healthy-principal deadline. The stall window itself is per subject:
+/// max(90s, negotiated stream lifetime + 30s).
+const BOB_OP_DEADLINE: Duration = Duration::from_secs(10);
+/// Stalled input streams: three concurrent partial uploads (the negotiated
+/// stream geometry is four concurrent object streams per direction on the
+/// rust offer, sixteen on the java offer — three leaves headroom on both).
+const STALLED_STREAMS: usize = 3;
+const STALL_PAYLOAD_LEN: usize = 256 * 1024;
+const STALL_PARTIAL_LEN: usize = 128 * 1024;
+
+fn r_stalled_principal_progress(context: &ScenarioContext) -> Result<()> {
+    run_raw_directions(
+        context,
+        "r-stalled-principal-progress",
+        r_stalled_principal_progress_direction,
+    )
+}
+
+/// Median of a sorted series.
+fn median(series: &[u64]) -> u64 {
+    let mid = series.len() / 2;
+    if series.len().is_multiple_of(2) {
+        (series[mid - 1] + series[mid]) / 2
+    } else {
+        series[mid]
+    }
+}
+
+/// RSS/FD plateau evidence for the anchor pid: baseline median over
+/// [20s, 50s] against the tail p90 over the final 30s of the window.
+fn plateau_evidence(
+    samples: &[resources::ProcessSample],
+    pid: u32,
+) -> Result<(u64, u64, u64, u64)> {
+    let rss: Vec<(u64, u64)> = samples
+        .iter()
+        .filter(|sample| sample.pid == pid && sample.rss_kb.is_some())
+        .map(|sample| (sample.elapsed_ms, sample.rss_kb.unwrap_or(0)))
+        .collect();
+    let fds: Vec<(u64, u64)> = samples
+        .iter()
+        .filter(|sample| sample.pid == pid && sample.fds.is_some())
+        .map(|sample| (sample.elapsed_ms, sample.fds.unwrap_or(0)))
+        .collect();
+    ensure!(
+        rss.len() >= 30,
+        "not enough RSS samples for plateau evidence ({} )",
+        rss.len()
+    );
+    let end = rss.last().map(|(elapsed, _)| *elapsed).unwrap_or(0);
+    let in_window = |series: &[(u64, u64)], from: u64, to: u64| -> Vec<u64> {
+        series
+            .iter()
+            .filter(|(elapsed, _)| *elapsed >= from && *elapsed <= to)
+            .map(|(_, value)| *value)
+            .collect()
+    };
+    let mut base_rss = in_window(&rss, 20_000, 50_000);
+    let mut tail_rss = in_window(&rss, end.saturating_sub(30_000), end);
+    let mut base_fd = in_window(&fds, 20_000, 50_000);
+    let mut tail_fd = in_window(&fds, end.saturating_sub(30_000), end);
+    ensure!(
+        !base_rss.is_empty() && !tail_rss.is_empty() && !base_fd.is_empty() && !tail_fd.is_empty(),
+        "plateau windows are empty (window too short?)"
+    );
+    base_rss.sort_unstable();
+    tail_rss.sort_unstable();
+    base_fd.sort_unstable();
+    tail_fd.sort_unstable();
+    let tail_p90_index = |series: &[u64]| -> usize {
+        // Nearest-rank p90: ceil(0.9 * n) - 1.
+        (series.len() * 9)
+            .div_ceil(10)
+            .saturating_sub(1)
+            .min(series.len() - 1)
+    };
+    Ok((
+        median(&base_rss),
+        tail_rss[tail_p90_index(&tail_rss)],
+        median(&base_fd),
+        tail_fd[tail_p90_index(&tail_fd)],
+    ))
+}
+
+/// One timed healthy-principal op; records latency and appends the transcript.
+fn bob_op(
+    fixture: &AuthorityFixture,
+    journal: &Path,
+    sequence: u64,
+    connection: &[String],
+    operation: &[&str],
+    label: &str,
+    transcript: &mut String,
+) -> Result<Duration> {
+    let started = Instant::now();
+    let output = fixture.run_client_op(journal, "bob", sequence, connection, operation)?;
+    let latency = started.elapsed();
+    let marker = match label {
+        "next-sequence" => "NEXT_SEQUENCE",
+        "declare" => "RECEIPT",
+        "admit" => "RECEIPT",
+        "lookup" => "RECEIPT",
+        "page" => "SCOPE",
+        other => bail!("unknown bob op label {other}"),
+    };
+    ensure!(
+        output.status.success() && String::from_utf8_lossy(&output.stdout).contains(marker),
+        "bob {label} failed ({})\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    transcript.push_str(&format!(
+        "=== bob {label} latency_ms={} ===\n{}\n",
+        latency.as_millis(),
+        String::from_utf8_lossy(&output.stdout)
+    ));
+    Ok(latency)
+}
+
+/// Probe the stalled upload streams: a write that the server aborted fails
+/// with the peer's reset; a write that still buffers means no stream-level
+/// enforcement yet. Returns the stream ids observed aborted. The connection's
+/// own liveness is recorded alongside every probe, because a subject may
+/// enforce at the connection level instead of per stream.
+fn probe_stalled_streams(
+    alice: &RawConn,
+    streams: &mut [(u64, quinn::SendStream)],
+    label: &str,
+    stalls: &mut String,
+) -> Result<BTreeSet<u64>> {
+    let mut aborted = BTreeSet::new();
+    match alice.try_wait_closed(Duration::from_millis(100))? {
+        Some(close) => stalls.push_str(&format!(
+            "{label}\tconnection\tclosed by peer: {}\n",
+            close_text(&close)
+        )),
+        None => stalls.push_str(&format!("{label}\tconnection\tlive\n")),
+    }
+    for (stream_id, stream) in streams.iter_mut() {
+        let mut outcome = format!("still-open-at-{label}");
+        for _ in 0..10 {
+            match alice.write_stream(stream, b"x") {
+                Ok(()) => thread::sleep(Duration::from_millis(400)),
+                Err(error) => {
+                    outcome = format!("aborted ({error:#})");
+                    aborted.insert(*stream_id);
+                    break;
+                }
+            }
+        }
+        stalls.push_str(&format!("{label}\tstream-{stream_id}\t{outcome}\n"));
+    }
+    Ok(aborted)
+}
+
+/// Drain whatever the server queued on the abusive principal's control stream
+/// and classify it. A Refusal carrying an input-stream tag is the
+/// protocol-level record of stall enforcement (LIMIT_EXCEEDED, code 4); every
+/// other frame is logged verbatim so the drain is auditable. Bounded: at most
+/// 64 frames, and the first read that ends, times out, or fails stops the
+/// drain. Called only after the measurement window, so the pending responses
+/// stay genuinely unread while the principal stalls.
+fn drain_control_refusals(
+    alice: &mut RawConn,
+    label: &str,
+    stalls: &mut String,
+) -> Vec<rawclient::Refusal> {
+    let mut refusals = Vec::new();
+    for _ in 0..64 {
+        match alice.read_control_bounded(Duration::from_millis(500)) {
+            Ok(Some(Frame::Control(FRAME_REFUSAL, body))) => {
+                match rawclient::parse_refusal(&body) {
+                    Ok(refusal) => {
+                        stalls.push_str(&format!(
+                            "{label}\tcontrol\trefusal tag_kind={} tag_id={} code={} detail={:?}\n",
+                            refusal.tag_kind, refusal.tag_id, refusal.code, refusal.detail
+                        ));
+                        refusals.push(refusal);
+                    }
+                    Err(error) => stalls.push_str(&format!(
+                        "{label}\tcontrol\tunparseable refusal ({error:#})\n"
+                    )),
+                }
+            }
+            Ok(Some(Frame::Control(kind, body))) => stalls.push_str(&format!(
+                "{label}\tcontrol\tframe kind={kind} len={}\n",
+                body.len()
+            )),
+            Ok(Some(Frame::Fin)) => {
+                stalls.push_str(&format!("{label}\tcontrol\tFIN\n"));
+                break;
+            }
+            Ok(None) => {
+                stalls.push_str(&format!("{label}\tcontrol\tno further frames\n"));
+                break;
+            }
+            Err(error) => {
+                stalls.push_str(&format!("{label}\tcontrol\tread failed ({error:#})\n"));
+                break;
+            }
+        }
+    }
+    refusals
+}
+
+fn r_stalled_principal_progress_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+) -> Result<()> {
+    let scenario_id = "r-stalled-principal-progress";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+    let certs = mtls::generate(
+        &scenario_dir.join("certs"),
+        &[("alice", "alice"), ("bob", "bob")],
+    )?;
+    let fixture = AuthorityFixture::new(
+        &context.rust_bin,
+        context.java_jar.as_deref(),
+        &scenario_dir.join("subject"),
+        certs,
+        server,
+        Subject::Rust,
+    )?;
+    fixture.run_init_authority()?;
+    let owned = fixture.start_server()?;
+    let sequence = fixture.next_sequence(&owned, "alice")?;
+    ensure!(
+        sequence == 1,
+        "fresh authority must report NEXT_SEQUENCE 1, got {sequence}"
+    );
+
+    // Measurement gates: the mandatory /proc scopes must be readable for the
+    // server process group, and the collector must start clean.
+    let anchor = owned.pid()?;
+    let permissions = resources::proc_permissions(anchor);
+    ensure!(
+        permissions.status && permissions.fd && permissions.io,
+        "{scenario_id}: mandatory /proc scopes unreadable for the server pid \
+         {anchor} (status={} fd={} io={}); an unavailable mandatory metric \
+         fails the row, never recorded as zero",
+        permissions.status,
+        permissions.fd,
+        permissions.io
+    );
+    let collector = resources::ProcessCollector::start(
+        anchor,
+        resources::SAMPLE_INTERVAL,
+        &scenario_dir.join("resources.tsv"),
+    )?;
+    let store_file = scenario_dir.join("store.tsv");
+    resources::sample_store(
+        "start",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        (
+            "client_subject",
+            "alice = rust raw peer (stalls); bob = rust CLI (healthy principal)".into(),
+        ),
+    ];
+    let mut stalls = String::from("probe\tstream\tobservation\n");
+
+    // ---- principal A (alice): establish the stalls ----
+    let peer = Peer::new()?;
+    let mut alice = raw_negotiate_as(&peer, &fixture, &owned, &mut events, &artifacts, "alice")?;
+    // Enforcement bounds are the NEGOTIATED selection's, per subject (the
+    // rust offer advertises idle 5s/lifetime 30s, the java offer 30s/300s).
+    let caps = alice
+        .caps()
+        .context("capabilities selection was not recorded during negotiation")?;
+    let negotiated_idle = Duration::from_millis(caps.idle_ms);
+    let negotiated_lifetime = Duration::from_millis(caps.lifetime_ms);
+    let stall_window = Duration::from_secs(90).max(negotiated_lifetime + Duration::from_secs(30));
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "healthy_principal_deadline_ms",
+                BOB_OP_DEADLINE.as_millis().to_string(),
+            ),
+            (
+                "window_seconds",
+                format!(
+                    "{} (lifetime {}s + 30s margin, 90s floor)",
+                    stall_window.as_secs(),
+                    negotiated_lifetime.as_secs()
+                ),
+            ),
+            (
+                "abusive_principal",
+                format!(
+                    "alice (raw peer): {STALLED_STREAMS} input streams with \
+                     partial {STALL_PARTIAL_LEN}-byte prefixes of declared \
+                     {STALL_PAYLOAD_LEN}-byte payloads and no FIN, one pending \
+                     30s watch held unread on a declared-never-admitted work, \
+                     one result stream requested and never read"
+                ),
+            ),
+            (
+                "control_independence",
+                "bob's next-sequence/declare/admit/lookup/page complete within \
+                 the deadline throughout the window while alice stalls"
+                    .into(),
+            ),
+            (
+                "stall_enforcement",
+                format!(
+                    "every stalled input stream is enforced at the negotiated \
+                     idle/lifetime bounds (idle {}s, lifetime {}s): either the \
+                     transport aborts it (observed by a failing write probe at \
+                     idle+10s / lifetime+10s) or a LIMIT_EXCEEDED (code {}) \
+                     Refusal naming that input stream tag is queued on the \
+                     control stream and read at window end — both channels are \
+                     recorded per stream in artifacts/stalls.tsv",
+                    negotiated_idle.as_secs(),
+                    negotiated_lifetime.as_secs(),
+                    rawclient::CODE_LIMIT_EXCEEDED
+                ),
+            ),
+            (
+                "rss_plateau",
+                "server-group RSS: tail p90 (final 30s) <= baseline median \
+                 (20-50s) + max(baseline/N, fixed slack); rust N=4 slack=64MiB, \
+                 java N=2 slack=128MiB (JVM warmup allowance) — never \
+                 monotonic growth"
+                    .into(),
+            ),
+            (
+                "fd_plateau",
+                "server-group FDs: tail p90 <= baseline median + 8".into(),
+            ),
+            (
+                "heap_scope",
+                "java-server direction: heap via jstat when the JDK reports it, \
+                 named gap otherwise; rust-server direction: no JVM exists, so \
+                 the Java-heap scope is not applicable and the Rust heap scope \
+                 is a named gap — RSS is never substituted for either"
+                    .into(),
+            ),
+        ],
+    )?;
+    let binding = raw_create_session(&mut alice)?;
+    let declare_op = oracle::operation_id(context.seed, "stall-declare", 0);
+    events.append("REQUEST_SENT", Some(declare_op), None, None, None, None)?;
+    // Unsealed: bob must keep declaring new entities in scope 0 throughout
+    // the window, which a sealed membership would refuse.
+    raw_declare(&mut alice, 2, &declare_op, 0, &[1, 2, 3, 4, 5, 6], false)?;
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(declare_op),
+        None,
+        None,
+        None,
+        None,
+    )?;
+
+    // W1: one admission that completes, so the result scope exists.
+    let payload = oracle::dataset(context.seed, 64 * 1024);
+    let payload_sha = oracle::sha256_hex(&payload);
+    let mut sha = [0u8; 32];
+    sha.copy_from_slice(&crate::decode_hex(&payload_sha)?);
+    let admit_op = oracle::operation_id(context.seed, "stall-admit", 1);
+    let header = rawclient::input_header_framed(
+        binding.generation,
+        &admit_op,
+        (0, 0, 1),
+        payload.len() as u64,
+        &sha,
+        "application/octet-stream",
+        "copy/v2",
+        0,
+        60_000,
+        1,
+        payload.len() as u64,
+    );
+    let mut w1_stream = alice.open_uni()?;
+    let w1_stream_id = u64::from(w1_stream.id());
+    alice.write_stream(&mut w1_stream, &header)?;
+    alice.write_stream(&mut w1_stream, &payload)?;
+    alice.finish_stream(&mut w1_stream)?;
+    events.append(
+        "REQUEST_SENT",
+        Some(admit_op),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let admitted = rawclient::parse_admitted_stream(&alice.expect_control(FRAME_WORK)?)?;
+    ensure!(
+        admitted == w1_stream_id,
+        "W1 admission receipt names stream {admitted}, expected {w1_stream_id}"
+    );
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(admit_op),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    drop(w1_stream);
+
+    // Watch W1 to terminal success. A watch answers as soon as the work
+    // revision differs from after_revision — immediately for after_revision 0
+    // — so the first answer can be a pre-terminal state; long-poll with the
+    // observed revision until a terminal state (5..=8) lands. Request ids
+    // must stay strictly increasing per connection: rounds use 3..=6,
+    // leaving 7 and 8 for the pending watch and result read below.
+    let terminal = {
+        let mut after = 0u64;
+        let mut terminal = None;
+        for round in 0..4u64 {
+            alice.send_control(
+                FRAME_WORK,
+                &rawclient::work_watch(3 + round, (0, 0, 1), after, 5_000),
+            )?;
+            let (revision, state) = match alice.read_control_bounded(Duration::from_secs(15))? {
+                Some(Frame::Control(FRAME_WORK, body)) => rawclient::parse_view_state(&body)?,
+                other => bail!("watch W1: expected Work::View, got {other:?}"),
+            };
+            if (5..=8).contains(&state) {
+                terminal = Some(state);
+                break;
+            }
+            ensure!(
+                revision > after,
+                "watch W1 made no progress (revision {revision}, after {after})"
+            );
+            after = revision;
+        }
+        terminal.context("watch W1 never reached a terminal state")?
+    };
+    ensure!(
+        terminal == 5,
+        "W1 must succeed (state 5 = SUCCEEDED), got state {terminal}"
+    );
+
+    // Stalled uploads: partial prefixes, never FINed. Receipts are NOT
+    // awaited: the rust server certifies admission only after the input FINes,
+    // so a partial stream gets no receipt — its Refusal (input receive
+    // deadline, LIMIT_EXCEEDED class) lands on the control stream at the idle
+    // bound and the stream reset is observed through the write probes below.
+    let stall_payload = oracle::dataset(context.seed ^ 0x57a11, STALL_PAYLOAD_LEN);
+    let stall_sha = oracle::sha256_hex(&stall_payload);
+    let mut full_sha = [0u8; 32];
+    full_sha.copy_from_slice(&crate::decode_hex(&stall_sha)?);
+    let mut stalled: Vec<(u64, quinn::SendStream)> = Vec::new();
+    for index in 0..STALLED_STREAMS {
+        let entity = 2 + index as u64;
+        let work = (0, 0, entity);
+        let operation = oracle::operation_id(context.seed, "stall-input", entity as u32);
+        let header = rawclient::input_header_framed(
+            binding.generation,
+            &operation,
+            work,
+            STALL_PAYLOAD_LEN as u64,
+            &full_sha,
+            "application/octet-stream",
+            "copy/v2",
+            0,
+            60_000,
+            1,
+            STALL_PAYLOAD_LEN as u64,
+        );
+        let mut stream = alice.open_uni()?;
+        let stream_id = u64::from(stream.id());
+        alice.write_stream(&mut stream, &header)?;
+        alice.write_stream(&mut stream, &stall_payload[..STALL_PARTIAL_LEN])?;
+        stalls.push_str(&format!("establish\tstream-{stream_id}\tpartial {STALL_PARTIAL_LEN}/{STALL_PAYLOAD_LEN} bytes, no FIN\n"));
+        stalled.push((stream_id, stream));
+    }
+
+    // Pending watch on a declared-never-admitted work; response never read.
+    alice.send_control(FRAME_WORK, &rawclient::work_watch(7, (0, 0, 6), 0, 30_000))?;
+    // Result stream for W1 requested and then never read (control or object).
+    alice.send_control(
+        FRAME_RESULT,
+        &rawclient::result_read(8, (0, 0, 1), 1, 0, &sha),
+    )?;
+    events.append("STALLS_ESTABLISHED", None, None, None, None, None)?;
+    resources::sample_store(
+        "stalls-established",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+    observed.push((
+        "stalls",
+        format!(
+            "{STALLED_STREAMS} partial inputs (no FIN), pending watch on 0:0:6, \
+             result stream for 0:0:1 unread"
+        ),
+    ));
+
+    // ---- principal B (bob): healthy client, timed ops throughout ----
+    let bob_sequence = fixture.next_sequence(&owned, "bob")?;
+    let bob_journal = scenario_dir.join("client").join("bob.sqlite");
+    fs::create_dir_all(bob_journal.parent().expect("journal has a parent"))?;
+    let mut init = fixture.client_base()?;
+    init.push("init-client".into());
+    init.extend(fixture.journal_args(&bob_journal, "bob", bob_sequence));
+    let init_out = crate::run_output_owned(&fixture.root, &init, OP_WAIT)?;
+    require(
+        &init_out,
+        Subject::Rust.client_initialized_marker(),
+        "bob init-client",
+    )?;
+    let bob_connection = fixture.connection_args(&owned, "bob")?;
+    let bob_input = artifacts.join("bob-input.bin");
+    fs::write(&bob_input, oracle::dataset(context.seed ^ 0xb0b, 4096))?;
+
+    let window_start = Instant::now();
+    let mut transcript = String::new();
+    let mut ops_log = String::from("round\top\tlatency_ms\n");
+    let mut worst = Duration::ZERO;
+    let mut round = 0u64;
+    let mut probed_idle = false;
+    let mut probed_lifetime = false;
+    let mut sampled_mid = false;
+    let mut aborted_ids: BTreeSet<u64> = BTreeSet::new();
+    let mut idle_abort_count = 0usize;
+    let mut lifetime_abort_count = None;
+    while window_start.elapsed() < stall_window {
+        round += 1;
+        // next-sequence is a journal-free top-level command (server/src/v2.rs
+        // Command::NextSequence), not a client subcommand; time it directly.
+        {
+            let started = Instant::now();
+            let probe = fixture.next_sequence(&owned, "bob")?;
+            let latency = started.elapsed();
+            worst = worst.max(latency);
+            transcript.push_str(&format!(
+                "=== bob next-sequence -> {probe} latency_ms={} ===\n",
+                latency.as_millis()
+            ));
+            ops_log.push_str(&format!(
+                "{round}\tnext-sequence\t{}\n",
+                latency.as_millis()
+            ));
+            ensure!(
+                latency < BOB_OP_DEADLINE,
+                "{scenario_id}: bob next-sequence latency {latency:?} exceeded                  the {BOB_OP_DEADLINE:?} deadline"
+            );
+        }
+        let ops: Vec<(&str, Vec<String>)> = vec![
+            (
+                "declare",
+                vec![
+                    "declare".into(),
+                    "--operation".into(),
+                    oracle::operation_hex(oracle::operation_id(
+                        context.seed,
+                        "bob-declare",
+                        round as u32,
+                    )),
+                    "--entities".into(),
+                    (1000 + round).to_string(),
+                ],
+            ),
+            (
+                "admit",
+                vec![
+                    "admit".into(),
+                    "--operation".into(),
+                    oracle::operation_hex(oracle::operation_id(
+                        context.seed,
+                        "bob-admit",
+                        round as u32,
+                    )),
+                    "--declaration".into(),
+                    oracle::operation_hex(oracle::operation_id(
+                        context.seed,
+                        "bob-declare",
+                        round as u32,
+                    )),
+                    "--work".into(),
+                    format!("0:0:{}", 1000 + round),
+                    "--input".into(),
+                    crate::path(&bob_input),
+                    "--application".into(),
+                    "copy/v2".into(),
+                    "--output-count".into(),
+                    "1".into(),
+                ],
+            ),
+            (
+                "lookup",
+                vec![
+                    "lookup".into(),
+                    "--operation".into(),
+                    oracle::operation_hex(oracle::operation_id(
+                        context.seed,
+                        "bob-admit",
+                        round as u32,
+                    )),
+                ],
+            ),
+            ("page", vec!["page".into(), "--scope".into(), "0".into()]),
+        ];
+        for (label, op) in &ops {
+            let latency = bob_op(
+                &fixture,
+                &bob_journal,
+                bob_sequence,
+                &bob_connection,
+                &op.iter().map(String::as_str).collect::<Vec<_>>(),
+                label,
+                &mut transcript,
+            )?;
+            worst = worst.max(latency);
+            ops_log.push_str(&format!("{round}\t{label}\t{}\n", latency.as_millis()));
+        }
+        // Evidence is written every round so a later failure never loses it.
+        fs::write(artifacts.join("bob-transcript.txt"), &transcript)?;
+        fs::write(artifacts.join("b-ops.tsv"), &ops_log)?;
+        // Enforcement probes at the NEGOTIATED-bound marks (+ margin so the
+        // refusal (idle) or reset has already landed).
+        if !probed_idle && window_start.elapsed() >= negotiated_idle + Duration::from_secs(10) {
+            probed_idle = true;
+            let idle_aborted =
+                probe_stalled_streams(&alice, &mut stalled, "idle-bound+10s", &mut stalls)?;
+            idle_abort_count = idle_aborted.len();
+            aborted_ids.extend(idle_aborted);
+            fs::write(artifacts.join("stalls.tsv"), &stalls)?;
+        }
+        if !probed_lifetime
+            && window_start.elapsed() >= negotiated_lifetime + Duration::from_secs(10)
+        {
+            probed_lifetime = true;
+            let lifetime_aborted =
+                probe_stalled_streams(&alice, &mut stalled, "lifetime-bound+10s", &mut stalls)?;
+            lifetime_abort_count = Some(lifetime_aborted.len());
+            aborted_ids.extend(lifetime_aborted);
+            fs::write(artifacts.join("stalls.tsv"), &stalls)?;
+            events.append("STALL_ABORT_OBSERVED", None, None, None, None, None)?;
+        }
+        if !sampled_mid && window_start.elapsed() >= stall_window / 2 {
+            sampled_mid = true;
+            resources::sample_store(
+                "mid-window",
+                &[&fixture.state_db, &fixture.object_dir],
+                &store_file,
+            )?;
+        }
+        let cycle = Duration::from_secs(4);
+        let elapsed = window_start.elapsed();
+        if elapsed < stall_window && elapsed < cycle * round as u32 {
+            thread::sleep(cycle * round as u32 - elapsed);
+        }
+    }
+    ensure!(
+        probed_idle && probed_lifetime,
+        "window ended before both enforcement probes ran"
+    );
+    let lifetime_abort_count = lifetime_abort_count.unwrap_or(0);
+    // The window is over: only now is the abusive principal's control stream
+    // read, so the queued refusals are the second, protocol-level record of
+    // the same enforcement the write probes observed at the transport level.
+    let refusals = drain_control_refusals(&mut alice, "window-end", &mut stalls);
+    fs::write(artifacts.join("stalls.tsv"), &stalls)?;
+    let refused_ids: BTreeSet<u64> = refusals
+        .iter()
+        .filter(|refusal| {
+            refusal.tag_kind == rawclient::TAG_INPUT_STREAM
+                && refusal.code == rawclient::CODE_LIMIT_EXCEEDED
+        })
+        .map(|refusal| refusal.tag_id)
+        .collect();
+    let unenforced: Vec<u64> = stalled
+        .iter()
+        .map(|(stream_id, _)| *stream_id)
+        .filter(|stream_id| !aborted_ids.contains(stream_id) && !refused_ids.contains(stream_id))
+        .collect();
+    ensure!(
+        unenforced.is_empty(),
+        "{scenario_id} {}: stalled input streams {unenforced:?} were never \
+         enforced at the negotiated bounds (idle {}s, lifetime {}s): no \
+         transport abort by lifetime+10s and no LIMIT_EXCEEDED refusal on the \
+         control stream; see artifacts/stalls.tsv",
+        server.name(),
+        negotiated_idle.as_secs(),
+        negotiated_lifetime.as_secs()
+    );
+    ensure!(
+        worst < BOB_OP_DEADLINE,
+        "{scenario_id} {}: bob op latency {worst:?} exceeded the {BOB_OP_DEADLINE:?} \
+         deadline — control progress is not independent of the stalled principal",
+        server.name()
+    );
+    observed.push((
+        "bob_ops",
+        format!("{round} rounds x 5 ops, worst latency {worst:?}"),
+    ));
+    observed.push((
+        "stall_enforcement",
+        format!(
+            "negotiated idle {}s / lifetime {}s; transport abort observed for \
+             {idle_abort_count}/{STALLED_STREAMS} streams by idle+10s and \
+             {lifetime_abort_count}/{STALLED_STREAMS} by lifetime+10s \
+             ({}/{STALLED_STREAMS} distinct); LIMIT_EXCEEDED input refusals on \
+             control at window end: {}/{STALLED_STREAMS}",
+            negotiated_idle.as_secs(),
+            negotiated_lifetime.as_secs(),
+            aborted_ids.len(),
+            refused_ids.len()
+        ),
+    ));
+    fs::write(artifacts.join("bob-transcript.txt"), &transcript)?;
+    fs::write(artifacts.join("b-ops.tsv"), &ops_log)?;
+    events.append(
+        "HEALTHY_PRINCIPAL_PROGRESS",
+        None,
+        None,
+        None,
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/b-ops.tsv".into(),
+            len: ops_log.len() as u64,
+            sha256: oracle::sha256_hex(ops_log.as_bytes()),
+        }),
+    )?;
+
+    // ---- measurement close-out ----
+    alice.close_application(b"stall row complete")?;
+    drop(alice);
+    let summary = collector.stop()?;
+    ensure!(
+        summary.error_lines == 0,
+        "{scenario_id}: dead collector — {} sampling error lines in resources.tsv",
+        summary.error_lines
+    );
+    observed.push((
+        "collector",
+        format!(
+            "{} ticks, {} sample lines, {} error lines",
+            summary.ticks, summary.lines, summary.error_lines
+        ),
+    ));
+    let samples = resources::read_process_samples(&scenario_dir.join("resources.tsv"))?;
+    ensure!(
+        samples.iter().all(|sample| sample.rss_kb.is_some()
+            && sample.fds.is_some()
+            && sample.threads.is_some()),
+        "{scenario_id}: a sample is missing a MANDATORY scope (rss/fd/threads)"
+    );
+    let heap_gap_notes = samples
+        .iter()
+        .filter(|sample| sample.note.contains("gap:heap"))
+        .count();
+    let heap_kb: Vec<u64> = samples.iter().filter_map(|sample| sample.heap_kb).collect();
+    let (base_rss, tail_rss, base_fd, tail_fd) = plateau_evidence(&samples, anchor)?;
+    let rss_growth = tail_rss.saturating_sub(base_rss);
+    let (rss_fraction, rss_slack_kb) = match server {
+        Subject::Rust => (4u64, 64 * 1024),
+        Subject::Java => (2u64, 128 * 1024),
+    };
+    ensure!(
+        rss_growth <= base_rss / rss_fraction + rss_slack_kb,
+        "{scenario_id} {}: server RSS grew across the window (baseline median \
+         {base_rss} KiB -> tail p90 {tail_rss} KiB, growth {rss_growth} KiB \
+         exceeds the plateau tolerance) — not bounded",
+        server.name()
+    );
+    ensure!(
+        tail_fd <= base_fd + 8,
+        "{scenario_id} {}: server FDs grew across the window (baseline median \
+         {base_fd} -> tail p90 {tail_fd}) — not bounded",
+        server.name()
+    );
+    resources::sample_store(
+        "end",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+    let store_records = resources::read_store_samples(&store_file)?;
+    observed.push((
+        "rss_plateau_kib",
+        format!("baseline_median={base_rss} tail_p90={tail_rss} growth={rss_growth}"),
+    ));
+    observed.push((
+        "fd_plateau",
+        format!("baseline_median={base_fd} tail_p90={tail_fd}"),
+    ));
+    observed.push((
+        "heap_scope",
+        match server {
+            // No JVM exists in a rust subject group, so the Java-heap scope is
+            // not applicable rather than collected; the Rust heap scope has no
+            // black-box collector at all. RSS is a separate scope and is never
+            // reported as either heap.
+            Subject::Rust => "not applicable: no JVM in the subject process group. Rust heap is a \
+                              named gap (no black-box allocator counter); RSS/HWM is a separate \
+                              scope and is never substituted for it"
+                .to_owned(),
+            Subject::Java if heap_kb.is_empty() => format!(
+                "named gap: jstat returned no heap for the subject JVM ({heap_gap_notes} probe \
+                 notes); RSS collected and never substituted for the heap scope"
+            ),
+            Subject::Java => format!(
+                "java heap via jstat -gc (S0U+S1U+EU+OU) at the {}ms heap cadence: {} samples, \
+                 min {} KiB, max {} KiB, {heap_gap_notes} probe gaps",
+                resources::HEAP_SAMPLE_INTERVAL.as_millis(),
+                heap_kb.len(),
+                heap_kb.iter().min().copied().unwrap_or_default(),
+                heap_kb.iter().max().copied().unwrap_or_default(),
+            ),
+        },
+    ));
+    observed.push((
+        "store_checkpoints",
+        format!(
+            "{} records across start/stalls-established/mid-window/end",
+            store_records.len()
+        ),
+    ));
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    stop_and_seal(context, scenario_dir, scenario_id, owned, events)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -16928,7 +18281,7 @@ mod tests {
             let row = rows.iter().find(|row| row.id == id).unwrap();
             assert!(row.rust_implemented, "{id} must be implemented");
         }
-        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 50);
+        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 53);
     }
 
     #[test]

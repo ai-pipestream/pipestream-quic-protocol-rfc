@@ -20,6 +20,7 @@ pub const QUIC_EXTENSION_UNSUPPORTED: u64 = 0x202;
 pub const QUIC_CONTROL_RESET: u64 = 0x20e;
 /// Named application refusal codes (Section 12.2).
 pub const CODE_FRAME_ERROR: u64 = 1;
+pub const CODE_LIMIT_EXCEEDED: u64 = 4;
 pub const CODE_EXTENSION_UNSUPPORTED: u64 = 2;
 pub const CODE_INTEGRITY_ERROR: u64 = 8;
 pub const CODE_NOT_READY: u64 = 9;
@@ -28,6 +29,7 @@ pub const FRAME_CAPABILITIES: u8 = 1;
 pub const FRAME_SESSION: u8 = 2;
 pub const FRAME_SCOPE: u8 = 3;
 pub const FRAME_WORK: u8 = 4;
+pub const FRAME_RESULT: u8 = 5;
 pub const FRAME_DRAIN: u8 = 6;
 pub const FRAME_REFUSAL: u8 = 7;
 
@@ -395,7 +397,6 @@ pub fn scope_page(request: u64, scope: u64) -> Vec<u8> {
     body
 }
 
-#[cfg(test)]
 pub fn work_watch(
     request: u64,
     work: (u64, u64, u64),
@@ -467,6 +468,10 @@ pub fn input_header_framed(
 // ---------------------------------------------------------------------------
 // Parsed control bodies
 // ---------------------------------------------------------------------------
+
+/// Refusal request-tag kind naming an input object stream (0 = control
+/// request tag).
+pub const TAG_INPUT_STREAM: u64 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Refusal {
@@ -540,6 +545,30 @@ pub fn parse_next_sequence(body: &[u8]) -> Result<u64> {
     r.uint()
 }
 
+/// ResultMessage::Read: request one output object of a terminal work; the
+/// server answers with a result object stream (which the caller may hold
+/// unread). FRAME_RESULT (5) carries this body.
+pub fn result_read(
+    request: u64,
+    work: (u64, u64, u64),
+    attempt: u64,
+    index: u64,
+    expected_sha256: &[u8; 32],
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    cbor_array(&mut body, 6);
+    cbor_uint(&mut body, 0); // ResultMessage::Read
+    cbor_uint(&mut body, request);
+    cbor_array(&mut body, 3);
+    for part in [work.0, work.1, work.2] {
+        cbor_uint(&mut body, part);
+    }
+    cbor_uint(&mut body, attempt);
+    cbor_uint(&mut body, index);
+    cbor_bytes(&mut body, expected_sha256);
+    body
+}
+
 /// Work::Admitted: returns the admitted input stream id from the request tag.
 pub fn parse_admitted_stream(body: &[u8]) -> Result<u64> {
     let mut r = Reader::new(body);
@@ -548,6 +577,27 @@ pub fn parse_admitted_stream(body: &[u8]) -> Result<u64> {
     ensure!(r.array_len()? == 2, "admission tag is not a 2-array");
     ensure!(r.uint()? == 1, "admission tag is not an input tag");
     r.uint()
+}
+
+/// Work::View response: returns (revision, work state) (records.rs State:
+/// 5..=8 are terminal, 5 = SUCCEEDED). Only the leading fields are parsed;
+/// the rest of the view is skipped.
+pub fn parse_view_state(body: &[u8]) -> Result<(u64, u64)> {
+    let mut r = Reader::new(body);
+    ensure!(
+        r.array_len()? == 4,
+        "work view is not a [kind, request, revision, view] array"
+    );
+    ensure!(r.uint()? == 5, "not a Work::View response");
+    r.uint()?; // request
+    let revision = r.uint()?;
+    let fields = r.array_len()?;
+    ensure!(fields >= 2, "work view record lacks work/state");
+    ensure!(r.array_len()? == 3, "work key is not a 3-array");
+    r.uint()?;
+    r.uint()?;
+    r.uint()?;
+    Ok((revision, r.uint()?))
 }
 
 /// Scope::PageResponse: returns (declared, (entity, state) pairs in page order).
@@ -643,6 +693,7 @@ impl Peer {
             connection,
             control_send: Some(control_send),
             control_recv,
+            caps: None,
         })
     }
 }
@@ -655,6 +706,42 @@ pub struct RawConn {
     connection: quinn::Connection,
     control_send: Option<quinn::SendStream>,
     control_recv: quinn::RecvStream,
+    /// Negotiated capability selection, set by the negotiation handshake.
+    caps: Option<SelectionCaps>,
+}
+
+/// Negotiated capability selection fields the R rows assert against.
+#[derive(Debug, Clone, Copy)]
+pub struct SelectionCaps {
+    pub idle_ms: u64,
+    pub lifetime_ms: u64,
+}
+
+/// Capabilities selection body: array(9) [response, supported, required,
+/// control_limit, stream_limit, pending_limit, object_limit, stream_idle_ms,
+/// stream_lifetime_ms]. The profile arrays are validated as uint arrays and
+/// skipped.
+pub fn parse_capabilities(body: &[u8]) -> Result<SelectionCaps> {
+    let mut r = Reader::new(body);
+    ensure!(
+        r.array_len()? == 9,
+        "capabilities selection is not a 9-array"
+    );
+    ensure!(r.uint()? == 1, "capability selection is not a response");
+    for _ in 0..r.array_len()? {
+        r.uint().context("supported profile id")?;
+    }
+    for _ in 0..r.array_len()? {
+        r.uint().context("required profile id")?;
+    }
+    r.uint()?; // control_limit
+    r.uint()?; // stream_limit
+    r.uint()?; // pending_limit
+    r.uint()?; // object_limit
+    Ok(SelectionCaps {
+        idle_ms: r.uint()?,
+        lifetime_ms: r.uint()?,
+    })
 }
 
 fn block_on<T>(
@@ -695,6 +782,15 @@ async fn recv_frame(control_recv: &mut quinn::RecvStream) -> Result<Frame> {
 }
 
 impl RawConn {
+    /// Negotiated capability selection recorded during the handshake.
+    pub fn caps(&self) -> Option<&SelectionCaps> {
+        self.caps.as_ref()
+    }
+
+    pub(crate) fn set_caps(&mut self, caps: SelectionCaps) {
+        self.caps = Some(caps);
+    }
+
     pub fn send_control(&mut self, frame_type: u8, body: &[u8]) -> Result<()> {
         let runtime = self.runtime.clone();
         let frame = control_frame(frame_type, body);
@@ -876,6 +972,11 @@ impl RawConn {
     /// server left open.
     pub fn close_application(&self, reason: &[u8]) -> Result<()> {
         self.connection.close(0u32.into(), reason);
+        // Drive the runtime so the close frame actually leaves the socket: a
+        // current-thread runtime only runs while block_on is active, and an
+        // undriven close strands the frame, leaving the peer connection open.
+        self.runtime
+            .block_on(async { tokio::time::sleep(Duration::from_millis(200)).await });
         Ok(())
     }
 

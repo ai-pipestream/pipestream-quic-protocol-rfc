@@ -1,0 +1,8 @@
+healthy_principal_deadline_ms	10000
+window_seconds	90 (lifetime 30s + 30s margin, 90s floor)
+abusive_principal	alice (raw peer): 3 input streams with partial 131072-byte prefixes of declared 262144-byte payloads and no FIN, one pending 30s watch held unread on a declared-never-admitted work, one result stream requested and never read
+control_independence	bob's next-sequence/declare/admit/lookup/page complete within the deadline throughout the window while alice stalls
+stall_enforcement	every stalled input stream is enforced at the negotiated idle/lifetime bounds (idle 5s, lifetime 30s): either the transport aborts it (observed by a failing write probe at idle+10s / lifetime+10s) or a LIMIT_EXCEEDED (code 4) Refusal naming that input stream tag is queued on the control stream and read at window end — both channels are recorded per stream in artifacts/stalls.tsv
+rss_plateau	server-group RSS: tail p90 (final 30s) <= baseline median (20-50s) + max(baseline/N, fixed slack); rust N=4 slack=64MiB, java N=2 slack=128MiB (JVM warmup allowance) — never monotonic growth
+fd_plateau	server-group FDs: tail p90 <= baseline median + 8
+heap_scope	java-server direction: heap via jstat when the JDK reports it, named gap otherwise; rust-server direction: no JVM exists, so the Java-heap scope is not applicable and the Rust heap scope is a named gap — RSS is never substituted for either

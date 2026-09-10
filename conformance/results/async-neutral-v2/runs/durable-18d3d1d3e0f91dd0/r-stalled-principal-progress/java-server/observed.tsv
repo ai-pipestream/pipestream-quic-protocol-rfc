@@ -1,0 +1,10 @@
+server_subject	java
+client_subject	alice = rust raw peer (stalls); bob = rust CLI (healthy principal)
+stalls	3 partial inputs (no FIN), pending watch on 0:0:6, result stream for 0:0:1 unread
+bob_ops	38 rounds x 5 ops, worst latency 150.96424ms
+stall_enforcement	negotiated idle 30s / lifetime 120s; transport abort observed for 3/3 streams by idle+10s and 3/3 by lifetime+10s (3/3 distinct); LIMIT_EXCEEDED input refusals on control at window end: 0/3
+collector	1524 ticks, 1524 sample lines, 0 error lines
+rss_plateau_kib	baseline_median=982212 tail_p90=1403300 growth=421088
+fd_plateau	baseline_median=14 tail_p90=17
+heap_scope	java heap via jstat -gc (S0U+S1U+EU+OU) at the 1000ms heap cadence: 152 samples, min 8233 KiB, max 1171499 KiB, 0 probe gaps
+store_checkpoints	134 records across start/stalls-established/mid-window/end

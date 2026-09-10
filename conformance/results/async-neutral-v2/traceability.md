@@ -25,8 +25,8 @@ Scenario matrix details: scenario-matrix-g1.md, -g2.md, -g3.md, -g4.md,
 | V2-RESULT 1–7 | manifest commitments; local-vs-remote copies; read pins; expiry refusal; integrity; cross-authority references | g1-zero-output DONE, g1-empty-input DONE, g7-read-pin-past-expiry SPEC, g7-receipt-before-output-expiry SPEC, g5-cross-authority-reference SPEC, g8-complete-with-pending SPEC | 2 DONE |
 | V2-CLOSE 1–5 | exact root complete; child-cut/altered CONFLICT; pending NOT_READY; detach semantics; half-close; fence precedence over STRICT | g8-* (6 rows), g4-ancestor-fence-publication | SPEC |
 | V2-TIME 1–6 | deadline independence; unsafe clock; queue time; cleanup refund; unsafe-time non-destructivity | g7-* (7 rows) | SPEC (fixture clock proposal needed for g7-unsafe-clock-refusal) |
-| V2-STORE 1–7 | crash both sides of commits; restart reconciliation; ownership; cleanup replay; retirement order; measured limits; separate metric scopes | g2 crash rows DONE (7), g3-* (6 rows) batch A impl, r-* (7 rows) SPEC | 7 DONE |
-| V2-RESOURCE (x-cut) | capacity ceilings; journal single-owner; adapter byte ceilings; cleanup credits | r-connection-ceiling, r-staging-and-journal-bounds, g3-store-ownership, r-memory-ladder | SPEC |
+| V2-STORE 1–7 | crash both sides of commits; restart reconciliation; ownership; cleanup replay; retirement order; measured limits; separate metric scopes | g2 crash rows DONE (7), g3-* (6 rows) batch A impl, r-capability-manifest DONE (separate scopes recorded per sample; mandatory-metric and dead-collector rules enforced by the validating reader), r-connection-ceiling DONE, r-stalled-principal-progress DONE, r-memory-ladder/-staging-and-journal-bounds/-network-bytes/-native-credit SPEC | 10 DONE |
+| V2-RESOURCE (x-cut) | capacity ceilings; journal single-owner; adapter byte ceilings; cleanup credits | r-connection-ceiling DONE (both servers; bounds and refusal classes recorded, recovery asserted), r-stalled-principal-progress DONE (both servers), g3-store-ownership impl, r-staging-and-journal-bounds SPEC, r-memory-ladder SPEC | 2 DONE |
 
 ## Explicit gaps (visible, not waived)
 
@@ -41,6 +41,11 @@ Scenario matrix details: scenario-matrix-g1.md, -g2.md, -g3.md, -g4.md,
    tests were outstanding at the base checkpoint) — the neutral driver
    covers the wire-abuse/refusal side black-box; codec-unit coverage is
    mapped to implementation tests in the final handoff, not claimed here.
+3a. Resource-scope gaps named at M16: the Rust heap scope has no
+   black-box collector (RSS/HWM is never substituted for it);
+   incomplete-handshake accounting in r-connection-ceiling is not
+   observable through the quinn client; network bytes are not collected
+   until r-network-bytes.
 4. Client-side boundaries for rust/java clients are driver-side only until
    client hooks exist (Java client hooks promised in Claude's next
    checkpoint; rust client hooks not proposed — client-death rows use

@@ -7,6 +7,7 @@ mod mtls;
 mod oracle;
 mod process;
 mod rawclient;
+mod resources;
 mod scenarios;
 mod schedule;
 
