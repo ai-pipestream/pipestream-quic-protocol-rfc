@@ -624,7 +624,14 @@ settlements before this writer can close those scopes.
 VFS and immutable checksummed file policy, not the V1 session schema. Each
 connection enables full synchronization and foreign keys, disables mmap, sets a
 2 MiB SQLite cache target and bounds busy waiting to five seconds. Bootstrap
-refuses incompatible metadata before switching to WAL. Receipts and local
+refuses incompatible metadata before switching to WAL. Every operation runs on
+its own short-lived connection; the host holds one idle query-only anchor
+connection for its lifetime and closes it on shutdown, so SQLite does not tear down
+and rewrite the 32 KiB WAL index on every scheduler store call. The anchor holds
+no transaction and no lock, so it cannot block a writer or a checkpoint. While
+the host is open the WAL therefore persists between operations, bounded by the
+native VFS limits and the per-transaction WAL ceiling; the main database file
+alone is not a consistent snapshot until the host closes. Receipts and local
 configuration are bounded deterministic CBOR, with no JSON or floating-point
 conversion. Receipt integrity also covers the retained profile combination and
 control ceiling.

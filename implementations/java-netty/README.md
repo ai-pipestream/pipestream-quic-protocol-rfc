@@ -239,7 +239,14 @@ loss are not successful drain or computation outcomes.
 One event-loop owner schedules independent handshake, incomplete/idle-control,
 oldest-queued-write and detach deadlines. Partial-frame progress cannot renew
 the control deadline; new complete requests cannot renew an older stalled write
-or the detach lifetime. Global admitted connections include incomplete handshakes;
+or the detach lifetime. On the durable listener the idle-control clock is judged
+only while nothing is outstanding in either direction: a live input, a result
+read, a granted wait and a pending request each carry their own bound, so a peer
+that waits on a granted watch or streams one long input is never closed for
+control silence. Stream bounds are judged before the connection, so a stalled
+input is refused per stream with a named REFUSAL on the surviving control
+stream even when the idle bound equals the control deadline. Application closes
+after authentication carry the named bound as their reason. Global admitted connections include incomplete handshakes;
 mapped owners and all anonymous/unmapped callers have separate bounded buckets.
 Native close finishes before admission capacity is released.
 
@@ -250,7 +257,15 @@ packet-local refusal transport**, then closes it with transport
 completion. `snapshot()` distinguishes admitted high water from admitted plus
 that extra transport. Its refusal count measures admission attempts, including
 repeated Initial packets, not distinct peers. Per-owner refusal after TLS uses
-application `LIMIT_EXCEEDED`.
+application `LIMIT_EXCEEDED`, with the bound's name as the close reason.
+
+The shipped durable launcher (`V2Main serve`, `DurableOptions.defaults()`)
+admits 32 connections globally and 8 per mapped owner or anonymous bucket.
+These are the documented bounds a conformance driver should expect: the global
+bound is refused at accept before any handshake completes (transport
+`CONNECTION_REFUSED`), the per-owner bound after authentication (application
+`LIMIT_EXCEEDED` 0x204, reason `owner connection ceiling`), and capacity is
+released only after native close finishes.
 
 Queued application response counts/bytes and the oldest write are bounded.
 Configuration limits the aggregate of queue, one frame and one read-buffer
