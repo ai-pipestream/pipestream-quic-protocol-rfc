@@ -41,3 +41,5 @@
 {::include sections-src/appendix-e.md}
 
 {::include sections-src/appendix-f.md}
+
+{::include sections-src/appendix-g.md}
