@@ -496,12 +496,14 @@ public final class DurableServer implements AutoCloseable {
           if (control != null) control.writes.check(now);
           if (detachRequested)
             deadline(now, detachStart, selected.streamLifetimeMs(), "detach lifetime");
-          // Silence on control is idleness only while nothing is outstanding in either direction.
-          // A live input, a result read, a granted wait and a pending request each carry their
-          // own bound; a peer that waits on a granted watch or streams one long input sends
-          // nothing on control and is not closed for it.
-          // Read the clock again: a stream refused above renews the activity clock after `now`.
-          if (!outstanding())
+          // Control silence closes only a core-only connection with nothing outstanding. A durable
+          // connection may stay quiet for as long as its owner keeps it: per-owner ceilings and the
+          // transport idle timeout bound it, Section 12 requires no more, and closing it would
+          // discard queued REFUSALs that a slow reader has not consumed yet. A live input, a
+          // result read, a granted wait and a pending request each carry their own bound. The
+          // clock is read again because a stream refused above renews the activity clock after
+          // `now`.
+          if (!durable() && !outstanding())
             deadline(
                 System.nanoTime(), lastFrame, core.controlTimeoutMs(), "idle control deadline");
         }

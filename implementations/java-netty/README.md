@@ -239,11 +239,12 @@ loss are not successful drain or computation outcomes.
 One event-loop owner schedules independent handshake, incomplete/idle-control,
 oldest-queued-write and detach deadlines. Partial-frame progress cannot renew
 the control deadline; new complete requests cannot renew an older stalled write
-or the detach lifetime. On the durable listener the idle-control clock is judged
-only while nothing is outstanding in either direction: a live input, a result
-read, a granted wait and a pending request each carry their own bound, so a peer
-that waits on a granted watch or streams one long input is never closed for
-control silence. Stream bounds are judged before the connection, so a stalled
+or the detach lifetime. The durable listener never closes a durable-profile
+connection for control silence: per-owner ceilings and the transport idle
+timeout bound it, and a close would discard queued REFUSALs a slow reader has
+not consumed. Only a core-only connection with nothing outstanding is closed at
+the control deadline; a live input, a result read, a granted wait and a pending
+request each carry their own bound. Stream bounds are judged before the connection, so a stalled
 input is refused per stream with a named REFUSAL on the surviving control
 stream even when the idle bound equals the control deadline. Application closes
 after authentication carry the named bound as their reason. Global admitted connections include incomplete handshakes;
