@@ -44,7 +44,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const PROCESS_HEADER: &str = "# pipestream-resources-v1";
+/// v2 adds the `cancelled_write_bytes` column after `write_bytes`: without it
+/// a large `write_bytes` rate cannot be told apart from page-cache writeback
+/// that was cancelled before it ever reached the device, which is a different
+/// claim about a subject. The version is in the header so a v1 artifact is
+/// never silently read with v2 column offsets.
+pub const PROCESS_HEADER: &str = "# pipestream-resources-v2";
+/// Column count of one v2 resources.tsv record.
+pub const PROCESS_FIELDS: usize = 14;
 pub const STORE_HEADER: &str = "# pipestream-store-v1";
 /// Default sampling interval (100 ms per the matrix measurement rules).
 pub const SAMPLE_INTERVAL: Duration = Duration::from_millis(100);
@@ -265,37 +272,40 @@ pub fn parse_status(text: &str) -> Result<StatusSample> {
 pub struct IoSample {
     pub read_bytes: Option<u64>,
     pub write_bytes: Option<u64>,
+    /// `/proc/<pid>/io cancelled_write_bytes`: bytes this process accounted
+    /// as written that were truncated away before writeback reached the
+    /// device. Mandatory alongside the other two: it comes from the same
+    /// file under the same permission, and without it `write_bytes` cannot
+    /// be read as disk traffic.
+    pub cancelled_write_bytes: Option<u64>,
 }
 
 pub fn parse_io(text: &str) -> Result<IoSample> {
     let mut sample = IoSample::default();
+    fn value_of(name: &str, value: Option<&str>) -> Result<u64> {
+        value
+            .with_context(|| format!("{name} without a value"))?
+            .parse()
+            .with_context(|| format!("{name} is not numeric"))
+    }
     for line in text.lines() {
         let mut fields = line.split_whitespace();
-        match fields.next() {
-            Some("read_bytes:") => {
-                sample.read_bytes = Some(
-                    fields
-                        .next()
-                        .context("read_bytes without a value")?
-                        .parse()
-                        .context("read_bytes is not numeric")?,
-                )
-            }
-            Some("write_bytes:") => {
-                sample.write_bytes = Some(
-                    fields
-                        .next()
-                        .context("write_bytes without a value")?
-                        .parse()
-                        .context("write_bytes is not numeric")?,
-                )
+        let key = fields.next();
+        let value = fields.next();
+        match key {
+            Some("read_bytes:") => sample.read_bytes = Some(value_of("read_bytes", value)?),
+            Some("write_bytes:") => sample.write_bytes = Some(value_of("write_bytes", value)?),
+            Some("cancelled_write_bytes:") => {
+                sample.cancelled_write_bytes = Some(value_of("cancelled_write_bytes", value)?)
             }
             _ => {}
         }
     }
     ensure!(
-        sample.read_bytes.is_some() && sample.write_bytes.is_some(),
-        "io record missing read_bytes or write_bytes"
+        sample.read_bytes.is_some()
+            && sample.write_bytes.is_some()
+            && sample.cancelled_write_bytes.is_some(),
+        "io record missing read_bytes, write_bytes or cancelled_write_bytes"
     );
     Ok(sample)
 }
@@ -436,6 +446,8 @@ pub struct ProcessSample {
     pub fds: Option<u64>,
     pub io_read_bytes: Option<u64>,
     pub io_write_bytes: Option<u64>,
+    /// v2 column: `/proc/<pid>/io cancelled_write_bytes`.
+    pub io_cancelled_write_bytes: Option<u64>,
     pub heap_kb: Option<u64>,
     pub note: String,
 }
@@ -449,7 +461,7 @@ impl ProcessSample {
             value.map(|v| v.to_string()).unwrap_or_else(|| "-".into())
         }
         format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
             self.seq,
             self.elapsed_ms,
             self.pid,
@@ -461,6 +473,7 @@ impl ProcessSample {
             field(self.fds),
             field(self.io_read_bytes),
             field(self.io_write_bytes),
+            field(self.io_cancelled_write_bytes),
             field(self.heap_kb),
             if self.note.is_empty() {
                 "-"
@@ -545,6 +558,7 @@ fn sample_pid(pid: u32, want_heap: bool) -> Result<ProcessSample> {
         fds,
         io_read_bytes: io.as_ref().and_then(|s| s.read_bytes),
         io_write_bytes: io.as_ref().and_then(|s| s.write_bytes),
+        io_cancelled_write_bytes: io.as_ref().and_then(|s| s.cancelled_write_bytes),
         heap_kb: heap,
         note,
     })
@@ -634,7 +648,7 @@ impl ProcessCollector {
                                     tick_summary.error_lines += 1;
                                     writeln!(
                                         writer,
-                                        "{seq}\t{}\t{pid}\t-\t-\t-\t-\t-\t-\t-\t-\t-\terror:sample:{error:#}",
+                                        "{seq}\t{}\t{pid}\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\terror:sample:{error:#}",
                                         start.elapsed().as_millis()
                                     )?;
                                 }
@@ -796,8 +810,9 @@ fn metric_field(path: &Path, field: &str) -> Result<Option<u64>> {
 }
 
 /// Read and validate a resources.tsv artifact. Rejects a missing/torn final
-/// line, a wrong field count, and non-numeric metrics. Error-note records are
-/// returned (the ROW decides: mandatory-scope errors fail the row).
+/// line, a header that is not this schema version, a wrong field count, and
+/// non-numeric metrics. Error-note records are returned (the ROW decides:
+/// mandatory-scope errors fail the row).
 pub fn read_process_samples(path: &Path) -> Result<Vec<ProcessSample>> {
     let text = fs::read_to_string(path)
         .with_context(|| format!("read resources file {}", path.display()))?;
@@ -806,12 +821,21 @@ pub fn read_process_samples(path: &Path) -> Result<Vec<ProcessSample>> {
     let mut last_seq_by_pid = BTreeMap::new();
     for line in text.lines() {
         if line.starts_with('#') {
+            // A v1 artifact has one fewer column; reading it with v2 offsets
+            // would silently misreport heap as cancelled writes.
+            ensure!(
+                line.split('\t')
+                    .next()
+                    .is_some_and(|version| version == PROCESS_HEADER),
+                "{}: resources header is not {PROCESS_HEADER}: {line:?}",
+                path.display()
+            );
             continue;
         }
         let fields = line.split('\t').collect::<Vec<_>>();
         ensure!(
-            fields.len() == 13,
-            "{}: resources record must have 13 fields, got {}: {line:?}",
+            fields.len() == PROCESS_FIELDS,
+            "{}: resources record must have {PROCESS_FIELDS} fields, got {}: {line:?}",
             path.display(),
             fields.len()
         );
@@ -829,7 +853,7 @@ pub fn read_process_samples(path: &Path) -> Result<Vec<ProcessSample>> {
             );
         }
         last_seq_by_pid.insert(pid, seq);
-        let note = fields[12];
+        let note = fields[13];
         samples.push(ProcessSample {
             seq,
             elapsed_ms: fields[1]
@@ -846,7 +870,8 @@ pub fn read_process_samples(path: &Path) -> Result<Vec<ProcessSample>> {
             fds: metric_field(path, fields[8])?,
             io_read_bytes: metric_field(path, fields[9])?,
             io_write_bytes: metric_field(path, fields[10])?,
-            heap_kb: metric_field(path, fields[11])?,
+            io_cancelled_write_bytes: metric_field(path, fields[11])?,
+            heap_kb: metric_field(path, fields[12])?,
             note: if note == "-" {
                 String::new()
             } else {
@@ -855,6 +880,30 @@ pub fn read_process_samples(path: &Path) -> Result<Vec<ProcessSample>> {
         });
     }
     Ok(samples)
+}
+
+/// One byte-counter's movement for one pid across its sampled window:
+/// (delta_bytes, span_ms, bytes_per_second). `None` when the scope was never
+/// collected for that pid, when fewer than two samples carry it, or when the
+/// span is zero — an unmeasurable rate is absent, never reported as 0.
+pub fn counter_rate(
+    samples: &[ProcessSample],
+    pid: u32,
+    scope: fn(&ProcessSample) -> Option<u64>,
+) -> Option<(u64, u64, u64)> {
+    let series: Vec<(u64, u64)> = samples
+        .iter()
+        .filter(|sample| sample.pid == pid)
+        .filter_map(|sample| scope(sample).map(|value| (sample.elapsed_ms, value)))
+        .collect();
+    let (first_ms, first) = *series.first()?;
+    let (last_ms, last) = *series.last()?;
+    if series.len() < 2 {
+        return None;
+    }
+    let span = last_ms.checked_sub(first_ms).filter(|span| *span > 0)?;
+    let delta = last.saturating_sub(first);
+    Some((delta, span, delta.saturating_mul(1000) / span))
 }
 
 /// Read and validate a store.tsv artifact (same truncation/field rules).
@@ -907,12 +956,22 @@ mod tests {
             parse_status("Threads:\t1\n").is_err(),
             "missing VmRSS is rejected"
         );
-        let io = parse_io("read_bytes: 12\nwrite_bytes: 34\n").unwrap();
+        let io = parse_io("read_bytes: 12\nwrite_bytes: 34\ncancelled_write_bytes: 8\n").unwrap();
         assert_eq!(io.read_bytes, Some(12));
         assert_eq!(io.write_bytes, Some(34));
+        assert_eq!(io.cancelled_write_bytes, Some(8));
         assert!(
             parse_io("read_bytes: 12\n").is_err(),
             "partial io is rejected"
+        );
+        assert!(
+            parse_io("read_bytes: 12\nwrite_bytes: 34\n").is_err(),
+            "a v1-shaped io record without cancelled_write_bytes is rejected, \
+             not defaulted to zero"
+        );
+        assert!(
+            parse_io("read_bytes: 12\nwrite_bytes: 34\ncancelled_write_bytes: x\n").is_err(),
+            "a non-numeric cancelled_write_bytes is rejected"
         );
     }
 
@@ -951,6 +1010,10 @@ mod tests {
         assert!(sample.threads.unwrap() > 0);
         assert!(sample.fds.unwrap() > 0);
         assert!(sample.io_read_bytes.is_some(), "self io must be readable");
+        assert!(
+            sample.io_cancelled_write_bytes.is_some(),
+            "self cancelled_write_bytes must be readable"
+        );
         assert!(sample.note.is_empty(), "self sample has no error notes");
     }
 
@@ -1010,14 +1073,31 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let file = directory.path().join("resources.tsv");
         let good = format!(
-            "{PROCESS_HEADER}\n1\t0\t{pid}\t1\t1\t100\t100\t1\t2\t0\t0\t-\t-\n",
+            "{PROCESS_HEADER}\n1\t0\t{pid}\t1\t1\t100\t100\t1\t2\t0\t4096\t512\t-\t-\n",
             pid = std::process::id()
         );
         fs::write(&file, &good).unwrap();
         let samples = read_process_samples(&file).unwrap();
         assert_eq!(samples.len(), 1);
         assert_eq!(samples[0].rss_kb, Some(100));
+        assert_eq!(samples[0].io_write_bytes, Some(4096));
+        assert_eq!(samples[0].io_cancelled_write_bytes, Some(512));
         assert_eq!(samples[0].heap_kb, None, "absent scope is -, not zero");
+        // A v1 artifact (13 columns, v1 header) is refused outright rather
+        // than read with v2 column offsets.
+        fs::write(
+            &file,
+            format!(
+                "# pipestream-resources-v1\n1\t0\t{pid}\t1\t1\t100\t100\t1\t2\t0\t4096\t-\t-\n",
+                pid = std::process::id()
+            ),
+        )
+        .unwrap();
+        assert!(
+            read_process_samples(&file).is_err(),
+            "a v1 resources artifact is rejected by the v2 reader"
+        );
+        fs::write(&file, &good).unwrap();
         // Torn final line.
         let mut torn = good.clone();
         torn.pop();
@@ -1030,7 +1110,7 @@ mod tests {
         fs::write(
             &file,
             format!(
-                "{PROCESS_HEADER}\n1\t0\t{pid}\t1\t1\tlots\t-\t1\t2\t0\t0\t-\t-\n",
+                "{PROCESS_HEADER}\n1\t0\t{pid}\t1\t1\tlots\t-\t1\t2\t0\t0\t0\t-\t-\n",
                 pid = std::process::id()
             ),
         )
@@ -1071,7 +1151,7 @@ mod tests {
         fs::write(
             &file,
             format!(
-                "{PROCESS_HEADER}\n7\t700\t4242\t-\t-\t-\t-\t-\t-\t-\t-\t-\terror:sample:read stat of pid 4242\n"
+                "{PROCESS_HEADER}\n7\t700\t4242\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\terror:sample:read stat of pid 4242\n"
             ),
         )
         .unwrap();
@@ -1079,9 +1159,62 @@ mod tests {
         assert_eq!(samples.len(), 1);
         assert_eq!(samples[0].ppid, None);
         assert_eq!(samples[0].rss_kb, None, "a dead sample is absent, not zero");
+        assert_eq!(
+            samples[0].io_cancelled_write_bytes, None,
+            "the v2 column is absent on a dead sample, not zero"
+        );
         assert!(
             samples[0].note.contains("error:"),
             "the dead-collector note survives the reader so the row can fail on it"
+        );
+    }
+
+    #[test]
+    fn counter_rate_is_absent_when_it_cannot_be_measured() {
+        let sample = |elapsed_ms: u64, write: Option<u64>, cancelled: Option<u64>| ProcessSample {
+            seq: elapsed_ms / 100,
+            elapsed_ms,
+            pid: 42,
+            ppid: Some(1),
+            pgrp: Some(1),
+            rss_kb: Some(1),
+            hwm_kb: Some(1),
+            threads: Some(1),
+            fds: Some(1),
+            io_read_bytes: Some(0),
+            io_write_bytes: write,
+            io_cancelled_write_bytes: cancelled,
+            heap_kb: None,
+            note: String::new(),
+        };
+        let series = vec![
+            sample(0, Some(1_000), Some(500)),
+            sample(1_000, Some(3_000), Some(2_500)),
+            sample(2_000, Some(5_000), None),
+        ];
+        assert_eq!(
+            counter_rate(&series, 42, |sample| sample.io_write_bytes),
+            Some((4_000, 2_000, 2_000))
+        );
+        // The cancelled scope has only two collected points, one second apart.
+        assert_eq!(
+            counter_rate(&series, 42, |sample| sample.io_cancelled_write_bytes),
+            Some((2_000, 1_000, 2_000))
+        );
+        // A pid that was never sampled has no rate at all.
+        assert_eq!(
+            counter_rate(&series, 7, |sample| sample.io_write_bytes),
+            None
+        );
+        // One point, or a zero span, is unmeasurable — absent, not zero.
+        assert_eq!(
+            counter_rate(&series[..1], 42, |sample| sample.io_write_bytes),
+            None
+        );
+        let instant = vec![sample(5, Some(1), None), sample(5, Some(9), None)];
+        assert_eq!(
+            counter_rate(&instant, 42, |sample| sample.io_write_bytes),
+            None
         );
     }
 
@@ -1114,6 +1247,12 @@ mod tests {
         let samples = read_process_samples(&file).unwrap();
         assert!(samples.len() as u64 >= summary.lines);
         assert_eq!(summary.error_lines, 0, "no dead-collector notes");
+        assert!(
+            samples
+                .iter()
+                .all(|sample| sample.io_cancelled_write_bytes.is_some()),
+            "the v2 cancelled-write scope is collected on every live sample"
+        );
         assert!(
             samples.iter().all(|sample| sample.pid == anchor),
             "only the anchored subject tree is sampled"

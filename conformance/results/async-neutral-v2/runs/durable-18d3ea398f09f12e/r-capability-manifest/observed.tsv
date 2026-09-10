@@ -1,0 +1,11 @@
+os_type	Linux
+kernel_release	7.0.0-31-generic
+cpu_count	32
+mem_total_kb	127121896
+fixture_fs_type	xfs
+fixture_mount	/work
+proc_permissions_self	io=true status=true fd=true net_dev=true
+jstat	/home/krickert/.sdkman/candidates/java/current/bin/jstat
+calibration_per_sample_ns	11662
+resources_schema	pipestream-resources-v2
+java_memory_freeze	-Xms256m -Xmx2g

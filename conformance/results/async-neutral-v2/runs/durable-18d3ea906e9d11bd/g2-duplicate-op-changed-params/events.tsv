@@ -1,0 +1,6 @@
+1	durable-18d3ea906e9d11bd	g2-duplicate-op-changed-params	rust	client	946250-18d3eaed70a968a3	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3ea906e9d11bd	g2-duplicate-op-changed-params	rust	client	946250-18d3eaed70a968a3	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3ea906e9d11bd	g2-duplicate-op-changed-params	rust	client	946250-18d3eaed70a968a3	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ea906e9d11bd	g2-duplicate-op-changed-params	rust	client	946250-18d3eaed70a968a3	4	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ea906e9d11bd	g2-duplicate-op-changed-params	rust	client	946250-18d3eaed70a968a3	5	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ea906e9d11bd	g2-duplicate-op-changed-params	rust	client	946250-18d3eaed70a968a3	6	REFUSAL_RECEIVED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1	7	artifacts/duplicate-refusal.txt	72	064f611be1d7ccb4d400de988f4e1b3b0abd54d5be1e89eafbda61ef13275d49

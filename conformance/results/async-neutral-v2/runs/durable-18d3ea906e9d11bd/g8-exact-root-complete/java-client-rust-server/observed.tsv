@@ -1,0 +1,13 @@
+server_subject	rust
+client_subject	java
+alpn	pipestream/2
+root_admissions	0:0:1 copy/v2 mode 0, 0:0:2 reassemble/v2 mode 1, 0:0:3 chunk-copy/v2 mode 2
+mode1_branch	1:0:1, 1:0:2 settled; 0:0:2 settled after both
+mode2_expansion	scope 2:1 declared=4 seal_matches_oracle=true
+mode2_settle_order	0:0:3 terminal after all 2:1 children terminal; rounds=1
+status_tree	manifest digests recomputed from MANIFEST prints; scope 1 (2 leaves), scope 2 (4 leaves), scope 0 (3 leaves with child_status_root folds) folded driver-side
+coverage_scope_1	declared=2 counts=[2,0,0,0] seal+status_root match driver recomputation
+coverage_scope_2	declared=4 counts=[4,0,0,0] seal+status_root match driver recomputation
+coverage_root	declared=3 counts=[3,0,0,0] seal+status_root match driver recomputation
+completed	COMPLETED replays the exact root coverage (all fields equal)
+java_jar_sha256	d658fe9e6fe923dad4c98198e6fe94e1dc92fb9aef4f084661cc8be4340cdfb6

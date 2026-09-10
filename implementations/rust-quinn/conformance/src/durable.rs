@@ -320,11 +320,12 @@ fn write_run_manifest(
         run_root.join("run.tsv"),
         format!(
             "started_ms\t{started}\nmode\t{}\nseed\t{}\nrust_bin\t{}\trust_sha256\t{}\n\
-             java_jar\t{java_path}\tjava_sha256\t{java_sha}\n",
+             java_jar\t{java_path}\tjava_sha256\t{java_sha}\njava_memory_flags\t{}\n",
             if args.dev { "dev" } else { "acceptance" },
             args.seed,
             path(rust_bin),
             rust_hash,
+            process::java_memory_flags_text(),
         ),
     )?;
     Ok(())

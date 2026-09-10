@@ -1,0 +1,11 @@
+server_subject	rust
+client_subject	rust
+settlement_wall_ms	250
+parent_final_state	7 (CANCELLED)
+parent_cancelling_observed	false
+child_scope	1:1
+children_succeeded	10
+children_cancelled	118
+children_other	0
+objects_before_restart	31
+objects_after_settlement	22

@@ -651,24 +651,54 @@ pub enum Frame {
     Fin,
 }
 
+/// Fixture-side QUIC idle timeout used when a probe arms keep-alive. Stated
+/// explicitly rather than inherited from the quinn default so a row can say
+/// what its own transport would have done.
+pub const KEEP_ALIVE_MAX_IDLE: Duration = Duration::from_secs(60);
+
 pub struct Peer {
     runtime: Arc<tokio::runtime::Runtime>,
+    /// QUIC PING cadence for connections this peer opens. `None` = quinn's
+    /// default (no keep-alive), which is what every row wants unless it
+    /// deliberately holds a connection idle for longer than the transport
+    /// idle timeout.
+    keep_alive: Option<Duration>,
 }
 
 impl Peer {
     pub fn new() -> Result<Self> {
+        Self::build(None)
+    }
+
+    /// A peer whose connections send QUIC PINGs every `interval`, with an
+    /// explicit [`KEEP_ALIVE_MAX_IDLE`] idle timeout.
+    ///
+    /// Rows that observe a subject enforcing a deadline on an otherwise
+    /// silent connection MUST use this: without it the fixture's own
+    /// transport idle timeout can tear the connection down first, and a
+    /// stream that dies with the connection is indistinguishable from a
+    /// stream the subject enforced. Keep-alive is transport-level PING
+    /// traffic and carries no application data, so it is not activity on
+    /// any object stream and must not renew an application deadline —
+    /// a subject that treats it as activity is itself a finding.
+    pub fn with_keep_alive(interval: Duration) -> Result<Self> {
+        Self::build(Some(interval))
+    }
+
+    fn build(keep_alive: Option<Duration>) -> Result<Self> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
         Ok(Self {
             runtime: Arc::new(runtime),
+            keep_alive,
         })
     }
 
     pub fn connect(&self, material: &Material, principal: &str, address: &str) -> Result<RawConn> {
-        let endpoint = self
-            .runtime
-            .block_on(client_endpoint(material, principal))?;
+        let endpoint =
+            self.runtime
+                .block_on(client_endpoint(material, principal, self.keep_alive))?;
         let address = address
             .parse::<std::net::SocketAddr>()
             .context("invalid server address")?;
@@ -980,11 +1010,34 @@ impl RawConn {
         Ok(())
     }
 
+    /// Graceful close that also waits (bounded) for the local endpoint to
+    /// have no connection left in a closing/draining state.
+    ///
+    /// A QUIC connection lingers for several PTOs after CONNECTION_CLOSE. A
+    /// row that closes its peer and immediately signals the subject to shut
+    /// down can catch the subject with that draining connection still on its
+    /// books, which is a fixture race, not a subject defect. Rows that hold
+    /// a connection open to the end of their window use this instead of
+    /// `close_application` + drop.
+    pub fn close_and_wait_idle(self, reason: &[u8], timeout: Duration) -> Result<()> {
+        self.connection.close(0u32.into(), reason);
+        let runtime = self.runtime.clone();
+        let endpoint = self.endpoint.clone();
+        runtime.block_on(async {
+            let _ = tokio::time::timeout(timeout, endpoint.wait_idle()).await;
+        });
+        Ok(())
+    }
+
     /// Abrupt loss: drop every handle without a close frame.
     pub fn vanish(self) {}
 }
 
-async fn client_endpoint(material: &Material, principal: &str) -> Result<quinn::Endpoint> {
+async fn client_endpoint(
+    material: &Material,
+    principal: &str,
+    keep_alive: Option<Duration>,
+) -> Result<quinn::Endpoint> {
     let identity = material.principal(principal)?;
     let mut roots = rustls::RootCertStore::empty();
     for cert in CertificateDer::pem_file_iter(&material.ca_cert)? {
@@ -999,9 +1052,19 @@ async fn client_endpoint(material: &Material, principal: &str) -> Result<quinn::
         .context("build client TLS identity")?;
     tls.alpn_protocols = vec![ALPN_V2.to_vec()];
     let mut endpoint = quinn::Endpoint::client("127.0.0.1:0".parse()?)?;
-    endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(
+    let mut config = quinn::ClientConfig::new(Arc::new(
         QuicClientConfig::try_from(tls).context("QUIC client config")?,
-    )));
+    ));
+    if let Some(interval) = keep_alive {
+        let mut transport = quinn::TransportConfig::default();
+        transport.keep_alive_interval(Some(interval));
+        transport.max_idle_timeout(Some(
+            quinn::IdleTimeout::try_from(KEEP_ALIVE_MAX_IDLE)
+                .context("fixture idle timeout out of range")?,
+        ));
+        config.transport_config(Arc::new(transport));
+    }
+    endpoint.set_default_client_config(config);
     Ok(endpoint)
 }
 

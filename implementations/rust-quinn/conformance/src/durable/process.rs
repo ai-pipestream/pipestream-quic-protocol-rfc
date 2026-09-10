@@ -17,6 +17,25 @@ use std::{
 
 // 30s so a cold JVM server can still become ready inside the window.
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Frozen JVM memory limits for every Java subject process the fixture
+/// spawns. Group R requires the limits and the environment allowance to be
+/// FIXED before a decisive measurement run, so they live here as one constant
+/// rather than per row: the same flags apply to client-side and server-side
+/// Java processes in every direction, and every row's evidence can name them.
+///
+/// `-Xmx2g` bounds the heap (and, because the JVM's default direct-memory
+/// ceiling tracks max heap, the direct scope with it). `-Xms256m` is
+/// deliberately far below the ceiling: an -Xms equal to -Xmx would commit the
+/// plateau up front and make the RSS plateau assertion pass trivially, which
+/// is a false pass, not evidence. The value is recorded into run.tsv, the
+/// r-capability-manifest row and every R row's observed.tsv.
+pub const JAVA_MEMORY_FLAGS: &[&str] = &["-Xms256m", "-Xmx2g"];
+
+/// Human-readable form of [`JAVA_MEMORY_FLAGS`] for evidence files.
+pub fn java_memory_flags_text() -> String {
+    JAVA_MEMORY_FLAGS.join(" ")
+}
 const OP_TIMEOUT: Duration = Duration::from_secs(30);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -123,17 +142,22 @@ impl AuthorityFixture {
     fn subject_base(&self, subject: Subject) -> Result<Vec<String>> {
         Ok(match subject {
             Subject::Rust => vec![path(&self.rust_bin), "v2".to_owned()],
-            Subject::Java => vec![
-                "java".into(),
-                "--enable-native-access=ALL-UNNAMED".into(),
-                "-cp".into(),
-                path(
-                    self.java_jar
-                        .as_ref()
-                        .context("Java subject requested but no --java-jar was provided")?,
-                ),
-                "ai.pipestream.quic.v2.V2Main".into(),
-            ],
+            Subject::Java => {
+                let jar = self
+                    .java_jar
+                    .as_ref()
+                    .context("Java subject requested but no --java-jar was provided")?;
+                let mut base = vec!["java".to_owned()];
+                // Frozen before any measurement run; see JAVA_MEMORY_FLAGS.
+                base.extend(JAVA_MEMORY_FLAGS.iter().map(|flag| (*flag).to_owned()));
+                base.extend([
+                    "--enable-native-access=ALL-UNNAMED".to_owned(),
+                    "-cp".to_owned(),
+                    path(jar),
+                    "ai.pipestream.quic.v2.V2Main".to_owned(),
+                ]);
+                base
+            }
         })
     }
 
@@ -563,6 +587,38 @@ impl Drop for OwnedServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_java_subject_base_carries_the_frozen_memory_flags_before_the_classpath() {
+        let directory = tempfile::tempdir().unwrap();
+        let jar = directory.path().join("subject-all.jar");
+        fs::write(&jar, b"not really a jar").unwrap();
+        let certs =
+            crate::durable::mtls::generate(&directory.path().join("certs"), &[("alice", "alice")])
+                .unwrap();
+        let fixture = AuthorityFixture::new(
+            Path::new("/nonexistent/pipestream-quinn"),
+            Some(&jar),
+            directory.path(),
+            certs,
+            Subject::Java,
+            Subject::Java,
+        )
+        .unwrap();
+        let base = fixture.base().unwrap();
+        assert_eq!(base[0], "java");
+        assert_eq!(&base[1..3], JAVA_MEMORY_FLAGS);
+        // The limits are argument-order sensitive: they must precede the
+        // classpath and main class, which stay last so serve_base can swap
+        // V2Main for FixtureMain.
+        assert_eq!(base[3], "--enable-native-access=ALL-UNNAMED");
+        assert_eq!(base[4], "-cp");
+        assert_eq!(base.last().unwrap(), "ai.pipestream.quic.v2.V2Main");
+        assert_eq!(java_memory_flags_text(), "-Xms256m -Xmx2g");
+        // The rust subject is never given JVM flags.
+        let rust = fixture.subject_base(Subject::Rust).unwrap();
+        assert!(!rust.iter().any(|argument| argument.starts_with("-Xm")));
+    }
 
     #[test]
     fn ready_file_text_must_parse_as_a_socket_address() {

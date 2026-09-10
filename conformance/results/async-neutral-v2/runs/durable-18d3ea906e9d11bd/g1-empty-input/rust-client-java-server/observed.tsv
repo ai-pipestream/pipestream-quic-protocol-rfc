@@ -1,0 +1,11 @@
+server_subject	java
+client_subject	rust
+alpn	pipestream/2
+application	copy/v2
+input_len	0
+terminal_state	5
+manifest_objects	1
+output_len	0
+output_sha256	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+watch_terminal	WORK revision=3 state=5 attempt=1 child=none VIEW WorkView { work: WorkKey { scope: Number(0), producer: Producer(0), entity: Id(1) }, state: State(5), attempt: Number(1), input: Some(Input { length: Number(0), sha256: Digest([227, 176, 196, 66, 152, 252, 28, 20, 154, 251, 244, 200, 153, 111, 185, 36, 39, 174, 65, 228, 100, 155, 147, 76, 164, 149, 153, 27, 120, 82, 184, 85]), content_type: ApplicationLabel("application/octet-stream") }), admitted_at: Some(Number(1789031402412)), deadline: Some(Number(1789031462412)), terminal_at: Some(Number(1789031402468)), receipt_until: Some(Number(1789117802468)), output_until: Some(Number(1789035002468)), child: None, manifest: Some(Manifest { version: Literal, authority: IdentityLabel("issuer-a"), owner: IdentityLabel("alice"), generation: Id(1), work: WorkKey { scope: Number(0), producer: Producer(0), entity: Id(1) }, attempt: Id(1), input_sha256: Digest([227, 176, 196, 66, 152, 252, 28, 20, 154, 251, 244, 200, 153, 111, 185, 36, 39, 174, 65, 228, 100, 155, 147, 76, 164, 149, 153, 27, 120, 82, 184, 85]), committed_at: Number(1789031402468), available_until: Number(1789035002468), outputs: [Output { index: OutputIndex(0), length: Number(0), sha256: Digest([227, 176, 196, 66, 152, 252, 28, 20, 154, 251, 244, 200, 153, 111, 185, 36, 39, 174, 65, 228, 100, 155, 147, 76, 164, 149, 153, 27, 120, 82, 184, 85]), content_type: ApplicationLabel("application/octet-stream"), locator: ResultLocator("pipestream://localhost:7443/v2/sessions/1/scopes/0/producers/0/entities/1/attempts/1/outputs/0") }] }), diagnostic: None }
+java_jar_sha256	d658fe9e6fe923dad4c98198e6fe94e1dc92fb9aef4f084661cc8be4340cdfb6

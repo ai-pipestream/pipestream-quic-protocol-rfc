@@ -1,0 +1,21 @@
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	1	REQUEST_SENT	48de662b0ce0af05911b30cfbad1a3b8						
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	2	RECEIPT_VALIDATED	48de662b0ce0af05911b30cfbad1a3b8						
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	3	REQUEST_SENT	613341ca9423416c00c9c41faec60bea	0:0:1	1				
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	4	RECEIPT_VALIDATED	613341ca9423416c00c9c41faec60bea	0:0:1	1				
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	5	REQUEST_SENT	b47fa5d85c100761228b73b85e5a9fe5						
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	6	RECEIPT_VALIDATED	b47fa5d85c100761228b73b85e5a9fe5						
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	7	OBSERVATION_JOURNALED		0:0:1	1				
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	8	REQUEST_SENT	f8e874371f658d8ceec4ee94bb36f3e7						
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	9	RECEIPT_VALIDATED	f8e874371f658d8ceec4ee94bb36f3e7						
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	10	REQUEST_SENT	c7643b58740e4f6a6ca79e3a994ff0b9	0:0:1	1				
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	11	RECEIPT_VALIDATED	c7643b58740e4f6a6ca79e3a994ff0b9	0:0:1	1				
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	12	REQUEST_SENT	686edf595524255ed0821b22cba4f554						
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	13	RECEIPT_VALIDATED	686edf595524255ed0821b22cba4f554						
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	14	OBSERVATION_JOURNALED		0:0:1	1				
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	15	REQUEST_SENT	fc479e68043f0f1996ea747bf097d2b8						
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	16	RECEIPT_VALIDATED	fc479e68043f0f1996ea747bf097d2b8						
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	17	REQUEST_SENT	6ee6c6858fd450d974d478dbb5047785	0:0:1	1				
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	18	RECEIPT_VALIDATED	6ee6c6858fd450d974d478dbb5047785	0:0:1	1				
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	19	REQUEST_SENT	0ad8c00cf5176cc39a05f277e73c4ca8						
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	20	RECEIPT_VALIDATED	0ad8c00cf5176cc39a05f277e73c4ca8						
+1	durable-18d3ea906e9d11bd	g4-ancestor-fence-publication	rust	client	946250-18d3eb2a034d2a86	21	OBSERVATION_JOURNALED		0:0:1	1				

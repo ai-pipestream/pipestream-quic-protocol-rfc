@@ -1,0 +1,5 @@
+exit=exit status: 0
+stdout:
+VERIFIED ResultHeader { kind: Literal, request: Id(2), generation: Id(1), work: WorkKey { scope: Number(0), producer: Producer(0), entity: Id(1) }, attempt: Id(1), index: OutputIndex(0), length: Number(4096), sha256: Digest([233, 201, 139, 137, 170, 135, 212, 100, 224, 154, 243, 169, 162, 12, 184, 251, 103, 255, 226, 0, 64, 243, 101, 107, 214, 49, 209, 197, 148, 254, 100, 177]) }
+
+stderr:

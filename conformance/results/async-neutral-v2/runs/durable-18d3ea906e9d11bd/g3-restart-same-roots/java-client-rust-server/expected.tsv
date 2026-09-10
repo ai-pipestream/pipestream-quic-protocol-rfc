@@ -1,0 +1,11 @@
+root_seal_sha256	739ceb0c6f3b2ad531c4aff3940a22023dd10b8f13892aa3e836a8ea31ce293f
+mode1_child_seal_sha256	2ef8a8179cfce72df60816ce6c01fb44ffb23ef5785a048da3365bec277fc694
+leaf_input_sha256	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+mode1_parent_sha256	9e1572ca5d5b092815ebf83c1ef53831065d73e5a29268f6bb7711c2553c6ba0
+mode2_input_sha256	1dedf2209c2609cd80437d911867f75214bbc91c384c7a53b10d6a16fc53fd34
+loaded_session	mode 0 published; mode 1 child scope sealed, both children settled; mode 2 expansion in flight; child-scope checkpoint fenced; 0:0:4 declared but unadmitted
+crash_label	seeded uncontrolled SIGKILL after the fence - process death, not power loss, not a boundary test
+expected_readiness	an op is served immediately after the restart is ready (recorded)
+expected_views	identical attempts and deadlines across the restart; in-flight expansion settles
+expected_seals	sealed scope seals still match the oracle after the restart
+expected_new_capacity	0:0:4 (declared before the kill) admits only after reconciliation

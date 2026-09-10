@@ -1,0 +1,5 @@
+live_server	java
+expected_duplicate	second server against the same roots refuses startup (exact exit recorded)
+expected_first_unaffected	subsequent op on the first server succeeds
+expected_after_stop	after SIGTERM on the first, the second starts cleanly and serves the retained session
+storage_probe_scope	private-storage-supplementary (duplicate-server startup capture; paired with the first-server op observation)

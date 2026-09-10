@@ -1,0 +1,10 @@
+policy_execution_limit_ms	60000
+policy_output_retention_ms	6000
+policy_receipt_retention_ms	6000
+clock_mode	real-short-policy
+work	0:0:1
+attempt	1
+input_len	65536
+input_sha256	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+expected_output_sha256	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+expected_after_promises_expire	authorized requests refuse named EXPIRED (6) or NOT_FOUND (5) once retired (both servers automatic); creation replay refuses EXPIRED (6); high-water preserved on both

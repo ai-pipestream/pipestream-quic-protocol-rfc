@@ -1,0 +1,10 @@
+1	durable-18d3ea906e9d11bd	g8-detach-drains	rust	client	946250-18d3eb721809ef25	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3ea906e9d11bd	g8-detach-drains	rust	client	946250-18d3eb721809ef25	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3ea906e9d11bd	g8-detach-drains	rust	client	946250-18d3eb721809ef25	3	REQUEST_SENT	40f2d62708b4e894746c1f3fe0f8be38	0:0:1	1				
+1	durable-18d3ea906e9d11bd	g8-detach-drains	rust	client	946250-18d3eb721809ef25	4	RECEIPT_VALIDATED	40f2d62708b4e894746c1f3fe0f8be38	0:0:1	1				
+1	durable-18d3ea906e9d11bd	g8-detach-drains	rust	client	946250-18d3eb721809ef25	5	OBSERVATION_JOURNALED	40f2d62708b4e894746c1f3fe0f8be38	0:0:1	1				
+1	durable-18d3ea906e9d11bd	g8-detach-drains	rust	client	946250-18d3eb721809ef25	6	REQUEST_SENT	c6576c6d7515a6f154f35d8a003936d3	0:0:2	1				
+1	durable-18d3ea906e9d11bd	g8-detach-drains	rust	client	946250-18d3eb721809ef25	7	RECEIPT_VALIDATED	c6576c6d7515a6f154f35d8a003936d3	0:0:2	1				
+1	durable-18d3ea906e9d11bd	g8-detach-drains	rust	client	946250-18d3eb721809ef25	8	OBSERVATION_JOURNALED	c6576c6d7515a6f154f35d8a003936d3	0:0:2	1				
+1	durable-18d3ea906e9d11bd	g8-detach-drains	rust	client	946250-18d3eb721809ef25	9	RESULT_VERIFIED		0:0:2	1				
+1	durable-18d3ea906e9d11bd	g8-detach-drains	rust	client	946250-18d3eb721809ef25	10	RESULT_INSTALLED		0:0:2	1		artifacts/continuation-read.bin	65536	cb8cd6739343a34842fe1b55615d9a0d7f9aa5f2f76be28f997798595d2e16ba

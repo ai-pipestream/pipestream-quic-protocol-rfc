@@ -81,6 +81,49 @@ subset only, kept distinct from the real client/server directions).
   with rationale); internal counter plateaus alone are not RSS
   evidence; one small payload proves nothing.
 
+#### Frozen limits and environment allowance (fixed at milestone 17)
+
+The JVM heap limit is now FROZEN in the fixture launch itself, before the
+decisive run of this row, and is not a per-row choice:
+`java -Xms256m -Xmx2g …` on every Java subject process the driver spawns
+(`conformance/src/durable/process.rs`, `JAVA_MEMORY_FLAGS`). It is recorded
+in `run.tsv` (`java_memory_flags`), in the r-capability-manifest
+`artifacts/manifest.tsv` (`java_memory_freeze`, with this rationale) and in
+each R row's `observed.tsv`. The Rust subject has no equivalent knob and is
+launched unchanged; that asymmetry is stated, not equalised.
+
+Rationale for the values, from M16 evidence rather than taste:
+
+1. Why freeze at all. At M16 the Java subject ran with the JVM default max
+   heap, which is a fraction of host RAM. On this host (121 GiB) that is a
+   ~30 GiB ceiling, so the collector had no reason to run: the M16 heap
+   scope showed used heap climbing 8 MiB → 1.17 GiB over 152 samples with
+   RSS plateauing near 1.4 GiB. A measurement whose bound is "whatever this
+   machine happens to have" is not reproducible and cannot support a
+   plateau claim on any other host.
+2. Why 2g for `-Xmx`. The largest heap occupancy actually observed at M16
+   was 1.17 GiB, and that figure is a GC sawtooth peak with garbage
+   included, not a live set. 2 GiB leaves headroom above the observed peak
+   while still being far below the host default, so a genuine leak in the
+   ladder hits the ceiling and shows up as GC pressure or an OOM instead of
+   being absorbed by the host. It also bounds the direct/native scope: the
+   JVM's default direct-memory ceiling tracks max heap, so `-Xmx2g` caps
+   the Netty direct buffers too without a second flag whose interaction
+   would have to be argued separately.
+3. Why 256m for `-Xms`, not 2g. Setting `-Xms` equal to `-Xmx` commits the
+   plateau at launch: RSS would start at the ceiling and the plateau
+   assertion ("tail p90 ≤ baseline median + allowance") would pass for a
+   subject that leaks, because the baseline already contains the ceiling.
+   A small initial heap keeps growth observable. The cost is that JVM
+   warm-up growth is real growth in the samples, which is exactly why the
+   Java allowance in the plateau assertion stays baseline/2 + 128 MiB
+   rather than the rust baseline/4 + 64 MiB.
+4. What a change would require. If a ladder rung genuinely needs more than
+   2 GiB, the ceiling is RE-frozen and re-recorded before that row's
+   decisive run, with the new value and reason written here; it is never
+   raised mid-matrix or per direction. The `-Xmx` figure is a frozen limit,
+   not a measurement, and no row may quote it as one.
+
 ### r-staging-and-journal-bounds
 - Staging objects, journals, retained data at configured ceilings:
   exhaustion refuses NEW work (named refusal) without breaking existing
@@ -112,8 +155,9 @@ Collectors live in `conformance/src/durable/resources.rs`:
 
 - Process scopes at 100 ms over the anchor pid plus every transitive
   ppid descendant (`/proc/<pid>/status` VmRSS/VmHWM/Threads,
-  `/proc/<pid>/fd` count, `/proc/<pid>/io` read/write bytes) into a
-  per-direction `resources.tsv`.
+  `/proc/<pid>/fd` count, `/proc/<pid>/io` read/write bytes — and, from
+  milestone 17, `cancelled_write_bytes`) into a per-direction
+  `resources.tsv`.
 - Java heap at a 1000 ms cadence (`jstat -gc`, S0U+S1U+EU+OU; each probe
   is itself a JVM launch, so it deliberately runs slower than the /proc
   scopes). Ticks that collected it carry a `heap:jstat` method note;
@@ -152,6 +196,67 @@ Observed in batch A (see the archived run, not quoted as acceptance):
   undriven connection whose CONNECTION_CLOSE has not been processed yet,
   which reads as "still open" when the peer closed seconds earlier. The
   probe therefore polls connection liveness first and records it.
+
+## Group R status (milestone 17 — batch A at the 0176855 Java pin)
+
+Batch A rerun green in dev against Java subject `0176855` (all-jar
+`d658fe9e…`) with the JVM heap frozen at `-Xms256m -Xmx2g`, archived run
+`durable-18d3ea398f09f12e`. Row statuses are unchanged (three DONE, four
+SPEC); what changed is the evidence and two fixture corrections.
+
+- Resources schema is now `# pipestream-resources-v2`, 14 columns: the
+  new one is `/proc/<pid>/io cancelled_write_bytes` after `write_bytes`.
+  All three io counters are MANDATORY; an absent one is an `error:` note
+  that fails the row, never a zero. The validating reader refuses a v1
+  header rather than reading 13 columns at v2 offsets.
+- Connection bounds are unchanged at the new pin (rust 4/16, java 8/32,
+  recovery on attempt 1 / 2), but the java per-owner refusal now carries
+  a named reason: `APPLICATION_CLOSE 0x204 reason="owner connection
+  ceiling"` where M16 saw an empty reason. The java global refusal is
+  still a transport-level close.
+- Stall enforcement KIND is unchanged on both subjects, and the java
+  close reason is now named. rust: 3/3 stalled inputs aborted per stream
+  (`STOP_SENDING 0x204`) by idle+10 s and 3/3 `LIMIT_EXCEEDED` refusals
+  ("input receive deadline") drained from a still-live control stream at
+  window end. java: the whole connection closed at the idle bound with
+  `APPLICATION_CLOSE 0x204 reason="idle control deadline"` (M16: empty
+  reason), 0/3 per-stream refusals readable. NAMED GAP: an
+  APPLICATION_CLOSE discards control frames the peer queued and the
+  client had not read, so this row cannot distinguish "no per-stream
+  refusal was sent" from "one was sent and the close discarded it".
+- Disk-I/O scopes over the stall window, anchor pid: rust `write_bytes`
+  11.52 MB/s of which `cancelled_write_bytes` 11.40 MB/s (98–99%
+  cancelled before writeback); java `write_bytes` 53.8 KB/s with
+  `cancelled_write_bytes` 0 over the window (M16 java: ~4.3 MB/s). The
+  rust figure is an observation about the authority's storage layer, not
+  a bound this row asserts.
+- Memory at the frozen heap: java RSS baseline median 348,084 KiB → tail
+  p90 367,760 KiB (growth 19,676), used heap max 161,068 KiB over 152
+  jstat samples with 0 probe gaps; M16, with the JVM default max heap,
+  showed 982,212 → 1,403,300 KiB and a used-heap max of 1,171,499 KiB.
+  Rust: RSS 19,916 → 21,152 KiB, FDs 12 → 15.
+- Healthy-principal progress: worst latency 150.5 ms (rust, 23 rounds ×
+  5 ops) and 150.7 ms (java, 38 rounds × 5 ops) against the 10 s
+  deadline.
+
+Two fixture measurement corrections, both in
+`r-stalled-principal-progress`:
+
+1. The abusive principal's connection now sends QUIC PINGs every 5 s with
+   an explicit 60 s transport idle timeout, because the row leaves it
+   silent for 90 s between enforcement probes — longer than the default
+   idle timeout. Without this the fixture's own transport tore the
+   connection down and every stalled stream died with it, which reads
+   exactly like subject enforcement and is not. PINGs are transport
+   traffic carrying no object-stream data, so they must not renew an
+   application receive deadline. A probe that finds the connection gone
+   with a transport idle timeout now records its stream aborts as NOT
+   attributable and does not count them.
+2. The row waits for its own endpoint to drain and then a fixed 30 s
+   settle before signalling the subject to stop, so a connection that was
+   alive one instant earlier is not still on the subject's books when
+   SIGTERM lands. No measurement is taken during that window and the
+   collector is already stopped.
 
 ## Measurement-scope rules (all R rows)
 - Rust heap, Java heap, whole-process RSS/HWM, native/direct, threads,

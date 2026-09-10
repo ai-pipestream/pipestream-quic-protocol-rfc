@@ -1,0 +1,5 @@
+exit=exit status: 1
+stdout:
+
+stderr:
+CONFLICT: client journal already owned or locking unavailable

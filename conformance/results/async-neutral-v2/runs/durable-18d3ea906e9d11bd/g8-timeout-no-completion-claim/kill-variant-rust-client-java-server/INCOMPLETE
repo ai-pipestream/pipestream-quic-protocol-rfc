@@ -1,0 +1,7 @@
+kill-variant-rust-client-java-server direction failed; the row evidence is the rust-client/rust-server direction. Error:
+process timed out
+stdout:
+
+stderr:
+
+java_jar_sha256=d658fe9e6fe923dad4c98198e6fe94e1dc92fb9aef4f084661cc8be4340cdfb6

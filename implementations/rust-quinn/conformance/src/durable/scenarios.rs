@@ -16976,9 +16976,33 @@ fn r_capability_manifest(context: &ScenarioContext) -> Result<()> {
         ("scope_fds", "/proc/<pid>/fd entry count; per sample".into()),
         (
             "scope_disk_io",
-            "/proc/<pid>/io read_bytes/write_bytes (actual disk I/O where the \
-             kernel permits); per sample"
+            "/proc/<pid>/io read_bytes/write_bytes/cancelled_write_bytes; per \
+             sample. All three are MANDATORY and read from the same file: \
+             write_bytes alone cannot be read as device traffic, because \
+             pages a process accounted as written and then truncated away \
+             before writeback are counted in write_bytes and again in \
+             cancelled_write_bytes"
                 .into(),
+        ),
+        (
+            "resources_schema",
+            format!(
+                "{} ({} columns per record)",
+                resources::PROCESS_HEADER,
+                resources::PROCESS_FIELDS
+            ),
+        ),
+        (
+            "java_memory_freeze",
+            format!(
+                "{} on every Java subject process, frozen before any \
+                 measurement row and identical in every direction and row. \
+                 -Xmx bounds the heap and, through the JVM's default \
+                 direct-memory ceiling, the direct scope with it; -Xms is \
+                 held far below the ceiling so the RSS plateau is measured \
+                 rather than pre-committed by the launch flags",
+                crate::durable::process::java_memory_flags_text()
+            ),
         ),
         (
             "scope_java_heap",
@@ -17061,6 +17085,14 @@ fn r_capability_manifest(context: &ScenarioContext) -> Result<()> {
             (
                 "calibration_per_sample_ns",
                 calibration.per_sample_ns.to_string(),
+            ),
+            (
+                "resources_schema",
+                resources::PROCESS_HEADER.trim_start_matches("# ").into(),
+            ),
+            (
+                "java_memory_freeze",
+                crate::durable::process::java_memory_flags_text(),
             ),
         ],
     )?;
@@ -17397,6 +17429,27 @@ const BOB_OP_DEADLINE: Duration = Duration::from_secs(10);
 const STALLED_STREAMS: usize = 3;
 const STALL_PAYLOAD_LEN: usize = 256 * 1024;
 const STALL_PARTIAL_LEN: usize = 128 * 1024;
+/// QUIC PING cadence on the abusive principal's connection. The row leaves
+/// that connection silent for minutes between enforcement probes, which is
+/// longer than the transport idle timeout: without keep-alive the FIXTURE's
+/// own transport tears the connection down, every stalled stream dies with
+/// it, and that is indistinguishable from the subject enforcing a deadline.
+/// PINGs carry no application data, so they are not activity on any object
+/// stream and must not renew an application receive deadline.
+const STALL_KEEP_ALIVE: Duration = Duration::from_secs(5);
+/// Settle window between closing the abusive connection and signalling the
+/// subject to stop, so the subject's transport can retire a connection that
+/// was still live one instant earlier.
+///
+/// Sized from observation, not taste: the rust authority runs its own 5 s
+/// keep-alive with a 60 s transport idle timeout and gives its whole
+/// shutdown a 5 s grace, of which the execution-pool wind-down can consume
+/// all before the transport wait even starts. At 5 s of settle the drain
+/// assertion in `OwnedServer::stop` was observed to fail intermittently
+/// under batch load with everything except the transport reported idle. The
+/// window is fixture timing, never evidence: no measurement is taken during
+/// it, and the collector is already stopped.
+const STALL_CLOSE_SETTLE: Duration = Duration::from_secs(30);
 
 fn r_stalled_principal_progress(context: &ScenarioContext) -> Result<()> {
     run_raw_directions(
@@ -17520,11 +17573,26 @@ fn probe_stalled_streams(
     stalls: &mut String,
 ) -> Result<BTreeSet<u64>> {
     let mut aborted = BTreeSet::new();
+    // A transport idle timeout is the FIXTURE's own transport giving up, not
+    // the subject enforcing anything. Every stream on the connection fails
+    // its write probe afterwards, so counting those as enforcement would
+    // pass the row on evidence the subject never produced.
+    let mut attributable = true;
     match alice.try_wait_closed(Duration::from_millis(100))? {
-        Some(close) => stalls.push_str(&format!(
-            "{label}\tconnection\tclosed by peer: {}\n",
-            close_text(&close)
-        )),
+        Some(close) => {
+            let text = close_text(&close);
+            attributable =
+                !matches!(&close, Close::Transport(reason) if reason.contains("timed out"));
+            stalls.push_str(&format!(
+                "{label}\tconnection\tclosed by peer: {text}{}\n",
+                if attributable {
+                    ""
+                } else {
+                    " [NOT attributable to the subject: fixture transport idle \
+                     timeout; stream aborts on this probe are not counted]"
+                }
+            ));
+        }
         None => stalls.push_str(&format!("{label}\tconnection\tlive\n")),
     }
     for (stream_id, stream) in streams.iter_mut() {
@@ -17533,8 +17601,15 @@ fn probe_stalled_streams(
             match alice.write_stream(stream, b"x") {
                 Ok(()) => thread::sleep(Duration::from_millis(400)),
                 Err(error) => {
-                    outcome = format!("aborted ({error:#})");
-                    aborted.insert(*stream_id);
+                    outcome = if attributable {
+                        aborted.insert(*stream_id);
+                        format!("aborted ({error:#})")
+                    } else {
+                        format!(
+                            "write failed after the fixture's transport idle timeout, \
+                             NOT counted as enforcement ({error:#})"
+                        )
+                    };
                     break;
                 }
             }
@@ -17655,11 +17730,27 @@ fn r_stalled_principal_progress_direction(
             "client_subject",
             "alice = rust raw peer (stalls); bob = rust CLI (healthy principal)".into(),
         ),
+        (
+            "java_memory_freeze",
+            match server {
+                Subject::Java => format!(
+                    "{} (frozen before the run; applies to this server process)",
+                    crate::durable::process::java_memory_flags_text()
+                ),
+                Subject::Rust => format!(
+                    "not applicable: no JVM in this subject group (the frozen \
+                     Java limits are {})",
+                    crate::durable::process::java_memory_flags_text()
+                ),
+            },
+        ),
     ];
     let mut stalls = String::from("probe\tstream\tobservation\n");
 
     // ---- principal A (alice): establish the stalls ----
-    let peer = Peer::new()?;
+    // Keep-alive: see STALL_KEEP_ALIVE. The abusive connection is silent for
+    // minutes between probes and must outlive the fixture's own transport.
+    let peer = Peer::with_keep_alive(STALL_KEEP_ALIVE)?;
     let mut alice = raw_negotiate_as(&peer, &fixture, &owned, &mut events, &artifacts, "alice")?;
     // Enforcement bounds are the NEGOTIATED selection's, per subject (the
     // rust offer advertises idle 5s/lifetime 30s, the java offer 30s/300s).
@@ -17727,6 +17818,30 @@ fn r_stalled_principal_progress_direction(
             (
                 "fd_plateau",
                 "server-group FDs: tail p90 <= baseline median + 8".into(),
+            ),
+            (
+                "fixture_transport",
+                format!(
+                    "the abusive principal's connection sends QUIC PINGs every \
+                     {}s with an explicit {}s transport idle timeout, so it \
+                     outlives the silent gaps between enforcement probes; \
+                     PINGs are transport traffic only and carry no object \
+                     stream data. A probe that finds the connection gone with \
+                     a transport idle timeout records its stream aborts as NOT \
+                     attributable to the subject and does not count them",
+                    STALL_KEEP_ALIVE.as_secs(),
+                    rawclient::KEEP_ALIVE_MAX_IDLE.as_secs()
+                ),
+            ),
+            (
+                "disk_io_scope",
+                "server-group write_bytes AND cancelled_write_bytes are both \
+                 collected per sample and reported as rates over the window; \
+                 neither is asserted against a bound here (this row's gates \
+                 are progress and the RSS/FD plateaus) — they are recorded so \
+                 an idle write rate can be told apart from cancelled \
+                 page-cache writeback"
+                    .into(),
             ),
             (
                 "heap_scope",
@@ -18120,8 +18235,14 @@ fn r_stalled_principal_progress_direction(
     )?;
 
     // ---- measurement close-out ----
-    alice.close_application(b"stall row complete")?;
-    drop(alice);
+    // Bounded wait for the close to finish draining: the keep-alive kept this
+    // connection alive to the end of the window, so unlike an already-dead
+    // connection it is still on the subject's books at this instant. The
+    // subject is only signalled to stop after its side has had time to
+    // retire the connection; SIGTERM on top of a still-draining connection
+    // is a fixture race, and a server that then reports a non-idle transport
+    // would be failed for the fixture's timing rather than its own drain.
+    alice.close_and_wait_idle(b"stall row complete", Duration::from_secs(15))?;
     let summary = collector.stop()?;
     ensure!(
         summary.error_lines == 0,
@@ -18139,8 +18260,11 @@ fn r_stalled_principal_progress_direction(
     ensure!(
         samples.iter().all(|sample| sample.rss_kb.is_some()
             && sample.fds.is_some()
-            && sample.threads.is_some()),
-        "{scenario_id}: a sample is missing a MANDATORY scope (rss/fd/threads)"
+            && sample.threads.is_some()
+            && sample.io_write_bytes.is_some()
+            && sample.io_cancelled_write_bytes.is_some()),
+        "{scenario_id}: a sample is missing a MANDATORY scope \
+         (rss/fd/threads/write_bytes/cancelled_write_bytes)"
     );
     let heap_gap_notes = samples
         .iter()
@@ -18180,6 +18304,33 @@ fn r_stalled_principal_progress_direction(
         "fd_plateau",
         format!("baseline_median={base_fd} tail_p90={tail_fd}"),
     ));
+    // Disk-I/O scope over the whole window for the anchor pid. write_bytes
+    // and cancelled_write_bytes are reported side by side: the difference is
+    // what the subject actually pushed towards the device, and an
+    // unmeasurable rate is absent rather than zero.
+    let write_rate = resources::counter_rate(&samples, anchor, |sample| sample.io_write_bytes);
+    let cancelled_rate =
+        resources::counter_rate(&samples, anchor, |sample| sample.io_cancelled_write_bytes);
+    let rate_text = |rate: Option<(u64, u64, u64)>| match rate {
+        Some((delta, span_ms, per_second)) => {
+            format!("delta_bytes={delta} span_ms={span_ms} bytes_per_s={per_second}")
+        }
+        None => "unmeasurable over this window (absent, never zero)".to_owned(),
+    };
+    observed.push(("io_write_bytes_window", rate_text(write_rate)));
+    observed.push(("io_cancelled_write_bytes_window", rate_text(cancelled_rate)));
+    observed.push((
+        "io_write_cancelled_share",
+        match (write_rate, cancelled_rate) {
+            (Some((written, _, _)), Some((cancelled, _, _))) if written > 0 => format!(
+                "{}% of the window's accounted write_bytes was cancelled \
+                 before writeback ({cancelled}/{written})",
+                cancelled.saturating_mul(100) / written
+            ),
+            (Some((0, _, _)), _) => "no accounted write_bytes over the window".to_owned(),
+            _ => "unmeasurable: one of the two scopes has no rate".to_owned(),
+        },
+    ));
     observed.push((
         "heap_scope",
         match server {
@@ -18213,6 +18364,9 @@ fn r_stalled_principal_progress_direction(
         ),
     ));
     write_kv(scenario_dir, "observed.tsv", &observed)?;
+    // Fixture timing only, after every measurement is taken and the collector
+    // is stopped: see STALL_CLOSE_SETTLE.
+    thread::sleep(STALL_CLOSE_SETTLE);
     stop_and_seal(context, scenario_dir, scenario_id, owned, events)
 }
 
