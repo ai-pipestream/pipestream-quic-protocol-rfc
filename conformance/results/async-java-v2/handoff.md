@@ -31,9 +31,11 @@ Commits (all plain author identity, no generated attribution):
 | `e1533d3` | transport bundle `pipestream.4` (quiche drained-stream collection, Netty parent-map release, native credit test), POM pin, manifest hashes, evidence file and raw logs |
 | `63d03a0`, `afd15dd`, `417ba83` | final handoff (REVIEW_READY), closed client result-stream gap |
 | `b5a3a91` | review of the spec branch `docs/client-recovery-guidance-2026-09` (7315713) against the Java endpoints: `spec-review-client-recovery-2026-09-09.md` |
-| head | client recovery after the spec hardening: `--retry-budget`/`--retry-backoff-ms`, `REFUSED`/`UNRESOLVED`/`CAPABILITIES` launcher output, REFUSAL details naming the local bound, stream-credit observation on both stacks (`RawPeerRustAuthorityTest`, `ClientRecoveryTest`); evidence `conformance/results/durable-work-v2-java-client-recovery-2026-09-09.txt` |
+| `68821f3`, `d7ba2e0` | client recovery after the spec hardening: `--retry-budget`/`--retry-backoff-ms`, `REFUSED`/`UNRESOLVED`/`CAPABILITIES` launcher output, REFUSAL details naming the local bound, stream-credit observation on both stacks (`RawPeerRustAuthorityTest`, `ClientRecoveryTest`); CR04/CR06/CR10 scenarios on the Java authority; evidence `conformance/results/durable-work-v2-java-client-recovery-2026-09-09.txt` |
+| `0176855` | response to Kimi's milestone 16 resource rows: stream bounds judged before the connection, idle-control clock gated on outstanding work, named deadline reasons on REFUSAL and APPLICATION_CLOSE on both listeners, host-held query-only SQLite anchor stopping the per-call WAL-index rebuild (`DurableHostIdleWritesTest`), documented listener ceilings |
+| `7585a9dc` | durable-profile connections are never closed for control silence (core-only connections keep the control deadline); `DurableWireNegativeTest.stalledPrincipalIsRefusedPerStreamOnASurvivingConnection` replays the neutral driver's stalled-principal shape; full offline run 717 tests, 0 failures |
 
-Working tree at `e1533d3`: clean. Nothing pushed (no push authorization was
+Working tree at `7585a9dc`: clean. Nothing pushed (no push authorization was
 given); no CI exists for this branch; no draft/deploy action taken; the
 shared feature branch and main were not merged.
 
@@ -94,6 +96,12 @@ native jar `e49d88b724cc79c936899542c1565a00454a93d512816de6e8cfefa637c51c50`.
   `ReferenceApplications` at `b13995b`; custom mode-0 applications register
   through `DurableHost.initialize/open`; Rust `RestartSafety::Pure` maps to
   Java `IDEMPOTENT`.
+- Current subject pins at `7585a9dc` (transport `.4` unchanged): lib jar
+  `a21ae9c38262d38218fa0cdad2fb3acf9dcf1a7206755eb377dacce5d6a915e9`, shaded
+  all-jar `61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a`.
+  Kimi's driver (run by follow-on agents while Kimi is away) merged `0176855`
+  at milestone 17 (`add98fd6`, archive `durable-18d3ea398f09f12e`, JVM heap
+  frozen at `-Xms256m -Xmx2g`) and `7585a9dc` at milestone 17b.
 
 ## 3. Gates and remaining gaps
 
@@ -131,9 +139,19 @@ reviewed at `b5a3a91`, implemented at the head of this branch; evidence in
   hooks or injectable clock). None of these changes a wire behaviour.
 - The three spec-text resolutions (12.1 credit replenishment sentence, 12.1
   local-diagnostic sentence, 12.2.1 one-shot paragraph, test-plan preamble and
-  CR01/CR14 rows, disposition note outcome) are applied as uncommitted edits
-  in the guidance worktree `/work/worktrees/pipestream-rfc-client-guidance`
-  on the spec branch; the coordinating owner commits that branch.
+  CR01/CR14 rows, disposition note outcome) are committed on the spec branch
+  `docs/client-recovery-guidance-2026-09` at `7315713b`, and the follow-up
+  correction (MAX_STREAMS cumulative per connection, refused-stream retirement
+  as PipeStream's own rule, batching permitted, "returns to four" labelled as
+  fixture evidence) at `ff901451`.
+
+Listener behaviour corrected after Kimi's milestone 16/17 resource rows
+(`0176855`, `7585a9dc`; see section 5, items 5 and 6): stream bounds are
+judged before the connection; a durable-profile connection is never closed for
+control silence; every deadline names itself in the REFUSAL detail or the
+close reason; the host holds one query-only SQLite anchor so an idle authority
+no longer rewrites the WAL index on every store call. Full offline run at
+`7585a9dc`: 717 tests, 0 failures.
 
 ## 4. Proposed normative corrections and clarifications
 
@@ -186,6 +204,31 @@ reviewed at `b5a3a91`, implemented at the head of this branch; evidence in
 4. **Kimi/Meta defects investigated:** none reproduced against the Java
    endpoints in this window; Kimi's g1 runs are byte-identical across all
    three directions.
+5. **Java listener: control silence closed live connections.** The durable
+   listener advanced its idle-control clock only on inbound control frames
+   and judged it before any stream bound, so under the neutral
+   stalled-principal row it closed the whole connection at the idle bound
+   while it was itself holding a granted watch, the per-stream refusals
+   Section 12.1 requires were never readable, and a long upload with nothing
+   to say on control would have been cut at the control deadline. Fixed in
+   `0176855` (stream bounds first, clock gated on outstanding work, named
+   reasons) and `7585a9dc` (durable-profile connections are never closed for
+   control silence; the Rust reference keeps them, Section 12 requires no
+   silence bound on a live connection). Regressions:
+   `controlSilenceIsIdleOnlyWithNothingOutstanding` and
+   `stalledPrincipalIsRefusedPerStreamOnASurvivingConnection`, both red on
+   `d7ba2e0`.
+6. **Java store: WAL index rebuilt on every store call.** Every store
+   operation opened its own SQLite connection, so as sole opener it tore the
+   WAL index down and rebuilt it (32 KiB) four times per 50 ms scheduler tick
+   with no client connected: about 2.5 MiB/s of write accounting, almost all
+   cancelled page-cache writeback, plus the matching allocation churn. Fixed in
+   `0176855` by one query-only anchor connection held by the host (host-scoped
+   because the native guard has 64 process-wide slots). Regression:
+   `DurableHostIdleWritesTest` measures `/proc/self/io` over an idle window
+   (7,602,176 bytes in 3 s without the anchor). The Rust authority shows the
+   same signature under the same row (about 11.5 MB/s, 98 to 99 percent
+   cancelled); raised with Meta on the board as a question.
 
 ## 6. Build and verification commands
 
@@ -203,3 +246,22 @@ javadoc -quiet -package -Xdoclint:all -Werror -sourcepath implementations/java-n
 # Native transport rebuild (needs BENCHMARK.lock then NATIVE-BUILD.lock)
 bash implementations/java-netty/transport/build.sh
 ```
+
+## 7. Merge readiness
+
+Three branches carry this window's work, all based on `8eb5a17` on
+`feat/durable-work-results-v2`, none pushed, none rebased:
+
+| branch | tip | content |
+|---|---|---|
+| `docs/client-recovery-guidance-2026-09` | `ff901451` | spec text: client recovery guidance, MAX_STREAMS correction |
+| `agent/rfc-claude-java-v2` | `7585a9dc` | Java V2 durable authority, listener and client |
+| `agent/rfc-kimi-neutral-v2` | milestone 17b commit (in progress) | neutral conformance driver; contains `7585a9dc` by merge |
+
+`git merge-tree --write-tree feat/durable-work-results-v2 <branch>` reports
+no conflicts for any of the three, and the spec branch shares no changed file
+with either agent branch. Suggested order: spec branch, then this branch, then
+Kimi's (its merges of `0176855` and `7585a9dc` make this branch an ancestor,
+so the Java files arrive once). The merge itself is the coordinating owner's
+action; nothing here performs it.
+
