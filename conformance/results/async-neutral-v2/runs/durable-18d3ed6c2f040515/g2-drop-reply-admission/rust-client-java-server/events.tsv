@@ -1,0 +1,41 @@
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	1	LISTENING							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	2	CONNECTION_AUTHENTICATED							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	3	CONNECTION_AUTHENTICATED							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	4	CONNECTION_AUTHENTICATED							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	5	SESSION_COMMITTED							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	6	SESSION_RESPONSE_SENT							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	rust	client	1136766-18d3edab6139a41d	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	7	CONNECTION_AUTHENTICATED							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	8	SESSION_RESPONSE_SENT							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	9	DECLARATION_COMMITTED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	10	DECLARATION_RESPONSE_SENT							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	rust	client	1136766-18d3edab6139a41d	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	rust	client	1136766-18d3edab6139a41d	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	11	CONNECTION_AUTHENTICATED							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	12	SESSION_RESPONSE_SENT							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	13	INPUT_INSTALLED	d82b4f0e9f3814f1161c84240d038f52	0:0:1					
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	14	ADMISSION_COMMITTED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	15					14			
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	16	EXECUTION_CLAIMED		0:0:1	1				
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	17	OUTPUT_INSTALLED		0:0:1	1				
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	18	PUBLICATION_COMMITTED		0:0:1	1				
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	rust	client	1136766-18d3edab6139a41d	4	REFUSAL_RECEIVED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1	12	artifacts/admit-withheld.txt	72	1a27f58dfffbc689f9083db2529d516f74272ecc83702c6bc5d0d09758e6c468
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	rust	client	1136766-18d3edab6139a41d	5	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	19	CONNECTION_AUTHENTICATED							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	20	SESSION_RESPONSE_SENT							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	21	ADMISSION_RESPONSE_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1					
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	22	CLOSURE_COMMITTED							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	rust	client	1136766-18d3edab6139a41d	6	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	23	CONNECTION_AUTHENTICATED							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	24	SESSION_RESPONSE_SENT							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	rust	client	1136766-18d3edab6139a41d	7	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	rust	client	1136766-18d3edab6139a41d	8	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	25	CONNECTION_AUTHENTICATED							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	26	SESSION_RESPONSE_SENT							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	rust	client	1136766-18d3edab6139a41d	9	REFUSAL_RECEIVED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1	7	artifacts/changed-admit-refusal.txt	72	064f611be1d7ccb4d400de988f4e1b3b0abd54d5be1e89eafbda61ef13275d49
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	27	CONNECTION_AUTHENTICATED							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	28	SESSION_RESPONSE_SENT							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	29	CONNECTION_AUTHENTICATED							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	30	SESSION_RESPONSE_SENT							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	31	DETACH_ACKNOWLEDGED							
+1	durable-18d3ed6c2f040515	g2-drop-reply-admission	java	server	1162885-18d3edab696a8d00	32	SHUTDOWN_DRAINED							

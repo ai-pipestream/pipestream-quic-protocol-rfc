@@ -1,0 +1,5 @@
+refusal_matched	stderr line: CONFLICT: operation intent changed
+refusal_code_source	Failure::Refused Display 'authority refusal {code.name()}: ...' (quinn/src/v2_client/session.rs); CONFLICT = wire code 7 (src/v2/mod.rs, src/v2/records.rs)
+lookup_matches_first_receipt	true
+page_declared	1
+page_members	1

@@ -1,0 +1,4 @@
+lost_ack_boundary	DECLARATION_COMMITTED: declaration durable, receipt withheld
+identical_replay	durable receipt returned unchanged
+changed_membership_same_op	named CONFLICT (7)
+expected_page	declared=2 members=2 (entities 1 and 2)

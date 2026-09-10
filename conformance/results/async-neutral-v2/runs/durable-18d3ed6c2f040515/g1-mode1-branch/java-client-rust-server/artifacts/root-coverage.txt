@@ -1,0 +1,1 @@
+COVERAGE ScopeSummary[scope=0, producer=0, parent=null, seal=444702408fc06ce1a8909f0db362f468199b490cac8495e64c079eeec55da6ab, declared=1, counts=Counts[success=1, failure=0, cancelled=0, skipped=0], statusRoot=0d47032e197fd32695cac3257744591ed791df8966a0b54527bf91ef3c9a5fb3, closedAt=1789034597786] status_root=0d47032e197fd32695cac3257744591ed791df8966a0b54527bf91ef3c9a5fb3

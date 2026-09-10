@@ -9,6 +9,7 @@ pub mod client;
 mod codec;
 mod commitments;
 mod correlation;
+pub mod fixture;
 mod messages;
 mod negotiation;
 mod records;

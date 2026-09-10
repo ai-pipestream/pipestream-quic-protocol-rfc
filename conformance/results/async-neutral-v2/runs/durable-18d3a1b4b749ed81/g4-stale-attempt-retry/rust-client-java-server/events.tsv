@@ -1,0 +1,13 @@
+1	durable-18d3a1b4b749ed81	g4-stale-attempt-retry	rust	client	1022440-18d3a24fe3801c01	1			0:0:1	1		artifacts/input.bin	8388608	b3f99ba8b69b1ba1e45195e2d0335e41593b1a53704fe18767d1adef33fcb4ed
+1	durable-18d3a1b4b749ed81	g4-stale-attempt-retry	rust	client	1022440-18d3a24fe3801c01	2	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3a1b4b749ed81	g4-stale-attempt-retry	rust	client	1022440-18d3a24fe3801c01	3	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3a1b4b749ed81	g4-stale-attempt-retry	rust	client	1022440-18d3a24fe3801c01	4	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3a1b4b749ed81	g4-stale-attempt-retry	rust	client	1022440-18d3a24fe3801c01	5	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3a1b4b749ed81	g4-stale-attempt-retry	rust	client	1022440-18d3a24fe3801c01	6	REQUEST_SENT	98cd7e29007ff1ae6e11437f96ed7c64	0:0:1	1				
+1	durable-18d3a1b4b749ed81	g4-stale-attempt-retry	rust	client	1022440-18d3a24fe3801c01	7	RECEIPT_VALIDATED	98cd7e29007ff1ae6e11437f96ed7c64	0:0:1	1				
+1	durable-18d3a1b4b749ed81	g4-stale-attempt-retry	rust	client	1022440-18d3a24fe3801c01	8	REQUEST_SENT	27baeee1ff31c7e8cd7a457593ed766b	0:0:1	1				
+1	durable-18d3a1b4b749ed81	g4-stale-attempt-retry	rust	client	1022440-18d3a24fe3801c01	9		27baeee1ff31c7e8cd7a457593ed766b	0:0:1	1	7			
+1	durable-18d3a1b4b749ed81	g4-stale-attempt-retry	rust	client	1022440-18d3a24fe3801c01	10	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3a1b4b749ed81	g4-stale-attempt-retry	rust	client	1022440-18d3a24fe3801c01	11	RECEIPT_VALIDATED	98cd7e29007ff1ae6e11437f96ed7c64	0:0:1	1				
+1	durable-18d3a1b4b749ed81	g4-stale-attempt-retry	rust	client	1022440-18d3a24fe3801c01	12	RESULT_VERIFIED		0:0:1	2				
+1	durable-18d3a1b4b749ed81	g4-stale-attempt-retry	rust	client	1022440-18d3a24fe3801c01	13	RESULT_INSTALLED		0:0:1	2		artifacts/output.bin	8388608	b3f99ba8b69b1ba1e45195e2d0335e41593b1a53704fe18767d1adef33fcb4ed

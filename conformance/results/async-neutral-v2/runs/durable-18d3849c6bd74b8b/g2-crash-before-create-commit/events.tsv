@@ -1,0 +1,3 @@
+1	durable-18d3849c6bd74b8b	g2-crash-before-create-commit	rust	client	528238-18d3849c6c81ad11	1	REQUEST_SENT							
+1	durable-18d3849c6bd74b8b	g2-crash-before-create-commit	rust	server	528275-18d3849c6e1d2d89	1	CONNECTION_AUTHENTICATED							
+1	durable-18d3849c6bd74b8b	g2-crash-before-create-commit	rust	client	528238-18d3849c6c81ad11	2	REFUSAL_RECEIVED				4	artifacts/binding-lost.txt	78	eada529787d08c6cda8967e73ccb4e5a6e1d127fc7ba648ef627d7c26a3934cb

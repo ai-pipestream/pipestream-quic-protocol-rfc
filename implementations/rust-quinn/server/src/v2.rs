@@ -84,6 +84,17 @@ pub enum Command {
         ready_file: Option<PathBuf>,
         #[arg(long, default_value_t=16*1024*1024)]
         object_limit: u64,
+        /// Test-only neutral-driver fixture hooks; never a production admin
+        /// API. When any is set, --fixture-events, --fixture-run and
+        /// --fixture-scenario are all required; --fixture-schedule is optional.
+        #[arg(long)]
+        fixture_events: Option<PathBuf>,
+        #[arg(long)]
+        fixture_run: Option<String>,
+        #[arg(long)]
+        fixture_scenario: Option<String>,
+        #[arg(long)]
+        fixture_schedule: Option<PathBuf>,
     },
     /// Read the authenticated owner's sequence without creating a session.
     NextSequence {
@@ -246,6 +257,10 @@ pub async fn run(command: Command) -> Result<()> {
             result_authority,
             ready_file,
             object_limit,
+            fixture_events,
+            fixture_run,
+            fixture_scenario,
+            fixture_schedule,
         } => {
             server::serve(
                 storage,
@@ -257,6 +272,10 @@ pub async fn run(command: Command) -> Result<()> {
                     result_authority,
                     ready_file,
                     object_limit,
+                    fixture_events,
+                    fixture_run,
+                    fixture_scenario,
+                    fixture_schedule,
                 },
             )
             .await?;

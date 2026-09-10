@@ -1,0 +1,10 @@
+fault_window	kill between payload staging and admission commit
+storage_probe_scope	private-storage-supplementary
+object_dir_baseline	files=5 bytes=131865 allocated_blocks=288
+object_dir_after_final_restart	files=7 bytes=16909457 allocated_blocks=33072
+object_dir_after_cleanup_window	files=7 bytes=16909457 allocated_blocks=33072
+restart_cleanup	no restart-time cleanup observed (16909457 -> 16909457); rust operator command: none in the v2 CLI (collect_payload_orphans is library-only, not run by serve startup)
+object_dir_final	files=6 bytes=70708 allocated_blocks=176
+reclaim	orphan bytes reclaimed during subsequent store operations (16909457 -> 70708)
+capacity_after_kills	liveness admission succeeded
+committed_untouched	known-good result byte-exact after every restart

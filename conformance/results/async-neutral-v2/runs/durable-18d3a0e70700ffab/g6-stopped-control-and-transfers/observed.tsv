@@ -1,0 +1,9 @@
+server_subject	rust
+client_subject	rust (raw probe)
+alpn	pipestream/2
+transport_pin	rust server: quinn 0.11.11 (workspace Cargo.lock pin); application data geometry from the negotiated capabilities
+reset_stream_on_control	APPLICATION_CLOSE code=0x20e reason="CONTROL_RESET"
+stop_sending_on_control_responses	APPLICATION_CLOSE code=0x20e reason="CONTROL_RESET"
+abort_mid_input	refusal code=8 (INTEGRITY_ERROR) tagged [1, 2]; scope page lookup: declared=1, entries=[(entity 1, state 0 DECLARED)] — no admission receipt, no obligation change
+connection_loss_mid_session	replacement connection attached generation 1 (receipt validated); next_creation_sequence=2 (exactly one creation); scope page declared=1 entries=[(1, 0)] — no obligation changed by the loss; clean close after detach: server-initiated APPLICATION_CLOSE code=0x000 reason="control FIN acknowledged"
+stream_credit	held concurrent unidirectional opens: 4 (further opens blocked at the peer's transport ceiling: true); refused input on stream 2 answered INTEGRITY_ERROR and released its credit — a replacement open succeeded while 3 streams stay held; MAX_STREAMS credit is released by refusals

@@ -1,0 +1,9 @@
+server_subject	rust
+client_subject	rust
+alpn	pipestream/2
+object_limit_client	16777216
+object_limit_server	16777216
+application	copy/v2
+mode	0
+terminal_state	5
+watch_terminal	WORK revision=3 state=5 attempt=1 child=none VIEW WorkView { work: WorkKey { scope: Number(0), producer: Producer(0), entity: Id(1) }, state: State(5), attempt: Number(1), input: Some(Input { length: Number(65536), sha256: Digest([227, 32, 151, 43, 205, 13, 220, 113, 108, 243, 174, 69, 225, 228, 122, 139, 77, 231, 168, 128, 22, 144, 111, 35, 16, 135, 178, 152, 92, 226, 6, 130]), content_type: ApplicationLabel("application/octet-stream") }), admitted_at: Some(Number(1788924063535)), deadline: Some(Number(1788924123535)), terminal_at: Some(Number(1788924063553)), receipt_until: Some(Number(1789010463553)), output_until: Some(Number(1788927663553)), child: None, manifest: Some(Manifest { version: Literal, authority: IdentityLabel("issuer-a"), owner: IdentityLabel("alice"), generation: Id(1), work: WorkKey { scope: Number(0), producer: Producer(0), entity: Id(1) }, attempt: Id(1), input_sha256: Digest([227, 32, 151, 43, 205, 13, 220, 113, 108, 243, 174, 69, 225, 228, 122, 139, 77, 231, 168, 128, 22, 144, 111, 35, 16, 135, 178, 152, 92, 226, 6, 130]), committed_at: Number(1788924063553), available_until: Number(1788927663553), outputs: [Output { index: OutputIndex(0), length: Number(65536), sha256: Digest([227, 32, 151, 43, 205, 13, 220, 113, 108, 243, 174, 69, 225, 228, 122, 139, 77, 231, 168, 128, 22, 144, 111, 35, 16, 135, 178, 152, 92, 226, 6, 130]), content_type: ApplicationLabel("application/octet-stream"), locator: ResultLocator("pipestream://localhost:7443/v2/sessions/1/scopes/0/producers/0/entities/1/attempts/1/outputs/0") }] }), diagnostic: None }

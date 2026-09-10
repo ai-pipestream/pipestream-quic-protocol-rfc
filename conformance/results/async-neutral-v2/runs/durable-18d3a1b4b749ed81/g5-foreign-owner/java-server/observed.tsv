@@ -1,0 +1,12 @@
+server_subject	java
+java_jar_sha256	9b23a14c36e3f33bc9fae1b12d0835441ba6d52aba14393ed4ae3f7e309e08c9
+attach_refusal	code=8 line: INTEGRITY_ERROR: session binding disagrees with persisted creation
+attach_source	client journal guard: wire Create was answered with bob's retained binding and the              local validate_binding refused the owner mismatch (src/v2/client.rs:343-365); the              claimed owner never leaves the client
+view_refusal	code=5 line: authority refusal NOT_FOUND: refused
+view_source	authority refusal on the wire from B's own session (rust server detail 'work not              declared', src/v2/authority/scopes.rs:172; java server detail 'refused')
+lookup_refusal	code=5 line: NOT_FOUND: no persisted client intent
+lookup_source	client journal guard: read_intent finds no persisted intent for the foreign id, so              no wire request was sent (src/v2/client.rs:399-402)
+read_refusal	code=5 line: NOT_FOUND: no retained output selection
+read_source	client journal guard: no retained output selection for the foreign work key, so no              wire request was sent (src/v2/client/observations/references.rs:112)
+a_readback_byte_exact	true
+wire_level_note	published clients cannot send a cross-owner Attach (Attach carries the journaled binding; Create carries no claimed owner): the authority-side attach_session UNAUTHORIZED branch (src/v2/authority/sessions.rs) is unreachable via the CLIs; probes exercise the intent-claim and foreign-identifier equivalents

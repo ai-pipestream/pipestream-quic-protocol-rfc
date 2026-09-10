@@ -1,0 +1,5 @@
+1	durable-18d3ed6c2f040515	g2-kill-at-publication-commit	java	client	1136766-18d3edc32db482c1	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3ed6c2f040515	g2-kill-at-publication-commit	java	client	1136766-18d3edc32db482c1	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3ed6c2f040515	g2-kill-at-publication-commit	java	client	1136766-18d3edc32db482c1	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ed6c2f040515	g2-kill-at-publication-commit	rust	server	1173654-18d3edc32f488750	1	PUBLICATION_COMMITTED							
+1	durable-18d3ed6c2f040515	g2-kill-at-publication-commit	java	client	1136766-18d3edc32db482c1	4	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				

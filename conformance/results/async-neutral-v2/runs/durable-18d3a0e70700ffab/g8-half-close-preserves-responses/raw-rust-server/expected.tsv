@@ -1,0 +1,2 @@
+half_close_must	after requesting detach the client may finish its control send direction; every             response committed before the FIN (the session receipt and the DETACHED response,             including any post-detach correlated refusals) MUST be delivered in full — the             control receive direction ends only after them
+close	clean close after the FIN is acknowledged (application code 0)

@@ -1,0 +1,5 @@
+exit=exit status: 1
+stdout:
+
+stderr:
+CONFLICT: CONFLICT: authority refused: membership is sealed or IDs did not increase

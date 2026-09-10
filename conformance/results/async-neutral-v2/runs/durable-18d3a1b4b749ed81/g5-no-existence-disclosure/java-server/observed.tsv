@@ -1,0 +1,7 @@
+server_subject	java
+java_jar_sha256	9b23a14c36e3f33bc9fae1b12d0835441ba6d52aba14393ed4ae3f7e309e08c9
+attach	exit_a=exit status: 1 exit_b=exit status: 1 code_a=Some(8) code_b=Some(8) indistinguishable=true
+lookup	exit_a=exit status: 1 exit_b=exit status: 1 code_a=Some(5) code_b=Some(5) indistinguishable=true
+view	exit_a=exit status: 1 exit_b=exit status: 1 code_a=Some(5) code_b=Some(5) indistinguishable=true
+read	exit_a=exit status: 1 exit_b=exit status: 1 code_a=Some(5) code_b=Some(5) indistinguishable=true
+wire_level_note	cross-owner addressing is not expressible via the published CLIs (Attach carries the journaled binding; Create carries no claimed owner); arm (a) vs (b) therefore probes the two levels the CLI can reach: cross-owner claims in the client intent (attach pair) and foreign identifiers inside the caller's own session (lookup/view/read pairs)

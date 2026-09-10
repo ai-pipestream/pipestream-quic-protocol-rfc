@@ -1,0 +1,10 @@
+server_subject	rust
+client_subject	java
+alpn	pipestream/2
+declared_total	9
+committed_seal_sha256	8098c13773c6eab92a7d5508a5ef632923337d9de16d353ae00bbb03f4c6a70f
+seal_matches_oracle	true
+membership_verified	true
+more_flag	exposed and exact on every page
+parent_field	not printed by either page CLI; scope 0 is the root (parent none by construction)
+java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a

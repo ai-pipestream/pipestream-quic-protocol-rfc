@@ -1,6 +1,7 @@
 //! Protocol-neutral process orchestration and immutable-corpus verification.
 
 mod composed_model;
+mod durable;
 mod extensions;
 mod receipts;
 mod schema;
@@ -48,6 +49,11 @@ enum Task {
         #[arg(long, default_value_t = 1_000_000)]
         max_states: usize,
     },
+    /// Run the neutral durable scenario driver (milestone 1: rust direction).
+    Durable {
+        #[command(flatten)]
+        args: durable::DurableArgs,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +88,7 @@ fn run(cli: Cli) -> Result<()> {
             scope_model::run(depth, max_states)?;
             composed_model::run(depth, max_states)
         }
+        Task::Durable { args } => durable::run(args),
     }
 }
 

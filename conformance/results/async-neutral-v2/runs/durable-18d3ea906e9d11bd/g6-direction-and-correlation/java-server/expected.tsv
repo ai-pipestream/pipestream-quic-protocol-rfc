@@ -1,0 +1,7 @@
+wrong_direction_message	a server-direction Session::Binding from the client is a framing violation: connection-fatal FRAME_ERROR (0x201)
+second_capabilities	a second capabilities frame after negotiation: connection-fatal FRAME_ERROR (0x201)
+unsolicited_selection	a capabilities frame with the response flag set as the first frame (server-direction before negotiation): connection-fatal FRAME_ERROR (0x201)
+repeated_and_decreasing_request_ids	request IDs must increase from 1: repeated or decreasing IDs are connection-fatal FRAME_ERROR (0x201)
+bare_control_fin	a control FIN before detach is outside the Section 12.8 MAY: connection-fatal FRAME_ERROR (0x201) (normative-clarifications-review item 5)
+second_bidirectional_stream	stream-count ceilings are transport parameters (normative-clarifications-review item 4): the second client bidirectional stream is refused at QUIC transport level (the open blocks past the budget deadline); the row never waits for an application LIMIT_EXCEEDED frame
+unidirectional_ceiling	more concurrent unidirectional streams than the negotiated data geometry are likewise refused at transport level; after the held streams are reset the credit is released and a replacement open succeeds

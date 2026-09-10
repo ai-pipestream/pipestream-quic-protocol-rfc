@@ -1,0 +1,12 @@
+server_subject	java
+client_subject	rust
+settlement_wall_ms	351
+parent_final_state	7 (CANCELLED)
+parent_cancelling_observed	false
+child_scope	1:1
+children_succeeded	0
+children_cancelled	0
+children_other	0
+objects_before_restart	4
+objects_after_settlement	2
+java_jar_sha256	ff537a609119534db8caca50d2828a4d421b8b0997ca04896883fff9cc60375b

@@ -1,0 +1,7 @@
+server_subject	rust
+foreign_ca_sha256	6cf53bac1c75e629dee548341b38f3145efb4ac268ec6840f168012faa4e533a
+probe_exit	exit status: 1
+probe_stderr_first_line	connection lost: aborted by peer: the cryptographic handshake failed: error 48: invalid peer certificate: UnknownIssuer
+probe_named_code	none (transport failure, no application refusal)
+application_refusal_surfaced	false
+alice_next_sequence_after	1

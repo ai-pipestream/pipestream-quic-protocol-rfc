@@ -1,0 +1,5 @@
+kill_boundary	CONNECTION_AUTHENTICATED: kill before any create commits
+subject_exit	86 after the boundary record
+expected_next_sequence_after_restart	1 (no phantom session)
+expected_generation	1
+expected_next_sequence_after_replay	2 (exactly one durable creation)

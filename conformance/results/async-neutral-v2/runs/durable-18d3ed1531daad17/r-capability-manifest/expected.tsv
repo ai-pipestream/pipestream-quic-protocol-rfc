@@ -1,0 +1,3 @@
+contract	the capability manifest records host facts, selected collectors, /proc permissions, tool availability and collector-overhead calibration BEFORE any measurement row
+mandatory_metric_rule	an unavailable MANDATORY metric fails its row; it is never recorded as zero
+dead_collector_rule	a sampling error mid-run is recorded and fails the row; truncated records are rejected by the validating reader

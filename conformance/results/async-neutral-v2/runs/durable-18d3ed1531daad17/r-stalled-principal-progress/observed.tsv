@@ -1,0 +1,14 @@
+server_subject	rust
+client_subject	alice = rust raw peer (stalls); bob = rust CLI (healthy principal)
+java_memory_freeze	not applicable: no JVM in this subject group (the frozen Java limits are -Xms256m -Xmx2g)
+stalls	3 partial inputs (no FIN), pending watch on 0:0:6, result stream for 0:0:1 unread
+bob_ops	23 rounds x 5 ops, worst latency 150.527996ms
+stall_enforcement	negotiated idle 5s / lifetime 30s; transport abort observed for 3/3 streams by idle+10s and 3/3 by lifetime+10s (3/3 distinct); LIMIT_EXCEEDED input refusals on control at window end: 3/3
+collector	928 ticks, 928 sample lines, 0 error lines
+rss_plateau_kib	baseline_median=19684 tail_p90=20844 growth=1160
+fd_plateau	baseline_median=12 tail_p90=15
+io_write_bytes_window	delta_bytes=1075953664 span_ms=92749 bytes_per_s=11600703
+io_cancelled_write_bytes_window	delta_bytes=1064800256 span_ms=92749 bytes_per_s=11480449
+io_write_cancelled_share	98% of the window's accounted write_bytes was cancelled before writeback (1064800256/1075953664)
+heap_scope	not applicable: no JVM in the subject process group. Rust heap is a named gap (no black-box allocator counter); RSS/HWM is a separate scope and is never substituted for it
+store_checkpoints	93 records across start/stalls-established/mid-window/end

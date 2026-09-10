@@ -1,0 +1,5 @@
+exit=exit status: 0
+stdout:
+COMPLETED ScopeSummary[scope=0, producer=0, parent=null, seal=444702408fc06ce1a8909f0db362f468199b490cac8495e64c079eeec55da6ab, declared=1, counts=Counts[success=1, failure=0, cancelled=0, skipped=0], statusRoot=914282b0c93e4b935542352f3a71a5401980c7ea6f3e2aa8cdccc35fb3d6155b, closedAt=1789035445538]
+
+stderr:

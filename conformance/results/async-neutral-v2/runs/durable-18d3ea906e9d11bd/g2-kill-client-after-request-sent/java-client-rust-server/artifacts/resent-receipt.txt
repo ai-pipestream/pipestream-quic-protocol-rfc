@@ -1,0 +1,1 @@
+RECEIPT operation=d82b4f0e9f3814f1161c84240d038f52 digest=fd39b908ddfd363eec15ffeabbafbef9e8040081c4b315a2cae6870d8261e43a outcome=Admitted[work=WorkKey[scope=0, producer=0, entity=1], attempt=1, admittedAt=1789031777690, deadline=1789031837690, child=null]

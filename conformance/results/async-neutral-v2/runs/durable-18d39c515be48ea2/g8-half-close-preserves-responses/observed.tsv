@@ -1,0 +1,6 @@
+server_subject	rust
+client_subject	rust
+alpn	pipestream/2
+cli_surface_gap	FIN-on-request-direction with pending responses is not expressible through the published CLIs; recorded for the G6 raw-probe milestone
+detach_ack	DETACHED delivered in full (exit 0)
+post_detach_op	exit=exit status: 0 answered=true refusal=None

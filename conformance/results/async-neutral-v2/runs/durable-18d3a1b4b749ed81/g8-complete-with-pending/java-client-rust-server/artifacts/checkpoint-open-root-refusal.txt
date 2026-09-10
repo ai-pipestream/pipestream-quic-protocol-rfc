@@ -1,0 +1,5 @@
+exit=exit status: 1
+stdout:
+
+stderr:
+WAIT_TIMEOUT: WAIT_TIMEOUT: authority refused: checkpoint wait expired

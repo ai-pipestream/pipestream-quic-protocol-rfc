@@ -1,0 +1,7 @@
+server_subject	java
+client_subject	rust
+alpn	pipestream/2
+cli_surface	FIN-on-request-direction with pending responses is not expressible through the published CLIs; the wire-level MUST is asserted by the raw peer directions raw-rust-server/ and raw-java-server/
+detach_ack	DETACHED delivered in full (exit 0)
+post_detach_op	exit=exit status: 0 answered=true refusal=None
+java_jar_sha256	9b23a14c36e3f33bc9fae1b12d0835441ba6d52aba14393ed4ae3f7e309e08c9

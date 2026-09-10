@@ -1,0 +1,17 @@
+probe	stream	observation
+establish	stream-6	partial 131072/262144 bytes, no FIN
+establish	stream-10	partial 131072/262144 bytes, no FIN
+establish	stream-14	partial 131072/262144 bytes, no FIN
+idle-bound+10s	connection	live
+idle-bound+10s	stream-6	still-open-at-idle-bound+10s
+idle-bound+10s	stream-10	still-open-at-idle-bound+10s
+idle-bound+10s	stream-14	still-open-at-idle-bound+10s
+lifetime-bound+10s	connection	live
+lifetime-bound+10s	stream-6	aborted (write stream: sending stopped by peer: error 516)
+lifetime-bound+10s	stream-10	aborted (write stream: sending stopped by peer: error 516)
+lifetime-bound+10s	stream-14	aborted (write stream: sending stopped by peer: error 516)
+window-end	control	frame kind=4 len=20
+window-end	control	refusal tag_kind=1 tag_id=6 code=4 detail="input receive deadline"
+window-end	control	refusal tag_kind=1 tag_id=10 code=4 detail="input receive deadline"
+window-end	control	refusal tag_kind=1 tag_id=14 code=4 detail="input receive deadline"
+window-end	control	no further frames

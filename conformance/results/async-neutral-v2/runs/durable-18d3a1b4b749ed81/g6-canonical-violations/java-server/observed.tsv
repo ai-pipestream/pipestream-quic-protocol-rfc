@@ -1,0 +1,22 @@
+server_subject	java
+client_subject	rust (raw probe)
+alpn	pipestream/2
+caps-extra-position	vector caps-extra-position (v2-capabilities, position 0): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason=""
+caps-missing-lifetime	vector caps-missing-lifetime (v2-capabilities, position 0): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason=""
+caps-control-too-small	vector caps-control-too-small (v2-capabilities, position 0): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason=""
+caps-duplicate-profile	vector caps-duplicate-profile (v2-capabilities, position 0): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason=""
+caps-required-not-supported	vector caps-required-not-supported (v2-capabilities, position 0): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason=""
+result-profile-without-durable	vector result-profile-without-durable (v2-capabilities, position 0): expected EXTENSION_UNSUPPORTED connection-fatal; observed APPLICATION_CLOSE code=0x202 reason=""
+caps-idle-exceeds-lifetime	vector caps-idle-exceeds-lifetime (v2-capabilities, position 0): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason=""
+zero-request	vector zero-request (v2-session-message, position 1): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason=""
+generation-overflow	vector generation-overflow (v2-session-message, position 1): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason=""
+session-policy-zero	vector session-policy-zero (v2-session-message, position 1): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason=""
+session-nonascii-owner	vector session-nonascii-owner (v2-session-message, position 1): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason=""
+noncanonical-session-request	vector noncanonical-session-request (v2-session-message, position 1): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason=""
+trailing-cbor-item	vector trailing-cbor-item (v2-session-message, position 1): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason=""
+zero-operation-id	vector zero-operation-id (v2-scope-message, position 2): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason=""
+unsorted-declaration	vector unsorted-declaration (v2-scope-message, position 2): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason=""
+empty-unsealed-batch	vector empty-unsealed-batch (v2-scope-message, position 2): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason=""
+extra-work-key-position	vector extra-work-key-position (v2-work-message, position 2): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason=""
+unknown-work-state	vector unknown-work-state (v2-work-message, position 2): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason=""
+inconsistent-success-without-input	vector inconsistent-success-without-input (v2-work-message, position 2): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason=""

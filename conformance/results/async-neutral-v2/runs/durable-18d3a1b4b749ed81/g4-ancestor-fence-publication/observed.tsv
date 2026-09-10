@@ -1,0 +1,28 @@
+server_subject	rust
+client_subject	rust
+iteration_1_pre_fence_delay_ms	0
+iteration_1_winning_order	publication
+iteration_1_parent_final_state	7 (CANCELLED)
+iteration_1_parent_cancelling_observed	false
+iteration_1_child_scope	1:1
+iteration_1_children_succeeded	16
+iteration_1_children_cancelled	112
+iteration_1_children_other	0
+iteration_2_pre_fence_delay_ms	2
+iteration_2_winning_order	publication
+iteration_2_parent_final_state	7 (CANCELLED)
+iteration_2_parent_cancelling_observed	false
+iteration_2_child_scope	1:1
+iteration_2_children_succeeded	5
+iteration_2_children_cancelled	123
+iteration_2_children_other	0
+iteration_3_pre_fence_delay_ms	10
+iteration_3_winning_order	publication
+iteration_3_parent_final_state	7 (CANCELLED)
+iteration_3_parent_cancelling_observed	false
+iteration_3_child_scope	1:1
+iteration_3_children_succeeded	1
+iteration_3_children_cancelled	127
+iteration_3_children_other	0
+orders_observed	publication:3,fence:0
+never_observed	parent FAILED(6); descendant FAILED; unsettled descendant at the deadline

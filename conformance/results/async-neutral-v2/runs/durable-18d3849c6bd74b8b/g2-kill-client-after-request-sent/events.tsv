@@ -1,0 +1,6 @@
+1	durable-18d3849c6bd74b8b	g2-kill-client-after-request-sent	rust	client	528238-18d384bf0971d6fd	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3849c6bd74b8b	g2-kill-client-after-request-sent	rust	client	528238-18d384bf0971d6fd	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3849c6bd74b8b	g2-kill-client-after-request-sent	rust	client	528238-18d384bf0971d6fd	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3849c6bd74b8b	g2-kill-client-after-request-sent	rust	client	528238-18d384bf0971d6fd	4	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3849c6bd74b8b	g2-kill-client-after-request-sent	rust	client	528238-18d384bf0971d6fd	5	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3849c6bd74b8b	g2-kill-client-after-request-sent	rust	client	528238-18d384bf0971d6fd	6	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				

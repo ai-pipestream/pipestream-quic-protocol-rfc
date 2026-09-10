@@ -1,0 +1,3 @@
+1	durable-18d3ed1531daad17	r-connection-ceiling	rust	client	1113626-18d3ed191a24cf81	1	CONNECTION_REFUSAL_OBSERVED							
+1	durable-18d3ed1531daad17	r-connection-ceiling	rust	client	1113626-18d3ed191a24cf81	2	CONNECTION_REFUSAL_OBSERVED							
+1	durable-18d3ed1531daad17	r-connection-ceiling	rust	client	1113626-18d3ed191a24cf81	3	CEILING_EVIDENCE					artifacts/connections.tsv	1611	12f9c8501a2accbcc4b028f36f7a256e46c2180e37c16bee1bb68663a184f3a8

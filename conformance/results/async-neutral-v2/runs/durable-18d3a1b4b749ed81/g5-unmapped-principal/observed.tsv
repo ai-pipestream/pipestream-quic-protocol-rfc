@@ -1,0 +1,5 @@
+server_subject	rust
+probe_exit	exit status: 1
+probe_refusal	code=3 line: connection lost: closed by peer: UNAUTHORIZED (code 515)
+refusal_source	connection close BEFORE the capabilities response: rust server refuses required              durable profiles for unauthenticated-mapped peers in Capabilities::select              (src/v2/negotiation.rs:52-60); java server throws UNAUTHORIZED 'caller credential              unavailable' from TlsAuthentication.negotiate (TlsAuthentication.java)
+alice_next_sequence_after	1

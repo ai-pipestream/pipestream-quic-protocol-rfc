@@ -1,0 +1,11 @@
+server_subject	rust
+client_subject	java
+alpn	pipestream/2
+parent_held_state	3
+complete_pending	refused without a completion claim: refusal=Some((9, "NOT_READY: NOT_READY: root summary not yet verified"))
+parent_state_after_refusal	3
+checkpoint_open_root	WAIT_TIMEOUT: WAIT_TIMEOUT: authority refused: checkpoint wait expired
+child_checkpoint_after_settle	scope 1 COVERAGE (descendant coverage committed bottom-up)
+settled_coverage	root COVERAGE after bottom-up settlement
+concurrent_download_during_complete	download_in_flight_at_complete=true; download VERIFIED byte-exact; complete COMPLETED
+java_jar_sha256	9b23a14c36e3f33bc9fae1b12d0835441ba6d52aba14393ed4ae3f7e309e08c9

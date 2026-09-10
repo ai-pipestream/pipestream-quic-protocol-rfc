@@ -180,11 +180,18 @@ pub struct Request {
 /// means a lost acknowledgment; it never undoes a committed admission.
 pub struct Reply {
     control: Control,
+    replay: bool,
     _pins: Option<Pins>,
 }
 impl Reply {
     pub fn control(&self) -> &Control {
         &self.control
+    }
+    /// True when the receipt replays an admission committed by an earlier
+    /// process: no boundary was reached here, so fixture reply gates must not
+    /// act on it.
+    pub fn replay(&self) -> bool {
+        self.replay
     }
 }
 
@@ -197,30 +204,37 @@ impl Request {
             Ok(pins) => receive(&self.shared, pins, &mut self.recv, self.accepted).await,
             Err(error) => Err(error.clone()),
         };
-        let control = match result {
+        let (control, replay) = match result {
             Ok((receipt, replay)) => {
                 if replay {
                     let _ = self.recv.stop(0u32.into());
                 }
-                Control::Work(Work::Admitted {
-                    request: tag,
-                    receipt,
-                })
+                (
+                    Control::Work(Work::Admitted {
+                        request: tag,
+                        receipt,
+                    }),
+                    replay,
+                )
             }
             Err(error) => {
                 let _ = self.recv.stop(
                     quinn::VarInt::from_u64(error.code.quic_error())
                         .expect("fixed application code"),
                 );
-                Control::Refusal(Refusal {
-                    request: tag,
-                    code: error.code,
-                    detail: Detail(error.detail.into()),
-                })
+                (
+                    Control::Refusal(Refusal {
+                        request: tag,
+                        code: error.code,
+                        detail: Detail(error.detail.into()),
+                    }),
+                    false,
+                )
             }
         };
         Reply {
             control,
+            replay,
             _pins: self.pins.ok(),
         }
     }

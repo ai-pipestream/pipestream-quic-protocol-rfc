@@ -1,0 +1,7 @@
+server_subject	rust
+client_subject	rust
+reconnect_leg	BINDING ok, view identical
+manifest_reread_leg	MANIFEST ok, view identical
+admission_replay_leg	identical RECEIPT, view identical
+retry_leg	skipped with note: work is terminal-success, not retryable
+deadline_fields_after_all_legs	deadline/terminal_at/receipt_until/output_until unchanged

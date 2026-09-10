@@ -1,0 +1,3 @@
+expected_outcome	QUIC CRYPTO_ERROR during handshake (RFC 9001 section 4.8)
+expected_no_capabilities	true (no CAPABILITIES exchange, no application REFUSAL)
+expected_state_unchanged	alice next-sequence stays 1

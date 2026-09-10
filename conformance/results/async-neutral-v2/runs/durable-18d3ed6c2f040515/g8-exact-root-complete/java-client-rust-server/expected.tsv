@@ -1,0 +1,10 @@
+root_members	0:0:1 copy/v2 mode 0, 0:0:2 reassemble/v2 mode 1, 0:0:3 chunk-copy/v2 mode 2
+child_scope_1	1:0 over [1,2] (mode-1, parent 0:0:2)
+child_scope_2	2:1 over [1,2,3,4] (mode-2, parent 0:0:3)
+expected_child_1_seal_sha256	2ef8a8179cfce72df60816ce6c01fb44ffb23ef5785a048da3365bec277fc694
+expected_child_2_seal_sha256	51b94d1de93d7862f31dd8b17960a513ec23ed0ffd2e66cded16087517fcb874
+expected_root_seal_sha256	6ec1e47e0903f171dee0ca62cac1741850a8fdc3bf3087b00eeff09a518005b6
+expected_root_counts	declared=3 success=3 failure=0 cancelled=0 skipped=0
+expected_child_1_counts	declared=2 success=2 failure=0 cancelled=0 skipped=0
+expected_child_2_counts	declared=4 success=4 failure=0 cancelled=0 skipped=0
+status_root	driver recomputes every manifest digest from the MANIFEST prints and folds status leaves entity-ascending (oracle::status_root); committed COVERAGE and COMPLETED status roots must match

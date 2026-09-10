@@ -1,0 +1,8 @@
+known_good_input_len	65536
+known_good_input_sha256	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+orphan_fault	kill between payload staging and the admission commit, one FRESH operation id per iteration
+iterations	2
+expected_committed	known-good result byte-exact after every restart
+expected_capacity	subsequent admission succeeds after the kills
+expected_reclaim	orphan bytes reclaimed where the subject cleans up on restart; otherwise the actual behavior and operator-command surface are recorded
+storage_probe_scope	private-storage-supplementary (object-dir metrics; paired with the known-good read and liveness admission)

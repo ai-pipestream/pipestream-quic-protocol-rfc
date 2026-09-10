@@ -1,0 +1,5 @@
+exit=exit status: 1
+stdout:
+
+stderr:
+connection lost: closed by peer: 515

@@ -1,0 +1,5 @@
+exit=exit status: 0
+stdout:
+RECEIPT OperationReceipt { operation: OperationId([216, 43, 79, 14, 159, 56, 20, 241, 22, 28, 132, 36, 13, 3, 143, 82]), request_digest: Digest([94, 93, 244, 37, 210, 71, 244, 203, 125, 152, 68, 125, 250, 119, 79, 226, 157, 166, 49, 40, 203, 180, 66, 230, 152, 54, 63, 53, 119, 25, 74, 206]), body: Admitted { work: WorkKey { scope: Number(0), producer: Producer(0), entity: Id(1) }, attempt: Id(1), admitted_at: Number(1788932033835), deadline: Number(1788932093835), child: None } }
+
+stderr:

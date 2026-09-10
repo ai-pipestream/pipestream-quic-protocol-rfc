@@ -1,0 +1,5 @@
+started_ms	1788919284355
+mode	dev
+seed	24301
+rust_bin	/work/worktrees/pipestream-rfc-kimi/implementations/rust-quinn/target/release/pipestream-quinn	rust_sha256	097829fa45d8c03eb0a5594badf0cfceababdc6d8c4898d8ce497426ec7406d7
+java_jar	/work/worktrees/pipestream-rfc-kimi/implementations/java-netty/target/pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar	java_sha256	94af1aac456be44b88c9281308f6d3428ba2e7422f8412274df6c3c3f0635a62

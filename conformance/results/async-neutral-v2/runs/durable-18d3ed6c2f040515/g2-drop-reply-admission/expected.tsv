@@ -1,0 +1,6 @@
+input_len	65536
+input_sha256	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+lost_ack_boundary	ADMISSION_COMMITTED: admission durable, receipt withheld
+identical_replay	attempt-1 receipt returned unchanged; terminal success under attempt 1 (no re-execution)
+changed_input_same_op	named CONFLICT (7)
+expected_page_members	1

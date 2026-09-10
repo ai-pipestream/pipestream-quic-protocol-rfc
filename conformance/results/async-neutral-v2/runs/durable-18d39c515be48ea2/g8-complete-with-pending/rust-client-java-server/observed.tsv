@@ -1,0 +1,11 @@
+server_subject	java
+client_subject	rust
+alpn	pipestream/2
+parent_held_state	3
+complete_pending	refused without a completion claim: refusal=Some((9, "NOT_READY: root coverage not recorded"))
+parent_state_after_refusal	3
+checkpoint_open_root	authority refusal WAIT_TIMEOUT: refused
+child_checkpoint_after_settle	scope 1 COVERAGE (descendant coverage committed bottom-up)
+settled_coverage	root COVERAGE after bottom-up settlement
+concurrent_download_during_complete	download_in_flight_at_complete=true; download VERIFIED byte-exact; complete COMPLETED
+java_jar_sha256	ff537a609119534db8caca50d2828a4d421b8b0997ca04896883fff9cc60375b

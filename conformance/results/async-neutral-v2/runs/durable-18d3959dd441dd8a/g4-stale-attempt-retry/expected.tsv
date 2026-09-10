@@ -1,0 +1,7 @@
+application	retry-copy/v2
+mode	0
+input_len	8388608
+input_sha256	b3f99ba8b69b1ba1e45195e2d0335e41593b1a53704fe18767d1adef33fcb4ed
+attempt_1_outcome	retryable → state AWAITING_RETRY(2)
+fence_sequence	retry R1 (expected 1) → attempt 2; stale retry R2 (expected 1, new op id, attempt 2 live) → CONFLICT (7) "retry attempt changed"; replay R1 → identical receipt, fence not advanced
+terminal	SUCCEEDED(5) under exactly attempt 2, never 3

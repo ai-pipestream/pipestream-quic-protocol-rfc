@@ -1,0 +1,8 @@
+1	durable-18d3ea906e9d11bd	g2-kill-server-after-admission-recovery	rust	client	946250-18d3eaee2512fc07	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3ea906e9d11bd	g2-kill-server-after-admission-recovery	rust	client	946250-18d3eaee2512fc07	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3ea906e9d11bd	g2-kill-server-after-admission-recovery	rust	client	946250-18d3eaee2512fc07	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ea906e9d11bd	g2-kill-server-after-admission-recovery	rust	client	946250-18d3eaee2512fc07	4	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ea906e9d11bd	g2-kill-server-after-admission-recovery	rust	client	946250-18d3eaee2512fc07	5			0:0:1	1				
+1	durable-18d3ea906e9d11bd	g2-kill-server-after-admission-recovery	rust	client	946250-18d3eaee2512fc07	6	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ea906e9d11bd	g2-kill-server-after-admission-recovery	rust	client	946250-18d3eaee2512fc07	7	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d3ea906e9d11bd	g2-kill-server-after-admission-recovery	rust	client	946250-18d3eaee2512fc07	8	RESULT_INSTALLED		0:0:1	1		artifacts/output.bin	4194304	e1974f415887a6324ee46bb7365f47898b1655b0e387593e81b74a8356ceae86

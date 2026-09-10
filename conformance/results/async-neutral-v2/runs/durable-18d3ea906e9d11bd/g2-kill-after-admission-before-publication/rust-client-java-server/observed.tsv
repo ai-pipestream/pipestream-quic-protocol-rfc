@@ -1,0 +1,5 @@
+subject_exit_code	137
+subject_boundary_record	EXECUTION_CLAIMED recorded before the exit
+terminal_state	5
+terminal_attempt	1
+recovery_path	automatic-redispatch-under-attempt-1

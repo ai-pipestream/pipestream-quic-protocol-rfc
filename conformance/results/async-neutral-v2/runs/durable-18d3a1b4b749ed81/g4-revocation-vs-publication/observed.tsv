@@ -1,0 +1,22 @@
+server_subject	rust
+client_subject	rust
+iteration_1_input_len	8388608
+iteration_1_pre_revoke_state	1 (ACTIVE)
+iteration_1_winning_order	fence
+iteration_1_post_revoke_refusal	authority refusal UNAUTHORIZED: authority access denied
+iteration_1_bytes_intact	true
+iteration_1_objects	2
+iteration_2_input_len	262144
+iteration_2_pre_revoke_state	5 (SUCCEEDED)
+iteration_2_winning_order	publication
+iteration_2_post_revoke_refusal	authority refusal UNAUTHORIZED: authority access denied
+iteration_2_bytes_intact	true
+iteration_2_objects	4
+iteration_3_input_len	65536
+iteration_3_pre_revoke_state	5 (SUCCEEDED)
+iteration_3_winning_order	publication
+iteration_3_post_revoke_refusal	authority refusal UNAUTHORIZED: authority access denied
+iteration_3_bytes_intact	true
+iteration_3_objects	4
+orders_observed	publication:2,fence:1
+java_direction	named gap: no operator revoke command on either Java CLI (V2Main/ ClientCommands); DurableHost.revoke(long) host-internal only

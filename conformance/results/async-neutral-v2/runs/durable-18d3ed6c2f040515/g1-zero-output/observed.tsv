@@ -1,0 +1,9 @@
+server_subject	rust
+client_subject	rust
+alpn	pipestream/2
+application	consume/v2
+input_len	65536
+terminal_state	5
+manifest_objects	0
+select_index0_refusal	NOT_FOUND: selected manifest output absent
+watch_terminal	WORK revision=3 state=5 attempt=1 child=none VIEW WorkView { work: WorkKey { scope: Number(0), producer: Producer(0), entity: Id(1) }, state: State(5), attempt: Number(1), input: Some(Input { length: Number(65536), sha256: Digest([227, 32, 151, 43, 205, 13, 220, 113, 108, 243, 174, 69, 225, 228, 122, 139, 77, 231, 168, 128, 22, 144, 111, 35, 16, 135, 178, 152, 92, 226, 6, 130]), content_type: ApplicationLabel("application/octet-stream") }), admitted_at: Some(Number(1789034559959)), deadline: Some(Number(1789034619959)), terminal_at: Some(Number(1789034559973)), receipt_until: Some(Number(1789120959973)), output_until: Some(Number(1789038159973)), child: None, manifest: Some(Manifest { version: Literal, authority: IdentityLabel("issuer-a"), owner: IdentityLabel("alice"), generation: Id(1), work: WorkKey { scope: Number(0), producer: Producer(0), entity: Id(1) }, attempt: Id(1), input_sha256: Digest([227, 32, 151, 43, 205, 13, 220, 113, 108, 243, 174, 69, 225, 228, 122, 139, 77, 231, 168, 128, 22, 144, 111, 35, 16, 135, 178, 152, 92, 226, 6, 130]), committed_at: Number(1789034559973), available_until: Number(1789038159973), outputs: [] }), diagnostic: None }

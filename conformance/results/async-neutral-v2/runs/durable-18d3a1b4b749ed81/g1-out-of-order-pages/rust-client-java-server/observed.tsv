@@ -1,0 +1,10 @@
+server_subject	java
+client_subject	rust
+alpn	pipestream/2
+declared_total	9
+committed_seal_sha256	8098c13773c6eab92a7d5508a5ef632923337d9de16d353ae00bbb03f4c6a70f
+seal_matches_oracle	true
+membership_verified	true
+more_flag	not exposed by the rust CLI; chaining derived from the page walk (named gap)
+parent_field	not printed by either page CLI; scope 0 is the root (parent none by construction)
+java_jar_sha256	9b23a14c36e3f33bc9fae1b12d0835441ba6d52aba14393ed4ae3f7e309e08c9

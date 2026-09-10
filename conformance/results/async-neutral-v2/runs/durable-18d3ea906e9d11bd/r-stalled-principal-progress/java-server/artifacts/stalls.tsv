@@ -1,0 +1,13 @@
+probe	stream	observation
+establish	stream-6	partial 131072/262144 bytes, no FIN
+establish	stream-10	partial 131072/262144 bytes, no FIN
+establish	stream-14	partial 131072/262144 bytes, no FIN
+idle-bound+10s	connection	closed by peer: APPLICATION_CLOSE code=0x204 reason="idle control deadline"
+idle-bound+10s	stream-6	aborted (write stream: connection lost: closed by peer: idle control deadline (code 516))
+idle-bound+10s	stream-10	aborted (write stream: connection lost: closed by peer: idle control deadline (code 516))
+idle-bound+10s	stream-14	aborted (write stream: connection lost: closed by peer: idle control deadline (code 516))
+lifetime-bound+10s	connection	closed by peer: APPLICATION_CLOSE code=0x204 reason="idle control deadline"
+lifetime-bound+10s	stream-6	aborted (write stream: connection lost: closed by peer: idle control deadline (code 516))
+lifetime-bound+10s	stream-10	aborted (write stream: connection lost: closed by peer: idle control deadline (code 516))
+lifetime-bound+10s	stream-14	aborted (write stream: connection lost: closed by peer: idle control deadline (code 516))
+window-end	control	read failed (read control frame prefix: connection lost: closed by peer: idle control deadline (code 516))

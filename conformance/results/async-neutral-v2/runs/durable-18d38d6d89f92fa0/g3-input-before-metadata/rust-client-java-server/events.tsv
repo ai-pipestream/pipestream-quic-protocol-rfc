@@ -1,0 +1,23 @@
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	java	server	2780336-18d38d6e5fd60780	1	LISTENING							
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	java	server	2780336-18d38d6e5fd60780	2	CONNECTION_AUTHENTICATED							
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	java	server	2780336-18d38d6e5fd60780	3	CONNECTION_AUTHENTICATED							
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	java	server	2780336-18d38d6e5fd60780	4	CONNECTION_AUTHENTICATED							
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	java	server	2780336-18d38d6e5fd60780	5	SESSION_COMMITTED							
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	java	server	2780336-18d38d6e5fd60780	6	SESSION_RESPONSE_SENT							
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	rust	client	2778783-18d38d6e78434dc5	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	java	server	2780336-18d38d6e5fd60780	7	CONNECTION_AUTHENTICATED							
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	java	server	2780336-18d38d6e5fd60780	8	SESSION_RESPONSE_SENT							
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	java	server	2780336-18d38d6e5fd60780	9	DECLARATION_COMMITTED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	java	server	2780336-18d38d6e5fd60780	10	DECLARATION_RESPONSE_SENT							
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	rust	client	2778783-18d38d6e78434dc5	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	rust	client	2778783-18d38d6e78434dc5	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	java	server	2780336-18d38d6e5fd60780	11	CONNECTION_AUTHENTICATED							
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	java	server	2780336-18d38d6e5fd60780	12	SESSION_RESPONSE_SENT							
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	java	server	2780336-18d38d6e5fd60780	13	INPUT_INSTALLED	d82b4f0e9f3814f1161c84240d038f52	0:0:1					
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	rust	client	2778783-18d38d6e78434dc5	4			0:0:1	1				
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	rust	client	2778783-18d38d6e78434dc5	5		d82b4f0e9f3814f1161c84240d038f52			5	artifacts/lookup-after-restart.txt	74	f17fba7cfe6c56e9f6c6762bcd3a35fd20460e2f3e980970604517ee2ba513cb
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	rust	client	2778783-18d38d6e78434dc5	6	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	rust	client	2778783-18d38d6e78434dc5	7	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	rust	client	2778783-18d38d6e78434dc5	8	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	rust	client	2778783-18d38d6e78434dc5	9	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d38d6d89f92fa0	g3-input-before-metadata	rust	client	2778783-18d38d6e78434dc5	10	RESULT_INSTALLED		0:0:1	1		artifacts/output.bin	12582912	ab0e2b4417deba665487ff89294e266427c72bf5b0de42a136d46acf2da4a60a

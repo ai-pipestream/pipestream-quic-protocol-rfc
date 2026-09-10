@@ -1,5 +1,5 @@
 use super::{
-    ingress::{response_capacity, Applications, PreparedInput},
+    ingress::{Applications, PreparedInput, response_capacity},
     *,
 };
 

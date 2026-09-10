@@ -58,6 +58,18 @@ impl Pending {
         })
     }
 
+    /// Committed reply-pair boundary this request reaches when it commits
+    /// freshly in this process. Session attach, idempotent operation replay
+    /// and read-only requests never commit and never gate the fixture reply
+    /// path.
+    pub(crate) fn gate_boundary(&self) -> Option<&'static str> {
+        match &self.message {
+            Control::Session(Session::Create { .. }) => Some("SESSION_COMMITTED"),
+            Control::Scope(Scope::Declare { .. }) => Some("DECLARATION_COMMITTED"),
+            _ => None,
+        }
+    }
+
     async fn execute(&self) -> Result<ResponseBody, Error> {
         let shared = &self.ticket.shared;
         if let Control::Drain(Drain::Detach { request }) = self.message {

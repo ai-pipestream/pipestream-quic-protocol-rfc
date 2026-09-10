@@ -1,0 +1,5 @@
+1	durable-18d385c7335e12e0	g2-kill-after-admission-before-publication	java	client	872324-18d385e0844bc621	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d385c7335e12e0	g2-kill-after-admission-before-publication	java	client	872324-18d385e0844bc621	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d385c7335e12e0	g2-kill-after-admission-before-publication	java	client	872324-18d385e0844bc621	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d385c7335e12e0	g2-kill-after-admission-before-publication	rust	server	906401-18d385e085e9df8c	1	EXECUTION_CLAIMED							
+1	durable-18d385c7335e12e0	g2-kill-after-admission-before-publication	java	client	872324-18d385e0844bc621	4	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				

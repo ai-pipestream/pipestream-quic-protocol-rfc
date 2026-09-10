@@ -1,0 +1,7 @@
+iterations	3
+iteration_input_lens	8388608,262144,65536
+revocation_mechanism	offline operator revocation per the matrix: the server is stopped, the operator runs rust `v2 revoke --owner alice --generation 1` (server/src/v2.rs Command::Revoke, prints SESSION_REVOKED), the server restarts on the same roots. The published CLI opens the payload store with an exclusive non-blocking flock (payload.rs RootLock) and refuses LIMIT_EXCEEDED "payload root already owned" while a server holds the root — the revoke cannot run against a live server through the published surface (recorded, not routed around). java = named gap (no operator revoke CLI; DurableHost.revoke host-internal)
+winning_order_rule	per iteration, sampled by the watch immediately preceding the offline stop: terminal SUCCEEDED(5) → publication completed before the revocation; nonterminal → the revocation fenced the publication
+post_revoke_rule	after the restart every session op on the revoked generation refuses UNAUTHORIZED (3) "authority access denied" — existing and new connections alike — and fresh session creation still answers (next creation sequence 2)
+bytes_not_retracted	the transmitted input artifact and its independent oracle hash are re-verified after the revocation and restart, and remain intact
+observation_note	post-revoke work state is not observable through the published CLIs (every session op refuses UNAUTHORIZED); fenced-vs-completed rests on the immediately-pre-offline watch sample plus object-dir metrics — recorded, not faked
