@@ -35,9 +35,16 @@ creation identity, attempts, authoritative effects, final result and resource
 measurements. Keep request completion, job settlement and storage reclamation
 as separate observations.
 
+The reference clients are one-shot: the driver re-invokes them with the
+retained journal, which is the recovery mode Section 12.2.1 permits for
+CR01-CR04 and CR09. Where a client also offers an in-process budget (Java
+`client ... --retry-budget N`), run the scenario in that mode as well and record
+the mode with the result. Fixture-free refusal sources are preferred: a held
+owner connection ceiling, a full active-job budget or a withheld reply.
+
 | ID | Scenario | Required observation |
 | --- | --- | --- |
-| CR01 | Refuse a mutation N times at the pre-admission boundary, then allow it. | A recovering client uses the same operation and immutable parameters with bounded waits and fresh transport correlation; at most one admission effect. A client stopping at its documented budget preserves resumable intent and reports unresolved work. |
+| CR01 | Refuse a mutation N times at the pre-admission boundary, then allow it. | A recovering client uses the same operation and immutable parameters with bounded waits and fresh transport correlation; at most one admission effect. A client stopping at its documented budget preserves resumable intent and reports unresolved work. State the recovery mode: driver re-invocation of the one-shot client, the client's own budget option, or both. |
 | CR02 | Fixed oversize request, transient executor contention, retained-output saturation and stream deadline all use LIMIT_EXCEEDED. | The client does not treat the code as proof of temporary executor saturation. It honors its retry budget and reports the limiting context; no silent identity replacement, output truncation or attempt increment. Retained promises survive saturation. |
 | CR03 | NOT_READY on a progressing work prerequisite and on control after detach; WAIT_TIMEOUT on a watch. | Bounded observation/backoff for the prerequisite; reconnect/attach after detach; another watch after timeout if desired. No busy loop or new work attempt. |
 | CR04 | Lose a mutation reply, return NOT_FOUND while an earlier transmission is still in flight, then complete that transmission. | The client resolves the same immutable operation; one effect and one matching receipt. A new identity is never inferred from absence. Include lost session-creation replies with the original sequence and policy. |
@@ -50,7 +57,7 @@ as separate observations.
 | CR11 | Read session limits, admit up to a controlled active-job budget, then delay job completion and retained-byte cleanup independently. | Admission receipts do not replenish executor credit; terminal status does not imply retained-byte release. Recovery/control and descendants still progress. In a frozen exclusive-capacity fixture, measure pacing and refusals; zero refusals is not a universal conformance condition. |
 | CR12 | Apply shared owner/global contention while the client stays below its session ceilings. | Refusals remain valid, client state stays bounded, existing promises survive, and capacity recovery permits resumed work. Advertised ceilings are never treated as guaranteed free capacity. |
 | CR13 | Stall one object while sending keepalives, empty progress and unrelated traffic; separately make genuine payload progress until absolute lifetime. | Unrelated activity never renews object idle time. Payload progress never extends absolute lifetime. Offered/selected limits and the triggered bound are diagnosable; no late FIN revives an expired transfer. |
-| CR14 | Repeated refused/redundant inputs, result aborts and abandoned streams, followed by a valid transfer on the same usable connection. | Control and replacement streams progress within documented connection limits; pending state, handles, buffers and staging remain bounded. Do not refund still-owned transport bytes or retained promises. Exercise packet loss/reordering and terminal/reset handling on both stacks. |
+| CR14 | Repeated refused/redundant inputs, result aborts and abandoned streams, followed by a valid transfer on the same usable connection. | Control and replacement streams progress within documented connection limits; pending state, handles, buffers and staging remain bounded. Do not refund still-owned transport bytes or retained promises. Exercise packet loss/reordering and terminal/reset handling on both stacks. Record on both stacks that the peer's stream limit advances for refused streams (Section 12.1's own requirement, not a QUIC rule): after repeated refusals beyond the initial allowance, replacement streams can still be opened without waiting for connection close. An observed allowance value (for example the client transport's remaining allowance returning to the negotiated limit after each refusal) is fixture evidence of that; batched advances are compliant. |
 
 Fault fixtures must bind the target request and pre-commit boundary, refusal
 code, finite refusal count, seed and overall deadline. Do not synthesize a

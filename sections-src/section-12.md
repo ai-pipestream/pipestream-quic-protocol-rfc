@@ -128,8 +128,11 @@ on the connection. Keepalives, unrelated control or object traffic, and empty
 progress notifications MUST NOT renew its idle deadline. Implementations
 SHOULD expose the offered and selected deadlines and the local bound that
 ended a transfer, without treating diagnostic text as machine-readable protocol
-state. A client may enforce a shorter local wait, but that does not change the
-selected peer limits or the durable work outcome.
+state. That exposure is local: an API error, a log entry or a fixture event. No
+wire field carries the ending bound; a REFUSAL's detail MAY name it, and a peer
+MUST NOT depend on the detail to learn it. A client may enforce a shorter local
+wait, but that does not change the selected peer limits or the durable work
+outcome.
 Implementations MUST
 also bound the time and bytes spent receiving headers, pending result-stream
 creation, per-principal connections, staging files, metadata, queued work,
@@ -152,7 +155,18 @@ correlation entries, buffers, handles or staging charges merely because a
 stream was refused. Nor may they refund resources still owned by the transport
 or required by a retained promise. Repeated refusals MUST preserve bounded
 resource use and continued control and replacement-stream progress within the
-connection's documented limits. This does not recycle QUIC stream identifiers
+connection's documented limits. {{RFC9000}}, Section 4.6 makes the MAX_STREAMS
+limit cumulative and leaves the policy for advancing it to the implementation.
+This specification adds its own requirement on top of that: an endpoint MUST
+count a refused or abandoned peer-initiated stream toward advancing that limit
+once the stream's reset or FIN exchange has completed, on the same terms as a
+stream it consumed successfully, so that repeated refusals cannot exhaust the
+peer's ability to open replacement streams. Batching such advances with other
+credit updates is permitted; never advancing for a locally stopped receive
+stream is not. Conformance evidence shows that replacement streams can still
+be opened after repeated refusals beyond the initial allowance; a particular
+observed allowance value is fixture evidence, not a protocol constant. This
+does not recycle QUIC stream identifiers
 or require unlimited use of one connection.
 
 ## Correlation and Error Scope
@@ -262,6 +276,14 @@ reports an unresolved or unavailable operation/delivery to the application; it
 MUST NOT manufacture a terminal work failure or success. Local journal failures
 MUST be surfaced: no retry policy may acknowledge durable client recovery while
 required intent, receipts or verified selections could not be persisted.
+
+Recovery need not be an in-process loop. A client whose recovery is a separate
+invocation that reopens its retained journal and replays the original intent
+performs the same replay under the same identity rules; the bounds on waiting,
+outstanding requests and cancellation then apply to the application or driver
+that re-invokes it. Both modes conform. An implementation MUST document which
+it provides, and a documented budget option makes its automatic mode subject to
+every rule above.
 
 ## Authenticated Sessions and Non-Reusable Identity
 

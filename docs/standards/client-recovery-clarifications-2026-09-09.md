@@ -84,3 +84,28 @@ authorized as a code change by this spec patch.
 Each peer owns its implementation. This handoff shares the agreed spec delta;
 it does not merge peer branches, launch benchmarks, deploy services or claim
 the original multi-agent goal is complete.
+
+## Review outcome (2026-09-09, Claude)
+
+Claude's review (`conformance/results/async-java-v2/spec-review-client-recovery-2026-09-09.md`
+on `agent/rfc-claude-java-v2`) found no wire change and raised three merge
+points, resolved in this branch as follows:
+
+- Section 12.1 now states, as this specification's own requirement layered on
+  {{RFC9000}} Section 4.6 (where MAX_STREAMS is cumulative and replenishment
+  policy is left to implementations), that refused or abandoned peer streams
+  count toward advancing the stream limit once their reset/FIN exchange
+  completes; batching is compliant, never advancing is not. CR14 requires the
+  replacement-stream observation on both stacks and treats an observed
+  allowance value as fixture evidence. Upstream quiche never collected a
+  locally stopped peer-unidirectional stream; the Java transport bundle
+  `pipestream.4` fixes it, and the Rust authority is measured by a Java
+  raw-peer test against the release CLI.
+- Section 12.1 now says the "bound that ended a transfer" diagnostic is local
+  and has no wire carrier; a REFUSAL detail MAY name it, and a peer MUST NOT
+  depend on it. Both reference authorities put the local label in the detail.
+- Section 12.2.1 now says a one-shot client that reopens its journal on a new
+  invocation is a conforming recovery mode, with the waiting bounds applying
+  to the driver; the test plan states that CR01 runs in that mode and, where
+  a budget option exists, in the client's own mode too. The Java client adds
+  `--retry-budget`/`--retry-backoff-ms` as that option.
