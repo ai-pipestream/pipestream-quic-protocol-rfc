@@ -255,8 +255,8 @@ Three branches carry this window's work, all based on `8eb5a17` on
 | branch | tip | content |
 |---|---|---|
 | `docs/client-recovery-guidance-2026-09` | `ff901451` | spec text: client recovery guidance, MAX_STREAMS correction |
-| `agent/rfc-claude-java-v2` | `7585a9dc` | Java V2 durable authority, listener and client |
-| `agent/rfc-kimi-neutral-v2` | milestone 17b commit (in progress) | neutral conformance driver; contains `7585a9dc` by merge |
+| `agent/rfc-claude-java-v2` | `7585a9dc` (code; this document follows on the same branch) | Java V2 durable authority, listener and client |
+| `agent/rfc-kimi-neutral-v2` | `73766f6a` | neutral conformance driver; contains `7585a9dc` by merge |
 
 `git merge-tree --write-tree feat/durable-work-results-v2 <branch>` reports
 no conflicts for any of the three, and the spec branch shares no changed file
