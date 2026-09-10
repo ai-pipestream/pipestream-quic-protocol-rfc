@@ -1,0 +1,7 @@
+1	durable-18d3ed6c2f040515	g2-simultaneous-duplicate	rust	client	1136766-18d3edc96e0f46a9	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3ed6c2f040515	g2-simultaneous-duplicate	rust	client	1136766-18d3edc96e0f46a9	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3ed6c2f040515	g2-simultaneous-duplicate	rust	client	1136766-18d3edc96e0f46a9	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ed6c2f040515	g2-simultaneous-duplicate	rust	client	1136766-18d3edc96e0f46a9	4	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ed6c2f040515	g2-simultaneous-duplicate	rust	client	1136766-18d3edc96e0f46a9	5	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ed6c2f040515	g2-simultaneous-duplicate	rust	client	1136766-18d3edc96e0f46a9	6	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d3ed6c2f040515	g2-simultaneous-duplicate	rust	client	1136766-18d3edc96e0f46a9	7	RESULT_INSTALLED		0:0:1	1		artifacts/output.bin	4194304	e1974f415887a6324ee46bb7365f47898b1655b0e387593e81b74a8356ceae86

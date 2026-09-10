@@ -1,0 +1,36 @@
+== batch-a page after=0 limit=3
+SCOPE scope=0 producer=0 declared=3 membership_verified=false seal=none
+MEMBERS [Entry[entity=1, state=DECLARED], Entry[entity=2, state=DECLARED], Entry[entity=3, state=DECLARED]] more=false
+
+== batch-b page after=3 limit=2
+SCOPE scope=0 producer=0 declared=5 membership_verified=false seal=none
+MEMBERS [Entry[entity=5, state=DECLARED], Entry[entity=7, state=DECLARED]] more=false
+
+== admitted-5 page after=0 limit=4
+SCOPE scope=0 producer=0 declared=5 membership_verified=false seal=none
+MEMBERS [Entry[entity=1, state=DECLARED], Entry[entity=2, state=DECLARED], Entry[entity=3, state=DECLARED], Entry[entity=5, state=SUCCEEDED]] more=true
+
+== sealed-c page after=0 limit=4
+SCOPE scope=0 producer=0 declared=9 membership_verified=false seal=8098c13773c6eab92a7d5508a5ef632923337d9de16d353ae00bbb03f4c6a70f
+MEMBERS [Entry[entity=1, state=DECLARED], Entry[entity=2, state=DECLARED], Entry[entity=3, state=DECLARED], Entry[entity=5, state=SUCCEEDED]] more=true
+
+== walk-0 page after=0 limit=3
+SCOPE scope=0 producer=0 declared=9 membership_verified=false seal=8098c13773c6eab92a7d5508a5ef632923337d9de16d353ae00bbb03f4c6a70f
+MEMBERS [Entry[entity=1, state=DECLARED], Entry[entity=2, state=DECLARED], Entry[entity=3, state=DECLARED]] more=true
+
+== walk-3 page after=3 limit=3
+SCOPE scope=0 producer=0 declared=9 membership_verified=false seal=8098c13773c6eab92a7d5508a5ef632923337d9de16d353ae00bbb03f4c6a70f
+MEMBERS [Entry[entity=5, state=SUCCEEDED], Entry[entity=7, state=DECLARED], Entry[entity=9, state=DECLARED]] more=true
+
+== walk-9 page after=9 limit=3
+SCOPE scope=0 producer=0 declared=9 membership_verified=true seal=8098c13773c6eab92a7d5508a5ef632923337d9de16d353ae00bbb03f4c6a70f
+MEMBERS [Entry[entity=10, state=DECLARED], Entry[entity=11, state=DECLARED], Entry[entity=12, state=DECLARED]] more=false
+
+== empty-tail page after=12 limit=3
+SCOPE scope=0 producer=0 declared=9 membership_verified=true seal=8098c13773c6eab92a7d5508a5ef632923337d9de16d353ae00bbb03f4c6a70f
+MEMBERS [] more=false
+
+== final page after=0 limit=256
+SCOPE scope=0 producer=0 declared=9 membership_verified=true seal=8098c13773c6eab92a7d5508a5ef632923337d9de16d353ae00bbb03f4c6a70f
+MEMBERS [Entry[entity=1, state=DECLARED], Entry[entity=2, state=DECLARED], Entry[entity=3, state=DECLARED], Entry[entity=5, state=SUCCEEDED], Entry[entity=7, state=DECLARED], Entry[entity=9, state=DECLARED], Entry[entity=10, state=DECLARED], Entry[entity=11, state=DECLARED], Entry[entity=12, state=DECLARED]] more=false
+

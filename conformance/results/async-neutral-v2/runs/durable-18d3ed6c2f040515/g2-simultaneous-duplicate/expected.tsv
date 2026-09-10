@@ -1,0 +1,6 @@
+input_len	4194304
+input_sha256	e1974f415887a6324ee46bb7365f47898b1655b0e387593e81b74a8356ceae86
+expected_both_exit	0
+expected_receipts	identical
+expected_page_members	1
+expected_attempt	1

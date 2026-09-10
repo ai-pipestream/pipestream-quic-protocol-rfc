@@ -1,0 +1,22 @@
+phase	attempt	principal	outcome	detail
+per-principal	1	alice	held	-
+per-principal	2	alice	held	-
+per-principal	3	alice	held	-
+per-principal	4	alice	held	-
+per-principal	5	alice	refused	post-auth refusal (connection closed after handshake): APPLICATION_CLOSE code=0x204 reason="LIMIT_EXCEEDED"
+global	1	bob	held	-
+global	2	bob	held	-
+global	3	bob	held	-
+global	4	bob	held	-
+global	5	bob	refused	total_held=8 post-auth refusal (connection closed after handshake): APPLICATION_CLOSE code=0x204 reason="LIMIT_EXCEEDED"
+global	1	carol	held	-
+global	2	carol	held	-
+global	3	carol	held	-
+global	4	carol	held	-
+global	5	carol	refused	total_held=12 post-auth refusal (connection closed after handshake): APPLICATION_CLOSE code=0x204 reason="LIMIT_EXCEEDED"
+global	1	dave	held	-
+global	2	dave	held	-
+global	3	dave	held	-
+global	4	dave	held	-
+global	5	dave	refused	total_held=16 post-auth refusal (connection closed after handshake): APPLICATION_CLOSE code=0x204 reason="LIMIT_EXCEEDED"
+recovery	1	alice	held	new connection after full close

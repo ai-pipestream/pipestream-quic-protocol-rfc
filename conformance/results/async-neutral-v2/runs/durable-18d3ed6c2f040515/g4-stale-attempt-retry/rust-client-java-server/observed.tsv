@@ -1,0 +1,10 @@
+server_subject	java
+client_subject	rust
+attempt_1_state	AWAITING_RETRY (2)
+r1_replacement_attempt	2
+stale_retry_refusal	authority refusal CONFLICT: retry attempt changed
+terminal_attempt	2
+terminal_state	SUCCEEDED (5)
+r1_replay	identical receipt; settled view byte-identical; fence not advanced
+result_read	attempt 2 byte-exact against the independent oracle
+java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a

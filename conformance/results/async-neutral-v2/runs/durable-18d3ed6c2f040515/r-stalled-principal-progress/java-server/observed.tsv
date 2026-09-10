@@ -1,0 +1,14 @@
+server_subject	java
+client_subject	alice = rust raw peer (stalls); bob = rust CLI (healthy principal)
+java_memory_freeze	-Xms256m -Xmx2g (frozen before the run; applies to this server process)
+stalls	3 partial inputs (no FIN), pending watch on 0:0:6, result stream for 0:0:1 unread
+bob_ops	38 rounds x 5 ops, worst latency 126.214208ms
+stall_enforcement	negotiated idle 30s / lifetime 120s; transport abort observed for 0/3 streams by idle+10s and 3/3 by lifetime+10s (3/3 distinct); LIMIT_EXCEEDED input refusals on control at window end: 3/3
+collector	1528 ticks, 1528 sample lines, 0 error lines
+rss_plateau_kib	baseline_median=350080 tail_p90=377152 growth=27072
+fd_plateau	baseline_median=20 tail_p90=21
+io_write_bytes_window	delta_bytes=8597504 span_ms=152837 bytes_per_s=56252
+io_cancelled_write_bytes_window	delta_bytes=405504 span_ms=152837 bytes_per_s=2653
+io_write_cancelled_share	4% of the window's accounted write_bytes was cancelled before writeback (405504/8597504)
+heap_scope	java heap via jstat -gc (S0U+S1U+EU+OU) at the 1000ms heap cadence: 152 samples, min 8078 KiB, max 162140 KiB, 0 probe gaps
+store_checkpoints	134 records across start/stalls-established/mid-window/end

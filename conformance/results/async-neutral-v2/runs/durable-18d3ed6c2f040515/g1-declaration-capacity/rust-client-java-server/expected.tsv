@@ -1,0 +1,10 @@
+case_c_within_batch	declare [5,3] refuses
+case_c_across_batch	declare [1,2] ok; declare [2,3] refuses CONFLICT
+case_d_batch_accepted	declare [3..=102] ok (100 entities); funding loop accepted batches until the authority refused
+case_d_batch_refused	declare [203..=252] (50 entities) refuses LIMIT_EXCEEDED: cumulative completion funding cap; actual bound recorded (202 declared before refusal)
+case_d_clap_arity	rust client: 257-entity batch refused client-side by clap (1..=256); wire unreachable (named gap)
+case_a_empty_no_seal	declare [] refuses
+case_b_empty_seal	declare [] --seal succeeds and seals (rust client only; java CLI requires --entities)
+expected_declared_total	202
+expected_seal_sha256	f9428164818e7c3b1477a39b28b7994914ff5d82a81d57700955715e8523ba4d
+declaration_alone_admits	false (no execution evidence)

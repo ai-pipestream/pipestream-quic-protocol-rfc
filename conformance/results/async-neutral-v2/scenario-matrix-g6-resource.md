@@ -182,15 +182,20 @@ Observed in batch A (see the archived run, not quoted as acceptance):
   (java) attempt after every held connection closed. Incomplete-handshake
   accounting is a NAMED GAP: the quinn client completes handshakes
   atomically, so half-open attempts are not observable black-box.
-- Stall enforcement differs in KIND between subjects and both are
-  recorded: the rust server aborts each stalled input stream individually
-  (STOP_SENDING 0x204) and additionally queues a per-stream
+- Stall enforcement differed in KIND between subjects at this pin and both
+  were recorded: the rust server aborts each stalled input stream
+  individually (STOP_SENDING 0x204) and additionally queues a per-stream
   LIMIT_EXCEEDED Refusal ("input receive deadline") on the control
-  stream, leaving the connection usable; the java server enforces at the
+  stream, leaving the connection usable; the java server enforced at the
   CONNECTION level, closing the whole connection with APPLICATION_CLOSE
-  0x204 at its idle bound, so no per-stream refusal is readable
+  0x204 at its idle bound, so no per-stream refusal was readable
   afterwards. A row asserts enforcement per stream through either
-  channel and records which one fired.
+  channel and records which one fired. SUPERSEDED at milestone 17b: at the
+  Java pin `7585a9dc` the kinds CONVERGED — the java server no longer
+  closes a durable connection for control silence, so both subjects now
+  enforce per stalled stream on a surviving connection and both queue the
+  same named refusal. The either-channel rule stays as written, because it
+  is what let the row record the difference while it existed.
 - Measuring transport-level enforcement requires driving the client
   runtime before judging a write: a quinn write can be accepted into an
   undriven connection whose CONNECTION_CLOSE has not been processed yet,
@@ -257,6 +262,64 @@ Two fixture measurement corrections, both in
    alive one instant earlier is not still on the subject's books when
    SIGTERM lands. No measurement is taken during that window and the
    collector is already stopped.
+
+## Group R status (milestone 17b — batch A at the 7585a9dc Java pin)
+
+Batch A rerun green in dev against Java subject `7585a9dc` (all-jar
+`61ab64a3…`), same frozen JVM limits `-Xms256m -Xmx2g`, same rust subject
+pin, archived run `durable-18d3ed1531daad17` (318/318 manifest entries
+verified). Row statuses are unchanged (three DONE, four SPEC); no fixture,
+scenario or collector code changed this milestone, so every difference
+below is subject behaviour or run-to-run variation, not a measurement
+change.
+
+- STALL ENFORCEMENT KINDS HAVE CONVERGED. java: the connection is LIVE at
+  both enforcement probes (`idle-bound+10s` and `lifetime-bound+10s`), the
+  three stalled inputs are aborted per stream by lifetime+10 s
+  (`STOP_SENDING 0x204`, 3/3 distinct), and 3/3 `LIMIT_EXCEEDED` (code 4)
+  Refusals with detail "input receive deadline" — one per stalled tag
+  (6, 10, 14) — are read from a still-open control stream at window end.
+  No APPLICATION_CLOSE appears on this row; M17's `0x204 reason="idle
+  control deadline"` at the idle bound is gone. rust is unchanged: 3/3
+  aborted by idle+10 s and 3/3 refused, connection live throughout. The M17
+  NAMED GAP (a close discarding queued control frames, so the row could not
+  tell "none sent" from "sent and discarded") does not apply here, because
+  nothing is discarded.
+- What the java close was hiding: at M17 the java direction showed 3/3
+  streams aborted by idle+10 s, but the connection close took them down.
+  With the connection kept, all three survive idle+10 s (0/3 aborted) and
+  are aborted per stream by lifetime+10 s. The java input receive deadline
+  therefore fires between idle+10 s (40 s) and lifetime+10 s (130 s); the
+  row brackets it and claims no value inside the bracket.
+- Connection bounds unchanged on both subjects: rust 4 per principal
+  (refusal on attempt 5) / 16 global, both refusals post-auth
+  `APPLICATION_CLOSE 0x204 reason="LIMIT_EXCEEDED"`, recovery on attempt 1;
+  java 8 per principal (refusal on attempt 9) / 32 global, per-owner
+  refusal post-auth `APPLICATION_CLOSE 0x204 reason="owner connection
+  ceiling"`, recovery on attempt 2. The java GLOBAL refusal is again a
+  transport-level refusal with the same peer text ("the server refused to
+  accept a new connection"), classified this run as `pre-auth transport
+  refusal (connect failed): open control stream` where M17 recorded the
+  same text as a post-auth close — a race in the client between the
+  handshake completing and the abort arriving, not a change of bound or
+  channel. Incomplete-handshake accounting is still a NAMED GAP.
+- Disk I/O over the stall window, anchor pid: rust `write_bytes` 11.60 MB/s
+  of which `cancelled_write_bytes` 11.48 MB/s (98% cancelled before
+  writeback; M17: 11.52 / 11.40 MB/s — unchanged, still the open question
+  to Meta about the Rust authority's storage layer); java `write_bytes`
+  56.3 KB/s with `cancelled_write_bytes` 2.7 KB/s, i.e. 4% cancelled where
+  M17 measured 0 over a slightly shorter window (M17: 53.8 KB/s, 0). This
+  row asserts no bound on either counter.
+- Memory and FDs at the frozen heap: java RSS baseline median 349,296 KiB →
+  tail p90 371,752 KiB (growth 22,456; M17: 348,084 → 367,760, growth
+  19,676), FDs 20 → 21, used heap min 9,370 / max 160,895 KiB over 152
+  jstat samples with 0 probe gaps (M17: 8,396 / 161,068, 0 gaps). rust RSS
+  19,684 → 20,844 KiB (growth 1,160; M17: 19,916 → 21,152), FDs 12 → 15.
+  Holding the abusive connection open for the whole window costs the JVM
+  about 4 MiB more tail RSS and nothing measurable in heap.
+- Healthy-principal progress: worst latency 150.528 ms (rust, 23 rounds × 5
+  ops) and 150.648 ms (java, 38 rounds × 5 ops) against the 10 s deadline
+  (M17: 150.534 / 150.677 ms).
 
 ## Measurement-scope rules (all R rows)
 - Rust heap, Java heap, whole-process RSS/HWM, native/direct, threads,

@@ -1,0 +1,3 @@
+kill_boundary	COMPLETE_RESPONSE_SENT: the subject exits 86 right after the reply boundary
+withheld_op	outcome recorded honestly: a failed or hung op must not print COMPLETED; the reply write was accepted by the transport before the kill, so a raced-through reply is recorded, never asserted away; a lost reply can leave the client drain-waiting past the op bound — the driver then terminates the still-waiting client
+restart	NEXT_SEQUENCE 2 (the creation is durable, no double alloc); re-driven complete replays or refuses named

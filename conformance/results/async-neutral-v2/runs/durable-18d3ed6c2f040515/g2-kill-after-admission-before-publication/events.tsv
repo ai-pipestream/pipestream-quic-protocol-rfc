@@ -1,0 +1,8 @@
+1	durable-18d3ed6c2f040515	g2-kill-after-admission-before-publication	rust	client	1136766-18d3edabda1c509e	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3ed6c2f040515	g2-kill-after-admission-before-publication	rust	client	1136766-18d3edabda1c509e	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3ed6c2f040515	g2-kill-after-admission-before-publication	rust	client	1136766-18d3edabda1c509e	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ed6c2f040515	g2-kill-after-admission-before-publication	rust	server	1163410-18d3edabdbb0a142	1	EXECUTION_CLAIMED							
+1	durable-18d3ed6c2f040515	g2-kill-after-admission-before-publication	rust	client	1136766-18d3edabda1c509e	4	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ed6c2f040515	g2-kill-after-admission-before-publication	rust	client	1136766-18d3edabda1c509e	5	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ed6c2f040515	g2-kill-after-admission-before-publication	rust	client	1136766-18d3edabda1c509e	6	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d3ed6c2f040515	g2-kill-after-admission-before-publication	rust	client	1136766-18d3edabda1c509e	7	RESULT_INSTALLED		0:0:1	1		artifacts/output.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682

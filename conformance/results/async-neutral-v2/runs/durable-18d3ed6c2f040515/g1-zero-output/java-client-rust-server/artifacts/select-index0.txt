@@ -1,0 +1,5 @@
+exit=exit status: 1
+stdout:
+
+stderr:
+FRAME_ERROR: FRAME_ERROR: integer outside schema range

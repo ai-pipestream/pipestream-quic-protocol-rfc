@@ -1,0 +1,7 @@
+iterations	6
+iteration_input_lens	8388608,4194304,1048576,262144,65536,65536
+skip_authorization	--allow-skip on serve: rust Storage open flag (server/src/v2/ configuration.rs Access::permits), java serve flag (V2Main.java)
+winning_order_rule	per iteration: disposition=1 → publication won (terminal SUCCEEDED(5), result read byte-exact); disposition=0 → fence won (terminal SKIPPED(8) — never SUCCEEDED, never FAILED — result read refuses a named code)
+aftermath_rule	on a fence-won work: a later conflicting cancel refuses CANCELLED (12) "first work fence has another outcome"; replaying the skip operation (same immutable id) returns the identical receipt
+aftermath_hold_open	statistical, hook-free: a mode-1 reassemble/v2 parent is nonterminal from admission with a sealed child scope of 33 children; child 1 is retry-copy/v2, which parks in AWAITING_RETRY with no authorized retry, so reconcile cannot close the scope until the fence cascade cancels it; the seal-hash and status member scans then cost several scan_batch passes, widening the fenced-but-nonterminal window to ~6 idle polls (20ms each); a cancel that instead observes the settled parent takes the disposition-1 terminal path (a legal race outcome), so the aftermath retries on a fresh authority, at most 4 attempts, and records every order observed
+evidence_rule	hook-free statistical variant (scenario-matrix-g4.md); winning_order recorded per iteration, never faked

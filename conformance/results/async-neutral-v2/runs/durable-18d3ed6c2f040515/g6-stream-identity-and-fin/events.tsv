@@ -1,0 +1,11 @@
+1	durable-18d3ed6c2f040515	g6-stream-identity-and-fin	rust	client	1136766-18d3ee17d129393d	1	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d3ed6c2f040515	g6-stream-identity-and-fin	rust	client	1136766-18d3ee17d129393d	2	BINDING_RECEIVED							
+1	durable-18d3ed6c2f040515	g6-stream-identity-and-fin	rust	client	1136766-18d3ee17d129393d	3	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d3ed6c2f040515	g6-stream-identity-and-fin	rust	server	1136766-18d3ee17d129393d	4	REFUSAL				8			
+1	durable-18d3ed6c2f040515	g6-stream-identity-and-fin	rust	server	1136766-18d3ee17d129393d	5	REFUSAL				8			
+1	durable-18d3ed6c2f040515	g6-stream-identity-and-fin	rust	server	1136766-18d3ee17d129393d	6	REFUSAL				8			
+1	durable-18d3ed6c2f040515	g6-stream-identity-and-fin	rust	server	1136766-18d3ee17d129393d	7	REFUSAL				8			
+1	durable-18d3ed6c2f040515	g6-stream-identity-and-fin	rust	server	1136766-18d3ee17d129393d	8	REFUSAL				1			
+1	durable-18d3ed6c2f040515	g6-stream-identity-and-fin	rust	server	1136766-18d3ee17d129393d	9	REFUSAL				1			
+1	durable-18d3ed6c2f040515	g6-stream-identity-and-fin	rust	client	1136766-18d3ee17d129393d	10	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d3ed6c2f040515	g6-stream-identity-and-fin	rust	server	1136766-18d3ee17d129393d	11	CONNECTION_CLOSED				0			

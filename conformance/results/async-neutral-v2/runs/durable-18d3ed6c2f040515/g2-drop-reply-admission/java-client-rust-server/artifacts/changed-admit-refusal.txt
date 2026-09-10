@@ -1,0 +1,5 @@
+exit=exit status: 1
+stdout:
+
+stderr:
+CONFLICT: CONFLICT: operation identity reused with different parameters

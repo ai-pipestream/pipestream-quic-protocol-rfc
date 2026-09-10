@@ -25,7 +25,7 @@ Scenario matrix details: scenario-matrix-g1.md, -g2.md, -g3.md, -g4.md,
 | V2-RESULT 1–7 | manifest commitments; local-vs-remote copies; read pins; expiry refusal; integrity; cross-authority references | g1-zero-output DONE, g1-empty-input DONE, g7-read-pin-past-expiry SPEC, g7-receipt-before-output-expiry SPEC, g5-cross-authority-reference SPEC, g8-complete-with-pending SPEC | 2 DONE |
 | V2-CLOSE 1–5 | exact root complete; child-cut/altered CONFLICT; pending NOT_READY; detach semantics; half-close; fence precedence over STRICT | g8-* (6 rows), g4-ancestor-fence-publication | SPEC |
 | V2-TIME 1–6 | deadline independence; unsafe clock; queue time; cleanup refund; unsafe-time non-destructivity | g7-* (7 rows) | SPEC (fixture clock proposal needed for g7-unsafe-clock-refusal) |
-| V2-STORE 1–7 | crash both sides of commits; restart reconciliation; ownership; cleanup replay; retirement order; measured limits; separate metric scopes | g2 crash rows DONE (7), g3-* (6 rows) batch A impl, r-capability-manifest DONE (separate scopes recorded per sample; mandatory-metric and dead-collector rules enforced by the validating reader; resources schema v2 adds cancelled_write_bytes and the frozen JVM limits are recorded here), r-connection-ceiling DONE, r-stalled-principal-progress DONE (re-observed at the 0176855 Java pin; enforcement kind per subject and the named-close-reason change recorded), r-memory-ladder/-staging-and-journal-bounds/-network-bytes/-native-credit SPEC | 10 DONE |
+| V2-STORE 1–7 | crash both sides of commits; restart reconciliation; ownership; cleanup replay; retirement order; measured limits; separate metric scopes | g2 crash rows DONE (7), g3-* (6 rows) batch A impl, r-capability-manifest DONE (separate scopes recorded per sample; mandatory-metric and dead-collector rules enforced by the validating reader; resources schema v2 adds cancelled_write_bytes and the frozen JVM limits are recorded here; re-verified unchanged at the 7585a9dc Java pin), r-connection-ceiling DONE, r-stalled-principal-progress DONE (re-observed at the 7585a9dc Java pin; both subjects now enforce per stalled stream on a surviving connection, 3/3 named LIMIT_EXCEEDED refusals readable on each), r-memory-ladder/-staging-and-journal-bounds/-network-bytes/-native-credit SPEC | 10 DONE |
 | V2-RESOURCE (x-cut) | capacity ceilings; journal single-owner; adapter byte ceilings; cleanup credits | r-connection-ceiling DONE (both servers; bounds and refusal classes recorded, recovery asserted), r-stalled-principal-progress DONE (both servers), g3-store-ownership impl, r-staging-and-journal-bounds SPEC, r-memory-ladder SPEC | 2 DONE |
 
 ## Explicit gaps (visible, not waived)
@@ -46,16 +46,22 @@ Scenario matrix details: scenario-matrix-g1.md, -g2.md, -g3.md, -g4.md,
    incomplete-handshake accounting in r-connection-ceiling is not
    observable through the quinn client; network bytes are not collected
    until r-network-bytes.
-3b. Added at M17, at the Java `0176855` pin: in
-   r-stalled-principal-progress the Java server closes the whole
+3b. Added at M17, at the Java `0176855` pin, and CLOSED at M17b: in
+   r-stalled-principal-progress the Java server closed the whole
    connection at its idle bound (APPLICATION_CLOSE 0x204, reason "idle
    control deadline"), and because that close discards control frames the
-   peer queued but the client had not read, the row cannot distinguish
+   peer queued but the client had not read, the row could not distinguish
    "no per-stream LIMIT_EXCEEDED refusal was sent" from "one was sent and
-   the close discarded it". Recorded as a named gap and raised with
-   Claude, not scored as a subject defect. Disk I/O is now three separate
-   MANDATORY counters (read/write/cancelled_write bytes) so a write rate
-   can be told apart from cancelled page-cache writeback.
+   the close discarded it". It was recorded as a named gap and raised with
+   Claude, not scored as a subject defect. At the Java `7585a9dc` pin the
+   connection stays open through control silence, the row reads 3/3
+   per-stream LIMIT_EXCEEDED "input receive deadline" refusals at window
+   end, and nothing is discarded, so the gap no longer applies. What it
+   leaves behind is a bracket rather than a gap: the Java per-stream abort
+   lands after idle+10 s and by lifetime+10 s and the row claims no value
+   inside it. Disk I/O is three separate MANDATORY counters
+   (read/write/cancelled_write bytes) so a write rate can be told apart
+   from cancelled page-cache writeback.
 4. Client-side boundaries for rust/java clients are driver-side only until
    client hooks exist (Java client hooks promised in Claude's next
    checkpoint; rust client hooks not proposed — client-death rows use

@@ -1,0 +1,14 @@
+server_subject	java
+client_subject	rust
+clock_mode	real-short-policy
+policy_accepted_at_create	true (both subjects)
+lookup_after_receipt_expiry	RECEIPT answers (named gap: no lazy receipt-expiry refusal; receipts are retained until retirement)
+output_read_after_receipt_expiry	VERIFIED byte-exact sha256=e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+manifest_after_receipt_expiry	readable (MANIFEST)
+replay_after_receipt_expiry	RECEIPT idempotent, no new work (page 1/1)
+retirement_mechanism	operator retirement command: named gap on both CLIs; both servers retire automatically (rust: v2_authority runtime maintenance, 20ms interval; java: RetentionService, 1s poll)
+session_after_output_expiry	refused: authority refusal EXPIRED: session retirement committed
+retired_operation_lookup	refused EXPIRED (6)
+retired_creation_replay	refused EXPIRED (6)
+owner_high_water	next-sequence=2 (never reissued)
+java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a

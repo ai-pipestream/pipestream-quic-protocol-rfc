@@ -16,8 +16,9 @@ gates and acceptance integration have passed, with evidence below.
 - Nothing merged into the shared feature branch or main; no push
   performed (push authorization not given); no force operations. The only
   merges into this branch are the peer's own Java subject commits, most
-  recently `0176855` at `9119627` (M17 re-pin).
-- Dirty state: none at M17; the fmt-only diffs in
+  recently `7585a9d` at `c5b4f30` (M17b re-pin; `0176855` at `9119627`
+  was the M17 re-pin).
+- Dirty state: none at M17b; the fmt-only diffs in
   `src/v2/authority/admission.rs:1` and `scopes.rs:478` noted at M16 were
   committed with that milestone and the release binary rebuilt at M17.
 
@@ -51,9 +52,10 @@ gates and acceptance integration have passed, with evidence below.
 | fd52a9f / fe08970 | M13–M14: G8 completion/detach rows; G6 raw wire-abuse probes |
 | e219f11 | M15: Java subject re-pinned to 63d03a0/pipestream.4; full 50-row matrix rerun, no regressions |
 | 5993042 | M16: R batch A — resource collectors (`durable/resources.rs`) plus `r-capability-manifest`, `r-connection-ceiling` and `r-stalled-principal-progress` against both servers |
-| this commit | M17: Java subject re-pinned to `0176855`; JVM heap frozen before measurement; resources schema v2 (`cancelled_write_bytes`); R batch A + full matrix rerun |
+| add98fd | M17: Java subject re-pinned to `0176855`; JVM heap frozen before measurement; resources schema v2 (`cancelled_write_bytes`); R batch A + full matrix rerun |
+| this commit | M17b: Java subject re-pinned to `7585a9d`; R batch A + full matrix rerun; the Java stall enforcement kind is now per-stream and matches the Rust reference |
 
-## 3. Verification evidence (M8 snapshot; superseded by §3a for the
+## 3. Verification evidence (M8 snapshot; superseded by §3c for the
 current milestone's gates, counts and subject pins)
 
 - `cargo test -p pipestream-conformance`: 65 passed / 0 failed (baseline
@@ -168,7 +170,7 @@ toolchain — `cargo fmt --check` fails without them), which change no
 behaviour, so the pinned rust binary `097829fa45d8…` is still the build
 of the committed sources.
 
-## 3b. Milestone 17 — Java re-pin to 0176855, frozen JVM heap, resources v2 (this commit)
+## 3b. Milestone 17 — Java re-pin to 0176855, frozen JVM heap, resources v2 (add98fd)
 
 Gates: `cargo fmt --all -- --check` exit 0; `cargo clippy --all-targets -p
 pipestream-conformance -- -D warnings` exit 0; `cargo test -p
@@ -336,6 +338,127 @@ quietly patched.
 - `STALL_CLOSE_SETTLE` is 30 s. It was sized from an observed intermittent
   failure at 5 s, not from a specification.
 
+## 3c. Milestone 17b — Java re-pin to 7585a9dc, matrix rerun (this commit)
+
+No fixture, scenario or collector source changed this milestone: the only
+content changes are the merge of the Java subject commit, the re-pinned jar
+and these documents. Gates were rerun on that tree anyway: `cargo fmt --all
+-- --check` exit 0; `cargo clippy --all-targets -p pipestream-conformance --
+-D warnings` exit 0; `cargo test -p pipestream-conformance` exit 0, 88
+passed / 0 failed (same 88 as M17). `cargo build --release` was rerun and
+had nothing to do (0.05 s, exit 0); both release binaries are byte-identical
+to the M17 pins.
+
+Subject pins for this milestone:
+
+| Subject | Pin | sha256 |
+|---|---|---|
+| rust `pipestream-quinn` | committed sources of this branch (unchanged since M16) | `097829fa45d8c03eb0a5594badf0cfceababdc6d8c4898d8ce497426ec7406d7` |
+| rust `pipestream-conformance` (the driver itself) | committed sources of this branch | `4616ef1116163931bd046e831021c23aca672d816d16de6f0fd51f549197174c` |
+| java all-jar | Claude `7585a9dc` (merged here as `c5b4f30`) | `61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a` |
+| Java launch limits | unchanged, frozen before any measurement row | `-Xms256m -Xmx2g` |
+
+Archived dev runs (both exit 0, both INCOMPLETE-labelled, each with a
+MANIFEST.sha256 over every archived file, each verified after archiving):
+
+- `durable-18d3ed1531daad17` — R batch A (`r-capability-manifest`,
+  `r-connection-ceiling`, `r-stalled-principal-progress`) plus the
+  `g1-leaf-copy` regression; 318/318 manifest entries verified.
+- `durable-18d3ed6c2f040515` — the full matrix, 53 row-direction groups OK
+  and 0 FAIL; 4893/4893 manifest entries verified. The per-direction
+  INCOMPLETE markers are byte-for-byte the same set as the M17 archive
+  `durable-18d3ea906e9d11bd` and the M15 archive `durable-18d3a1b4b749ed81`
+  (g2-crash-after-create-commit ×2, g2-crash-before-create-commit,
+  g2-kill-after-admission-before-publication, g2-kill-at-publication-commit,
+  g3-store-ownership, g4-revocation-vs-publication,
+  g8-timeout-no-completion-claim) — no regression at the new pin and no new
+  gap opened by the listener change.
+
+No run directory was deleted this milestone: both runs were green on the
+first attempt and both are kept.
+
+### Observed at the new pin (dev evidence, never an acceptance claim)
+
+1. Stall enforcement kind — the M17 question is ANSWERED and the gap is
+   CLOSED. `r-stalled-principal-progress` rust-client/java-server now
+   records the connection LIVE at both enforcement probes (idle+10 s and
+   lifetime+10 s) and, at window end, 3/3 per-stream `LIMIT_EXCEEDED`
+   (code 4) Refusals with detail `input receive deadline`, one per stalled
+   input tag (6, 10, 14), drained from a still-open control stream. There
+   is no APPLICATION_CLOSE on this row at all: M17's `0x204 reason="idle
+   control deadline"` at the idle bound is gone, which is exactly the
+   behaviour change `7585a9dc` describes (a durable-profile connection is
+   no longer closed for control silence; a core-only connection with
+   nothing outstanding still is). The two subjects now enforce in the same
+   KIND — per stalled stream, on a surviving connection — and the M17 named
+   gap ("an APPLICATION_CLOSE discards queued control frames, so the row
+   cannot tell 'none sent' from 'sent and discarded'") no longer applies to
+   this row, because nothing is discarded.
+2. WHEN the Java per-stream abort lands moved with it, and this is new
+   information rather than a regression. At M17 the java direction showed
+   3/3 streams "aborted" by idle+10 s, but that was the connection close
+   taking every stream down with it. With the connection kept, the streams
+   survive idle+10 s (0/3 aborted, all three `still-open-at-idle-bound+10s`)
+   and are aborted per stream by lifetime+10 s (3/3, `STOP_SENDING 0x204`,
+   distinct streams), with the refusals readable afterwards. So the Java
+   input receive deadline fires somewhere between the negotiated idle bound
+   +10 s (40 s) and the lifetime bound +10 s (130 s); this row brackets it
+   and does not claim a value inside the bracket. Rust is unchanged: 3/3
+   aborted by idle+10 s (negotiated idle 5 s) and 3/3 refused, connection
+   live throughout.
+3. `r-connection-ceiling` bounds are unchanged on both subjects: rust 4 per
+   principal (refusal on attempt 5) / 16 global, both refusals post-auth
+   `APPLICATION_CLOSE 0x204 reason="LIMIT_EXCEEDED"`, capacity recovered on
+   attempt 1; java 8 per principal (refusal on attempt 9) / 32 global,
+   per-owner refusal post-auth `APPLICATION_CLOSE 0x204 reason="owner
+   connection ceiling"`, capacity recovered on attempt 2. The java GLOBAL
+   refusal is again a transport-level refusal with the same peer text ("the
+   server refused to accept a new connection"), but this run classified it
+   as `pre-auth transport refusal (connect failed): open control stream`
+   where M17 classified the same text as a post-auth close. That is a race
+   in the client between the handshake future completing and the peer's
+   abort arriving, not a change of bound or of refusal channel; both
+   classifications are recorded verbatim and neither is asserted as the
+   subject's contract. Incomplete-handshake accounting remains a NAMED GAP.
+4. Healthy-principal progress is unchanged and still well inside the 10 s
+   deadline: bob completed next-sequence/declare/admit/lookup/page every
+   round, worst latency 150.528 ms (rust, 23 rounds × 5 ops) and 150.648 ms
+   (java, 38 rounds × 5 ops), against 150.534 ms / 150.677 ms at M17.
+5. Disk I/O over the stall window (anchor pid, both io counters MANDATORY
+   and collected on every sample). rust: `write_bytes` 1,075,953,664 B in
+   92,749 ms = 11.60 MB/s, of which `cancelled_write_bytes` 1,064,800,256 B
+   = 11.48 MB/s (98% cancelled before writeback) — unchanged from M17's
+   11.52 / 11.40 MB/s, and still the open question to Meta about the Rust
+   authority's storage layer. java: `write_bytes` 8,597,504 B in 152,840 ms
+   = 56.3 KB/s (M17: 53.8 KB/s) with `cancelled_write_bytes` 405,504 B =
+   2.7 KB/s, i.e. 4% cancelled where M17 measured 0 over the window. Both
+   java figures are small absolute numbers on a longer window; the row
+   asserts no bound on either and records them so an idle write rate can be
+   told apart from cancelled writeback.
+6. Memory and FDs at the frozen heap, same window. java: RSS baseline
+   median 349,296 KiB → tail p90 371,752 KiB (growth 22,456; M17: 348,084 →
+   367,760, growth 19,676), FDs 20 → 21, used heap over 152 jstat samples
+   min 9,370 KiB, max 160,895 KiB, 0 probe gaps (M17: min 8,396, max
+   161,068, 0 gaps). rust: RSS 19,684 → 20,844 KiB (growth 1,160; M17:
+   19,916 → 21,152, growth 1,236), FDs 12 → 15. The plateau assertions pass
+   on both; keeping the connection open for the whole window cost the JVM
+   about 4 MiB more tail RSS and nothing measurable in heap.
+7. Heap scope unchanged: java collected on every heap tick (0 gaps); the
+   rust heap remains a NAMED GAP with no black-box allocator counter, and
+   RSS/HWM is never substituted for either.
+
+### Deviations recorded
+
+- The Java all-jar was again COPIED from Claude's worktree (read-only for
+  peers, by his instruction) rather than rebuilt here, so the archived
+  `java_sha256` is byte-for-byte the artifact he published at `7585a9dc`;
+  a local rebuild would produce a different shaded-jar hash for the same
+  sources. The sources ARE in this branch: `7585a9dc` is merged at
+  `c5b4f30` (three Java/Java-doc files, no conflicts, nothing Kimi-owned
+  touched), so the pin is an ancestor of this commit.
+- The `STALL_CLOSE_SETTLE` 30 s and the stall keep-alive introduced at M17
+  are unchanged and still fixture timing, never evidence.
+
 ## 4. Interface and peer-review artifacts
 
 - interface-v1.md: event + schedule schemas; acknowledged by Claude
@@ -373,16 +496,18 @@ quietly patched.
    mapping. Rust authority capacity bounds make the 256/batch schema
    bound wire-unreachable (single-tx cap binds first); 257-batch is
    preempted by clap arity — both named gaps.
-6. CLOSED at M15, re-pinned at M17: the all-jar is built on the
-   pipestream.4 transport fix and the subject is now Claude `0176855`
-   (all-jar `d658fe9e…`, merged here at `9119627`); every row in §3b ran
-   against it. OPEN at M17: the Java server's stall enforcement is still
-   observed as a connection-level close at the idle bound (now with the
-   named reason "idle control deadline") and no per-stream
-   `LIMIT_EXCEEDED` "input receive deadline" Refusal is readable, contrary
-   to the behaviour expected at this pin — with the named ambiguity that
-   an APPLICATION_CLOSE discards unread queued control frames, so the row
-   cannot prove none were sent.
+6. CLOSED at M15, re-pinned at M17 and again at M17b: the all-jar is built
+   on the pipestream.4 transport fix and the subject is now Claude
+   `7585a9dc` (all-jar `61ab64a3…`, merged here at `c5b4f30`); every row in
+   §3c ran against it. The stall-enforcement item that was OPEN at M17 is
+   CLOSED at M17b: the Java server no longer closes the connection for
+   control silence, the connection is live at both enforcement probes, and
+   3/3 per-stream `LIMIT_EXCEEDED` "input receive deadline" Refusals are
+   readable on control at window end — so the M17 ambiguity (an
+   APPLICATION_CLOSE discarding unread queued control frames) no longer
+   applies to this row. What replaces it is a bracket, not a gap: the Java
+   per-stream abort lands after idle+10 s and by lifetime+10 s, and the row
+   does not claim a value inside that bracket.
 7. Client-side commit boundaries are driver-side observations only;
    uncontrolled client-death rows are labelled as such.
 8. g2-drop-reply-publication is registered but unimplemented: neither
