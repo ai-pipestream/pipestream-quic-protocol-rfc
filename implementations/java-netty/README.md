@@ -12,7 +12,7 @@ java -jar target/pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar --help
 
 The reference library and Java example pin the Netty `4.2.17.Final` BOM. QUIC
 classes/native artifacts use the source-built `ai.pipestream.transport` extension
-at `4.2.17.Final-pipestream.3`; other Netty modules remain official `io.netty`
+at `4.2.17.Final-pipestream.4`; other Netty modules remain official `io.netty`
 dependencies. The bootstrap above verifies and installs the pinned extension in
 a fresh isolated Maven repository under reference-code, then prints only that
 repository path to stdout. Build progress goes to stderr. Reuse the captured
@@ -239,7 +239,15 @@ loss are not successful drain or computation outcomes.
 One event-loop owner schedules independent handshake, incomplete/idle-control,
 oldest-queued-write and detach deadlines. Partial-frame progress cannot renew
 the control deadline; new complete requests cannot renew an older stalled write
-or the detach lifetime. Global admitted connections include incomplete handshakes;
+or the detach lifetime. The durable listener never closes a durable-profile
+connection for control silence: per-owner ceilings and the transport idle
+timeout bound it, and a close would discard queued REFUSALs a slow reader has
+not consumed. Only a core-only connection with nothing outstanding is closed at
+the control deadline; a live input, a result read, a granted wait and a pending
+request each carry their own bound. Stream bounds are judged before the connection, so a stalled
+input is refused per stream with a named REFUSAL on the surviving control
+stream even when the idle bound equals the control deadline. Application closes
+after authentication carry the named bound as their reason. Global admitted connections include incomplete handshakes;
 mapped owners and all anonymous/unmapped callers have separate bounded buckets.
 Native close finishes before admission capacity is released.
 
@@ -250,7 +258,15 @@ packet-local refusal transport**, then closes it with transport
 completion. `snapshot()` distinguishes admitted high water from admitted plus
 that extra transport. Its refusal count measures admission attempts, including
 repeated Initial packets, not distinct peers. Per-owner refusal after TLS uses
-application `LIMIT_EXCEEDED`.
+application `LIMIT_EXCEEDED`, with the bound's name as the close reason.
+
+The shipped durable launcher (`V2Main serve`, `DurableOptions.defaults()`)
+admits 32 connections globally and 8 per mapped owner or anonymous bucket.
+These are the documented bounds a conformance driver should expect: the global
+bound is refused at accept before any handshake completes (transport
+`CONNECTION_REFUSED`), the per-owner bound after authentication (application
+`LIMIT_EXCEEDED` 0x204, reason `owner connection ceiling`), and capacity is
+released only after native close finishes.
 
 Queued application response counts/bytes and the oldest write are bounded.
 Configuration limits the aggregate of queue, one frame and one read-buffer
@@ -1039,3 +1055,74 @@ Default Maven `test` runs the independent Java codec/store tests without requiri
 a Rust executable. The repository's `conformance/run_all.sh` explicitly enables
 the interoperability profile after building Rust; a missing executable is a
 failure, not a skipped integration test.
+
+## Version 2 durable endpoints
+
+`ai.pipestream.quic.v2` now contains the complete Java V2 durable authority and
+client for Section 12 / Appendix F, composed from the stores and services above:
+
+- `DurableHost` (public, `AutoCloseable`) opens or initializes an authority root
+  (`authority.sqlite` plus the bounded object directory), registers
+  `Application`s (`Processor` for modes 0/1, `Producer` for mode 2, with
+  `RestartSafety`), owns the bounded storage `Workers` pool, the execution
+  scheduler, retention, result delivery and control waits, and exposes owner
+  policy, clock and revocation. `ReferenceApplications.all()` registers
+  `copy/v2`, `consume/v2`, `retry-copy/v2`, `reassemble/v2`, `chunk-copy/v2`
+  and `transform/v2`.
+- `DurableServer` (public) is the listener: Core plus durable-work (65284) and
+  result-delivery (65285) profiles, stream-ID tagged input admission with
+  replay STOP_SENDING 0, correlated refusals, result streams, DETACH/FIN
+  ordering and a bounded SIGTERM drain. No SQLite, file hashing or application
+  callback ever runs on a Netty event loop; request tickets are retained
+  across worker hops and released on native write settlement.
+- `DurableClient` (public) with `ClientJournal` (exclusive SQLite journal of
+  intents, receipts, observations, seals and selections), `ClientValidation`,
+  `InputSource` and `ResultFiles` (staged, digest-verified, hard-link
+  installed results). Every mutation is journaled before it is sent and every
+  receipt is validated against the journaled intent before it is journaled.
+- Launchers: `V2Main` (`init-authority`, `serve`, `next-sequence`,
+  `init-client`, `client <operation>`), argument-compatible with the Rust CLI
+  (same journal arguments, principal map, `READY host:port`, `DRAINED`).
+  `FixtureMain` is the test-only fixture adapter for the neutral failure driver
+  (interface-v1 events, `pause`/`drop-reply`/`kill` schedule actions, both
+  roles); it is not reachable from `V2Main`.
+
+Conformance evidence, the public API contract and the fixture contract are in
+`conformance/results/async-java-v2/` (`api-plan.md`, `handoff.md`). Tests:
+`DurableServerTest`, `DurableClientTest`, `DurableBranchTest`,
+`DurableMutationTest`, `DurableAuthorizationTest`, `DurableLifecycleTest`,
+`DurableWireNegativeTest`, `V2MainProcessTest`, `FixtureMainTest`, and the
+Rust-peer suites `RustClientJavaServerTest` and `JavaClientRustServerTest`
+under `-Psealed-interop`. The transport pin `4.2.17.Final-pipestream.4`
+carries the drained-stream collection fix described in
+[transport/README.md](transport/README.md); refused input streams return
+their MAX_STREAMS credit only on that revision.
+
+Client recovery (Section 12.2.1) has two documented modes. The default is
+one-shot: `V2Main client` exits after one attempt, and recovery is the next
+invocation, which reopens the journal and replays the original intent under
+the original operation identity with fresh transport correlation.
+`--retry-budget N [--retry-backoff-ms M]` is the in-process mode: the same
+journaled operation is re-invoked on a fresh connection after an authority
+`LIMIT_EXCEEDED`, `NOT_READY`, `WAIT_TIMEOUT` or `INTERNAL_ERROR`, a
+`CONTROL_RESET`, transport loss or the local request deadline, with doubling
+backoff and jitter; `CONFLICT`, `UNAUTHORIZED`, framing and integrity codes,
+terminal outcomes and every local or journal failure stop immediately.
+Exhausting the budget prints `UNRESOLVED` and exits 1 with the intent still
+journaled; no outcome is ever manufactured. Authority refusals are named on
+stdout as `REFUSED code=… detail=…`, and `client capabilities` prints the
+offered and selected stream deadlines (Section 12.1 diagnostics). REFUSAL
+details carry the authority's local bound or check label, as the Rust
+authority's do; they are bounded and never parsed. `ClientRecoveryTest`
+drives both modes through the launcher against real refusals (a saturated
+storage-worker pool and withheld replies after real commits), and
+`RawPeerRustAuthorityTest` (`-Psealed-interop`) measures the Section 12.1
+refused-stream rule as returned stream credit against the Rust authority,
+the counterpart of the Java-side check in `DurableWireNegativeTest`.
+`ClientJournalFaultTest` injects real journal I/O failures (a read-only
+journal directory under SQLite's rollback-journal mode) before transmission,
+while saving a receipt and while saving a verified selection;
+`AuthorizationClockRecoveryTest` withdraws and restores the owner policy,
+makes the host clock untrusted or regressed, and finally revokes the session
+durably, showing that only the temporary conditions are resolved by the next
+invocation and that none of them is retried by the budget.

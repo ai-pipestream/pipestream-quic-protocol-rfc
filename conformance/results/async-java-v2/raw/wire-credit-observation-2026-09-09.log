@@ -1,0 +1,13 @@
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /work/worktrees/pipestream-rfc-claude/implementations/java-netty/target/native
+[ 33%] Built target pipestream_sqlite
+[ 66%] Built target sqlite_test_engine
+[100%] Built target sqlite_guard_test
+Test project /work/worktrees/pipestream-rfc-claude/implementations/java-netty/target/native
+    Start 1: sqlite-file-growth
+1/1 Test #1: sqlite-file-growth ...............   Passed    0.02 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   0.02 sec

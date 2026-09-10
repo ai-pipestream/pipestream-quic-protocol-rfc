@@ -1,0 +1,1239 @@
+netty.patch: OK
+quiche.patch: OK
+quiche-Cargo.lock: OK
+licenses/netty-LICENSE.txt: OK
+licenses/netty-NOTICE.txt: OK
+licenses/quiche-COPYING: OK
+Transport build directory: /work/reference-code/pipestream-quic-build.jJsCGdZV
+From https://github.com/netty/netty
+ * branch            e0789d32c72f46fd2e7c99b6fdbbf7e2f4409e44 -> FETCH_HEAD
+HEAD is now at e0789d3 [maven-release-plugin] prepare release netty-4.2.17.Final
+From https://github.com/cloudflare/quiche
+ * branch            4f347477006bf7f928335d28f05056013f70b87e -> FETCH_HEAD
+HEAD is now at 4f34747 Allow to specify dcid when creating a client side connection (#2234)
+[INFO] Scanning for projects...
+[INFO] ------------------------------------------------------------------------
+[INFO] Detecting the operating system and CPU architecture
+[INFO] ------------------------------------------------------------------------
+[INFO] os.detected.name: linux
+[INFO] os.detected.arch: x86_64
+[INFO] os.detected.bitness: 64
+[INFO] os.detected.version: 7.0
+[INFO] os.detected.version.major: 7
+[INFO] os.detected.version.minor: 0
+[INFO] os.detected.release: ubuntu
+[INFO] os.detected.release.version: 26.04
+[INFO] os.detected.release.like.ubuntu: true
+[INFO] os.detected.release.like.debian: true
+[INFO] os.detected.classifier: linux-x86_64
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Build Order:
+[INFO] 
+[INFO] PipeStream transport extension / Netty QUIC classes                [jar]
+[INFO] PipeStream transport extension / Netty QUIC native                 [jar]
+[INFO] 
+[INFO] ----------< ai.pipestream.transport:netty-codec-classes-quic >----------
+[INFO] Building PipeStream transport extension / Netty QUIC classes 4.2.17.Final-pipestream.4 [1/2]
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.0.0:enforce (enforce-maven) @ netty-codec-classes-quic ---
+[INFO] 
+[INFO] --- enforcer:3.0.0:enforce (enforce-tools) @ netty-codec-classes-quic ---
+[INFO] 
+[INFO] --- checkstyle:3.1.0:check (check-style) @ netty-codec-classes-quic ---
+[INFO] Starting audit...
+Audit done.
+[INFO] 
+[INFO] --- xml:1.0.1:check-format (check-style) @ netty-codec-classes-quic ---
+[INFO] 
+[INFO] --- build-helper:1.10:parse-version (parse-version) @ netty-codec-classes-quic ---
+[INFO] 
+[INFO] --- antrun:1.8:run (write-version-properties) @ netty-codec-classes-quic ---
+[INFO] Executing tasks
+
+main:
+     [echo] Current commit: e0789d3 on 2026-08-04 22:25:22 +0000
+    [mkdir] Created dir: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/target/classes/META-INF
+[propertyfile] Creating new property file: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/target/classes/META-INF/ai.pipestream.transport.versions.properties
+[INFO] Executed tasks
+[INFO] 
+[INFO] --- resources:3.0.1:resources (default-resources) @ netty-codec-classes-quic ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] skip non existing resourceDirectory /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/src/main/resources
+[INFO] 
+[INFO] --- compiler:3.14.0:compile (default-compile) @ netty-codec-classes-quic ---
+[WARNING]  Parameter 'compilerVersion' (user property 'maven.compiler.compilerVersion') is deprecated: This parameter is no longer evaluated by the underlying compilers, instead the actual version of the javac binary is automatically retrieved.
+[WARNING]  Parameter 'optimize' (user property 'maven.compiler.optimize') is deprecated: This property is a no-op in javac.
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 106 source files with javac [forked debug deprecation release 8] to target/classes
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicSslContext.java:[19,27] [deprecation] ApplicationProtocolNegotiator in io.netty.handler.ssl has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/EpollQuicUtils.java:[19,29] [deprecation] SegmentedDatagramPacket in io.netty.channel.epoll has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicSslContext.java:[415,11] [deprecation] ApplicationProtocolNegotiator in io.netty.handler.ssl has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicChannel.java:[334,15] [deprecation] QuicChannelBootstrap(Channel) in QuicChannelBootstrap has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicStreamChannelConfig.java:[52,28] [deprecation] setMaxMessagesPerRead(int) in DuplexChannelConfig has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicStreamChannelConfig.java:[52,28] [deprecation] setMaxMessagesPerRead(int) in ChannelConfig has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/EpollQuicUtils.java:[41,12] [deprecation] SegmentedDatagramPacket in io.netty.channel.epoll has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicStreamChannelConfig.java:[116,35] [deprecation] setMaxMessagesPerRead(int) in DefaultChannelConfig has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/src/main/java/io/netty/handler/codec/quic/QuicheQuicStreamChannelConfig.java:[117,13] [deprecation] setMaxMessagesPerRead(int) in DefaultChannelConfig has been deprecated
+[INFO] 
+[INFO] --- forbiddenapis:2.2:check (check-forbidden-apis) @ netty-codec-classes-quic ---
+[WARNING]  Parameter 'internalRuntimeForbidden' is deprecated: Use <a href="bundled-signatures.html">bundled signatures</a> {@code "jdk-non-portable"} or {@code "jdk-internal"} instead.
+[INFO] Skipping forbidden-apis checks.
+[INFO] 
+[INFO] --- bundle:5.1.8:manifest (generate-manifest) @ netty-codec-classes-quic ---
+[INFO] No MANIFEST.MF file found, generating manifest.
+[WARNING] Manifest ai.pipestream.transport:netty-codec-classes-quic:jar:4.2.17.Final-pipestream.4 : Unused Import-Package instructions: [sun.net.dns.*, sun.misc.*, sun.security.*] 
+[INFO] Writing manifest: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/target/classes/META-INF/MANIFEST.MF
+[INFO] 
+[INFO] --- module-info:2.2:generate (module-info) @ netty-codec-classes-quic ---
+[INFO] Using source file: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/src/main/java/module-info.yml
+[INFO] Using module name "io.netty.codec.classes.quic"
+[INFO] Using module version "4.2.17.Final-pipestream.4"
+[INFO] Automatically adding export for package "io.netty.handler.codec.quic"
+[INFO] Automatically adding mandatory "java.base" dependency
+[INFO] Wrote module descriptor "/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/target/classes/META-INF/versions/11/module-info.class"
+[INFO] 
+[INFO] --- resources:3.0.1:testResources (default-testResources) @ netty-codec-classes-quic ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] skip non existing resourceDirectory /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/src/test/resources
+[INFO] Copying 0 resource
+[INFO] 
+[INFO] --- compiler:3.14.0:testCompile (default-testCompile) @ netty-codec-classes-quic ---
+[WARNING]  Parameter 'compilerVersion' (user property 'maven.compiler.compilerVersion') is deprecated: This parameter is no longer evaluated by the underlying compilers, instead the actual version of the javac binary is automatically retrieved.
+[WARNING]  Parameter 'optimize' (user property 'maven.compiler.optimize') is deprecated: This property is a no-op in javac.
+[INFO] No sources to compile
+[INFO] 
+[INFO] --- forbiddenapis:2.2:testCheck (check-forbidden-test-apis) @ netty-codec-classes-quic ---
+[WARNING]  Parameter 'internalRuntimeForbidden' is deprecated: Use <a href="bundled-signatures.html">bundled signatures</a> {@code "jdk-non-portable"} or {@code "jdk-internal"} instead.
+[INFO] Skipping forbidden-apis checks.
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ netty-codec-classes-quic ---
+[INFO] Tests will run in random order. To reproduce ordering use flag -Dsurefire.runOrder.random.seed=189359891745947
+[INFO] 
+[INFO] --- source:3.2.0:jar-no-fork (attach-sources) @ netty-codec-classes-quic ---
+[INFO] Building jar: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/target/netty-codec-classes-quic-4.2.17.Final-pipestream.4-sources.jar
+[INFO] 
+[INFO] --- source:3.2.0:test-jar-no-fork (attach-test-sources) @ netty-codec-classes-quic ---
+[INFO] No sources in project. Archive not created.
+[INFO] 
+[INFO] --- jar:3.0.2:jar (default-jar) @ netty-codec-classes-quic ---
+[INFO] Building jar: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/target/netty-codec-classes-quic-4.2.17.Final-pipestream.4.jar
+[INFO] 
+[INFO] --- jar:3.0.2:test-jar (default) @ netty-codec-classes-quic ---
+[INFO] Building jar: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/target/netty-codec-classes-quic-4.2.17.Final-pipestream.4-tests.jar
+[INFO] 
+[INFO] --- revapi:0.15.0:check (api-check) @ netty-codec-classes-quic ---
+[INFO] Skipping execution
+[INFO] 
+[INFO] --- install:3.1.4:install (default-install) @ netty-codec-classes-quic ---
+[INFO] Installing /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/pom.xml to /work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository/ai/pipestream/transport/netty-codec-classes-quic/4.2.17.Final-pipestream.4/netty-codec-classes-quic-4.2.17.Final-pipestream.4.pom
+[INFO] Installing /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/target/netty-codec-classes-quic-4.2.17.Final-pipestream.4.jar to /work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository/ai/pipestream/transport/netty-codec-classes-quic/4.2.17.Final-pipestream.4/netty-codec-classes-quic-4.2.17.Final-pipestream.4.jar
+[INFO] Installing /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/target/netty-codec-classes-quic-4.2.17.Final-pipestream.4-sources.jar to /work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository/ai/pipestream/transport/netty-codec-classes-quic/4.2.17.Final-pipestream.4/netty-codec-classes-quic-4.2.17.Final-pipestream.4-sources.jar
+[INFO] Installing /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/target/netty-codec-classes-quic-4.2.17.Final-pipestream.4-tests.jar to /work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository/ai/pipestream/transport/netty-codec-classes-quic/4.2.17.Final-pipestream.4/netty-codec-classes-quic-4.2.17.Final-pipestream.4-tests.jar
+[INFO] 
+[INFO] ----------< ai.pipestream.transport:netty-codec-native-quic >-----------
+[INFO] Building PipeStream transport extension / Netty QUIC native 4.2.17.Final-pipestream.4 [2/2]
+[INFO]   from /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:3.0.0:enforce (enforce-maven) @ netty-codec-native-quic ---
+[INFO] 
+[INFO] --- enforcer:3.0.0:enforce (enforce-tools) @ netty-codec-native-quic ---
+[INFO] 
+[INFO] --- checkstyle:3.1.0:check (check-style) @ netty-codec-native-quic ---
+[INFO] Starting audit...
+Audit done.
+[INFO] 
+[INFO] --- xml:1.0.1:check-format (check-style) @ netty-codec-native-quic ---
+[INFO] 
+[INFO] --- build-helper:1.10:parse-version (parse-version) @ netty-codec-native-quic ---
+[INFO] 
+[INFO] --- antrun:1.8:run (write-version-properties) @ netty-codec-native-quic ---
+[INFO] Executing tasks
+
+main:
+     [echo] Current commit: e0789d3 on 2026-08-04 22:25:22 +0000
+    [mkdir] Created dir: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/classes/META-INF
+[propertyfile] Creating new property file: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/classes/META-INF/ai.pipestream.transport.versions.properties
+[INFO] Executed tasks
+[INFO] 
+[INFO] --- build-helper:1.10:add-source (default) @ netty-codec-native-quic ---
+[INFO] Source directory: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/main/c added.
+[INFO] 
+[INFO] --- dependency:2.10:unpack-dependencies (unpack) @ netty-codec-native-quic ---
+[INFO] Unpacking /work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository/io/netty/netty-jni-util/0.0.10.Final/netty-jni-util-0.0.10.Final-sources.jar to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-jni-util with includes "**.h,**.c" and excludes ""
+[INFO] 
+[INFO] --- antrun:1.8:run (build-boringssl) @ netty-codec-native-quic ---
+[INFO] Executing tasks
+
+main:
+     [echo] Clone BoringSSL
+     [exec] Cloning into '/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source'...
+     [echo] Building BoringSSL
+     [exec] Note: switching to '0226f30467f540a3f62ef48d453f93927da199b6'.
+     [exec] 
+     [exec] You are in 'detached HEAD' state. You can look around, make experimental
+     [exec] changes and commit them, and you can discard any commits you make in this
+     [exec] state without impacting any branches by switching back to a branch.
+     [exec] 
+     [exec] If you want to create a new branch to retain commits you create, you may
+     [exec] do so (now or later) by using -c with the switch command. Example:
+     [exec] 
+     [exec]   git switch -c <new-branch-name>
+     [exec] 
+     [exec] Or undo this operation with:
+     [exec] 
+     [exec]   git switch -
+     [exec] 
+     [exec] Turn off this advice by setting config variable advice.detachedHead to false
+     [exec] 
+     [exec] HEAD is now at 0226f3046 Various IWYU fixes
+    [mkdir] Created dir: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/build-target
+     [exec] -- The C compiler identification is GNU 15.2.0
+     [exec] -- Detecting C compiler ABI info
+     [exec] -- Detecting C compiler ABI info - done
+     [exec] -- Check for working C compiler: /usr/bin/cc - skipped
+     [exec] -- Detecting C compile features
+     [exec] -- Detecting C compile features - done
+     [exec] -- The CXX compiler identification is GNU 15.2.0
+     [exec] -- Detecting CXX compiler ABI info
+     [exec] -- Detecting CXX compiler ABI info - done
+     [exec] -- Check for working CXX compiler: /usr/bin/c++ - skipped
+     [exec] -- Detecting CXX compile features
+     [exec] -- Detecting CXX compile features - done
+     [exec] -- Checking for module 'libunwind-generic>=1.3.0'
+     [exec] --   Found libunwind-generic, version 1.8.3
+     [exec] -- The ASM compiler identification is GNU
+     [exec] -- Found assembler: /usr/bin/cc
+     [exec] -- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+     [exec] -- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+     [exec] -- Found Threads: TRUE
+     [exec] -- Configuring done (0.3s)
+     [exec] -- Generating done (0.0s)
+     [exec] -- Build files have been written to: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/build-target
+     [exec] [1/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/aes-gcm-avx2-x86_64-apple.S.o
+     [exec] [2/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/aes-gcm-avx2-x86_64-linux.S.o
+     [exec] [3/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/aes-gcm-avx512-x86_64-apple.S.o
+     [exec] [4/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/aes-gcm-avx512-x86_64-linux.S.o
+     [exec] [5/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/aesni-gcm-x86_64-apple.S.o
+     [exec] [6/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/aesni-x86-apple.S.o
+     [exec] [7/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/aesni-x86-linux.S.o
+     [exec] [8/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/aesni-x86_64-apple.S.o
+     [exec] [9/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/aesv8-armv8-apple.S.o
+     [exec] [10/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/aesv8-armv8-linux.S.o
+     [exec] [11/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/aesv8-armv8-win.S.o
+     [exec] [12/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/aesv8-gcm-armv8-linux.S.o
+     [exec] [13/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/armv4-mont-linux.S.o
+     [exec] [14/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/aesni-gcm-x86_64-linux.S.o
+     [exec] [15/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/aesni-x86_64-linux.S.o
+     [exec] [16/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/aesv8-armv7-linux.S.o
+     [exec] [17/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/aesv8-gcm-armv8-apple.S.o
+     [exec] [18/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/aesv8-gcm-armv8-win.S.o
+     [exec] [19/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/armv8-mont-apple.S.o
+     [exec] [20/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/armv8-mont-linux.S.o
+     [exec] [21/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/armv8-mont-win.S.o
+     [exec] [22/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/bn-586-apple.S.o
+     [exec] [23/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/bn-586-linux.S.o
+     [exec] [24/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/bn-armv8-apple.S.o
+     [exec] [25/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/bn-armv8-linux.S.o
+     [exec] [26/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/bn-armv8-win.S.o
+     [exec] [27/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/bsaes-armv7-linux.S.o
+     [exec] [28/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/co-586-apple.S.o
+     [exec] [29/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/co-586-linux.S.o
+     [exec] [30/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/ghash-armv4-linux.S.o
+     [exec] [31/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/ghash-neon-armv8-apple.S.o
+     [exec] [32/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/ghash-neon-armv8-linux.S.o
+     [exec] [33/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/ghash-neon-armv8-win.S.o
+     [exec] [34/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/ghash-ssse3-x86-apple.S.o
+     [exec] [35/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/ghash-ssse3-x86-linux.S.o
+     [exec] [36/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/ghash-ssse3-x86_64-apple.S.o
+     [exec] [37/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/ghash-ssse3-x86_64-linux.S.o
+     [exec] [38/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/ghash-x86-linux.S.o
+     [exec] [39/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/ghash-x86_64-apple.S.o
+     [exec] [40/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/ghashv8-armv7-linux.S.o
+     [exec] [41/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/ghashv8-armv8-apple.S.o
+     [exec] [42/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/ghashv8-armv8-linux.S.o
+     [exec] [43/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/ghash-x86-apple.S.o
+     [exec] [44/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/ghash-x86_64-linux.S.o
+     [exec] [45/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/ghashv8-armv8-win.S.o
+     [exec] [46/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/p256-armv8-asm-apple.S.o
+     [exec] [47/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/p256-armv8-asm-linux.S.o
+     [exec] [48/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/p256-armv8-asm-win.S.o
+     [exec] [49/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/p256_beeu-armv8-asm-win.S.o
+     [exec] [50/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/p256-x86_64-asm-apple.S.o
+     [exec] [51/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/p256_beeu-armv8-asm-apple.S.o
+     [exec] [52/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/p256_beeu-x86_64-asm-apple.S.o
+     [exec] [53/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/rdrand-x86_64-apple.S.o
+     [exec] [54/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/p256_beeu-armv8-asm-linux.S.o
+     [exec] [55/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/p256_beeu-x86_64-asm-linux.S.o
+     [exec] [56/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/rdrand-x86_64-linux.S.o
+     [exec] [57/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha1-586-apple.S.o
+     [exec] [58/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha1-armv8-linux.S.o
+     [exec] [59/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha1-armv8-win.S.o
+     [exec] [60/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha256-armv8-win.S.o
+     [exec] [61/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/rsaz-avx2-apple.S.o
+     [exec] [62/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha256-586-apple.S.o
+     [exec] [63/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha256-x86_64-apple.S.o
+     [exec] [64/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/p256-x86_64-asm-linux.S.o
+     [exec] [65/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha1-586-linux.S.o
+     [exec] [66/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha1-armv4-large-linux.S.o
+     [exec] [67/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha1-armv8-apple.S.o
+     [exec] [68/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha1-x86_64-apple.S.o
+     [exec] [69/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha256-586-linux.S.o
+     [exec] [70/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha256-armv4-linux.S.o
+     [exec] [71/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha256-armv8-apple.S.o
+     [exec] [72/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha256-armv8-linux.S.o
+     [exec] [73/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha512-586-apple.S.o
+     [exec] [74/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha512-armv4-linux.S.o
+     [exec] [75/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha512-armv8-linux.S.o
+     [exec] [76/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha512-armv8-win.S.o
+     [exec] [77/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/rsaz-avx2-linux.S.o
+     [exec] [78/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha512-586-linux.S.o
+     [exec] [79/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha512-armv8-apple.S.o
+     [exec] [80/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha512-x86_64-apple.S.o
+     [exec] [81/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/vpaes-armv7-linux.S.o
+     [exec] [82/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/vpaes-armv8-apple.S.o
+     [exec] [83/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/vpaes-armv8-linux.S.o
+     [exec] [84/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/vpaes-armv8-win.S.o
+     [exec] [85/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/vpaes-x86-linux.S.o
+     [exec] [86/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha256-x86_64-linux.S.o
+     [exec] [87/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/vpaes-x86-apple.S.o
+     [exec] [88/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/vpaes-x86_64-linux.S.o
+     [exec] [89/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/x86-mont-apple.S.o
+     [exec] [90/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/x86-mont-linux.S.o
+     [exec] [91/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/x86_64-mont-apple.S.o
+     [exec] [92/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha1-x86_64-linux.S.o
+     [exec] [93/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/sha512-x86_64-linux.S.o
+     [exec] [94/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/vpaes-x86_64-apple.S.o
+     [exec] [95/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/x86_64-mont-linux.S.o
+     [exec] [96/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/x86_64-mont5-apple.S.o
+     [exec] [97/409] Building ASM object CMakeFiles/fipsmodule.dir/gen/bcm/x86_64-mont5-linux.S.o
+     [exec] [98/409] Building ASM object CMakeFiles/fipsmodule.dir/third_party/fiat/asm/fiat_p256_adx_mul.S.o
+     [exec] [99/409] Building ASM object CMakeFiles/fipsmodule.dir/third_party/fiat/asm/fiat_p256_adx_sqr.S.o
+     [exec] [100/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/a_dup.cc.o
+     [exec] [101/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/a_octet.cc.o
+     [exec] [102/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/a_d2i_fp.cc.o
+     [exec] [103/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/a_i2d_fp.cc.o
+     [exec] [104/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/f_string.cc.o
+     [exec] [105/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/f_int.cc.o
+     [exec] [106/409] Building CXX object CMakeFiles/crypto.dir/crypto/aes/aes.cc.o
+     [exec] [107/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/asn_pack.cc.o
+     [exec] [108/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/tasn_fre.cc.o
+     [exec] [109/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/a_utctm.cc.o
+     [exec] [110/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/tasn_typ.cc.o
+     [exec] [111/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/a_bool.cc.o
+     [exec] [112/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/a_object.cc.o
+     [exec] [113/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/tasn_new.cc.o
+     [exec] [114/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/asn1_par.cc.o
+     [exec] [115/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/tasn_utl.cc.o
+     [exec] [116/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/a_time.cc.o
+     [exec] [117/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/a_type.cc.o
+     [exec] [118/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/posix_time.cc.o
+     [exec] [119/409] Building CXX object CMakeFiles/crypto.dir/crypto/bio/errno.cc.o
+     [exec] [120/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/a_mbstr.cc.o
+     [exec] [121/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/a_strnid.cc.o
+     [exec] [122/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/a_gentm.cc.o
+     [exec] [123/409] Building CXX object CMakeFiles/crypto.dir/crypto/bio/printf.cc.o
+     [exec] [124/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/asn1_lib.cc.o
+     [exec] [125/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/a_strex.cc.o
+     [exec] [126/409] Building CXX object CMakeFiles/crypto.dir/crypto/bio/hexdump.cc.o
+     [exec] [127/409] Building CXX object CMakeFiles/crypto.dir/crypto/bio/fd.cc.o
+     [exec] [128/409] Building CXX object CMakeFiles/crypto.dir/crypto/bio/bio_mem.cc.o
+     [exec] [129/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/tasn_enc.cc.o
+     [exec] [130/409] Building CXX object CMakeFiles/crypto.dir/crypto/bn/bn_asn1.cc.o
+     [exec] [131/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/a_bitstr.cc.o
+     [exec] [132/409] Building CXX object CMakeFiles/crypto.dir/crypto/bio/file.cc.o
+     [exec] [133/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/tasn_dec.cc.o
+     [exec] [134/409] Building CXX object CMakeFiles/crypto.dir/crypto/bn/sqrt.cc.o
+     [exec] [135/409] Building CXX object CMakeFiles/crypto.dir/crypto/bio/connect.cc.o
+     [exec] [136/409] Building CXX object CMakeFiles/crypto.dir/crypto/asn1/a_int.cc.o
+     [exec] [137/409] Building CXX object CMakeFiles/crypto.dir/crypto/bio/pair.cc.o
+     [exec] [138/409] Building CXX object CMakeFiles/crypto.dir/crypto/bn/exponentiation.cc.o
+     [exec] [139/409] Building CXX object CMakeFiles/crypto.dir/crypto/bn/div.cc.o
+     [exec] [140/409] Building CXX object CMakeFiles/crypto.dir/crypto/bio/socket.cc.o
+     [exec] [141/409] Building CXX object CMakeFiles/crypto.dir/crypto/bytestring/asn1_compat.cc.o
+     [exec] [142/409] Building CXX object CMakeFiles/crypto.dir/crypto/buf/buf.cc.o
+     [exec] [143/409] Building CXX object CMakeFiles/crypto.dir/crypto/bio/socket_helper.cc.o
+     [exec] [144/409] Building CXX object CMakeFiles/crypto.dir/crypto/base64/base64.cc.o
+     [exec] [145/409] Building CXX object CMakeFiles/crypto.dir/crypto/cipher/derive_key.cc.o
+     [exec] [146/409] Building CXX object CMakeFiles/crypto.dir/crypto/cipher/e_aesctrhmac.cc.o
+     [exec] [147/409] Building CXX object CMakeFiles/crypto.dir/crypto/cipher/e_des.cc.o
+     [exec] [148/409] Building CXX object CMakeFiles/crypto.dir/crypto/chacha/chacha.cc.o
+     [exec] [149/409] Building CXX object CMakeFiles/crypto.dir/crypto/bytestring/unicode.cc.o
+     [exec] [150/409] Building CXX object CMakeFiles/crypto.dir/crypto/cipher/e_null.cc.o
+     [exec] [151/409] Building CXX object CMakeFiles/crypto.dir/crypto/cpu_aarch64_fuchsia.cc.o
+     [exec] [152/409] Building CXX object CMakeFiles/crypto.dir/crypto/cpu_aarch64_linux.cc.o
+     [exec] [153/409] Building CXX object CMakeFiles/crypto.dir/crypto/cpu_aarch64_apple.cc.o
+     [exec] [154/409] Building CXX object CMakeFiles/crypto.dir/crypto/cipher/e_rc4.cc.o
+     [exec] [155/409] Building CXX object CMakeFiles/crypto.dir/crypto/cipher/e_aeseax.cc.o
+     [exec] [156/409] Building CXX object CMakeFiles/crypto.dir/crypto/cpu_aarch64_openbsd.cc.o
+     [exec] [157/409] Building CXX object CMakeFiles/crypto.dir/crypto/cipher/get_cipher.cc.o
+     [exec] [158/409] Building CXX object CMakeFiles/crypto.dir/crypto/blake2/blake2.cc.o
+     [exec] [159/409] Building CXX object CMakeFiles/crypto.dir/crypto/bn/convert.cc.o
+     [exec] [160/409] Building CXX object CMakeFiles/crypto.dir/crypto/cpu_aarch64_sysreg.cc.o
+     [exec] [161/409] Building CXX object CMakeFiles/crypto.dir/crypto/bio/bio.cc.o
+     [exec] [162/409] Building CXX object CMakeFiles/crypto.dir/crypto/cipher/e_chacha20poly1305.cc.o
+     [exec] [163/409] Building CXX object CMakeFiles/crypto.dir/crypto/cpu_arm_linux.cc.o
+     [exec] [164/409] Building CXX object CMakeFiles/crypto.dir/crypto/cpu_aarch64_win.cc.o
+     [exec] [165/409] Building CXX object CMakeFiles/crypto.dir/crypto/cipher/e_rc2.cc.o
+     [exec] [166/409] Building CXX object CMakeFiles/crypto.dir/crypto/bytestring/ber.cc.o
+     [exec] [167/409] Building CXX object CMakeFiles/crypto.dir/crypto/cpu_arm_freebsd.cc.o
+     [exec] [168/409] Building CXX object CMakeFiles/crypto.dir/crypto/cpu_intel.cc.o
+     [exec] [169/409] Building CXX object CMakeFiles/crypto.dir/crypto/crypto.cc.o
+     [exec] [170/409] Building CXX object CMakeFiles/crypto.dir/crypto/cipher/e_tls.cc.o
+     [exec] [171/409] Building CXX object CMakeFiles/crypto.dir/crypto/cipher/tls_cbc.cc.o
+     [exec] [172/409] Building CXX object CMakeFiles/crypto.dir/crypto/dh/params.cc.o
+     [exec] [173/409] Building CXX object CMakeFiles/crypto.dir/crypto/ecdsa/ecdsa_p1363.cc.o
+     [exec] [174/409] Building CXX object CMakeFiles/crypto.dir/crypto/engine/engine.cc.o
+     [exec] [175/409] Building CXX object CMakeFiles/crypto.dir/crypto/ecdh/ecdh.cc.o
+     [exec] [176/409] Building CXX object CMakeFiles/crypto.dir/crypto/cipher/e_aesgcmsiv.cc.o
+     [exec] [177/409] Building CXX object CMakeFiles/crypto.dir/crypto/ec/ec_derive.cc.o
+     [exec] [178/409] Building CXX object CMakeFiles/crypto.dir/crypto/cms/cms.cc.o
+     [exec] [179/409] Building CXX object CMakeFiles/crypto.dir/crypto/curve25519/spake25519.cc.o
+     [exec] [180/409] Building CXX object CMakeFiles/crypto.dir/crypto/conf/conf.cc.o
+     [exec] [181/409] Building CXX object CMakeFiles/crypto.dir/crypto/digest/digest_extra.cc.o
+     [exec] [182/409] Building CXX object CMakeFiles/crypto.dir/crypto/fipsmodule/fips_shared_support.cc.o
+     [exec] [183/409] Building CXX object CMakeFiles/crypto.dir/crypto/dh/dh_asn1.cc.o
+     [exec] [184/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/p_ec.cc.o
+     [exec] [185/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/p_dh.cc.o
+     [exec] [186/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/p_ed25519.cc.o
+     [exec] [187/409] Building CXX object CMakeFiles/crypto.dir/crypto/ecdsa/ecdsa_asn1.cc.o
+     [exec] [188/409] Building CXX object CMakeFiles/crypto.dir/crypto/dsa/dsa.cc.o
+     [exec] [189/409] Building CXX object CMakeFiles/crypto.dir/crypto/ec/hash_to_curve.cc.o
+     [exec] [190/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/evp.cc.o
+     [exec] [191/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/p_dsa_asn1.cc.o
+     [exec] [192/409] Building CXX object CMakeFiles/crypto.dir/crypto/bytestring/cbb.cc.o
+     [exec] [193/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/p_hkdf.cc.o
+     [exec] [194/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/p_dh_asn1.cc.o
+     [exec] [195/409] Building CXX object CMakeFiles/crypto.dir/crypto/dsa/dsa_asn1.cc.o
+     [exec] [196/409] Building CXX object CMakeFiles/crypto.dir/crypto/err/err.cc.o
+     [exec] [197/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/pbkdf.cc.o
+     [exec] [198/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/p_ed25519_asn1.cc.o
+     [exec] [199/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/evp_ctx.cc.o
+     [exec] [200/409] Building CXX object CMakeFiles/crypto.dir/crypto/ec/ec_asn1.cc.o
+     [exec] [201/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/p_ec_asn1.cc.o
+     [exec] [202/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/p_x25519_asn1.cc.o
+     [exec] [203/409] Building CXX object CMakeFiles/crypto.dir/crypto/ex_data.cc.o
+     [exec] [204/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/sign.cc.o
+     [exec] [205/409] Building CXX object CMakeFiles/crypto.dir/crypto/fuzzer_mode.cc.o
+     [exec] [206/409] Building CXX object CMakeFiles/crypto.dir/crypto/bytestring/cbs.cc.o
+     [exec] [207/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/scrypt.cc.o
+     [exec] [208/409] Building CXX object CMakeFiles/crypto.dir/crypto/mlkem/mlkem.cc.o
+     [exec] [209/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/evp_asn1.cc.o
+     [exec] [210/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/print.cc.o
+     [exec] [211/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/p_rsa_asn1.cc.o
+     [exec] [212/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/p_x25519.cc.o
+     [exec] [213/409] Building CXX object CMakeFiles/crypto.dir/crypto/des/des.cc.o
+     [exec] [214/409] Building CXX object CMakeFiles/crypto.dir/crypto/evp/p_rsa.cc.o
+     [exec] [215/409] Building CXX object CMakeFiles/crypto.dir/crypto/obj/obj_xref.cc.o
+     [exec] [216/409] Building CXX object CMakeFiles/crypto.dir/crypto/mldsa/mldsa.cc.o
+     [exec] [217/409] Building CXX object CMakeFiles/crypto.dir/crypto/lhash/lhash.cc.o
+     [exec] [218/409] Building CXX object CMakeFiles/crypto.dir/crypto/md4/md4.cc.o
+     [exec] [219/409] Building CXX object CMakeFiles/crypto.dir/crypto/md5/md5.cc.o
+     [exec] [220/409] Building CXX object CMakeFiles/crypto.dir/crypto/poly1305/poly1305.cc.o
+     [exec] [221/409] Building CXX object CMakeFiles/crypto.dir/crypto/rand/getentropy.cc.o
+     [exec] [222/409] Building CXX object CMakeFiles/crypto.dir/crypto/poly1305/poly1305_arm.cc.o
+     [exec] [223/409] Building CXX object CMakeFiles/crypto.dir/crypto/pem/pem_x509.cc.o
+     [exec] [224/409] Building CXX object CMakeFiles/crypto.dir/crypto/pem/pem_oth.cc.o
+     [exec] [225/409] Building CXX object CMakeFiles/crypto.dir/crypto/rand/deterministic.cc.o
+     [exec] [226/409] Building CXX object CMakeFiles/crypto.dir/crypto/mem.cc.o
+     [exec] [227/409] Building CXX object CMakeFiles/crypto.dir/crypto/pem/pem_xaux.cc.o
+     [exec] [228/409] Building CXX object CMakeFiles/crypto.dir/crypto/rand/forkunsafe.cc.o
+     [exec] [229/409] Building CXX object CMakeFiles/crypto.dir/crypto/pem/pem_pkey.cc.o
+     [exec] [230/409] Building CXX object CMakeFiles/crypto.dir/crypto/pem/pem_pk8.cc.o
+     [exec] [231/409] Building CXX object CMakeFiles/crypto.dir/crypto/pem/pem_info.cc.o
+     [exec] [232/409] Building CXX object CMakeFiles/crypto.dir/crypto/rand/rand.cc.o
+     [exec] [233/409] Building CXX object CMakeFiles/crypto.dir/crypto/rand/fork_detect.cc.o
+     [exec] [234/409] Building CXX object CMakeFiles/crypto.dir/crypto/pkcs7/pkcs7.cc.o
+     [exec] [235/409] Building CXX object CMakeFiles/crypto.dir/crypto/rand/ios.cc.o
+     [exec] [236/409] Building CXX object CMakeFiles/crypto.dir/crypto/rand/trusty.cc.o
+     [exec] [237/409] Building CXX object CMakeFiles/crypto.dir/crypto/pem/pem_all.cc.o
+     [exec] [238/409] Building CXX object CMakeFiles/crypto.dir/crypto/rand/windows.cc.o
+     [exec] [239/409] Building CXX object CMakeFiles/crypto.dir/crypto/hpke/hpke.cc.o
+     [exec] [240/409] Building CXX object CMakeFiles/crypto.dir/crypto/obj/obj.cc.o
+     [exec] [241/409] Building CXX object CMakeFiles/crypto.dir/crypto/rc4/rc4.cc.o
+     [exec] [242/409] Building CXX object CMakeFiles/crypto.dir/crypto/pkcs8/p5_pbev2.cc.o
+     [exec] [243/409] Building CXX object CMakeFiles/crypto.dir/crypto/rand/passive.cc.o
+     [exec] [244/409] Building CXX object CMakeFiles/crypto.dir/crypto/rand/urandom.cc.o
+     [exec] [245/409] Building CXX object CMakeFiles/crypto.dir/crypto/sha/sha256.cc.o
+     [exec] [246/409] Building CXX object CMakeFiles/crypto.dir/crypto/rsa/rsa_extra.cc.o
+     [exec] [247/409] Building CXX object CMakeFiles/crypto.dir/crypto/rsa/rsa_print.cc.o
+     [exec] [248/409] Building CXX object CMakeFiles/crypto.dir/crypto/pool/pool.cc.o
+     [exec] [249/409] Building CXX object CMakeFiles/crypto.dir/crypto/refcount.cc.o
+     [exec] [250/409] Building CXX object CMakeFiles/crypto.dir/crypto/pkcs8/pkcs8.cc.o
+     [exec] [251/409] Building CXX object CMakeFiles/crypto.dir/crypto/sha/sha512.cc.o
+     [exec] [252/409] Building CXX object CMakeFiles/crypto.dir/crypto/sha/sha1.cc.o
+     [exec] [253/409] Building CXX object CMakeFiles/crypto.dir/crypto/pem/pem_lib.cc.o
+     [exec] [254/409] Building CXX object CMakeFiles/crypto.dir/crypto/thread.cc.o
+     [exec] [255/409] Building CXX object CMakeFiles/crypto.dir/crypto/slhdsa/slhdsa.cc.o
+     [exec] [256/409] Building CXX object CMakeFiles/crypto.dir/crypto/thread_none.cc.o
+     [exec] [257/409] Building CXX object CMakeFiles/crypto.dir/crypto/thread_win.cc.o
+     [exec] [258/409] Building CXX object CMakeFiles/crypto.dir/crypto/poly1305/poly1305_vec.cc.o
+     [exec] [259/409] Building CXX object CMakeFiles/crypto.dir/crypto/pkcs7/pkcs7_x509.cc.o
+     [exec] [260/409] Building CXX object CMakeFiles/crypto.dir/crypto/thread_pthread.cc.o
+     [exec] [261/409] Building CXX object CMakeFiles/crypto.dir/crypto/siphash/siphash.cc.o
+     [exec] [262/409] Building CXX object CMakeFiles/crypto.dir/crypto/kyber/kyber.cc.o
+     [exec] [263/409] Building CXX object CMakeFiles/crypto.dir/crypto/curve25519/curve25519_64_adx.cc.o
+     [exec] [264/409] Building CXX object CMakeFiles/crypto.dir/crypto/rsa/rsa_crypt.cc.o
+     [exec] [265/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/a_digest.cc.o
+     [exec] [266/409] Building CXX object CMakeFiles/crypto.dir/crypto/pkcs8/pkcs8_x509.cc.o
+     [exec] [267/409] Building CXX object CMakeFiles/crypto.dir/crypto/spake2plus/spake2plus.cc.o
+     [exec] [268/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/i2d_pr.cc.o
+     [exec] [269/409] Building CXX object CMakeFiles/crypto.dir/crypto/rsa/rsa_asn1.cc.o
+     [exec] [270/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/name_print.cc.o
+     [exec] [271/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/a_verify.cc.o
+     [exec] [272/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/a_sign.cc.o
+     [exec] [273/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/t_crl.cc.o
+     [exec] [274/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/rsa_pss.cc.o
+     [exec] [275/409] Building CXX object CMakeFiles/crypto.dir/crypto/stack/stack.cc.o
+     [exec] [276/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/t_x509a.cc.o
+     [exec] [277/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_akey.cc.o
+     [exec] [278/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/by_file.cc.o
+     [exec] [279/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_bcons.cc.o
+     [exec] [280/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_akeya.cc.o
+     [exec] [281/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/asn1_gen.cc.o
+     [exec] [282/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/t_x509.cc.o
+     [exec] [283/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/by_dir.cc.o
+     [exec] [284/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/t_req.cc.o
+     [exec] [285/409] Building CXX object CMakeFiles/crypto.dir/crypto/trust_token/trust_token.cc.o
+     [exec] [286/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_bitst.cc.o
+     [exec] [287/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/algorithm.cc.o
+     [exec] [288/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/policy.cc.o
+     [exec] [289/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_extku.cc.o
+     [exec] [290/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_cpols.cc.o
+     [exec] [291/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_genn.cc.o
+     [exec] [292/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_int.cc.o
+     [exec] [293/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_conf.cc.o
+     [exec] [294/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_alt.cc.o
+     [exec] [295/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_enum.cc.o
+     [exec] [296/409] Building CXX object CMakeFiles/crypto.dir/crypto/curve25519/curve25519.cc.o
+     [exec] [297/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_ia5.cc.o
+     [exec] [298/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_crld.cc.o
+     [exec] [299/409] Building CXX object CMakeFiles/crypto.dir/crypto/trust_token/voprf.cc.o
+     [exec] [300/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509.cc.o
+     [exec] [301/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_ocsp.cc.o
+     [exec] [302/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_pcons.cc.o
+     [exec] [303/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_info.cc.o
+     [exec] [304/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_skey.cc.o
+     [exec] [305/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509_def.cc.o
+     [exec] [306/409] Building CXX object CMakeFiles/crypto.dir/crypto/trust_token/pmbtoken.cc.o
+     [exec] [307/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_pmaps.cc.o
+     [exec] [308/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509_d2.cc.o
+     [exec] [309/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_prn.cc.o
+     [exec] [310/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_ncons.cc.o
+     [exec] [311/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509_cmp.cc.o
+     [exec] [312/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509_att.cc.o
+     [exec] [313/409] Building ASM object CMakeFiles/crypto.dir/crypto/curve25519/asm/x25519-asm-arm.S.o
+     [exec] [314/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_lib.cc.o
+     [exec] [315/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509_obj.cc.o
+     [exec] [316/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/aes128gcmsiv-x86_64-apple.S.o
+     [exec] [317/409] Building ASM object CMakeFiles/crypto.dir/crypto/poly1305/poly1305_arm_asm.S.o
+     [exec] [318/409] Building ASM object CMakeFiles/crypto.dir/crypto/hrss/asm/poly_rq_mul.S.o
+     [exec] [319/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509_req.cc.o
+     [exec] [320/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/aes128gcmsiv-x86_64-linux.S.o
+     [exec] [321/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/chacha-armv8-apple.S.o
+     [exec] [322/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_purp.cc.o
+     [exec] [323/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/chacha-armv4-linux.S.o
+     [exec] [324/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509_lu.cc.o
+     [exec] [325/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/chacha-armv8-win.S.o
+     [exec] [326/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/chacha-armv8-linux.S.o
+     [exec] [327/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/chacha-x86-apple.S.o
+     [exec] [328/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509rset.cc.o
+     [exec] [329/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/chacha-x86-linux.S.o
+     [exec] [330/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/chacha-x86_64-apple.S.o
+     [exec] [331/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/chacha20_poly1305_armv8-apple.S.o
+     [exec] [332/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/chacha20_poly1305_armv8-linux.S.o
+     [exec] [333/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/chacha-x86_64-linux.S.o
+     [exec] [334/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/chacha20_poly1305_armv8-win.S.o
+     [exec] [335/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/md5-586-linux.S.o
+     [exec] [336/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/md5-x86_64-linux.S.o
+     [exec] [337/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/chacha20_poly1305_x86_64-apple.S.o
+     [exec] [338/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/md5-586-apple.S.o
+     [exec] [339/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/md5-x86_64-apple.S.o
+     [exec] [340/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509_trs.cc.o
+     [exec] [341/409] Building ASM object CMakeFiles/crypto.dir/third_party/fiat/asm/fiat_curve25519_adx_square.S.o
+     [exec] [342/409] Building ASM object CMakeFiles/crypto.dir/third_party/fiat/asm/fiat_curve25519_adx_mul.S.o
+     [exec] [343/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509_ext.cc.o
+     [exec] [344/409] Building ASM object CMakeFiles/crypto.dir/gen/crypto/chacha20_poly1305_x86_64-linux.S.o
+     [exec] [345/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509_set.cc.o
+     [exec] [346/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509_txt.cc.o
+     [exec] [347/409] Building CXX object CMakeFiles/crypto.dir/gen/crypto/err_data.cc.o
+     [exec] [348/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509_v3.cc.o
+     [exec] [349/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509spki.cc.o
+     [exec] [350/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509cset.cc.o
+     [exec] [351/409] Building CXX object CMakeFiles/crypto.dir/crypto/hrss/hrss.cc.o
+     [exec] [352/409] Building CXX object CMakeFiles/crypto.dir/crypto/xwing/xwing.cc.o
+     [exec] [353/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x_crl.cc.o
+     [exec] [354/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x_spki.cc.o
+     [exec] [355/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x_sig.cc.o
+     [exec] [356/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x_req.cc.o
+     [exec] [357/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509_vpm.cc.o
+     [exec] [358/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509name.cc.o
+     [exec] [359/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x_exten.cc.o
+     [exec] [360/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x_attrib.cc.o
+     [exec] [361/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x_name.cc.o
+     [exec] [362/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x_algor.cc.o
+     [exec] [363/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x_x509a.cc.o
+     [exec] [364/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x_pubkey.cc.o
+     [exec] [365/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/v3_utl.cc.o
+     [exec] [366/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x_all.cc.o
+     [exec] [367/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x509_vfy.cc.o
+     [exec] [368/409] Building CXX object CMakeFiles/crypto.dir/crypto/x509/x_x509.cc.o
+     [exec] [369/409] Building CXX object CMakeFiles/ssl.dir/ssl/bio_ssl.cc.o
+     [exec] [370/409] Building CXX object CMakeFiles/ssl.dir/ssl/d1_pkt.cc.o
+     [exec] [371/409] Building CXX object CMakeFiles/ssl.dir/ssl/d1_srtp.cc.o
+     [exec] [372/409] Building CXX object CMakeFiles/ssl.dir/ssl/d1_lib.cc.o
+     [exec] [373/409] Building CXX object CMakeFiles/ssl.dir/ssl/dtls_method.cc.o
+     [exec] [374/409] Building CXX object CMakeFiles/ssl.dir/ssl/ssl_buffer.cc.o
+     [exec] [375/409] Building CXX object CMakeFiles/ssl.dir/ssl/s3_lib.cc.o
+     [exec] [376/409] Building CXX object CMakeFiles/ssl.dir/ssl/s3_pkt.cc.o
+     [exec] [377/409] Building CXX object CMakeFiles/ssl.dir/ssl/dtls_record.cc.o
+     [exec] [378/409] Building CXX object CMakeFiles/ssl.dir/ssl/ssl_aead_ctx.cc.o
+     [exec] [379/409] Building CXX object CMakeFiles/ssl.dir/ssl/handshake.cc.o
+     [exec] [380/409] Building CXX object CMakeFiles/ssl.dir/ssl/ssl_transcript.cc.o
+     [exec] [381/409] Building CXX object CMakeFiles/ssl.dir/ssl/ssl_stat.cc.o
+     [exec] [382/409] Building CXX object CMakeFiles/ssl.dir/ssl/ssl_asn1.cc.o
+     [exec] [383/409] Building CXX object CMakeFiles/ssl.dir/ssl/ssl_file.cc.o
+     [exec] [384/409] Building CXX object CMakeFiles/ssl.dir/ssl/ssl_cert.cc.o
+     [exec] [385/409] Building CXX object CMakeFiles/ssl.dir/ssl/d1_both.cc.o
+     [exec] [386/409] Building CXX object CMakeFiles/ssl.dir/ssl/ssl_versions.cc.o
+     [exec] [387/409] Building CXX object CMakeFiles/ssl.dir/ssl/s3_both.cc.o
+     [exec] [388/409] Building CXX object CMakeFiles/ssl.dir/ssl/encrypted_client_hello.cc.o
+     [exec] [389/409] Building CXX object CMakeFiles/ssl.dir/ssl/ssl_key_share.cc.o
+     [exec] [390/409] Building CXX object CMakeFiles/ssl.dir/ssl/handoff.cc.o
+     [exec] [391/409] Building CXX object CMakeFiles/ssl.dir/ssl/t1_enc.cc.o
+     [exec] [392/409] Building CXX object CMakeFiles/ssl.dir/ssl/ssl_cipher.cc.o
+     [exec] [393/409] Building CXX object CMakeFiles/ssl.dir/ssl/handshake_server.cc.o
+     [exec] [394/409] Building CXX object CMakeFiles/ssl.dir/ssl/ssl_privkey.cc.o
+     [exec] [395/409] Building CXX object CMakeFiles/ssl.dir/ssl/ssl_credential.cc.o
+     [exec] [396/409] Building CXX object CMakeFiles/ssl.dir/ssl/handshake_client.cc.o
+     [exec] [397/409] Building CXX object CMakeFiles/ssl.dir/ssl/tls13_both.cc.o
+     [exec] [398/409] Building CXX object CMakeFiles/ssl.dir/ssl/tls13_client.cc.o
+     [exec] [399/409] Building CXX object CMakeFiles/ssl.dir/ssl/tls_method.cc.o
+     [exec] [400/409] Building CXX object CMakeFiles/ssl.dir/ssl/tls_record.cc.o
+     [exec] [401/409] Building CXX object CMakeFiles/ssl.dir/ssl/tls13_enc.cc.o
+     [exec] [402/409] Building CXX object CMakeFiles/ssl.dir/ssl/ssl_x509.cc.o
+     [exec] [403/409] Building CXX object CMakeFiles/ssl.dir/ssl/ssl_session.cc.o
+     [exec] [404/409] Building CXX object CMakeFiles/ssl.dir/ssl/tls13_server.cc.o
+     [exec] [405/409] Building CXX object CMakeFiles/ssl.dir/ssl/ssl_lib.cc.o
+     [exec] [406/409] Building CXX object CMakeFiles/ssl.dir/ssl/extensions.cc.o
+     [exec] [407/409] Building CXX object CMakeFiles/fipsmodule.dir/crypto/fipsmodule/bcm.cc.o
+     [exec] [408/409] Linking CXX static library libcrypto.a
+     [exec] [409/409] Linking CXX static library libssl.a
+    [mkdir] Created dir: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/build
+     [copy] Copying 1 file to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/build
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/build-target/libssl.a to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/build/libssl.a
+     [copy] Copying 1 file to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/build
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/build-target/libcrypto.a to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/build/libcrypto.a
+     [copy] Copying 99 files to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/aead.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/aead.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/aes.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/aes.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/arm_arch.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/arm_arch.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/asm_base.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/asm_base.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/asn1.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/asn1.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/asn1_mac.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/asn1_mac.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/asn1t.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/asn1t.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/base.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/base.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/base64.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/base64.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/bcm_public.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/bcm_public.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/bio.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/bio.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/blake2.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/blake2.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/blowfish.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/blowfish.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/bn.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/bn.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/buf.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/buf.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/buffer.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/buffer.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/bytestring.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/bytestring.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/cast.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/cast.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/chacha.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/chacha.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/cipher.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/cipher.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/cmac.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/cmac.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/cms.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/cms.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/conf.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/conf.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/cpu.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/cpu.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/crypto.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/crypto.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/ctrdrbg.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/ctrdrbg.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/curve25519.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/curve25519.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/des.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/des.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/dh.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/dh.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/digest.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/digest.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/dsa.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/dsa.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/dtls1.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/dtls1.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/e_os2.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/e_os2.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/ec.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/ec.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/ec_key.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/ec_key.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/ecdh.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/ecdh.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/ecdsa.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/ecdsa.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/engine.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/engine.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/err.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/err.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/evp.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/evp.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/evp_errors.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/evp_errors.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/ex_data.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/ex_data.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/hkdf.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/hkdf.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/hmac.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/hmac.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/hpke.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/hpke.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/hrss.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/hrss.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/is_boringssl.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/is_boringssl.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/kdf.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/kdf.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/lhash.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/lhash.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/md4.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/md4.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/md5.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/md5.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/mem.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/mem.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/mldsa.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/mldsa.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/mlkem.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/mlkem.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/nid.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/nid.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/obj.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/obj.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/obj_mac.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/obj_mac.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/objects.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/objects.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/opensslconf.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/opensslconf.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/opensslv.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/opensslv.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/ossl_typ.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/ossl_typ.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/pem.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/pem.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/pkcs12.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/pkcs12.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/pkcs7.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/pkcs7.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/pkcs8.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/pkcs8.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/pki/certificate.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/pki/certificate.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/pki/ocsp.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/pki/ocsp.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/pki/signature_verify_cache.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/pki/signature_verify_cache.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/pki/verify.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/pki/verify.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/pki/verify_error.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/pki/verify_error.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/poly1305.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/poly1305.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/pool.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/pool.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/posix_time.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/posix_time.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/rand.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/rand.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/rc4.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/rc4.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/ripemd.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/ripemd.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/rsa.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/rsa.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/safestack.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/safestack.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/service_indicator.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/service_indicator.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/sha.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/sha.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/sha2.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/sha2.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/siphash.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/siphash.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/slhdsa.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/slhdsa.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/span.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/span.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/srtp.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/srtp.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/ssl.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/ssl.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/ssl3.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/ssl3.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/stack.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/stack.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/target.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/target.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/thread.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/thread.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/time.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/time.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/tls1.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/tls1.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/trust_token.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/trust_token.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/type_check.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/type_check.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/x509.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/x509.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/x509_vfy.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/x509_vfy.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/x509v3.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/x509v3.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/x509v3_errors.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/x509v3_errors.h
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source/include/openssl/xwing.h to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include/openssl/xwing.h
+   [delete] Deleting directory /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl-source
+[INFO] Executed tasks
+[INFO] 
+[INFO] --- antrun:1.8:run (build-quiche) @ netty-codec-native-quic ---
+[INFO] Executing tasks
+
+main:
+     [echo] Quiche was already cloned, skipping the clone step.
+     [echo] Building Quiche
+     [exec]    Compiling proc-macro2 v1.0.107
+     [exec]    Compiling quote v1.0.47
+     [exec]    Compiling unicode-ident v1.0.24
+     [exec]    Compiling serde_core v1.0.229
+     [exec]    Compiling ident_case v1.0.1
+     [exec]    Compiling strsim v0.11.1
+     [exec]    Compiling find-msvc-tools v0.1.12
+     [exec]    Compiling serde v1.0.229
+     [exec]    Compiling shlex v2.0.1
+     [exec]    Compiling autocfg v1.5.1
+     [exec]    Compiling zmij v1.0.23
+     [exec]    Compiling serde_json v1.0.151
+     [exec]    Compiling equivalent v1.0.2
+     [exec]    Compiling hashbrown v0.17.1
+     [exec]    Compiling libm v0.2.16
+     [exec]    Compiling memchr v2.8.3
+     [exec]    Compiling cdylib-link-lines v0.1.5
+     [exec]    Compiling libc v0.2.189
+     [exec]    Compiling itoa v1.0.18
+     [exec]    Compiling once_cell v1.21.4
+     [exec]    Compiling octets v0.3.4 (/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/quiche-source/octets)
+     [exec]    Compiling slab v0.4.12
+     [exec]    Compiling log v0.4.34
+     [exec]    Compiling either v1.18.0
+     [exec]    Compiling cc v1.4.5
+     [exec]    Compiling memoffset v0.9.1
+     [exec]    Compiling intrusive-collections v0.9.7
+     [exec]    Compiling indexmap v2.14.2
+     [exec]    Compiling syn v3.0.5
+     [exec]    Compiling syn v2.0.119
+     [exec]    Compiling cmake v0.1.58
+     [exec]    Compiling quiche v0.25.0 (/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/quiche-source/quiche)
+     [exec]    Compiling enum_dispatch v0.3.13
+     [exec]    Compiling darling_core v0.24.1
+     [exec]    Compiling serde_derive v1.0.229
+     [exec]    Compiling darling_macro v0.24.1
+     [exec]    Compiling darling v0.24.1
+     [exec]    Compiling serde_with_macros v3.23.0
+     [exec]    Compiling serde_with v3.23.0
+     [exec]    Compiling smallvec v1.16.0
+     [exec]    Compiling qlog v0.16.0 (/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/quiche-source/qlog)
+     [exec]     Finished `release` profile [optimized + debuginfo] target(s) in 9.32s
+    [mkdir] Created dir: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/quiche
+     [copy] Copying 1 file to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/quiche/build
+     [copy] Copying 1 file to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/quiche/quiche/include
+   [delete] Deleting directory /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/quiche-source
+[INFO] Executed tasks
+[INFO] 
+[INFO] --- antrun:1.8:run (copy-src) @ netty-codec-native-quic ---
+[INFO] Executing tasks
+
+main:
+     [copy] Copying 4 files to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/generated-sources/c
+     [copy] Copying 2 files to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/generated-sources/c
+[INFO] Executed tasks
+[INFO] 
+[INFO] --- antrun:1.8:run (setup-template) @ netty-codec-native-quic ---
+[INFO] Executing tasks
+
+main:
+     [copy] Copying 1 file to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/template/m4
+     [copy] Copying /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/main/native-package/m4/custom.m4.template to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/template/m4/custom.m4
+[INFO] Executed tasks
+[INFO] 
+[INFO] --- resources:3.0.1:resources (default-resources) @ netty-codec-native-quic ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Copying 4 resources
+[INFO] 
+[INFO] --- compiler:3.14.0:compile (default-compile) @ netty-codec-native-quic ---
+[WARNING]  Parameter 'compilerVersion' (user property 'maven.compiler.compilerVersion') is deprecated: This parameter is no longer evaluated by the underlying compilers, instead the actual version of the javac binary is automatically retrieved.
+[WARNING]  Parameter 'optimize' (user property 'maven.compiler.optimize') is deprecated: This property is a no-op in javac.
+[INFO] Recompiling the module because of changed dependency.
+[INFO] 
+[INFO] --- forbiddenapis:2.2:check (check-forbidden-apis) @ netty-codec-native-quic ---
+[WARNING]  Parameter 'internalRuntimeForbidden' is deprecated: Use <a href="bundled-signatures.html">bundled signatures</a> {@code "jdk-non-portable"} or {@code "jdk-internal"} instead.
+[INFO] Skipping forbidden-apis checks.
+[INFO] 
+[INFO] --- bundle:5.1.8:manifest (generate-manifest) @ netty-codec-native-quic ---
+[INFO] No MANIFEST.MF file found, generating manifest.
+[WARNING] Manifest ai.pipestream.transport:netty-codec-native-quic:jar:4.2.17.Final-pipestream.4 : Unused Export-Package instructions: [io.netty.*] 
+[WARNING] Manifest ai.pipestream.transport:netty-codec-native-quic:jar:4.2.17.Final-pipestream.4 : Unused Import-Package instructions: [sun.net.dns.*, sun.misc.*, sun.security.*] 
+[INFO] Writing manifest: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/classes/META-INF/MANIFEST.MF
+[INFO] 
+[INFO] --- bundle:5.1.8:manifest (native-manifest) @ netty-codec-native-quic ---
+[INFO] No MANIFEST.MF file found, generating manifest.
+[WARNING] Manifest ai.pipestream.transport:netty-codec-native-quic:jar:4.2.17.Final-pipestream.4 : Unused Export-Package instructions: [ai.pipestream.transport.*] 
+[INFO] Writing manifest: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/linux-x86_64/MANIFEST.MF
+[INFO] 
+[INFO] --- hawtjni:1.18:generate (generate-native-lib) @ netty-codec-native-quic ---
+[INFO] executing: /bin/sh -c './autogen.sh'
+[INFO] auto reconf...
+[INFO] libtoolize: putting auxiliary files in AC_CONFIG_AUX_DIR, 'autotools'.
+[INFO] libtoolize: copying file 'autotools/ltmain.sh'
+[INFO] libtoolize: putting macros in AC_CONFIG_MACRO_DIRS, 'm4'.
+[INFO] libtoolize: copying file 'm4/libtool.m4'
+[INFO] libtoolize: copying file 'm4/ltoptions.m4'
+[INFO] libtoolize: copying file 'm4/ltsugar.m4'
+[INFO] libtoolize: copying file 'm4/ltversion.m4'
+[INFO] libtoolize: copying file 'm4/lt~obsolete.m4'
+[INFO] configure.ac:28: warning: The macro 'AC_CANONICAL_SYSTEM' is obsolete.
+[INFO] configure.ac:28: You should run autoupdate.
+[INFO] ./lib/autoconf/general.m4:2081: AC_CANONICAL_SYSTEM is expanded from...
+[INFO] configure.ac:28: the top level
+[INFO] configure.ac:37: warning: The macro 'AC_PROG_LIBTOOL' is obsolete.
+[INFO] configure.ac:37: You should run autoupdate.
+[INFO] m4/libtool.m4:100: AC_PROG_LIBTOOL is expanded from...
+[INFO] configure.ac:37: the top level
+[INFO] configure.ac:36: installing 'autotools/ar-lib'
+[INFO] configure.ac:33: installing 'autotools/compile'
+[INFO] configure.ac:27: installing 'autotools/config.guess'
+[INFO] configure.ac:27: installing 'autotools/config.sub'
+[INFO] configure.ac:34: installing 'autotools/install-sh'
+[INFO] configure.ac:58: installing 'autotools/missing'
+[INFO] 
+[INFO] --- module-info:2.2:generate (module-info) @ netty-codec-native-quic ---
+[INFO] Using module name "io.netty.codec.quic.linux.x86_64"
+[INFO] Using module version "4.2.17.Final-pipestream.4"
+[INFO] Automatically adding mandatory "java.base" dependency
+[INFO] Wrote module descriptor "/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/classes/META-INF/versions/11/module-info.class"
+[INFO] 
+[INFO] --- module-info:2.2:generate (fallback-module-info) @ netty-codec-native-quic ---
+[INFO] Using module name "io.netty.codec.quic"
+[INFO] Using module version "4.2.17.Final-pipestream.4"
+[INFO] Automatically adding mandatory "java.base" dependency
+[INFO] Wrote module descriptor "/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/fallback-classes/META-INF/versions/11/module-info.class"
+[INFO] 
+[INFO] --- hawtjni:1.18:build (generate-native-lib) @ netty-codec-native-quic ---
+[INFO] executing: /bin/sh -c './configure' '--disable-ccache' '--prefix=/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/native-build/target' '--libdir=/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/native-build/target/lib' '--libdir=/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/native-build/target/lib'
+[INFO] configure: WARNING: unrecognized options: --disable-ccache
+[INFO] checking build system type... x86_64-pc-linux-gnu
+[INFO] checking host system type... x86_64-pc-linux-gnu
+[INFO] checking target system type... x86_64-pc-linux-gnu
+[INFO] checking for gcc... gcc
+[INFO] checking whether the C compiler works... yes
+[INFO] checking for C compiler default output file name... a.out
+[INFO] checking for suffix of executables... 
+[INFO] checking whether we are cross compiling... no
+[INFO] checking for suffix of object files... o
+[INFO] checking whether the compiler supports GNU C... yes
+[INFO] checking whether gcc accepts -g... yes
+[INFO] checking for gcc option to enable C11 features... none needed
+[INFO] checking whether gcc understands -c and -o together... yes
+[INFO] checking for a BSD-compatible install... /usr/bin/install -c
+[INFO] checking for ar... ar
+[INFO] checking the archiver (ar) interface... ar
+[INFO] checking how to print strings... printf
+[INFO] checking for a sed that does not truncate output... /usr/bin/sed
+[INFO] checking for grep that handles long lines and -e... /usr/bin/grep
+[INFO] checking for egrep... /usr/bin/grep -E
+[INFO] checking for fgrep... /usr/bin/grep -F
+[INFO] checking for ld used by gcc... /usr/bin/x86_64-linux-gnu-ld
+[INFO] checking if the linker (/usr/bin/x86_64-linux-gnu-ld) is GNU ld... yes
+[INFO] checking for BSD- or MS-compatible name lister (nm)... /home/linuxbrew/.linuxbrew/bin/nm -B
+[INFO] checking the name lister (/home/linuxbrew/.linuxbrew/bin/nm -B) interface... BSD nm
+[INFO] checking whether ln -s works... yes
+[INFO] checking the maximum length of command line arguments... 1572864
+[INFO] checking how to convert x86_64-pc-linux-gnu file names to x86_64-pc-linux-gnu format... func_convert_file_noop
+[INFO] checking how to convert x86_64-pc-linux-gnu file names to toolchain format... func_convert_file_noop
+[INFO] checking for /usr/bin/x86_64-linux-gnu-ld option to reload object files... -r
+[INFO] checking for file... file
+[INFO] checking for objdump... objdump
+[INFO] checking how to recognize dependent libraries... pass_all
+[INFO] checking for dlltool... dlltool
+[INFO] checking how to associate runtime and link libraries... printf %s\n
+[INFO] checking for ranlib... ranlib
+[INFO] checking for archiver @FILE support... @
+[INFO] checking for strip... strip
+[INFO] checking for gawk... gawk
+[INFO] checking command to parse /home/linuxbrew/.linuxbrew/bin/nm -B output from gcc object... ok
+[INFO] checking for sysroot... no
+[INFO] checking for a working dd... /usr/bin/dd
+[INFO] checking how to truncate binary pipes... /usr/bin/dd bs=4096 count=1
+[INFO] checking for mt... mt
+[INFO] checking if mt is a manifest tool... no
+[INFO] checking for stdio.h... yes
+[INFO] checking for stdlib.h... yes
+[INFO] checking for string.h... yes
+[INFO] checking for inttypes.h... yes
+[INFO] checking for stdint.h... yes
+[INFO] checking for strings.h... yes
+[INFO] checking for sys/stat.h... yes
+[INFO] checking for sys/types.h... yes
+[INFO] checking for unistd.h... yes
+[INFO] checking for dlfcn.h... yes
+[INFO] checking for objdir... .libs
+[INFO] checking if gcc supports -fno-rtti -fno-exceptions... no
+[INFO] checking for gcc option to produce PIC... -fPIC -DPIC
+[INFO] checking if gcc PIC flag -fPIC -DPIC works... yes
+[INFO] checking if gcc static flag -static works... yes
+[INFO] checking if gcc supports -c -o file.o... yes
+[INFO] checking if gcc supports -c -o file.o... (cached) yes
+[INFO] checking whether the gcc linker (/usr/bin/x86_64-linux-gnu-ld -m elf_x86_64) supports shared libraries... yes
+[INFO] checking whether -lc should be explicitly linked in... no
+[INFO] checking dynamic linker characteristics... GNU/Linux ld.so
+[INFO] checking how to hardcode library paths into programs... immediate
+[INFO] checking whether stripping libraries is possible... yes
+[INFO] checking if libtool supports shared libraries... yes
+[INFO] checking whether to build shared libraries... yes
+[INFO] checking whether to build static libraries... no
+[INFO] configure: JAVA_HOME was set, checking to see if it's a JDK we can use...
+[INFO] checking if '/home/krickert/.sdkman/candidates/java/current' is a JDK... yes
+[INFO] checking whether sleep supports fractional seconds... yes
+[INFO] checking filesystem timestamp resolution... 0.01
+[INFO] checking whether build environment is sane... yes
+[INFO] checking for a race-free mkdir -p... /usr/bin/mkdir -p
+[INFO] checking whether make sets $(MAKE)... yes
+[INFO] checking whether make supports nested variables... yes
+[INFO] checking xargs -n works... yes
+[INFO] checking whether UID '1000' is supported by ustar format... yes
+[INFO] checking whether GID '1000' is supported by ustar format... yes
+[INFO] checking how to create a ustar tar archive... gnutar
+[INFO] checking that generated files are newer than configure... done
+[INFO] configure: creating ./config.status
+[INFO] config.status: creating Makefile
+[INFO] config.status: creating src/config.h
+[INFO] config.status: executing libtool commands
+[INFO] configure: WARNING: unrecognized options: --disable-ccache
+[INFO] 
+[INFO]   (netty_quiche42_pipestream_linux_x86_64) version 4.2.17.Final-pipestream.4
+[INFO]   Prefix.........: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/native-build/target
+[INFO]   C Compiler.....: gcc -g -O2 -std=gnu99 -fvisibility=hidden -Werror -fno-omit-frame-pointer -Wunused -Wno-unused-value -O3 -I/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include -I/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/quiche/quiche/include -O3 -fno-omit-frame-pointer -I/home/krickert/.sdkman/candidates/java/current/include -I/home/krickert/.sdkman/candidates/java/current/include/linux
+[INFO]   Linker.........: /usr/bin/x86_64-linux-gnu-ld -m elf_x86_64  -Wl,--exclude-libs,ALL -L/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/build -lssl -lcrypto -L/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/quiche/build -lquiche -static-libstdc++ -l:libstdc++.a -Wl,--strip-debug -Wl,--exclude-libs,ALL -Wl,-lrt  -release 4.2.17.Final-pipestream.4 
+[INFO] 
+[INFO] executing: /bin/sh -c 'make' 'install'
+[INFO] /bin/bash ./libtool  --tag=CC   --mode=compile gcc -DHAVE_CONFIG_H -I. -I./src     -g -O2 -std=gnu99 -fvisibility=hidden -Werror -fno-omit-frame-pointer -Wunused -Wno-unused-value -O3 -I/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include -I/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/quiche/quiche/include -O3 -fno-omit-frame-pointer -I/home/krickert/.sdkman/candidates/java/current/include -I/home/krickert/.sdkman/candidates/java/current/include/linux -c -o src/netty_quic_boringssl.lo src/netty_quic_boringssl.c
+[INFO] libtool: compile:  gcc -DHAVE_CONFIG_H -I. -I./src -g -O2 -std=gnu99 -fvisibility=hidden -Werror -fno-omit-frame-pointer -Wunused -Wno-unused-value -O3 -I/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include -I/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/quiche/quiche/include -O3 -fno-omit-frame-pointer -I/home/krickert/.sdkman/candidates/java/current/include -I/home/krickert/.sdkman/candidates/java/current/include/linux -c src/netty_quic_boringssl.c  -fPIC -DPIC -o src/.libs/netty_quic_boringssl.o
+[INFO] /bin/bash ./libtool  --tag=CC   --mode=compile gcc -DHAVE_CONFIG_H -I. -I./src     -g -O2 -std=gnu99 -fvisibility=hidden -Werror -fno-omit-frame-pointer -Wunused -Wno-unused-value -O3 -I/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include -I/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/quiche/quiche/include -O3 -fno-omit-frame-pointer -I/home/krickert/.sdkman/candidates/java/current/include -I/home/krickert/.sdkman/candidates/java/current/include/linux -c -o src/netty_quic_quiche.lo src/netty_quic_quiche.c
+[INFO] libtool: compile:  gcc -DHAVE_CONFIG_H -I. -I./src -g -O2 -std=gnu99 -fvisibility=hidden -Werror -fno-omit-frame-pointer -Wunused -Wno-unused-value -O3 -I/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include -I/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/quiche/quiche/include -O3 -fno-omit-frame-pointer -I/home/krickert/.sdkman/candidates/java/current/include -I/home/krickert/.sdkman/candidates/java/current/include/linux -c src/netty_quic_quiche.c  -fPIC -DPIC -o src/.libs/netty_quic_quiche.o
+[INFO] /bin/bash ./libtool  --tag=CC   --mode=compile gcc -DHAVE_CONFIG_H -I. -I./src     -g -O2 -std=gnu99 -fvisibility=hidden -Werror -fno-omit-frame-pointer -Wunused -Wno-unused-value -O3 -I/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include -I/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/quiche/quiche/include -O3 -fno-omit-frame-pointer -I/home/krickert/.sdkman/candidates/java/current/include -I/home/krickert/.sdkman/candidates/java/current/include/linux -c -o src/netty_jni_util.lo src/netty_jni_util.c
+[INFO] libtool: compile:  gcc -DHAVE_CONFIG_H -I. -I./src -g -O2 -std=gnu99 -fvisibility=hidden -Werror -fno-omit-frame-pointer -Wunused -Wno-unused-value -O3 -I/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include -I/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/quiche/quiche/include -O3 -fno-omit-frame-pointer -I/home/krickert/.sdkman/candidates/java/current/include -I/home/krickert/.sdkman/candidates/java/current/include/linux -c src/netty_jni_util.c  -fPIC -DPIC -o src/.libs/netty_jni_util.o
+[INFO] /bin/bash ./libtool  --tag=CC   --mode=link gcc  -g -O2 -std=gnu99 -fvisibility=hidden -Werror -fno-omit-frame-pointer -Wunused -Wno-unused-value -O3 -I/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/include -I/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/quiche/quiche/include -O3 -fno-omit-frame-pointer -I/home/krickert/.sdkman/candidates/java/current/include -I/home/krickert/.sdkman/candidates/java/current/include/linux  -Wl,--exclude-libs,ALL -L/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/build -lssl -lcrypto -L/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/quiche/build -lquiche -static-libstdc++ -l:libstdc++.a -Wl,--strip-debug -Wl,--exclude-libs,ALL -Wl,-lrt  -release 4.2.17.Final-pipestream.4 -o libnetty_quiche42_pipestream_linux_x86_64.la -rpath /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/native-build/target/lib src/netty_quic_boringssl.lo src/netty_quic_quiche.lo src/netty_jni_util.lo  
+[INFO] libtool: link: gcc -shared  -fPIC -DPIC  src/.libs/netty_quic_boringssl.o src/.libs/netty_quic_quiche.o src/.libs/netty_jni_util.o   -L/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/boringssl/build -lssl -lcrypto -L/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/quiche/build -lquiche -l:libstdc++.a  -g -O2 -Werror -O3 -O3 -Wl,--exclude-libs -Wl,ALL -static-libstdc++ -Wl,--strip-debug -Wl,--exclude-libs -Wl,ALL -Wl,-lrt   -Wl,-soname -Wl,libnetty_quiche42_pipestream_linux_x86_64-4.2.17.Final-pipestream.4.so -o .libs/libnetty_quiche42_pipestream_linux_x86_64-4.2.17.Final-pipestream.4.so
+[INFO] libtool: link: (cd ".libs" && rm -f "libnetty_quiche42_pipestream_linux_x86_64.so" && ln -s "libnetty_quiche42_pipestream_linux_x86_64-4.2.17.Final-pipestream.4.so" "libnetty_quiche42_pipestream_linux_x86_64.so")
+[INFO] libtool: link: ( cd ".libs" && rm -f "libnetty_quiche42_pipestream_linux_x86_64.la" && ln -s "../libnetty_quiche42_pipestream_linux_x86_64.la" "libnetty_quiche42_pipestream_linux_x86_64.la" )
+[INFO] make[1]: Entering directory '/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/native-build'
+[INFO]  /usr/bin/mkdir -p '/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/native-build/target/lib'
+[INFO]  /bin/bash ./libtool   --mode=install /usr/bin/install -c   libnetty_quiche42_pipestream_linux_x86_64.la '/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/native-build/target/lib'
+[INFO] libtool: install: /usr/bin/install -c .libs/libnetty_quiche42_pipestream_linux_x86_64-4.2.17.Final-pipestream.4.so /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/native-build/target/lib/libnetty_quiche42_pipestream_linux_x86_64-4.2.17.Final-pipestream.4.so
+[INFO] libtool: install: (cd /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/native-build/target/lib && { ln -s -f libnetty_quiche42_pipestream_linux_x86_64-4.2.17.Final-pipestream.4.so libnetty_quiche42_pipestream_linux_x86_64.so || { rm -f libnetty_quiche42_pipestream_linux_x86_64.so && ln -s libnetty_quiche42_pipestream_linux_x86_64-4.2.17.Final-pipestream.4.so libnetty_quiche42_pipestream_linux_x86_64.so; }; })
+[INFO] libtool: install: /usr/bin/install -c .libs/libnetty_quiche42_pipestream_linux_x86_64.lai /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/native-build/target/lib/libnetty_quiche42_pipestream_linux_x86_64.la
+[INFO] libtool: finish: PATH="/home/krickert/.local/bin:/home/krickert/.local/bin:/home/krickert/.local/bin:/home/krickert/.kimi-code/bin:/home/krickert/.grok/bin:/home/krickert/.bun/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/home/krickert/.local/bin:/home/krickert/.local/bin:/home/krickert/.local/bin:/home/krickert/.kimi-code/bin:/home/krickert/.grok/bin:/home/krickert/.bun/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/home/krickert/.local/bin:/home/krickert/.nvm/versions/node/v24.16.0/bin:/home/krickert/.sdkman/candidates/quarkus/current/bin:/home/krickert/.sdkman/candidates/maven/current/bin:/home/krickert/.sdkman/candidates/java/current/bin:/home/krickert/.sdkman/candidates/gradle/current/bin:/home/krickert/.local/bin:/home/krickert/.local/bin:/home/krickert/.local/bin:/home/krickert/.local/bin:/home/krickert/.local/bin:/home/krickert/.cargo/bin:/home/krickert/.local/bin:/home/krickert/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/snap/bin:/home/krickert/.jbcontext/bin:/home/krickert/.jbcontext/bin:/home/krickert/.jbcontext/bin:/home/krickert/.jbcontext/bin:/home/krickert/.jbcontext/bin:/home/krickert/.jbcontext/bin:/home/krickert/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin:/home/krickert/.claude/plugins/cache/cloudflare/cloudflare/1.0.0/bin:/sbin" ldconfig -n /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/native-build/target/lib
+[INFO] ----------------------------------------------------------------------
+[INFO] Libraries have been installed in:
+[INFO]    /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/native-build/target/lib
+[INFO] 
+[INFO] If you ever happen to want to link against installed libraries
+[INFO] in a given directory, LIBDIR, you must either use libtool, and
+[INFO] specify the full pathname of the library, or use the '-LLIBDIR'
+[INFO] flag during linking and do at least one of the following:
+[INFO]    - add LIBDIR to the 'LD_LIBRARY_PATH' environment variable
+[INFO]      during execution
+[INFO]    - add LIBDIR to the 'LD_RUN_PATH' environment variable
+[INFO]      during linking
+[INFO]    - use the '-Wl,-rpath -Wl,LIBDIR' linker flag
+[INFO]    - have your system administrator add LIBDIR to '/etc/ld.so.conf'
+[INFO] 
+[INFO] See any operating system documentation about shared libraries for
+[INFO] more information, such as the ld(1) and ld.so(8) manual pages.
+[INFO] ----------------------------------------------------------------------
+[INFO] make[1]: Nothing to be done for 'install-data-am'.
+[INFO] make[1]: Leaving directory '/work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/native-build'
+[INFO] Adding test resource root: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/native-lib-only
+[INFO] 
+[INFO] --- resources:3.0.1:testResources (default-testResources) @ netty-codec-native-quic ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Copying 3 resources
+[INFO] Copying 0 resource
+[INFO] 
+[INFO] --- antrun:1.8:run (copy-native-lib-and-license) @ netty-codec-native-quic ---
+[INFO] Executing tasks
+
+main:
+     [copy] Copying 1 file to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/classes
+     [copy] Copying 1 file to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/classes/META-INF
+     [copy] Copying 1 file to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/classes/META-INF
+     [copy] Copying 32 files to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/classes/META-INF/license
+[INFO] Executed tasks
+[INFO] 
+[INFO] --- antrun:1.8:run (copy-to-native-output) @ netty-codec-native-quic ---
+[INFO] Executing tasks
+
+main:
+     [copy] Copying 6 files to /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/fallback-classes
+[INFO] Executed tasks
+[INFO] 
+[INFO] --- compiler:3.14.0:testCompile (default-testCompile) @ netty-codec-native-quic ---
+[WARNING]  Parameter 'compilerVersion' (user property 'maven.compiler.compilerVersion') is deprecated: This parameter is no longer evaluated by the underlying compilers, instead the actual version of the javac binary is automatically retrieved.
+[WARNING]  Parameter 'optimize' (user property 'maven.compiler.optimize') is deprecated: This property is a no-op in javac.
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 43 source files with javac [forked debug deprecation release 8] to target/test-classes
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicTestUtils.java:[33,32] [deprecation] SelfSignedCertificate in io.netty.handler.ssl.util has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/test/java/io/netty/handler/codec/quic/example/QuicServerExample.java:[30,32] [deprecation] SelfSignedCertificate in io.netty.handler.ssl.util has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/test/java/io/netty/handler/codec/quic/example/QuicServerSoReusePortExample.java:[31,32] [deprecation] SelfSignedCertificate in io.netty.handler.ssl.util has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/test/java/io/netty/handler/codec/quic/example/QuicServerZeroRTTExample.java:[33,32] [deprecation] SelfSignedCertificate in io.netty.handler.ssl.util has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicChannelConnectTest.java:[254,20] [deprecation] connectionAddress(QuicConnectionAddress) in QuicChannelBootstrap has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicChannelDatagramTest.java:[260,45] [deprecation] MAX_MESSAGES_PER_READ in ChannelOption has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicTestUtils.java:[43,17] [deprecation] SelfSignedCertificate in io.netty.handler.ssl.util has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicTestUtils.java:[48,8] [deprecation] SelfSignedCertificate in io.netty.handler.ssl.util has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicTestUtils.java:[50,23] [deprecation] SelfSignedCertificate in io.netty.handler.ssl.util has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicTestUtils.java:[94,41] [deprecation] RCVBUF_ALLOCATOR in ChannelOption has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/test/java/io/netty/handler/codec/quic/QuicTestUtils.java:[97,41] [deprecation] RCVBUF_ALLOCATOR in ChannelOption has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/test/java/io/netty/handler/codec/quic/example/QuicServerExample.java:[51,8] [deprecation] SelfSignedCertificate in io.netty.handler.ssl.util has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/test/java/io/netty/handler/codec/quic/example/QuicServerExample.java:[51,58] [deprecation] SelfSignedCertificate in io.netty.handler.ssl.util has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/test/java/io/netty/handler/codec/quic/example/QuicServerSoReusePortExample.java:[57,8] [deprecation] SelfSignedCertificate in io.netty.handler.ssl.util has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/test/java/io/netty/handler/codec/quic/example/QuicServerSoReusePortExample.java:[57,58] [deprecation] SelfSignedCertificate in io.netty.handler.ssl.util has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/test/java/io/netty/handler/codec/quic/example/QuicServerZeroRTTExample.java:[50,8] [deprecation] SelfSignedCertificate in io.netty.handler.ssl.util has been deprecated
+[WARNING] /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/src/test/java/io/netty/handler/codec/quic/example/QuicServerZeroRTTExample.java:[50,58] [deprecation] SelfSignedCertificate in io.netty.handler.ssl.util has been deprecated
+[INFO] 
+[INFO] --- forbiddenapis:2.2:testCheck (check-forbidden-test-apis) @ netty-codec-native-quic ---
+[WARNING]  Parameter 'internalRuntimeForbidden' is deprecated: Use <a href="bundled-signatures.html">bundled signatures</a> {@code "jdk-non-portable"} or {@code "jdk-internal"} instead.
+[INFO] Skipping forbidden-apis checks.
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ netty-codec-native-quic ---
+[INFO] Tests will run in random order. To reproduce ordering use flag -Dsurefire.runOrder.random.seed=189403716040231
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running io.netty.handler.codec.quic.QuicStreamChannelCloseTest
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::loadLibrary has been called by io.netty.util.internal.NativeLibraryUtil in an unnamed module (file:/work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository/io/netty/netty-common/4.2.17.Final/netty-common-4.2.17.Final.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+[INFO] Tests run: 24, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.999 s -- in io.netty.handler.codec.quic.QuicStreamChannelCloseTest
+[INFO] Running io.netty.handler.codec.quic.QuicStreamChannelCreationTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.042 s -- in io.netty.handler.codec.quic.QuicStreamChannelCreationTest
+[INFO] Running io.netty.handler.codec.quic.QuicConnectionAddressTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in io.netty.handler.codec.quic.QuicConnectionAddressTest
+[INFO] Running io.netty.handler.codec.quic.QuicChannelConnectTest
+01:12:31.161 [multiThreadIoEventLoopGroup-2-1] WARN  i.n.channel.DefaultChannelPipeline - An exceptionCaught() event was fired, and it reached at the tail of the pipeline. It usually means the last handler in the pipeline did not handle the exception.
+javax.net.ssl.SSLHandshakeException: error:1000007e:SSL routines:OPENSSL_internal:CERT_CB_ERROR
+	at io.netty.handler.codec.quic.Quiche.convertToException(Quiche.java:947)
+	at io.netty.handler.codec.quic.Quiche.convertToException(Quiche.java:930)
+	at io.netty.handler.codec.quic.QuicheQuicChannel.connectionSendSegments(QuicheQuicChannel.java:1283)
+	at io.netty.handler.codec.quic.QuicheQuicChannel.connectionSend(QuicheQuicChannel.java:1493)
+	at io.netty.handler.codec.quic.QuicheQuicChannel.recvComplete(QuicheQuicChannel.java:1195)
+	at io.netty.handler.codec.quic.QuicheQuicCodec.channelReadComplete(QuicheQuicCodec.java:243)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelReadComplete(AbstractChannelHandlerContext.java:385)
+	at io.netty.channel.DefaultChannelPipeline$HeadContext.channelReadComplete(DefaultChannelPipeline.java:1434)
+	at io.netty.channel.DefaultChannelPipeline.fireChannelReadComplete(DefaultChannelPipeline.java:932)
+	at io.netty.channel.epoll.EpollDatagramChannel$EpollDatagramChannelUnsafe.epollInReady(EpollDatagramChannel.java:613)
+	at io.netty.channel.epoll.AbstractEpollChannel$AbstractEpollUnsafe.handle(AbstractEpollChannel.java:487)
+	at io.netty.channel.epoll.EpollIoHandler$DefaultEpollIoRegistration.handle(EpollIoHandler.java:349)
+	at io.netty.channel.epoll.EpollIoHandler.processReady(EpollIoHandler.java:548)
+	at io.netty.channel.epoll.EpollIoHandler.run(EpollIoHandler.java:491)
+	at io.netty.channel.SingleThreadIoEventLoop.runIo(SingleThreadIoEventLoop.java:225)
+	at io.netty.channel.SingleThreadIoEventLoop.run(SingleThreadIoEventLoop.java:196)
+	at io.netty.util.concurrent.SingleThreadEventExecutor$5.run(SingleThreadEventExecutor.java:1204)
+	at io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
+	at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)
+	at java.base/java.lang.Thread.run(Thread.java:1474)
+Caused by: io.netty.handler.codec.quic.QuicException: QuicTransportError{code=0, name='NO_ERROR'}: QUICHE_ERR_TLS_FAIL
+	at io.netty.handler.codec.quic.Quiche.convertToException(Quiche.java:944)
+	... 19 common frames omitted
+01:12:35.167 [multiThreadIoEventLoopGroup-2-3] WARN  i.n.channel.DefaultChannelPipeline - An exceptionCaught() event was fired, and it reached at the tail of the pipeline. It usually means the last handler in the pipeline did not handle the exception.
+javax.net.ssl.SSLHandshakeException: error:1000007e:SSL routines:OPENSSL_internal:CERT_CB_ERROR
+	at io.netty.handler.codec.quic.Quiche.convertToException(Quiche.java:947)
+	at io.netty.handler.codec.quic.Quiche.convertToException(Quiche.java:930)
+	at io.netty.handler.codec.quic.QuicheQuicChannel.connectionSendSegments(QuicheQuicChannel.java:1283)
+	at io.netty.handler.codec.quic.QuicheQuicChannel.connectionSend(QuicheQuicChannel.java:1493)
+	at io.netty.handler.codec.quic.QuicheQuicChannel.access$600(QuicheQuicChannel.java:77)
+	at io.netty.handler.codec.quic.QuicheQuicChannel$QuicChannelUnsafe.lambda$decorateTaskRecv$1(QuicheQuicChannel.java:1866)
+	at io.netty.util.concurrent.AbstractEventExecutor.runTask(AbstractEventExecutor.java:148)
+	at io.netty.util.concurrent.AbstractEventExecutor.safeExecute(AbstractEventExecutor.java:141)
+	at io.netty.util.concurrent.SingleThreadEventExecutor.runAllTasks(SingleThreadEventExecutor.java:535)
+	at io.netty.channel.SingleThreadIoEventLoop.run(SingleThreadIoEventLoop.java:201)
+	at io.netty.util.concurrent.SingleThreadEventExecutor$5.run(SingleThreadEventExecutor.java:1204)
+	at io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
+	at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)
+	at java.base/java.lang.Thread.run(Thread.java:1474)
+Caused by: io.netty.handler.codec.quic.QuicException: QuicTransportError{code=0, name='NO_ERROR'}: QUICHE_ERR_TLS_FAIL
+	at io.netty.handler.codec.quic.Quiche.convertToException(Quiche.java:944)
+	... 13 common frames omitted
+Server dropping incoming packet #1
+Server dropping incoming packet #2
+Server dropping incoming packet #1
+Server dropping incoming packet #2
+Server dropping incoming packet #1
+Server dropping incoming packet #2
+Server dropping incoming packet #1
+Server dropping incoming packet #2
+[INFO] Tests run: 84, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 30.94 s -- in io.netty.handler.codec.quic.QuicChannelConnectTest
+[INFO] Running io.netty.handler.codec.quic.QuicPortReuseTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.276 s -- in io.netty.handler.codec.quic.QuicPortReuseTest
+[INFO] Running io.netty.handler.codec.quic.QuicheQuicServerCodecTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.018 s -- in io.netty.handler.codec.quic.QuicheQuicServerCodecTest
+[INFO] Running io.netty.handler.codec.quic.QuicStreamCreditTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.079 s -- in io.netty.handler.codec.quic.QuicStreamCreditTest
+[INFO] Running io.netty.handler.codec.quic.QuicReadableTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.091 s -- in io.netty.handler.codec.quic.QuicReadableTest
+[INFO] Running io.netty.handler.codec.quic.QuicStreamSendBufferLimitsTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.018 s -- in io.netty.handler.codec.quic.QuicStreamSendBufferLimitsTest
+[INFO] Running io.netty.handler.codec.quic.QuicheQuicClientCodecTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in io.netty.handler.codec.quic.QuicheQuicClientCodecTest
+[INFO] Running io.netty.handler.codec.quic.QuicWritableTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.056 s -- in io.netty.handler.codec.quic.QuicWritableTest
+[INFO] Running io.netty.handler.codec.quic.QuicTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in io.netty.handler.codec.quic.QuicTest
+[INFO] Running io.netty.handler.codec.quic.QuicChannelEchoTest
+[INFO] Tests run: 16, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.818 s -- in io.netty.handler.codec.quic.QuicChannelEchoTest
+[INFO] Running io.netty.handler.codec.quic.QuicConnectionStatsTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.032 s -- in io.netty.handler.codec.quic.QuicConnectionStatsTest
+[INFO] Running io.netty.handler.codec.quic.QuicCodecDispatcherTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in io.netty.handler.codec.quic.QuicCodecDispatcherTest
+[INFO] Running io.netty.handler.codec.quic.QuicConnectionPathStatsTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.016 s -- in io.netty.handler.codec.quic.QuicConnectionPathStatsTest
+[INFO] Running io.netty.handler.codec.quic.QuicConnectionIdGeneratorTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in io.netty.handler.codec.quic.QuicConnectionIdGeneratorTest
+[INFO] Running io.netty.handler.codec.quic.QuicStreamIdGeneratorTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in io.netty.handler.codec.quic.QuicStreamIdGeneratorTest
+[INFO] Running io.netty.handler.codec.quic.QuicTransportParametersTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.018 s -- in io.netty.handler.codec.quic.QuicTransportParametersTest
+[INFO] Running io.netty.handler.codec.quic.SipHashTest
+[INFO] Tests run: 65, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.019 s -- in io.netty.handler.codec.quic.SipHashTest
+[INFO] Running io.netty.handler.codec.quic.QuicStreamShutdownTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.046 s -- in io.netty.handler.codec.quic.QuicStreamShutdownTest
+[INFO] Running io.netty.handler.codec.quic.FlushStrategyTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in io.netty.handler.codec.quic.FlushStrategyTest
+[INFO] Running io.netty.handler.codec.quic.QuicChannelDatagramTest
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.102 s -- in io.netty.handler.codec.quic.QuicChannelDatagramTest
+[INFO] Running io.netty.handler.codec.quic.QuicSslContextTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0 s -- in io.netty.handler.codec.quic.QuicSslContextTest
+[INFO] Running io.netty.handler.codec.quic.QuicStreamSendBufferTest
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.333 s -- in io.netty.handler.codec.quic.QuicStreamSendBufferTest
+[INFO] Running io.netty.handler.codec.quic.QuicStreamLimitTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.057 s -- in io.netty.handler.codec.quic.QuicStreamLimitTest
+[INFO] Running io.netty.handler.codec.quic.InsecureQuicTokenHandlerTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in io.netty.handler.codec.quic.InsecureQuicTokenHandlerTest
+[INFO] Running io.netty.handler.codec.quic.QuicStreamTypeTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.029 s -- in io.netty.handler.codec.quic.QuicStreamTypeTest
+[INFO] Running io.netty.handler.codec.quic.QuicStreamFrameTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.053 s -- in io.netty.handler.codec.quic.QuicStreamFrameTest
+[INFO] Running io.netty.handler.codec.quic.NoQuicTokenHandlerTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in io.netty.handler.codec.quic.NoQuicTokenHandlerTest
+[INFO] Running io.netty.handler.codec.quic.QuicStreamHalfClosureTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.056 s -- in io.netty.handler.codec.quic.QuicStreamHalfClosureTest
+[INFO] Running io.netty.handler.codec.quic.QuicCodecBuilderTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.017 s -- in io.netty.handler.codec.quic.QuicCodecBuilderTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[INFO] Tests run: 297, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[WARNING] Corrupted channel by directly writing to native stream in forked JVM 1. See FAQ web page and the dump file /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/surefire-reports/2026-09-09T01-12-29_370-jvmRun1.dumpstream
+[INFO] 
+[INFO] --- source:3.2.0:jar-no-fork (attach-sources) @ netty-codec-native-quic ---
+[INFO] Building jar: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-codec-native-quic-4.2.17.Final-pipestream.4-sources.jar
+[INFO] 
+[INFO] --- source:3.2.0:test-jar-no-fork (attach-test-sources) @ netty-codec-native-quic ---
+[INFO] Building jar: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-codec-native-quic-4.2.17.Final-pipestream.4-test-sources.jar
+[INFO] 
+[INFO] --- jar:3.0.2:jar (default-jar) @ netty-codec-native-quic ---
+[INFO] Building jar: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-codec-native-quic-4.2.17.Final-pipestream.4.jar
+[INFO] 
+[INFO] --- jar:3.0.2:test-jar (default) @ netty-codec-native-quic ---
+[INFO] Building jar: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-codec-native-quic-4.2.17.Final-pipestream.4-tests.jar
+[INFO] 
+[INFO] --- jar:3.0.2:jar (empty-javadoc-jar) @ netty-codec-native-quic ---
+[WARNING] JAR will be empty - no content was marked for inclusion!
+[INFO] Building jar: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-codec-native-quic-4.2.17.Final-pipestream.4-javadoc.jar
+[INFO] 
+[INFO] --- jar:3.0.2:jar (native-jar) @ netty-codec-native-quic ---
+[INFO] Building jar: /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-codec-native-quic-4.2.17.Final-pipestream.4-linux-x86_64.jar
+[INFO] 
+[INFO] --- revapi:0.15.0:check (api-check) @ netty-codec-native-quic ---
+[INFO] Skipping execution
+[INFO] 
+[INFO] --- install:3.1.4:install (default-install) @ netty-codec-native-quic ---
+[INFO] Installing /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/pom.xml to /work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository/ai/pipestream/transport/netty-codec-native-quic/4.2.17.Final-pipestream.4/netty-codec-native-quic-4.2.17.Final-pipestream.4.pom
+[INFO] Installing /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-codec-native-quic-4.2.17.Final-pipestream.4.jar to /work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository/ai/pipestream/transport/netty-codec-native-quic/4.2.17.Final-pipestream.4/netty-codec-native-quic-4.2.17.Final-pipestream.4.jar
+[INFO] Installing /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-codec-native-quic-4.2.17.Final-pipestream.4-sources.jar to /work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository/ai/pipestream/transport/netty-codec-native-quic/4.2.17.Final-pipestream.4/netty-codec-native-quic-4.2.17.Final-pipestream.4-sources.jar
+[INFO] Installing /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-codec-native-quic-4.2.17.Final-pipestream.4-test-sources.jar to /work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository/ai/pipestream/transport/netty-codec-native-quic/4.2.17.Final-pipestream.4/netty-codec-native-quic-4.2.17.Final-pipestream.4-test-sources.jar
+[INFO] Installing /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-codec-native-quic-4.2.17.Final-pipestream.4-tests.jar to /work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository/ai/pipestream/transport/netty-codec-native-quic/4.2.17.Final-pipestream.4/netty-codec-native-quic-4.2.17.Final-pipestream.4-tests.jar
+[INFO] Installing /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-codec-native-quic-4.2.17.Final-pipestream.4-javadoc.jar to /work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository/ai/pipestream/transport/netty-codec-native-quic/4.2.17.Final-pipestream.4/netty-codec-native-quic-4.2.17.Final-pipestream.4-javadoc.jar
+[INFO] Installing /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-codec-native-quic-4.2.17.Final-pipestream.4-linux-x86_64.jar to /work/reference-code/pipestream-quic-build.jJsCGdZV/maven-repository/ai/pipestream/transport/netty-codec-native-quic/4.2.17.Final-pipestream.4/netty-codec-native-quic-4.2.17.Final-pipestream.4-linux-x86_64.jar
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Summary for PipeStream transport extension / Netty QUIC classes 4.2.17.Final-pipestream.4:
+[INFO] 
+[INFO] PipeStream transport extension / Netty QUIC classes  SUCCESS [ 17.685 s]
+[INFO] PipeStream transport extension / Netty QUIC native . SUCCESS [01:29 min]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  02:06 min
+[INFO] Finished at: 2026-09-09T01:13:18-04:00
+[INFO] ------------------------------------------------------------------------
+
+Verified transport artifacts (installed only in the isolated repository):
+4ff6e0834a48b404954a1909f18e4fbd3d03a099d8257521c0ac60f879e509b3  /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/target/netty-codec-classes-quic-4.2.17.Final-pipestream.4-sources.jar
+87a3d581978b63085e5f52fc8dafe132eb81ddf86c180a87cf5461b126547105  /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/target/netty-codec-classes-quic-4.2.17.Final-pipestream.4.jar
+4143a135363590b63f6593f732a3d201ee99527f67cf1ecc54aca4703ce76994  /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-classes-quic/target/netty-codec-classes-quic-4.2.17.Final-pipestream.4-tests.jar
+46328fc99f94e591de95f84b845ed52728d3f4308bb11ca1866803925aa77042  /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-codec-native-quic-4.2.17.Final-pipestream.4-sources.jar
+de0e9a145bde9e1ab2f554c5d99ac9feb89b7bc21bcddc4f595fa3403ee5afc2  /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-codec-native-quic-4.2.17.Final-pipestream.4-test-sources.jar
+f46725b5fa17933334b218d4f3bbd2e1d88b9ed90e441d18945ec25747dae751  /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-codec-native-quic-4.2.17.Final-pipestream.4.jar
+44859acc512a66de8807657fbb9da6cacb2af71fc842509a75b174ea9a790e7f  /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-codec-native-quic-4.2.17.Final-pipestream.4-tests.jar
+e7b6a527bd84c9e620c4da4339e7f6a458a2694c4309e324353d4e8eb93256d5  /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-codec-native-quic-4.2.17.Final-pipestream.4-javadoc.jar
+e49d88b724cc79c936899542c1565a00454a93d512816de6e8cfefa637c51c50  /work/reference-code/pipestream-quic-build.jJsCGdZV/netty/codec-native-quic/target/netty-codec-native-quic-4.2.17.Final-pipestream.4-linux-x86_64.jar
+Full build and test outputs remain in /work/reference-code/pipestream-quic-build.jJsCGdZV
+exit=0
+wrapper-exit=0

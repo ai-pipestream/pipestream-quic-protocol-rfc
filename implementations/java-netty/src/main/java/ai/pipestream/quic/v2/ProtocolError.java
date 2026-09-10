@@ -81,6 +81,12 @@ public final class ProtocolError extends RuntimeException {
   /** Named failure retained by exception serialization. */
   private final Code code;
 
+  /** Bounded local diagnostic; never protocol state. */
+  private final String detail;
+
+  /** Whether the peer authority named this failure (REFUSAL or application close). */
+  private final boolean authority;
+
   /**
    * Construct a named local protocol failure.
    *
@@ -88,8 +94,26 @@ public final class ProtocolError extends RuntimeException {
    * @param detail local diagnostic, not authoritative state
    */
   public ProtocolError(Code code, String detail) {
-    super(code.name() + ": " + detail);
+    this(code, detail, false);
+  }
+
+  private ProtocolError(Code code, String detail, boolean authority) {
+    super(code.name() + ": " + (authority ? "authority refused: " : "") + detail);
     this.code = java.util.Objects.requireNonNull(code);
+    this.detail = java.util.Objects.requireNonNull(detail);
+    this.authority = authority;
+  }
+
+  /**
+   * A failure named by the peer authority: a correlated REFUSAL or an application close carrying a
+   * Section 12.2 code. The detail is the peer's bounded diagnostic and is not machine-readable.
+   *
+   * @param code refusal code
+   * @param detail peer diagnostic text
+   * @return named remote failure
+   */
+  public static ProtocolError refused(Code code, String detail) {
+    return new ProtocolError(code, detail, true);
   }
 
   /**
@@ -101,14 +125,51 @@ public final class ProtocolError extends RuntimeException {
     return code;
   }
 
+  /**
+   * Get the bounded diagnostic without the code prefix.
+   *
+   * @return local or peer diagnostic text
+   */
+  public String detail() {
+    return detail;
+  }
+
+  /**
+   * Whether the peer authority named this failure rather than local validation or transport state.
+   * Only such failures are candidates for the client's bounded automatic recovery.
+   *
+   * @return true for a peer REFUSAL or a coded application close
+   */
+  public boolean fromAuthority() {
+    return authority;
+  }
+
+  /**
+   * A local framing failure.
+   *
+   * @param detail local diagnostic
+   * @return FRAME_ERROR
+   */
   static ProtocolError frame(String detail) {
     return new ProtocolError(Code.FRAME_ERROR, detail);
   }
 
+  /**
+   * A local bound or deadline failure.
+   *
+   * @param detail local diagnostic naming the bound
+   * @return LIMIT_EXCEEDED
+   */
   static ProtocolError limit(String detail) {
     return new ProtocolError(Code.LIMIT_EXCEEDED, detail);
   }
 
+  /**
+   * Require a framing condition.
+   *
+   * @param condition condition that must hold
+   * @param detail local diagnostic when it does not
+   */
   static void require(boolean condition, String detail) {
     if (!condition) throw frame(detail);
   }

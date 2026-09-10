@@ -25,6 +25,7 @@ import io.netty.handler.codec.quic.QuicStreamType;
 import io.netty.util.AttributeKey;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -270,6 +271,15 @@ public final class CoreServer implements AutoCloseable {
     if (listener != null) listener.close();
   }
 
+  /**
+   * The bounded diagnostic carried as a close reason: the local label that named the bound or
+   * check, never state the peer may act on.
+   */
+  private static String diagnostic(ProtocolError failure) {
+    String detail = failure.detail();
+    return detail.length() <= 120 ? detail : detail.substring(0, 120);
+  }
+
   private final class Connection extends ChannelInboundHandlerAdapter {
     final QuicChannel channel;
     final StreamTransport transport;
@@ -371,7 +381,9 @@ public final class CoreServer implements AutoCloseable {
       channel.close(
           authenticated,
           authenticated ? (int) failure.code().applicationError() : 0x02,
-          Unpooled.EMPTY_BUFFER);
+          authenticated
+              ? Unpooled.copiedBuffer(diagnostic(failure), StandardCharsets.UTF_8)
+              : Unpooled.EMPTY_BUFFER);
     }
 
     void stopActivity() {
