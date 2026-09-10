@@ -1115,6 +1115,14 @@ public final class DurableHost implements AutoCloseable {
     }
   }
 
+  private static void releaseQuietly(SessionStore sessions, Throwable primary) {
+    try {
+      sessions.close();
+    } catch (SQLException suppressed) {
+      primary.addSuppressed(suppressed);
+    }
+  }
+
   /**
    * Perform explicit first installation of new authority roots. Existing files are never adopted or
    * overwritten. The host is live on return: discovery, maintenance and storage workers run.
@@ -1148,9 +1156,11 @@ public final class DurableHost implements AutoCloseable {
             root.resolve(OBJECTS), configuration.objects().toStore(), sessions.identity());
     try {
       sessions.bindInputs(inputs);
+      sessions.anchor();
       return new DurableHost(root, configuration, applications, owners, clock, sessions, inputs);
     } catch (IOException | SQLException | RuntimeException | Error failure) {
       closeQuietly(inputs, failure);
+      releaseQuietly(sessions, failure);
       throw failure;
     }
   }
@@ -1185,9 +1195,11 @@ public final class DurableHost implements AutoCloseable {
     InputStore inputs = InputStore.open(root.resolve(OBJECTS), configuration.objects().toStore());
     try {
       sessions.verifyInputs(inputs);
+      sessions.anchor();
       return new DurableHost(root, configuration, applications, owners, clock, sessions, inputs);
     } catch (IOException | SQLException | RuntimeException | Error failure) {
       closeQuietly(inputs, failure);
+      releaseQuietly(sessions, failure);
       throw failure;
     }
   }
@@ -1465,6 +1477,11 @@ public final class DurableHost implements AutoCloseable {
     } catch (IOException | InterruptedException pending) {
       if (pending instanceof InterruptedException) Thread.currentThread().interrupt();
       failure = new IOException("retention shutdown incomplete", pending);
+    }
+    try {
+      sessions.close();
+    } catch (SQLException pending) {
+      failure = new IOException("session store anchor did not close", pending);
     }
     if (failure != null) throw failure;
     inputs.close();

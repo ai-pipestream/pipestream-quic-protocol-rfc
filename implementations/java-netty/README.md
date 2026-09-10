@@ -239,7 +239,14 @@ loss are not successful drain or computation outcomes.
 One event-loop owner schedules independent handshake, incomplete/idle-control,
 oldest-queued-write and detach deadlines. Partial-frame progress cannot renew
 the control deadline; new complete requests cannot renew an older stalled write
-or the detach lifetime. Global admitted connections include incomplete handshakes;
+or the detach lifetime. On the durable listener the idle-control clock is judged
+only while nothing is outstanding in either direction: a live input, a result
+read, a granted wait and a pending request each carry their own bound, so a peer
+that waits on a granted watch or streams one long input is never closed for
+control silence. Stream bounds are judged before the connection, so a stalled
+input is refused per stream with a named REFUSAL on the surviving control
+stream even when the idle bound equals the control deadline. Application closes
+after authentication carry the named bound as their reason. Global admitted connections include incomplete handshakes;
 mapped owners and all anonymous/unmapped callers have separate bounded buckets.
 Native close finishes before admission capacity is released.
 
@@ -250,7 +257,15 @@ packet-local refusal transport**, then closes it with transport
 completion. `snapshot()` distinguishes admitted high water from admitted plus
 that extra transport. Its refusal count measures admission attempts, including
 repeated Initial packets, not distinct peers. Per-owner refusal after TLS uses
-application `LIMIT_EXCEEDED`.
+application `LIMIT_EXCEEDED`, with the bound's name as the close reason.
+
+The shipped durable launcher (`V2Main serve`, `DurableOptions.defaults()`)
+admits 32 connections globally and 8 per mapped owner or anonymous bucket.
+These are the documented bounds a conformance driver should expect: the global
+bound is refused at accept before any handshake completes (transport
+`CONNECTION_REFUSED`), the per-owner bound after authentication (application
+`LIMIT_EXCEEDED` 0x204, reason `owner connection ceiling`), and capacity is
+released only after native close finishes.
 
 Queued application response counts/bytes and the oldest write are bounded.
 Configuration limits the aggregate of queue, one frame and one read-buffer
@@ -1081,3 +1096,32 @@ under `-Psealed-interop`. The transport pin `4.2.17.Final-pipestream.4`
 carries the drained-stream collection fix described in
 [transport/README.md](transport/README.md); refused input streams return
 their MAX_STREAMS credit only on that revision.
+
+Client recovery (Section 12.2.1) has two documented modes. The default is
+one-shot: `V2Main client` exits after one attempt, and recovery is the next
+invocation, which reopens the journal and replays the original intent under
+the original operation identity with fresh transport correlation.
+`--retry-budget N [--retry-backoff-ms M]` is the in-process mode: the same
+journaled operation is re-invoked on a fresh connection after an authority
+`LIMIT_EXCEEDED`, `NOT_READY`, `WAIT_TIMEOUT` or `INTERNAL_ERROR`, a
+`CONTROL_RESET`, transport loss or the local request deadline, with doubling
+backoff and jitter; `CONFLICT`, `UNAUTHORIZED`, framing and integrity codes,
+terminal outcomes and every local or journal failure stop immediately.
+Exhausting the budget prints `UNRESOLVED` and exits 1 with the intent still
+journaled; no outcome is ever manufactured. Authority refusals are named on
+stdout as `REFUSED code=… detail=…`, and `client capabilities` prints the
+offered and selected stream deadlines (Section 12.1 diagnostics). REFUSAL
+details carry the authority's local bound or check label, as the Rust
+authority's do; they are bounded and never parsed. `ClientRecoveryTest`
+drives both modes through the launcher against real refusals (a saturated
+storage-worker pool and withheld replies after real commits), and
+`RawPeerRustAuthorityTest` (`-Psealed-interop`) measures the Section 12.1
+refused-stream rule as returned stream credit against the Rust authority,
+the counterpart of the Java-side check in `DurableWireNegativeTest`.
+`ClientJournalFaultTest` injects real journal I/O failures (a read-only
+journal directory under SQLite's rollback-journal mode) before transmission,
+while saving a receipt and while saving a verified selection;
+`AuthorizationClockRecoveryTest` withdraws and restores the owner policy,
+makes the host clock untrusted or regressed, and finally revokes the session
+durably, showing that only the temporary conditions are resolved by the next
+invocation and that none of them is retried by the budget.

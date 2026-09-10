@@ -27,6 +27,7 @@ import io.netty.util.AttributeKey;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -338,6 +339,32 @@ public final class DurableServer implements AutoCloseable {
     if (force && listener != null) listener.close();
   }
 
+  /**
+   * The bounded diagnostic carried in a REFUSAL: the local label that named the bound or check (for
+   * example the header, idle or lifetime deadline), never state the peer may act on.
+   */
+  private static String diagnostic(ProtocolError failure) {
+    String detail = failure.detail();
+    return detail.length() <= 120 ? detail : detail.substring(0, 120);
+  }
+
+  /**
+   * Enforce one local deadline under its own label, so the REFUSAL or close reason names the bound
+   * that fired rather than the shared clock check.
+   *
+   * @param now monotonic nanoseconds
+   * @param then the instant the bound started from
+   * @param millis the bound
+   * @param label the bound's name
+   */
+  private static void deadline(long now, long then, long millis, String label) {
+    try {
+      ObjectStream.before(now, then, millis * 1000000L);
+    } catch (ProtocolError expired) {
+      throw ProtocolError.limit(label);
+    }
+  }
+
   private static ProtocolError named(Throwable failure) {
     Throwable cause = failure;
     while (cause != null) {
@@ -459,18 +486,41 @@ public final class DurableServer implements AutoCloseable {
       if (closing || ended) return;
       try {
         long now = System.nanoTime();
-        if (!authenticated) ObjectStream.before(now, started, core.handshakeTimeoutMs() * 1000000L);
+        if (!authenticated) deadline(now, started, core.handshakeTimeoutMs(), "handshake deadline");
         else {
           guard.requireAuthenticated();
-          ObjectStream.before(now, lastFrame, core.controlTimeoutMs() * 1000000L);
-          if (detachRequested)
-            ObjectStream.before(now, detachStart, selected.streamLifetimeMs() * 1000000L);
-          if (control != null) control.writes.check(now);
+          // Stream bounds are judged first: a stalled input is refused per stream (Section 12.1)
+          // before any connection-level judgement, so its REFUSAL is readable on the surviving
+          // control stream even when the idle bound equals the control deadline.
           for (InputTransfer transfer : Set.copyOf(inputs)) transfer.check(now);
+          if (control != null) control.writes.check(now);
+          if (detachRequested)
+            deadline(now, detachStart, selected.streamLifetimeMs(), "detach lifetime");
+          // Silence on control is idleness only while nothing is outstanding in either direction.
+          // A live input, a result read, a granted wait and a pending request each carry their
+          // own bound; a peer that waits on a granted watch or streams one long input sends
+          // nothing on control and is not closed for it.
+          // Read the clock again: a stream refused above renews the activity clock after `now`.
+          if (!outstanding())
+            deadline(
+                System.nanoTime(), lastFrame, core.controlTimeoutMs(), "idle control deadline");
         }
       } catch (ProtocolError failure) {
         fail(failure);
       }
+    }
+
+    /** Whether any input, result read, granted wait or pending request is still open. */
+    boolean outstanding() {
+      return !inputs.isEmpty()
+          || !results.isEmpty()
+          || !waits.isEmpty()
+          || (requests != null && requests.usage().pending() > 0);
+    }
+
+    /** Record activity in either direction; it renews only the idle-control clock. */
+    void touch() {
+      lastFrame = System.nanoTime();
     }
 
     void drain() {
@@ -483,10 +533,14 @@ public final class DurableServer implements AutoCloseable {
       if (closing || ended) return;
       closing = true;
       stopActivity();
+      // After authentication the close carries the named bound as its reason, so a client can
+      // tell a LIMIT_EXCEEDED close from a crash without any other channel.
       channel.close(
           authenticated,
           authenticated ? (int) failure.code().applicationError() : 0x02,
-          Unpooled.EMPTY_BUFFER);
+          authenticated
+              ? Unpooled.copiedBuffer(diagnostic(failure), StandardCharsets.UTF_8)
+              : Unpooled.EMPTY_BUFFER);
     }
 
     void stopActivity() {
@@ -582,6 +636,7 @@ public final class DurableServer implements AutoCloseable {
         ticket.close();
         return;
       }
+      touch();
       byte[] frame;
       try {
         frame = Wire.encode(response, selected.controlLimit());
@@ -597,12 +652,14 @@ public final class DurableServer implements AutoCloseable {
         ticket.close();
         return;
       }
+      touch();
       long id = ticket.request().map(ClientCorrelation::requestId).orElse(0L);
       if (id == 0) {
         ticket.close();
         return;
       }
-      Refusal refusal = new Refusal(new Records.RequestTag(false, id), failure.code(), "refused");
+      Refusal refusal =
+          new Refusal(new Records.RequestTag(false, id), failure.code(), diagnostic(failure));
       if (!control.writes.sendEncoded(
           Wire.encode(refusal, selected.controlLimit()),
           success -> {
@@ -834,6 +891,7 @@ public final class DurableServer implements AutoCloseable {
                   loop(
                       () -> {
                         waits.remove(wait);
+                        touch();
                         if (failure == null) respond(ticket, response);
                         else respondRefusal(ticket, named(failure));
                       }));
@@ -1003,6 +1061,7 @@ public final class DurableServer implements AutoCloseable {
           data = transport.claimIncoming(stream);
         } catch (ProtocolError failure) {
           inputs.remove(this);
+          touch();
           throw failure;
         }
         try {
@@ -1022,8 +1081,8 @@ public final class DurableServer implements AutoCloseable {
           if (header == null) {
             if (headerReader != null) headerReader.checkDeadline(now);
           } else {
-            ObjectStream.before(now, headerAccepted, selected.streamLifetimeMs() * 1000000L);
-            ObjectStream.before(now, lastProgress, selected.streamIdleMs() * 1000000L);
+            deadline(now, headerAccepted, selected.streamLifetimeMs(), "input stream lifetime");
+            deadline(now, lastProgress, selected.streamIdleMs(), "input receive deadline");
           }
         } catch (ProtocolError expired) {
           refuse(expired);
@@ -1056,7 +1115,10 @@ public final class DurableServer implements AutoCloseable {
           if (receiver == null) throw ProtocolError.frame("payload before admission check");
           byte[] chunk = new byte[content.readableBytes()];
           content.readBytes(chunk);
-          if (chunk.length > 0) lastProgress = System.nanoTime();
+          if (chunk.length > 0) {
+            lastProgress = System.nanoTime();
+            touch();
+          }
           write(chunk, fin);
         } catch (ProtocolError failure) {
           refuse(failure);
@@ -1116,7 +1178,10 @@ public final class DurableServer implements AutoCloseable {
                       return;
                     }
                     receiver = opened;
-                    if (rest.length > 0) lastProgress = System.nanoTime();
+                    if (rest.length > 0) {
+                      lastProgress = System.nanoTime();
+                      touch();
+                    }
                     write(rest, fin);
                   },
                   this::refuse);
@@ -1133,6 +1198,7 @@ public final class DurableServer implements AutoCloseable {
         stream.close();
         done = true;
         inputs.remove(this);
+        touch();
         if (boundaries.withhold(Boundaries.Boundary.ADMISSION_RESPONSE_SENT)) {
           ticket.close();
           fail(new ProtocolError(CONTROL_RESET, "fixture withheld reply"));
@@ -1202,6 +1268,7 @@ public final class DurableServer implements AutoCloseable {
         responded = true;
         done = true;
         inputs.remove(this);
+        touch();
         receiver = null;
         data.release();
         stream.close();
@@ -1229,6 +1296,7 @@ public final class DurableServer implements AutoCloseable {
         if (done) return;
         done = true;
         inputs.remove(this);
+        touch();
         InputStore.Receiver open = receiver;
         receiver = null;
         if (data != null) {
@@ -1254,7 +1322,8 @@ public final class DurableServer implements AutoCloseable {
           return;
         }
         Refusal refusal =
-            new Refusal(new Records.RequestTag(true, streamId), failure.code(), "input refused");
+            new Refusal(
+                new Records.RequestTag(true, streamId), failure.code(), diagnostic(failure));
         if (!control.writes.sendEncoded(
                 Wire.encode(refusal, selected.controlLimit()),
                 success -> {
@@ -1301,6 +1370,7 @@ public final class DurableServer implements AutoCloseable {
         if (done) return;
         done = true;
         inputs.remove(this);
+        touch();
         InputStore.Receiver open = receiver;
         receiver = null;
         if (open != null) closeReceiver(open);
@@ -1364,6 +1434,7 @@ public final class DurableServer implements AutoCloseable {
             },
             failure -> {
               results.remove(this);
+              touch();
               done = true;
               respondRefusal(ticket, failure);
             });
@@ -1478,6 +1549,7 @@ public final class DurableServer implements AutoCloseable {
         if (done) return;
         done = true;
         results.remove(this);
+        touch();
         data.release();
         boundaries.sent(
             Boundaries.Boundary.RESULT_FIN_SENT,
@@ -1489,6 +1561,7 @@ public final class DurableServer implements AutoCloseable {
         if (done) return;
         done = true;
         results.remove(this);
+        touch();
         ResultService.Read open = read;
         read = null;
         if (data != null) {
@@ -1530,6 +1603,7 @@ public final class DurableServer implements AutoCloseable {
         if (done) return;
         done = true;
         results.remove(this);
+        touch();
         ResultService.Read open = read;
         read = null;
         if (open != null) closeRead(open);

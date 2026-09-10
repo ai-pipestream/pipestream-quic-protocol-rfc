@@ -38,7 +38,10 @@ final class ClientCommands {
             + " <operation>",
         "    connection: --connect HOST:PORT --server-name NAME --ca PEM --cert PEM --key PEM"
             + " [--object-limit BYTES]",
-        "    operations: binding | declare --operation HEX [--scope N] --entities A,B,.. [--seal]",
+        "    recovery: [--retry-budget N] [--retry-backoff-ms N] (default 0: one-shot; the next"
+            + " invocation replays the journal)",
+        "    operations: capabilities | binding"
+            + " | declare --operation HEX [--scope N] --entities A,B,.. [--seal]",
         "      admit --operation HEX --declaration HEX --work S:P:E --input FILE --application"
             + " LABEL [--mode N] [--execution-ms N] [--content-type T] [--output-count N]"
             + " [--output-bytes N]",
@@ -204,183 +207,284 @@ final class ClientCommands {
     return HexFormat.of().formatHex(bytes);
   }
 
+  /**
+   * Whether one failed invocation may be repeated under the caller's budget, as Section 12.2.1
+   * allows: an authority LIMIT_EXCEEDED, NOT_READY, WAIT_TIMEOUT or INTERNAL_ERROR, a control
+   * reset, or transport loss and local request deadlines. Local validation, journal failures and
+   * every other refusal (CONFLICT, UNAUTHORIZED, framing, integrity, terminal outcomes) stop at
+   * once.
+   *
+   * @param failure invocation failure, possibly wrapped
+   * @return whether a further attempt is a permitted recovery action
+   */
+  static boolean recoverable(Throwable failure) {
+    Throwable cause = failure;
+    while (cause != null) {
+      if (cause instanceof ProtocolError error) {
+        return switch (error.code()) {
+          case LIMIT_EXCEEDED, NOT_READY, WAIT_TIMEOUT, INTERNAL_ERROR -> error.fromAuthority();
+          case CONTROL_RESET -> true;
+          default -> false;
+        };
+      }
+      if (cause instanceof java.sql.SQLException) return false;
+      if (cause instanceof java.io.IOException
+          || cause instanceof java.util.concurrent.TimeoutException) return true;
+      cause = cause.getCause();
+    }
+    return false;
+  }
+
+  private static ProtocolError.Code codeOf(Throwable failure) {
+    Throwable cause = failure;
+    while (cause != null) {
+      if (cause instanceof ProtocolError error) return error.code();
+      cause = cause.getCause();
+    }
+    return ProtocolError.Code.CONTROL_RESET;
+  }
+
+  /**
+   * One journaled operation, re-invoked under an explicit bounded budget. Every attempt is a new
+   * connection with fresh request numbers; the journal supplies the original identity and
+   * parameters, so a replay is never a new attempt. {@code --retry-budget 0} (the default) is the
+   * one-shot mode: recovery is the caller's next invocation. Exhausting the budget prints {@code
+   * UNRESOLVED} and rethrows the last failure; it never manufactures an outcome.
+   */
   private static void client(String[] arguments, Map<String, String> options, Boundaries hooks)
       throws Exception {
     String operation = operationName(arguments);
     ClientJournal.Intent intent = intent(options);
     Path journalFile = V2Main.requiredPath(options, "journal");
+    int budget =
+        (int) Checks.range(Long.parseLong(options.getOrDefault("retry-budget", "0")), 0, 1000);
+    long backoff =
+        Checks.range(Long.parseLong(options.getOrDefault("retry-backoff-ms", "200")), 1, 60_000);
+    java.util.random.RandomGenerator jitter = java.util.random.RandomGenerator.getDefault();
     try (ClientJournal journal = ClientJournal.open(journalFile, ClientJournal.Limits.defaults())) {
       if (!journal.intent().equals(intent))
         throw new ProtocolError(
             ProtocolError.Code.CONFLICT, "journal intent differs from the supplied arguments");
-      try (DurableClient client =
-          DurableClient.connect(
-              connect(options), authentication(options), journal, clientOptions(options), hooks)) {
-        get(client.ready());
-        Messages.Binding binding = get(client.binding());
-        switch (operation) {
-          case "binding" -> System.out.println("BINDING " + binding);
-          case "declare" -> {
-            List<Long> entities = new ArrayList<>();
-            for (String entity : V2Main.required(options, "entities").split(","))
-              entities.add(Long.parseUnsignedLong(entity.trim()));
+      for (int attempt = 1; ; attempt++) {
+        try {
+          attempt(operation, options, journal, hooks);
+          return;
+        } catch (Exception failure) {
+          if (!recoverable(failure) || attempt > budget) {
+            if (budget > 0)
+              System.out.println(
+                  "UNRESOLVED attempts="
+                      + attempt
+                      + " last="
+                      + codeOf(failure)
+                      + (recoverable(failure) ? " budget-exhausted" : " not-recoverable"));
+            throw failure;
+          }
+          long step = Math.min(backoff << Math.min(attempt - 1, 8), 30_000);
+          long wait = step + jitter.nextLong(step / 2 + 1);
+          System.out.println(
+              "RECOVERING attempt="
+                  + attempt
+                  + " budget="
+                  + budget
+                  + " code="
+                  + codeOf(failure)
+                  + " wait-ms="
+                  + wait);
+          Thread.sleep(wait);
+        }
+      }
+    }
+  }
+
+  private static void attempt(
+      String operation, Map<String, String> options, ClientJournal journal, Boundaries hooks)
+      throws Exception {
+    ClientOptions clientOptions = clientOptions(options);
+    try (DurableClient client =
+        DurableClient.connect(
+            connect(options), authentication(options), journal, clientOptions, hooks)) {
+      Messages.Capabilities selected = get(client.ready());
+      if (operation.equals("capabilities")) {
+        Messages.Capabilities offered = clientOptions.offer(journal.intent().profiles());
+        System.out.println(
+            "CAPABILITIES offered-idle-ms="
+                + offered.streamIdleMs()
+                + " offered-lifetime-ms="
+                + offered.streamLifetimeMs()
+                + " selected-idle-ms="
+                + selected.streamIdleMs()
+                + " selected-lifetime-ms="
+                + selected.streamLifetimeMs()
+                + " stream-limit="
+                + selected.streamLimit()
+                + " pending-limit="
+                + selected.pendingLimit()
+                + " object-limit="
+                + selected.objectLimit());
+        get(client.detach());
+        return;
+      }
+      Messages.Binding binding = get(client.binding());
+      switch (operation) {
+        case "binding" -> System.out.println("BINDING " + binding);
+        case "declare" -> {
+          List<Long> entities = new ArrayList<>();
+          for (String entity : V2Main.required(options, "entities").split(","))
+            entities.add(Long.parseUnsignedLong(entity.trim()));
+          print(
+              "RECEIPT",
+              get(
+                  client.declare(
+                      operation(options, "operation"),
+                      Long.parseUnsignedLong(options.getOrDefault("scope", "0")),
+                      entities,
+                      options.containsKey("seal"))));
+        }
+        case "admit" -> admit(client, options, operation(options, "operation"), null);
+        case "replay" -> {
+          Records.OperationId id = operation(options, "operation");
+          ClientJournal.PendingOperation pending =
+              journal
+                  .operation(id)
+                  .orElseThrow(
+                      () ->
+                          new ProtocolError(
+                              ProtocolError.Code.NOT_FOUND, "operation not journaled"));
+          if (pending.input() != null) admit(client, options, id, pending);
+          else print("RECEIPT", get(replay(client, pending)));
+        }
+        case "lookup" -> print("RECEIPT", get(client.lookup(operation(options, "operation"))));
+        case "unresolved" -> {
+          for (ClientJournal.PendingOperation pending :
+              journal.unresolved(
+                  Long.parseUnsignedLong(options.getOrDefault("after", "0")),
+                  Integer.parseInt(options.getOrDefault("limit", "256"))))
+            System.out.println(
+                "UNRESOLVED sequence="
+                    + pending.sequence()
+                    + " operation="
+                    + hex(pending.operation().bytes())
+                    + " kind="
+                    + (pending.input() != null
+                        ? "admit"
+                        : pending.mutation().getClass().getSimpleName()));
+        }
+        case "watch" -> {
+          ClientJournal.Observed observed =
+              get(
+                  client.watch(
+                      work(V2Main.required(options, "work")),
+                      Long.parseUnsignedLong(options.getOrDefault("after", "0")),
+                      Long.parseUnsignedLong(options.getOrDefault("wait-ms", "0"))));
+          Records.WorkView view = observed.view();
+          System.out.println(
+              "WORK revision="
+                  + observed.revision()
+                  + " state="
+                  + view.state().value()
+                  + " attempt="
+                  + view.attempt()
+                  + " child="
+                  + (view.child() == null
+                      ? "none"
+                      : view.child().scope() + ":" + view.child().producer()));
+          System.out.println("VIEW " + view);
+        }
+        case "page" -> {
+          DurableClient.ScopePage page =
+              get(
+                  client.page(
+                      Long.parseUnsignedLong(options.getOrDefault("scope", "0")),
+                      Long.parseUnsignedLong(options.getOrDefault("after", "0")),
+                      Integer.parseInt(options.getOrDefault("limit", "256"))));
+          System.out.println(
+              "SCOPE scope="
+                  + page.scope()
+                  + " producer="
+                  + page.producer()
+                  + " declared="
+                  + page.declared()
+                  + " membership_verified="
+                  + page.membershipVerified()
+                  + " seal="
+                  + (page.seal() == null ? "none" : hex(page.seal().bytes())));
+          System.out.println("MEMBERS " + page.entries() + " more=" + page.more());
+        }
+        case "checkpoint" -> {
+          Records.ScopeSummary summary =
+              get(
+                  client.checkpoint(
+                      Long.parseUnsignedLong(options.getOrDefault("scope", "0")),
+                      new Records.Digest(HexFormat.of().parseHex(V2Main.required(options, "seal"))),
+                      Long.parseUnsignedLong(options.getOrDefault("wait-ms", "0"))));
+          System.out.println(
+              "COVERAGE " + summary + " status_root=" + hex(summary.statusRoot().bytes()));
+        }
+        case "manifest" ->
+            System.out.println(
+                "MANIFEST "
+                    + get(
+                        client.manifest(
+                            work(V2Main.required(options, "work")),
+                            Long.parseUnsignedLong(V2Main.required(options, "attempt")))));
+        case "select" -> {
+          Records.WorkKey key = work(V2Main.required(options, "work"));
+          long attempt = Long.parseUnsignedLong(V2Main.required(options, "attempt"));
+          int index = Integer.parseInt(V2Main.required(options, "index"));
+          get(client.manifest(key, attempt));
+          System.out.println("REFERENCE " + get(client.select(key, attempt, index)).output());
+        }
+        case "read" -> {
+          ResultFiles.Delivered delivered =
+              get(
+                  client.read(
+                      work(V2Main.required(options, "work")),
+                      Long.parseUnsignedLong(V2Main.required(options, "attempt")),
+                      Integer.parseInt(V2Main.required(options, "index")),
+                      new ResultFiles.Destination(V2Main.requiredPath(options, "output"))));
+          System.out.println(
+              "VERIFIED length="
+                  + delivered.length()
+                  + " sha256="
+                  + hex(delivered.sha256().bytes()));
+        }
+        case "retry" ->
             print(
                 "RECEIPT",
                 get(
-                    client.declare(
+                    client.retry(
                         operation(options, "operation"),
-                        Long.parseUnsignedLong(options.getOrDefault("scope", "0")),
-                        entities,
-                        options.containsKey("seal"))));
-          }
-          case "admit" -> admit(client, options, operation(options, "operation"), null);
-          case "replay" -> {
-            Records.OperationId id = operation(options, "operation");
-            ClientJournal.PendingOperation pending =
-                journal
-                    .operation(id)
-                    .orElseThrow(
-                        () ->
-                            new ProtocolError(
-                                ProtocolError.Code.NOT_FOUND, "operation not journaled"));
-            if (pending.input() != null) admit(client, options, id, pending);
-            else print("RECEIPT", get(replay(client, pending)));
-          }
-          case "lookup" -> print("RECEIPT", get(client.lookup(operation(options, "operation"))));
-          case "unresolved" -> {
-            for (ClientJournal.PendingOperation pending :
-                journal.unresolved(
-                    Long.parseUnsignedLong(options.getOrDefault("after", "0")),
-                    Integer.parseInt(options.getOrDefault("limit", "256"))))
-              System.out.println(
-                  "UNRESOLVED sequence="
-                      + pending.sequence()
-                      + " operation="
-                      + hex(pending.operation().bytes())
-                      + " kind="
-                      + (pending.input() != null
-                          ? "admit"
-                          : pending.mutation().getClass().getSimpleName()));
-          }
-          case "watch" -> {
-            ClientJournal.Observed observed =
-                get(
-                    client.watch(
                         work(V2Main.required(options, "work")),
-                        Long.parseUnsignedLong(options.getOrDefault("after", "0")),
-                        Long.parseUnsignedLong(options.getOrDefault("wait-ms", "0"))));
-            Records.WorkView view = observed.view();
-            System.out.println(
-                "WORK revision="
-                    + observed.revision()
-                    + " state="
-                    + view.state().value()
-                    + " attempt="
-                    + view.attempt()
-                    + " child="
-                    + (view.child() == null
-                        ? "none"
-                        : view.child().scope() + ":" + view.child().producer()));
-            System.out.println("VIEW " + view);
-          }
-          case "page" -> {
-            DurableClient.ScopePage page =
+                        Long.parseUnsignedLong(V2Main.required(options, "expected-attempt")))));
+        case "cancel" ->
+            print(
+                "RECEIPT",
                 get(
-                    client.page(
-                        Long.parseUnsignedLong(options.getOrDefault("scope", "0")),
-                        Long.parseUnsignedLong(options.getOrDefault("after", "0")),
-                        Integer.parseInt(options.getOrDefault("limit", "256"))));
-            System.out.println(
-                "SCOPE scope="
-                    + page.scope()
-                    + " producer="
-                    + page.producer()
-                    + " declared="
-                    + page.declared()
-                    + " membership_verified="
-                    + page.membershipVerified()
-                    + " seal="
-                    + (page.seal() == null ? "none" : hex(page.seal().bytes())));
-            System.out.println("MEMBERS " + page.entries() + " more=" + page.more());
-          }
-          case "checkpoint" -> {
-            Records.ScopeSummary summary =
+                    client.cancel(
+                        operation(options, "operation"), work(V2Main.required(options, "work")))));
+        case "skip" ->
+            print(
+                "RECEIPT",
                 get(
-                    client.checkpoint(
-                        Long.parseUnsignedLong(options.getOrDefault("scope", "0")),
-                        new Records.Digest(
-                            HexFormat.of().parseHex(V2Main.required(options, "seal"))),
-                        Long.parseUnsignedLong(options.getOrDefault("wait-ms", "0"))));
-            System.out.println(
-                "COVERAGE " + summary + " status_root=" + hex(summary.statusRoot().bytes()));
-          }
-          case "manifest" ->
-              System.out.println(
-                  "MANIFEST "
-                      + get(
-                          client.manifest(
-                              work(V2Main.required(options, "work")),
-                              Long.parseUnsignedLong(V2Main.required(options, "attempt")))));
-          case "select" -> {
-            Records.WorkKey key = work(V2Main.required(options, "work"));
-            long attempt = Long.parseUnsignedLong(V2Main.required(options, "attempt"));
-            int index = Integer.parseInt(V2Main.required(options, "index"));
-            get(client.manifest(key, attempt));
-            System.out.println("REFERENCE " + get(client.select(key, attempt, index)).output());
-          }
-          case "read" -> {
-            ResultFiles.Delivered delivered =
+                    client.skip(
+                        operation(options, "operation"), work(V2Main.required(options, "work")))));
+        case "cancel-scope" ->
+            print(
+                "RECEIPT",
                 get(
-                    client.read(
-                        work(V2Main.required(options, "work")),
-                        Long.parseUnsignedLong(V2Main.required(options, "attempt")),
-                        Integer.parseInt(V2Main.required(options, "index")),
-                        new ResultFiles.Destination(V2Main.requiredPath(options, "output"))));
-            System.out.println(
-                "VERIFIED length="
-                    + delivered.length()
-                    + " sha256="
-                    + hex(delivered.sha256().bytes()));
-          }
-          case "retry" ->
-              print(
-                  "RECEIPT",
-                  get(
-                      client.retry(
-                          operation(options, "operation"),
-                          work(V2Main.required(options, "work")),
-                          Long.parseUnsignedLong(V2Main.required(options, "expected-attempt")))));
-          case "cancel" ->
-              print(
-                  "RECEIPT",
-                  get(
-                      client.cancel(
-                          operation(options, "operation"),
-                          work(V2Main.required(options, "work")))));
-          case "skip" ->
-              print(
-                  "RECEIPT",
-                  get(
-                      client.skip(
-                          operation(options, "operation"),
-                          work(V2Main.required(options, "work")))));
-          case "cancel-scope" ->
-              print(
-                  "RECEIPT",
-                  get(
-                      client.cancelScope(
-                          operation(options, "operation"),
-                          Long.parseUnsignedLong(options.getOrDefault("scope", "0")))));
-          case "complete" -> System.out.println("COMPLETED " + get(client.complete()));
-          case "detach" -> {
-            get(client.detach());
-            System.out.println("DETACHED");
-            return;
-          }
-          default -> throw new IllegalArgumentException("unknown client operation: " + operation);
+                    client.cancelScope(
+                        operation(options, "operation"),
+                        Long.parseUnsignedLong(options.getOrDefault("scope", "0")))));
+        case "complete" -> System.out.println("COMPLETED " + get(client.complete()));
+        case "detach" -> {
+          get(client.detach());
+          System.out.println("DETACHED");
+          return;
         }
-        get(client.detach());
+        default -> throw new IllegalArgumentException("unknown client operation: " + operation);
       }
+      get(client.detach());
     }
   }
 

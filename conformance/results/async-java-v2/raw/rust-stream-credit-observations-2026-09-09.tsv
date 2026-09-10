@@ -1,0 +1,13 @@
+ordinal	shape	stream	code	detail	credit-before-open	credit-at-refusal	credit-after-wait	wait-ms
+0	truncated-fin	2	INTEGRITY_ERROR	truncated payload	4	4	4	0
+1	reset-after-partial	6	INTEGRITY_ERROR	input stream interrupted	4	4	4	0
+2	truncated-fin	10	INTEGRITY_ERROR	truncated payload	4	4	4	0
+3	reset-after-partial	14	INTEGRITY_ERROR	input stream interrupted	4	4	4	0
+4	truncated-fin	18	INTEGRITY_ERROR	truncated payload	4	4	4	0
+5	reset-after-partial	22	INTEGRITY_ERROR	input stream interrupted	4	4	4	0
+6	truncated-fin	26	INTEGRITY_ERROR	truncated payload	4	4	4	0
+7	reset-after-partial	30	INTEGRITY_ERROR	input stream interrupted	4	4	4	0
+8	truncated-fin	34	INTEGRITY_ERROR	truncated payload	4	4	4	0
+9	reset-after-partial	38	INTEGRITY_ERROR	input stream interrupted	4	4	4	0
+10	truncated-fin	42	INTEGRITY_ERROR	truncated payload	4	4	4	0
+11	reset-after-partial	46	INTEGRITY_ERROR	input stream interrupted	4	4	4	0

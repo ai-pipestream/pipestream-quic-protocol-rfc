@@ -166,6 +166,7 @@ final class SessionStore {
   private final Configuration config;
   private final byte[] configBytes;
   private final UUID identity;
+  private Connection anchor;
 
   private SessionStore(BoundedSqlite database, Configuration config, UUID identity) {
     this.database = database;
@@ -249,6 +250,56 @@ final class SessionStore {
     } finally {
       DATABASE_OPERATIONS.release();
     }
+  }
+
+  /**
+   * Hold one idle read-only connection until {@link #close()}. The host holds it for its lifetime;
+   * a bare store handle holds none, so short-lived direct users release the native guard slot.
+   * SQLite tears the WAL index down when a database's last connection closes and rebuilds it,
+   * rewriting its 32 KiB shared-memory file, when the next one opens. Every store operation runs on
+   * its own short-lived connection, so without an anchor an idle authority rewrote the index on
+   * every scheduler store call: about 2.5 MiB/s of write accounting and a matching allocation churn
+   * with no client connected. The anchor holds no transaction and therefore no lock, so it never
+   * blocks a writer or a checkpoint, and query-only mode means it can never write.
+   *
+   * @throws SQLException if the anchor cannot be opened or the metadata row is missing
+   */
+  void anchor() throws SQLException {
+    synchronized (this) {
+      if (anchor != null) return;
+    }
+    Connection connection = database.connect();
+    try (var statement = connection.createStatement()) {
+      statement.execute("PRAGMA query_only=ON");
+      try (var row = statement.executeQuery("SELECT 1 FROM ps_v2_meta WHERE singleton=1")) {
+        if (!row.next()) throw corrupt("database metadata missing");
+      }
+    } catch (SQLException | RuntimeException failure) {
+      try {
+        connection.close();
+      } catch (SQLException close) {
+        failure.addSuppressed(close);
+      }
+      throw failure;
+    }
+    synchronized (this) {
+      anchor = connection;
+    }
+  }
+
+  /**
+   * Release the anchor connection. Operations already in flight keep their own connections; the
+   * database's last connection to close performs SQLite's usual WAL checkpoint and index teardown.
+   *
+   * @throws SQLException if the anchor cannot be closed
+   */
+  void close() throws SQLException {
+    Connection held;
+    synchronized (this) {
+      held = anchor;
+      anchor = null;
+    }
+    if (held != null) held.close();
   }
 
   /**

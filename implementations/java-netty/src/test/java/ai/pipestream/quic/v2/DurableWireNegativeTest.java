@@ -10,6 +10,7 @@ import io.netty.handler.codec.quic.QuicStreamChannel;
 import io.netty.handler.codec.quic.QuicStreamType;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
@@ -41,6 +42,20 @@ final class DurableWireNegativeTest {
 
   static DurableOptions options(
       long streamIdleMs, long streamLifetimeMs, int dataStreams, long headerTimeoutMs) {
+    return options(
+        streamIdleMs,
+        streamLifetimeMs,
+        dataStreams,
+        headerTimeoutMs,
+        DurableOptions.defaults().core().controlTimeoutMs());
+  }
+
+  static DurableOptions options(
+      long streamIdleMs,
+      long streamLifetimeMs,
+      int dataStreams,
+      long headerTimeoutMs,
+      long controlTimeoutMs) {
     DurableOptions defaults = DurableOptions.defaults();
     CoreOptions core = defaults.core();
     return new DurableOptions(
@@ -55,7 +70,7 @@ final class DurableWireNegativeTest {
             core.controlWindowBytes(),
             core.readChunkBytes(),
             core.handshakeTimeoutMs(),
-            core.controlTimeoutMs()),
+            controlTimeoutMs),
         dataStreams,
         defaults.maxDataStreams(),
         defaults.dataSendBytes(),
@@ -345,6 +360,9 @@ final class DurableWireNegativeTest {
           Refusal refused = assertInstanceOf(Refusal.class, response);
           assertEquals(new Records.RequestTag(true, stream.streamId()), refused.request());
           assertEquals(ProtocolError.Code.INTEGRITY_ERROR, refused.code());
+          // The refused stream's slot returns as credit before anything else happens: the
+          // Section 12.1 refused-stream rule, measured the same way against the Rust authority.
+          peer.awaitStreamCredit(2);
         } else {
           assertEquals(
               new Records.RequestTag(true, stream.streamId()),
@@ -357,6 +375,80 @@ final class DurableWireNegativeTest {
           authority.server.snapshot().toCompletableFuture().get(5, TimeUnit.SECONDS);
       assertEquals(0, snapshot.inputs());
       peer.call(new Detach(peer.request()));
+    }
+  }
+
+  /**
+   * Control silence is idleness only while nothing is outstanding. A granted watch and one slowly
+   * progressing input each outlive the control deadline without a single control frame; a stalled
+   * input whose idle bound equals the control deadline is refused per stream, with a named reason,
+   * on a connection that survives; and only a connection with nothing outstanding is closed for
+   * idle control, carrying the bound's name as the close reason.
+   */
+  @Test
+  void controlSilenceIsIdleOnlyWithNothingOutstanding() throws Exception {
+    byte[] input = DurableServerTest.payload(24_000, 7);
+    try (Authority authority = new Authority("silent", options(2000, 20_000, 2, 1500, 2000));
+        RawDurablePeer peer = authority.peer("alice")) {
+      assertInstanceOf(Binding.class, peer.call(new Create(peer.request(), 1, POLICY)));
+      assertInstanceOf(
+          DeclarationResponse.class,
+          peer.call(
+              new Declare(
+                  peer.request(), DurableServerTest.operation(1), 0, List.of(1L, 2L, 3L), true)));
+      Records.WorkKey declared = new Records.WorkKey(0, 0, 3);
+      // A granted wait twice the control deadline: no control frame for 4 s, the response arrives.
+      WatchResponse current =
+          assertInstanceOf(
+              WatchResponse.class, peer.call(new Watch(peer.request(), declared, 0, 0)));
+      long start = System.nanoTime();
+      WatchResponse waited =
+          assertInstanceOf(
+              WatchResponse.class,
+              peer.call(new Watch(peer.request(), declared, current.revision(), 4000)));
+      assertEquals(current.revision(), waited.revision());
+      assertTrue(
+          System.nanoTime() - start >= TimeUnit.MILLISECONDS.toNanos(3500),
+          "the wait was granted for its full duration");
+      assertFalse(peer.closed.isDone(), "connection survived a granted wait");
+      // One input progressing below its idle bound for longer than twice the control deadline.
+      QuicStreamChannel slow =
+          peer.sendInput(
+              DurableServerTest.header(1, 2, WORK, input, "copy/v2", 0),
+              Arrays.copyOf(input, 1000),
+              false);
+      int offset = 1000;
+      for (int i = 0; i < 12; i++) {
+        Thread.sleep(400);
+        slow.writeAndFlush(Unpooled.wrappedBuffer(input, offset, 1000)).sync();
+        offset += 1000;
+      }
+      slow.writeAndFlush(Unpooled.wrappedBuffer(input, offset, input.length - offset)).sync();
+      slow.shutdownOutput().sync();
+      assertInstanceOf(AdmissionResponse.class, peer.next());
+      assertEquals(Records.State.SUCCEEDED, DurableServerTest.awaitTerminal(peer, WORK).state());
+      assertFalse(peer.closed.isDone(), "connection survived a long silent upload");
+      // Idle bound equal to the control deadline: the stalled stream alone is refused, by name.
+      QuicStreamChannel stalled =
+          withStreamCredit(
+              () ->
+                  peer.sendInput(
+                      DurableServerTest.header(
+                          1, 3, new Records.WorkKey(0, 0, 2), input, "copy/v2", 0),
+                      Arrays.copyOf(input, 1000),
+                      false));
+      Refusal idle = assertInstanceOf(Refusal.class, peer.next());
+      assertEquals(new Records.RequestTag(true, stalled.streamId()), idle.request());
+      assertEquals(ProtocolError.Code.LIMIT_EXCEEDED, idle.code());
+      assertEquals("input receive deadline", idle.detail());
+      stalled.shutdownOutput(0x204).sync();
+      assertInstanceOf(WatchResponse.class, peer.call(new Watch(peer.request(), declared, 0, 0)));
+      assertFalse(peer.closed.isDone(), "connection survived a per-stream refusal");
+      // Nothing outstanding: silence past the control deadline closes with the bound's name.
+      QuicConnectionCloseEvent close = peer.closed.get(10, TimeUnit.SECONDS);
+      assertTrue(close.isApplicationClose(), close.toString());
+      assertEquals(ProtocolError.Code.LIMIT_EXCEEDED.applicationError(), close.error());
+      assertEquals("idle control deadline", new String(close.reason(), StandardCharsets.UTF_8));
     }
   }
 

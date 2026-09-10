@@ -272,6 +272,39 @@ final class RawDurablePeer implements AutoCloseable {
   }
 
   /**
+   * The server's current unidirectional stream allowance for this peer (QUIC MAX_STREAMS credit
+   * minus open streams), read on the connection's event loop.
+   *
+   * @return streams this peer may still open
+   * @throws Exception event loop failure
+   */
+  long streamCredit() throws Exception {
+    return connection
+        .eventLoop()
+        .submit(() -> connection.peerAllowedStreams(QuicStreamType.UNIDIRECTIONAL))
+        .get(5, TimeUnit.SECONDS);
+  }
+
+  /**
+   * Block until the server has handed back every refused or finished stream's slot: the Section
+   * 12.1 refused-stream rule observed as credit, without waiting for connection close.
+   *
+   * @param expected allowance to wait for
+   * @throws Exception event loop failure
+   */
+  void awaitStreamCredit(long expected) throws Exception {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    long credit = streamCredit();
+    while (credit < expected) {
+      assertTrue(
+          System.nanoTime() < deadline,
+          "stream credit not returned: " + credit + " of " + expected);
+      Thread.sleep(20);
+      credit = streamCredit();
+    }
+  }
+
+  /**
    * Open one unidirectional input stream and write the exact header, payload and FIN.
    *
    * @param header input header
