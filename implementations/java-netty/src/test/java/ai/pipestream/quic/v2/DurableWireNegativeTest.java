@@ -444,11 +444,108 @@ final class DurableWireNegativeTest {
       stalled.shutdownOutput(0x204).sync();
       assertInstanceOf(WatchResponse.class, peer.call(new Watch(peer.request(), declared, 0, 0)));
       assertFalse(peer.closed.isDone(), "connection survived a per-stream refusal");
-      // Nothing outstanding: silence past the control deadline closes with the bound's name.
-      QuicConnectionCloseEvent close = peer.closed.get(10, TimeUnit.SECONDS);
-      assertTrue(close.isApplicationClose(), close.toString());
-      assertEquals(ProtocolError.Code.LIMIT_EXCEEDED.applicationError(), close.error());
-      assertEquals("idle control deadline", new String(close.reason(), StandardCharsets.UTF_8));
+      // A durable connection with nothing outstanding is never closed for control silence: twice
+      // the control deadline of complete silence, then it still answers.
+      Thread.sleep(4500);
+      assertFalse(peer.closed.isDone(), "durable connection closed for control silence");
+      assertInstanceOf(WatchResponse.class, peer.call(new Watch(peer.request(), declared, 0, 0)));
+      // A core-only connection with nothing outstanding is closed at the control deadline, with
+      // the bound's name as the close reason.
+      try (RawDurablePeer core =
+          new RawDurablePeer(authority.server.address(), pki.client("bob"), 65_536)) {
+        core.negotiate(RawDurablePeer.offer(List.of(), 1 << 20));
+        QuicConnectionCloseEvent close = core.closed.get(10, TimeUnit.SECONDS);
+        assertTrue(close.isApplicationClose(), close.toString());
+        assertEquals(ProtocolError.Code.LIMIT_EXCEEDED.applicationError(), close.error());
+        assertEquals("idle control deadline", new String(close.reason(), StandardCharsets.UTF_8));
+      }
+    }
+  }
+
+  /**
+   * The neutral driver's stalled-principal shape, against a peer that does read control: three
+   * partial inputs with no FIN, a granted watch as long as the idle bound on
+   * declared-never-admitted work, and a result stream requested and never read. Every stalled input
+   * is refused per stream, by name, and the connection is still open when the last refusal has been
+   * read.
+   */
+  @Test
+  void stalledPrincipalIsRefusedPerStreamOnASurvivingConnection() throws Exception {
+    byte[] input = DurableServerTest.payload(24_000, 5);
+    byte[] stall = DurableServerTest.payload(256 * 1024, 11);
+    try (Authority authority = new Authority("principal", options(3000, 12_000, 4, 1500, 3000));
+        RawDurablePeer peer = authority.peer("alice")) {
+      assertInstanceOf(Binding.class, peer.call(new Create(peer.request(), 1, POLICY)));
+      assertInstanceOf(
+          DeclarationResponse.class,
+          peer.call(
+              new Declare(
+                  peer.request(),
+                  DurableServerTest.operation(1),
+                  0,
+                  List.of(1L, 2L, 3L, 4L, 5L, 6L),
+                  true)));
+      peer.sendInput(DurableServerTest.header(1, 2, WORK, input, "copy/v2", 0), input, true);
+      assertInstanceOf(AdmissionResponse.class, peer.next());
+      Records.WorkView view = DurableServerTest.awaitTerminal(peer, WORK);
+      assertEquals(Records.State.SUCCEEDED, view.state());
+      Records.Output output = view.manifest().outputs().get(0);
+      // Three stalled inputs: a declared 256 KiB payload, 128 KiB sent, no FIN.
+      long[] stalled = new long[3];
+      for (int i = 0; i < 3; i++) {
+        int index = i;
+        QuicStreamChannel stream =
+            withStreamCredit(
+                () ->
+                    peer.sendInput(
+                        DurableServerTest.header(
+                            1,
+                            10 + index,
+                            new Records.WorkKey(0, 0, 2 + index),
+                            stall,
+                            "copy/v2",
+                            0),
+                        Arrays.copyOf(stall, 128 * 1024),
+                        false));
+        stalled[i] = stream.streamId();
+      }
+      // A watch as long as the idle bound, held on declared-never-admitted work, and a result read
+      // whose stream is never read.
+      peer.send(new Watch(peer.request(), new Records.WorkKey(0, 0, 6), 0, 3000));
+      peer.holdIncoming = true;
+      peer.send(new Read(peer.request(), WORK, 1, 0, output.sha256()));
+      // Read control until every stalled stream has been refused, or the bound is missed.
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
+      int refused = 0;
+      while (refused < 3) {
+        long remaining = deadline - System.nanoTime();
+        assertTrue(remaining > 0, "stalled inputs were not all refused by idle+5s");
+        Message message =
+            peer.messages.poll(Math.max(1, remaining / 1_000_000), TimeUnit.MILLISECONDS);
+        assertNotNull(
+            message,
+            "no control frame before the bound; connection "
+                + (peer.closed.isDone() ? peer.closed.get() : "still open"));
+        if (message instanceof Refusal refusal && refusal.request().input()) {
+          assertEquals(ProtocolError.Code.LIMIT_EXCEEDED, refusal.code(), refusal.toString());
+          assertEquals("input receive deadline", refusal.detail());
+          refused++;
+        }
+      }
+      assertFalse(
+          peer.closed.isDone(),
+          "connection closed before the refusals were read: "
+              + (peer.closed.isDone() ? peer.closed.get() : ""));
+      for (long id : stalled) assertTrue(id >= 0);
+      // The neutral driver reads control only at the end of its window, long after the idle bound:
+      // the refused streams and the expired watch leave nothing outstanding, and the connection
+      // must still be there, silent for twice the control deadline, when it does.
+      Thread.sleep(6500);
+      assertFalse(peer.closed.isDone(), "durable connection closed for control silence");
+      assertInstanceOf(
+          WatchResponse.class,
+          peer.call(new Watch(peer.request(), new Records.WorkKey(0, 0, 6), 0, 0)));
+      peer.resumeIncoming();
     }
   }
 
