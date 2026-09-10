@@ -1,0 +1,34 @@
+[package]
+name = "durable-transform-grpc"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Equivalent durable streaming-gRPC baseline for the durable-transform workload (contract C1 section 8)"
+
+[lib]
+name = "grpc_baseline"
+path = "src/lib.rs"
+
+[[bin]]
+name = "grpc-worker"
+path = "src/bin/grpc-worker.rs"
+
+[[bin]]
+name = "grpc-coordinator"
+path = "src/bin/grpc-coordinator.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.6", features = ["derive"] }
+prost = "0.14"
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
+sha2 = "0.11.0"
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-stream = "0.1"
+tonic = { version = "0.14", features = ["transport", "tls-ring"] }
+tonic-prost = "0.14"
+workload-core = { path = "../durable-transform-workload/workload-core" }
+
+[build-dependencies]
+tonic-prost-build = "0.14"

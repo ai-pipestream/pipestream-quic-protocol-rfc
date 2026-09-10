@@ -1,0 +1,12 @@
+[package]
+name = "workload-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Shared deterministic transform, input generator, and verification oracle for the durable-transform workload (contract C1)"
+
+[dependencies]
+sha2 = "0.11.0"
+
+[dev-dependencies]

@@ -1,0 +1,22 @@
+[package]
+name = "workload-authority"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "External durable-transform worker authority: transform/v2 on public PipeStream APIs"
+
+[[bin]]
+name = "workload-authority"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.6", features = ["derive"] }
+pipestream-quinn = { path = "../../../implementations/rust-quinn/quinn" }
+rustls = { version = "0.23.43", default-features = false, features = ["ring", "std"] }
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "signal"] }
+workload-core = { path = "../workload-core" }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.4", features = ["fs"] }

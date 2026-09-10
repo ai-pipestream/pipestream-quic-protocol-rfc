@@ -1,0 +1,119 @@
+syntax = "proto3";
+
+package pipestream.workload.v1;
+
+// Comparison-local durable transform protocol. This is the gRPC baseline's
+// application contract, not a PipeStream wire mapping. Transport is HTTP/2
+// streaming gRPC; all durability below is implemented by this baseline.
+service TransformWorker {
+  // Client-streaming chunk upload. The server commits the operation receipt
+  // and outcome durably before replying (commit-before-ACK). Replaying the
+  // same operation ID returns the identical receipt without re-execution.
+  rpc Submit(stream SubmitRequest) returns (SubmitResponse);
+  // Explicit authorized retry of a retryable attempt.
+  rpc Retry(RetryRequest) returns (SubmitResponse);
+  // Owner-authorized cancellation fence.
+  rpc Cancel(CancelRequest) returns (CancelResponse);
+  // Resolve a committed-but-unobserved operation without new execution.
+  rpc Lookup(LookupRequest) returns (SubmitResponse);
+  // Retained manifest for a committed (work, attempt).
+  rpc GetManifest(ManifestRequest) returns (ManifestResponse);
+  // Server-streaming authenticated result fetch of one committed output.
+  rpc ReadOutput(ReadRequest) returns (stream OutputChunk);
+}
+
+message ChunkIdentity {
+  string authority = 1;
+  string owner = 2;
+  uint64 generation = 3;
+  uint64 ordinal = 4;
+  // Lowercase hex of the nonzero 16-octet immutable operation ID.
+  string operation_id = 5;
+}
+
+message SubmitHeader {
+  ChunkIdentity id = 1;
+  uint64 total_length = 2;
+  // 32-byte SHA-256 of the exact input bytes.
+  bytes input_sha256 = 3;
+  // Constant execution ceiling (not a wall-clock deadline: absolute times
+  // would break operation identity across resume). The worker admits at
+  // `admitted_at` and enforces completion within admitted_at + ceiling.
+  uint64 execution_ceiling_ms = 4;
+  // SHA-256 over (authority, owner, generation, ordinal, operation_id,
+  // total_length, input_sha256, execution_ceiling_ms) as length-prefixed
+  // fields; changed parameters under a reused operation ID are CONFLICT.
+  bytes params_digest = 5;
+}
+
+message SubmitRequest {
+  oneof payload {
+    SubmitHeader header = 1;
+    bytes content = 2;
+  }
+}
+
+// outcome: COMMITTED = terminal success persisted; RETRYABLE = attempt
+// failed but the work may be retried; CONFLICT = reused ID with different
+// parameters; EXPIRED = deadline passed; UNAUTHORIZED / NOT_FOUND /
+// CANCELLED as named.
+message SubmitResponse {
+  string operation_id = 1;
+  bytes params_digest = 2;
+  string outcome = 3;
+  uint64 attempt = 4;
+  uint64 committed_at_ms = 5;
+  string detail = 6;
+}
+
+message RetryRequest {
+  ChunkIdentity id = 1;
+  uint64 expected_attempt = 2;
+}
+
+message CancelRequest {
+  ChunkIdentity id = 1;
+}
+
+message CancelResponse {
+  string operation_id = 1;
+  // ACCEPTED = fence committed; TERMINAL = pre-existing terminal outcome.
+  string disposition = 2;
+  string detail = 3;
+}
+
+message LookupRequest {
+  string operation_id = 1;
+}
+
+message OutputManifest {
+  ChunkIdentity id = 1;
+  uint64 attempt = 2;
+  bytes input_sha256 = 3;
+  bytes output_sha256 = 4;
+  uint64 output_length = 5;
+  uint64 committed_at_ms = 6;
+  uint64 available_until_ms = 7;
+}
+
+message ManifestRequest {
+  ChunkIdentity id = 1;
+  uint64 attempt = 2;
+}
+
+message ManifestResponse {
+  OutputManifest manifest = 1;
+}
+
+message ReadRequest {
+  ChunkIdentity id = 1;
+  uint64 attempt = 2;
+  bytes expected_output_sha256 = 3;
+}
+
+message OutputChunk {
+  bytes content = 1;
+  // True on the final message; the client validates length, SHA-256 and FIN
+  // before presenting bytes as a verified result.
+  bool fin = 2;
+}

@@ -13,6 +13,7 @@ __pycache__/
 *.py[cod]
 implementations/*/target/
 examples/*/target/
+examples/*/*/target/
 implementations/cpp-msquic/build/
 .refcache/
 build/

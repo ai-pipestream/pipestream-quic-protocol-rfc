@@ -1,0 +1,9 @@
+version	run_id	scenario_id	target	boundary	action	seed	deadline_ms
+1	dt-full	F1	worker-b	ADMISSION_RESPONSE_SENT	kill	6	30000
+1	dt-full	F1	worker-b	ADMISSION_RESPONSE_SENT	restart	6	60000
+1	dt-full	F2	coordinator	REQUEST_SENT	kill	6	30000
+1	dt-full	F2	coordinator	REQUEST_SENT	restart	6	60000
+1	dt-full	F3	worker-c	PUBLICATION_COMMITTED	kill	6	30000
+1	dt-full	F3	worker-c	PUBLICATION_COMMITTED	restart	6	60000
+1	dt-full	F4	coordinator	RESULT_VERIFIED	kill	6	30000
+1	dt-full	F4	coordinator	RESULT_VERIFIED	restart	6	60000
