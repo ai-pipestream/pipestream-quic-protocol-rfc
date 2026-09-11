@@ -1,0 +1,10 @@
+10	1789096733257	2	-1	session-open	workload-c
+10	1789096733257	0	-1	session-open	workload-a
+10	1789096733257	1	-1	session-open	workload-b
+11	1789096733257	2	-1	commits	0 chunks
+11	1789096733257	0	-1	commits	0 chunks
+11	1789096733257	2	-1	session-close	
+11	1789096733257	1	-1	commits	0 chunks
+11	1789096733257	0	-1	session-close	
+11	1789096733257	1	-1	session-close	
+0	1789096733258	-	-	final-verified	0 bytes
