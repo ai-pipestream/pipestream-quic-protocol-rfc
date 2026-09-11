@@ -37,6 +37,9 @@ Commits (all plain author identity, no generated attribution):
 | `ab59dafb` | client control deadline corrected (traceability defect D1: send renews the activity clock, no silence failure with nothing pending, pending requests due within wait + control deadline; `DurableClientControlDeadlineTest`); `--db-mib`/`--wal-mib` storage funding on `init-authority` and `serve` for Meta (`V2MainStorageFundingTest`); refusal timing and before/after write probes in the stalled-principal test; replayed-input stop and release assertions; clause-level Section 12 traceability (`docs/standards/section-12-java-traceability.md`, 373 statements); Kimi M17b question (2) answered (section 5) |
 | `0a088050` | client cross-checks scope pages before journaling them and views against retained child scopes (defect 8, `DurableClientContradictionTest`); STOP_SENDING alone is not admission evidence (`DurableClientControlDeadlineTest`, two cases, raw authority input and control script hooks); replayed-stream and D2/D3/D7 notes; handoff section 4 items 7-9 |
 | `a700f5f4` | store-level Section 12.6 tests: a replacement lease already expired at the final time observation is CONFLICT and commits nothing (`ExecutionStoreTest`); a cancellation fence on a STRICT parent keeps precedence over a later child failure, excludes new descendants and their outcome commits, and settles them through the bounded cascade (`ClosureReconciliationTest`) |
+| `0d8ec7bf` | wire-level scope paging (`ScopePagingWireTest`): a 300-member sealed scope walked with `after-entity` and `more` over real QUIC, a mid-range page, a page past the end, an unsealed scope that grows after an empty page and seals only on the sealing declaration (S12-288 to S12-290); the 18 refusal codes pinned to the Section 11.10 registry with reserved and out-of-range values mapped to FRAME_ERROR (`RefusalCodeRegistryTest`, S12-072). The paging fixture reproduces the C15 storage bound: the default file policy refuses the first 256-member declaration with LIMIT_EXCEEDED `SQLite file capacity exhausted`, so the test funds the authority through `V2Main.configuration` (`db-mib` 1024, `wal-mib` 256) |
+| `c9edaed8` | wire and client gap tests: OUTPUT_UNAVAILABLE over real QUIC after the installed object is deleted, with the SUCCEEDED outcome and manifest unchanged, and a revoked session refused UNAUTHORIZED on a fresh `Read` with no pending read (`ResultDeliveryWireGapTest`, S12-265, S12-277); capability profile lists bounded at 32, strictly increasing, in range, on both lists (`CapabilityListBoundsTest`, S12-028); a manifest locator naming another endpoint is never dereferenced or sent credentials, the read stays on the configured connection (`DurableClientLocatorTest`, S12-280, S12-283); credential expiry closes the bound connection UNAUTHORIZED, the expired certificate cannot return, and a longer-lived certificate for the same principal attaches to the same retained generation (`CredentialExpiryReconnectTest`, S12-098) |
+| `4cb4b444` | listener fix for defect 9: an input's stream and pending slots are released when its admission response or refusal is sent, not when the retained storage-cleanup owner closes (`DurableRequests.Ticket`), so a peer that read the refusal and was granted transport credit is not refused LIMIT_EXCEEDED on its retransmission; found when slow fsync made `DurableWireNegativeTest.stalledInputsExpireWithoutBlockingAHealthyConnection` fail deterministically; regression `DurableRequestsTest.anInputSlotIsReleasedWithItsResponseNotWithItsCleanupOwner`; the wire test now names the drained control messages on failure; new jar pin (section 2) |
 
 Working tree at `a700f5f4`: clean. Nothing pushed (no push authorization was
 given); no CI exists for this branch; no draft/deploy action taken; the
@@ -108,7 +111,10 @@ native jar `e49d88b724cc79c936899542c1565a00454a93d512816de6e8cfefa637c51c50`.
   `--db-mib 1024 --wal-mib 256` on both `init-authority` and `serve`.
   `0a088050` changes only the Java client and tests, so the `ab59dafb` jar stays
   the peer pin and is the build in `target/`; no new jar is issued until the
-  listener or launcher changes again.
+  listener or launcher changes again. Superseded at `4cb4b444` (listener request
+  tracker: a refused or answered input releases its stream slot with its
+  response, defect 9; wire behaviour otherwise unchanged): lib jar `5a658ac1ca61f13b43dce42b46f513fa4b508110c44e178dbb0d8336b8ea0f59`,
+  shaded all-jar `02a410fc711a038e729305db5fdaae4cd80b809a220b8e2be6cdbb6e0c1bc014`.
   Kimi's driver (run by follow-on agents while Kimi is away) merged `0176855`
   at milestone 17 (`add98fd6`, archive `durable-18d3ea398f09f12e`, JVM heap
   frozen at `-Xms256m -Xmx2g`) and `7585a9dc` at milestone 17b.
@@ -313,6 +319,30 @@ no longer rewrites the WAL index on every store call. Full offline run at
    (two tests, both orders, membership and producer contradictions), red on
    `ab59dafb`.
 
+9. **Java listener: a refused input kept its connection stream slot until
+   storage cleanup finished, after the peer had already been granted transport
+   credit.** `DurableServer.InputTransfer.refuse` closes the QUIC stream (so
+   quiche collects it and the peer receives MAX_STREAMS credit) and sends the
+   correlated REFUSAL, but the `DurableRequests` input ticket was released only
+   when the retained cleanup owner closed, after `InputStore.Receiver.close`
+   (unlink and fsync of the partial input) had run on a storage worker. A peer
+   that read the refusal and retransmitted on the fresh credit was refused
+   LIMIT_EXCEEDED `connection input or request capacity exhausted` although
+   the negotiated stream bound (Section 12.1, `stream-limit`) had a free slot.
+   The window is the storage cleanup latency; it was invisible while fsync on
+   the RAID-0 NVMe took about a millisecond and became deterministic on
+   2026-09-11 when fsync rose to 35-75 ms (`DurableWireNegativeTest.
+   stalledInputsExpireWithoutBlockingAHealthyConnection` failed five runs in
+   a row on the committed tree; a diagnostic build reported
+   `pending=2/64 inputs=2/2` with both refused inputs still counted). Fixed in
+   `4cb4b444`: an input's primary ticket (the response sender) releases the
+   stream and pending slots when the admission response or refusal has been
+   sent; retained owners keep the binding for cleanup only. Control requests
+   keep their capacity until the last owner releases it. Regression:
+   `DurableRequestsTest.anInputSlotIsReleasedWithItsResponseNotWithItsCleanupOwner`
+   (deterministic, no storage involved), plus the wire test under slow
+   storage. Listener wire behaviour otherwise unchanged; new jar pin below.
+
 Kimi's milestone 17b question (2), the per-stream abort of stalled inputs
 landing between idle+10 s and lifetime+10 s instead of at the 30 s idle bound,
 is answered and is not a Java defect. A timestamped reproduction (Java
@@ -369,7 +399,7 @@ Three branches carry this window's work, all based on `8eb5a17` on
 | branch | tip | content |
 |---|---|---|
 | `docs/client-recovery-guidance-2026-09` | `ff901451` | spec text: client recovery guidance, MAX_STREAMS correction |
-| `agent/rfc-claude-java-v2` | `a700f5f4` (tests and this document on the same branch) | Java V2 durable authority, listener and client |
+| `agent/rfc-claude-java-v2` | `4cb4b444` (tests and this document on the same branch) | Java V2 durable authority, listener and client |
 | `agent/rfc-kimi-neutral-v2` | `73766f6a` | neutral conformance driver; contains `7585a9dc` by merge |
 
 `git merge-tree --write-tree feat/durable-work-results-v2 <branch>` reports

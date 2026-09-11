@@ -688,9 +688,16 @@ final class DurableWireNegativeTest {
       try {
         withStreamCredit(() -> stalled.sendInput(partial, input, true));
       } catch (Exception failure) {
+        java.util.List<Message> pending = new java.util.ArrayList<>();
+        Message drained;
+        while ((drained = stalled.messages.poll(1, TimeUnit.SECONDS)) != null) pending.add(drained);
         throw new AssertionError(
             "retransmission failed; connection close event: "
-                + (stalled.closed.isDone() ? stalled.closed.get() : "connection still open"),
+                + (stalled.closed.isDone() ? stalled.closed.get() : "connection still open")
+                + "; control messages: "
+                + pending
+                + "; server inputs: "
+                + authority.server.snapshot().toCompletableFuture().get(5, TimeUnit.SECONDS),
             failure);
       }
       assertInstanceOf(AdmissionResponse.class, stalled.next());
