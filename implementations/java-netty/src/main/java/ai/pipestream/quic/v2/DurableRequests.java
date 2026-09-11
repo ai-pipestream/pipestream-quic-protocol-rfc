@@ -59,6 +59,8 @@ final class DurableRequests implements AutoCloseable {
     final long accepted;
     final CompletableFuture<Void> drained = new CompletableFuture<>();
     int references = 1;
+    /** Whether this flight still occupies its connection capacity slot. */
+    boolean counted = true;
 
     Flight(Message request, Kind kind) {
       this.request = request;
@@ -75,10 +77,16 @@ final class DurableRequests implements AutoCloseable {
    */
   final class Ticket implements AutoCloseable {
     private final Flight flight;
+    private final boolean primary;
     private boolean released;
 
     private Ticket(Flight flight) {
+      this(flight, true);
+    }
+
+    private Ticket(Flight flight, boolean primary) {
       this.flight = flight;
+      this.primary = primary;
     }
 
     /**
@@ -92,7 +100,7 @@ final class DurableRequests implements AutoCloseable {
         if (flight.references == Integer.MAX_VALUE)
           throw ProtocolError.limit("request owner count exhausted");
         flight.references++;
-        return new Ticket(flight);
+        return new Ticket(flight, false);
       }
     }
 
@@ -173,7 +181,10 @@ final class DurableRequests implements AutoCloseable {
       if (released) throw error(CONFLICT, "request owner already released");
     }
 
-    /** Release this owner once; only the final physical owner releases connection capacity. */
+    /**
+     * Release this owner once. An input's capacity is released by its primary owner (the response
+     * sender); every other kind releases capacity with its final physical owner.
+     */
     @Override
     public void close() {
       Flight ready;
@@ -182,7 +193,17 @@ final class DurableRequests implements AutoCloseable {
         if (released) return;
         released = true;
         abandonedDetach = false;
-        if (--flight.references == 0) {
+        // An input occupies its stream and request slots only until its admission response or
+        // refusal has been sent (Section 12.1 negotiated stream bound); the retained owners that
+        // finish storage cleanup afterwards keep the binding, not the capacity, so a peer that
+        // has read the refusal and been granted transport credit is not refused again for it.
+        if (primary && flight.kind == Kind.INPUT && flight.counted) {
+          flight.counted = false;
+          pending.remove(flight);
+          inputs--;
+        }
+        if (--flight.references == 0 && flight.counted) {
+          flight.counted = false;
           pending.remove(flight);
           switch (flight.kind) {
             case BINDING -> bindingPending = false;

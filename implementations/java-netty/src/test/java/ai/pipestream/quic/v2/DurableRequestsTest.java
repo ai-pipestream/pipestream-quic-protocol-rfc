@@ -3,6 +3,7 @@ package ai.pipestream.quic.v2;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -253,6 +254,53 @@ final class DurableRequestsTest {
       assertEquals(0, requests.usage().pending());
       requests.close();
     }
+  }
+
+  @Test
+  void anInputSlotIsReleasedWithItsResponseNotWithItsCleanupOwner() throws Exception {
+    SessionStore sessions =
+        SessionStore.initialize(directory.resolve("slots.sqlite"), ResultFixture.configuration());
+    AtomicLong nanos = new AtomicLong(5);
+    DurableRequests requests =
+        new DurableRequests(access("alice"), ResultFixture.SELECTED, nanos::get);
+    Messages.Create create = new Messages.Create(1, 1, new Records.Policy(10_000, 20_000, 30_000));
+    DurableRequests.Ticket binding = accepted(requests.accept(create));
+    Messages.Binding committed = sessions.create(access("alice"), ResultFixture.SELECTED, create);
+    binding.bind(committed);
+    binding.close();
+    int limit = ResultFixture.SELECTED.streamLimit();
+    List<DurableRequests.Ticket> inputs = new ArrayList<>();
+    for (int i = 0; i < limit; i++) inputs.add(requests.input());
+    assertEquals(limit, requests.usage().inputs());
+    assertCode(ProtocolError.Code.LIMIT_EXCEEDED, requests::input);
+    // The refusal (or admission response) is sent while storage cleanup still owns a copy:
+    // the stream slot is free at once, and the copy keeps the binding for the cleanup.
+    DurableRequests.Ticket cleanup = inputs.get(0).retain();
+    inputs.get(0).close();
+    assertEquals(limit - 1, requests.usage().inputs());
+    assertEquals(limit - 1, requests.usage().pending());
+    assertEquals(committed, cleanup.binding().orElseThrow());
+    DurableRequests.Ticket retransmission = requests.input();
+    assertEquals(limit, requests.usage().inputs());
+    assertCode(ProtocolError.Code.LIMIT_EXCEEDED, requests::input);
+    // The cleanup owner's release does not release the slot a second time.
+    cleanup.close();
+    assertEquals(limit, requests.usage().inputs());
+    assertEquals(limit, requests.usage().pending());
+    retransmission.close();
+    assertEquals(limit - 1, requests.usage().inputs());
+    // A control request still holds its pending slot until its last owner releases it.
+    DurableRequests.Ticket page = accepted(requests.accept(new Messages.Page(2, 0, 0, 1)));
+    DurableRequests.Ticket worker = page.retain();
+    int pending = requests.usage().pending();
+    page.close();
+    assertEquals(pending, requests.usage().pending());
+    worker.close();
+    assertEquals(pending - 1, requests.usage().pending());
+    for (DurableRequests.Ticket input : inputs) input.close();
+    assertEquals(0, requests.usage().inputs());
+    requests.close();
+    sessions.close();
   }
 
   private static DurableRequests.Ticket accepted(DurableRequests.Acceptance acceptance) {
