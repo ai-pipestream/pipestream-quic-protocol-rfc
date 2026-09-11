@@ -58,6 +58,15 @@ final class DurableTestPki {
   }
 
   private void leaf(String name, String usage) throws Exception {
+    leaf(name, usage, 2);
+  }
+
+  /** Issue one more client leaf for {@code name} valid for {@code days} days under the same CA. */
+  void clientLeaf(String name, int days) throws Exception {
+    leaf(name, "clientAuth\n", days);
+  }
+
+  private void leaf(String name, String usage, int days) throws Exception {
     command(
         "openssl",
         "req",
@@ -91,7 +100,7 @@ final class DurableTestPki {
         "-out",
         name + ".crt",
         "-days",
-        "2",
+        Integer.toString(days),
         "-extfile",
         name + ".ext");
   }
