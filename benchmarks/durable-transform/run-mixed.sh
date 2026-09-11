@@ -31,6 +31,10 @@ cleanup() {
 trap cleanup EXIT
 
 JAVA_MAIN="ai.pipestream.quic.v2.V2Main"
+# Physical storage funding for the Rust authority DBs (MiB). Defaults
+# preserve historical funding; larger corpora raise these via env.
+PHYS_DB_MIB="${PS_PHYS_DB_MIB:-256}"
+PHYS_WAL_MIB="${PS_PHYS_WAL_MIB:-64}"
 for i in 0 1 2; do
   w=$(printf '%s' abc | cut -c $((i + 1))); port=$((17443 + i))
   if [ "$w" = "$JWORK" ]; then
@@ -48,10 +52,11 @@ for i in 0 1 2; do
   else
     "$PS_AUTH" init-authority --state-db "$W/ps-$w.sqlite" --object-dir "$W/ps-$w.obj" \
       --authority "workload-$w" --principal-map "$W/pki/ps-principals.tsv" \
-      --trust-system-clock
+      --trust-system-clock --db-mib "$PHYS_DB_MIB" --wal-mib "$PHYS_WAL_MIB"
     "$PS_AUTH" serve --state-db "$W/ps-$w.sqlite" --object-dir "$W/ps-$w.obj" \
       --authority "workload-$w" --principal-map "$W/pki/ps-principals.tsv" \
-      --trust-system-clock --bind "127.0.0.1:$port" --cert "$W/pki/ps-server-$w.pem" \
+      --trust-system-clock --db-mib "$PHYS_DB_MIB" --wal-mib "$PHYS_WAL_MIB" \
+      --bind "127.0.0.1:$port" --cert "$W/pki/ps-server-$w.pem" \
       --key "$W/pki/ps-server-$w.key" --client-ca "$W/pki/ps-ca.pem" \
       --result-authority "localhost:$port" --ready-file "$W/ps-$w.ready" \
       > "$W/ps-$w.log" 2>&1 &
@@ -91,7 +96,7 @@ kill $PIDS 2>/dev/null || true
 wait 2>/dev/null || true
 lo_after=$(awk -F: '/lo:/{split($2,f," "); print f[1]":"f[9]}' /proc/net/dev)
 echo -e "wall_ms=$((END_MS - START_MS))\nlo_rx_tx_before=$lo_before\nlo_rx_tx_after=$lo_after" > "$ART/mixed-net.txt"
-echo -e "java-worker: $JWORK\njava-jar: $JAR\nrestart-safety: Pure (Rust) / IDEMPOTENT (Java transform/v2)\nfixture-schedule-schema: kimi interface-v1 1452f60 (c566751a...)" > "$ART/run-record.txt"
+echo -e "java-worker: $JWORK\njava-jar: $JAR\nrestart-safety: Pure (Rust) / IDEMPOTENT (Java transform/v2)\nfixture-schedule-schema: kimi interface-v1 1452f60 (c566751a...)\nrust-phys-funding-mib: db=$PHYS_DB_MIB wal=$PHYS_WAL_MIB" > "$ART/run-record.txt"
 grep -q "first-usable-output" "$ART/mixed-events.tsv" || { echo "MIXED: no first-usable"; exit 1; }
 grep -q "final-verified" "$ART/mixed-events.tsv" || { echo "MIXED: no final-verified"; exit 1; }
 if [ -n "${EXPECTED_SHA:-}" ]; then

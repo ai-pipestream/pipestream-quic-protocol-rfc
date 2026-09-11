@@ -22,14 +22,19 @@ cleanup() {
   [ -n "$PIDS" ] && kill $PIDS 2>/dev/null || true
 }
 trap cleanup EXIT
+# Physical storage funding for the authority DBs (MiB). Defaults preserve
+# historical funding; larger corpora raise these via env and record them.
+PHYS_DB_MIB="${PS_PHYS_DB_MIB:-256}"
+PHYS_WAL_MIB="${PS_PHYS_WAL_MIB:-64}"
 for i in 0 1 2; do
   w=$(printf '%s' abc | cut -c $((i + 1))); port=$((17443 + i))
   "$PS_AUTH" init-authority --state-db "$W/ps-$w.sqlite" --object-dir "$W/ps-$w.obj" \
     --authority "workload-$w" --principal-map "$W/pki/ps-principals.tsv" \
-    --trust-system-clock
+    --trust-system-clock --db-mib "$PHYS_DB_MIB" --wal-mib "$PHYS_WAL_MIB"
   "$PS_AUTH" serve --state-db "$W/ps-$w.sqlite" --object-dir "$W/ps-$w.obj" \
     --authority "workload-$w" --principal-map "$W/pki/ps-principals.tsv" \
-    --trust-system-clock --bind "127.0.0.1:$port" --cert "$W/pki/ps-server-$w.pem" \
+    --trust-system-clock --db-mib "$PHYS_DB_MIB" --wal-mib "$PHYS_WAL_MIB" \
+    --bind "127.0.0.1:$port" --cert "$W/pki/ps-server-$w.pem" \
     --key "$W/pki/ps-server-$w.key" --client-ca "$W/pki/ps-ca.pem" \
     --result-authority "localhost:$port" --ready-file "$W/ps-$w.ready" \
     > "$W/ps-$w.log" 2>&1 &
@@ -68,7 +73,7 @@ kill $PIDS 2>/dev/null || true
 wait 2>/dev/null || true
 lo_after=$(awk -F: '/lo:/{split($2,f," "); print f[1]":"f[9]}' /proc/net/dev)
 echo -e "wall_ms=$((END_MS - START_MS))\nlo_rx_tx_before=$lo_before\nlo_rx_tx_after=$lo_after" > "$ART/ps-net.txt"
-echo -e "restart-safety: Pure (deterministic re-execution, no external effects)\nfixture-schedule-schema: kimi interface-v1 1452f60 (c566751a...)" > "$ART/run-record.txt"
+echo -e "restart-safety: Pure (deterministic re-execution, no external effects)\nfixture-schedule-schema: kimi interface-v1 1452f60 (c566751a...)\nphys-funding-mib: db=$PHYS_DB_MIB wal=$PHYS_WAL_MIB" > "$ART/run-record.txt"
 grep -q "first-usable-output" "$ART/ps-events.tsv" || { echo "PS: no first-usable"; exit 1; }
 grep -q "final-verified" "$ART/ps-events.tsv" || { echo "PS: no final-verified"; exit 1; }
 echo "PS arm done in $((END_MS - START_MS)) ms"

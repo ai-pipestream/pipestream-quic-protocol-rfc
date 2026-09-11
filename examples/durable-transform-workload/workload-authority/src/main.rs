@@ -203,6 +203,30 @@ struct Storage {
     payload_objects: u64,
     #[arg(long, default_value_t=8*1024*1024*1024)]
     payload_bytes: u64,
+    /// Physical SQLite database file cap in MiB. Funds record growth for
+    /// large corpora; defaults preserve historical behavior.
+    #[arg(long, default_value_t = 256)]
+    db_mib: u64,
+    /// Physical SQLite WAL file cap in MiB.
+    #[arg(long, default_value_t = 64)]
+    wal_mib: u64,
+}
+
+/// Physical file-length funding from CLI MiB caps. (256, 64) reproduces
+/// `PhysicalLimits::default()` exactly.
+fn physical_limits(db_mib: u64, wal_mib: u64) -> Result<PhysicalLimits> {
+    let limits = PhysicalLimits {
+        database_bytes: db_mib
+            .checked_mul(1 << 20)
+            .filter(|n| *n >= 65536 && *n <= (16 << 30) && *n % 65536 == 0)
+            .context("db-mib out of funded range")?,
+        wal_bytes: wal_mib
+            .checked_mul(1 << 20)
+            .filter(|n| *n >= 65536 && *n <= (16 << 30) && *n % 65536 == 0)
+            .context("wal-mib out of funded range")?,
+        ..PhysicalLimits::default()
+    };
+    Ok(limits)
 }
 
 impl Storage {
@@ -240,7 +264,7 @@ impl Storage {
             &self.state_db,
             IdentityLabel(self.authority.clone()),
             policy,
-            PhysicalLimits::default(),
+            physical_limits(self.db_mib, self.wal_mib)?,
             Arc::new(TrustedSystemClock),
             access,
         )?;
@@ -358,5 +382,37 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::Serve { storage, network } => serve(storage, network).await,
+    }
+}
+
+#[cfg(test)]
+mod funding_tests {
+    use super::*;
+
+    #[test]
+    fn defaults_reproduce_historical_funding() {
+        assert_eq!(
+            physical_limits(256, 64).unwrap(),
+            PhysicalLimits::default()
+        );
+    }
+
+    #[test]
+    fn larger_funding_maps_mib_to_bytes() {
+        let limits = physical_limits(1024, 256).unwrap();
+        assert_eq!(limits.database_bytes, 1024 << 20);
+        assert_eq!(limits.wal_bytes, 256 << 20);
+        // Untouched lanes stay at default.
+        assert_eq!(
+            limits.journal_bytes,
+            PhysicalLimits::default().journal_bytes
+        );
+    }
+
+    #[test]
+    fn zero_and_overflow_funding_rejected() {
+        assert!(physical_limits(0, 64).is_err());
+        assert!(physical_limits(256, 0).is_err());
+        assert!(physical_limits(u64::MAX, 64).is_err());
     }
 }
