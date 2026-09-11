@@ -142,20 +142,25 @@ used 1.97.1 against that closure. `cargo build` on the host will confirm.
   failure with LimitExceeded/Cancelled, all other codes rejected, and
   a surviving session afterwards. Timestamps are first-observation
   brackets (alive, dead], not termination instants.
-- CR13 status: PARTIAL. Vs Rust all four arms PASS. Vs Java: idle
-  PASS, but lifetime DIVERGES — the 30 s kill lands in-window (30.0 s)
-  yet the connection is unusable afterwards (vs Rust it stays up;
-  Java's own 30 s stream cap coincides — see CoreOptions.java:90 — so
-  this may be server-side enforcement tearing down harder); rerun
-  reproduced it, so it is systematic, not a flake. complete/cancel-neg
-  vs Java unrun (mixed run already proves Java commit paths;
-  cancel-neg mechanics are client-local). Reported as a peer mismatch
-  for adjudication, not papered over. Remaining gaps needing the
-  client-library owner: (1) a disable/extend knob for the idle/lifetime
-  timers (no true disable-timer negative control exists without it);
-  (2) causal deadline evidence (post-deadline writes surface Cancelled,
-  exact death instants unobservable); (3) server-side enforcement and
-  the download direction are untested by these arms.
+- CR13 status: CLOSED (C15, 2026-09-10, seed 6, base 85887911). Vs
+  Rust all four arms PASS (unchanged, §8 above). Vs Java all four arms
+  PASS against Claude `7585a9dc` (jar `61ab64a3…` hash-verified, copied
+  into the run dir, no rebuild): idle (stall dies in-window,
+  alive_at=3120ms dead_at=7068ms, session survives), lifetime (30 s
+  kill lands in-window, `probe-stream-dead` Cancelled alive_at=187ms
+  dead_at=30015ms, then `probe-session-survived`), complete (commits),
+  cancel-neg (injected shutdown correctly rejected). Artifacts:
+  `benchmarks/durable-transform/results/cr13-c15-java-seed6/`
+  (`probe-events.tsv`, four worker logs, `MANIFEST.sha256` verified).
+  The earlier divergence was measured at `63d03a0` (connection unusable
+  after the 30 s kill) and is closed by `7585a9dc` (a durable-profile
+  connection is no longer closed for control silence). Remaining open
+  requests to the client-library owner (not gaps in this evidence):
+  (1) a disable/extend knob for the idle/lifetime timers (no true
+  disable-timer negative control exists without it); (2) causal
+  deadline evidence (post-deadline writes surface Cancelled, exact
+  death instants unobservable); (3) server-side enforcement and the
+  download direction are untested by these arms.
 
 ## 9. Safe next actions
 
