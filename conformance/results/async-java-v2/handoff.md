@@ -36,8 +36,9 @@ Commits (all plain author identity, no generated attribution):
 | `7585a9dc` | durable-profile connections are never closed for control silence (core-only connections keep the control deadline); `DurableWireNegativeTest.stalledPrincipalIsRefusedPerStreamOnASurvivingConnection` replays the neutral driver's stalled-principal shape; full offline run 717 tests, 0 failures |
 | `ab59dafb` | client control deadline corrected (traceability defect D1: send renews the activity clock, no silence failure with nothing pending, pending requests due within wait + control deadline; `DurableClientControlDeadlineTest`); `--db-mib`/`--wal-mib` storage funding on `init-authority` and `serve` for Meta (`V2MainStorageFundingTest`); refusal timing and before/after write probes in the stalled-principal test; replayed-input stop and release assertions; clause-level Section 12 traceability (`docs/standards/section-12-java-traceability.md`, 373 statements); Kimi M17b question (2) answered (section 5) |
 | `0a088050` | client cross-checks scope pages before journaling them and views against retained child scopes (defect 8, `DurableClientContradictionTest`); STOP_SENDING alone is not admission evidence (`DurableClientControlDeadlineTest`, two cases, raw authority input and control script hooks); replayed-stream and D2/D3/D7 notes; handoff section 4 items 7-9 |
+| `a700f5f4` | store-level Section 12.6 tests: a replacement lease already expired at the final time observation is CONFLICT and commits nothing (`ExecutionStoreTest`); a cancellation fence on a STRICT parent keeps precedence over a later child failure, excludes new descendants and their outcome commits, and settles them through the bounded cascade (`ClosureReconciliationTest`) |
 
-Working tree at `0a088050`: clean. Nothing pushed (no push authorization was
+Working tree at `a700f5f4`: clean. Nothing pushed (no push authorization was
 given); no CI exists for this branch; no draft/deploy action taken; the
 shared feature branch and main were not merged.
 
@@ -368,7 +369,7 @@ Three branches carry this window's work, all based on `8eb5a17` on
 | branch | tip | content |
 |---|---|---|
 | `docs/client-recovery-guidance-2026-09` | `ff901451` | spec text: client recovery guidance, MAX_STREAMS correction |
-| `agent/rfc-claude-java-v2` | `0a088050` (code; this document follows on the same branch) | Java V2 durable authority, listener and client |
+| `agent/rfc-claude-java-v2` | `a700f5f4` (tests and this document on the same branch) | Java V2 durable authority, listener and client |
 | `agent/rfc-kimi-neutral-v2` | `73766f6a` | neutral conformance driver; contains `7585a9dc` by merge |
 
 `git merge-tree --write-tree feat/durable-work-results-v2 <branch>` reports
