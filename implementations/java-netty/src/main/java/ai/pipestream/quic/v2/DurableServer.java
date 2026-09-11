@@ -1229,30 +1229,36 @@ public final class DurableServer implements AutoCloseable {
             () -> {
               if (chunk.length > 0) target.write(ByteBuffer.wrap(chunk), now);
               if (!fin) return null;
-              InputStore.Stored stored = target.finish(now);
-              boundaries.committed(
-                  Boundaries.Boundary.INPUT_INSTALLED,
-                  Boundaries.Details.NONE
-                      .operation(header.operation())
-                      .work(header.parameters().work()));
-              AdmissionResponse response =
-                  host.sessions()
-                      .admit(
-                          access,
-                          selected,
-                          header.generation(),
-                          host.inputs(),
-                          header,
-                          streamId,
-                          host.storageClock(),
-                          host.applicationAuthorization());
-              boundaries.committed(
-                  Boundaries.Boundary.ADMISSION_COMMITTED,
-                  Boundaries.Details.NONE
-                      .operation(header.operation())
-                      .work(header.parameters().work())
-                      .attempt(1));
-              return response;
+              // The installed object stays pinned against orphan reclamation until the admission
+              // transaction has decided its durable fate (handoff defect 10).
+              InputStore.Stored stored = target.finish(now, true);
+              try {
+                boundaries.committed(
+                    Boundaries.Boundary.INPUT_INSTALLED,
+                    Boundaries.Details.NONE
+                        .operation(header.operation())
+                        .work(header.parameters().work()));
+                AdmissionResponse response =
+                    host.sessions()
+                        .admit(
+                            access,
+                            selected,
+                            header.generation(),
+                            host.inputs(),
+                            header,
+                            streamId,
+                            host.storageClock(),
+                            host.applicationAuthorization());
+                boundaries.committed(
+                    Boundaries.Boundary.ADMISSION_COMMITTED,
+                    Boundaries.Details.NONE
+                        .operation(header.operation())
+                        .work(header.parameters().work())
+                        .attempt(1));
+                return response;
+              } finally {
+                stored.release();
+              }
             },
             response -> {
               busy = false;
