@@ -1,0 +1,9 @@
+1	durable-18d42c12afac14aa	g1-leaf-copy	rust	client	3032375-18d42c16dd4520af	1			0:0:1	1		artifacts/input.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+1	durable-18d42c12afac14aa	g1-leaf-copy	rust	client	3032375-18d42c16dd4520af	2	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d42c12afac14aa	g1-leaf-copy	rust	client	3032375-18d42c16dd4520af	3	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d42c12afac14aa	g1-leaf-copy	rust	client	3032375-18d42c16dd4520af	4	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d42c12afac14aa	g1-leaf-copy	rust	client	3032375-18d42c16dd4520af	5	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d42c12afac14aa	g1-leaf-copy	rust	client	3032375-18d42c16dd4520af	6	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d42c12afac14aa	g1-leaf-copy	rust	client	3032375-18d42c16dd4520af	7			0:0:1	1		artifacts/manifest.txt	884	f144ed38cd1cd2c4d2b74c0b44a682b4aeea40c4fb697962b7b49a69587a8e8d
+1	durable-18d42c12afac14aa	g1-leaf-copy	rust	client	3032375-18d42c16dd4520af	8	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d42c12afac14aa	g1-leaf-copy	rust	client	3032375-18d42c16dd4520af	9	RESULT_INSTALLED		0:0:1	1		artifacts/output.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682

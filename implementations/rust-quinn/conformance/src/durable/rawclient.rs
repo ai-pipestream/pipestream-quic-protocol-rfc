@@ -505,6 +505,38 @@ pub struct Binding {
     pub authority: String,
     pub owner: String,
     pub generation: u64,
+    pub creation_sequence: u64,
+    /// The session's retained-record ceilings as the SUBJECT declares them in
+    /// the binding receipt: scopes, entities, operations, input bytes, output
+    /// bytes, active jobs. These are the numbers an R row quotes as a
+    /// subject's declared limits, rather than any documented default.
+    pub limits: SessionLimits,
+}
+
+/// Session limits echoed in a `Session::Binding` receipt (a 6-array).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionLimits {
+    pub scopes: u64,
+    pub entities: u64,
+    pub operations: u64,
+    pub input_bytes: u64,
+    pub output_bytes: u64,
+    pub active_jobs: u64,
+}
+
+impl SessionLimits {
+    /// Evidence text for an artifact line.
+    pub fn text(&self) -> String {
+        format!(
+            "scopes={} entities={} operations={} input_bytes={} output_bytes={} active_jobs={}",
+            self.scopes,
+            self.entities,
+            self.operations,
+            self.input_bytes,
+            self.output_bytes,
+            self.active_jobs
+        )
+    }
 }
 
 pub fn parse_binding(body: &[u8]) -> Result<Binding> {
@@ -515,11 +547,27 @@ pub fn parse_binding(body: &[u8]) -> Result<Binding> {
     let authority = r.text()?;
     let owner = r.text()?;
     let generation = r.uint()?;
+    let creation_sequence = r.uint()?;
+    r.skip().context("session receipt policy")?;
+    ensure!(
+        r.array_len()? == 6,
+        "session receipt limits is not a 6-array"
+    );
+    let limits = SessionLimits {
+        scopes: r.uint()?,
+        entities: r.uint()?,
+        operations: r.uint()?,
+        input_bytes: r.uint()?,
+        output_bytes: r.uint()?,
+        active_jobs: r.uint()?,
+    };
     Ok(Binding {
         request,
         authority,
         owner,
         generation,
+        creation_sequence,
+        limits,
     })
 }
 
@@ -685,8 +733,31 @@ impl Peer {
         Self::build(Some(interval))
     }
 
+    /// The peer's runtime is MULTI-THREADED on purpose, and this is a
+    /// measurement property, not a performance choice.
+    ///
+    /// quinn spawns its endpoint driver — the task that reads inbound
+    /// packets and applies the frames in them — onto whatever runtime the
+    /// endpoint is created in. On a current-thread runtime that task only
+    /// progresses while some `block_on` is pending on this thread, so a row
+    /// that sleeps between probes, or whose probe returns immediately out of
+    /// local send credit, leaves inbound packets unprocessed for as long as
+    /// it is not inside `block_on`. The subject's STOP_SENDING or refusal is
+    /// then observed at the NEXT call that happens to wait, and the row
+    /// reports the time of its own probe rather than the time of the
+    /// subject's action.
+    ///
+    /// That is exactly how `r-stalled-principal-progress` came to bracket
+    /// the Java input receive deadline between 40 s and 130 s when the
+    /// subject was in fact refusing at 30.1 s: the STOP_SENDING frames had
+    /// been arriving and being retransmitted for a minute and were all
+    /// applied within one millisecond of each other the moment the client
+    /// next blocked. Worker threads keep the driver running while the
+    /// scenario thread sleeps, so an observation timestamp is the subject's
+    /// timing and not the fixture's scheduling.
     fn build(keep_alive: Option<Duration>) -> Result<Self> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
             .enable_all()
             .build()?;
         Ok(Self {
@@ -743,6 +814,14 @@ pub struct RawConn {
 /// Negotiated capability selection fields the R rows assert against.
 #[derive(Debug, Clone, Copy)]
 pub struct SelectionCaps {
+    /// Maximum control body bytes the subject will accept.
+    pub control_limit: u64,
+    /// Concurrent object streams per direction per connection.
+    pub stream_limit: u64,
+    /// Maximum pending control responses on one connection.
+    pub pending_limit: u64,
+    /// Maximum input/result object payload bytes.
+    pub object_limit: u64,
     pub idle_ms: u64,
     pub lifetime_ms: u64,
 }
@@ -764,11 +843,15 @@ pub fn parse_capabilities(body: &[u8]) -> Result<SelectionCaps> {
     for _ in 0..r.array_len()? {
         r.uint().context("required profile id")?;
     }
-    r.uint()?; // control_limit
-    r.uint()?; // stream_limit
-    r.uint()?; // pending_limit
-    r.uint()?; // object_limit
+    let control_limit = r.uint()?;
+    let stream_limit = r.uint()?;
+    let pending_limit = r.uint()?;
+    let object_limit = r.uint()?;
     Ok(SelectionCaps {
+        control_limit,
+        stream_limit,
+        pending_limit,
+        object_limit,
         idle_ms: r.uint()?,
         lifetime_ms: r.uint()?,
     })
@@ -1029,8 +1112,66 @@ impl RawConn {
         Ok(())
     }
 
+    /// Transport statistics straight from the SOURCE-PINNED QUIC transport
+    /// (quinn 0.11.11 / quinn-proto 0.11.17, both pinned in this workspace's
+    /// Cargo.lock) for THIS connection: UDP datagram byte totals in each
+    /// direction, per-frame-type receive and transmit counts, and path
+    /// loss/retransmission counters.
+    ///
+    /// This is the transport's own accounting of the frames it decoded out
+    /// of received packets and encoded into sent ones, not a fixture wrapper
+    /// counting application calls. `udp_tx`/`udp_rx` are wire bytes for this
+    /// connection alone, which is what makes them FIXTURE-SCOPED where an
+    /// interface counter is host-scoped. What they are NOT: a byte-for-byte
+    /// packet capture (no capability for one on this host), and not the
+    /// SUBJECT's accounting — they are one endpoint's view.
+    pub fn stats(&self) -> quinn::ConnectionStats {
+        self.connection.stats()
+    }
+
+    /// NON-WRITING probe of one send stream's state.
+    ///
+    /// A probe that writes bytes to test whether a stream is still alive is
+    /// not a passive observation: on an input stream those bytes are payload
+    /// progress, and a subject whose receive deadline is measured from the
+    /// last payload byte has its deadline legitimately renewed by the probe
+    /// itself. This polls quinn's own `stopped()` future with a bounded
+    /// wait instead, so the stream carries nothing the subject can read as
+    /// activity.
+    pub fn poll_stream_stopped(
+        &self,
+        stream: &quinn::SendStream,
+        timeout: Duration,
+    ) -> Result<StreamState> {
+        let stopped = stream.stopped();
+        self.runtime.block_on(async move {
+            match tokio::time::timeout(timeout, stopped).await {
+                Ok(Ok(Some(code))) => Ok(StreamState::Stopped(code.into_inner())),
+                Ok(Ok(None)) => Ok(StreamState::Acknowledged),
+                Ok(Err(error)) => Ok(StreamState::Lost(format!("{error}"))),
+                Err(_elapsed) => Ok(StreamState::Open),
+            }
+        })
+    }
+
     /// Abrupt loss: drop every handle without a close frame.
     pub fn vanish(self) {}
+}
+
+/// What a non-writing probe saw on one send stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamState {
+    /// Nothing observed within the bounded wait: still open as far as this
+    /// endpoint can tell.
+    Open,
+    /// The peer sent STOP_SENDING with this application error code.
+    Stopped(u64),
+    /// The peer acknowledged every byte of a finished stream. A stalled
+    /// input is never finished, so this is recorded rather than expected.
+    Acknowledged,
+    /// The stream or its connection is gone; the reason is recorded, and a
+    /// transport loss is never counted as subject enforcement.
+    Lost(String),
 }
 
 async fn client_endpoint(

@@ -1,0 +1,4 @@
+# pipestream-store-v1
+start	/work/worktrees/pipestream-rfc-kimi/implementations/rust-quinn/target/durable-runs/runs/durable-18d42c12afac14aa/r-staging-and-journal-bounds/subject/authority.sqlite	86016	86016
+start	/work/worktrees/pipestream-rfc-kimi/implementations/rust-quinn/target/durable-runs/runs/durable-18d42c12afac14aa/r-staging-and-journal-bounds/subject/objects/binding	89	4096
+start	/work/worktrees/pipestream-rfc-kimi/implementations/rust-quinn/target/durable-runs/runs/durable-18d42c12afac14aa/r-staging-and-journal-bounds/subject/objects/root.lock	0	0

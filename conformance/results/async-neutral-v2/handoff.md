@@ -18,6 +18,10 @@ gates and acceptance integration have passed, with evidence below.
   merges into this branch are the peer's own Java subject commits, most
   recently `7585a9d` at `c5b4f30` (M17b re-pin; `0176855` at `9119627`
   was the M17 re-pin).
+- Base after M18a: the branch was fast-forwarded once to `85887911` (the
+  coordinating owner's combined review commit, which already contains
+  `73766f6a`); this was a pure `--ff-only` merge of `main`, nothing was
+  merged INTO main or the feature branch, and no push or rebase was made.
 - Dirty state: none at M17b; the fmt-only diffs in
   `src/v2/authority/admission.rs:1` and `scopes.rs:478` noted at M16 were
   committed with that milestone and the release binary rebuilt at M17.
@@ -53,7 +57,12 @@ gates and acceptance integration have passed, with evidence below.
 | e219f11 | M15: Java subject re-pinned to 63d03a0/pipestream.4; full 50-row matrix rerun, no regressions |
 | 5993042 | M16: R batch A — resource collectors (`durable/resources.rs`) plus `r-capability-manifest`, `r-connection-ceiling` and `r-stalled-principal-progress` against both servers |
 | add98fd | M17: Java subject re-pinned to `0176855`; JVM heap frozen before measurement; resources schema v2 (`cancelled_write_bytes`); R batch A + full matrix rerun |
-| this commit | M17b: Java subject re-pinned to `7585a9d`; R batch A + full matrix rerun; the Java stall enforcement kind is now per-stream and matches the Rust reference |
+| 73766f6a | M17b: Java subject re-pinned to `7585a9d`; R batch A + full matrix rerun; the Java stall enforcement kind is now per-stream and matches the Rust reference |
+| 7544b134 | M18a: `r-memory-ladder` implemented against both subjects (payload and retained-inventory ladders, over-limit rung, group-window statistics); R row ids reconciled with the canonical matrix names |
+| 9deed6a0 | M18b: `r-staging-and-journal-bounds` implemented against both subjects (PARTIAL: journal/retained-byte ceilings recorded, not driven); the raw peer's tokio runtime is now driven continuously, which withdraws the M17b stalled-abort bracket as a client artefact |
+| 0d5dded6 | M18c: `r-stalled-principal-progress` re-run with non-writing probes on the driven client — both subjects enforce at their own negotiated idle bound inside a two-second bracket; every R row plus `g1-leaf-copy` re-run as the group regression |
+| 1d3569ee | M18d: `r-network-bytes` implemented against both subjects (PARTIAL: no network namespace and no packet capture on this host, both recorded by the checks that failed); new network scope with its own schema and validating reader |
+| this commit | M18e: `r-native-credit` implemented against both subjects (PARTIAL: no packet capture, and one endpoint's view only); group R is now four DONE and three PARTIAL, with every row implemented |
 
 ## 3. Verification evidence (M8 snapshot; superseded by §3c for the
 current milestone's gates, counts and subject pins)
@@ -459,6 +468,507 @@ first attempt and both are kept.
 - The `STALL_CLOSE_SETTLE` 30 s and the stall keep-alive introduced at M17
   are unchanged and still fixture timing, never evidence.
 
+## 3d. Milestone 18a — r-memory-ladder
+
+First of the four remaining R rows. `r-memory-ladder` is implemented against
+both subjects and green in dev; the three placeholder row ids left over from
+milestone 16 are retired and the registry now carries exactly the canonical
+matrix names.
+
+Gates on this tree: `cargo fmt --all -- --check` exit 0; `cargo clippy
+--all-targets -p pipestream-conformance -- -D warnings` exit 0; `cargo test -p
+pipestream-conformance` exit 0, 90 passed / 0 failed (88 at M17b; the two new
+tests cover the group-window statistics and the nearest-rank percentile);
+`cargo build --release` exit 0.
+
+Subject pins for this milestone:
+
+| Subject | Pin | sha256 |
+|---|---|---|
+| rust `pipestream-quinn` | committed sources of this branch (unchanged since M16) | `097829fa45d8c03eb0a5594badf0cfceababdc6d8c4898d8ce497426ec7406d7` |
+| rust `pipestream-conformance` (the driver) | committed sources at this milestone | `733fa7b899157924794f71377e61646af6616a3f9ca7f7ca7d199cf61b0eb1b8` |
+| java all-jar | Claude `7585a9dc` (merged here as `c5b4f30`) | `61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a` |
+| Java launch limits | unchanged, frozen before any measurement row | `-Xms256m -Xmx2g` |
+
+The Java jar is the byte-identical artifact copied from Claude's read-only
+tree and hash-verified before the run (`61ab64a3…`); it is never rebuilt
+here. The rust subject binary was rebuilt from the committed sources and came
+out byte-identical to the M16/M17/M17b pin, so no reference-implementation
+source changed with this milestone. The driver binary hash moves, because the
+driver is what this milestone changes.
+
+Archived dev run (exit 0, INCOMPLETE-labelled, MANIFEST.sha256 over every
+archived file, verified after archiving):
+
+- `durable-18d428da0717c79d` — `r-memory-ladder` (both directions) plus the
+  `g1-leaf-copy` regression; 421/421 manifest entries verified.
+
+No archived run directory was deleted. Three pre-archive development runs
+under `target/durable-runs` (untracked, never archived) found three real
+fixture defects before the decisive run and are described in the deviations
+below.
+
+### Row design and what is frozen
+
+Detail is in scenario-matrix-g6-resource.md under "Group R status (milestone
+18a)". In short: two ladders over one raw-peer connection per direction —
+payload 64 KiB / 1 MiB / 16 MiB with four admissions per rung, and inventory
+1 / 16 / 64 cumulative resident works at a fixed 64 KiB payload — plus an
+over-limit rung that declares 64 MiB against a 16 MiB `object_limit` and
+records the refusal. `expected.tsv` is written after negotiation and BEFORE
+the first rung's traffic; the plateau allowances in it are computed from the
+limits the SUBJECT declared on the wire (`stream_limit x object_limit` for
+the payload ladder, `pending_limit x control_limit` for the inventory ladder)
+plus a stated per-subject slack, and are never widened afterwards. The JVM
+heap ceiling is the milestone-17 freeze, unchanged.
+
+Every rung figure is a per-tick SUM over the whole sampled process group
+before it is a statistic, measured over the last 6 s of a 12 s quiet settle.
+
+### Observed (dev evidence, never an acceptance claim)
+
+1. Memory does not scale with PAYLOAD on either subject. 256x payload
+   (65,536 -> 16,777,216 B per admission) moved the group tail p90 RSS by
+   1,568 KiB on rust (18,924 -> 20,492) and 25,008 KiB on java (341,944 ->
+   366,952), against frozen allowances of 131,072 and 524,288 KiB. Buffering
+   a single largest payload once would already cost 16,320 KiB.
+2. Memory does not scale with RETAINED INVENTORY. 1 -> 64 resident works at a
+   fixed payload moved tail p90 RSS by 1,532 KiB on rust and by nothing
+   measurable on java (367,532 -> 341,948; recorded as growth 0, never as a
+   negative figure), against allowances of 66,560 and 278,528 KiB.
+3. The two subjects refuse the over-limit rung with the same code and
+   different text, both recorded verbatim: rust `LIMIT_EXCEEDED (4) "input
+   exceeds retained duration, bytes or response limits"`, java
+   `LIMIT_EXCEEDED (4) "input exceeds negotiated object limit"`, both tagged
+   to the input stream.
+4. The Java LISTENER's declared selection is not `DurableOptions.defaults()`:
+   it offers `pending_limit=32` and `stream_lifetime_ms=120000` where the
+   library defaults are 64 and 300000. The row reads the selection off the
+   wire and sizes its allowances from that, which is why it never quotes a
+   documented default as a subject bound.
+5. Handles and threads stay bounded across the ladder (rust FDs 12 -> 15,
+   threads 49 -> 50; java FDs 18 -> 22, threads 32 -> 44) and the Java heap
+   is collected on every heap tick inside the rung windows (42 ticks, 0
+   gaps, 10,637 -> 156,058 KiB against the frozen 2 GiB ceiling). Collector
+   health: 1,014/1,014/0 error lines (rust), 997/997/0 (java).
+6. JAVA NATIVE/DIRECT IS A NAMED GAP ON THIS HOST, with the exact failing
+   check archived: `jcmd <pid> VM.native_memory summary` answers "Native
+   memory tracking is not enabled" (transcript in
+   `artifacts/jcmd-native.txt`, alongside `jcmd VM.flags` confirming
+   `MaxHeapSize=2147483648` / `InitialHeapSize=268435456` in the live
+   subject). Enabling NMT means changing the frozen launch flags mid-matrix
+   and adding the collector's own overhead to the measurement it serves; it
+   is recorded as unavailable rather than substituted by RSS minus heap. A
+   future milestone may re-freeze WITH NMT and rerun every R row.
+7. The Rust heap scope remains a NAMED GAP (no black-box allocator counter);
+   RSS/HWM is a separate scope and is never reported as either heap.
+
+### Fixture defects found and fixed before the decisive run
+
+All three were found by development runs that were never archived, and all
+three are recorded rather than quietly patched.
+
+1. The over-limit rung was refused `CONFLICT` "input membership was not
+   declared" instead of `LIMIT_EXCEEDED`, because both subjects check scope
+   membership before the declared length. The row now declares the
+   over-limit entity like any other, so the refusal it records is the
+   object-limit decision it exists to observe.
+2. An unpaced burst of 48 admissions in the top inventory rung was refused by
+   the Java subject with `LIMIT_EXCEEDED` "retained input, output or executor
+   capacity" — a concurrent-job ceiling, not a memory result. Admissions are
+   now paced in batches of two and each batch settled before the next, so
+   these ladders vary payload and retained inventory and never executor
+   concurrency. The ceilings themselves belong to
+   `r-staging-and-journal-bounds`.
+3. Signalling the subject to stop while 76 works were still winding down made
+   `OwnedServer::stop` fail its drain assertion with `transport_idle: false`
+   and every other scope idle: the rust authority's fixed 5 s shutdown grace
+   was consumed by the execution-pool wind-down before its transport wait
+   started. This is the same mechanism recorded at M17 for the stall row. The
+   row now waits (bounded, 120 s) for every admitted work to be terminal
+   before it signals anything; no measurement is taken during that wait and
+   the rung windows have already closed.
+
+### Deviations recorded
+
+- The Java all-jar was again COPIED from Claude's read-only tree rather than
+  rebuilt here, so the archived `java_sha256` is byte-for-byte the artifact
+  he published at `7585a9dc`; the sources are in this branch at `c5b4f30`.
+- The 64 MiB rung of the matrix's suggested payload ladder is NOT measured.
+  Both subjects declare `object_limit` = 16 MiB, so a 64 MiB object never
+  becomes resident and measuring it would measure a refusal; it is probed
+  once as the over-limit rung and its refusal recorded instead. This is the
+  matrix's own "select feasible sizes with explicit ceilings" case and the
+  ceiling is named in `expected.tsv`.
+- The "concurrent works" wording of the matrix's inventory ladder is realised
+  as RETAINED resident works, for the concurrency reason in fixture defect 2
+  above. The row says so in `expected.tsv` rather than implying it held 64
+  works in flight.
+
+## 3e. Milestone 18b — r-staging-and-journal-bounds (PARTIAL) and a raw-client measurement fix
+
+Second of the four remaining R rows, plus a driver-side measurement fix that
+applies to every raw row.
+
+Gates on this tree: `cargo fmt --all -- --check` exit 0; `cargo clippy
+--all-targets -p pipestream-conformance -- -D warnings` exit 0; `cargo test -p
+pipestream-conformance` exit 0, 90 passed / 0 failed (unchanged from M18a);
+`cargo build --release` exit 0.
+
+Subject pins are unchanged from M18a — rust `pipestream-quinn`
+`097829fa45d8…` (rebuilt from committed sources, byte-identical), java
+all-jar `61ab64a312908dad…` copied from Claude's read-only tree and
+hash-verified, JVM launch limits `-Xms256m -Xmx2g` still frozen. The driver
+binary at this milestone is `bd2a6ae050dea92b5d31a03ad9d883a7d17c98b5e45d0a021f3612c95d04e786`.
+
+Archived dev runs — ALL THREE ARE KEPT, including the two that are not the
+decisive one, and each MANIFEST.sha256 verifies after archiving:
+
+- `durable-18d42cb15342e2b8` — DECISIVE: `r-staging-and-journal-bounds`
+  (both directions) plus the `g1-leaf-copy` regression, exit 0, 142/142
+  manifest entries verified.
+- `durable-18d42c12afac14aa` — FAILED and recorded as failed: the row's own
+  session attach was refused `LIMIT_EXCEEDED "metadata concurrency
+  exhausted"` because the connection it needed was attached after the
+  pending phase had already filled the subject's control capacity. 101/101
+  manifest entries verified.
+- `durable-18d42bb4e9e2c860` — SUPERSEDED: the row reported SCENARIO OK, but
+  its rust reconciliation evidence was wrong (the probe read its own
+  `"input receive deadline"` refusal as a capacity refusal, and every later
+  attempt then hit an immutable-intent CONFLICT from a re-used operation
+  id). It is kept because it is the evidence for fixture defects 5 and 6
+  below, and because the row was not asserting reconciliation at all at that
+  point — which is itself the finding that produced the assertion.
+  138/138 manifest entries verified.
+
+### The row
+
+Design and full observations are in scenario-matrix-g6-resource.md under
+"Group R status (milestone 18b)". Status PARTIAL, with the reason carried in
+the row's own `observed.tsv` (`row_status`): the pending-control-work and
+staging-object ceilings are driven to exhaustion and every property the
+matrix asks for is asserted around them — a named refusal for NEW work with
+the attempt number it arrived on, existing promises still completing, file
+handles returning to baseline, capacity still charged while the transfers
+are held, and capacity reconciling after safe cleanup and after a restart on
+the same roots — but the JOURNAL and RETAINED-BYTE ceilings are recorded from
+the subject's declarations and sampled per file at six checkpoints rather
+than driven to exhaustion, because driving them needs hundreds of megabytes
+of committed records.
+
+The driver now parses the session binding receipt's retained-record limits
+(`scopes`, `entities`, `operations`, `input_bytes`, `output_bytes`,
+`active_jobs`), so the ceilings the row quotes come from the subject on the
+wire rather than from a library default.
+
+Headline numbers: rust refuses the 17th pending control request
+(`"connection pending limit"`, declared `pending_limit` 16) and the 5th
+concurrent incomplete transfer of one owner (`"input transfer capacity
+exhausted"`, documented `active_per_owner` 4); java refuses the 33rd
+(`"request refused"`, declared `pending_limit` 32) and the 129th
+(`"input handle capacity exhausted"`, documented 128 handles). 16/16 and
+32/32 granted waits were answered afterwards. FDs: rust 12 → 17 held → 14
+released; java 18 → 150 held → 22 released.
+
+### Client-side observation defect fixed — affects every raw row
+
+The coordinating owner supplied a timestamped reproduction (Java DIAG build
+plus a quinn trace subscriber on a copy of the driver) showing that the Java
+subject refuses each stalled input at idle+0.1 s
+(`sinceProgressMs=30094`), retransmits its STOP_SENDING 0x204 for about a
+minute, and that every "got frame StopSending" line in the client's own
+trace lands within one millisecond of the others. Root cause is in the
+conformance crate: `rawclient::Peer` built a `new_current_thread` tokio
+runtime, so quinn's endpoint driver — the task that reads inbound packets
+and applies their frames — only progressed while a `block_on` was pending on
+the scenario thread. A row that slept between probes, or whose probe
+returned immediately out of local send credit, left inbound packets
+unprocessed until the next call that actually waited, and then reported the
+time of its own probe as the time of the subject's action.
+
+Fix: `Peer` now builds a two-worker multi-threaded runtime, so the driver
+runs while the scenario thread sleeps. Only the conformance crate changed.
+The tokio dependency gained the `rt-multi-thread` FEATURE of a crate it
+already depends on — no new crate — and `Cargo.lock` is byte-identical
+before and after, as is the rust subject binary.
+
+Consequence for the record: the 40–130 s bracket that
+`r-stalled-principal-progress` reported for the Java input receive deadline
+at M17b was an OBSERVATION ARTEFACT OF THIS DRIVER, not the subject's
+timing. The bracket is WITHDRAWN rather than restated. That row is not
+re-run in this milestone; re-running it properly needs the second half of
+the fix as well — probes that poll the send stream's stopped state instead
+of writing payload bytes (which are progress and renew the Java deadline),
+with intermediate probes at idle+2 s, +5 s and +10 s and first-observation
+brackets recorded. Kimi's M17b request (2) to Claude is ANSWERED and closed
+by his finding; what remains open is this driver-side re-run, which is
+Kimi's own work and not a question to Claude.
+
+### Fixture defects found and fixed before the decisive run
+
+1. A filler watch waiting past a revision that could never arrive can only
+   be answered by its own deadline, which proves nothing about a promise
+   being kept; the watches now wait past the DECLARATION revision so the
+   admission answers them.
+2. `WaitMs` is bounded at 30 s by the protocol — a 60 s wait is a
+   FRAME_ERROR, not a longer wait.
+3. Reading one control frame after a burst of attempts attributes an early
+   refusal to the last attempt. Refusals carry the request or input-stream
+   tag they belong to, and the row now matches on that tag and asserts the
+   match before recording an attempt number.
+4. A per-attempt control wait made the staging sweep outlast the Java
+   subject's own input receive deadline, which reaped the earliest transfers
+   while later ones were still being opened; batched opens with one bounded
+   drain per batch keep the sweep inside the deadline.
+5. A probe holding an incomplete transfer open for longer than the subject's
+   object idle bound reads the subject's `"input receive deadline"` refusal
+   as a capacity refusal; probe waits are now 2 s, below the smaller of the
+   two negotiated idle bounds (rust 5 s).
+6. Each recovery attempt declares a new entity and therefore needs a new
+   operation id; re-using one is an immutable-intent CONFLICT that masks the
+   capacity answer entirely.
+7. Reconciliation after cleanup and after restart was recorded but not
+   ASSERTED, so a run whose reconciliation evidence was wrong still reported
+   SCENARIO OK. Both are now assertions, conditional on the ceiling having
+   actually been reached.
+
+### Deviations recorded
+
+- Row status PARTIAL: the journal/retained-BYTE ceilings are recorded, not
+  driven. Named above and in the row's `observed.tsv`.
+- The java-direction sweep reaches the 128-handle ceiling only by walking to
+  a second principal, because the per-owner CONNECTION ceiling (8) turns the
+  ninth alice connection away first. That turn-away is logged as
+  `setup-refused` with the peer's text and is not counted as a staging
+  refusal.
+- `r-stalled-principal-progress` is NOT re-run at this milestone even though
+  the runtime fix changes what it would observe. Its M17b numbers therefore
+  stand in §3c as recorded, with the bracket withdrawn here; the row is
+  re-run before any acceptance claim.
+
+## 3f. Milestone 18c — the stalled-principal re-run on a driven client
+
+The measurement fix landed at M18b changed what the raw peer can observe, so
+`r-stalled-principal-progress` is re-run here with the second half of that
+fix — non-writing enforcement probes — and every other R row is re-run
+alongside it, which makes this milestone's archive the group's regression
+evidence as well.
+
+Gates on this tree: `cargo fmt --all -- --check` exit 0; `cargo clippy
+--all-targets -p pipestream-conformance -- -D warnings` exit 0; `cargo test -p
+pipestream-conformance` exit 0, 90 passed / 0 failed; `cargo build --release`
+exit 0, reproducing the unchanged rust subject binary `097829fa45d8…`.
+
+### What changed in the row
+
+1. The enforcement probes no longer WRITE. The earlier probe wrote ten
+   one-byte payloads per stalled stream per probe; on a subject whose input
+   receive deadline is measured from the last payload byte (the Java
+   server's `DurableServer.InputTransfer.lastProgress`) those bytes are
+   progress and renew the deadline the probe exists to observe. The probe
+   now polls quinn's own `stopped()` future with a 250 ms bounded wait and
+   sends nothing.
+2. Six probe marks instead of two, one of them BELOW the bound: idle-2 s,
+   idle+0 s, idle+2 s, idle+5 s, idle+10 s, lifetime+10 s. Without a probe
+   that sees a stream open there is no lower end to a bracket.
+3. Probes run inside the round's idle time in 200 ms slices rather than once
+   per four-second round, which is affordable only because they are
+   non-writing.
+4. The row records, per stream, the last probe that saw it open and the
+   first that saw it stopped, and claims nothing inside that bracket.
+
+### Archived dev run
+
+`durable-18d42e1bffb6a51b` — `r-capability-manifest`, `r-connection-ceiling`,
+`r-stalled-principal-progress`, `r-memory-ladder`,
+`r-staging-and-journal-bounds` and the `g1-leaf-copy` regression, all exit 0,
+INCOMPLETE-labelled, 731/731 manifest entries verified after archiving. This
+single archive is both the milestone's evidence and group R's
+no-regression evidence at the fixed runtime, which is the "batch A plus
+g1-leaf-copy once at the end" rerun the assignment asks for.
+
+Subject pins unchanged: rust `pipestream-quinn` `097829fa45d8…` (rebuilt
+byte-identical), java all-jar `61ab64a312908dad…` copied and hash-verified,
+JVM limits `-Xms256m -Xmx2g` still frozen. Driver binary for this milestone:
+`d7b2eb76ae6e51c7ba52b8161b982dadf53dd2c8229dc7a2f1002773adfc2377`.
+
+### Observed (dev evidence, never an acceptance claim)
+
+1. BOTH SUBJECTS ENFORCE AT THEIR OWN NEGOTIATED IDLE BOUND, and the bracket
+   is about two seconds wide instead of ninety. java (negotiated idle 30 s):
+   all three stalled inputs OPEN at +28.000 s and all three STOPPED by
+   +30.156 s. rust (negotiated idle 5 s): all three OPEN at +3.102 s and all
+   three STOPPED by +5.101 s. Both then read 3/3 `LIMIT_EXCEEDED` (code 4)
+   Refusals with detail `input receive deadline` from a still-open control
+   stream at window end, so the transport channel and the protocol channel
+   agree on both subjects.
+2. THE MILESTONE-17b BRACKET (40 s–130 s on java) IS SUPERSEDED BY A
+   MEASUREMENT, not merely withdrawn. It was the product of two client
+   defects at once — probes that wrote payload and so renewed the deadline,
+   and a current-thread runtime that only applied inbound frames inside
+   `block_on` — and neither was the subject's timing. Claude's finding and
+   the coordinating owner's reproduction are both confirmed by this run.
+3. Healthy-principal progress is unchanged and still far inside the 10 s
+   deadline (worst 150.537 ms rust over 23 rounds, 150.445 ms java over 38),
+   so removing the writes did not remove the pressure the row applies: the
+   stalls, the held pending request and the unread result stream are all
+   still there.
+4. No regression anywhere else in group R at the fixed runtime; the
+   per-row figures are in scenario-matrix-g6-resource.md under "Group R
+   status (milestone 18c)". Two observations are new there: the java
+   connection-ceiling recovery now lands on attempt 1 where M17/M17b saw
+   attempt 2 (a continuously-driven client sends its CONNECTION_CLOSE when
+   it closes rather than at its next blocking call — recorded, not asserted
+   as a subject change), and the rust control-capacity ceiling is NOT stable
+   between runs (attempt 17 `"connection pending limit"` at M18b, attempt 8
+   `"metadata concurrency exhausted"` here). The staging row already
+   declines to claim that the ceiling which fires is the declared
+   `pending_limit`, and asserts only that NEW work is refused by a named
+   code while existing promises complete; both held in both runs.
+
+### Deviations recorded
+
+- `r-stalled-principal-progress` is the only row whose LOGIC changed this
+  milestone; the other four R rows and `g1-leaf-copy` are unchanged code
+  re-run for regression. Their differences from M17b are therefore subject
+  behaviour, run-to-run variation, or the runtime fix — never a measurement
+  change, except where the runtime fix is named as the likely cause.
+- The full 53-row matrix is NOT re-run at this milestone. The runtime fix
+  touches every raw row, so a full-matrix rerun is required before any
+  acceptance claim; what exists here is the R group plus the G1 regression.
+
+## 3g. Milestone 18d — r-network-bytes (PARTIAL)
+
+Third of the four remaining R rows, and the first that needed a new
+measurement scope rather than a new use of an existing one.
+
+Gates: `cargo fmt --all -- --check` exit 0; `cargo clippy --all-targets -p
+pipestream-conformance -- -D warnings` exit 0; `cargo test -p
+pipestream-conformance` exit 0, 92 passed / 0 failed (90 at M18c; the two new
+tests cover the `/proc/net/dev` parser against the live kernel and the
+network artifact's truncation, missing-method and wrong-header rejections);
+`cargo build --release` exit 0, reproducing the unchanged rust subject binary
+`097829fa45d8…`. Driver binary
+`4dc7ddcf4ff5ed3c98b806d3c5e16663f28ede02bf64317b171f973670f900c1`.
+
+Archived dev run: `durable-18d42f5607941dc5` — `r-network-bytes` both
+directions plus the `g1-leaf-copy` regression, exit 0, INCOMPLETE-labelled,
+120/120 manifest entries verified after archiving. No run directory deleted.
+
+### The new scope
+
+`network.tsv` is its own schema (`# pipestream-network-v1`, eight columns:
+checkpoint, method, interface, elapsed_ms, rx_bytes, rx_packets, tx_bytes,
+tx_packets), separate from the process schema because network bytes are a
+separate scope and are never mixed into a resources record. Its validating
+reader rejects a torn final line, a wrong header version, a wrong field count
+and — new here — a record whose METHOD column is empty or `-`, so a
+collection method can never be inferred after the fact.
+
+Full design and observations are in scenario-matrix-g6-resource.md under
+"Group R status (milestone 18d)". In short: two methods side by side and
+never substituted — host-scoped kernel loopback counters with the loopback
+double-counting rule stated, and the source-pinned transport's own
+per-connection UDP byte totals, which are fixture-scoped by construction —
+with handshake/TLS measured in its own phase before any payload exists,
+retransmission reported from the transport's path counters rather than
+subtracted, and the logical payload recorded as its own number and compared,
+never used to derive a network figure.
+
+### Observed
+
+1. The host-scoped method is unusable alone here, and the row quantifies
+   that: the same 10 s idle baseline measured 0 B in the archived run and
+   150,144,677 B in a development run twenty minutes earlier.
+2. Handshake with no payload in existence: rust sent 8,473 B / 15 datagrams
+   and received 7,357 B / 13; java sent 10,945 B / 15 and received 2,967 B /
+   12, already with one lost packet and one congestion event.
+3. Against 4,194,304 B of logical payload the transfer cost 4,302,837 B of
+   UDP payload on rust (2% overhead) and 4,337,607 B on java (3%).
+4. Retransmission over the whole connection: rust 0 lost packets, java 9
+   (11,682 B) with 4 congestion events — on loopback.
+5. The dead-collector and truncation rules are PROVED in-row, not asserted:
+   a deliberately truncated copy of the artifact must be rejected by the
+   reader and a counter read against a non-existent interface must fail.
+
+### Deviations recorded
+
+- Row status PARTIAL: neither a network namespace nor packet capture is
+  granted on this host, so per-packet accounting of the SUBJECT's side is not
+  observable and no fixture-scoped INTERFACE counter exists. The exact
+  failing checks are run by the row and archived verbatim in
+  `artifacts/capability-probes.txt`.
+- `network.tsv` lives under `artifacts/` rather than at the scenario root
+  (where `resources.tsv` and `store.tsv` sit) because an event record's
+  artifact label must be relative to the scenario directory and contain a
+  path separator.
+
+## 3h. Milestone 18e — r-native-credit (PARTIAL); group R complete
+
+The last of the four remaining R rows. With it every row of group R is
+implemented: four DONE (`r-capability-manifest`, `r-connection-ceiling`,
+`r-stalled-principal-progress`, `r-memory-ladder`) and three PARTIAL
+(`r-staging-and-journal-bounds`, `r-network-bytes`, `r-native-credit`), each
+PARTIAL carrying its reason in its own `observed.tsv` as well as here.
+
+Gates: `cargo fmt --all -- --check` exit 0; `cargo clippy --all-targets -p
+pipestream-conformance -- -D warnings` exit 0; `cargo test -p
+pipestream-conformance` exit 0, 92 passed / 0 failed; `cargo build --release`
+exit 0, reproducing the unchanged rust subject binary `097829fa45d8…`. Driver
+binary `1cf0757fe6cd9f8b0f266c0d5e89d72f9caafe98fd9949960fc246200e34f836`.
+
+Archived dev run `durable-18d42ff8392fc9ef` — `r-native-credit` both
+directions plus the `g1-leaf-copy` regression, exit 0, INCOMPLETE-labelled,
+118/118 manifest entries verified. No run directory deleted.
+
+### Observed
+
+1. A write returning is a QUEUEING event, not completion, and the row
+   measures the gap: 16,777,216 application bytes handed over in one call
+   that returned after 87.19 ms (rust) / 87.31 ms (java), with the transport
+   reporting the stream Open at that instant and actual completion following
+   the FIN by 565 µs (rust) / 26.73 ms (java).
+2. The transport sent more than the application queued: 17,220,072 B in
+   13,331 datagrams (rust) and 17,334,102 B in 11,959 (java) against
+   16,777,216 application bytes, with 15 packets (20,394 B) lost on the java
+   path — retransmission reported, not subtracted.
+3. Borrowed credit is visible as frames the peer put on the wire: 341
+   MAX_DATA and 2,047 MAX_STREAM_DATA from rust, 125 and 125 from java.
+   Neither side ever sent DATA_BLOCKED or STREAM_DATA_BLOCKED, so on
+   loopback the application never outran its lent credit — recorded as an
+   observation, not asserted as a property.
+4. Stream credit IS released after refused streams, pairing with the
+   `g6-stopped-control-and-transfers` MAX_STREAMS note: every object-stream
+   slot filled with a stream declaring four times the negotiated
+   `object_limit`, rust refusing 4/4 and java 16/16 with LIMIT_EXCEEDED plus
+   a STOP_SENDING per stream; after retiring them MAX_STREAMS_UNI arrived
+   (rust 0 → 2, java 1 → 2) and a further object stream DID open, so the
+   credit was usable and not merely reported.
+
+### Why PARTIAL
+
+No byte-for-byte packet capture on this host — the row runs
+`tcpdump -i lo -c 1 -w /dev/null` itself and archives its refusal — so the
+evidence is the source-pinned transport's own per-frame and per-datagram
+accounting rather than a capture; and it is one endpoint's view, so the
+SUBJECT's internal credit ledger is not observable. Both are named; neither
+is inferred or substituted.
+
+### Fixture defects found and fixed before the decisive run
+
+1. `execution_ms` above the session policy's 60 s execution limit is a
+   LIMIT_EXCEEDED refusal of the admission, not a longer deadline.
+2. A subject that refuses on the header can STOP_SENDING before the header
+   write returns; that is the refusal arriving through the transport channel
+   rather than the control channel, and it is counted as such rather than
+   treated as a fixture error. A stream can be refused on BOTH channels, so
+   the two counts are explicitly not disjoint.
+3. The refusal phase can leave a late FRAME_ERROR on control for a header
+   the peer stopped mid-write (the Java subject's header timeout is 10 s).
+   The row therefore does not use the control stream again for its own
+   housekeeping after that phase; it drains what it can, records the count,
+   and closes.
+
 ## 4. Interface and peer-review artifacts
 
 - interface-v1.md: event + schedule schemas; acknowledged by Claude
@@ -514,15 +1024,64 @@ first attempt and both are kept.
    subject exposes a PUBLICATION reply pair to withhold (publication is
    observed via watch, not a correlated reply); the kill-at-boundary
    variant is the delivered evidence.
+9. Group R at M18b: `r-capability-manifest`, `r-connection-ceiling`,
+   `r-stalled-principal-progress` and `r-memory-ladder` are DONE;
+   `r-staging-and-journal-bounds` is PARTIAL (pending and staging ceilings
+   driven and asserted; journal/retained-byte ceilings recorded, not
+   driven); `r-network-bytes` is PARTIAL (two methods recorded per sample,
+   handshake and retransmission separated, dead-collector and truncation
+   proved in-row; no fixture-scoped interface counter and no packet capture
+   on this host, both recorded by the checks that failed); `r-native-credit`
+   is PARTIAL (application queue bytes, borrowed flow credit and actual
+   transport completion separated and measured from the source-pinned
+   transport's own frame and datagram accounting, with stream-credit release
+   after refused streams observed and re-used; no packet capture on this
+   host and one endpoint's view only). EVERY R ROW IS NOW IMPLEMENTED:
+   four DONE, three PARTIAL, nothing skipped.
+   `r-stalled-principal-progress` was RE-RUN at M18c on the fixed runtime
+   with non-writing probes and now brackets both subjects inside two seconds
+   of their own negotiated idle bound; the M17b 40-130 s bracket is
+   superseded. The FULL 53-row matrix has not been re-run since the runtime
+   fix and must be before any acceptance claim. NAMED GAPS in group R: the Rust heap scope has no
+   black-box collector; Java native/direct is unavailable on this host
+   because NMT is off and the launch flags are frozen; incomplete-handshake
+   accounting is not observable through the quinn client. None of the three
+   is substituted by another scope.
 
 ## 6. Safe next action
 
-Finish group R: `r-memory-ladder` — its prerequisite is now met, the
-limits and the environment allowance are frozen and recorded (`-Xms256m
--Xmx2g`, rationale in scenario-matrix-g6-resource.md), and the M16 java
-heap-growth question is answered in §3b item 5 (it was an unbounded
-default heap, not retention), so the row can be built on ladders rather
-than on that doubt. Then `r-staging-and-journal-bounds`, `r-network-bytes`
-(needs a network-bytes collector — not built in batch A) and
-`r-native-credit`. Then acceptance-mode integration into
-conformance/run_all.sh and the final full-matrix run.
+Finish group R. `r-memory-ladder` is DONE (M18a) and
+`r-staging-and-journal-bounds` is PARTIAL (M18b). Two things are queued:
+
+1. DONE at M18c: `r-stalled-principal-progress` re-run on the fixed runtime
+   with non-writing probes at idle-2 s, +0 s, +2 s, +5 s, +10 s and
+   lifetime+10 s. Both subjects enforce inside a two-second bracket at their
+   own negotiated idle bound. What remains from it is a FULL 53-row matrix
+   rerun on the fixed runtime, which no milestone here has done.
+2. DONE at M18d and M18e: `r-network-bytes` and `r-native-credit`, both
+   PARTIAL for named host-capability reasons. Group R has no unimplemented
+   row left.
+
+The two things group R still needs before any acceptance claim are a FULL
+53-row matrix rerun on the fixed runtime (no milestone here has done one
+since the raw-client runtime fix at M18b) and acceptance-mode integration
+into conformance/run_all.sh.
+
+## 3i. Driver-binary hashes: what they are and are not (recorded at M18e)
+
+The per-milestone `pipestream-conformance` hashes quoted in §3d–§3h identify
+the binary that produced that milestone's archive, and nothing more. They are
+NOT reproducible across cargo invocations: from identical sources,
+`cargo build --release -p pipestream-conformance` and `cargo build --release`
+over the whole workspace produce different `pipestream-conformance` binaries
+(`1cf0757fe6cd9f8b…` and `3e2a31918c428a8e…` at this commit), because the two
+invocations give the crate a different `-C metadata` and cargo replaces the
+artifact in place.
+
+The pin that matters is unaffected: the rust SUBJECT binary
+`pipestream-quinn` is byte-identical under both invocations and has been
+`097829fa45d8c03eb0a5594badf0cfceababdc6d8c4898d8ce497426ec7406d7` at every
+milestone of M18, including across the tokio `rt-multi-thread` feature
+change. `run.tsv` in every archive records the subject hashes the run
+actually used, and the nc-stale-binary control re-hashes them after every
+scenario.

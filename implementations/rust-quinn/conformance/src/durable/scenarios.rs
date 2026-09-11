@@ -15,7 +15,7 @@ use crate::{hex, unique_suffix};
 use anyhow::{Context, Result, bail, ensure};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File},
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
@@ -160,15 +160,20 @@ pub fn rows() -> Vec<Row> {
     );
     push(
         &mut rows,
+        // Row ids are the CANONICAL matrix names of
+        // scenario-matrix-g6-resource.md. Three milestone-16 placeholders
+        // (`r-pending-ceiling`, `r-staging-quota`, `r-journal-bounds`) were
+        // never implemented under those ids and are retired here; the
+        // mapping is recorded in traceability.md.
         "R",
         &[
             "r-capability-manifest",
             "r-connection-ceiling",
-            "r-pending-ceiling",
             "r-stalled-principal-progress",
             "r-memory-ladder",
-            "r-staging-quota",
-            "r-journal-bounds",
+            "r-staging-and-journal-bounds",
+            "r-network-bytes",
+            "r-native-credit",
         ],
     );
     for id in [
@@ -183,6 +188,10 @@ pub fn rows() -> Vec<Row> {
         "r-capability-manifest",
         "r-connection-ceiling",
         "r-stalled-principal-progress",
+        "r-memory-ladder",
+        "r-staging-and-journal-bounds",
+        "r-network-bytes",
+        "r-native-credit",
         "g2-crash-before-create-commit",
         "g2-crash-after-create-commit",
         "g2-drop-reply-declaration",
@@ -288,7 +297,12 @@ fn direction_coverage(row: &Row, context: &ScenarioContext) -> String {
     } else if row.id.starts_with("r-") && context.java_jar.is_some() {
         if row.id == "r-capability-manifest" {
             "host-capability measurement (no subject direction; informs every R row)".to_owned()
-        } else if row.id == "r-connection-ceiling" {
+        } else if row.id == "r-connection-ceiling"
+            || row.id == "r-memory-ladder"
+            || row.id == "r-staging-and-journal-bounds"
+            || row.id == "r-network-bytes"
+            || row.id == "r-native-credit"
+        {
             "rust-raw-client/rust-server, rust-raw-client/java-server".to_owned()
         } else {
             "rust-cli-client(bob)+rust-raw-client(alice)/rust-server, \
@@ -401,6 +415,10 @@ fn run_rust_direction(row: &Row, context: &ScenarioContext) -> Result<()> {
         "r-capability-manifest" => r_capability_manifest(context),
         "r-connection-ceiling" => r_connection_ceiling(context),
         "r-stalled-principal-progress" => r_stalled_principal_progress(context),
+        "r-memory-ladder" => r_memory_ladder(context),
+        "r-staging-and-journal-bounds" => r_staging_and_journal_bounds(context),
+        "r-network-bytes" => r_network_bytes(context),
+        "r-native-credit" => r_native_credit(context),
         other => bail!("scenario {other} has no rust direction implemented"),
     }
 }
@@ -17450,6 +17468,11 @@ const STALL_KEEP_ALIVE: Duration = Duration::from_secs(5);
 /// window is fixture timing, never evidence: no measurement is taken during
 /// it, and the collector is already stopped.
 const STALL_CLOSE_SETTLE: Duration = Duration::from_secs(30);
+/// Bounded wait of one NON-WRITING stream probe. Short, because the probe
+/// only asks whether a STOP_SENDING has already arrived and the peer's
+/// runtime is driven continuously, so an answer that exists is already
+/// applied; a long wait here would blur the first-observation bracket.
+const STALL_PROBE_POLL: Duration = Duration::from_millis(250);
 
 fn r_stalled_principal_progress(context: &ScenarioContext) -> Result<()> {
     run_raw_directions(
@@ -17561,9 +17584,22 @@ fn bob_op(
     Ok(latency)
 }
 
-/// Probe the stalled upload streams: a write that the server aborted fails
-/// with the peer's reset; a write that still buffers means no stream-level
-/// enforcement yet. Returns the stream ids observed aborted. The connection's
+/// NON-WRITING probe of the stalled upload streams.
+///
+/// It polls each send stream's stopped state with a short bounded wait and
+/// writes nothing. An earlier version wrote ten one-byte payloads per
+/// stream per probe, and that was wrong twice over: on a subject whose
+/// input receive deadline is measured from the LAST PAYLOAD BYTE (the Java
+/// server's `InputTransfer.lastProgress`) those bytes are progress and
+/// legitimately renew the very deadline the probe is there to observe, and
+/// on a client whose transport is only driven inside `block_on` a write
+/// that returns out of local send credit never yields to the endpoint
+/// driver, so the peer's STOP_SENDING is applied at the next call that
+/// happens to wait rather than when it arrived. Both are fixed: this probe
+/// carries no application data at all, and the peer's runtime is driven
+/// continuously (`rawclient::Peer::build`).
+///
+/// Returns the stream ids observed stopped on THIS probe. The connection's
 /// own liveness is recorded alongside every probe, because a subject may
 /// enforce at the connection level instead of per stream.
 fn probe_stalled_streams(
@@ -17574,9 +17610,9 @@ fn probe_stalled_streams(
 ) -> Result<BTreeSet<u64>> {
     let mut aborted = BTreeSet::new();
     // A transport idle timeout is the FIXTURE's own transport giving up, not
-    // the subject enforcing anything. Every stream on the connection fails
-    // its write probe afterwards, so counting those as enforcement would
-    // pass the row on evidence the subject never produced.
+    // the subject enforcing anything. Every stream on the connection reports
+    // lost afterwards, so counting those as enforcement would pass the row
+    // on evidence the subject never produced.
     let mut attributable = true;
     match alice.try_wait_closed(Duration::from_millis(100))? {
         Some(close) => {
@@ -17596,24 +17632,30 @@ fn probe_stalled_streams(
         None => stalls.push_str(&format!("{label}\tconnection\tlive\n")),
     }
     for (stream_id, stream) in streams.iter_mut() {
-        let mut outcome = format!("still-open-at-{label}");
-        for _ in 0..10 {
-            match alice.write_stream(stream, b"x") {
-                Ok(()) => thread::sleep(Duration::from_millis(400)),
-                Err(error) => {
-                    outcome = if attributable {
-                        aborted.insert(*stream_id);
-                        format!("aborted ({error:#})")
-                    } else {
-                        format!(
-                            "write failed after the fixture's transport idle timeout, \
-                             NOT counted as enforcement ({error:#})"
-                        )
-                    };
-                    break;
-                }
+        let outcome = match alice.poll_stream_stopped(stream, STALL_PROBE_POLL)? {
+            rawclient::StreamState::Open => format!("still-open-at-{label}"),
+            rawclient::StreamState::Stopped(code) if attributable => {
+                aborted.insert(*stream_id);
+                format!("aborted (STOP_SENDING {code})")
             }
-        }
+            rawclient::StreamState::Stopped(code) => format!(
+                "STOP_SENDING {code} seen after the fixture's transport idle timeout, \
+                 NOT counted as enforcement"
+            ),
+            rawclient::StreamState::Acknowledged => {
+                "acknowledged (the peer read a finished stream to completion, which a \
+                 never-FINed stall should never reach)"
+                    .to_owned()
+            }
+            rawclient::StreamState::Lost(reason) if attributable => {
+                aborted.insert(*stream_id);
+                format!("aborted (stream lost: {reason})")
+            }
+            rawclient::StreamState::Lost(reason) => format!(
+                "stream lost after the fixture's transport idle timeout, NOT counted as \
+                 enforcement ({reason})"
+            ),
+        };
         stalls.push_str(&format!("{label}\tstream-{stream_id}\t{outcome}\n"));
     }
     Ok(aborted)
@@ -17797,15 +17839,27 @@ fn r_stalled_principal_progress_direction(
                 format!(
                     "every stalled input stream is enforced at the negotiated \
                      idle/lifetime bounds (idle {}s, lifetime {}s): either the \
-                     transport aborts it (observed by a failing write probe at \
-                     idle+10s / lifetime+10s) or a LIMIT_EXCEEDED (code {}) \
-                     Refusal naming that input stream tag is queued on the \
-                     control stream and read at window end — both channels are \
+                     transport aborts it (STOP_SENDING, observed by a \
+                     NON-WRITING probe at idle+2s, +5s, +10s and \
+                     lifetime+10s) or a LIMIT_EXCEEDED (code {}) Refusal \
+                     naming that input stream tag is queued on the control \
+                     stream and read at window end — both channels are \
                      recorded per stream in artifacts/stalls.tsv",
                     negotiated_idle.as_secs(),
                     negotiated_lifetime.as_secs(),
                     rawclient::CODE_LIMIT_EXCEEDED
                 ),
+            ),
+            (
+                "stall_enforcement_bracket",
+                "per stream, the row records the LAST probe that saw it open \
+                 and the FIRST that saw it stopped, and claims no value \
+                 inside that bracket. The probes carry no application data, \
+                 so none of them renews a receive deadline measured from the \
+                 last payload byte; the milestone-17b bracket, taken with \
+                 writing probes on a client whose transport was only driven \
+                 inside block_on, is withdrawn rather than restated"
+                    .into(),
             ),
             (
                 "rss_plateau",
@@ -18028,12 +18082,51 @@ fn r_stalled_principal_progress_direction(
     let mut ops_log = String::from("round\top\tlatency_ms\n");
     let mut worst = Duration::ZERO;
     let mut round = 0u64;
-    let mut probed_idle = false;
-    let mut probed_lifetime = false;
     let mut sampled_mid = false;
     let mut aborted_ids: BTreeSet<u64> = BTreeSet::new();
-    let mut idle_abort_count = 0usize;
-    let mut lifetime_abort_count = None;
+    // Enforcement probes at the NEGOTIATED bounds plus the intermediate
+    // marks. The row brackets the subject's enforcement between the last
+    // probe that saw a stream open and the first that saw it stopped, so
+    // the marks are close together just after the idle bound where the
+    // enforcement is expected, and one far out at the lifetime bound to
+    // catch a subject that enforces there instead.
+    let mut probe_marks: Vec<(String, Duration, bool)> = vec![
+        (
+            // Below the bound on purpose: without a probe that sees a stream
+            // OPEN there is no lower end to the bracket, only "stopped by
+            // the time anyone looked".
+            "idle-bound-2s".to_owned(),
+            negotiated_idle.saturating_sub(Duration::from_secs(2)),
+            false,
+        ),
+        ("idle-bound+0s".to_owned(), negotiated_idle, false),
+        (
+            "idle-bound+2s".to_owned(),
+            negotiated_idle + Duration::from_secs(2),
+            false,
+        ),
+        (
+            "idle-bound+5s".to_owned(),
+            negotiated_idle + Duration::from_secs(5),
+            false,
+        ),
+        (
+            "idle-bound+10s".to_owned(),
+            negotiated_idle + Duration::from_secs(10),
+            false,
+        ),
+        (
+            "lifetime-bound+10s".to_owned(),
+            negotiated_lifetime + Duration::from_secs(10),
+            false,
+        ),
+    ];
+    probe_marks.sort_by_key(|(_, at, _)| *at);
+    // Per stream: the last probe that saw it open, and the first that saw
+    // it stopped. That pair IS the bracket the row reports.
+    let mut last_open_at: BTreeMap<u64, (String, u64)> = BTreeMap::new();
+    let mut first_stopped_at: BTreeMap<u64, (String, u64)> = BTreeMap::new();
+    let mut probe_log: Vec<(String, u64, usize)> = Vec::new();
     while window_start.elapsed() < stall_window {
         round += 1;
         // next-sequence is a journal-free top-level command (server/src/v2.rs
@@ -18127,27 +18220,6 @@ fn r_stalled_principal_progress_direction(
         // Evidence is written every round so a later failure never loses it.
         fs::write(artifacts.join("bob-transcript.txt"), &transcript)?;
         fs::write(artifacts.join("b-ops.tsv"), &ops_log)?;
-        // Enforcement probes at the NEGOTIATED-bound marks (+ margin so the
-        // refusal (idle) or reset has already landed).
-        if !probed_idle && window_start.elapsed() >= negotiated_idle + Duration::from_secs(10) {
-            probed_idle = true;
-            let idle_aborted =
-                probe_stalled_streams(&alice, &mut stalled, "idle-bound+10s", &mut stalls)?;
-            idle_abort_count = idle_aborted.len();
-            aborted_ids.extend(idle_aborted);
-            fs::write(artifacts.join("stalls.tsv"), &stalls)?;
-        }
-        if !probed_lifetime
-            && window_start.elapsed() >= negotiated_lifetime + Duration::from_secs(10)
-        {
-            probed_lifetime = true;
-            let lifetime_aborted =
-                probe_stalled_streams(&alice, &mut stalled, "lifetime-bound+10s", &mut stalls)?;
-            lifetime_abort_count = Some(lifetime_aborted.len());
-            aborted_ids.extend(lifetime_aborted);
-            fs::write(artifacts.join("stalls.tsv"), &stalls)?;
-            events.append("STALL_ABORT_OBSERVED", None, None, None, None, None)?;
-        }
         if !sampled_mid && window_start.elapsed() >= stall_window / 2 {
             sampled_mid = true;
             resources::sample_store(
@@ -18156,20 +18228,61 @@ fn r_stalled_principal_progress_direction(
                 &store_file,
             )?;
         }
+        // Enforcement probes at the NEGOTIATED-bound marks, checked inside
+        // the round's idle time in short slices rather than once per round.
+        // Every probe is non-writing, so running them often costs the
+        // subject nothing and renews no deadline, and the resolution of the
+        // first-observation bracket is the slice rather than the round.
         let cycle = Duration::from_secs(4);
-        let elapsed = window_start.elapsed();
-        if elapsed < stall_window && elapsed < cycle * round as u32 {
-            thread::sleep(cycle * round as u32 - elapsed);
+        let target = cycle * round as u32;
+        loop {
+            let due: Vec<String> = probe_marks
+                .iter_mut()
+                .filter(|(_, at, done)| !*done && window_start.elapsed() >= *at)
+                .map(|mark| {
+                    mark.2 = true;
+                    mark.0.clone()
+                })
+                .collect();
+            for label in due {
+                let elapsed_ms = window_start.elapsed().as_millis() as u64;
+                let stopped = probe_stalled_streams(&alice, &mut stalled, &label, &mut stalls)?;
+                for (stream_id, _) in stalled.iter() {
+                    if stopped.contains(stream_id) {
+                        first_stopped_at
+                            .entry(*stream_id)
+                            .or_insert_with(|| (label.clone(), elapsed_ms));
+                    } else if !first_stopped_at.contains_key(stream_id) {
+                        last_open_at.insert(*stream_id, (label.clone(), elapsed_ms));
+                    }
+                }
+                probe_log.push((label, elapsed_ms, stopped.len()));
+                aborted_ids.extend(stopped);
+                fs::write(artifacts.join("stalls.tsv"), &stalls)?;
+                if !aborted_ids.is_empty() {
+                    events.append("STALL_ABORT_OBSERVED", None, None, None, None, None)?;
+                }
+            }
+            let elapsed = window_start.elapsed();
+            if elapsed >= stall_window || elapsed >= target {
+                break;
+            }
+            thread::sleep(Duration::from_millis(200).min(target - elapsed));
         }
     }
     ensure!(
-        probed_idle && probed_lifetime,
-        "window ended before both enforcement probes ran"
+        probe_marks.iter().all(|(_, _, done)| *done),
+        "window ended before every enforcement probe ran: {:?}",
+        probe_marks
+            .iter()
+            .filter(|(_, _, done)| !done)
+            .map(|(label, _, _)| label.clone())
+            .collect::<Vec<_>>()
     );
-    let lifetime_abort_count = lifetime_abort_count.unwrap_or(0);
     // The window is over: only now is the abusive principal's control stream
     // read, so the queued refusals are the second, protocol-level record of
-    // the same enforcement the write probes observed at the transport level.
+    // the same enforcement the non-writing probes observed at the transport
+    // level.
     let refusals = drain_control_refusals(&mut alice, "window-end", &mut stalls);
     fs::write(artifacts.join("stalls.tsv"), &stalls)?;
     let refused_ids: BTreeSet<u64> = refusals
@@ -18208,16 +18321,43 @@ fn r_stalled_principal_progress_direction(
     observed.push((
         "stall_enforcement",
         format!(
-            "negotiated idle {}s / lifetime {}s; transport abort observed for \
-             {idle_abort_count}/{STALLED_STREAMS} streams by idle+10s and \
-             {lifetime_abort_count}/{STALLED_STREAMS} by lifetime+10s \
-             ({}/{STALLED_STREAMS} distinct); LIMIT_EXCEEDED input refusals on \
-             control at window end: {}/{STALLED_STREAMS}",
+            "negotiated idle {}s / lifetime {}s; non-writing probes at {}; \
+             {}/{STALLED_STREAMS} distinct streams observed stopped; LIMIT_EXCEEDED \
+             input refusals on control at window end: {}/{STALLED_STREAMS}",
             negotiated_idle.as_secs(),
             negotiated_lifetime.as_secs(),
+            probe_log
+                .iter()
+                .map(|(label, at, count)| format!("{label} (+{at}ms: {count} stopped)"))
+                .collect::<Vec<_>>()
+                .join(", "),
             aborted_ids.len(),
             refused_ids.len()
         ),
+    ));
+    // FIRST-OBSERVATION BRACKET per stream: the last probe that saw it open
+    // and the first that saw it stopped. Nothing inside that bracket is
+    // claimed. Every probe carries no application data, so nothing here
+    // renews the subject's receive deadline; the milestone-17b bracket that
+    // did claim a value was an artefact of a client whose transport was
+    // only driven inside `block_on`, and it is withdrawn, not restated.
+    observed.push((
+        "stall_enforcement_bracket",
+        stalled
+            .iter()
+            .map(|(stream_id, _)| {
+                let open = last_open_at
+                    .get(stream_id)
+                    .map(|(label, at)| format!("{label} (+{at}ms)"))
+                    .unwrap_or_else(|| "no probe saw it open".to_owned());
+                let stopped = first_stopped_at
+                    .get(stream_id)
+                    .map(|(label, at)| format!("{label} (+{at}ms)"))
+                    .unwrap_or_else(|| "never observed stopped".to_owned());
+                format!("stream-{stream_id}: last open {open}, first stopped {stopped}")
+            })
+            .collect::<Vec<_>>()
+            .join("; "),
     ));
     fs::write(artifacts.join("bob-transcript.txt"), &transcript)?;
     fs::write(artifacts.join("b-ops.tsv"), &ops_log)?;
@@ -18370,6 +18510,3235 @@ fn r_stalled_principal_progress_direction(
     stop_and_seal(context, scenario_dir, scenario_id, owned, events)
 }
 
+// ---------------------------------------------------------------------------
+// r-memory-ladder (milestone 18a)
+// ---------------------------------------------------------------------------
+//
+// Two ladders against the limits the subject itself declares in the
+// capability selection this row reads on the wire (object_limit,
+// stream_limit, pending_limit, control_limit) plus the JVM heap ceiling
+// frozen in `process::JAVA_MEMORY_FLAGS` before any measurement row. The
+// ladder, the limits and the environment allowance are written into
+// expected.tsv BEFORE the first rung's traffic and are never re-chosen from
+// what the run produced.
+//
+// What the row asserts is that memory PLATEAUS at those bounds: the group's
+// tail RSS at the largest rung may exceed the smallest rung's only by the
+// frozen allowance, which is itself derived from the declared limits
+// (stream_limit x object_limit of in-flight object bytes, pending_limit x
+// control_limit of in-flight control state) plus a stated per-subject slack.
+// Internal counters are not used as RSS evidence anywhere in this row: every
+// figure comes from /proc of the whole sampled process group, and the Java
+// heap scope is jstat only.
+
+/// Measured payload rungs. 64 MiB is deliberately NOT a measured rung: both
+/// subjects declare `object_limit` = 16 MiB in the selection this row reads,
+/// so a 64 MiB object never becomes resident anywhere and measuring it would
+/// measure a refusal. It is probed once as the over-limit rung instead, and
+/// the refusal is recorded verbatim.
+const LADDER_PAYLOADS: [usize; 3] = [64 * 1024, 1024 * 1024, 16 * 1024 * 1024];
+/// Admissions per payload rung: more than one, because a single payload
+/// proves nothing about constant memory.
+const LADDER_REPEATS: usize = 4;
+/// Declared length of the over-limit probe (4x the declared object_limit).
+const LADDER_OVER_LIMIT: u64 = 64 * 1024 * 1024;
+/// Cumulative resident admitted works at the end of each inventory rung.
+const LADDER_INVENTORY: [u64; 3] = [1, 16, 64];
+/// Fixed payload of every inventory-ladder admission, so that ladder varies
+/// inventory alone.
+const LADDER_INVENTORY_PAYLOAD: usize = 64 * 1024;
+/// Entities are declared in batches this size: the rust authority's single
+/// transaction cap binds well below the protocol's 256/batch schema bound
+/// (g1-declaration-capacity), so the row never relies on one large batch.
+const LADDER_DECLARE_BATCH: usize = 16;
+/// Idle window measured after readiness and before the first rung.
+const LADDER_BASELINE: Duration = Duration::from_secs(15);
+/// Quiet settle after each rung's traffic.
+const LADDER_SETTLE: Duration = Duration::from_secs(12);
+/// Plateau statistics are taken over the LAST part of each rung's settle, so
+/// the tail contains no transfer activity of its own rung.
+const LADDER_TAIL: Duration = Duration::from_secs(6);
+/// Bounded wait for the over-limit refusal.
+const LADDER_REFUSAL_WAIT: Duration = Duration::from_secs(10);
+/// Bounded wait, AFTER every measurement window, for the ladder's admitted
+/// works to reach a terminal state, so the subject is not signalled to stop
+/// while its execution pool is still winding them down. Fixture timing, never
+/// evidence.
+const LADDER_QUIESCE: Duration = Duration::from_secs(120);
+/// Admissions per pacing batch. Both subjects declare a concurrent-job
+/// ceiling (the Java session ceiling is the lowest at four executor jobs per
+/// owner), so the ladders admit in batches of this size and settle each batch
+/// before the next. Concurrency is not what these ladders vary.
+const LADDER_ADMIT_BATCH: u64 = 2;
+
+/// One ladder rung's window on the collector's clock.
+struct Rung {
+    label: String,
+    kind: &'static str,
+    payload_bytes: u64,
+    admissions: u64,
+    resident_works: u64,
+    start_ms: u64,
+    tail_from_ms: u64,
+    end_ms: u64,
+}
+
+fn r_memory_ladder(context: &ScenarioContext) -> Result<()> {
+    run_raw_directions(context, "r-memory-ladder", r_memory_ladder_direction)
+}
+
+/// Admit one input over the raw peer and read its admission receipt.
+/// Returns the stream id the receipt named.
+#[allow(clippy::too_many_arguments)]
+fn ladder_admit(
+    alice: &mut RawConn,
+    generation: u64,
+    operation: &[u8; 16],
+    work: (u64, u64, u64),
+    payload: &[u8],
+    sha: &[u8; 32],
+) -> Result<u64> {
+    let header = rawclient::input_header_framed(
+        generation,
+        operation,
+        work,
+        payload.len() as u64,
+        sha,
+        "application/octet-stream",
+        "copy/v2",
+        0,
+        60_000,
+        1,
+        payload.len() as u64,
+    );
+    let mut stream = alice.open_uni()?;
+    let stream_id = u64::from(stream.id());
+    alice.write_stream(&mut stream, &header)?;
+    alice.write_stream(&mut stream, payload)?;
+    alice.finish_stream(&mut stream)?;
+    let admitted = rawclient::parse_admitted_stream(&alice.expect_control(FRAME_WORK)?)?;
+    ensure!(
+        admitted == stream_id,
+        "admission receipt names stream {admitted}, expected {stream_id}"
+    );
+    Ok(stream_id)
+}
+
+/// Bounded wait for every ladder work up to `admitted` to reach a terminal
+/// state (5..=8), polling the scope page.
+///
+/// The ladders vary PAYLOAD and INVENTORY, never executor concurrency: both
+/// subjects declare a concurrent-job ceiling well below the inventory ladder's
+/// top rung (the Java session's `activeJobs` and per-owner executor bounds
+/// refuse the excess with LIMIT_EXCEEDED "retained input, output or executor
+/// capacity"), and a memory ladder that tripped a concurrency ceiling would
+/// be measuring that refusal instead of memory. Admissions are therefore
+/// paced in small batches and each batch is settled before the next, so the
+/// rung's resident inventory is retained work, not work in flight. The
+/// concurrency ceilings themselves are `r-staging-and-journal-bounds`.
+fn ladder_wait_settled(
+    alice: &mut RawConn,
+    request: &mut u64,
+    admitted: u64,
+    deadline: Duration,
+) -> Result<u64> {
+    let until = Instant::now() + deadline;
+    loop {
+        let (_declared, members) = raw_page(alice, *request, 0)?;
+        *request += 1;
+        let terminal = members
+            .iter()
+            .filter(|(entity, state)| *entity <= admitted && (5..=8).contains(state))
+            .count() as u64;
+        if terminal >= admitted {
+            return Ok(terminal);
+        }
+        ensure!(
+            Instant::now() < until,
+            "only {terminal}/{admitted} ladder works reached a terminal state \
+             within {deadline:?}; the ladder cannot pace its admissions"
+        );
+        thread::sleep(Duration::from_millis(250));
+    }
+}
+
+fn r_memory_ladder_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+) -> Result<()> {
+    let scenario_id = "r-memory-ladder";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+    let certs = mtls::generate(&scenario_dir.join("certs"), &[("alice", "alice")])?;
+    let fixture = AuthorityFixture::new(
+        &context.rust_bin,
+        context.java_jar.as_deref(),
+        &scenario_dir.join("subject"),
+        certs,
+        server,
+        Subject::Rust,
+    )?;
+    fixture.run_init_authority()?;
+    let owned = fixture.start_server()?;
+    let sequence = fixture.next_sequence(&owned, "alice")?;
+    ensure!(
+        sequence == 1,
+        "fresh authority must report NEXT_SEQUENCE 1, got {sequence}"
+    );
+
+    // Measurement gates before any rung: mandatory /proc scopes readable for
+    // the anchor, collector clean.
+    let anchor = owned.pid()?;
+    let permissions = resources::proc_permissions(anchor);
+    ensure!(
+        permissions.status && permissions.fd && permissions.io,
+        "{scenario_id}: mandatory /proc scopes unreadable for the server pid \
+         {anchor} (status={} fd={} io={}); an unavailable mandatory metric \
+         fails the row, never recorded as zero",
+        permissions.status,
+        permissions.fd,
+        permissions.io
+    );
+    let store_file = scenario_dir.join("store.tsv");
+    let collector = resources::ProcessCollector::start(
+        anchor,
+        resources::SAMPLE_INTERVAL,
+        &scenario_dir.join("resources.tsv"),
+    )?;
+    let clock = Instant::now();
+    let elapsed_ms = |instant: Instant| instant.duration_since(clock).as_millis() as u64;
+    resources::sample_store(
+        "start",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+
+    // Keep-alive: the ladder is quiet for LADDER_SETTLE between rungs and the
+    // fixture's own transport must not be what ends the connection. PINGs are
+    // transport traffic and carry no object-stream data.
+    let peer = Peer::with_keep_alive(Duration::from_secs(5))?;
+    let mut alice = raw_negotiate_as(&peer, &fixture, &owned, &mut events, &artifacts, "alice")?;
+    let caps = *alice
+        .caps()
+        .context("capabilities selection was not recorded during negotiation")?;
+
+    // ---- FROZEN before the first rung: ladder, limits, allowances ----
+    // The allowances are derived from the limits the SUBJECT declared, plus a
+    // stated per-subject slack; they are never widened later to fit what the
+    // run produced.
+    let in_flight_object_bound = caps.stream_limit.saturating_mul(caps.object_limit);
+    let in_flight_control_bound = caps.pending_limit.saturating_mul(caps.control_limit);
+    let (slack_kb, slack_reason) = match server {
+        Subject::Rust => (
+            64 * 1024,
+            "64 MiB: allocator retention and page-cache-backed store mappings \
+             in a native process with no heap ceiling to bound them",
+        ),
+        Subject::Java => (
+            256 * 1024,
+            "256 MiB: JVM warm-up, code cache, GC sawtooth and metaspace \
+             growth under a 2 GiB max heap; the heap ceiling itself is the \
+             frozen -Xmx and is not re-chosen here",
+        ),
+    };
+    let payload_allowance_kb = in_flight_object_bound / 1024 + slack_kb;
+    let inventory_allowance_kb = in_flight_control_bound / 1024 + slack_kb;
+    let ladder_text = LADDER_PAYLOADS
+        .iter()
+        .map(|bytes| format!("{bytes}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let inventory_text = LADDER_INVENTORY
+        .iter()
+        .map(|count| format!("{count}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "frozen_before_decisive_run",
+                "this file is written after negotiation and BEFORE the first \
+                 rung's traffic; the ladder, the declared limits it is sized \
+                 against and the allowances below are fixed here and are never \
+                 re-chosen from what the run produced"
+                    .into(),
+            ),
+            ("payload_ladder_bytes", ladder_text.clone()),
+            ("payload_repeats_per_rung", LADDER_REPEATS.to_string()),
+            ("inventory_ladder_resident_works", inventory_text.clone()),
+            (
+                "inventory_payload_bytes",
+                LADDER_INVENTORY_PAYLOAD.to_string(),
+            ),
+            (
+                "admission_pacing",
+                format!(
+                    "admissions are issued in batches of {LADDER_ADMIT_BATCH} and every \
+                     batch is settled to a terminal state before the next; these ladders \
+                     vary payload and RETAINED inventory, never executor concurrency, and \
+                     both subjects declare a concurrent-job ceiling below the top inventory \
+                     rung (that ceiling is r-staging-and-journal-bounds, not this row)"
+                ),
+            ),
+            (
+                "declared_object_limit",
+                format!(
+                    "{} (subject's capability selection, read on the wire)",
+                    caps.object_limit
+                ),
+            ),
+            ("declared_stream_limit", caps.stream_limit.to_string()),
+            ("declared_pending_limit", caps.pending_limit.to_string()),
+            ("declared_control_limit", caps.control_limit.to_string()),
+            (
+                "over_limit_rung",
+                format!(
+                    "one input header declaring {LADDER_OVER_LIMIT} bytes, \
+                     {}x the declared object_limit {}: expected LIMIT_EXCEEDED \
+                     (code {}) naming the input stream, recorded verbatim. The \
+                     payload is never sent, so this rung measures a refusal, \
+                     not memory",
+                    LADDER_OVER_LIMIT / caps.object_limit.max(1),
+                    caps.object_limit,
+                    rawclient::CODE_LIMIT_EXCEEDED
+                ),
+            ),
+            (
+                "java_memory_freeze",
+                format!(
+                    "{} on every Java subject process, frozen before any \
+                     measurement row (milestone 17) and unchanged here",
+                    crate::durable::process::java_memory_flags_text()
+                ),
+            ),
+            (
+                "payload_plateau_allowance_kib",
+                format!(
+                    "{payload_allowance_kb} = stream_limit {} x object_limit {} \
+                     ({in_flight_object_bound} B of in-flight object bytes the \
+                     subject is configured to hold) + {slack_kb} KiB slack \
+                     ({slack_reason})",
+                    caps.stream_limit, caps.object_limit
+                ),
+            ),
+            (
+                "inventory_plateau_allowance_kib",
+                format!(
+                    "{inventory_allowance_kb} = pending_limit {} x control_limit \
+                     {} ({in_flight_control_bound} B of in-flight control state \
+                     the subject is configured to hold) + {slack_kb} KiB slack \
+                     ({slack_reason})",
+                    caps.pending_limit, caps.control_limit
+                ),
+            ),
+            (
+                "plateau_assertion",
+                "for each ladder, the group's tail p90 RSS at the LARGEST rung \
+                 minus the tail p90 at the SMALLEST rung must not exceed that \
+                 ladder's frozen allowance; a subject whose memory scaled with \
+                 payload or inventory beyond its configured bounds exceeds it"
+                    .into(),
+            ),
+            (
+                "fd_assertion",
+                "group FD tail p90 at the last rung <= baseline median + 16".into(),
+            ),
+            (
+                "thread_assertion",
+                "group thread tail p90 at the last rung <= baseline median + 64 \
+                 (a fixture-chosen bound above both subjects' declared worker \
+                 pools, stated rather than derived)"
+                    .into(),
+            ),
+            (
+                "measurement_scope",
+                "whole sampled process group (anchor pid plus every transitive \
+                 descendant), per-tick group SUM then statistic; RSS/HWM, \
+                 threads, FDs, disk I/O and Java heap are separate scopes and \
+                 none is substituted for another"
+                    .into(),
+            ),
+            (
+                "native_direct_scope",
+                "Java native/direct allocation is probed once per direction \
+                 with jcmd VM.native_memory summary and its exact result is \
+                 recorded; it is never inferred from RSS minus heap"
+                    .into(),
+            ),
+            (
+                "rust_heap_scope",
+                "NAMED GAP: no black-box Rust heap collector exists for the \
+                 subject binary; RSS/HWM is a separate scope and is never \
+                 reported as Rust heap"
+                    .into(),
+            ),
+        ],
+    )?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        (
+            "client_subject",
+            "rust raw peer (one connection, sequential admissions)".into(),
+        ),
+        (
+            "declared_limits",
+            format!(
+                "object_limit={} stream_limit={} pending_limit={} \
+                 control_limit={} idle_ms={} lifetime_ms={}",
+                caps.object_limit,
+                caps.stream_limit,
+                caps.pending_limit,
+                caps.control_limit,
+                caps.idle_ms,
+                caps.lifetime_ms
+            ),
+        ),
+        (
+            "java_memory_freeze",
+            match server {
+                Subject::Java => format!(
+                    "{} (frozen before the run; applies to this server process)",
+                    crate::durable::process::java_memory_flags_text()
+                ),
+                Subject::Rust => format!(
+                    "not applicable: no JVM in this subject group (the frozen \
+                     Java limits are {})",
+                    crate::durable::process::java_memory_flags_text()
+                ),
+            },
+        ),
+        ("payload_ladder_bytes", ladder_text),
+        ("inventory_ladder_resident_works", inventory_text),
+        (
+            "payload_plateau_allowance_kib",
+            payload_allowance_kb.to_string(),
+        ),
+        (
+            "inventory_plateau_allowance_kib",
+            inventory_allowance_kb.to_string(),
+        ),
+    ];
+
+    // ---- baseline rung: idle, no ladder traffic ----
+    let mut rungs: Vec<Rung> = Vec::new();
+    let baseline_start = elapsed_ms(Instant::now());
+    thread::sleep(LADDER_BASELINE);
+    let baseline_end = elapsed_ms(Instant::now());
+    rungs.push(Rung {
+        label: "baseline-idle".into(),
+        kind: "baseline",
+        payload_bytes: 0,
+        admissions: 0,
+        resident_works: 0,
+        start_ms: baseline_start,
+        tail_from_ms: baseline_end.saturating_sub(LADDER_TAIL.as_millis() as u64),
+        end_ms: baseline_end,
+    });
+
+    let binding = raw_create_session(&mut alice)?;
+    let mut request = 2u64;
+    let total_entities = (LADDER_PAYLOADS.len() * LADDER_REPEATS) as u64
+        + LADDER_INVENTORY[LADDER_INVENTORY.len() - 1];
+    // One entity beyond the ladders is declared for the over-limit probe.
+    // Membership is checked before the declared length is, so an undeclared
+    // entity would be refused CONFLICT ("input membership was not declared")
+    // and the row would never reach the object_limit decision it is there to
+    // observe.
+    let declare_target = total_entities + 1;
+    let mut declared = 0u64;
+    while declared < declare_target {
+        let batch: Vec<u64> =
+            (declared + 1..=(declared + LADDER_DECLARE_BATCH as u64).min(declare_target)).collect();
+        let operation = oracle::operation_id(context.seed, "ladder-declare", declared as u32);
+        raw_declare(&mut alice, request, &operation, 0, &batch, false)?;
+        request += 1;
+        declared += batch.len() as u64;
+    }
+    events.append("DECLARATION_COMMITTED", None, None, None, None, None)?;
+    observed.push(("declared_entities", declared.to_string()));
+
+    // ---- payload ladder ----
+    let mut entity = 0u64;
+    let mut resident = 0u64;
+    for payload_bytes in LADDER_PAYLOADS {
+        let payload = oracle::dataset(context.seed ^ payload_bytes as u64, payload_bytes);
+        let mut sha = [0u8; 32];
+        sha.copy_from_slice(&crate::decode_hex(&oracle::sha256_hex(&payload))?);
+        let start = elapsed_ms(Instant::now());
+        for repeat in 0..LADDER_REPEATS {
+            entity += 1;
+            let operation = oracle::operation_id(
+                context.seed,
+                "ladder-payload",
+                (entity * 16 + repeat as u64) as u32,
+            );
+            ladder_admit(
+                &mut alice,
+                binding.generation,
+                &operation,
+                (0, 0, entity),
+                &payload,
+                &sha,
+            )?;
+            resident += 1;
+            if resident.is_multiple_of(LADDER_ADMIT_BATCH) {
+                ladder_wait_settled(&mut alice, &mut request, resident, LADDER_QUIESCE)?;
+            }
+        }
+        ladder_wait_settled(&mut alice, &mut request, resident, LADDER_QUIESCE)?;
+        thread::sleep(LADDER_SETTLE);
+        let end = elapsed_ms(Instant::now());
+        rungs.push(Rung {
+            label: format!("payload-{payload_bytes}"),
+            kind: "payload",
+            payload_bytes: payload_bytes as u64,
+            admissions: LADDER_REPEATS as u64,
+            resident_works: resident,
+            start_ms: start,
+            tail_from_ms: end.saturating_sub(LADDER_TAIL.as_millis() as u64),
+            end_ms: end,
+        });
+        resources::sample_store(
+            &format!("payload-{payload_bytes}"),
+            &[&fixture.state_db, &fixture.object_dir],
+            &store_file,
+        )?;
+    }
+    events.append("ADMISSION_COMMITTED", None, None, None, None, None)?;
+
+    // ---- over-limit rung: declared length above the declared object_limit ----
+    // The payload is never sent: the refusal is a decision about the declared
+    // parameters, and sending 64 MiB the subject has already refused would
+    // measure the fixture, not the subject.
+    let over_entity = total_entities + 1;
+    let over_operation = oracle::operation_id(context.seed, "ladder-over-limit", 0);
+    let over_header = rawclient::input_header_framed(
+        binding.generation,
+        &over_operation,
+        (0, 0, over_entity),
+        LADDER_OVER_LIMIT,
+        &[0u8; 32],
+        "application/octet-stream",
+        "copy/v2",
+        0,
+        60_000,
+        1,
+        LADDER_OVER_LIMIT,
+    );
+    let mut over_stream = alice.open_uni()?;
+    let over_stream_id = u64::from(over_stream.id());
+    alice.write_stream(&mut over_stream, &over_header)?;
+    let over_outcome = match alice.read_control_bounded(LADDER_REFUSAL_WAIT)? {
+        Some(Frame::Control(FRAME_REFUSAL, body)) => {
+            let refusal = rawclient::parse_refusal(&body)?;
+            ensure!(
+                refusal.code == rawclient::CODE_LIMIT_EXCEEDED,
+                "{scenario_id} {}: the over-limit rung was refused with code {} \
+                 ({:?}), expected LIMIT_EXCEEDED ({})",
+                server.name(),
+                refusal.code,
+                refusal.detail,
+                rawclient::CODE_LIMIT_EXCEEDED
+            );
+            format!(
+                "refused: tag_kind={} tag_id={} code={} detail={:?} \
+                 (stream {over_stream_id})",
+                refusal.tag_kind, refusal.tag_id, refusal.code, refusal.detail
+            )
+        }
+        Some(other) => bail!(
+            "{scenario_id} {}: the over-limit rung produced {other:?} instead of \
+             a refusal",
+            server.name()
+        ),
+        None => bail!(
+            "{scenario_id} {}: no refusal within {:?} for an input declaring \
+             {LADDER_OVER_LIMIT} bytes against a declared object_limit of {}; \
+             the row records no memory figure for this rung",
+            server.name(),
+            LADDER_REFUSAL_WAIT,
+            caps.object_limit
+        ),
+    };
+    let _ = alice.reset_stream(&mut over_stream, rawclient::CODE_LIMIT_EXCEEDED);
+    observed.push(("over_limit_rung", over_outcome));
+    events.append("LIMIT_REFUSAL_OBSERVED", None, None, None, None, None)?;
+
+    // ---- inventory ladder: fixed payload, growing resident inventory ----
+    let inv_payload = oracle::dataset(context.seed ^ 0x1_0000, LADDER_INVENTORY_PAYLOAD);
+    let mut inv_sha = [0u8; 32];
+    inv_sha.copy_from_slice(&crate::decode_hex(&oracle::sha256_hex(&inv_payload))?);
+    let inventory_base = resident;
+    for target in LADDER_INVENTORY {
+        let start = elapsed_ms(Instant::now());
+        let mut admitted_here = 0u64;
+        while resident - inventory_base < target {
+            entity += 1;
+            let operation = oracle::operation_id(context.seed, "ladder-inventory", entity as u32);
+            ladder_admit(
+                &mut alice,
+                binding.generation,
+                &operation,
+                (0, 0, entity),
+                &inv_payload,
+                &inv_sha,
+            )?;
+            resident += 1;
+            admitted_here += 1;
+            if resident.is_multiple_of(LADDER_ADMIT_BATCH) {
+                ladder_wait_settled(&mut alice, &mut request, resident, LADDER_QUIESCE)?;
+            }
+        }
+        ladder_wait_settled(&mut alice, &mut request, resident, LADDER_QUIESCE)?;
+        thread::sleep(LADDER_SETTLE);
+        let end = elapsed_ms(Instant::now());
+        rungs.push(Rung {
+            label: format!("inventory-{target}"),
+            kind: "inventory",
+            payload_bytes: LADDER_INVENTORY_PAYLOAD as u64,
+            admissions: admitted_here,
+            resident_works: resident,
+            start_ms: start,
+            tail_from_ms: end.saturating_sub(LADDER_TAIL.as_millis() as u64),
+            end_ms: end,
+        });
+        resources::sample_store(
+            &format!("inventory-{target}"),
+            &[&fixture.state_db, &fixture.object_dir],
+            &store_file,
+        )?;
+    }
+    observed.push(("resident_works_final", resident.to_string()));
+
+    // ---- quiesce before the close-out ----
+    // Every measurement window has closed. The ladder leaves the authority
+    // with `resident` admitted works, and a subject signalled to stop while
+    // its execution pool is still winding those down spends its fixed
+    // shutdown grace on the pool instead of on the transport wait — which
+    // reads as a failed drain and is fixture timing, not a subject defect
+    // (the same mechanism milestone 17 recorded for the stall row). The row
+    // therefore waits, bounded, for every admitted work to be terminal
+    // before it signals anything. This is after the last rung's window: no
+    // measurement is taken here.
+    let quiesce_deadline = Instant::now() + LADDER_QUIESCE;
+    let terminal_works = loop {
+        let (_declared, members) = raw_page(&mut alice, request, 0)?;
+        request += 1;
+        let terminal = members
+            .iter()
+            .filter(|(entity, state)| *entity <= resident && (5..=8).contains(state))
+            .count();
+        if terminal as u64 >= resident || Instant::now() >= quiesce_deadline {
+            break terminal;
+        }
+        thread::sleep(Duration::from_secs(2));
+    };
+    observed.push((
+        "quiesce_before_stop",
+        format!(
+            "{terminal_works}/{resident} admitted works terminal within {:?} \
+             (fixture timing after every measurement window; never evidence)",
+            LADDER_QUIESCE
+        ),
+    ));
+
+    // ---- Java native/direct scope: probed, never inferred ----
+    let native_scope = match server {
+        Subject::Rust => "not applicable: no JVM in the subject process group".to_owned(),
+        Subject::Java => java_native_memory_probe(anchor, &artifacts)?,
+    };
+    observed.push(("java_native_direct_scope", native_scope));
+
+    // ---- measurement close-out ----
+    alice.close_and_wait_idle(b"memory ladder complete", Duration::from_secs(15))?;
+    let summary = collector.stop()?;
+    ensure!(
+        summary.error_lines == 0,
+        "{scenario_id}: dead collector — {} sampling error lines in resources.tsv",
+        summary.error_lines
+    );
+    observed.push((
+        "collector",
+        format!(
+            "{} ticks, {} sample lines, {} error lines",
+            summary.ticks, summary.lines, summary.error_lines
+        ),
+    ));
+    let samples = resources::read_process_samples(&scenario_dir.join("resources.tsv"))?;
+    ensure!(
+        samples.iter().all(|sample| sample.rss_kb.is_some()
+            && sample.hwm_kb.is_some()
+            && sample.fds.is_some()
+            && sample.threads.is_some()
+            && sample.io_write_bytes.is_some()
+            && sample.io_cancelled_write_bytes.is_some()),
+        "{scenario_id}: a sample is missing a MANDATORY scope \
+         (rss/hwm/fd/threads/write_bytes/cancelled_write_bytes)"
+    );
+
+    // Per-rung plateau evidence over the whole process group.
+    let mut table = String::from(
+        "rung\tkind\tpayload_bytes\tadmissions\tresident_works\tstart_ms\ttail_from_ms\tend_ms\t\
+         ticks\tpids_min\tpids_max\trss_median_kib\trss_p90_kib\trss_max_kib\thwm_max_kib\t\
+         threads_median\tthreads_max\tfd_median\tfd_p90\theap_ticks\theap_min_kib\theap_max_kib\t\
+         heap_gap_ticks\n",
+    );
+    let mut stats_by_label: Vec<(String, resources::WindowStats)> = Vec::new();
+    for rung in &rungs {
+        let stats =
+            resources::group_window_stats(&samples, rung.tail_from_ms, rung.end_ms, &rung.label)?;
+        table.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            rung.label,
+            rung.kind,
+            rung.payload_bytes,
+            rung.admissions,
+            rung.resident_works,
+            rung.start_ms,
+            rung.tail_from_ms,
+            rung.end_ms,
+            stats.ticks,
+            stats.pids_min,
+            stats.pids_max,
+            stats.rss_median_kb,
+            stats.rss_p90_kb,
+            stats.rss_max_kb,
+            stats.hwm_max_kb,
+            stats.threads_median,
+            stats.threads_max,
+            stats.fd_median,
+            stats.fd_p90,
+            stats.heap_ticks,
+            stats
+                .heap_min_kb
+                .map(|kb| kb.to_string())
+                .unwrap_or_else(|| "-".into()),
+            stats
+                .heap_max_kb
+                .map(|kb| kb.to_string())
+                .unwrap_or_else(|| "-".into()),
+            stats.heap_gap_ticks,
+        ));
+        stats_by_label.push((rung.label.clone(), stats));
+    }
+    fs::write(artifacts.join("rungs.tsv"), &table)?;
+    events.append(
+        "LADDER_EVIDENCE",
+        None,
+        None,
+        None,
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/rungs.tsv".into(),
+            len: table.len() as u64,
+            sha256: oracle::sha256_hex(table.as_bytes()),
+        }),
+    )?;
+
+    let find = |label: &str| -> Result<&resources::WindowStats> {
+        stats_by_label
+            .iter()
+            .find(|(name, _)| name == label)
+            .map(|(_, stats)| stats)
+            .with_context(|| format!("rung {label} has no window statistics"))
+    };
+    let baseline = find("baseline-idle")?;
+    let payload_first = find(&format!("payload-{}", LADDER_PAYLOADS[0]))?;
+    let payload_last = find(&format!(
+        "payload-{}",
+        LADDER_PAYLOADS[LADDER_PAYLOADS.len() - 1]
+    ))?;
+    let inventory_first = find(&format!("inventory-{}", LADDER_INVENTORY[0]))?;
+    let inventory_last = find(&format!(
+        "inventory-{}",
+        LADDER_INVENTORY[LADDER_INVENTORY.len() - 1]
+    ))?;
+
+    let payload_growth = payload_last
+        .rss_p90_kb
+        .saturating_sub(payload_first.rss_p90_kb);
+    let inventory_growth = inventory_last
+        .rss_p90_kb
+        .saturating_sub(inventory_first.rss_p90_kb);
+    observed.push((
+        "baseline_rss_kib",
+        format!(
+            "median={} p90={} max={} over {} ticks",
+            baseline.rss_median_kb, baseline.rss_p90_kb, baseline.rss_max_kb, baseline.ticks
+        ),
+    ));
+    observed.push((
+        "payload_ladder_rss_kib",
+        format!(
+            "{}B tail_p90={} ({} ticks) -> {}B tail_p90={} ({} ticks), growth={} \
+             against the frozen allowance {}",
+            LADDER_PAYLOADS[0],
+            payload_first.rss_p90_kb,
+            payload_first.ticks,
+            LADDER_PAYLOADS[LADDER_PAYLOADS.len() - 1],
+            payload_last.rss_p90_kb,
+            payload_last.ticks,
+            payload_growth,
+            payload_allowance_kb
+        ),
+    ));
+    observed.push((
+        "payload_ladder_scaling",
+        format!(
+            "payload grew by {} B per admission ({}x); group tail p90 RSS grew by \
+             {} KiB. A subject that buffered each payload once would have grown \
+             by at least {} KiB",
+            LADDER_PAYLOADS[LADDER_PAYLOADS.len() - 1] - LADDER_PAYLOADS[0],
+            LADDER_PAYLOADS[LADDER_PAYLOADS.len() - 1] / LADDER_PAYLOADS[0],
+            payload_growth,
+            (LADDER_PAYLOADS[LADDER_PAYLOADS.len() - 1] - LADDER_PAYLOADS[0]) / 1024
+        ),
+    ));
+    observed.push((
+        "inventory_ladder_rss_kib",
+        format!(
+            "{} resident tail_p90={} ({} ticks) -> {} resident tail_p90={} ({} \
+             ticks), growth={} against the frozen allowance {}",
+            LADDER_INVENTORY[0],
+            inventory_first.rss_p90_kb,
+            inventory_first.ticks,
+            LADDER_INVENTORY[LADDER_INVENTORY.len() - 1],
+            inventory_last.rss_p90_kb,
+            inventory_last.ticks,
+            inventory_growth,
+            inventory_allowance_kb
+        ),
+    ));
+    observed.push((
+        "hwm_kib",
+        format!(
+            "baseline={} payload_last={} inventory_last={}",
+            baseline.hwm_max_kb, payload_last.hwm_max_kb, inventory_last.hwm_max_kb
+        ),
+    ));
+    observed.push((
+        "threads",
+        format!(
+            "baseline median={} -> last rung median={} max={}",
+            baseline.threads_median, inventory_last.threads_median, inventory_last.threads_max
+        ),
+    ));
+    observed.push((
+        "fds",
+        format!(
+            "baseline median={} -> last rung p90={} max={}",
+            baseline.fd_median, inventory_last.fd_p90, inventory_last.fd_max
+        ),
+    ));
+    observed.push((
+        "heap_scope",
+        match server {
+            Subject::Rust => "not applicable: no JVM in the subject process group. Rust heap is a \
+                              NAMED GAP (no black-box allocator counter); RSS/HWM is a separate \
+                              scope and is never substituted for it"
+                .to_owned(),
+            Subject::Java => {
+                let ticks: usize = stats_by_label.iter().map(|(_, s)| s.heap_ticks).sum();
+                let gaps: usize = stats_by_label.iter().map(|(_, s)| s.heap_gap_ticks).sum();
+                let min = stats_by_label
+                    .iter()
+                    .filter_map(|(_, s)| s.heap_min_kb)
+                    .min();
+                let max = stats_by_label
+                    .iter()
+                    .filter_map(|(_, s)| s.heap_max_kb)
+                    .max();
+                format!(
+                    "java heap via jstat -gc (S0U+S1U+EU+OU) inside the measured rung \
+                     windows: {ticks} heap ticks, {gaps} probe gaps, min {} KiB, max {} \
+                     KiB, against the frozen -Xmx ceiling",
+                    min.map(|kb| kb.to_string()).unwrap_or_else(|| "-".into()),
+                    max.map(|kb| kb.to_string()).unwrap_or_else(|| "-".into()),
+                )
+            }
+        },
+    ));
+
+    // ---- assertions ----
+    ensure!(
+        payload_growth <= payload_allowance_kb,
+        "{scenario_id} {}: group RSS scaled with PAYLOAD beyond the configured \
+         bound — tail p90 {} KiB at {} B grew to {} KiB at {} B (growth {} KiB, \
+         frozen allowance {} KiB)",
+        server.name(),
+        payload_first.rss_p90_kb,
+        LADDER_PAYLOADS[0],
+        payload_last.rss_p90_kb,
+        LADDER_PAYLOADS[LADDER_PAYLOADS.len() - 1],
+        payload_growth,
+        payload_allowance_kb
+    );
+    ensure!(
+        inventory_growth <= inventory_allowance_kb,
+        "{scenario_id} {}: group RSS scaled with INVENTORY beyond the configured \
+         bound — tail p90 {} KiB at {} resident works grew to {} KiB at {} \
+         resident works (growth {} KiB, frozen allowance {} KiB)",
+        server.name(),
+        inventory_first.rss_p90_kb,
+        LADDER_INVENTORY[0],
+        inventory_last.rss_p90_kb,
+        LADDER_INVENTORY[LADDER_INVENTORY.len() - 1],
+        inventory_growth,
+        inventory_allowance_kb
+    );
+    ensure!(
+        inventory_last.fd_p90 <= baseline.fd_median + 16,
+        "{scenario_id} {}: group FDs grew across the ladder (baseline median {} \
+         -> last rung p90 {})",
+        server.name(),
+        baseline.fd_median,
+        inventory_last.fd_p90
+    );
+    ensure!(
+        inventory_last.threads_max <= baseline.threads_median + 64,
+        "{scenario_id} {}: group threads grew across the ladder (baseline median \
+         {} -> last rung max {})",
+        server.name(),
+        baseline.threads_median,
+        inventory_last.threads_max
+    );
+    if server == Subject::Java {
+        let gaps: usize = stats_by_label.iter().map(|(_, s)| s.heap_gap_ticks).sum();
+        let ticks: usize = stats_by_label.iter().map(|(_, s)| s.heap_ticks).sum();
+        ensure!(
+            gaps == 0 && ticks > 0,
+            "{scenario_id} java: the Java heap scope is MANDATORY for a JVM \
+             subject and must be collected on every heap tick ({ticks} collected, \
+             {gaps} gaps)"
+        );
+    }
+
+    resources::sample_store(
+        "end",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+    let store_records = resources::read_store_samples(&store_file)?;
+    observed.push((
+        "store_checkpoints",
+        format!(
+            "{} records across the rung checkpoints",
+            store_records.len()
+        ),
+    ));
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    thread::sleep(STALL_CLOSE_SETTLE);
+    stop_and_seal(context, scenario_dir, scenario_id, owned, events)
+}
+
+/// Java native/direct allocation probe. The exact command and its exact
+/// result are recorded; nothing is inferred from RSS minus heap, and the
+/// frozen launch flags are NOT changed to enable a collector mid-matrix.
+fn java_native_memory_probe(pid: u32, artifacts: &Path) -> Result<String> {
+    let Some(jcmd) = resources::tool_on_path("jcmd") else {
+        return Ok("UNAVAILABLE: no jcmd on PATH (named gap; never inferred from RSS)".to_owned());
+    };
+    let mut transcript = String::new();
+    let mut summary = String::new();
+    for (label, arguments) in [
+        ("VM.native_memory", vec!["VM.native_memory", "summary"]),
+        ("VM.flags", vec!["VM.flags"]),
+    ] {
+        let output = std::process::Command::new(&jcmd)
+            .arg(pid.to_string())
+            .args(&arguments)
+            .output()
+            .with_context(|| format!("run jcmd {} {label}", pid))?;
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        transcript.push_str(&format!(
+            "=== jcmd {pid} {} (exit {}) ===\n{stdout}{stderr}\n",
+            arguments.join(" "),
+            output.status
+        ));
+        if label == "VM.native_memory" {
+            let text = format!("{stdout}{stderr}");
+            summary = if text.contains("Native memory tracking is not enabled") {
+                "UNAVAILABLE: jcmd VM.native_memory summary reports \"Native memory \
+                 tracking is not enabled\". Enabling it needs -XX:NativeMemoryTracking \
+                 added to the JVM launch flags, which are FROZEN before this matrix's \
+                 measurement rows (-Xms256m -Xmx2g); changing them mid-matrix would \
+                 re-open every earlier R row's frozen environment. Recorded as a named \
+                 gap, never inferred from RSS minus heap"
+                    .to_owned()
+            } else if output.status.success() {
+                let total = text
+                    .lines()
+                    .find(|line| line.trim_start().starts_with("Total:"))
+                    .unwrap_or("(no Total: line)")
+                    .trim()
+                    .to_owned();
+                format!("collected by jcmd VM.native_memory summary: {total}")
+            } else {
+                format!(
+                    "UNAVAILABLE: jcmd VM.native_memory summary exited {} — {}",
+                    output.status,
+                    text.lines().next().unwrap_or("(no output)")
+                )
+            };
+        }
+    }
+    let path = artifacts.join("jcmd-native.txt");
+    fs::write(&path, &transcript)?;
+    Ok(format!("{summary} (transcript artifacts/jcmd-native.txt)"))
+}
+
+// ---------------------------------------------------------------------------
+// r-staging-and-journal-bounds (milestone 18b)
+// ---------------------------------------------------------------------------
+//
+// Drives the ceilings each subject DECLARES — the capability selection's
+// pending_limit and the session binding receipt's retained-record limits —
+// until new work is refused, and proves the four properties the matrix asks
+// for: a named refusal for NEW work, EXISTING promises still completing,
+// bounded file handles, and capacity that stays charged while physical I/O
+// is busy and reconciles after safe cleanup and after restart.
+//
+// Every ceiling in this row is read off the wire, never quoted from a
+// library default: `r-memory-ladder` already found the Java listener
+// advertising a pending_limit its own `DurableOptions.defaults()` does not.
+
+/// Declared length of one staging input. The prefix below is what is
+/// actually sent, so every staging stream stays an incomplete transfer
+/// holding a staging object without ever committing one.
+const STAGING_DECLARED_LEN: usize = 64 * 1024;
+const STAGING_PREFIX_LEN: usize = 4 * 1024;
+/// Hard cap on the connections this row opens per principal. Both subjects
+/// enforce a per-principal connection ceiling of their own
+/// (r-connection-ceiling: rust 4, java 8), so the row walks principals when
+/// one principal's connections run out.
+const STAGING_MAX_CONNECTIONS_PER_PRINCIPAL: u64 = 8;
+/// Hard cap on staging streams opened in total. A cap is not a bound: if it
+/// is reached without a refusal, the staging arm is recorded as NOT REACHED
+/// with the cap and the declared ceilings, never as a pass.
+const STAGING_MAX_STREAMS: u64 = 200;
+/// Bounded wait for a refusal or an admission receipt on control.
+const STAGING_REPLY_WAIT: Duration = Duration::from_secs(10);
+/// Bounded wait for a single-shot probe transfer.
+///
+/// It must stay BELOW the smaller of the two subjects. negotiated object
+/// idle bounds (rust 5 s, java 30 s). A probe holds an incomplete transfer
+/// open while it waits, so a longer wait lets the subject reap that very
+/// transfer at its input receive deadline and the probe reads a
+/// LIMIT_EXCEEDED "input receive deadline" refusal as if capacity had been
+/// refused. A capacity refusal is immediate; a deadline refusal is not.
+const STAGING_PROBE_WAIT: Duration = Duration::from_secs(2);
+/// Bounded drain after each per-connection batch of staging attempts. The
+/// row drains once per batch rather than waiting after every attempt: a
+/// refusal carries the input-stream tag it belongs to, so batching loses no
+/// attribution, and a per-attempt wait made the sweep last longer than the
+/// subject's own input receive deadline, which then reaped the earliest
+/// transfers while later ones were still being opened.
+const STAGING_BATCH_DRAIN: Duration = Duration::from_millis(500);
+/// Deadline on the watches that fill the pending-response ceiling. The
+/// protocol bounds a wait at 30 s (`WaitMs`), and a larger value is a
+/// FRAME_ERROR rather than a longer wait, so this is the maximum a filler
+/// watch may ask for.
+const STAGING_PENDING_DEADLINE_MS: u64 = 30_000;
+/// Revision the filler watches wait PAST. A declared-never-admitted work
+/// sits at the revision its declaration produced, so a watch for anything
+/// after that revision stays genuinely pending until the work changes — and
+/// then it is answered, which is how this row shows the granted waits were
+/// kept. A revision that can never arrive would only ever be answered by the
+/// wait deadline, which proves nothing about the promise.
+const STAGING_PENDING_AFTER_REVISION: u64 = 1;
+/// Bounded drain for the waits granted before exhaustion. It is longer than
+/// the filler watches' own deadline, so a wait answered at its deadline
+/// rather than at the next revision still counts as a promise kept.
+const STAGING_PENDING_DRAIN: Duration = Duration::from_secs(50);
+/// Quiet window after releasing the staging streams, so safe cleanup can run
+/// before the row asks whether capacity came back.
+const STAGING_CLEANUP_SETTLE: Duration = Duration::from_secs(20);
+/// Bounded wait for capacity to come back after cleanup / after restart.
+const STAGING_RECOVERY_WAIT: Duration = Duration::from_secs(60);
+
+fn r_staging_and_journal_bounds(context: &ScenarioContext) -> Result<()> {
+    run_raw_directions(
+        context,
+        "r-staging-and-journal-bounds",
+        r_staging_and_journal_bounds_direction,
+    )
+}
+
+/// One staging attempt: an input header plus a partial payload and no FIN.
+/// The stream is returned held open. `reply_wait` is `Some` only for the
+/// single-shot probes, which must see their own answer immediately; the
+/// sweep passes `None` and drains the whole batch's control frames once,
+/// matching each refusal to its attempt by input-stream tag.
+struct StagingAttempt {
+    stream: quinn::SendStream,
+    stream_id: u64,
+    refusal: Option<rawclient::Refusal>,
+}
+
+fn staging_open(
+    conn: &mut RawConn,
+    generation: u64,
+    operation: &[u8; 16],
+    work: (u64, u64, u64),
+    payload_sha: &[u8; 32],
+    prefix: &[u8],
+    reply_wait: Option<Duration>,
+) -> Result<StagingAttempt> {
+    let header = rawclient::input_header_framed(
+        generation,
+        operation,
+        work,
+        STAGING_DECLARED_LEN as u64,
+        payload_sha,
+        "application/octet-stream",
+        "copy/v2",
+        0,
+        60_000,
+        1,
+        STAGING_DECLARED_LEN as u64,
+    );
+    let mut stream = conn.open_uni()?;
+    let stream_id = u64::from(stream.id());
+    conn.write_stream(&mut stream, &header)?;
+    conn.write_stream(&mut stream, prefix)?;
+    // A subject that refuses the staging reservation answers on control
+    // straight away; one that accepts it stays silent until the transfer
+    // FINs, because an incomplete input is not an admission.
+    let refusal = match reply_wait {
+        Some(wait) => match conn.read_control_bounded(wait)? {
+            Some(Frame::Control(FRAME_REFUSAL, body)) => Some(rawclient::parse_refusal(&body)?),
+            _ => None,
+        },
+        None => None,
+    };
+    Ok(StagingAttempt {
+        stream,
+        stream_id,
+        refusal,
+    })
+}
+
+/// One held connection of the staging phase.
+struct StagingConn {
+    /// Recorded on every ceilings.tsv line this connection produced.
+    #[allow(dead_code)]
+    principal: String,
+    conn: RawConn,
+    streams: Vec<quinn::SendStream>,
+}
+
+fn r_staging_and_journal_bounds_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+) -> Result<()> {
+    let scenario_id = "r-staging-and-journal-bounds";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+    let certs = mtls::generate(
+        &scenario_dir.join("certs"),
+        &[
+            ("alice", "alice"),
+            ("bob", "bob"),
+            ("carol", "carol"),
+            ("dave", "dave"),
+        ],
+    )?;
+    let fixture = AuthorityFixture::new(
+        &context.rust_bin,
+        context.java_jar.as_deref(),
+        &scenario_dir.join("subject"),
+        certs,
+        server,
+        Subject::Rust,
+    )?;
+    fixture.run_init_authority()?;
+    let mut owned = fixture.start_server()?;
+    ensure!(
+        fixture.next_sequence(&owned, "alice")? == 1,
+        "fresh authority must report NEXT_SEQUENCE 1"
+    );
+
+    let anchor = owned.pid()?;
+    let permissions = resources::proc_permissions(anchor);
+    ensure!(
+        permissions.status && permissions.fd && permissions.io,
+        "{scenario_id}: mandatory /proc scopes unreadable for the server pid {anchor} \
+         (status={} fd={} io={})",
+        permissions.status,
+        permissions.fd,
+        permissions.io
+    );
+    let store_file = scenario_dir.join("store.tsv");
+    let collector = resources::ProcessCollector::start(
+        anchor,
+        resources::SAMPLE_INTERVAL,
+        &scenario_dir.join("resources.tsv"),
+    )?;
+    let clock = Instant::now();
+    let elapsed_ms = |instant: Instant| instant.duration_since(clock).as_millis() as u64;
+    resources::sample_store(
+        "start",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+    // Baseline handles/RSS before the row opens anything.
+    thread::sleep(Duration::from_secs(10));
+    let baseline_to_ms = elapsed_ms(Instant::now());
+
+    let peer = Peer::with_keep_alive(Duration::from_secs(5))?;
+    let mut alice = raw_negotiate_as(&peer, &fixture, &owned, &mut events, &artifacts, "alice")?;
+    let caps = *alice
+        .caps()
+        .context("capabilities selection was not recorded during negotiation")?;
+    let binding = raw_create_session(&mut alice)?;
+    let session_limits = binding.limits;
+
+    let mut log = String::from("phase\tattempt\tprincipal\tconnection\toutcome\tdetail\n");
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        (
+            "client_subject",
+            "rust raw peer (several connections, incomplete staging transfers held open)".into(),
+        ),
+        (
+            "declared_pending_limit",
+            format!(
+                "{} (capability selection, read on the wire)",
+                caps.pending_limit
+            ),
+        ),
+        (
+            "declared_stream_limit",
+            format!("{} (capability selection)", caps.stream_limit),
+        ),
+        (
+            "declared_session_limits",
+            format!("{} (session binding receipt)", session_limits.text()),
+        ),
+        (
+            "java_memory_freeze",
+            match server {
+                Subject::Java => format!(
+                    "{} (frozen before the run)",
+                    crate::durable::process::java_memory_flags_text()
+                ),
+                Subject::Rust => "not applicable: no JVM in this subject group".to_owned(),
+            },
+        ),
+    ];
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "declared_ceilings_source",
+                "every ceiling this row drives is read off the wire before it is driven: \
+                 the capability selection (pending_limit, stream_limit, object_limit) and \
+                 the session binding receipt's retained-record limits. No library default \
+                 is quoted as a subject bound"
+                    .into(),
+            ),
+            ("pending_limit", caps.pending_limit.to_string()),
+            ("stream_limit", caps.stream_limit.to_string()),
+            ("session_limits", session_limits.text()),
+            (
+                "new_work_refusal",
+                format!(
+                    "at exhaustion a NEW request or a NEW staging transfer is refused with \
+                     LIMIT_EXCEEDED (code {}) and the subject's detail string is recorded \
+                     verbatim, together with the attempt number the refusal arrived on",
+                    rawclient::CODE_LIMIT_EXCEEDED
+                ),
+            ),
+            (
+                "existing_promises",
+                "the requests already granted before exhaustion still answer, and a staging \
+                 transfer already accepted before exhaustion still completes to an admission \
+                 receipt when it FINs"
+                    .into(),
+            ),
+            (
+                "handles_bounded",
+                "the server group's FD tail p90 returns to within baseline median + 8 after \
+                 the staging streams are released and their connections closed"
+                    .into(),
+            ),
+            (
+                "charge_while_busy",
+                "while the staging transfers are held the ceiling stays charged: a further \
+                 attempt is refused again with the same named code"
+                    .into(),
+            ),
+            (
+                "reconcile_after_cleanup",
+                format!(
+                    "after the staging streams are released and a {}s cleanup settle, a fresh \
+                     staging transfer is accepted within {}s",
+                    STAGING_CLEANUP_SETTLE.as_secs(),
+                    STAGING_RECOVERY_WAIT.as_secs()
+                ),
+            ),
+            (
+                "reconcile_after_restart",
+                "after the subject is stopped and restarted on the same roots, a fresh \
+                 staging transfer is accepted again — the charge did not survive as a leak — \
+                 and the store's file lengths and allocated blocks are sampled either side \
+                 of the restart"
+                    .into(),
+            ),
+            (
+                "journal_ceiling_scope",
+                "the journal/retained-BYTE ceilings are recorded from the binding receipt \
+                 and the subject's configuration and the actual retained bytes are sampled \
+                 at every checkpoint, but they are NOT driven to exhaustion by this row: \
+                 doing so needs hundreds of megabytes of committed records. That arm is \
+                 PARTIAL with this reason, never a skip and never a pass"
+                    .into(),
+            ),
+        ],
+    )?;
+
+    // Two further connections of the SAME owner are attached now, BEFORE
+    // the pending phase fills the subject's control-side capacity: one that
+    // will admit the watched work so the granted waits can be kept, and one
+    // reserved for the "is the capacity still charged?" probe. An attach
+    // attempted after the fill is itself refused (the rust authority answers
+    // LIMIT_EXCEEDED "metadata concurrency exhausted"), which would make the
+    // row's own scaffolding a casualty of the ceiling it is measuring.
+    let mut admitter = raw_negotiate_as(&peer, &fixture, &owned, &mut events, &artifacts, "alice")?;
+    admitter.send_control(
+        FRAME_SESSION,
+        &rawclient::session_attach(1, &binding.authority, &binding.owner, binding.generation),
+    )?;
+    let attached = rawclient::parse_binding(&admitter.expect_control(FRAME_SESSION)?)?;
+    ensure!(
+        attached.generation == binding.generation,
+        "attach receipt generation {} differs from {}",
+        attached.generation,
+        binding.generation
+    );
+    let mut prober = raw_negotiate_as(&peer, &fixture, &owned, &mut events, &artifacts, "alice")?;
+    prober.send_control(
+        FRAME_SESSION,
+        &rawclient::session_attach(1, &binding.authority, &binding.owner, binding.generation),
+    )?;
+    rawclient::parse_binding(&prober.expect_control(FRAME_SESSION)?)?;
+    let prober_request = 2u64;
+
+    // ---- Phase A: the pending-control-work ceiling ----
+    // Filled with watches on a declared-never-admitted work, waiting past the
+    // revision its declaration produced, so each one stays genuinely pending
+    // until the work changes. Each attempt is checked for its OWN refusal
+    // before the next is sent: a refusal carries the request tag it belongs
+    // to, and reading one frame after a whole burst would attribute an early
+    // refusal to the last attempt. The declared pending_limit is recorded
+    // beside the ceiling that actually fires, which need not be the same
+    // thing — the rust authority refuses on metadata concurrency first.
+    let declare_op = oracle::operation_id(context.seed, "staging-declare-a", 0);
+    let mut request = 2u64;
+    raw_declare(&mut alice, request, &declare_op, 0, &[1], false)?;
+    request += 1;
+    let pending_target = caps.pending_limit;
+    let mut pending_accepted = 0u64;
+    let mut pending_answered_early = 0u64;
+    let mut pending_refusal: Option<(u64, u64, rawclient::Refusal)> = None;
+    for attempt in 1..=(pending_target + 4) {
+        let watch_request = request;
+        request += 1;
+        alice.send_control(
+            FRAME_WORK,
+            &rawclient::work_watch(
+                watch_request,
+                (0, 0, 1),
+                STAGING_PENDING_AFTER_REVISION,
+                STAGING_PENDING_DEADLINE_MS,
+            ),
+        )?;
+        match alice.read_control_bounded(Duration::from_millis(400))? {
+            Some(Frame::Control(FRAME_REFUSAL, body)) => {
+                let refusal = rawclient::parse_refusal(&body)?;
+                log.push_str(&format!(
+                    "pending-fill\t{attempt}\talice\t0\trefused\trequest {watch_request} \
+                     tag_kind={} tag_id={} code={} detail={:?}\n",
+                    refusal.tag_kind, refusal.tag_id, refusal.code, refusal.detail
+                ));
+                pending_refusal = Some((attempt, watch_request, refusal));
+                break;
+            }
+            Some(Frame::Control(FRAME_WORK, _)) => {
+                pending_answered_early += 1;
+                log.push_str(&format!(
+                    "pending-fill\t{attempt}\talice\t0\tanswered\trequest {watch_request} was \
+                     answered immediately and is not holding a pending slot\n"
+                ));
+            }
+            Some(Frame::Control(kind, body)) => log.push_str(&format!(
+                "pending-fill\t{attempt}\talice\t0\tframe\trequest {watch_request} kind={kind} \
+                 len={}\n",
+                body.len()
+            )),
+            Some(Frame::Fin) => {
+                log.push_str("pending-fill\t-\talice\t0\tfin\tcontrol FIN\n");
+                break;
+            }
+            None => {
+                pending_accepted += 1;
+                log.push_str(&format!(
+                    "pending-fill\t{attempt}\talice\t0\tpending\trequest {watch_request} \
+                     granted and unanswered (after_revision {STAGING_PENDING_AFTER_REVISION}, \
+                     wait {STAGING_PENDING_DEADLINE_MS}ms)\n"
+                ));
+            }
+        }
+    }
+    match &pending_refusal {
+        Some((attempt, watch_request, refusal)) => {
+            ensure!(
+                refusal.code == rawclient::CODE_LIMIT_EXCEEDED,
+                "{scenario_id} {}: pending control work was refused with code {} ({:?}) on \
+                 attempt {attempt}, expected LIMIT_EXCEEDED ({})",
+                server.name(),
+                refusal.code,
+                refusal.detail,
+                rawclient::CODE_LIMIT_EXCEEDED
+            );
+            ensure!(
+                refusal.tag_kind == 0 && refusal.tag_id == *watch_request,
+                "{scenario_id} {}: the refusal names request tag ({}, {}) but it answered \
+                 request {watch_request}; the row will not attribute a refusal to an attempt \
+                 it does not name",
+                server.name(),
+                refusal.tag_kind,
+                refusal.tag_id
+            );
+            observed.push((
+                "pending_ceiling",
+                format!(
+                    "declared pending_limit {pending_target}; {pending_accepted} waits granted \
+                     and left unanswered ({pending_answered_early} answered immediately and \
+                     held no slot), and attempt {attempt} (request {watch_request}) was refused \
+                     LIMIT_EXCEEDED (4) detail={:?}. The ceiling that fires is not necessarily \
+                     the declared pending_limit and the row does not claim it is",
+                    refusal.detail
+                ),
+            ));
+            events.append("LIMIT_REFUSAL_OBSERVED", None, None, None, None, None)?;
+        }
+        None => observed.push((
+            "pending_ceiling",
+            format!(
+                "NOT REACHED: {pending_accepted} waits were granted and left unanswered \
+                 against a declared pending_limit of {pending_target} over \
+                 {} attempts, with no refusal. Recorded as not reached, never as a pass; \
+                 see artifacts/ceilings.tsv",
+                pending_target + 4
+            ),
+        )),
+    }
+    fs::write(artifacts.join("ceilings.tsv"), &log)?;
+
+    // EXISTING PROMISES: the queued watches must still answer. They are
+    // waiting on a revision that only an admission can produce, so this
+    // connection is left as it is and the SECOND connection of the same
+    // owner — attached before the fill, see above — admits the work; the
+    // first connection then drains its granted waits.
+    let promise_payload = oracle::dataset(context.seed ^ 0x5a, STAGING_DECLARED_LEN);
+    let mut promise_sha = [0u8; 32];
+    promise_sha.copy_from_slice(&crate::decode_hex(&oracle::sha256_hex(&promise_payload))?);
+    let promise_op = oracle::operation_id(context.seed, "staging-promise", 1);
+    ladder_admit(
+        &mut admitter,
+        binding.generation,
+        &promise_op,
+        (0, 0, 1),
+        &promise_payload,
+        &promise_sha,
+    )?;
+    // The admitter has done its one job. It is closed immediately, because
+    // both subjects enforce a per-owner CONNECTION ceiling of their own
+    // (r-connection-ceiling: rust 4, java 8) and the staging phase below
+    // needs those slots for staging connections, not for a connection that
+    // is finished with.
+    admitter.close_application(b"staging row: admission delivered")?;
+    // Drain what the first connection had been promised. Watches waiting on
+    // the declaration revision answer as soon as the admission moves the
+    // work on, or at their own deadline; both are the promise being kept,
+    // and the row records how many were.
+    let mut answered = 0u64;
+    let mut drained_other = 0u64;
+    let drain_deadline = Instant::now() + STAGING_PENDING_DRAIN;
+    while answered < pending_accepted && Instant::now() < drain_deadline {
+        match alice.read_control_bounded(Duration::from_secs(5))? {
+            Some(Frame::Control(FRAME_WORK, _)) => answered += 1,
+            Some(Frame::Control(FRAME_REFUSAL, body)) => {
+                let refusal = rawclient::parse_refusal(&body)?;
+                log.push_str(&format!(
+                    "pending-drain\t-\talice\t0\trefusal\tcode={} detail={:?}\n",
+                    refusal.code, refusal.detail
+                ));
+                drained_other += 1;
+            }
+            Some(Frame::Control(kind, _)) => {
+                log.push_str(&format!("pending-drain\t-\talice\t0\tframe\tkind={kind}\n"));
+                drained_other += 1;
+            }
+            Some(Frame::Fin) => break,
+            // Nothing yet: a granted wait may answer at the work's next
+            // revision or at its own deadline, and the row waits for either
+            // rather than concluding the promise was dropped.
+            None => continue,
+        }
+    }
+    log.push_str(&format!(
+        "pending-drain\t-\talice\t0\tsummary\t{answered}/{pending_accepted} granted waits \
+         answered, {drained_other} other frames\n"
+    ));
+    observed.push((
+        "pending_existing_promises",
+        format!(
+            "{answered}/{pending_accepted} waits granted before exhaustion were answered \
+             after the watched work was admitted on a second connection ({drained_other} \
+             other control frames drained and logged)"
+        ),
+    ));
+    ensure!(
+        answered >= pending_accepted,
+        "{scenario_id} {}: only {answered}/{pending_accepted} granted waits were answered \
+         after exhaustion; existing promises were not kept",
+        server.name()
+    );
+    fs::write(artifacts.join("ceilings.tsv"), &log)?;
+    resources::sample_store(
+        "pending-ceiling",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+
+    // ---- Phase B: the staging-object ceiling ----
+    // Incomplete input transfers are staging objects: the header reserves,
+    // the payload never finishes, nothing commits. They are opened in
+    // per-connection batches and the control stream is drained once per
+    // batch, because a refusal carries the INPUT STREAM tag it belongs to
+    // and can therefore be attributed exactly. Batching also matters for the
+    // measurement: a per-attempt wait made the sweep outlast the subject's
+    // own input receive deadline, which then reaped the earliest transfers
+    // while the row was still opening later ones.
+    let staging_payload = oracle::dataset(context.seed ^ 0x57, STAGING_DECLARED_LEN);
+    let mut staging_sha = [0u8; 32];
+    staging_sha.copy_from_slice(&crate::decode_hex(&oracle::sha256_hex(&staging_payload))?);
+    let prefix = &staging_payload[..STAGING_PREFIX_LEN];
+    let mut held: Vec<StagingConn> = Vec::new();
+    let mut staging_refusal: Option<(u64, String, rawclient::Refusal)> = None;
+    let mut staging_open_count = 0u64;
+    let mut staging_reaped = 0u64;
+    let mut last_accepted: Option<(usize, usize, u64, u64)> = None;
+    // Entity ids must strictly increase within a scope across declaration
+    // batches, so every later phase allocates from this cursor and never
+    // re-uses a lower id.
+    let mut entity_cursor = 100_000u64;
+    'principals: for principal in ["alice", "bob", "carol", "dave"] {
+        for connection_index in 0..STAGING_MAX_CONNECTIONS_PER_PRINCIPAL {
+            if staging_open_count >= STAGING_MAX_STREAMS {
+                log.push_str(&format!(
+                    "staging\t{staging_open_count}\t{principal}\t{connection_index}\tcap\t\
+                     hard cap {STAGING_MAX_STREAMS} streams reached without a refusal\n"
+                ));
+                break 'principals;
+            }
+            let mut conn = match peer.connect(&fixture.certs, principal, &owned.address) {
+                Ok(conn) => conn,
+                Err(error) => {
+                    log.push_str(&format!(
+                        "staging\t-\t{principal}\t{connection_index}\tconnect-refused\t{error:#}\n"
+                    ));
+                    continue 'principals;
+                }
+            };
+            let batch: Vec<u64> = (0..caps.stream_limit)
+                .map(|slot| entity_cursor + slot + 1)
+                .collect();
+            entity_cursor += caps.stream_limit + 1;
+            // A connection that authenticates and is then turned away by a
+            // per-owner ceiling fails on its first control read. That is
+            // this row walking into ANOTHER subject bound, not a fixture
+            // error: it is logged and the row moves to the next principal.
+            let prepared = (|| -> Result<u64> {
+                let offer = rawclient::frozen("capabilities-offer")?;
+                conn.send_frozen(&offer.frame)?;
+                let selection =
+                    rawclient::parse_capabilities(&conn.expect_control(FRAME_CAPABILITIES)?)?;
+                conn.set_caps(selection);
+                // Per-principal session: alice attaches to the existing one,
+                // a fresh principal creates its own.
+                let generation = if principal == "alice" {
+                    conn.send_control(
+                        FRAME_SESSION,
+                        &rawclient::session_attach(
+                            1,
+                            &binding.authority,
+                            &binding.owner,
+                            binding.generation,
+                        ),
+                    )?;
+                    rawclient::parse_binding(&conn.expect_control(FRAME_SESSION)?)?.generation
+                } else {
+                    raw_create_session(&mut conn)?.generation
+                };
+                let declare = oracle::operation_id(
+                    context.seed,
+                    "staging-declare-b",
+                    (batch[0] + principal.len() as u64) as u32,
+                );
+                raw_declare(&mut conn, 2, &declare, 0, &batch, false)?;
+                Ok(generation)
+            })();
+            let generation = match prepared {
+                Ok(generation) => generation,
+                Err(error) => {
+                    log.push_str(&format!(
+                        "staging\t-\t{principal}\t{connection_index}\tsetup-refused\t{error:#}\n"
+                    ));
+                    continue 'principals;
+                }
+            };
+            // Open this connection's whole batch, then read control once.
+            let mut streams: Vec<quinn::SendStream> = Vec::new();
+            let mut opened: Vec<(u64, u64, u64)> = Vec::new(); // attempt, entity, stream id
+            let mut transport_failed: Option<String> = None;
+            for entity in &batch {
+                if staging_open_count >= STAGING_MAX_STREAMS {
+                    break;
+                }
+                let operation = oracle::operation_id(context.seed, "staging-input", *entity as u32);
+                match staging_open(
+                    &mut conn,
+                    generation,
+                    &operation,
+                    (0, 0, *entity),
+                    &staging_sha,
+                    prefix,
+                    None,
+                ) {
+                    Ok(attempt) => {
+                        staging_open_count += 1;
+                        opened.push((staging_open_count, *entity, attempt.stream_id));
+                        streams.push(attempt.stream);
+                    }
+                    Err(error) => {
+                        // The subject stopped this transfer as it was being
+                        // written. That is the subject's own enforcement,
+                        // recorded rather than treated as a fixture error.
+                        staging_reaped += 1;
+                        transport_failed = Some(format!("{error:#}"));
+                        break;
+                    }
+                }
+            }
+            if let Some(error) = &transport_failed {
+                log.push_str(&format!(
+                    "staging\t{staging_open_count}\t{principal}\t{connection_index}\treaped\t\
+                     a staging transfer was stopped by the subject while it was being \
+                     written: {error}\n"
+                ));
+            }
+            // One bounded drain, matched to the attempts by input-stream tag.
+            let mut refused_here: Vec<(u64, rawclient::Refusal)> = Vec::new();
+            for _ in 0..(caps.stream_limit * 2 + 2) {
+                match conn.read_control_bounded(STAGING_BATCH_DRAIN)? {
+                    Some(Frame::Control(FRAME_REFUSAL, body)) => {
+                        let refusal = rawclient::parse_refusal(&body)?;
+                        let attempt = opened
+                            .iter()
+                            .find(|(_, _, stream_id)| {
+                                refusal.tag_kind == rawclient::TAG_INPUT_STREAM
+                                    && *stream_id == refusal.tag_id
+                            })
+                            .map(|(attempt, _, _)| *attempt);
+                        log.push_str(&format!(
+                            "staging\t{}\t{principal}\t{connection_index}\trefused\t\
+                             tag_kind={} tag_id={} code={} detail={:?}\n",
+                            attempt
+                                .map(|a| a.to_string())
+                                .unwrap_or_else(|| "unmatched".into()),
+                            refusal.tag_kind,
+                            refusal.tag_id,
+                            refusal.code,
+                            refusal.detail
+                        ));
+                        if let Some(attempt) = attempt {
+                            refused_here.push((attempt, refusal));
+                        }
+                    }
+                    Some(Frame::Control(kind, body)) => log.push_str(&format!(
+                        "staging\t-\t{principal}\t{connection_index}\tframe\tkind={kind} len={}\n",
+                        body.len()
+                    )),
+                    Some(Frame::Fin) => {
+                        log.push_str(&format!(
+                            "staging\t-\t{principal}\t{connection_index}\tfin\tcontrol FIN\n"
+                        ));
+                        break;
+                    }
+                    None => break,
+                }
+            }
+            refused_here.sort_by_key(|(attempt, _)| *attempt);
+            let refused_attempts: BTreeSet<u64> =
+                refused_here.iter().map(|(attempt, _)| *attempt).collect();
+            for (attempt, entity, stream_id) in &opened {
+                if refused_attempts.contains(attempt) {
+                    continue;
+                }
+                log.push_str(&format!(
+                    "staging\t{attempt}\t{principal}\t{connection_index}\tstaged\tstream={stream_id} \
+                     work=0:0:{entity} {STAGING_PREFIX_LEN}/{STAGING_DECLARED_LEN} bytes, no FIN\n"
+                ));
+                let slot = opened
+                    .iter()
+                    .position(|(a, _, _)| a == attempt)
+                    .expect("the attempt came from this list");
+                last_accepted = Some((held.len(), slot, *entity, *stream_id));
+            }
+            let first_refusal = refused_here.into_iter().next();
+            held.push(StagingConn {
+                principal: principal.to_owned(),
+                conn,
+                streams,
+            });
+            if let Some((attempt, refusal)) = first_refusal {
+                staging_refusal = Some((attempt, principal.to_owned(), refusal));
+                break 'principals;
+            }
+            if transport_failed.is_some() {
+                break 'principals;
+            }
+        }
+    }
+    fs::write(artifacts.join("ceilings.tsv"), &log)?;
+    let staging_held: u64 = held.iter().map(|c| c.streams.len() as u64).sum();
+    observed.push((
+        "staging_streams_opened",
+        format!(
+            "{staging_open_count} incomplete input transfers over {} connections \
+             ({staging_held} still held at the end of the sweep, {staging_reaped} stopped by \
+             the subject while being written); hard caps {STAGING_MAX_STREAMS} streams / \
+             {STAGING_MAX_CONNECTIONS_PER_PRINCIPAL} connections per principal",
+            held.len()
+        ),
+    ));
+    let staging_partial = match &staging_refusal {
+        Some((attempt, principal, refusal)) => {
+            ensure!(
+                refusal.code == rawclient::CODE_LIMIT_EXCEEDED,
+                "{scenario_id} {}: staging exhaustion was refused with code {} ({:?}), \
+                 expected LIMIT_EXCEEDED ({})",
+                server.name(),
+                refusal.code,
+                refusal.detail,
+                rawclient::CODE_LIMIT_EXCEEDED
+            );
+            observed.push((
+                "staging_ceiling",
+                format!(
+                    "NEW work refused on staging attempt {attempt} (principal {principal}) with \
+                     LIMIT_EXCEEDED (4), tag_kind={} tag_id={} detail={:?}",
+                    refusal.tag_kind, refusal.tag_id, refusal.detail
+                ),
+            ));
+            events.append("LIMIT_REFUSAL_OBSERVED", None, None, None, None, None)?;
+            false
+        }
+        None => {
+            observed.push((
+                "staging_ceiling",
+                format!(
+                    "NOT REACHED: {staging_open_count} incomplete transfers were accepted \
+                     without any count ceiling being refused, up to this row's hard caps \
+                     ({STAGING_MAX_STREAMS} streams, {STAGING_MAX_CONNECTIONS_PER_PRINCIPAL} \
+                     connections per principal), with {staging_reaped} transfer(s) stopped by \
+                     the subject's own input receive deadline during the sweep. A cap is not a \
+                     bound: recorded as not reached, never as a pass. What this shows about \
+                     the subject is that it bounds incomplete staging transfers by TIME rather \
+                     than by a count this row can reach"
+                ),
+            ));
+            true
+        }
+    };
+    resources::sample_store(
+        "staging-full",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+    let staging_full_ms = elapsed_ms(Instant::now());
+
+    // ---- Phase C: capacity stays charged while the transfers are busy ----
+    let recharge = if staging_refusal.is_some() {
+        let entity = entity_cursor + 1;
+        entity_cursor += 2;
+        // The probe runs on the RESERVED connection, not on a held staging
+        // connection: every staging connection has all `stream_limit` of its
+        // object-stream slots occupied by transfers this row is holding, and
+        // an open that waits for transport stream credit would time out and
+        // be reported as the subject refusing capacity when it is the
+        // fixture's own stream geometry. It must also be the SAME owner
+        // whose capacity is exhausted, so a different principal is not an
+        // option either.
+        let declare = oracle::operation_id(context.seed, "staging-recharge-declare", 0);
+        let declared = raw_declare(&mut prober, prober_request, &declare, 0, &[entity], false);
+        match declared {
+            Ok(()) => {
+                let operation = oracle::operation_id(context.seed, "staging-recharge", 0);
+                let attempt = staging_open(
+                    &mut prober,
+                    binding.generation,
+                    &operation,
+                    (0, 0, entity),
+                    &staging_sha,
+                    prefix,
+                    Some(STAGING_PROBE_WAIT),
+                )?;
+                let text = match attempt.refusal {
+                    Some(refusal) => format!(
+                        "still charged: a further staging attempt while every transfer is held \
+                         is refused again, code={} detail={:?}",
+                        refusal.code, refusal.detail
+                    ),
+                    None => "NOT still charged: a further staging attempt was accepted while \
+                             every earlier transfer is still held"
+                        .to_owned(),
+                };
+                log.push_str(&format!("charged\t-\t-\t-\tprobe\t{text}\n"));
+                drop(attempt.stream);
+                text
+            }
+            Err(error) => {
+                let text = format!(
+                    "still charged: the recharge probe could not even declare its entity — \
+                     {error:#}"
+                );
+                log.push_str(&format!("charged\t-\t-\t-\tprobe\t{text}\n"));
+                text
+            }
+        }
+    } else {
+        "not applicable: the staging ceiling was never reached".to_owned()
+    };
+    observed.push(("capacity_charged_while_busy", recharge));
+
+    // EXISTING PROMISES at the staging ceiling: a transfer accepted BEFORE
+    // exhaustion still completes when it FINs.
+    let promise_outcome = match last_accepted {
+        Some((conn_index, slot, entity, stream_id)) => {
+            // A transfer the subject already stopped is not a fixture error:
+            // it is the subject's own deadline enforcement and is recorded
+            // as such rather than propagated.
+            let completion = (|| -> Result<String> {
+                let target = held
+                    .get_mut(conn_index)
+                    .context("the accepted staging transfer's connection is gone")?;
+                let stream = target
+                    .streams
+                    .get_mut(slot)
+                    .context("the accepted staging transfer's stream is gone")?;
+                target
+                    .conn
+                    .write_stream(stream, &staging_payload[STAGING_PREFIX_LEN..])?;
+                target.conn.finish_stream(stream)?;
+                Ok(
+                    match target.conn.read_control_bounded(STAGING_REPLY_WAIT)? {
+                        Some(Frame::Control(FRAME_WORK, body)) => {
+                            let admitted = rawclient::parse_admitted_stream(&body)?;
+                            format!(
+                                "kept: the staging transfer accepted before exhaustion (work \
+                             0:0:{entity}, stream {stream_id}) completed to an admission receipt \
+                             naming stream {admitted} while NEW work stayed refused"
+                            )
+                        }
+                        Some(Frame::Control(FRAME_REFUSAL, body)) => {
+                            let refusal = rawclient::parse_refusal(&body)?;
+                            format!(
+                                "BROKEN: the staging transfer accepted before exhaustion was refused \
+                             on completion, code={} detail={:?}",
+                                refusal.code, refusal.detail
+                            )
+                        }
+                        Some(Frame::Control(kind, _)) => {
+                            format!("unexpected control frame kind={kind} on completion")
+                        }
+                        Some(Frame::Fin) => "control FIN before the completion receipt".to_owned(),
+                        None => format!("no receipt within {STAGING_REPLY_WAIT:?}"),
+                    },
+                )
+            })();
+            match completion {
+                Ok(text) => text,
+                Err(error) => format!(
+                    "not completable: the transfer (work 0:0:{entity}, stream {stream_id}) could \
+                     not be finished — {error:#}. Recorded as the subject's own enforcement on \
+                     an incomplete transfer, not as a promise broken at the ceiling"
+                ),
+            }
+        }
+        None => "not applicable: no staging transfer was accepted before exhaustion".to_owned(),
+    };
+    log.push_str(&format!(
+        "existing\t-\t-\t-\tcompletion\t{promise_outcome}\n"
+    ));
+    observed.push(("staging_existing_promises", promise_outcome.clone()));
+    if last_accepted.is_some() && staging_refusal.is_some() {
+        ensure!(
+            promise_outcome.starts_with("kept:"),
+            "{scenario_id} {}: a staging transfer accepted before exhaustion did not complete \
+             — {promise_outcome}",
+            server.name()
+        );
+    }
+    fs::write(artifacts.join("ceilings.tsv"), &log)?;
+
+    // ---- Phase D: release, settle, and ask whether capacity came back ----
+    let fd_peak_from_ms = elapsed_ms(Instant::now());
+    for connection in held.drain(..) {
+        let StagingConn { conn, streams, .. } = connection;
+        drop(streams);
+        conn.close_application(b"staging row: releasing held transfers")?;
+    }
+    prober.close_application(b"staging row: releasing the reserved prober")?;
+    thread::sleep(STAGING_CLEANUP_SETTLE);
+    let after_cleanup_ms = elapsed_ms(Instant::now());
+    resources::sample_store(
+        "after-cleanup",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+    let recovery_after_cleanup = staging_recovery_probe(
+        &peer,
+        &fixture,
+        &owned,
+        &binding,
+        &staging_sha,
+        prefix,
+        entity_cursor,
+        context.seed,
+        "after-cleanup",
+        &mut log,
+    )?;
+    observed.push(("reconcile_after_cleanup", recovery_after_cleanup.clone()));
+
+    // ---- Phase E: restart and ask again ----
+    resources::sample_store(
+        "before-restart",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+    let before_restart: u64 = resources::read_store_samples(&store_file)?
+        .iter()
+        .filter(|record| record.checkpoint == "before-restart")
+        .map(|record| record.len)
+        .sum();
+    // The collector is anchored on the old pid, so it stops with the old
+    // process; the restarted subject is measured by a fresh collector.
+    let summary_before = collector.stop()?;
+    owned.stop()?;
+    owned = fixture.start_server()?;
+    let anchor_after = owned.pid()?;
+    let collector_after = resources::ProcessCollector::start(
+        anchor_after,
+        resources::SAMPLE_INTERVAL,
+        &scenario_dir.join("resources-after-restart.tsv"),
+    )?;
+    resources::sample_store(
+        "after-restart",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+    let after_restart: u64 = resources::read_store_samples(&store_file)?
+        .iter()
+        .filter(|record| record.checkpoint == "after-restart")
+        .map(|record| record.len)
+        .sum();
+    let recovery_after_restart = staging_recovery_probe(
+        &peer,
+        &fixture,
+        &owned,
+        &binding,
+        &staging_sha,
+        prefix,
+        entity_cursor + 1_000,
+        context.seed,
+        "after-restart",
+        &mut log,
+    )?;
+    observed.push(("reconcile_after_restart", recovery_after_restart.clone()));
+    observed.push((
+        "retained_bytes_across_restart",
+        format!(
+            "store file lengths total {before_restart} B before the restart and \
+             {after_restart} B after it (separate scope from allocated blocks; both are in \
+             store.tsv per file and per checkpoint)"
+        ),
+    ));
+    let summary_after = collector_after.stop()?;
+    fs::write(artifacts.join("ceilings.tsv"), &log)?;
+
+    // Reconciliation is an ASSERTION, not just a record: capacity charged at
+    // exhaustion must come back after safe cleanup and must not survive a
+    // restart as a leak. Only meaningful once the ceiling was actually
+    // reached — a capacity that was never exhausted has nothing to reconcile.
+    if staging_refusal.is_some() {
+        ensure!(
+            recovery_after_cleanup.contains("accepted"),
+            "{scenario_id} {}: staging capacity did not come back after the transfers were \
+             released and a {:?} cleanup settle — {recovery_after_cleanup}",
+            server.name(),
+            STAGING_CLEANUP_SETTLE
+        );
+        ensure!(
+            recovery_after_restart.contains("accepted"),
+            "{scenario_id} {}: staging capacity did not reconcile across a restart on the \
+             same roots — {recovery_after_restart}",
+            server.name()
+        );
+    }
+
+    // ---- measurement close-out ----
+    ensure!(
+        summary_before.error_lines == 0 && summary_after.error_lines == 0,
+        "{scenario_id}: dead collector — {} + {} sampling error lines",
+        summary_before.error_lines,
+        summary_after.error_lines
+    );
+    observed.push((
+        "collector",
+        format!(
+            "pre-restart {} ticks / {} lines / {} errors; post-restart {} ticks / {} lines / \
+             {} errors",
+            summary_before.ticks,
+            summary_before.lines,
+            summary_before.error_lines,
+            summary_after.ticks,
+            summary_after.lines,
+            summary_after.error_lines
+        ),
+    ));
+    let samples = resources::read_process_samples(&scenario_dir.join("resources.tsv"))?;
+    ensure!(
+        samples.iter().all(|sample| sample.rss_kb.is_some()
+            && sample.hwm_kb.is_some()
+            && sample.fds.is_some()
+            && sample.threads.is_some()
+            && sample.io_write_bytes.is_some()
+            && sample.io_cancelled_write_bytes.is_some()),
+        "{scenario_id}: a sample is missing a MANDATORY scope"
+    );
+    let baseline = resources::group_window_stats(&samples, 0, baseline_to_ms, "baseline")?;
+    let loaded = resources::group_window_stats(
+        &samples,
+        staging_full_ms.saturating_sub(5_000),
+        fd_peak_from_ms,
+        "staging-held",
+    )?;
+    let released = resources::group_window_stats(
+        &samples,
+        after_cleanup_ms.saturating_sub(5_000),
+        after_cleanup_ms,
+        "after-cleanup",
+    )?;
+    observed.push((
+        "fds",
+        format!(
+            "baseline median={} -> staging held p90={} (max {}) -> after release p90={} \
+             (max {})",
+            baseline.fd_median, loaded.fd_p90, loaded.fd_max, released.fd_p90, released.fd_max
+        ),
+    ));
+    observed.push((
+        "rss_kib",
+        format!(
+            "baseline median={} -> staging held p90={} -> after release p90={}",
+            baseline.rss_median_kb, loaded.rss_p90_kb, released.rss_p90_kb
+        ),
+    ));
+    observed.push((
+        "threads",
+        format!(
+            "baseline median={} -> staging held max={} -> after release max={}",
+            baseline.threads_median, loaded.threads_max, released.threads_max
+        ),
+    ));
+    ensure!(
+        released.fd_p90 <= baseline.fd_median + 8,
+        "{scenario_id} {}: file handles did not come back after the staging transfers were \
+         released (baseline median {} -> released p90 {}); handles are not bounded",
+        server.name(),
+        baseline.fd_median,
+        released.fd_p90
+    );
+
+    // ---- journal / retained-byte ceilings: recorded, not driven ----
+    let store_records = resources::read_store_samples(&store_file)?;
+    let checkpoints: BTreeSet<&str> = store_records
+        .iter()
+        .map(|record| record.checkpoint.as_str())
+        .collect();
+    let journal_peak = store_records
+        .iter()
+        .filter(|record| record.path.ends_with("authority.sqlite"))
+        .map(|record| record.len)
+        .max()
+        .unwrap_or(0);
+    observed.push((
+        "journal_ceiling_declared",
+        format!(
+            "session binding receipt: {}. Configured file ceilings that this row does NOT \
+             drive to exhaustion: the java subject's bounded-SQLite policy (256 MiB database, \
+             64 MiB WAL, 64 MiB rollback journal, 512 KiB shared memory) and its object store \
+             policy (8 GiB bytes, 10,000 files, 128 handles); the rust authority's equivalent \
+             record-completion capacity. Driving any of them needs hundreds of megabytes of \
+             committed records, which is outside this row's bounded budget",
+            session_limits.text()
+        ),
+    ));
+    observed.push((
+        "journal_observed_peak",
+        format!(
+            "largest authority.sqlite length observed across {} checkpoints: {journal_peak} B \
+             (file length and allocated blocks are separate scopes, both per file in store.tsv)",
+            checkpoints.len()
+        ),
+    ));
+    observed.push((
+        "store_checkpoints",
+        format!(
+            "{} records across {}",
+            store_records.len(),
+            checkpoints.into_iter().collect::<Vec<_>>().join(", ")
+        ),
+    ));
+    let row_status = if staging_partial {
+        "PARTIAL: the staging ceiling was not reached inside this row's hard caps, and the \
+         journal/retained-BYTE ceilings are recorded rather than driven (see \
+         journal_ceiling_declared). Named reasons, never skips"
+    } else {
+        "PARTIAL: the pending-response and staging-object ceilings are driven to exhaustion \
+         and their refusals, promise-keeping, handle bounds and reconciliation are asserted, \
+         but the journal/retained-BYTE ceilings are recorded rather than driven (see \
+         journal_ceiling_declared). Named reason, never a skip"
+    };
+    observed.push(("row_status", row_status.to_owned()));
+
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    events.append(
+        "CEILING_EVIDENCE",
+        None,
+        None,
+        None,
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/ceilings.tsv".into(),
+            len: log.len() as u64,
+            sha256: oracle::sha256_hex(log.as_bytes()),
+        }),
+    )?;
+    thread::sleep(STALL_CLOSE_SETTLE);
+    stop_and_seal(context, scenario_dir, scenario_id, owned, events)
+}
+
+/// Ask whether staging capacity has come back: a fresh connection, a fresh
+/// declaration and one staging transfer. Returns the outcome text.
+#[allow(clippy::too_many_arguments)]
+fn staging_recovery_probe(
+    peer: &Peer,
+    fixture: &AuthorityFixture,
+    owned: &OwnedServer,
+    binding: &rawclient::Binding,
+    staging_sha: &[u8; 32],
+    prefix: &[u8],
+    entity: u64,
+    seed: u64,
+    label: &str,
+    log: &mut String,
+) -> Result<String> {
+    let deadline = Instant::now() + STAGING_RECOVERY_WAIT;
+    let mut last;
+    let mut attempt_number = 0u64;
+    loop {
+        attempt_number += 1;
+        let outcome = (|| -> Result<String> {
+            let mut conn = peer.connect(&fixture.certs, "alice", &owned.address)?;
+            let offer = rawclient::frozen("capabilities-offer")?;
+            conn.send_frozen(&offer.frame)?;
+            let selection =
+                rawclient::parse_capabilities(&conn.expect_control(FRAME_CAPABILITIES)?)?;
+            conn.set_caps(selection);
+            conn.send_control(
+                FRAME_SESSION,
+                &rawclient::session_attach(
+                    1,
+                    &binding.authority,
+                    &binding.owner,
+                    binding.generation,
+                ),
+            )?;
+            let attached = rawclient::parse_binding(&conn.expect_control(FRAME_SESSION)?)?;
+            // Each attempt declares a NEW entity, so it must also carry a NEW
+            // operation id: re-using one with different parameters is an
+            // immutable-intent CONFLICT, which would mask whatever the
+            // capacity answer actually is.
+            let declare = oracle::operation_id(
+                seed,
+                "staging-recovery-declare",
+                (entity + attempt_number) as u32,
+            );
+            raw_declare(&mut conn, 2, &declare, 0, &[entity + attempt_number], false)?;
+            let operation =
+                oracle::operation_id(seed, "staging-recovery", (entity + attempt_number) as u32);
+            let probe = staging_open(
+                &mut conn,
+                attached.generation,
+                &operation,
+                (0, 0, entity + attempt_number),
+                staging_sha,
+                prefix,
+                Some(STAGING_PROBE_WAIT),
+            )?;
+            let text = match probe.refusal {
+                Some(refusal) => format!(
+                    "refused on attempt {attempt_number}: code={} detail={:?}",
+                    refusal.code, refusal.detail
+                ),
+                None => format!(
+                    "accepted on attempt {attempt_number} (staging transfer {} opened)",
+                    probe.stream_id
+                ),
+            };
+            drop(probe.stream);
+            conn.close_application(b"staging recovery probe complete")?;
+            Ok(text)
+        })();
+        last = match outcome {
+            Ok(text) => text,
+            Err(error) => format!("attempt {attempt_number} failed: {error:#}"),
+        };
+        log.push_str(&format!(
+            "recovery-{label}\t{attempt_number}\talice\t-\tprobe\t{last}\n"
+        ));
+        if last.starts_with("accepted") || Instant::now() >= deadline {
+            break;
+        }
+        thread::sleep(Duration::from_secs(5));
+    }
+    Ok(format!(
+        "{label}: {last} (bounded wait {:?})",
+        STAGING_RECOVERY_WAIT
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// r-network-bytes (milestone 18d)
+// ---------------------------------------------------------------------------
+//
+// Fixture-scoped network measurement, with the collection method recorded on
+// every sample and never substituted mid-row. Two methods are used side by
+// side and reported separately, never averaged or swapped:
+//
+// - `proc-net-dev`: the kernel's loopback interface counters. HOST-SCOPED on
+//   this host, not fixture-scoped, because no network namespace is
+//   available (the exact failing check is recorded). Loopback
+//   double-counting: every datagram on `lo` is counted once in that
+//   interface's RX and once in its TX, so an interface delta is twice the
+//   wire bytes; the row reports both the raw delta and the halved figure and
+//   never silently halves.
+// - `quinn-conn-udp`: the source-pinned transport's own per-connection UDP
+//   datagram byte totals. FIXTURE-SCOPED by construction — they belong to
+//   one connection — and one-sided, being this endpoint's view.
+//
+// Handshake, TLS and retransmission bytes are measured in their own phase and
+// recorded separately from logical payload bytes. Network bytes are never
+// inferred from payload size; the row records the logical payload it sent as
+// a separate number and compares, never derives.
+
+/// Idle window used to quantify how much of the host-scoped loopback counter
+/// is NOT this fixture.
+const NET_BASELINE: Duration = Duration::from_secs(10);
+/// Payload of the transfer phase. Large enough that framing, ACK and header
+/// overhead is a small fraction and a retransmission would be visible.
+const NET_PAYLOAD_LEN: usize = 4 * 1024 * 1024;
+
+fn r_network_bytes(context: &ScenarioContext) -> Result<()> {
+    run_raw_directions(context, "r-network-bytes", r_network_bytes_direction)
+}
+
+/// Run one host-capability probe and record its exact result.
+fn net_capability_probe(command: &[&str], transcript: &mut String) -> String {
+    let output = Command::new(command[0])
+        .args(&command[1..])
+        .stdin(Stdio::null())
+        .output();
+    match output {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            transcript.push_str(&format!(
+                "=== {} (exit {}) ===\n{stdout}{stderr}\n",
+                command.join(" "),
+                output.status
+            ));
+            let text = format!("{stdout}{stderr}");
+            let first = text
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("(no output)")
+                .trim()
+                .to_owned();
+            format!("exit {} — {first}", output.status)
+        }
+        Err(error) => {
+            transcript.push_str(&format!(
+                "=== {} (not runnable) ===\n{error}\n",
+                command.join(" ")
+            ));
+            format!("not runnable: {error}")
+        }
+    }
+}
+
+/// Sample the loopback interface into network.tsv and return the counters.
+fn net_sample(
+    file: &Path,
+    checkpoint: &str,
+    clock: Instant,
+    anchor: u32,
+) -> Result<resources::InterfaceCounters> {
+    let counters = resources::interface_counters(anchor, "lo")?;
+    resources::append_network_sample(
+        file,
+        &resources::NetworkSample {
+            checkpoint: checkpoint.to_owned(),
+            method: "proc-net-dev".to_owned(),
+            interface: counters.interface.clone(),
+            elapsed_ms: clock.elapsed().as_millis() as u64,
+            rx_bytes: counters.rx_bytes,
+            rx_packets: counters.rx_packets,
+            tx_bytes: counters.tx_bytes,
+            tx_packets: counters.tx_packets,
+        },
+    )?;
+    Ok(counters)
+}
+
+/// Interface delta between two samples, as (rx bytes, tx bytes, rx packets,
+/// tx packets).
+fn net_delta(
+    from: &resources::InterfaceCounters,
+    to: &resources::InterfaceCounters,
+) -> (u64, u64, u64, u64) {
+    (
+        to.rx_bytes.saturating_sub(from.rx_bytes),
+        to.tx_bytes.saturating_sub(from.tx_bytes),
+        to.rx_packets.saturating_sub(from.rx_packets),
+        to.tx_packets.saturating_sub(from.tx_packets),
+    )
+}
+
+/// One connection's UDP totals from the source-pinned transport.
+fn quinn_udp_text(stats: &quinn::ConnectionStats) -> String {
+    format!(
+        "udp_tx={}B/{}dg udp_rx={}B/{}dg sent_packets={} lost_packets={} lost_bytes={} \
+         congestion_events={} current_mtu={}",
+        stats.udp_tx.bytes,
+        stats.udp_tx.datagrams,
+        stats.udp_rx.bytes,
+        stats.udp_rx.datagrams,
+        stats.path.sent_packets,
+        stats.path.lost_packets,
+        stats.path.lost_bytes,
+        stats.path.congestion_events,
+        stats.path.current_mtu
+    )
+}
+
+fn r_network_bytes_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+) -> Result<()> {
+    let scenario_id = "r-network-bytes";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+
+    // ---- host capability manifest for THIS scope, before any measurement ----
+    // A method that is unavailable is recorded by the exact check that
+    // failed, never by a note saying it was not attempted.
+    let mut probes = String::new();
+    let netns_plain = net_capability_probe(&["unshare", "-n", "true"], &mut probes);
+    let netns_userns = net_capability_probe(&["unshare", "-r", "-n", "true"], &mut probes);
+    let capture = net_capability_probe(
+        &["tcpdump", "-i", "lo", "-c", "1", "-w", "/dev/null"],
+        &mut probes,
+    );
+    fs::write(artifacts.join("capability-probes.txt"), &probes)?;
+    let namespace_available = netns_plain.starts_with("exit exit status: 0")
+        || netns_userns.starts_with("exit exit status: 0");
+    let capture_available = capture.starts_with("exit exit status: 0");
+
+    let certs = mtls::generate(&scenario_dir.join("certs"), &[("alice", "alice")])?;
+    let fixture = AuthorityFixture::new(
+        &context.rust_bin,
+        context.java_jar.as_deref(),
+        &scenario_dir.join("subject"),
+        certs,
+        server,
+        Subject::Rust,
+    )?;
+    fixture.run_init_authority()?;
+    let owned = fixture.start_server()?;
+    ensure!(
+        fixture.next_sequence(&owned, "alice")? == 1,
+        "fresh authority must report NEXT_SEQUENCE 1"
+    );
+    let anchor = owned.pid()?;
+    let permissions = resources::proc_permissions(anchor);
+    ensure!(
+        permissions.net_dev,
+        "{scenario_id}: /proc/net/dev is unreadable, so the only remaining \
+         network-byte method on this host is gone; the row fails rather than \
+         recording zero bytes"
+    );
+    // The network scope lives under artifacts/ beside the capability probes
+    // it depends on, so an event record can reference it by a relative label.
+    let network_file = artifacts.join("network.tsv");
+    let clock = Instant::now();
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "method_rule",
+                "the collection method is recorded on EVERY sample line and is \
+                 never substituted mid-row; two methods are reported side by \
+                 side and never averaged or swapped"
+                    .into(),
+            ),
+            (
+                "method_proc_net_dev",
+                "kernel loopback interface counters read through \
+                 /proc/<subject pid>/net/dev, which reports that pid's network \
+                 NAMESPACE. On this host that namespace is the host's, so the \
+                 scope is HOST-WIDE, not fixture-wide; the row measures an idle \
+                 baseline to quantify what is not this fixture"
+                    .into(),
+            ),
+            (
+                "method_quinn_conn_udp",
+                "per-connection UDP datagram byte totals from the source-pinned \
+                 transport (quinn 0.11.11 / quinn-proto 0.11.17, pinned in \
+                 Cargo.lock). Fixture-scoped by construction because they belong \
+                 to one connection; one-sided, being this endpoint's view"
+                    .into(),
+            ),
+            (
+                "loopback_double_counting",
+                "every datagram on lo is counted once in that interface's RX and \
+                 once in its TX, so an interface delta is TWICE the wire bytes. \
+                 The row reports the raw delta and the halved figure side by \
+                 side and never silently halves"
+                    .into(),
+            ),
+            (
+                "handshake_and_retransmit",
+                "handshake, TLS and retry bytes are measured in their own phase, \
+                 before any payload exists, and recorded separately from logical \
+                 payload bytes. Retransmission is reported from the transport's \
+                 own lost_packets/lost_bytes counters"
+                    .into(),
+            ),
+            (
+                "never_inferred",
+                format!(
+                    "logical payload bytes ({NET_PAYLOAD_LEN}) are recorded as \
+                     their own number and COMPARED with measured transport bytes; \
+                     no network figure in this row is derived from a payload size"
+                ),
+            ),
+            (
+                "dead_collector_rule",
+                "the row proves its own detection: a deliberately truncated copy \
+                 of the network artifact must be REJECTED by the validating \
+                 reader, a record with no stated method must be rejected, and a \
+                 counter read against a non-existent interface must fail rather \
+                 than return zero"
+                    .into(),
+            ),
+        ],
+    )?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        (
+            "client_subject",
+            "rust raw peer (one connection per phase)".into(),
+        ),
+        (
+            "capability_network_namespace",
+            format!(
+                "{}: `unshare -n true` -> {netns_plain}; `unshare -r -n true` -> \
+                 {netns_userns}",
+                if namespace_available {
+                    "AVAILABLE"
+                } else {
+                    "UNAVAILABLE (so no fixture-scoped interface counter exists on this host)"
+                }
+            ),
+        ),
+        (
+            "capability_packet_capture",
+            format!(
+                "{}: `tcpdump -i lo -c 1 -w /dev/null` -> {capture}",
+                if capture_available {
+                    "AVAILABLE"
+                } else {
+                    "UNAVAILABLE (so packet-level byte accounting falls back to the \
+                     source-pinned transport's own per-connection UDP counters)"
+                }
+            ),
+        ),
+        (
+            "method_in_use",
+            "proc-net-dev (host-scoped interface counters) AND quinn-conn-udp \
+             (fixture-scoped per-connection transport counters), recorded per \
+             sample, reported separately"
+                .into(),
+        ),
+    ];
+
+    // ---- Phase 1: host idle baseline ----
+    let idle_from = net_sample(&network_file, "baseline-start", clock, anchor)?;
+    thread::sleep(NET_BASELINE);
+    let idle_to = net_sample(&network_file, "baseline-end", clock, anchor)?;
+    let (idle_rx, idle_tx, idle_rxp, idle_txp) = net_delta(&idle_from, &idle_to);
+    observed.push((
+        "host_idle_baseline",
+        format!(
+            "over {}s with no fixture traffic the host's lo moved rx={idle_rx}B/{idle_rxp}pkt \
+             tx={idle_tx}B/{idle_txp}pkt. That is the contamination floor of the host-scoped \
+             method and is why every figure below is reported alongside the fixture-scoped one",
+            NET_BASELINE.as_secs()
+        ),
+    ));
+
+    // ---- Phase 2: handshake, TLS and session establishment only ----
+    let peer = Peer::new()?;
+    let handshake_from = net_sample(&network_file, "handshake-start", clock, anchor)?;
+    let mut conn = raw_negotiate_as(&peer, &fixture, &owned, &mut events, &artifacts, "alice")?;
+    let binding = raw_create_session(&mut conn)?;
+    let handshake_stats = conn.stats();
+    let handshake_to = net_sample(&network_file, "handshake-end", clock, anchor)?;
+    let (hs_rx, hs_tx, hs_rxp, hs_txp) = net_delta(&handshake_from, &handshake_to);
+    observed.push((
+        "handshake_tls_bytes_interface",
+        format!(
+            "proc-net-dev, HOST-SCOPED: rx={hs_rx}B/{hs_rxp}pkt tx={hs_tx}B/{hs_txp}pkt over the \
+             mTLS handshake, ALPN, capability negotiation and session creation, with no payload \
+             in existence. Loopback double-counting: wire bytes are half the sum, \
+             {}B",
+            (hs_rx + hs_tx) / 2
+        ),
+    ));
+    observed.push((
+        "handshake_tls_bytes_transport",
+        format!(
+            "quinn-conn-udp, FIXTURE-SCOPED, same phase: {}",
+            quinn_udp_text(&handshake_stats)
+        ),
+    ));
+    events.append("NETWORK_HANDSHAKE_MEASURED", None, None, None, None, None)?;
+
+    // ---- Phase 3: one known payload ----
+    let payload = oracle::dataset(context.seed ^ 0x4e37, NET_PAYLOAD_LEN);
+    let mut sha = [0u8; 32];
+    sha.copy_from_slice(&crate::decode_hex(&oracle::sha256_hex(&payload))?);
+    let declare_op = oracle::operation_id(context.seed, "network-declare", 0);
+    raw_declare(&mut conn, 2, &declare_op, 0, &[1], false)?;
+    let transfer_from = net_sample(&network_file, "transfer-start", clock, anchor)?;
+    let before = conn.stats();
+    let operation = oracle::operation_id(context.seed, "network-admit", 1);
+    ladder_admit(
+        &mut conn,
+        binding.generation,
+        &operation,
+        (0, 0, 1),
+        &payload,
+        &sha,
+    )?;
+    let after = conn.stats();
+    let transfer_to = net_sample(&network_file, "transfer-end", clock, anchor)?;
+    let (tx_rx, tx_tx, tx_rxp, tx_txp) = net_delta(&transfer_from, &transfer_to);
+    let udp_tx_delta = after.udp_tx.bytes.saturating_sub(before.udp_tx.bytes);
+    let udp_rx_delta = after.udp_rx.bytes.saturating_sub(before.udp_rx.bytes);
+    let interface_wire = (tx_rx + tx_tx) / 2;
+    observed.push((
+        "logical_payload_bytes",
+        format!(
+            "{NET_PAYLOAD_LEN} bytes of application payload, plus its framed input header. This \
+             is recorded as its own number and compared with the measured figures below; no \
+             network figure in this row is derived from it"
+        ),
+    ));
+    observed.push((
+        "transfer_bytes_interface",
+        format!(
+            "proc-net-dev, HOST-SCOPED: rx={tx_rx}B/{tx_rxp}pkt tx={tx_tx}B/{tx_txp}pkt; wire \
+             bytes after the loopback double-counting rule = {interface_wire}B against \
+             {NET_PAYLOAD_LEN}B of logical payload"
+        ),
+    ));
+    observed.push((
+        "transfer_bytes_transport",
+        format!(
+            "quinn-conn-udp, FIXTURE-SCOPED: this connection sent {udp_tx_delta}B and received \
+             {udp_rx_delta}B of UDP payload during the transfer, against {NET_PAYLOAD_LEN}B of \
+             logical payload — overhead {}B ({}%)",
+            udp_tx_delta.saturating_sub(NET_PAYLOAD_LEN as u64),
+            udp_tx_delta
+                .saturating_sub(NET_PAYLOAD_LEN as u64)
+                .saturating_mul(100)
+                / (NET_PAYLOAD_LEN as u64)
+        ),
+    ));
+    observed.push((
+        "retransmission",
+        format!(
+            "transport path counters over the whole connection: sent_packets={} \
+             lost_packets={} lost_bytes={} congestion_events={} current_mtu={}. Retransmitted \
+             bytes are inside the measured transport and interface totals and are reported here \
+             rather than subtracted from them",
+            after.path.sent_packets,
+            after.path.lost_packets,
+            after.path.lost_bytes,
+            after.path.congestion_events,
+            after.path.current_mtu
+        ),
+    ));
+    events.append("NETWORK_TRANSFER_MEASURED", None, None, None, None, None)?;
+
+    // Let the admitted work settle so the subject is not signalled to stop
+    // mid-execution (fixture timing; no measurement is taken here).
+    let mut request = 3u64;
+    ladder_wait_settled(&mut conn, &mut request, 1, LADDER_QUIESCE)?;
+    let closing = conn.stats();
+    conn.close_and_wait_idle(b"network row complete", Duration::from_secs(15))?;
+    let final_sample = net_sample(&network_file, "end", clock, anchor)?;
+    let (all_rx, all_tx, _, _) = net_delta(&idle_from, &final_sample);
+    observed.push((
+        "whole_row_interface",
+        format!(
+            "proc-net-dev, HOST-SCOPED, first to last sample: rx={all_rx}B tx={all_tx}B (wire \
+             {}B after halving) — includes the idle baseline and anything else on this host's \
+             loopback, which is exactly the limitation the method carries here",
+            (all_rx + all_tx) / 2
+        ),
+    ));
+    observed.push((
+        "whole_row_transport",
+        format!(
+            "quinn-conn-udp, FIXTURE-SCOPED, whole connection: {}",
+            quinn_udp_text(&closing)
+        ),
+    ));
+
+    // ---- Dead-collector / truncation proof, run in-row ----
+    let samples = resources::read_network_samples(&network_file)?;
+    ensure!(
+        samples.len() >= 6,
+        "{scenario_id}: expected at least six network samples, got {}",
+        samples.len()
+    );
+    ensure!(
+        samples.iter().all(|sample| !sample.method.is_empty()),
+        "{scenario_id}: a network sample carries no collection method"
+    );
+    let truncated_path = artifacts.join("network-truncated-control.tsv");
+    let text = fs::read_to_string(&network_file)?;
+    fs::write(&truncated_path, &text[..text.len().saturating_sub(7)])?;
+    let truncation_rejected = resources::read_network_samples(&truncated_path).is_err();
+    let missing_interface = resources::interface_counters(anchor, "definitely-not-an-interface")
+        .err()
+        .map(|error| format!("{error:#}"))
+        .unwrap_or_else(|| "NOT DETECTED".to_owned());
+    ensure!(
+        truncation_rejected,
+        "{scenario_id}: the validating reader accepted a truncated network artifact; a dead \
+         collector would read back as a smaller measurement"
+    );
+    ensure!(
+        missing_interface != "NOT DETECTED",
+        "{scenario_id}: reading a non-existent interface returned counters instead of failing"
+    );
+    observed.push((
+        "dead_collector_control",
+        format!(
+            "PROVED in-row: a copy of the artifact truncated mid-record is REJECTED by the \
+             validating reader ({} good samples read from the intact file), and a counter read \
+             against a non-existent interface fails with: {missing_interface}",
+            samples.len()
+        ),
+    ));
+    events.append(
+        "NETWORK_EVIDENCE",
+        None,
+        None,
+        None,
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/network.tsv".into(),
+            len: text.len() as u64,
+            sha256: oracle::sha256_hex(text.as_bytes()),
+        }),
+    )?;
+
+    // ---- what this row does NOT establish ----
+    observed.push((
+        "row_status",
+        if namespace_available || capture_available {
+            "the host grants a fixture-scoped network method; see the capability fields".to_owned()
+        } else {
+            "PARTIAL: this host grants NEITHER a network namespace NOR packet capture (exact \
+             failing checks recorded above and in artifacts/capability-probes.txt), so the \
+             only fixture-SCOPED figures here are the source-pinned transport's own \
+             per-connection UDP counters, and the interface counters are host-scoped with an \
+             idle baseline quantifying the difference. Per-packet byte accounting of the \
+             SUBJECT's side is not observable at all. Named reason, never a skip"
+                .to_owned()
+        },
+    ));
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    thread::sleep(STALL_CLOSE_SETTLE);
+    stop_and_seal(context, scenario_dir, scenario_id, owned, events)
+}
+
+// ---------------------------------------------------------------------------
+// r-native-credit (milestone 18e)
+// ---------------------------------------------------------------------------
+//
+// Separates three quantities the matrix insists are not the same thing:
+//
+// - BORROWED NATIVE FLOW CREDIT: the MAX_DATA, MAX_STREAM_DATA and
+//   MAX_STREAMS frames the PEER actually put on the wire, counted by the
+//   source-pinned transport as it decoded them out of received packets, plus
+//   the DATA_BLOCKED / STREAM_DATA_BLOCKED frames this side put on the wire
+//   when the application outran the credit it had been lent.
+// - APPLICATION QUEUE BYTES: what the application handed to the transport.
+//   Known exactly, because this row wrote them.
+// - ACTUAL TRANSPORT COMPLETION: the peer acknowledging every byte of a
+//   finished stream, observed through quinn's `stopped()` future, and the
+//   UDP bytes the transport really sent.
+//
+// The counters come from `quinn::Connection::stats()` — quinn 0.11.11 /
+// quinn-proto 0.11.17, both pinned in this workspace's Cargo.lock — which is
+// the transport's own per-frame accounting, not a wrapper counting
+// application calls. What it is NOT is a byte-for-byte packet capture: this
+// host grants no CAP_NET_RAW (the exact failing check is recorded by
+// r-network-bytes and repeated here), and it is one endpoint's view, so the
+// SUBJECT's own credit accounting is not observable. Those two limits are
+// why this row is PARTIAL.
+
+/// Payload written in one application call to separate queueing from
+/// completion. Equal to the declared object limit of both subjects, so it is
+/// the largest single object either will accept.
+const CREDIT_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
+/// Bounded wait for actual transport completion of the finished stream.
+const CREDIT_ACK_WAIT: Duration = Duration::from_secs(30);
+/// Bounded wait used when asking whether completion has ALREADY happened.
+const CREDIT_INSTANT: Duration = Duration::from_millis(50);
+/// Bounded wait for the peer to return stream credit after refused streams.
+const CREDIT_RELEASE_WAIT: Duration = Duration::from_secs(15);
+
+fn r_native_credit(context: &ScenarioContext) -> Result<()> {
+    run_raw_directions(context, "r-native-credit", r_native_credit_direction)
+}
+
+/// Frame-level credit accounting of one connection, as the source-pinned
+/// transport counted it.
+fn credit_frame_text(stats: &quinn::ConnectionStats) -> String {
+    format!(
+        "rx[MAX_DATA={} MAX_STREAM_DATA={} MAX_STREAMS_UNI={} MAX_STREAMS_BIDI={} \
+         STOP_SENDING={} RESET_STREAM={} STREAM={} ACK={}] \
+         tx[DATA_BLOCKED={} STREAM_DATA_BLOCKED={} STREAMS_BLOCKED_UNI={} STREAM={} ACK={}]",
+        stats.frame_rx.max_data,
+        stats.frame_rx.max_stream_data,
+        stats.frame_rx.max_streams_uni,
+        stats.frame_rx.max_streams_bidi,
+        stats.frame_rx.stop_sending,
+        stats.frame_rx.reset_stream,
+        stats.frame_rx.stream,
+        stats.frame_rx.acks,
+        stats.frame_tx.data_blocked,
+        stats.frame_tx.stream_data_blocked,
+        stats.frame_tx.streams_blocked_uni,
+        stats.frame_tx.stream,
+        stats.frame_tx.acks
+    )
+}
+
+/// One checkpoint row of credit.tsv.
+#[allow(clippy::too_many_arguments)]
+fn credit_row(checkpoint: &str, elapsed_ms: u64, stats: &quinn::ConnectionStats) -> String {
+    format!(
+        "{checkpoint}\t{elapsed_ms}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+        stats.udp_tx.bytes,
+        stats.udp_rx.bytes,
+        stats.path.sent_packets,
+        stats.path.lost_packets,
+        stats.frame_rx.max_data,
+        stats.frame_rx.max_stream_data,
+        stats.frame_rx.max_streams_uni,
+        stats.frame_rx.stop_sending,
+        stats.frame_tx.data_blocked,
+        stats.frame_tx.stream_data_blocked,
+        stats.frame_tx.streams_blocked_uni,
+        stats.frame_tx.stream
+    )
+}
+
+fn r_native_credit_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+) -> Result<()> {
+    let scenario_id = "r-native-credit";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+
+    // The capture capability is re-checked here rather than assumed from
+    // r-network-bytes: a row states the method it used, on the run it used it.
+    let mut probes = String::new();
+    let capture = net_capability_probe(
+        &["tcpdump", "-i", "lo", "-c", "1", "-w", "/dev/null"],
+        &mut probes,
+    );
+    fs::write(artifacts.join("capability-probes.txt"), &probes)?;
+    let capture_available = capture.starts_with("exit exit status: 0");
+
+    let certs = mtls::generate(&scenario_dir.join("certs"), &[("alice", "alice")])?;
+    let fixture = AuthorityFixture::new(
+        &context.rust_bin,
+        context.java_jar.as_deref(),
+        &scenario_dir.join("subject"),
+        certs,
+        server,
+        Subject::Rust,
+    )?;
+    fixture.run_init_authority()?;
+    let owned = fixture.start_server()?;
+    ensure!(
+        fixture.next_sequence(&owned, "alice")? == 1,
+        "fresh authority must report NEXT_SEQUENCE 1"
+    );
+
+    let peer = Peer::new()?;
+    let mut conn = raw_negotiate_as(&peer, &fixture, &owned, &mut events, &artifacts, "alice")?;
+    let caps = *conn
+        .caps()
+        .context("capabilities selection was not recorded during negotiation")?;
+    let binding = raw_create_session(&mut conn)?;
+    let clock = Instant::now();
+    let mut table = String::from(
+        "checkpoint\telapsed_ms\tudp_tx_bytes\tudp_rx_bytes\tsent_packets\tlost_packets\t\
+         rx_max_data\trx_max_stream_data\trx_max_streams_uni\trx_stop_sending\ttx_data_blocked\t\
+         tx_stream_data_blocked\ttx_streams_blocked_uni\ttx_stream\n",
+    );
+    let checkpoint = |label: &str, stats: &quinn::ConnectionStats, table: &mut String| {
+        table.push_str(&credit_row(
+            label,
+            clock.elapsed().as_millis() as u64,
+            stats,
+        ));
+    };
+    checkpoint("session-established", &conn.stats(), &mut table);
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "evidence_source",
+                "quinn::Connection::stats() from the SOURCE-PINNED transport \
+                 (quinn 0.11.11 / quinn-proto 0.11.17, pinned in Cargo.lock): \
+                 the transport's own count of frames it decoded out of received \
+                 packets and encoded into sent ones, plus its UDP byte totals \
+                 and path loss counters. Not a wrapper counting application \
+                 calls, and not the subject's accounting"
+                    .into(),
+            ),
+            (
+                "borrowed_native_flow_credit",
+                "MAX_DATA, MAX_STREAM_DATA and MAX_STREAMS_UNI frames RECEIVED \
+                 from the peer, and DATA_BLOCKED / STREAM_DATA_BLOCKED / \
+                 STREAMS_BLOCKED_UNI frames SENT when the application outran the \
+                 credit it had been lent"
+                    .into(),
+            ),
+            (
+                "application_queue_bytes",
+                format!(
+                    "{CREDIT_PAYLOAD_LEN} bytes handed to the transport in one \
+                     application call; known exactly because this row wrote them"
+                ),
+            ),
+            (
+                "actual_transport_completion",
+                "the peer acknowledging EVERY byte of the finished stream, \
+                 observed through quinn's stopped() future resolving to \
+                 acknowledged; a write call returning is not completion and this \
+                 row measures the gap between them"
+                    .into(),
+            ),
+            (
+                "credit_release",
+                format!(
+                    "after {} refused object streams are retired, MAX_STREAMS_UNI \
+                     must arrive from the peer and a further stream must actually \
+                     open — pairing with the g6-stopped-* observation that refused \
+                     inputs return stream credit",
+                    caps.stream_limit
+                ),
+            ),
+            (
+                "not_established",
+                "byte-for-byte packet capture (no CAP_NET_RAW on this host; the \
+                 exact failing check is run by this row and archived) and the \
+                 SUBJECT's own credit accounting (not observable from one \
+                 endpoint). Both are named, neither is inferred"
+                    .into(),
+            ),
+        ],
+    )?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        (
+            "client_subject",
+            "rust raw peer (source-pinned quinn transport)".into(),
+        ),
+        (
+            "declared_limits",
+            format!(
+                "object_limit={} stream_limit={} pending_limit={} control_limit={}",
+                caps.object_limit, caps.stream_limit, caps.pending_limit, caps.control_limit
+            ),
+        ),
+        (
+            "capability_packet_capture",
+            format!(
+                "{}: `tcpdump -i lo -c 1 -w /dev/null` -> {capture}",
+                if capture_available {
+                    "AVAILABLE"
+                } else {
+                    "UNAVAILABLE"
+                }
+            ),
+        ),
+    ];
+
+    // ---- Phase A: application queue bytes vs actual transport completion ----
+    let declare_op = oracle::operation_id(context.seed, "credit-declare", 0);
+    raw_declare(
+        &mut conn,
+        2,
+        &declare_op,
+        0,
+        &[1, 2, 3, 4, 5, 6, 7, 8],
+        false,
+    )?;
+    let payload = oracle::dataset(context.seed ^ 0xc2ed, CREDIT_PAYLOAD_LEN);
+    let mut sha = [0u8; 32];
+    sha.copy_from_slice(&crate::decode_hex(&oracle::sha256_hex(&payload))?);
+    let operation = oracle::operation_id(context.seed, "credit-admit", 1);
+    let header = rawclient::input_header_framed(
+        binding.generation,
+        &operation,
+        (0, 0, 1),
+        CREDIT_PAYLOAD_LEN as u64,
+        &sha,
+        "application/octet-stream",
+        "copy/v2",
+        0,
+        // The session policy caps execution at 60 s; a larger value is a
+        // LIMIT_EXCEEDED refusal of the admission, not a longer deadline.
+        60_000,
+        1,
+        CREDIT_PAYLOAD_LEN as u64,
+    );
+    let mut stream = conn.open_uni()?;
+    let stream_id = u64::from(stream.id());
+    conn.write_stream(&mut stream, &header)?;
+    checkpoint("header-written", &conn.stats(), &mut table);
+    let write_started = Instant::now();
+    conn.write_stream(&mut stream, &payload)?;
+    let write_returned = write_started.elapsed();
+    let after_write = conn.stats();
+    checkpoint("payload-write-returned", &after_write, &mut table);
+    // The application has now handed over every byte. Ask, at this instant,
+    // whether the transport has completed: a write returning is a queueing
+    // event, not a completion event.
+    let at_write_return = conn.poll_stream_stopped(&stream, CREDIT_INSTANT)?;
+    conn.finish_stream(&mut stream)?;
+    let completion_started = Instant::now();
+    let completion = conn.poll_stream_stopped(&stream, CREDIT_ACK_WAIT)?;
+    let completion_took = completion_started.elapsed();
+    let after_completion = conn.stats();
+    checkpoint("transport-completion", &after_completion, &mut table);
+    observed.push((
+        "queue_vs_completion",
+        format!(
+            "the application handed {CREDIT_PAYLOAD_LEN} bytes to stream {stream_id} in one \
+             call, which returned after {write_returned:?}. At that instant the transport \
+             reported the stream as {at_write_return:?} — a write returning is a QUEUEING \
+             event. Actual transport completion (the peer acknowledging every byte) was \
+             {completion:?} and took a further {completion_took:?} after the FIN"
+        ),
+    ));
+    observed.push((
+        "transport_bytes_at_completion",
+        format!(
+            "udp_tx={}B/{}dg udp_rx={}B/{}dg sent_packets={} lost_packets={} lost_bytes={} \
+             against {CREDIT_PAYLOAD_LEN}B of application queue bytes",
+            after_completion.udp_tx.bytes,
+            after_completion.udp_tx.datagrams,
+            after_completion.udp_rx.bytes,
+            after_completion.udp_rx.datagrams,
+            after_completion.path.sent_packets,
+            after_completion.path.lost_packets,
+            after_completion.path.lost_bytes
+        ),
+    ));
+    observed.push((
+        "borrowed_credit_during_transfer",
+        format!(
+            "frames on the wire, counted by the source-pinned transport: {}",
+            credit_frame_text(&after_completion)
+        ),
+    ));
+    let receipt = rawclient::parse_admitted_stream(&conn.expect_control(FRAME_WORK)?)?;
+    ensure!(
+        receipt == stream_id,
+        "{scenario_id} {}: admission receipt names stream {receipt}, expected {stream_id}",
+        server.name()
+    );
+    checkpoint("admission-receipt", &conn.stats(), &mut table);
+    events.append("CREDIT_TRANSFER_MEASURED", None, None, None, None, None)?;
+
+    // ---- Phase B: credit release after refused streams ----
+    // Every object stream slot is filled with a stream the subject must
+    // refuse (a declared length above the negotiated object limit), then the
+    // streams are retired and the peer's MAX_STREAMS_UNI is watched for the
+    // returned credit. This is the same path g6-stopped-control-and-transfers
+    // observes for MAX_STREAMS after refused inputs.
+    let before_release = conn.stats();
+    checkpoint("before-refusals", &before_release, &mut table);
+    let oversize = caps.object_limit.saturating_mul(4).max(1);
+    let mut refused_streams: Vec<quinn::SendStream> = Vec::new();
+    let mut refusals = 0u64;
+    let mut transport_stopped = 0u64;
+    for slot in 0..caps.stream_limit {
+        let entity = 2 + slot;
+        let operation = oracle::operation_id(context.seed, "credit-oversize", entity as u32);
+        let header = rawclient::input_header_framed(
+            binding.generation,
+            &operation,
+            (0, 0, entity),
+            oversize,
+            &[0u8; 32],
+            "application/octet-stream",
+            "copy/v2",
+            0,
+            60_000,
+            1,
+            oversize,
+        );
+        let Some(mut oversize_stream) = conn.open_uni_ceiling()? else {
+            break;
+        };
+        // A subject that refuses on the header can STOP_SENDING before this
+        // write returns. That is the refusal arriving through the transport
+        // channel rather than the control channel, and it is counted as
+        // such, not treated as a fixture error.
+        if conn.write_stream(&mut oversize_stream, &header).is_err() {
+            transport_stopped += 1;
+        }
+        refused_streams.push(oversize_stream);
+    }
+    let opened_for_refusal = refused_streams.len() as u64;
+    for _ in 0..opened_for_refusal {
+        match conn.read_control_bounded(Duration::from_secs(5))? {
+            Some(Frame::Control(FRAME_REFUSAL, body)) => {
+                let refusal = rawclient::parse_refusal(&body)?;
+                ensure!(
+                    refusal.code == rawclient::CODE_LIMIT_EXCEEDED,
+                    "{scenario_id} {}: an oversize object stream was refused with code {} \
+                     ({:?}), expected LIMIT_EXCEEDED",
+                    server.name(),
+                    refusal.code,
+                    refusal.detail
+                );
+                refusals += 1;
+            }
+            Some(Frame::Control(kind, _)) => bail!(
+                "{scenario_id} {}: expected a refusal for an oversize object stream, got \
+                 control frame kind {kind}",
+                server.name()
+            ),
+            // Nothing more on control: whatever is left was refused through
+            // the transport channel instead, which the counts record.
+            Some(Frame::Fin) | None => break,
+        }
+    }
+    checkpoint("refusals-read", &conn.stats(), &mut table);
+    // Retire the refused streams and watch for the returned stream credit.
+    for mut refused in refused_streams.drain(..) {
+        let _ = conn.reset_stream(&mut refused, rawclient::CODE_LIMIT_EXCEEDED);
+    }
+    // Drain whatever the refusal phase still has in flight before the
+    // control stream is used for anything else. A stream the peer stopped
+    // mid-header can also produce a control refusal for the partial header
+    // it did read, so a stream may be refused on BOTH channels and the
+    // counts below are not disjoint.
+    let mut drained_late = 0u64;
+    let drain_deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < drain_deadline {
+        match conn.read_control_bounded(Duration::from_millis(300))? {
+            Some(Frame::Control(FRAME_REFUSAL, body)) => {
+                let refusal = rawclient::parse_refusal(&body)?;
+                drained_late += 1;
+                refusals += u64::from(refusal.code == rawclient::CODE_LIMIT_EXCEEDED);
+            }
+            Some(Frame::Control(..)) => drained_late += 1,
+            Some(Frame::Fin) => break,
+            None => continue,
+        }
+    }
+    let release_deadline = Instant::now() + CREDIT_RELEASE_WAIT;
+    let mut released = conn.stats();
+    while released.frame_rx.max_streams_uni <= before_release.frame_rx.max_streams_uni
+        && Instant::now() < release_deadline
+    {
+        thread::sleep(Duration::from_millis(200));
+        released = conn.stats();
+    }
+    checkpoint("credit-released", &released, &mut table);
+    let max_streams_gain = released
+        .frame_rx
+        .max_streams_uni
+        .saturating_sub(before_release.frame_rx.max_streams_uni);
+    // Credit that is reported but not usable is not credit: open one more.
+    let reopened = conn.open_uni_ceiling()?.is_some();
+    checkpoint("credit-reused", &conn.stats(), &mut table);
+    observed.push((
+        "credit_release_after_refusals",
+        format!(
+            "{opened_for_refusal} object streams opened against a negotiated stream_limit of \
+             {}: {refusals} refused LIMIT_EXCEEDED on the control channel and \
+             {transport_stopped} stopped by the peer on the transport channel before the \
+             header write returned ({drained_late} further control frames drained \
+             afterwards; the two counts are not disjoint), for an oversize declared length, \
+             then retired. \
+             MAX_STREAMS_UNI frames received from the peer rose by {max_streams_gain} (from \
+             {} to {}) within {:?}, and a further object stream {} open afterwards",
+            caps.stream_limit,
+            before_release.frame_rx.max_streams_uni,
+            released.frame_rx.max_streams_uni,
+            CREDIT_RELEASE_WAIT,
+            if reopened { "DID" } else { "did NOT" }
+        ),
+    ));
+    events.append("CREDIT_RELEASE_OBSERVED", None, None, None, None, None)?;
+
+    let final_stats = conn.stats();
+    checkpoint("end", &final_stats, &mut table);
+    fs::write(artifacts.join("credit.tsv"), &table)?;
+    observed.push(("frame_totals_at_end", credit_frame_text(&final_stats)));
+
+    // ---- assertions ----
+    ensure!(
+        completion == rawclient::StreamState::Acknowledged,
+        "{scenario_id} {}: the finished stream never reached actual transport completion \
+         within {CREDIT_ACK_WAIT:?}; observed {completion:?}",
+        server.name()
+    );
+    ensure!(
+        final_stats.frame_rx.max_data > 0 || final_stats.frame_rx.max_stream_data > 0,
+        "{scenario_id} {}: no MAX_DATA or MAX_STREAM_DATA frame was ever received, so no \
+         borrowed flow credit was observed on the wire at all",
+        server.name()
+    );
+    ensure!(
+        refusals + transport_stopped >= opened_for_refusal && opened_for_refusal > 0,
+        "{scenario_id} {}: {refusals} refused on control and {transport_stopped} stopped on \
+         the transport, of {opened_for_refusal} oversize object streams opened; the \
+         credit-release phase needs every one of them refused",
+        server.name()
+    );
+    ensure!(
+        max_streams_gain > 0 && reopened,
+        "{scenario_id} {}: stream credit was not returned after refused object streams were \
+         retired (MAX_STREAMS_UNI gain {max_streams_gain}, further stream opened: {reopened})",
+        server.name()
+    );
+    observed.push((
+        "row_status",
+        if capture_available {
+            "packet capture is available on this host; see the capability field".to_owned()
+        } else {
+            "PARTIAL: the credit evidence is the SOURCE-PINNED transport's own per-frame and \
+             per-datagram accounting, which is what it decoded from received packets and \
+             encoded into sent ones — not a wrapper counter, but also not a byte-for-byte \
+             packet capture, because this host grants no CAP_NET_RAW (exact failing check \
+             recorded above). It is also one endpoint's view: the SUBJECT's own credit \
+             accounting is not observable from here. Both limits are named, neither is \
+             inferred"
+                .to_owned()
+        },
+    ));
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    events.append(
+        "CREDIT_EVIDENCE",
+        None,
+        None,
+        None,
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/credit.tsv".into(),
+            len: table.len() as u64,
+            sha256: oracle::sha256_hex(table.as_bytes()),
+        }),
+    )?;
+    // The control stream is deliberately NOT used again: the refusal phase
+    // can leave a late FRAME_ERROR for a header the peer stopped mid-write,
+    // and a row that then reads control for its own housekeeping would fail
+    // on the subject's own refusal arriving on time. The single admitted
+    // work is one object copy; the close-and-settle below is more than
+    // enough for the execution pool to wind it down before SIGTERM.
+    conn.close_and_wait_idle(b"native credit row complete", Duration::from_secs(15))?;
+    thread::sleep(STALL_CLOSE_SETTLE);
+    stop_and_seal(context, scenario_dir, scenario_id, owned, events)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -18435,7 +21804,7 @@ mod tests {
             let row = rows.iter().find(|row| row.id == id).unwrap();
             assert!(row.rust_implemented, "{id} must be implemented");
         }
-        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 53);
+        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 57);
     }
 
     #[test]

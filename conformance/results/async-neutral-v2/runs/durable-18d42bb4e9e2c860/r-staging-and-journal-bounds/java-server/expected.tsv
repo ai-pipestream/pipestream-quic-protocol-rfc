@@ -1,0 +1,11 @@
+declared_ceilings_source	every ceiling this row drives is read off the wire before it is driven: the capability selection (pending_limit, stream_limit, object_limit) and the session binding receipt's retained-record limits. No library default is quoted as a subject bound
+pending_limit	32
+stream_limit	16
+session_limits	scopes=4096 entities=1000000 operations=1000000 input_bytes=1073741824 output_bytes=1073741824 active_jobs=16
+new_work_refusal	at exhaustion a NEW request or a NEW staging transfer is refused with LIMIT_EXCEEDED (code 4) and the subject's detail string is recorded verbatim, together with the attempt number the refusal arrived on
+existing_promises	the requests already granted before exhaustion still answer, and a staging transfer already accepted before exhaustion still completes to an admission receipt when it FINs
+handles_bounded	the server group's FD tail p90 returns to within baseline median + 8 after the staging streams are released and their connections closed
+charge_while_busy	while the staging transfers are held the ceiling stays charged: a further attempt is refused again with the same named code
+reconcile_after_cleanup	after the staging streams are released and a 20s cleanup settle, a fresh staging transfer is accepted within 60s
+reconcile_after_restart	after the subject is stopped and restarted on the same roots, a fresh staging transfer is accepted again — the charge did not survive as a leak — and the store's file lengths and allocated blocks are sampled either side of the restart
+journal_ceiling_scope	the journal/retained-BYTE ceilings are recorded from the binding receipt and the subject's configuration and the actual retained bytes are sampled at every checkpoint, but they are NOT driven to exhaustion by this row: doing so needs hundreds of megabytes of committed records. That arm is PARTIAL with this reason, never a skip and never a pass

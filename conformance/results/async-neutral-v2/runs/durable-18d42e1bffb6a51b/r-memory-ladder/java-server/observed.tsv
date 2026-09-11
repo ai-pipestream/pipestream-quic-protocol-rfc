@@ -1,0 +1,23 @@
+server_subject	java
+client_subject	rust raw peer (one connection, sequential admissions)
+declared_limits	object_limit=16777216 stream_limit=16 pending_limit=32 control_limit=524288 idle_ms=30000 lifetime_ms=120000
+java_memory_freeze	-Xms256m -Xmx2g (frozen before the run; applies to this server process)
+payload_ladder_bytes	65536,1048576,16777216
+inventory_ladder_resident_works	1,16,64
+payload_plateau_allowance_kib	524288
+inventory_plateau_allowance_kib	278528
+declared_entities	77
+over_limit_rung	refused: tag_kind=1 tag_id=50 code=4 detail="input exceeds negotiated object limit" (stream 50)
+resident_works_final	76
+quiesce_before_stop	76/76 admitted works terminal within 120s (fixture timing after every measurement window; never evidence)
+java_native_direct_scope	UNAVAILABLE: jcmd VM.native_memory summary reports "Native memory tracking is not enabled". Enabling it needs -XX:NativeMemoryTracking added to the JVM launch flags, which are FROZEN before this matrix's measurement rows (-Xms256m -Xmx2g); changing them mid-matrix would re-open every earlier R row's frozen environment. Recorded as a named gap, never inferred from RSS minus heap (transcript artifacts/jcmd-native.txt)
+collector	989 ticks, 989 sample lines, 0 error lines
+baseline_rss_kib	median=239306 p90=249200 max=251028 over 60 ticks
+payload_ladder_rss_kib	65536B tail_p90=350936 (60 ticks) -> 16777216B tail_p90=359728 (60 ticks), growth=8792 against the frozen allowance 524288
+payload_ladder_scaling	payload grew by 16711680 B per admission (256x); group tail p90 RSS grew by 8792 KiB. A subject that buffered each payload once would have grown by at least 16320 KiB
+inventory_ladder_rss_kib	1 resident tail_p90=368436 (60 ticks) -> 64 resident tail_p90=372832 (60 ticks), growth=4396 against the frozen allowance 278528
+hwm_kib	baseline=385008 payload_last=623496 inventory_last=623496
+threads	baseline median=32 -> last rung median=44 max=44
+fds	baseline median=19 -> last rung p90=22 max=23
+heap_scope	java heap via jstat -gc (S0U+S1U+EU+OU) inside the measured rung windows: 42 heap ticks, 0 probe gaps, min 20079 KiB, max 160907 KiB, against the frozen -Xmx ceiling
+store_checkpoints	458 records across the rung checkpoints
