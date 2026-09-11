@@ -1,0 +1,34 @@
+12	1789096923137	1	-1	session-open	workload-b
+12	1789096923137	0	-1	session-open	workload-a
+17	1789096923142	1	-1	declared	1 entities
+19	1789096923144	0	-1	declared	2 entities
+27	1789096923152	1	1	admitted	
+29	1789096923154	0	0	admitted	
+43	1789096923168	0	3	admitted	
+69	1789096923194	0	0	succeeded	attempt 1
+74	1789096923199	1	1	succeeded	attempt 1
+86	1789096923211	0	0	first-usable-output	
+86	1789096923211	0	0	chunk-verified	
+88	1789096923213	0	3	succeeded	attempt 1
+91	1789096923216	1	1	first-usable-output	
+91	1789096923216	1	1	chunk-verified	
+92	1789096923217	2	-1	session-open	workload-c
+95	1789096923220	1	-1	checkpoint	declared 1
+97	1789096923222	1	-1	complete	declared 1
+97	1789096923222	1	-1	commits	1 chunks
+97	1789096923222	0	3	chunk-verified	
+103	1789096923228	0	-1	checkpoint	declared 2
+103	1789096923228	2	-1	declared	1 entities
+105	1789096923230	0	-1	complete	declared 2
+105	1789096923230	0	-1	commits	2 chunks
+132	1789096923257	2	2	admitted	
+177	1789096923302	1	-1	session-close	
+183	1789096923308	0	-1	session-close	
+246	1789096923371	2	2	succeeded	attempt 1
+269	1789096923394	2	2	first-usable-output	
+269	1789096923394	2	2	chunk-verified	
+277	1789096923402	2	-1	checkpoint	declared 1
+279	1789096923404	2	-1	complete	declared 1
+279	1789096923404	2	-1	commits	1 chunks
+371	1789096923496	2	-1	session-close	
+0	1789096923498	-	-	final-verified	200000 bytes

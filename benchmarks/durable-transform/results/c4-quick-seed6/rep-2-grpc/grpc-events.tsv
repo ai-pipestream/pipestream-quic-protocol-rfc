@@ -1,0 +1,21 @@
+10	1789096931831	2	-1	session-open	workload-c
+10	1789096931832	1	-1	session-open	workload-b
+10	1789096931832	0	-1	session-open	workload-a
+11	1789096931833	2	2	admitted	
+12	1789096931833	1	1	admitted	
+12	1789096931834	0	0	admitted	
+13	1789096931835	2	2	first-usable-output	
+13	1789096931835	2	2	chunk-verified	
+13	1789096931835	2	-1	commits	1 chunks
+13	1789096931835	2	-1	session-close	
+14	1789096931835	1	1	first-usable-output	
+14	1789096931835	1	1	chunk-verified	
+14	1789096931835	1	-1	commits	1 chunks
+14	1789096931835	1	-1	session-close	
+14	1789096931836	0	0	first-usable-output	
+14	1789096931836	0	0	chunk-verified	
+15	1789096931837	0	3	admitted	
+17	1789096931838	0	3	chunk-verified	
+17	1789096931838	0	-1	commits	2 chunks
+17	1789096931838	0	-1	session-close	
+0	1789096931840	-	-	final-verified	200000 bytes
