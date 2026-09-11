@@ -1,0 +1,6 @@
+PKI ready in /tmp/c4-large48b/rep-0-mixed/work/pki (valid ~2 days, loopback only)
+INITIALIZED
+INITIALIZED
+Picked up JAVA_TOOL_OPTIONS: -Xms256m -Xmx2g
+INITIALIZED /tmp/c4-large48b/rep-0-mixed/work/java-c.root
+Error: authority refusal LIMIT_EXCEEDED: SQLite file capacity exhausted

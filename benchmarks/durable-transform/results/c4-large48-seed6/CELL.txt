@@ -1,0 +1,8 @@
+cell: large (SIZE=50331648, 768 chunks, 256/worker, seed 6, ladder v2; streams from disk, no full-corpus heap copy)
+funding: Rust authorities db=1024/wal=256 MiB via PS_PHYS_DB_MIB/WAL_MIB (recorded per-run in run-record.txt); coordinator cf490e43+detail-log (609c1e4c), authority 0f44f52e, jar 61ab64a3, JAVA_TOOL_OPTIONS=-Xms256m -Xmx2g
+order: warmups ps/mixed/grpc, then mirror-rotated reps (even ps,mixed,grpc / odd grpc,mixed,ps); see order.log
+result: PARTIAL. ps 4/4 PASS, grpc 4/4 PASS. mixed 0/4 FAIL, uniformly: Java worker-c authority refuses the first 100-entity declare batch with 'authority refusal LIMIT_EXCEEDED: SQLite file capacity exhausted' (Rust a/b accept all 3 batches). Java bound in (43,100] entities; Java storage funding is Claude's lane, not patchable here.
+All 8 ps+grpc finals sha256 acc15911648496f7ef12c7291e31fcb07aff45a268e8fd8b293c616d6b58af9a (50331648 bytes), byte-exact across arms and reps (bins excluded from git, kept in /tmp/c4-large48b run dirs; reproducible from seed 6); every passing event stream has first-usable-output + final-verified.
+Raw coordinator-arm wall_ms by rep: ps 18185,18311,18171 (warmup 16813); grpc 1099,1101,1087 (warmup 1071). No performance claim (loopback, shared host).
+REQUEST TO CLAUDE: raise or expose Java authority storage funding for >=256-entity scopes, or document the Java bound; repro: run-mixed.sh WORK 6 50331648 c with jar 61ab64a3.
+state DBs/PKI excluded from archive (kept in /tmp/c4-large48b run dirs); artifacts + stdout logs archived.
