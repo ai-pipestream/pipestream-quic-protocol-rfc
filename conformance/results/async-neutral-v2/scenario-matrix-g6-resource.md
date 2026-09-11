@@ -601,6 +601,92 @@ stands withdrawn rather than restated.
    defects 5 and 6 (reconciliation reported as refused when the ceiling had
    in fact cleared) and is kept as superseded.
 
+## Group R status (milestone 18c — the stalled-principal re-run on a driven client)
+
+`r-stalled-principal-progress` is RE-RUN with non-writing enforcement probes
+on the continuously-driven raw peer, and the milestone-17b bracket is
+replaced by a measurement rather than merely withdrawn. Every other R row is
+re-run alongside it so this milestone's archive is the group's regression
+evidence as well.
+
+### What changed in the row
+
+1. THE ENFORCEMENT PROBES NO LONGER WRITE. The earlier probe wrote ten
+   one-byte payloads per stalled stream per probe. On a subject whose input
+   receive deadline is measured from the LAST PAYLOAD BYTE — the Java
+   server's `DurableServer.InputTransfer.lastProgress` — those bytes are
+   progress and legitimately renew the very deadline the probe exists to
+   observe. The probe now polls quinn's own `stopped()` future with a 250 ms
+   bounded wait and sends nothing.
+2. THERE ARE SIX PROBE MARKS, NOT TWO, AND ONE IS BELOW THE BOUND:
+   idle-2 s, idle+0 s, idle+2 s, idle+5 s, idle+10 s and lifetime+10 s.
+   Without a probe that sees a stream OPEN there is no lower end to a
+   bracket, only "stopped by the time anyone first looked".
+3. PROBES RUN INSIDE THE ROUND'S IDLE TIME in 200 ms slices instead of once
+   per four-second round, so the bracket's resolution is the slice. This is
+   only affordable because the probes are non-writing.
+4. The row records, per stream, the LAST probe that saw it open and the
+   FIRST that saw it stopped, and claims nothing inside that bracket.
+
+### Observed (dev evidence, never an acceptance claim)
+
+1. BOTH SUBJECTS ENFORCE AT THEIR OWN NEGOTIATED IDLE BOUND, and the bracket
+   is now about two seconds wide instead of ninety.
+   - java (negotiated idle 30 s): all three stalled inputs OPEN at +28.000 s
+     and all three STOPPED by +30.156 s. The Java input receive deadline
+     fires inside (28.000 s, 30.156 s], which is its 30 s bound.
+   - rust (negotiated idle 5 s): all three OPEN at +3.102 s and all three
+     STOPPED by +5.177 s — inside (3.102 s, 5.177 s], its 5 s bound.
+   Both then read 3/3 `LIMIT_EXCEEDED` (code 4) Refusals with detail
+   `input receive deadline` from a still-open control stream at window end,
+   so the transport channel and the protocol channel agree on both subjects.
+2. THE MILESTONE-17b BRACKET (40 s–130 s on java) IS SUPERSEDED, not merely
+   withdrawn. It was the product of two client defects at once: probes that
+   wrote payload and so renewed the deadline, and a current-thread runtime
+   that only applied inbound frames inside `block_on`, so a STOP_SENDING
+   that had been arriving and being retransmitted for a minute was recorded
+   at the time of the client's next blocking call. Neither was the subject's
+   timing.
+3. Healthy-principal progress is unchanged and still far inside the 10 s
+   deadline on both subjects, so removing the writes did not remove the
+   pressure the row puts on the subject: the stalls, the held pending
+   request and the unread result stream are all still there.
+
+### Regression: every R row plus g1-leaf-copy re-run on the fixed client
+
+The same archive (`durable-18d42e1bffb6a51b`, 731/731 manifest entries
+verified) carries `r-capability-manifest`, `r-connection-ceiling`,
+`r-stalled-principal-progress`, `r-memory-ladder`,
+`r-staging-and-journal-bounds` and the `g1-leaf-copy` regression, all exit 0,
+so this milestone's evidence is also the group's no-regression evidence at
+the fixed runtime.
+
+- CONNECTION BOUNDS UNCHANGED: rust 4 per principal / 16 global, java 8 / 32.
+  One difference worth naming: the java direction recovered capacity on
+  ATTEMPT 1 here where M17/M17b recorded attempt 2. A continuously-driven
+  client sends its CONNECTION_CLOSE frames when it closes rather than at the
+  next blocking call, which is the likeliest explanation; it is recorded as
+  an observation, not asserted as a change in the subject.
+- MEMORY LADDER UNCHANGED IN SHAPE: rust payload growth 1,744 KiB and
+  inventory growth 1,108 KiB; java 8,792 KiB and 4,396 KiB, all far inside
+  the frozen allowances (131,072 / 66,560 and 524,288 / 278,528 KiB).
+- STALL-ROW RESOURCE FIGURES UNCHANGED: rust RSS baseline median 19,908 →
+  tail p90 20,768 KiB, FDs 12 → 15, and 99% of the window's accounted
+  `write_bytes` cancelled before writeback (1,028,214,784 / 1,038,503,936) —
+  still the open question to Meta about the Rust authority's storage layer.
+  java RSS 355,376 → 372,004 KiB, FDs 20 → 21, 4% cancelled, used heap min
+  9,424 / max 162,117 KiB over 151 jstat samples with 0 probe gaps.
+- STAGING CEILINGS: java is stable at attempt 33 (`"request refused"`) and
+  attempt 129 (`"input handle capacity exhausted"`). RUST'S CONTROL-CAPACITY
+  CEILING IS NOT STABLE and the row is right not to claim it is: at M18b it
+  refused attempt 17 with `"connection pending limit"` (the declared
+  `pending_limit` of 16) and here it refused attempt 8 with `"metadata
+  concurrency exhausted"` after 7 granted waits. Both are LIMIT_EXCEEDED,
+  both are recorded with the attempt number and the verbatim detail, and the
+  row asserts only that NEW work is refused by a named code while existing
+  promises complete — which held in both runs. The rust staging ceiling
+  itself is stable at attempt 5 (`"input transfer capacity exhausted"`).
+
 ## Measurement-scope rules (all R rows)
 - Rust heap, Java heap, whole-process RSS/HWM, native/direct, threads,
   FDs, file lengths, allocated filesystem blocks, actual disk I/O, and

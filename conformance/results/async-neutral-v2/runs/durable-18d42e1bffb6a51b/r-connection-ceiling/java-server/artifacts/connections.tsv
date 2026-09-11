@@ -1,0 +1,38 @@
+phase	attempt	principal	outcome	detail
+per-principal	1	alice	held	-
+per-principal	2	alice	held	-
+per-principal	3	alice	held	-
+per-principal	4	alice	held	-
+per-principal	5	alice	held	-
+per-principal	6	alice	held	-
+per-principal	7	alice	held	-
+per-principal	8	alice	held	-
+per-principal	9	alice	refused	post-auth refusal (connection closed after handshake): APPLICATION_CLOSE code=0x204 reason="owner connection ceiling"
+global	1	bob	held	-
+global	2	bob	held	-
+global	3	bob	held	-
+global	4	bob	held	-
+global	5	bob	held	-
+global	6	bob	held	-
+global	7	bob	held	-
+global	8	bob	held	-
+global	9	bob	refused	total_held=16 post-auth refusal (connection closed after handshake): APPLICATION_CLOSE code=0x204 reason="owner connection ceiling"
+global	1	carol	held	-
+global	2	carol	held	-
+global	3	carol	held	-
+global	4	carol	held	-
+global	5	carol	held	-
+global	6	carol	held	-
+global	7	carol	held	-
+global	8	carol	held	-
+global	9	carol	refused	total_held=24 post-auth refusal (connection closed after handshake): APPLICATION_CLOSE code=0x204 reason="owner connection ceiling"
+global	1	dave	held	-
+global	2	dave	held	-
+global	3	dave	held	-
+global	4	dave	held	-
+global	5	dave	held	-
+global	6	dave	held	-
+global	7	dave	held	-
+global	8	dave	held	-
+global	9	dave	refused	total_held=32 pre-auth transport refusal (connect failed): open control stream: aborted by peer: the server refused to accept a new connection
+recovery	1	alice	held	new connection after full close

@@ -1,0 +1,12 @@
+1	durable-18d42e1bffb6a51b	r-stalled-principal-progress	rust	client	3256741-18d42e26fd24d1a9	1	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d42e1bffb6a51b	r-stalled-principal-progress	rust	client	3256741-18d42e26fd24d1a9	2	REQUEST_SENT	2d966671241509f9b49eba050dada15c						
+1	durable-18d42e1bffb6a51b	r-stalled-principal-progress	rust	client	3256741-18d42e26fd24d1a9	3	RECEIPT_VALIDATED	2d966671241509f9b49eba050dada15c						
+1	durable-18d42e1bffb6a51b	r-stalled-principal-progress	rust	client	3256741-18d42e26fd24d1a9	4	REQUEST_SENT	2f409041ccb862e02edeaa484ac2916d	0:0:1	1				
+1	durable-18d42e1bffb6a51b	r-stalled-principal-progress	rust	client	3256741-18d42e26fd24d1a9	5	RECEIPT_VALIDATED	2f409041ccb862e02edeaa484ac2916d	0:0:1	1				
+1	durable-18d42e1bffb6a51b	r-stalled-principal-progress	rust	client	3256741-18d42e26fd24d1a9	6	STALLS_ESTABLISHED							
+1	durable-18d42e1bffb6a51b	r-stalled-principal-progress	rust	client	3256741-18d42e26fd24d1a9	7	STALL_ABORT_OBSERVED							
+1	durable-18d42e1bffb6a51b	r-stalled-principal-progress	rust	client	3256741-18d42e26fd24d1a9	8	STALL_ABORT_OBSERVED							
+1	durable-18d42e1bffb6a51b	r-stalled-principal-progress	rust	client	3256741-18d42e26fd24d1a9	9	STALL_ABORT_OBSERVED							
+1	durable-18d42e1bffb6a51b	r-stalled-principal-progress	rust	client	3256741-18d42e26fd24d1a9	10	STALL_ABORT_OBSERVED							
+1	durable-18d42e1bffb6a51b	r-stalled-principal-progress	rust	client	3256741-18d42e26fd24d1a9	11	STALL_ABORT_OBSERVED							
+1	durable-18d42e1bffb6a51b	r-stalled-principal-progress	rust	client	3256741-18d42e26fd24d1a9	12	HEALTHY_PRINCIPAL_PROGRESS					artifacts/b-ops.tsv	1700	646285d53fbd0547814ba6c99de65a47e5947fe5457820684559daa56f8e808d

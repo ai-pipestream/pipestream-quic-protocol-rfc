@@ -15,7 +15,7 @@ use crate::{hex, unique_suffix};
 use anyhow::{Context, Result, bail, ensure};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File},
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
@@ -17462,6 +17462,11 @@ const STALL_KEEP_ALIVE: Duration = Duration::from_secs(5);
 /// window is fixture timing, never evidence: no measurement is taken during
 /// it, and the collector is already stopped.
 const STALL_CLOSE_SETTLE: Duration = Duration::from_secs(30);
+/// Bounded wait of one NON-WRITING stream probe. Short, because the probe
+/// only asks whether a STOP_SENDING has already arrived and the peer's
+/// runtime is driven continuously, so an answer that exists is already
+/// applied; a long wait here would blur the first-observation bracket.
+const STALL_PROBE_POLL: Duration = Duration::from_millis(250);
 
 fn r_stalled_principal_progress(context: &ScenarioContext) -> Result<()> {
     run_raw_directions(
@@ -17573,9 +17578,22 @@ fn bob_op(
     Ok(latency)
 }
 
-/// Probe the stalled upload streams: a write that the server aborted fails
-/// with the peer's reset; a write that still buffers means no stream-level
-/// enforcement yet. Returns the stream ids observed aborted. The connection's
+/// NON-WRITING probe of the stalled upload streams.
+///
+/// It polls each send stream's stopped state with a short bounded wait and
+/// writes nothing. An earlier version wrote ten one-byte payloads per
+/// stream per probe, and that was wrong twice over: on a subject whose
+/// input receive deadline is measured from the LAST PAYLOAD BYTE (the Java
+/// server's `InputTransfer.lastProgress`) those bytes are progress and
+/// legitimately renew the very deadline the probe is there to observe, and
+/// on a client whose transport is only driven inside `block_on` a write
+/// that returns out of local send credit never yields to the endpoint
+/// driver, so the peer's STOP_SENDING is applied at the next call that
+/// happens to wait rather than when it arrived. Both are fixed: this probe
+/// carries no application data at all, and the peer's runtime is driven
+/// continuously (`rawclient::Peer::build`).
+///
+/// Returns the stream ids observed stopped on THIS probe. The connection's
 /// own liveness is recorded alongside every probe, because a subject may
 /// enforce at the connection level instead of per stream.
 fn probe_stalled_streams(
@@ -17586,9 +17604,9 @@ fn probe_stalled_streams(
 ) -> Result<BTreeSet<u64>> {
     let mut aborted = BTreeSet::new();
     // A transport idle timeout is the FIXTURE's own transport giving up, not
-    // the subject enforcing anything. Every stream on the connection fails
-    // its write probe afterwards, so counting those as enforcement would
-    // pass the row on evidence the subject never produced.
+    // the subject enforcing anything. Every stream on the connection reports
+    // lost afterwards, so counting those as enforcement would pass the row
+    // on evidence the subject never produced.
     let mut attributable = true;
     match alice.try_wait_closed(Duration::from_millis(100))? {
         Some(close) => {
@@ -17608,24 +17626,30 @@ fn probe_stalled_streams(
         None => stalls.push_str(&format!("{label}\tconnection\tlive\n")),
     }
     for (stream_id, stream) in streams.iter_mut() {
-        let mut outcome = format!("still-open-at-{label}");
-        for _ in 0..10 {
-            match alice.write_stream(stream, b"x") {
-                Ok(()) => thread::sleep(Duration::from_millis(400)),
-                Err(error) => {
-                    outcome = if attributable {
-                        aborted.insert(*stream_id);
-                        format!("aborted ({error:#})")
-                    } else {
-                        format!(
-                            "write failed after the fixture's transport idle timeout, \
-                             NOT counted as enforcement ({error:#})"
-                        )
-                    };
-                    break;
-                }
+        let outcome = match alice.poll_stream_stopped(stream, STALL_PROBE_POLL)? {
+            rawclient::StreamState::Open => format!("still-open-at-{label}"),
+            rawclient::StreamState::Stopped(code) if attributable => {
+                aborted.insert(*stream_id);
+                format!("aborted (STOP_SENDING {code})")
             }
-        }
+            rawclient::StreamState::Stopped(code) => format!(
+                "STOP_SENDING {code} seen after the fixture's transport idle timeout, \
+                 NOT counted as enforcement"
+            ),
+            rawclient::StreamState::Acknowledged => {
+                "acknowledged (the peer read a finished stream to completion, which a \
+                 never-FINed stall should never reach)"
+                    .to_owned()
+            }
+            rawclient::StreamState::Lost(reason) if attributable => {
+                aborted.insert(*stream_id);
+                format!("aborted (stream lost: {reason})")
+            }
+            rawclient::StreamState::Lost(reason) => format!(
+                "stream lost after the fixture's transport idle timeout, NOT counted as \
+                 enforcement ({reason})"
+            ),
+        };
         stalls.push_str(&format!("{label}\tstream-{stream_id}\t{outcome}\n"));
     }
     Ok(aborted)
@@ -17809,15 +17833,27 @@ fn r_stalled_principal_progress_direction(
                 format!(
                     "every stalled input stream is enforced at the negotiated \
                      idle/lifetime bounds (idle {}s, lifetime {}s): either the \
-                     transport aborts it (observed by a failing write probe at \
-                     idle+10s / lifetime+10s) or a LIMIT_EXCEEDED (code {}) \
-                     Refusal naming that input stream tag is queued on the \
-                     control stream and read at window end — both channels are \
+                     transport aborts it (STOP_SENDING, observed by a \
+                     NON-WRITING probe at idle+2s, +5s, +10s and \
+                     lifetime+10s) or a LIMIT_EXCEEDED (code {}) Refusal \
+                     naming that input stream tag is queued on the control \
+                     stream and read at window end — both channels are \
                      recorded per stream in artifacts/stalls.tsv",
                     negotiated_idle.as_secs(),
                     negotiated_lifetime.as_secs(),
                     rawclient::CODE_LIMIT_EXCEEDED
                 ),
+            ),
+            (
+                "stall_enforcement_bracket",
+                "per stream, the row records the LAST probe that saw it open \
+                 and the FIRST that saw it stopped, and claims no value \
+                 inside that bracket. The probes carry no application data, \
+                 so none of them renews a receive deadline measured from the \
+                 last payload byte; the milestone-17b bracket, taken with \
+                 writing probes on a client whose transport was only driven \
+                 inside block_on, is withdrawn rather than restated"
+                    .into(),
             ),
             (
                 "rss_plateau",
@@ -18040,12 +18076,51 @@ fn r_stalled_principal_progress_direction(
     let mut ops_log = String::from("round\top\tlatency_ms\n");
     let mut worst = Duration::ZERO;
     let mut round = 0u64;
-    let mut probed_idle = false;
-    let mut probed_lifetime = false;
     let mut sampled_mid = false;
     let mut aborted_ids: BTreeSet<u64> = BTreeSet::new();
-    let mut idle_abort_count = 0usize;
-    let mut lifetime_abort_count = None;
+    // Enforcement probes at the NEGOTIATED bounds plus the intermediate
+    // marks. The row brackets the subject's enforcement between the last
+    // probe that saw a stream open and the first that saw it stopped, so
+    // the marks are close together just after the idle bound where the
+    // enforcement is expected, and one far out at the lifetime bound to
+    // catch a subject that enforces there instead.
+    let mut probe_marks: Vec<(String, Duration, bool)> = vec![
+        (
+            // Below the bound on purpose: without a probe that sees a stream
+            // OPEN there is no lower end to the bracket, only "stopped by
+            // the time anyone looked".
+            "idle-bound-2s".to_owned(),
+            negotiated_idle.saturating_sub(Duration::from_secs(2)),
+            false,
+        ),
+        ("idle-bound+0s".to_owned(), negotiated_idle, false),
+        (
+            "idle-bound+2s".to_owned(),
+            negotiated_idle + Duration::from_secs(2),
+            false,
+        ),
+        (
+            "idle-bound+5s".to_owned(),
+            negotiated_idle + Duration::from_secs(5),
+            false,
+        ),
+        (
+            "idle-bound+10s".to_owned(),
+            negotiated_idle + Duration::from_secs(10),
+            false,
+        ),
+        (
+            "lifetime-bound+10s".to_owned(),
+            negotiated_lifetime + Duration::from_secs(10),
+            false,
+        ),
+    ];
+    probe_marks.sort_by_key(|(_, at, _)| *at);
+    // Per stream: the last probe that saw it open, and the first that saw
+    // it stopped. That pair IS the bracket the row reports.
+    let mut last_open_at: BTreeMap<u64, (String, u64)> = BTreeMap::new();
+    let mut first_stopped_at: BTreeMap<u64, (String, u64)> = BTreeMap::new();
+    let mut probe_log: Vec<(String, u64, usize)> = Vec::new();
     while window_start.elapsed() < stall_window {
         round += 1;
         // next-sequence is a journal-free top-level command (server/src/v2.rs
@@ -18139,27 +18214,6 @@ fn r_stalled_principal_progress_direction(
         // Evidence is written every round so a later failure never loses it.
         fs::write(artifacts.join("bob-transcript.txt"), &transcript)?;
         fs::write(artifacts.join("b-ops.tsv"), &ops_log)?;
-        // Enforcement probes at the NEGOTIATED-bound marks (+ margin so the
-        // refusal (idle) or reset has already landed).
-        if !probed_idle && window_start.elapsed() >= negotiated_idle + Duration::from_secs(10) {
-            probed_idle = true;
-            let idle_aborted =
-                probe_stalled_streams(&alice, &mut stalled, "idle-bound+10s", &mut stalls)?;
-            idle_abort_count = idle_aborted.len();
-            aborted_ids.extend(idle_aborted);
-            fs::write(artifacts.join("stalls.tsv"), &stalls)?;
-        }
-        if !probed_lifetime
-            && window_start.elapsed() >= negotiated_lifetime + Duration::from_secs(10)
-        {
-            probed_lifetime = true;
-            let lifetime_aborted =
-                probe_stalled_streams(&alice, &mut stalled, "lifetime-bound+10s", &mut stalls)?;
-            lifetime_abort_count = Some(lifetime_aborted.len());
-            aborted_ids.extend(lifetime_aborted);
-            fs::write(artifacts.join("stalls.tsv"), &stalls)?;
-            events.append("STALL_ABORT_OBSERVED", None, None, None, None, None)?;
-        }
         if !sampled_mid && window_start.elapsed() >= stall_window / 2 {
             sampled_mid = true;
             resources::sample_store(
@@ -18168,20 +18222,61 @@ fn r_stalled_principal_progress_direction(
                 &store_file,
             )?;
         }
+        // Enforcement probes at the NEGOTIATED-bound marks, checked inside
+        // the round's idle time in short slices rather than once per round.
+        // Every probe is non-writing, so running them often costs the
+        // subject nothing and renews no deadline, and the resolution of the
+        // first-observation bracket is the slice rather than the round.
         let cycle = Duration::from_secs(4);
-        let elapsed = window_start.elapsed();
-        if elapsed < stall_window && elapsed < cycle * round as u32 {
-            thread::sleep(cycle * round as u32 - elapsed);
+        let target = cycle * round as u32;
+        loop {
+            let due: Vec<String> = probe_marks
+                .iter_mut()
+                .filter(|(_, at, done)| !*done && window_start.elapsed() >= *at)
+                .map(|mark| {
+                    mark.2 = true;
+                    mark.0.clone()
+                })
+                .collect();
+            for label in due {
+                let elapsed_ms = window_start.elapsed().as_millis() as u64;
+                let stopped = probe_stalled_streams(&alice, &mut stalled, &label, &mut stalls)?;
+                for (stream_id, _) in stalled.iter() {
+                    if stopped.contains(stream_id) {
+                        first_stopped_at
+                            .entry(*stream_id)
+                            .or_insert_with(|| (label.clone(), elapsed_ms));
+                    } else if !first_stopped_at.contains_key(stream_id) {
+                        last_open_at.insert(*stream_id, (label.clone(), elapsed_ms));
+                    }
+                }
+                probe_log.push((label, elapsed_ms, stopped.len()));
+                aborted_ids.extend(stopped);
+                fs::write(artifacts.join("stalls.tsv"), &stalls)?;
+                if !aborted_ids.is_empty() {
+                    events.append("STALL_ABORT_OBSERVED", None, None, None, None, None)?;
+                }
+            }
+            let elapsed = window_start.elapsed();
+            if elapsed >= stall_window || elapsed >= target {
+                break;
+            }
+            thread::sleep(Duration::from_millis(200).min(target - elapsed));
         }
     }
     ensure!(
-        probed_idle && probed_lifetime,
-        "window ended before both enforcement probes ran"
+        probe_marks.iter().all(|(_, _, done)| *done),
+        "window ended before every enforcement probe ran: {:?}",
+        probe_marks
+            .iter()
+            .filter(|(_, _, done)| !done)
+            .map(|(label, _, _)| label.clone())
+            .collect::<Vec<_>>()
     );
-    let lifetime_abort_count = lifetime_abort_count.unwrap_or(0);
     // The window is over: only now is the abusive principal's control stream
     // read, so the queued refusals are the second, protocol-level record of
-    // the same enforcement the write probes observed at the transport level.
+    // the same enforcement the non-writing probes observed at the transport
+    // level.
     let refusals = drain_control_refusals(&mut alice, "window-end", &mut stalls);
     fs::write(artifacts.join("stalls.tsv"), &stalls)?;
     let refused_ids: BTreeSet<u64> = refusals
@@ -18220,16 +18315,43 @@ fn r_stalled_principal_progress_direction(
     observed.push((
         "stall_enforcement",
         format!(
-            "negotiated idle {}s / lifetime {}s; transport abort observed for \
-             {idle_abort_count}/{STALLED_STREAMS} streams by idle+10s and \
-             {lifetime_abort_count}/{STALLED_STREAMS} by lifetime+10s \
-             ({}/{STALLED_STREAMS} distinct); LIMIT_EXCEEDED input refusals on \
-             control at window end: {}/{STALLED_STREAMS}",
+            "negotiated idle {}s / lifetime {}s; non-writing probes at {}; \
+             {}/{STALLED_STREAMS} distinct streams observed stopped; LIMIT_EXCEEDED \
+             input refusals on control at window end: {}/{STALLED_STREAMS}",
             negotiated_idle.as_secs(),
             negotiated_lifetime.as_secs(),
+            probe_log
+                .iter()
+                .map(|(label, at, count)| format!("{label} (+{at}ms: {count} stopped)"))
+                .collect::<Vec<_>>()
+                .join(", "),
             aborted_ids.len(),
             refused_ids.len()
         ),
+    ));
+    // FIRST-OBSERVATION BRACKET per stream: the last probe that saw it open
+    // and the first that saw it stopped. Nothing inside that bracket is
+    // claimed. Every probe carries no application data, so nothing here
+    // renews the subject's receive deadline; the milestone-17b bracket that
+    // did claim a value was an artefact of a client whose transport was
+    // only driven inside `block_on`, and it is withdrawn, not restated.
+    observed.push((
+        "stall_enforcement_bracket",
+        stalled
+            .iter()
+            .map(|(stream_id, _)| {
+                let open = last_open_at
+                    .get(stream_id)
+                    .map(|(label, at)| format!("{label} (+{at}ms)"))
+                    .unwrap_or_else(|| "no probe saw it open".to_owned());
+                let stopped = first_stopped_at
+                    .get(stream_id)
+                    .map(|(label, at)| format!("{label} (+{at}ms)"))
+                    .unwrap_or_else(|| "never observed stopped".to_owned());
+                format!("stream-{stream_id}: last open {open}, first stopped {stopped}")
+            })
+            .collect::<Vec<_>>()
+            .join("; "),
     ));
     fs::write(artifacts.join("bob-transcript.txt"), &transcript)?;
     fs::write(artifacts.join("b-ops.tsv"), &ops_log)?;

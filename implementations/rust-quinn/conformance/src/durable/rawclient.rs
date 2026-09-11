@@ -1112,8 +1112,49 @@ impl RawConn {
         Ok(())
     }
 
+    /// NON-WRITING probe of one send stream's state.
+    ///
+    /// A probe that writes bytes to test whether a stream is still alive is
+    /// not a passive observation: on an input stream those bytes are payload
+    /// progress, and a subject whose receive deadline is measured from the
+    /// last payload byte has its deadline legitimately renewed by the probe
+    /// itself. This polls quinn's own `stopped()` future with a bounded
+    /// wait instead, so the stream carries nothing the subject can read as
+    /// activity.
+    pub fn poll_stream_stopped(
+        &self,
+        stream: &quinn::SendStream,
+        timeout: Duration,
+    ) -> Result<StreamState> {
+        let stopped = stream.stopped();
+        self.runtime.block_on(async move {
+            match tokio::time::timeout(timeout, stopped).await {
+                Ok(Ok(Some(code))) => Ok(StreamState::Stopped(code.into_inner())),
+                Ok(Ok(None)) => Ok(StreamState::Acknowledged),
+                Ok(Err(error)) => Ok(StreamState::Lost(format!("{error}"))),
+                Err(_elapsed) => Ok(StreamState::Open),
+            }
+        })
+    }
+
     /// Abrupt loss: drop every handle without a close frame.
     pub fn vanish(self) {}
+}
+
+/// What a non-writing probe saw on one send stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamState {
+    /// Nothing observed within the bounded wait: still open as far as this
+    /// endpoint can tell.
+    Open,
+    /// The peer sent STOP_SENDING with this application error code.
+    Stopped(u64),
+    /// The peer acknowledged every byte of a finished stream. A stalled
+    /// input is never finished, so this is recorded rather than expected.
+    Acknowledged,
+    /// The stream or its connection is gone; the reason is recorded, and a
+    /// transport loss is never counted as subject enforcement.
+    Lost(String),
 }
 
 async fn client_endpoint(
