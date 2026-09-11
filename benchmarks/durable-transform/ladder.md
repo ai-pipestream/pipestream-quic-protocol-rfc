@@ -50,14 +50,20 @@ why; cells run under different ladder versions are not pooled.
 | uneven | 100_000 | 2 (partial tail) | uneven chunk count, exact boundary + partial |
 | quick | 200_000 | 4 (partial tail) | parity with `run-quick.sh` gate |
 | standard | 8_388_608 | 128 | primary comparison cell (matches §8 evidence) |
-| large | 67_108_864 | 1024 | object >> window, streamed from disk |
+| large | 50_331_648 | 768 (256/worker) | object >> window, streamed from disk |
 
 ## Explicit ceilings (chosen before measuring, with reasons)
 
-- Largest corpus 64 MiB: a single 8 MiB arm takes minutes on the shared
-  host under one-at-a-time locking; 64 MiB x 3 arms x (1 warmup + 3 reps)
-  is the largest block that fits realistic lock windows. Anything larger
-  is UNAVAILABLE, not extrapolated.
+- Largest corpus 48 MiB (ladder v2; was 64 MiB): the 64 MiB cell
+  (1024 chunks, ~341/worker) is infeasible on default authority funding —
+  measured 2026-09-11: single declares >256 violate the V2 list bound
+  (fixed: batched declares, seal-last), 100-entity batches fit a single
+  transaction (254 fails, 115 succeeds per conformance), but cumulative
+  record-completion funding caps declared entities at ~256/worker
+  (3rd 100-batch refused). 48 MiB x 3 arms x (1 warmup + 3 reps) is the
+  largest block that fits both funding and realistic lock windows.
+  Anything larger is UNAVAILABLE, not extrapolated. The failed 64 MiB
+  attempts stay archived (c4-large64-attempts), not pooled.
 - Corpus exceeding the 2g Java heap (the "larger than allowed heap" case
   at full scale) is UNAVAILABLE on this host: a >2 GiB loopback run would
   hold BENCHMARK.lock for hours and starve the shared host. The large
