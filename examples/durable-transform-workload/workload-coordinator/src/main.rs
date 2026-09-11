@@ -495,7 +495,7 @@ async fn send_admission(
                 if !backpressure {
                     return Err(e.into());
                 }
-                session.log("admit-refused", ordinal as i64, "LIMIT_EXCEEDED");
+                session.log("admit-refused", ordinal as i64, &e.to_string());
                 if attempt + 1 >= MAX_ATTEMPTS {
                     return Err(e.into());
                 }
