@@ -59,6 +59,8 @@ COORD_NOFETCH=()
 COORD_STOP=()
 [ -n "${GRPC_FETCH_DELAY_MS:-}" ] && COORD_STOP+=(--test-fetch-delay-ms "$GRPC_FETCH_DELAY_MS")
 [ -n "${GRPC_STALL_READ_MS:-}" ] && COORD_STOP+=(--test-stall-read-ms "$GRPC_STALL_READ_MS")
+[ "${GRPC_SERIAL:-0}" = 1 ] && COORD_STOP+=(--serial)
+[ -n "${GRPC_PENDING_LIMIT:-}" ] && COORD_STOP+=(--pending-limit "$GRPC_PENDING_LIMIT")
 "$GRPC_COORD" run --ca "$W/pki/grpc-ca.pem" --cert "$W/pki/grpc-client.pem" \
   --key "$W/pki/grpc-client.key" --owner workload --db "$W/grpc-coord.sqlite" \
   --endpoint-a https://127.0.0.1:18443 --endpoint-b https://127.0.0.1:18444 \

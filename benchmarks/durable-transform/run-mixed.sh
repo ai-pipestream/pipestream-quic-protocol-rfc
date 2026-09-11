@@ -47,6 +47,9 @@ MIXED_NO_FETCH=()
 [ "${PS_NO_FETCH:-0}" = 1 ] && MIXED_NO_FETCH+=(--test-no-fetch)
 MIXED_KILL=()
 [ "${PS_KILL_AFTER_FIRST_VERIFIED:-0}" = 1 ] && MIXED_KILL+=(--test-kill-after-first-verified)
+MIXED_PIPE=()
+[ "${PS_SERIAL:-0}" = 1 ] && MIXED_PIPE+=(--serial)
+[ -n "${PS_PENDING_LIMIT:-}" ] && MIXED_PIPE+=(--pending-limit "$PS_PENDING_LIMIT")
 for i in 0 1 2; do
   w=$(printf '%s' abc | cut -c $((i + 1))); port=$((17443 + i))
   if [ "$w" = "$JWORK" ]; then
@@ -95,7 +98,7 @@ START_MS=$(ms_now)
   ${PS_SWAP_INPUTS:+--test-swap-inputs "$PS_SWAP_INPUTS"} \
   ${PS_EXECUTION_MS:+--execution-ms "$PS_EXECUTION_MS"} \
   ${PS_DROP_INPUT:+--test-drop-input "$PS_DROP_INPUT"} \
-  "${MIXED_NO_FETCH[@]}" "${MIXED_KILL[@]}"
+  "${MIXED_NO_FETCH[@]}" "${MIXED_KILL[@]}" "${MIXED_PIPE[@]}"
 END_MS=$(ms_now)
 # Contract §6 negative controls: a dead metric collector or missing
 # per-worker samples fails the run instead of passing silently.

@@ -1,0 +1,3 @@
+restart-safety: Pure (deterministic re-execution, no external effects)
+fixture-schedule-schema: kimi interface-v1 1452f60 (c566751a...)
+phys-funding-mib: db=1024 wal=256

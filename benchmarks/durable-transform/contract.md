@@ -201,3 +201,15 @@ and measure it.
 No production deployment, no draft submission, no IETF-acceptance claim,
 no network-wide speed claim from loopback data. Performance deltas are
 findings; they never justify weakening either side's guarantees.
+
+## 12. Change log
+
+- C16e (2026-09-11): both coordinators pipeline admissions and
+  verification by default (up to `--pending-limit`, default 16, a local
+  concurrency cap, not a negotiated protocol limit). Durability rules are
+  unchanged: every admission journals its intent before sending, results
+  validate before journaling, one receipt per operation, frozen operation
+  identities. `--serial` reproduces the old one-at-a-time order and
+  numbers. Event rows now carry phase timings (`admit=`, `watch=`,
+  `fetch=` ms details) for the before/after breakdown; labels and gates
+  are unchanged. gRPC gets the same concurrency (fairness).

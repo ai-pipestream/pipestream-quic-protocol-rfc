@@ -300,8 +300,20 @@ struct Run {
     /// verbatim in the event stream.
     #[arg(long, default_value_t = 0)]
     test_stall_read_ms: u64,
+    /// Admit and verify serially (one chunk at a time), reproducing the
+    /// pre-pipelining behavior and numbers. Default (off) pipelines both
+    /// phases up to --pending-limit.
+    #[arg(long, default_value_t = false)]
+    serial: bool,
+    /// Coordinator-side cap on in-flight admissions/verifications per
+    /// worker session. This is a local concurrency cap, not a negotiated
+    /// protocol limit; durability rules are unchanged (journal before
+    /// send, validate before journal, one receipt per operation).
+    #[arg(long, default_value_t = 16)]
+    pending_limit: usize,
 }
 
+#[derive(Clone)]
 struct Session {
     worker: u64,
     client: Client,
@@ -513,7 +525,10 @@ async fn watch_terminal(session: &Session, ordinal: u64) -> Result<(Id, u64)> {
     }
 }
 
-async fn fetch_verified(
+/// Select, read and stage one chunk's output (transfer only: no oracle
+/// check, no completion rows). Retried as backpressure by fetch_one; the
+/// oracle comparison afterwards always fails fast.
+async fn fetch_transfer(
     session: &Session,
     seed: u64,
     total: u64,
@@ -521,15 +536,14 @@ async fn fetch_verified(
     attempt: Id,
     staging: &Path,
     stall_read_ms: u64,
-    first_usable: &mut bool,
-) -> Result<()> {
+) -> Result<bool> {
     let key = work_key(ordinal);
     let expected = expected_chunk(seed, total, ordinal);
     let path = out_path(staging, ordinal);
     if path.exists() {
         let bytes = std::fs::read(&path)?;
         if bytes == expected {
-            return Ok(());
+            return Ok(true);
         }
         std::fs::remove_file(&path)?;
     }
@@ -547,29 +561,59 @@ async fn fetch_verified(
         .client
         .read_output(key, attempt, OutputIndex(0))
         .await
-        .map_err(|e| anyhow::anyhow!("stalled read ordinal {ordinal}: {e}"))?
+        .map_err(anyhow::Error::from)
+        .with_context(|| format!("stalled read ordinal {ordinal}"))?
         .save_to(path.clone(), OBJECT_LIMIT)
         .await?;
     let _ = saved;
-    let bytes = std::fs::read(&path)?;
-    if bytes != expected {
-        bail!("chunk {ordinal} failed byte verification after verified transfer");
-    }
-    if !*first_usable {
-        *first_usable = true;
-        session.log("first-usable-output", ordinal as i64, "");
-    }
-    session.log("chunk-verified", ordinal as i64, "");
-    Ok(())
+    let _ = saved;
+    Ok(false)
 }
 
-/// Admit one chunk, treating authority capacity refusals as backpressure.
+/// Bounded backpressure retry for one fallible fetch step: transport and
+/// authority backpressure (same classifier as admission) retry under a
+/// 240-attempt budget; anything else, including a dead worker's cancelled
+/// watch (the F3 signal), fails fast.
+async fn fetch_retry<F, Fut, T>(session: &Session, ordinal: u64, mut step: F) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let mut wait_ms = 100u64;
+    for attempt in 0..240u32 {
+        match step().await {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                let Some(label) = e
+                    .downcast_ref::<session::Failure>()
+                    .and_then(backpressure_label)
+                else {
+                    return Err(e);
+                };
+                if attempt + 1 >= 240 {
+                    session.log("fetch-budget-out", ordinal as i64, &e.to_string());
+                    return Err(e);
+                }
+                session.log(label, ordinal as i64, &e.to_string());
+                tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
+                wait_ms = (wait_ms * 2).min(5_000);
+            }
+        }
+    }
+    unreachable!("fetch retry loop always returns");
+}
+
+/// Admit one chunk, treating capacity refusals as backpressure.
 ///
-/// A LIMIT_EXCEEDED refusal means the authority is healthy but full; the
-/// journaled intent is unchanged, so resending the SAME operation identity is
-/// safe and required for durable progress. Every refusal is recorded in the
-/// event stream with its named code; any other error fails fast. Bounded:
-/// 240 attempts, 100 ms doubling to 5 s (about 10 minutes worst case).
+/// A LIMIT_EXCEEDED refusal means the authority is healthy but full; a
+/// NOT_READY refusal means it is not ready yet; our own client's
+/// unresolved-admission ceiling means we over-admitted against the peer's
+/// stream budget. In all three cases the journaled intent is unchanged, so
+/// resending the SAME operation identity is safe and required for durable
+/// progress (admission is idempotent on prior receipt). Every backpressure
+/// event is recorded in the event stream with its named code; any other
+/// error fails fast. Bounded: 240 attempts, 100 ms doubling to 5 s (about
+/// 10 minutes worst case).
 async fn send_admission(
     session: &Session,
     chunk: &Path,
@@ -596,15 +640,13 @@ async fn send_admission(
                 return Ok(());
             }
             Err(e) => {
-                let backpressure = matches!(
-                    &e,
-                    session::Failure::Refused(r) if r.code == ErrorCode::LimitExceeded
-                );
-                if !backpressure {
+                let Some(label) = backpressure_label(&e) else {
+                    session.log("admit-fatal-send", ordinal as i64, &format!("{e:?}"));
                     return Err(e.into());
-                }
-                session.log("admit-refused", ordinal as i64, &e.to_string());
+                };
+                session.log(label, ordinal as i64, &e.to_string());
                 if attempt + 1 >= MAX_ATTEMPTS {
+                    session.log("admit-budget-out-send", ordinal as i64, &e.to_string());
                     return Err(e.into());
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
@@ -613,6 +655,154 @@ async fn send_admission(
         }
     }
     unreachable!("admit retry loop always returns");
+}
+
+/// Classify an admission-path error: Some(label) if it is retryable
+/// backpressure under the same journaled identity, None if fatal.
+/// Authority full (LIMIT_EXCEEDED), authority not ready yet (NOT_READY),
+/// and our own client's local ceilings (unresolved admissions, outgoing
+/// streams: LimitExceeded at the transport means too much in flight) all
+/// retry; anything else fails fast. The verbatim detail stays on the row,
+/// so each trigger remains distinguishable in the event stream.
+fn backpressure_label(e: &session::Failure) -> Option<&'static str> {
+    match e {
+        session::Failure::Refused(r) if r.code == ErrorCode::LimitExceeded => Some("admit-refused"),
+        session::Failure::Refused(r) if r.code == ErrorCode::NotReady => Some("admit-notready"),
+        session::Failure::Protocol(p) if p.code == ErrorCode::LimitExceeded => Some("admit-ceiling"),
+        _ => None,
+    }
+}
+
+/// Admit one chunk under its frozen identity (terminal work and
+/// just-replayed operations are skipped silently, as in the serial loop).
+/// Shared by the serial and pipelined paths so both execute the same
+/// durable sequence; the admit latency is recorded on the event row.
+async fn admit_one(
+    session: &Session,
+    seed: u64,
+    total: u64,
+    worker: u64,
+    execution_ms: u64,
+    staging: &Path,
+    declaration: OperationId,
+    replayed: &std::collections::HashSet<[u8; 16]>,
+    ordinal: u64,
+) -> Result<()> {
+    // The terminal-state probe touches authority metadata too, so under
+    // pipelined concurrency it meets the same backpressure as the send;
+    // retry it under the same identity and budget (240 attempts).
+    let admitted = {
+        let mut wait_ms = 100u64;
+        let mut attempt = 0u32;
+        loop {
+            match session.client.observed_work(work_key(ordinal)).await {
+                Ok(o) => break o,
+                Err(e) => {
+                    let Some(label) = backpressure_label(&e) else {
+                        session.log("admit-fatal-probe", ordinal as i64, &format!("{e:?}"));
+                        return Err(e.into());
+                    };
+                    attempt += 1;
+                    if attempt >= 240 {
+                        session.log("admit-budget-out-probe", ordinal as i64, &e.to_string());
+                        return Err(e.into());
+                    }
+                    session.log(label, ordinal as i64, &e.to_string());
+                    tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
+                    wait_ms = (wait_ms * 2).min(5_000);
+                }
+            }
+        }
+    };
+    let terminal = admitted.map(|o| (5..=8).contains(&o.view.state.0)).unwrap_or(false);
+    if terminal {
+        return Ok(());
+    }
+    let operation = operation_id(seed, worker, "admit", ordinal);
+    if replayed.contains(&operation.0) {
+        return Ok(());
+    }
+    let len = chunk_len(total, ordinal);
+    let intent = journal::Intent {
+        operation,
+        mutation: Mutation::Admit(AdmitParameters {
+            work: work_key(ordinal),
+            input: Input {
+                length: Number(len as u64),
+                sha256: Digest(blake_of_chunk(seed, total, ordinal)),
+                content_type: ApplicationLabel(CONTENT_TYPE.into()),
+            },
+            application: ApplicationLabel(TRANSFORM_LABEL.into()),
+            mode: Mode(0),
+            execution_ms: Duration(execution_ms),
+            outputs: OutputBudget {
+                count: BatchCount(1),
+                total_bytes: Number(len as u64),
+            },
+        }),
+    };
+    let t = Instant::now();
+    send_admission(session, &chunk_path(staging, ordinal), &intent, declaration, ordinal).await?;
+    session.log("admitted", ordinal as i64, &format!("admit={}ms", t.elapsed().as_millis()));
+    Ok(())
+}
+
+/// Watch, fetch and verify one chunk, then apply the F4 one-shot hook when
+/// armed. Shared by the serial and pipelined paths. first_usable fires once
+/// per session (atomically: in pipelined mode the first completer wins).
+async fn fetch_one(
+    session: &Session,
+    seed: u64,
+    total: u64,
+    ordinal: u64,
+    staging: &Path,
+    stall_read_ms: u64,
+    kill_after_verified: bool,
+    first_usable: &std::sync::atomic::AtomicBool,
+) -> Result<()> {
+    use std::sync::atomic::Ordering;
+    // Watch for terminal state. Backpressure retries; a dead worker's
+    // cancelled watch (the F3 signal) fails fast.
+    let t = Instant::now();
+    let (attempt, _) = fetch_retry(session, ordinal, || async {
+        watch_terminal(session, ordinal).await
+    })
+    .await?;
+    session.log("succeeded", ordinal as i64, &format!("attempt {} watch={}ms", attempt.0, t.elapsed().as_millis()));
+    // Transfer the output. Backpressure retries; anything else fails fast.
+    let t = Instant::now();
+    let shortcut = fetch_retry(session, ordinal, || async {
+        fetch_transfer(session, seed, total, ordinal, attempt, staging, stall_read_ms).await
+    })
+    .await?;
+    if shortcut {
+        // Resume shortcut (byte-verified staged output): no completion
+        // rows, no hook, exactly as before.
+        return Ok(());
+    }
+    // Oracle comparison: always fail-fast, never retried. A mismatch here
+    // is corruption, not backpressure.
+    let expected = expected_chunk(seed, total, ordinal);
+    let bytes = std::fs::read(out_path(staging, ordinal))?;
+    if bytes != expected {
+        bail!("chunk {ordinal} failed byte verification after verified transfer");
+    }
+    if !first_usable.swap(true, Ordering::SeqCst) {
+        session.log("first-usable-output", ordinal as i64, "");
+    }
+    session.log("chunk-verified", ordinal as i64, &format!("fetch={}ms", t.elapsed().as_millis()));
+    // TEST-ONLY F4 hook: abort at the first RESULT_VERIFIED boundary.
+    // The chunk-verified row above proves the boundary was reached.
+    // One-shot via sentinel so the --resume restart proceeds past it.
+    if kill_after_verified {
+        let sentinel = staging.join("kill-f4-fired");
+        if !sentinel.exists() {
+            std::fs::write(&sentinel, b"fired")?;
+            eprintln!("TEST-ONLY test-kill-after-first-verified: aborting");
+            std::process::abort();
+        }
+    }
+    Ok(())
 }
 
 fn sync_dir(path: &Path) -> Result<()> {
@@ -676,45 +866,34 @@ async fn run_session(
     let declare_ops: Vec<OperationId> = plan.iter().map(|(op, _, _)| *op).collect();
     let replayed = replay_unresolved(&session, staging, &ordinals, &declare_ops).await?;
     // Admit every chunk of this shard under its frozen identity, except
-    // terminal work and just-replayed operations.
-    for (pos, &ordinal) in ordinals.iter().enumerate() {
-        let admitted = session.client.observed_work(work_key(ordinal)).await?;
-        let terminal = admitted.map(|o| (5..=8).contains(&o.view.state.0)).unwrap_or(false);
-        if terminal {
-            continue;
+    // terminal work and just-replayed operations. Pipelined by default
+    // (up to pending-limit in flight); --serial keeps the old order.
+    // Every admission journals its intent before sending either way.
+    if run.serial {
+        for (pos, &ordinal) in ordinals.iter().enumerate() {
+            admit_one(&session, seed, total, worker, run.execution_ms, staging, declare_ops[pos / DECLARE_BATCH], &replayed, ordinal).await?;
         }
-        let operation = operation_id(seed, worker, "admit", ordinal);
-        if replayed.contains(&operation.0) {
-            continue;
+    } else {
+        let execution_ms = run.execution_ms;
+        let limit = run.pending_limit.max(1);
+        let mut set = tokio::task::JoinSet::new();
+        for (pos, &ordinal) in ordinals.iter().enumerate() {
+            while set.len() >= limit {
+                if let Some(r) = set.join_next().await {
+                    r??;
+                }
+            }
+            let s = session.clone();
+            let st = staging.to_path_buf();
+            let rp = replayed.clone();
+            let declaration = declare_ops[pos / DECLARE_BATCH];
+            set.spawn(async move {
+                admit_one(&s, seed, total, worker, execution_ms, &st, declaration, &rp, ordinal).await
+            });
         }
-        let len = chunk_len(total, ordinal);
-        let intent = journal::Intent {
-            operation,
-            mutation: Mutation::Admit(AdmitParameters {
-                work: work_key(ordinal),
-                input: Input {
-                    length: Number(len as u64),
-                    sha256: Digest(blake_of_chunk(seed, total, ordinal)),
-                    content_type: ApplicationLabel(CONTENT_TYPE.into()),
-                },
-                application: ApplicationLabel(TRANSFORM_LABEL.into()),
-                mode: Mode(0),
-                execution_ms: Duration(run.execution_ms),
-                outputs: OutputBudget {
-                    count: BatchCount(1),
-                    total_bytes: Number(len as u64),
-                },
-            }),
-        };
-        send_admission(
-            &session,
-            &chunk_path(staging, ordinal),
-            &intent,
-            declare_ops[pos / DECLARE_BATCH],
-            ordinal,
-        )
-        .await?;
-        session.log("admitted", ordinal as i64, "");
+        while let Some(r) = set.join_next().await {
+            r??;
+        }
     }
     // Watch, fetch, and verify each chunk (skipped for stopped-consumer).
     if run.test_no_fetch {
@@ -738,21 +917,30 @@ async fn run_session(
         tokio::time::sleep(std::time::Duration::from_millis(run.test_fetch_delay_ms)).await;
         session.log("consumer-resumed", -1, "fetching after hold");
     }
-    let mut first_usable = false;
-    for &ordinal in &ordinals {
-        let (attempt, _) = watch_terminal(&session, ordinal).await?;
-        session.log("succeeded", ordinal as i64, &format!("attempt {}", attempt.0));
-        fetch_verified(&session, seed, total, ordinal, attempt, staging, run.test_stall_read_ms, &mut first_usable).await?;
-        // TEST-ONLY F4 hook: abort at the first RESULT_VERIFIED boundary.
-        // The chunk-verified row above proves the boundary was reached.
-        // One-shot via sentinel so the --resume restart proceeds past it.
-        if run.test_kill_after_first_verified {
-            let sentinel = staging.join("kill-f4-fired");
-            if !sentinel.exists() {
-                std::fs::write(&sentinel, b"fired")?;
-                eprintln!("TEST-ONLY test-kill-after-first-verified: aborting");
-                std::process::abort();
+    let first_usable = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    if run.serial {
+        for &ordinal in &ordinals {
+            fetch_one(&session, seed, total, ordinal, staging, run.test_stall_read_ms, run.test_kill_after_first_verified, first_usable.as_ref()).await?;
+        }
+    } else {
+        let mut set = tokio::task::JoinSet::new();
+        for &ordinal in &ordinals {
+            while set.len() >= run.pending_limit.max(1) {
+                if let Some(r) = set.join_next().await {
+                    r??;
+                }
             }
+            let s = session.clone();
+            let st = staging.to_path_buf();
+            let stall = run.test_stall_read_ms;
+            let kill = run.test_kill_after_first_verified;
+            let fu = first_usable.clone();
+            set.spawn(async move {
+                fetch_one(&s, seed, total, ordinal, &st, stall, kill, fu.as_ref()).await
+            });
+        }
+        while let Some(r) = set.join_next().await {
+            r??;
         }
     }
     // Checkpoint the sealed root scope, then assert durable completion.
@@ -1306,6 +1494,8 @@ async fn main() -> Result<()> {
             test_no_fetch: run.test_no_fetch,
             test_fetch_delay_ms: run.test_fetch_delay_ms,
             test_stall_read_ms: run.test_stall_read_ms,
+            serial: run.serial,
+            pending_limit: run.pending_limit,
         };
         handles.push(tokio::spawn(async move {
             let staging = run.staging.clone();

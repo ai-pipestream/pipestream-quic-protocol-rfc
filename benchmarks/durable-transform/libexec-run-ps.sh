@@ -35,6 +35,10 @@ COORD_NOFETCH=()
 COORD_STOP=()
 [ -n "${PS_FETCH_DELAY_MS:-}" ] && COORD_STOP+=(--test-fetch-delay-ms "$PS_FETCH_DELAY_MS")
 [ -n "${PS_STALL_READ_MS:-}" ] && COORD_STOP+=(--test-stall-read-ms "$PS_STALL_READ_MS")
+# Coordinator pipelining (C16e): pipelined by default; PS_SERIAL=1 keeps the
+# old serial order; PS_PENDING_LIMIT overrides the 16 in-flight cap.
+[ "${PS_SERIAL:-0}" = 1 ] && COORD_STOP+=(--serial)
+[ -n "${PS_PENDING_LIMIT:-}" ] && COORD_STOP+=(--pending-limit "$PS_PENDING_LIMIT")
 COORD_KILL=()
 [ "${PS_KILL_AFTER_FIRST_VERIFIED:-0}" = 1 ] && COORD_KILL+=(--test-kill-after-first-verified)
 COORD_SWAP=()
