@@ -4,5 +4,5 @@ order: warmups ps/mixed/grpc, then mirror-rotated reps (even ps,mixed,grpc / odd
 result: PASS, 18/18 exit=0, no failed runs.
 All 18 finals sha256 b3dd5e34376dba8b6042c99fea2ab6e821045305e7ed00ff9a0cecfe92b0160b (8388608 bytes) - reproduces the 2026-09-09 all-Rust pin exactly, including the Java-worker mixed arm.
 Every event stream has first-usable-output + final-verified.
-Raw coordinator-arm wall_ms (loopback, shared host, no performance claim): ps 1807,1807?/1971/2039../2086 (reps: 1869,1807,1971,2086,2062); mixed 2039,2178,2220,2290,2546; grpc 199,200,200,200,223. Medians: ps ~1971 ms, mixed ~2220 ms, grpc ~200 ms. Mixed includes per-rep JVM worker startup; host shared.
+Raw coordinator-arm wall_ms (loopback, shared host, no performance claim) by rep: ps 1869,1807,1971,2086,2062; mixed 2290,2546,2039,2178,2220; grpc 199,200,200,200,223. Medians: ps ~1971 ms, mixed ~2220 ms, grpc ~200 ms. Mixed includes per-rep JVM worker startup; host shared.
 state DBs/PKI excluded from archive (kept in /tmp/c4-standard run dirs); artifacts + stdout logs archived.
