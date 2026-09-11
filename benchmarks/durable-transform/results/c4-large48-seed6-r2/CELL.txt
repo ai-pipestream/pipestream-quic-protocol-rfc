@@ -1,0 +1,6 @@
+cell: large r2 (SIZE=50331648, 768 chunks, 256/worker, seed 6, ladder v3; new jar e1763b4a (ab59dafb) + Java funding 1024/256 on BOTH java commands, Rust funding 1024/256)
+coordinator 609c1e4c, authority 0f44f52e, grpc e48b226d/03321977, JAVA_TOOL_OPTIONS=-Xms256m -Xmx2g
+order: warmups ps/mixed/grpc, then mirror-rotated reps; see order.log
+result: PASS 12/12 exit=0. Mixed 4/4 closes the C15 refusal (Java SQLite file capacity): funded Java authority accepts all declare batches.
+All 12 finals sha256 acc15911648496f7ef12c7291e31fcb07aff45a268e8fd8b293c616d6b58af9a - identical to the C15 c4-large48-seed6 ps+grpc digest (old jar 61ab64a3): wire behaviour unchanged, bins kept in /tmp/c16a-large48.
+Every event stream has first-usable-output + final-verified. Earlier c4-large48-seed6 archive kept (pooled only within identical config).
