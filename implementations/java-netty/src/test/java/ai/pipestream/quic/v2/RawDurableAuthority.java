@@ -25,6 +25,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
  * A raw, scripted V2 authority for client-side negative testing. It negotiates the durable
@@ -42,6 +43,20 @@ final class RawDurableAuthority implements AutoCloseable {
     void deliver(Read read, QuicStreamChannel stream) throws Exception;
   }
 
+  /**
+   * Handles one incoming input stream once its header has been read; runs on the event loop.
+   * {@code reply} writes a control frame to the same connection from any thread.
+   */
+  interface InputScript {
+    void accept(Records.InputHeader header, QuicStreamChannel stream, Consumer<Message> reply)
+        throws Exception;
+  }
+
+  /** Answers a control request before the default script; null falls through to the default. */
+  interface ControlScript {
+    Message answer(Message request);
+  }
+
   private final MultiThreadIoEventLoopGroup group =
       new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
   private final ExecutorService scripts =
@@ -53,6 +68,9 @@ final class RawDurableAuthority implements AutoCloseable {
   private final Channel listener;
   final BlockingQueue<Message> received = new LinkedBlockingQueue<>();
   volatile ResultScript script = (read, stream) -> stream.shutdownOutput().sync();
+  /** Default: stop the input at once (STOP_SENDING 0) and never answer it. */
+  volatile InputScript inputs = (header, stream, reply) -> stream.close();
+  volatile ControlScript controls = request -> null;
   /** Delay before answering any control the raw authority refuses by default (WATCH, ...). */
   volatile long controlDelayMs;
   /** Never answer controls the raw authority refuses by default; the client must bound the wait. */
@@ -84,12 +102,12 @@ final class RawDurableAuthority implements AutoCloseable {
                 new ChannelInitializer<QuicStreamChannel>() {
                   @Override
                   protected void initChannel(QuicStreamChannel stream) {
+                    Control control = stream.parent().pipeline().get(Control.class);
                     if (stream.type() != QuicStreamType.BIDIRECTIONAL) {
-                      stream.close();
+                      stream.pipeline().addLast(control.inputReader(stream));
                       return;
                     }
                     stream.config().setAllowHalfClosure(true);
-                    Control control = stream.parent().pipeline().get(Control.class);
                     control.stream = stream;
                     stream.pipeline().addLast(control.reader());
                   }
@@ -155,6 +173,29 @@ final class RawDurableAuthority implements AutoCloseable {
       stream.writeAndFlush(Unpooled.wrappedBuffer(Wire.encode(message, selected.controlLimit())));
     }
 
+    /** Read one input header, then hand the stream to the input script. */
+    SimpleChannelInboundHandler<ByteBuf> inputReader(QuicStreamChannel input) {
+      ObjectStream.HeaderReader reader =
+          new ObjectStream.HeaderReader(true, System.nanoTime(), 10_000);
+      return new SimpleChannelInboundHandler<>() {
+        boolean handed;
+
+        @Override
+        protected void channelRead0(ChannelHandlerContext ctx, ByteBuf bytes) throws Exception {
+          if (handed) return;
+          Records.Value header = reader.feed(bytes.nioBuffer(), System.nanoTime());
+          if (header == null) return;
+          handed = true;
+          inputs.accept((Records.InputHeader) header, input, Control.this::send);
+        }
+
+        @Override
+        public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+          ctx.close();
+        }
+      };
+    }
+
     private void handle(Message message) {
       received.add(message);
       if (selected == null) {
@@ -162,6 +203,11 @@ final class RawDurableAuthority implements AutoCloseable {
         selected = guard.negotiate(offer, options.offer());
         decoder.limit(selected.controlLimit());
         send(selected);
+        return;
+      }
+      Message scripted = controls.answer(message);
+      if (scripted != null) {
+        send(scripted);
         return;
       }
       switch (message) {

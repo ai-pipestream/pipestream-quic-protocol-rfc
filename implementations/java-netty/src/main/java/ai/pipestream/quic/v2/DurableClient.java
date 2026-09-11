@@ -890,6 +890,7 @@ public final class DurableClient implements AutoCloseable {
                       return;
                     }
                     inputTransfers.put(streamId, this);
+                    lastFrame = System.nanoTime();
                     writeHeader(Wire.encodeHeader(header));
                   }));
     }
@@ -1086,6 +1087,9 @@ public final class DurableClient implements AutoCloseable {
       Optional<ClientJournal.ScopeEvidence> child = journal.scope(view.child().scope());
       if (child.isPresent()) ClientValidation.relationship(view, child.get());
     }
+    // A retained scope that names this work as its parent binds the view's child allocation too.
+    for (ClientJournal.ScopeEvidence child : journal.childScopes(view.work()))
+      ClientValidation.relationship(view, child);
   }
 
   /**
@@ -1128,23 +1132,35 @@ public final class DurableClient implements AutoCloseable {
                           && page.declared() > 0
                           && !page.more())
                         throw new ProtocolError(INTEGRITY_ERROR, "sealed page without seal");
-                      journal.observePage(page);
-                      boundaries.committed(
-                          Boundaries.Boundary.OBSERVATION_JOURNALED, Boundaries.Details.NONE);
-                      ClientJournal.ScopeEvidence evidence = journal.scope(scope).orElseThrow();
-                      if (evidence.parent() != null) {
+                      // Section 12.8: verify against retained evidence before this observation
+                      // becomes durable; a contradicting page is never journaled.
+                      ClientJournal.ScopeEvidence offered =
+                          new ClientJournal.ScopeEvidence(
+                              scope,
+                              page.producer(),
+                              page.parent(),
+                              page.declared(),
+                              page.sealed(),
+                              page.seal(),
+                              false,
+                              null);
+                      if (offered.parent() != null) {
                         Optional<ClientJournal.Observed> parent =
-                            journal.observedWork(evidence.parent());
+                            journal.observedWork(offered.parent());
                         if (parent.isPresent())
-                          ClientValidation.relationship(parent.get().view(), evidence);
+                          ClientValidation.relationship(parent.get().view(), offered);
                       }
                       for (Entry entry : page.entries()) {
                         Optional<ClientJournal.Observed> member =
                             journal.observedWork(
                                 new Records.WorkKey(scope, page.producer(), entry.entity()));
                         if (member.isPresent())
-                          ClientValidation.membership(evidence, member.get().view(), true);
+                          ClientValidation.membership(offered, member.get().view(), true);
                       }
+                      journal.observePage(page);
+                      boundaries.committed(
+                          Boundaries.Boundary.OBSERVATION_JOURNALED, Boundaries.Details.NONE);
+                      ClientJournal.ScopeEvidence evidence = journal.scope(scope).orElseThrow();
                       return new ScopePage(
                           scope,
                           page.producer(),

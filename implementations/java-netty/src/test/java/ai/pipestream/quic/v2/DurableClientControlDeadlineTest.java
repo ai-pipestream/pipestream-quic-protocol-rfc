@@ -34,9 +34,11 @@ class DurableClientControlDeadlineTest {
   static void setup() throws Exception {
     pki = DurableTestPki.generate(directory, List.of("alice"));
     principals = pki.principals(List.of("alice"));
-    byte[] payload = new byte[1000];
-    manifest =
-        new Records.Manifest(
+    manifest = manifestFor(new byte[1000]);
+  }
+
+  static Records.Manifest manifestFor(byte[] payload) throws Exception {
+    return new Records.Manifest(
             "issuer-a",
             "alice",
             1,
@@ -153,6 +155,97 @@ class DurableClientControlDeadlineTest {
       // The bound is the connection's: it is failed with the same named reason.
       ProtocolError closed = DurableClientTest.refusal(session.client.closed());
       assertEquals(ProtocolError.Code.LIMIT_EXCEEDED, closed.code(), closed.toString());
+    }
+  }
+  static Records.OperationReceipt admission(Records.InputHeader header, long admittedAt) {
+    Records.AdmitParameters parameters = header.parameters();
+    return new Records.OperationReceipt(
+        header.operation(),
+        Commitments.operation(new Commitments.Context("issuer-a", "alice", 1), 0, header),
+        new Records.Admitted(
+            parameters.work(), 1, admittedAt, admittedAt + parameters.executionMs(), null));
+  }
+
+  static Records.AdmitParameters parameters(InputSource source) {
+    return new Records.AdmitParameters(
+        WORK,
+        source.input(),
+        "copy/v2",
+        0,
+        10_000,
+        new Records.OutputBudget(1, source.input().length()));
+  }
+
+  /**
+   * Section 12.4: "The client still needs the correlated receipt or operation lookup; STOP_SENDING
+   * alone is not admission evidence." The authority stops the input stream as soon as it has read
+   * the header and answers on control three quarters of a control deadline later (an input's
+   * receipt carries no wait, so it is due within the control deadline): the admission stays
+   * pending across the stop, nothing is journaled until the receipt arrives, and the receipt is
+   * then validated and journaled exactly as for an unstopped transfer.
+   */
+  @Test
+  @Timeout(60)
+  void stopSendingAloneIsNotAdmissionEvidence() throws Exception {
+    Path input = directory.resolve("stopped-input.bin");
+    byte[] bytes = new byte[300_000];
+    new java.util.Random(7).nextBytes(bytes);
+    java.nio.file.Files.write(input, bytes);
+    try (Session session = new Session("stopped")) {
+      long delay = 3 * CONTROL_TIMEOUT_MS / 4;
+      session.authority.inputs =
+          (header, stream, reply) -> {
+            stream.close();
+            stream
+                .eventLoop()
+                .schedule(
+                    () ->
+                        reply.accept(
+                            new Messages.AdmissionResponse(
+                                new Records.RequestTag(true, stream.streamId()),
+                                admission(header, 1_000))),
+                    delay,
+                    TimeUnit.MILLISECONDS);
+          };
+      InputSource source = InputSource.file(input, "application/octet-stream", 16L << 20);
+      Records.OperationId operation = DurableServerTest.operation(2);
+      var admitted =
+          session
+              .client
+              .admit(operation, parameters(source), DurableServerTest.operation(1), source)
+              .toCompletableFuture();
+      Thread.sleep(delay / 2);
+      assertFalse(admitted.isDone(), "admission resolved by the stop alone: " + admitted);
+      assertTrue(session.journal.receipt(operation).isEmpty(), "receipt journaled before it arrived");
+      Records.OperationReceipt receipt = DurableClientTest.get(admitted);
+      assertEquals(operation, receipt.operation());
+      assertEquals(1, ((Records.Admitted) receipt.outcome()).attempt());
+      assertEquals(receipt, session.journal.receipt(operation).orElseThrow());
+      assertFalse(session.client.closed().toCompletableFuture().isDone(), "connection failed");
+    }
+  }
+
+  /** A stopped input whose receipt never comes is bounded by the control deadline and named. */
+  @Test
+  @Timeout(60)
+  void aStoppedInputWithoutAReceiptIsBoundedByTheControlDeadline() throws Exception {
+    Path input = directory.resolve("stopped-unanswered.bin");
+    java.nio.file.Files.write(input, new byte[10_000]);
+    try (Session session = new Session("unanswered")) {
+      InputSource source = InputSource.file(input, "application/octet-stream", 16L << 20);
+      Records.OperationId operation = DurableServerTest.operation(2);
+      long started = System.nanoTime();
+      ProtocolError failure =
+          DurableClientTest.refusal(
+              session.client.admit(
+                  operation, parameters(source), DurableServerTest.operation(1), source));
+      long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+      assertEquals(ProtocolError.Code.LIMIT_EXCEEDED, failure.code(), failure.toString());
+      assertTrue(failure.getMessage().endsWith("control response deadline"), failure.toString());
+      assertTrue(
+          elapsedMs >= CONTROL_TIMEOUT_MS - 200 && elapsedMs <= CONTROL_TIMEOUT_MS + 1_500,
+          "bound missed: " + elapsedMs + " ms");
+      assertTrue(session.journal.receipt(operation).isEmpty(), "receipt journaled without one");
     }
   }
 }

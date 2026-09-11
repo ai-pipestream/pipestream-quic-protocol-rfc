@@ -163,7 +163,10 @@ final class DurableBranchTest {
       Records.ScopeSummary root = s.coverage(0);
       assertEquals(new Records.Counts(1, 0, 0, 0), root.counts());
       assertEquals(root, get(s.client.complete()));
-      // A checkpoint over a foreign seal is INTEGRITY_ERROR, an unsealed scope NOT_READY.
+      // A checkpoint over a foreign seal is refused before it is sent: the journal holds this
+      // child's verified membership under its own seal, so the client answers NOT_READY locally
+      // and the authority's INTEGRITY_ERROR (SessionStoreTest) is not reached from here (handoff
+      // section 4, item 8).
       assertEquals(
           ProtocolError.Code.NOT_READY,
           DurableClientTest.refusal(s.client.checkpoint(child, root.seal(), 0)).code());
