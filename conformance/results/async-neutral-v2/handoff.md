@@ -1066,3 +1066,22 @@ The two things group R still needs before any acceptance claim are a FULL
 53-row matrix rerun on the fixed runtime (no milestone here has done one
 since the raw-client runtime fix at M18b) and acceptance-mode integration
 into conformance/run_all.sh.
+
+## 3i. Driver-binary hashes: what they are and are not (recorded at M18e)
+
+The per-milestone `pipestream-conformance` hashes quoted in §3d–§3h identify
+the binary that produced that milestone's archive, and nothing more. They are
+NOT reproducible across cargo invocations: from identical sources,
+`cargo build --release -p pipestream-conformance` and `cargo build --release`
+over the whole workspace produce different `pipestream-conformance` binaries
+(`1cf0757fe6cd9f8b…` and `3e2a31918c428a8e…` at this commit), because the two
+invocations give the crate a different `-C metadata` and cargo replaces the
+artifact in place.
+
+The pin that matters is unaffected: the rust SUBJECT binary
+`pipestream-quinn` is byte-identical under both invocations and has been
+`097829fa45d8c03eb0a5594badf0cfceababdc6d8c4898d8ce497426ec7406d7` at every
+milestone of M18, including across the tokio `rt-multi-thread` feature
+change. `run.tsv` in every archive records the subject hashes the run
+actually used, and the nc-stale-binary control re-hashes them after every
+scenario.
