@@ -35,8 +35,9 @@ Commits (all plain author identity, no generated attribution):
 | `0176855` | response to Kimi's milestone 16 resource rows: stream bounds judged before the connection, idle-control clock gated on outstanding work, named deadline reasons on REFUSAL and APPLICATION_CLOSE on both listeners, host-held query-only SQLite anchor stopping the per-call WAL-index rebuild (`DurableHostIdleWritesTest`), documented listener ceilings |
 | `7585a9dc` | durable-profile connections are never closed for control silence (core-only connections keep the control deadline); `DurableWireNegativeTest.stalledPrincipalIsRefusedPerStreamOnASurvivingConnection` replays the neutral driver's stalled-principal shape; full offline run 717 tests, 0 failures |
 | `ab59dafb` | client control deadline corrected (traceability defect D1: send renews the activity clock, no silence failure with nothing pending, pending requests due within wait + control deadline; `DurableClientControlDeadlineTest`); `--db-mib`/`--wal-mib` storage funding on `init-authority` and `serve` for Meta (`V2MainStorageFundingTest`); refusal timing and before/after write probes in the stalled-principal test; replayed-input stop and release assertions; clause-level Section 12 traceability (`docs/standards/section-12-java-traceability.md`, 373 statements); Kimi M17b question (2) answered (section 5) |
+| `0a088050` | client cross-checks scope pages before journaling them and views against retained child scopes (defect 8, `DurableClientContradictionTest`); STOP_SENDING alone is not admission evidence (`DurableClientControlDeadlineTest`, two cases, raw authority input and control script hooks); replayed-stream and D2/D3/D7 notes; handoff section 4 items 7-9 |
 
-Working tree at `ab59dafb`: clean. Nothing pushed (no push authorization was
+Working tree at `0a088050`: clean. Nothing pushed (no push authorization was
 given); no CI exists for this branch; no draft/deploy action taken; the
 shared feature branch and main were not merged.
 
@@ -104,6 +105,9 @@ native jar `e49d88b724cc79c936899542c1565a00454a93d512816de6e8cfefa637c51c50`.
   deadline and launcher flags changed): lib jar `950b8fb8a2f2ad4bc13571775b1de66640ec26f3a760bb6716142687bedc8e18`, shaded all-jar
   `e1763b4a460b524ba54c41287dc469a369c778eefce72e3cc2d4d3bc90c18779`. Meta: the 48 MiB mixed cell needs
   `--db-mib 1024 --wal-mib 256` on both `init-authority` and `serve`.
+  `0a088050` changes only the Java client and tests, so the `ab59dafb` jar stays
+  the peer pin and is the build in `target/`; no new jar is issued until the
+  listener or launcher changes again.
   Kimi's driver (run by follow-on agents while Kimi is away) merged `0176855`
   at milestone 17 (`add98fd6`, archive `durable-18d3ea398f09f12e`, JVM heap
   frozen at `-Xms256m -Xmx2g`) and `7585a9dc` at milestone 17b.
@@ -183,6 +187,42 @@ no longer rewrites the WAL index on every store call. Full offline run at
 6. **Cancelled-scope declaration and replay codes** aside, no other refusal
    code disagreement was found between the Java and Rust reference endpoints
    in the exercised matrix.
+7. **Oversized private-type frames (traceability D2, needs a spec call).**
+   Section 12.1 says both "Validate lengths before allocating buffers" and
+   "Private types 0xC0..0xFF require an activated defining profile; otherwise
+   refuse EXTENSION_UNSUPPORTED". The Java decoder (`Wire.Decoder`) judges the
+   declared length against the negotiated control limit before it classifies
+   the type, so a private type whose body exceeds the limit is LIMIT_EXCEEDED,
+   and only an in-limit private type is EXTENSION_UNSUPPORTED. The Rust
+   reference was not compared on this input. Propose stating the precedence:
+   "length validation precedes type classification; an over-limit body is
+   LIMIT_EXCEEDED whatever its type". If the intent is the opposite (a peer
+   probing profile support with a large private frame should learn
+   EXTENSION_UNSUPPORTED), the Java decoder changes one branch. No code change
+   until decided; `V2WireTest` will pin whichever code is chosen.
+8. **Client-side seal mismatch on checkpoint (traceability D3, needs a spec
+   call).** Section 12.8 gives the authority's answer to a checkpoint over a
+   different seal (INTEGRITY_ERROR) and requires the client to verify identity,
+   seal, count partition and commitments "before acknowledging coverage". The
+   Java client also refuses *before sending* when its journal holds verified
+   membership under another seal, with NOT_READY "sealed membership not
+   verified for this seal", so the authority's INTEGRITY_ERROR is unreachable
+   through this client for a scope it has verified. Two questions: may a client
+   refuse locally (saving a round trip that can only fail), and if so which
+   code names the local refusal (NOT_READY as today, or INTEGRITY_ERROR to
+   mirror the authority)? Until decided the Java behaviour stays; the
+   authority side is covered by `SessionStoreTest`, and
+   `DurableBranchTest`'s comment at the checkpoint call is corrected to say
+   the refusal is local.
+9. **Overflow codes (traceability D7, resolved without a spec change).**
+   Section 12.9's "Checked arithmetic overflow is LIMIT_EXCEEDED before
+   commitment" is met: every store-side deadline and capacity sum
+   (`AdmissionStore.add`, `InputStore.add`, `RetirementStore` cutoff) refuses
+   LIMIT_EXCEEDED. `Checks.sum` raising FRAME_ERROR is reached only from
+   decoding peer-supplied aggregates (`Records.Counts`, manifest output
+   totals), where a value outside the schema range is a framing violation under
+   Section 12.2. `V2WireTest` should pin FRAME_ERROR there explicitly; the
+   traceability document records the mapping.
 
 ## 5. Defects found
 
@@ -254,6 +294,23 @@ no longer rewrites the WAL index on every store call. Full offline run at
    `DurableClientControlDeadlineTest` (three cases: idle silence, a delayed
    answer inside a long wait, a withheld answer bounded and named), red on
    `1e7d25a7`.
+8. **Java client: contradicting scope page journaled before it was
+   cross-checked; parent view never checked against retained child scopes.**
+   `DurableClient.page` called `journal.observePage` and only then compared the
+   page's parent against the retained parent view, so a page contradicting a
+   validated parent admission was refused INTEGRITY_ERROR but had already become
+   a durable observation (Section 12.8: the client MUST NOT replace prior
+   validated commitments with the contradictory observation). In the other
+   order, `DurableClient.relationships` checked a view only against the scope
+   it names as its child, never against retained scopes that name the view as
+   their parent, so a parent view allocating child scope 6 was accepted after
+   scope 5 had been paged with parent = that work. Found while writing the
+   tests for S12-292 to S12-295 (traceability gap list). Fixed in `0a088050`:
+   the page is cross-checked against retained evidence before it is journaled,
+   and a view is checked against every retained scope naming it as parent
+   (`ClientJournal.childScopes`). Regression: `DurableClientContradictionTest`
+   (two tests, both orders, membership and producer contradictions), red on
+   `ab59dafb`.
 
 Kimi's milestone 17b question (2), the per-stream abort of stalled inputs
 landing between idle+10 s and lifetime+10 s instead of at the 30 s idle bound,
@@ -311,7 +368,7 @@ Three branches carry this window's work, all based on `8eb5a17` on
 | branch | tip | content |
 |---|---|---|
 | `docs/client-recovery-guidance-2026-09` | `ff901451` | spec text: client recovery guidance, MAX_STREAMS correction |
-| `agent/rfc-claude-java-v2` | `ab59dafb` (code; this document follows on the same branch) | Java V2 durable authority, listener and client |
+| `agent/rfc-claude-java-v2` | `0a088050` (code; this document follows on the same branch) | Java V2 durable authority, listener and client |
 | `agent/rfc-kimi-neutral-v2` | `73766f6a` | neutral conformance driver; contains `7585a9dc` by merge |
 
 `git merge-tree --write-tree feat/durable-work-results-v2 <branch>` reports
