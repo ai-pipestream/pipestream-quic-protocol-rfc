@@ -241,6 +241,15 @@ final class DurableServerTest {
       assertEquals(operation(2), replay.receipt().operation());
       assertEquals(
           1, assertInstanceOf(Records.Admitted.class, replay.receipt().outcome()).attempt());
+      // The redundant stream is stopped (STOP_SENDING, application error 0; Section 12.4) and
+      // released without opening an input: the transport exposes no error code to the peer, so
+      // the stop is observed as a payload write that no longer makes progress, and the release as
+      // an input count of zero while the replayed receipt is already in hand.
+      io.netty.channel.ChannelFuture late =
+          stream.writeAndFlush(io.netty.buffer.Unpooled.wrappedBuffer(new byte[] {1}));
+      assertFalse(late.await(1000) && late.isSuccess(), "replayed stream still accepts payload");
+      assertEquals(
+          0, server.snapshot().toCompletableFuture().get(5, TimeUnit.SECONDS).inputs());
       // Identical creation replays the identical binding without a new generation.
       Refusal second =
           assertInstanceOf(Refusal.class, peer.call(new Create(peer.request(), 1, POLICY)));

@@ -53,6 +53,10 @@ final class RawDurableAuthority implements AutoCloseable {
   private final Channel listener;
   final BlockingQueue<Message> received = new LinkedBlockingQueue<>();
   volatile ResultScript script = (read, stream) -> stream.shutdownOutput().sync();
+  /** Delay before answering any control the raw authority refuses by default (WATCH, ...). */
+  volatile long controlDelayMs;
+  /** Never answer controls the raw authority refuses by default; the client must bound the wait. */
+  volatile boolean withholdControls;
 
   RawDurableAuthority(
       TlsAuthentication authentication, Records.Manifest manifest, Records.Policy policy)
@@ -210,12 +214,17 @@ final class RawDurableAuthority implements AutoCloseable {
                       Wire.encode(new Detached(d.request()), selected.controlLimit())))
               .addListener(ignored -> stream.shutdownOutput());
         }
-        default ->
-            send(
-                new Refusal(
-                    new Records.RequestTag(false, ClientCorrelation.requestId(message)),
-                    ProtocolError.Code.NOT_FOUND,
-                    "raw authority"));
+        default -> {
+          if (withholdControls) return;
+          Refusal refusal =
+              new Refusal(
+                  new Records.RequestTag(false, ClientCorrelation.requestId(message)),
+                  ProtocolError.Code.NOT_FOUND,
+                  "raw authority");
+          if (controlDelayMs > 0)
+            stream.eventLoop().schedule(() -> send(refusal), controlDelayMs, TimeUnit.MILLISECONDS);
+          else send(refusal);
+        }
       }
     }
   }

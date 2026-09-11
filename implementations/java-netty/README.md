@@ -1083,6 +1083,13 @@ client for Section 12 / Appendix F, composed from the stores and services above:
 - Launchers: `V2Main` (`init-authority`, `serve`, `next-sequence`,
   `init-client`, `client <operation>`), argument-compatible with the Rust CLI
   (same journal arguments, principal map, `READY host:port`, `DRAINED`).
+  `init-authority` and `serve` accept `--db-mib MIB` and `--wal-mib MIB` (whole
+  MiB, 1 to 16384) to fund the authority's SQLite database and WAL files beyond
+  the 256 MiB / 64 MiB defaults; the same values must be repeated on every
+  `serve` of that root because the retained file policy cannot change on reopen.
+  Under the defaults, cumulative record funding refuses further declares with
+  LIMIT_EXCEEDED "SQLite file capacity exhausted" at roughly 256 entities per
+  worker in the durable-transform workload; larger scopes need larger funding.
   `FixtureMain` is the test-only fixture adapter for the neutral failure driver
   (interface-v1 events, `pause`/`drop-reply`/`kill` schedule actions, both
   roles); it is not reachable from `V2Main`.

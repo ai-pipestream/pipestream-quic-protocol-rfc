@@ -1,5 +1,6 @@
 package ai.pipestream.quic.v2;
 
+import ai.pipestream.quic.BoundedSqlite;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
@@ -79,7 +80,57 @@ public final class V2Main {
     DurableHost.Configuration defaults =
         DurableHost.Configuration.defaults(
             required(options, "authority"), required(options, "result-authority"));
-    return defaults;
+    if (!options.containsKey("db-mib") && !options.containsKey("wal-mib")) return defaults;
+    BoundedSqlite.Limits files = defaults.files();
+    files =
+        new BoundedSqlite.Limits(
+            mebibytes(options, "db-mib", files.databaseBytes()),
+            mebibytes(options, "wal-mib", files.walBytes()),
+            files.journalBytes(),
+            files.sharedMemoryBytes());
+    return new DurableHost.Configuration(
+        defaults.authority(),
+        defaults.resultAuthority(),
+        defaults.sessionLimits(),
+        defaults.maximumPolicy(),
+        defaults.maxOwners(),
+        defaults.maxSessions(),
+        defaults.maxSessionsPerOwner(),
+        files,
+        defaults.objects(),
+        defaults.maxJobs(),
+        defaults.maxJobsPerOwner(),
+        defaults.execution(),
+        defaults.scheduler(),
+        defaults.retention(),
+        defaults.results(),
+        defaults.waits(),
+        defaults.storageWorkers(),
+        defaults.producer());
+  }
+
+  /**
+   * Storage funding option in MiB, matching the Rust reference CLI ({@code --db-mib},
+   * {@code --wal-mib}): a whole number of MiB between 1 and 16384, so every value is a 64 KiB
+   * multiple within the native file guard ceiling. The same values must be given on every reopen;
+   * the retained file policy cannot change.
+   *
+   * @param options parsed options
+   * @param name option name
+   * @param fallback bytes when the option is absent
+   * @return bytes
+   */
+  static long mebibytes(Map<String, String> options, String name, long fallback) {
+    if (!options.containsKey(name)) return fallback;
+    long value;
+    try {
+      value = Long.parseLong(required(options, name));
+    } catch (NumberFormatException invalid) {
+      throw new IllegalArgumentException("--" + name + " must be a whole number of MiB", invalid);
+    }
+    if (value < 1 || value > 16384)
+      throw new IllegalArgumentException("--" + name + " must be between 1 and 16384 MiB");
+    return value << 20;
   }
 
   /**
@@ -306,10 +357,12 @@ public final class V2Main {
     List<String> lines = new ArrayList<>();
     lines.add("PipeStream V2 durable endpoints (Java/Netty)");
     lines.add("  init-authority --root DIR --authority LABEL --result-authority HOST:PORT");
+    lines.add("        [--db-mib MIB] [--wal-mib MIB]");
     lines.add("  serve --root DIR --authority LABEL --result-authority HOST:PORT --bind HOST:PORT");
     lines.add(
         "        --cert PEM --key PEM --client-ca PEM --principal-map TSV --trust-system-clock");
     lines.add("        [--allow-skip] [--ready-file PATH] [--object-limit BYTES]");
+    lines.add("        [--db-mib MIB] [--wal-mib MIB]  (must repeat the init-authority values)");
     lines.addAll(ClientCommands.usage());
     lines.add("Legacy version-1 commands remain in ai.pipestream.quic.Main.");
     for (String line : lines) System.out.println(line);

@@ -313,7 +313,17 @@ public final class DurableClient implements AutoCloseable {
       if (!authenticated) ObjectStream.before(now, started, core.handshakeTimeoutMs() * 1000000L);
       else {
         guard.requireAuthenticated();
-        ObjectStream.before(now, lastFrame, core.controlTimeoutMs() * 1000000L);
+        // Control silence alone never fails a durable connection with nothing outstanding: the
+        // authority keeps quiet durable connections too, and the transport idle timeout bounds a
+        // dead peer. A pending request is due within the control deadline after its own wait
+        // (a WATCH or CHECKPOINT may hold its response for up to 30000 ms), measured from the
+        // last activity in either direction.
+        long wait = correlation.pendingWaitMs();
+        if (wait >= 0) {
+          long elapsed = now - lastFrame;
+          if (elapsed < 0 || elapsed >= (core.controlTimeoutMs() + wait) * 1000000L)
+            throw new ProtocolError(LIMIT_EXCEEDED, "control response deadline");
+        }
         if (detachSent)
           ObjectStream.before(now, detachStart, selected.streamLifetimeMs() * 1000000L);
         if (control != null) control.writes.check(now);
@@ -485,6 +495,7 @@ public final class DurableClient implements AutoCloseable {
     long id = ClientCorrelation.requestId(request);
     byte[] frame = correlation.register(request, commitment);
     controls.put(id, new Continuation(response, result));
+    lastFrame = System.nanoTime();
     if (!control.writes.sendEncoded(
         frame,
         success -> {
