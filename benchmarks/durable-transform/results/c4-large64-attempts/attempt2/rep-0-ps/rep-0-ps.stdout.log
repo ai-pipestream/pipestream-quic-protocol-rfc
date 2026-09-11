@@ -1,0 +1,5 @@
+PKI ready in /tmp/c4-large2/rep-0-ps/work/pki (valid ~2 days, loopback only)
+INITIALIZED
+INITIALIZED
+INITIALIZED
+Error: authority refusal LIMIT_EXCEEDED: physical database capacity exhausted

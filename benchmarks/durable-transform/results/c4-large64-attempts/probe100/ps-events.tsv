@@ -1,0 +1,9 @@
+50	1789097354626	1	-1	session-open	workload-b
+51	1789097354626	0	-1	session-open	workload-a
+51	1789097354627	2	-1	session-open	workload-c
+58	1789097354633	0	-1	declared	batch 0: 100 entities
+58	1789097354634	1	-1	declared	batch 0: 100 entities
+59	1789097354635	2	-1	declared	batch 0: 100 entities
+67	1789097354642	0	-1	declared	batch 1: 100 entities
+67	1789097354642	1	-1	declared	batch 1: 100 entities
+67	1789097354643	2	-1	declared	batch 1: 100 entities

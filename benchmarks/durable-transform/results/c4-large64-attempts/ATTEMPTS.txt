@@ -1,0 +1,8 @@
+64 MiB attempts (SIZE=67108864, 1024 chunks, ~341/worker, seed 6): ladder v1 large cell, infeasible on default authority funding. NOT pooled with any cell.
+
+attempt1 (coordinator 54330cbf, single Declare per shard): all 8 ps/mixed runs exit=1 'FRAME_ERROR: oversize list' (entity_ids 341 > V2 256-entry bound; violation caught client-side pre-wire). All 4 grpc runs exit=0.
+attempt2 (coordinator b4b2ffe5, 256-entity batches, seal-last): all 8 ps/mixed runs exit=1 'authority refusal LIMIT_EXCEEDED: physical database capacity exhausted' (single 256-row transaction exceeds funded WAL/pages; conformance: 254 fails, 115 succeeds). All 4 grpc runs exit=0.
+probe100 (coordinator cf490e43, 100-entity batches): single ps probe; batches 0+1 (100 each) accepted on all 3 workers, batch 2 refused 'authority record completion capacity exhausted' (cumulative declared-entity funding ~256/worker).
+
+All 8 passing grpc 64 MiB finals sha256 b28b0b7b1f2dd65cd36c1099246147c11b5d58428eb64097e14b94ecd04d6f69 (67108864 bytes, byte-identical across attempts; bins excluded from archive, kept in /tmp/c4-large{,2} run dirs).
+Outcome: coordinator Declare batching fixed + tested (declare_plan, 4 unit tests); ladder v2 resizes large cell to 48 MiB (256/worker = measured bound).
