@@ -1,0 +1,1 @@
+F3 boundary note: scheduled PUBLICATION_COMMITTED lives in framework code past execute() return; hook fires at nearest app-visible prior commit OUTPUT_INSTALLED

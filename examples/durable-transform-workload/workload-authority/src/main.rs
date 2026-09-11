@@ -43,9 +43,19 @@ const TRANSFORM_LABEL: &str = "transform/v2";
 /// `wrong` enables a TEST-ONLY fault (negative-control runs): bytes pass
 /// through untransformed so the coordinator oracle rejects them. Never set
 /// in measured cells; every use is recorded by run-negative.sh.
+/// TEST-ONLY one-shot kill predicate, unit-tested below: with arming
+/// `kill_after > 0`, the execution that completes the kill_after-th output
+/// install fires exactly once (counts start at 1).
+fn kill_now(installed: u64, kill_after: u64) -> bool {
+    kill_after > 0 && installed == kill_after
+}
+
 struct Transform {
     wrong: bool,
     delay_ms: u64,
+    /// TEST-ONLY: abort after the kill_after-th OUTPUT_INSTALLED (0 = off).
+    kill_after: u64,
+    installed: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 impl Application for Transform {
     fn execute(&self, context: &mut WorkContext) -> std::result::Result<ApplicationOutcome, StoreError> {
@@ -81,17 +91,37 @@ impl Application for Transform {
             context.renew()?;
         }
         context.finish_output()?;
+        // TEST-ONLY F3 hook: abort at the kill_after-th OUTPUT_INSTALLED
+        // boundary (fault F3's PUBLICATION_COMMITTED lives in framework
+        // code past execute()'s return, so this is the nearest app-visible
+        // prior commit; the restart re-executes purely). One-shot: the
+        // process dies here, and the restart runs without the flag.
+        let installed = self
+            .installed
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        if kill_now(installed, self.kill_after) {
+            eprintln!(
+                "TEST-ONLY test-kill-after-output-installed: aborting after output {installed}"
+            );
+            std::process::abort();
+        }
         Ok(ApplicationOutcome::Succeeded)
     }
 }
 
-fn registry(wrong: bool, delay_ms: u64) -> Result<Arc<Applications>> {
+fn registry(wrong: bool, delay_ms: u64, kill_after: u64) -> Result<Arc<Applications>> {
     let mut apps = Applications::default();
     apps.register(
         ApplicationLabel(TRANSFORM_LABEL.into()),
         vec![Mode(0)],
         RestartSafety::Pure,
-        Arc::new(Transform { wrong, delay_ms }),
+        Arc::new(Transform {
+            wrong,
+            delay_ms,
+            kill_after,
+            installed: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }),
     )?;
     Ok(Arc::new(apps))
 }
@@ -332,6 +362,12 @@ struct Network {
     /// every use is recorded by run-slow.sh.
     #[arg(long, default_value_t = 0)]
     test_work_delay_ms: u64,
+    /// TEST-ONLY: abort the process after the Nth OUTPUT_INSTALLED commit
+    /// (boundary-armed fault F3; 0 = off). One-shot: the restart is
+    /// expected to run without this flag. Never set in measured cells;
+    /// every use is recorded by run-faults-boundary.sh.
+    #[arg(long, default_value_t = 0)]
+    test_kill_after_output_installed: u64,
 }
 
 async fn serve(storage: Storage, network: Network) -> Result<()> {
@@ -365,7 +401,11 @@ async fn serve(storage: Storage, network: Network) -> Result<()> {
         network.bind,
         security,
         authority,
-        registry(network.test_wrong_transform, network.test_work_delay_ms)?,
+        registry(
+            network.test_wrong_transform,
+            network.test_work_delay_ms,
+            network.test_kill_after_output_installed,
+        )?,
         authority::execution::ResultEndpoint::new(network.result_authority)?,
         options,
     )?;
@@ -451,5 +491,27 @@ mod funding_tests {
         assert!(physical_limits(0, 64).is_err());
         assert!(physical_limits(256, 0).is_err());
         assert!(physical_limits(u64::MAX, 64).is_err());
+    }
+}
+
+#[cfg(test)]
+mod kill_hook_tests {
+    use super::*;
+
+    #[test]
+    fn disarmed_never_fires() {
+        for installed in [0, 1, 2, u64::MAX] {
+            assert!(!kill_now(installed, 0));
+        }
+    }
+
+    #[test]
+    fn fires_exactly_once_at_armed_count() {
+        assert!(!kill_now(0, 1));
+        assert!(kill_now(1, 1));
+        assert!(!kill_now(2, 1));
+        assert!(!kill_now(2, 3));
+        assert!(kill_now(3, 3));
+        assert!(!kill_now(4, 3));
     }
 }

@@ -45,10 +45,14 @@ for i in 0 1 2; do
   "$PS_AUTH" init-authority --state-db "$W/ps-$w.sqlite" --object-dir "$W/ps-$w.obj" \
     --authority "workload-$w" --principal-map "$W/pki/ps-principals.tsv" \
     --trust-system-clock --db-mib "$PHYS_DB_MIB" --wal-mib "$PHYS_WAL_MIB"
+  # TEST-ONLY F3 arming: the commit-time kill flag lands on worker-c only.
+  KILL_C=()
+  [ "$w" = c ] && [ -n "${PS_KILL_C_AFTER_OUTPUT:-}" ] \
+    && KILL_C=(--test-kill-after-output-installed "$PS_KILL_C_AFTER_OUTPUT")
   "$PS_AUTH" serve --state-db "$W/ps-$w.sqlite" --object-dir "$W/ps-$w.obj" \
     --authority "workload-$w" --principal-map "$W/pki/ps-principals.tsv" \
     --trust-system-clock --db-mib "$PHYS_DB_MIB" --wal-mib "$PHYS_WAL_MIB" \
-    "${AUTH_FAULT[@]}" \
+    "${AUTH_FAULT[@]}" "${KILL_C[@]}" \
     --bind "127.0.0.1:$port" --cert "$W/pki/ps-server-$w.pem" \
     --key "$W/pki/ps-server-$w.key" --client-ca "$W/pki/ps-ca.pem" \
     --result-authority "localhost:$port" --ready-file "$W/ps-$w.ready" \

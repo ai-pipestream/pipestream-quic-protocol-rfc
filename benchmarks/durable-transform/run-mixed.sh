@@ -45,6 +45,8 @@ AUTH_FAULT=()
 [ -n "${PS_WORK_DELAY_MS:-}" ] && AUTH_FAULT+=(--test-work-delay-ms "$PS_WORK_DELAY_MS")
 MIXED_NO_FETCH=()
 [ "${PS_NO_FETCH:-0}" = 1 ] && MIXED_NO_FETCH+=(--test-no-fetch)
+MIXED_KILL=()
+[ "${PS_KILL_AFTER_FIRST_VERIFIED:-0}" = 1 ] && MIXED_KILL+=(--test-kill-after-first-verified)
 for i in 0 1 2; do
   w=$(printf '%s' abc | cut -c $((i + 1))); port=$((17443 + i))
   if [ "$w" = "$JWORK" ]; then
@@ -93,7 +95,7 @@ START_MS=$(ms_now)
   ${PS_SWAP_INPUTS:+--test-swap-inputs "$PS_SWAP_INPUTS"} \
   ${PS_EXECUTION_MS:+--execution-ms "$PS_EXECUTION_MS"} \
   ${PS_DROP_INPUT:+--test-drop-input "$PS_DROP_INPUT"} \
-  "${MIXED_NO_FETCH[@]}"
+  "${MIXED_NO_FETCH[@]}" "${MIXED_KILL[@]}"
 END_MS=$(ms_now)
 # Contract §6 negative controls: a dead metric collector or missing
 # per-worker samples fails the run instead of passing silently.
