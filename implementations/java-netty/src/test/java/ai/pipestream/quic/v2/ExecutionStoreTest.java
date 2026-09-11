@@ -193,6 +193,50 @@ final class ExecutionStoreTest {
     }
   }
 
+  /**
+   * Section 12.6: acquisition MUST NOT commit a replacement lease that is already expired at the
+   * final time observation. The store authorizes three times (load, the pre-transition refresh,
+   * and the commit); the lease is computed after the second (1100 + 100 = 1200, inside the 2000
+   * deadline) and the third moves the clock to 1250, past the lease but before the deadline, so
+   * the only guard that can fire is the expired-lease one, and nothing is committed.
+   */
+  @Test
+  void newLeaseAlreadyExpiredAtCommitIsConflictAndCommitsNothing() throws Exception {
+    Fixture fixture = fixture("expired-at-commit", 0);
+    try (InputStore inputs = fixture.inputs()) {
+      assertNotNull(inputs.identity());
+      AtomicLong now = new AtomicLong(1100);
+      AtomicInteger checks = new AtomicInteger();
+      AdmissionStore.Authorization advance =
+          (binding, parameters) -> {
+            if (checks.incrementAndGet() == 3) now.set(1250);
+          };
+      ProtocolError refused =
+          assertThrows(
+              ProtocolError.class,
+              () ->
+                  fixture
+                      .sessions()
+                      .claimExecution(
+                          execAccess(),
+                          1,
+                          WORK,
+                          fixture.inputs(),
+                          100,
+                          () -> new AdmissionStore.Time(now.get(), true),
+                          advance));
+      assertEquals(ProtocolError.Code.CONFLICT, refused.code(), refused.toString());
+      assertTrue(refused.getMessage().endsWith("new worker lease expired before commit"), refused.toString());
+      assertEquals(0, job(fixture).record().lease(), "expired lease was committed");
+      assertEquals(Records.State.ACTIVE, view(fixture).state());
+      // The same claim with a clock that stays put succeeds, so the refusal was the time, not
+      // the fixture.
+      ExecutionStore.Lease lease = claim(fixture, 1100, 100);
+      assertEquals(1, lease.attempt());
+      assertEquals(1200, lease.until());
+    }
+  }
+
   @Test
   void deadlineExpirySettlesLocallyAndTerminalReobservationNeedsNoFreshClock() throws Exception {
     Fixture fixture = fixture("expiry", 0);
