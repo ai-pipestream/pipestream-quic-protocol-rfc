@@ -1,0 +1,16 @@
+23	1789124135807	2	-1	session-open	workload-c
+23	1789124135807	0	-1	session-open	workload-a
+23	1789124135807	1	-1	session-open	workload-b
+37	1789124135821	0	0	admitted	
+40	1789124135823	1	1	admitted	
+40	1789124135823	1	-1	consumer-stopped	admitted, not fetching
+40	1789124135823	1	-1	commits	1 chunks
+40	1789124135823	1	-1	session-close	
+45	1789124135829	2	2	admitted	
+45	1789124135829	2	-1	consumer-stopped	admitted, not fetching
+45	1789124135829	2	-1	commits	1 chunks
+45	1789124135829	2	-1	session-close	
+50	1789124135834	0	3	admitted	
+50	1789124135834	0	-1	consumer-stopped	admitted, not fetching
+50	1789124135834	0	-1	commits	2 chunks
+50	1789124135834	0	-1	session-close	

@@ -289,6 +289,17 @@ struct Run {
     /// consumer arm). Arrival rows exist, completion rows must not.
     #[arg(long, default_value_t = false)]
     test_no_fetch: bool,
+    /// TEST-ONLY: after admitting everything, hold the consumer still for
+    /// this many ms (stopped-consumer arm) before fetching. The stall
+    /// interval is logged; authorities hold the results meanwhile.
+    #[arg(long, default_value_t = 0)]
+    test_fetch_delay_ms: u64,
+    /// TEST-ONLY: after selecting an output, stall this many ms before the
+    /// first read (stalled-read probe). Whatever the peer does to the
+    /// stalled stream (refusal detail or quiet patience) is logged
+    /// verbatim in the event stream.
+    #[arg(long, default_value_t = 0)]
+    test_stall_read_ms: u64,
 }
 
 struct Session {
@@ -509,6 +520,7 @@ async fn fetch_verified(
     ordinal: u64,
     attempt: Id,
     staging: &Path,
+    stall_read_ms: u64,
     first_usable: &mut bool,
 ) -> Result<()> {
     let key = work_key(ordinal);
@@ -522,10 +534,20 @@ async fn fetch_verified(
         std::fs::remove_file(&path)?;
     }
     session.client.select_output(key.clone(), attempt, OutputIndex(0)).await?;
+    if stall_read_ms > 0 {
+        session.log(
+            "stalled-read",
+            ordinal as i64,
+            &format!("selected, holding first read {stall_read_ms} ms"),
+        );
+        eprintln!("TEST-ONLY test-stall-read-ms: holding first read {stall_read_ms} ms");
+        tokio::time::sleep(std::time::Duration::from_millis(stall_read_ms)).await;
+    }
     let saved = session
         .client
         .read_output(key, attempt, OutputIndex(0))
-        .await?
+        .await
+        .map_err(|e| anyhow::anyhow!("stalled read ordinal {ordinal}: {e}"))?
         .save_to(path.clone(), OBJECT_LIMIT)
         .await?;
     let _ = saved;
@@ -700,11 +722,27 @@ async fn run_session(
         eprintln!("TEST-ONLY test-no-fetch: admitted, not fetching");
         return Ok(());
     }
+    // TEST-ONLY stopped consumer: everything is admitted and the
+    // authorities hold the results; hold still for the stated interval
+    // (logged) before the first fetch, then complete normally.
+    if run.test_fetch_delay_ms > 0 {
+        session.log(
+            "consumer-stopped",
+            -1,
+            &format!("admitted, holding fetch {} ms", run.test_fetch_delay_ms),
+        );
+        eprintln!(
+            "TEST-ONLY test-fetch-delay-ms: admitted, holding fetch {} ms",
+            run.test_fetch_delay_ms
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(run.test_fetch_delay_ms)).await;
+        session.log("consumer-resumed", -1, "fetching after hold");
+    }
     let mut first_usable = false;
     for &ordinal in &ordinals {
         let (attempt, _) = watch_terminal(&session, ordinal).await?;
         session.log("succeeded", ordinal as i64, &format!("attempt {}", attempt.0));
-        fetch_verified(&session, seed, total, ordinal, attempt, staging, &mut first_usable).await?;
+        fetch_verified(&session, seed, total, ordinal, attempt, staging, run.test_stall_read_ms, &mut first_usable).await?;
         // TEST-ONLY F4 hook: abort at the first RESULT_VERIFIED boundary.
         // The chunk-verified row above proves the boundary was reached.
         // One-shot via sentinel so the --resume restart proceeds past it.
@@ -1266,6 +1304,8 @@ async fn main() -> Result<()> {
             test_drop_input: None,
             test_kill_after_first_verified: run.test_kill_after_first_verified,
             test_no_fetch: run.test_no_fetch,
+            test_fetch_delay_ms: run.test_fetch_delay_ms,
+            test_stall_read_ms: run.test_stall_read_ms,
         };
         handles.push(tokio::spawn(async move {
             let staging = run.staging.clone();
@@ -1278,6 +1318,12 @@ async fn main() -> Result<()> {
     }
     for handle in handles {
         handle.await??;
+    }
+    // TEST-ONLY stopped consumer: arrivals exist but nothing was fetched;
+    // refuse final assembly with a named reason instead of crashing on
+    // absent staged outputs.
+    if run.test_no_fetch {
+        bail!("TEST-ONLY test-no-fetch: admitted without fetching; refusing final assembly");
     }
     assemble_final(run.seed, run.size, &staging, &run.output, &run.events).await?;
     Ok(())

@@ -32,6 +32,9 @@ AUTH_FAULT=()
 [ -n "${PS_WORK_DELAY_MS:-}" ] && AUTH_FAULT+=(--test-work-delay-ms "$PS_WORK_DELAY_MS")
 COORD_NOFETCH=()
 [ "${PS_NO_FETCH:-0}" = 1 ] && COORD_NOFETCH+=(--test-no-fetch)
+COORD_STOP=()
+[ -n "${PS_FETCH_DELAY_MS:-}" ] && COORD_STOP+=(--test-fetch-delay-ms "$PS_FETCH_DELAY_MS")
+[ -n "${PS_STALL_READ_MS:-}" ] && COORD_STOP+=(--test-stall-read-ms "$PS_STALL_READ_MS")
 COORD_KILL=()
 [ "${PS_KILL_AFTER_FIRST_VERIFIED:-0}" = 1 ] && COORD_KILL+=(--test-kill-after-first-verified)
 COORD_SWAP=()
@@ -49,10 +52,14 @@ for i in 0 1 2; do
   KILL_C=()
   [ "$w" = c ] && [ -n "${PS_KILL_C_AFTER_OUTPUT:-}" ] \
     && KILL_C=(--test-kill-after-output-installed "$PS_KILL_C_AFTER_OUTPUT")
+  # TEST-ONLY slow worker: per-chunk work delay lands on worker-c only.
+  DELAY_C=()
+  [ "$w" = c ] && [ -n "${PS_WORK_DELAY_C_MS:-}" ] \
+    && DELAY_C=(--test-work-delay-ms "$PS_WORK_DELAY_C_MS")
   "$PS_AUTH" serve --state-db "$W/ps-$w.sqlite" --object-dir "$W/ps-$w.obj" \
     --authority "workload-$w" --principal-map "$W/pki/ps-principals.tsv" \
     --trust-system-clock --db-mib "$PHYS_DB_MIB" --wal-mib "$PHYS_WAL_MIB" \
-    "${AUTH_FAULT[@]}" "${KILL_C[@]}" \
+    "${AUTH_FAULT[@]}" "${KILL_C[@]}" "${DELAY_C[@]}" \
     --bind "127.0.0.1:$port" --cert "$W/pki/ps-server-$w.pem" \
     --key "$W/pki/ps-server-$w.key" --client-ca "$W/pki/ps-ca.pem" \
     --result-authority "localhost:$port" --ready-file "$W/ps-$w.ready" \
@@ -74,7 +81,7 @@ START_MS=$(ms_now)
   --connect-a 127.0.0.1:17443 --connect-b 127.0.0.1:17444 --connect-c 127.0.0.1:17445 \
   --seed "$SEED" --size "$SIZE" --staging "$W/ps-staging" \
   --output "$ART/ps-final.bin" --events "$ART/ps-events.tsv" \
-  "${COORD_SWAP[@]}" "${COORD_EXEC[@]}" "${COORD_DROP[@]}" "${COORD_NOFETCH[@]}" "${COORD_KILL[@]}"
+  "${COORD_SWAP[@]}" "${COORD_EXEC[@]}" "${COORD_DROP[@]}" "${COORD_NOFETCH[@]}" "${COORD_KILL[@]}" "${COORD_STOP[@]}"
 END_MS=$(ms_now)
 # Contract §6 negative controls: a dead metric collector or missing
 # per-worker samples fails the run instead of passing silently.

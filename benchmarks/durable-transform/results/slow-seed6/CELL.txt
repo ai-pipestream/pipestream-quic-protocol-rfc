@@ -1,0 +1,28 @@
+cell: slow worker (seed 6, 200000 bytes, 4 chunks; runner run-slow.sh;
+worker-c owns ordinal 2 and alone carries the FLAG-armed per-chunk work
+delay: --test-work-delay-ms on worker-c only via PS_/GRPC_WORK_DELAY_C_MS).
+binaries: see ../slow-seed6.bin.sha256.
+result: PASS. Per arm: 1 positive twin PASS (pin holds, calibrates pace)
++ 5 slow reps PASS (first-usable-output + final-verified, pin-exact,
+no timeouts, slow chunk verified exactly once, no attempt-2 on ps).
+calibration: delay = 10x positive-twin median per-chunk latency, floored
+at 1000 ms, capped at 5000 ms (>=12x below the 60 s execution deadline).
+ps: median 200 ms -> delay 2000 ms. grpc: median 30 ms -> delay 1000 ms.
+Stall-window asymmetry (honest, structural): ps admits async, so the
+authority-side stall lands between admitted and verified; grpc submits
+synchronously, so the worker-side stall lands before admitted. The runner
+measures each arm in its own window (see script comment); tolerance
+50 ms stated for rel-ms truncation + worker phasing.
+ps reps (delay 2000): slow chunk 2320,2357,2318,2318,2327 ms; walls
+2778,2806,2810,2768,2767 vs pos 773. Exposed ~= delay (nothing hidden:
+the slow chunk sits on the critical path to closure).
+grpc reps (delay 1000): slow chunk 1002,1002,1002,995,1001 ms; walls
+1065,1064,1063,1059,1061 vs pos 108. Exposed ~= 955 ms, ~45 ms hidden
+in overlap with the other shards.
+how much slowdown each arm hides: essentially none on this cell -- both
+arms expose ~all of the injected stall. No re-streaming or re-execution
+observed on either arm (single verified row, attempt 1); the brief's
+"retains per-entity progress / re-streams" distinction is not exercised
+by a below-deadline slow worker that never triggers recovery.
+state DBs, key material, staging, worker logs excluded (reproducible from
+seed 6 + runner); artifacts + stdout logs + calibration table archived.

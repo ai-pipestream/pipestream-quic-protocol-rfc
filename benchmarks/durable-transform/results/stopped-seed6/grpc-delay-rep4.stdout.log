@@ -1,0 +1,5 @@
+PKI ready in benchmarks/durable-transform/results/stopped-seed6/grpc-delay-rep4/work/pki (valid ~2 days, loopback only)
+TEST-ONLY test-fetch-delay-ms: admitted, holding fetch 5000 ms
+TEST-ONLY test-fetch-delay-ms: admitted, holding fetch 5000 ms
+TEST-ONLY test-fetch-delay-ms: admitted, holding fetch 5000 ms
+gRPC arm done in 5399 ms

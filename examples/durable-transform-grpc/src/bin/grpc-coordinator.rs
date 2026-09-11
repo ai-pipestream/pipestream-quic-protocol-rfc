@@ -83,6 +83,16 @@ struct Run {
     /// consumer arm). Arrival rows exist, completion rows must not.
     #[arg(long, default_value_t = false)]
     test_no_fetch: bool,
+    /// TEST-ONLY: after admitting everything, hold the consumer still for
+    /// this many ms (stopped-consumer arm) before fetching. The stall
+    /// interval is logged; workers hold the results meanwhile.
+    #[arg(long, default_value_t = 0)]
+    test_fetch_delay_ms: u64,
+    /// TEST-ONLY: after the first stream message arrives, stall this many
+    /// ms mid-drain before reading on (stalled-read probe). Whatever the
+    /// peer does to the stalled stream is logged verbatim.
+    #[arg(long, default_value_t = 0)]
+    test_stall_read_ms: u64,
 }
 
 /// TEST-ONLY: parse an "A:B" ordinal pair with distinct ordinals.
@@ -233,6 +243,8 @@ async fn fetch_output(
     op: [u8; 16],
     manifest: &proto::OutputManifest,
     staging: &Path,
+    stall_read_ms: u64,
+    log_ctx: (&Path, Instant, i64),
 ) -> Result<()> {
     let path = out_path(staging, ordinal);
     let mut stream = client
@@ -254,11 +266,34 @@ async fn fetch_output(
     let mut hasher = Sha256::new();
     let mut len: u64 = 0;
     let mut fin = false;
+    let mut first = true;
     while let Some(chunk) = stream
         .message()
         .await
         .map_err(|e| anyhow::anyhow!("stream ordinal {ordinal}: {e}"))?
     {
+        // TEST-ONLY stalled-read probe: the stream is open and the first
+        // message has arrived; hold the drain still, then read on.
+        // Whatever the peer does is logged verbatim (here and in any
+        // error the drain returns below).
+        if first {
+            first = false;
+            if stall_read_ms > 0 {
+                let (events, started, worker) = log_ctx;
+                log(
+                    events,
+                    started,
+                    worker,
+                    ordinal as i64,
+                    "stalled-read",
+                    &format!("stream open, holding drain {stall_read_ms} ms"),
+                );
+                eprintln!(
+                    "TEST-ONLY test-stall-read-ms: holding drain {stall_read_ms} ms"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(stall_read_ms)).await;
+            }
+        }
         file.write_all(&chunk.content)?;
         hasher.update(&chunk.content);
         len += chunk.content.len() as u64;
@@ -367,10 +402,25 @@ async fn run_worker(
                 rusqlite::params![op.as_slice(), reply.params_digest, COMMITTED, wall_ms() as i64],
             )?;
             log(&run.events, started, worker as i64, ordinal as i64, "admitted", "");
-            if run.test_no_fetch {
-                continue;
-            }
+        } // if known != COMMITTED
+        } // for &ordinal (admit phase)
+        // Fetch phase over the same ordinals (admit phase above is
+        // complete for this worker). Skipped for stopped-consumer.
+        if run.test_no_fetch {
+            log(&run.events, started, worker as i64, -1, "consumer-stopped", "admitted, not fetching");
+        } else {
+        // TEST-ONLY stopped consumer: everything is admitted and the
+        // workers hold the results; hold still the stated interval
+        // (logged) before the first fetch, then complete normally.
+        if run.test_fetch_delay_ms > 0 {
+            log(&run.events, started, worker as i64, -1, "consumer-stopped", &format!("admitted, holding fetch {} ms", run.test_fetch_delay_ms));
+            eprintln!("TEST-ONLY test-fetch-delay-ms: admitted, holding fetch {} ms", run.test_fetch_delay_ms);
+            tokio::time::sleep(std::time::Duration::from_millis(run.test_fetch_delay_ms)).await;
+            log(&run.events, started, worker as i64, -1, "consumer-resumed", "fetching after hold");
         }
+        for &ordinal in &ordinals {
+        let op = operation_id(seed, worker, "submit", ordinal);
+        let expected = expected_chunk(seed, total, ordinal);
         let manifest = wait_manifest(
             &mut client, authority, &run.owner, run.generation, ordinal, op,
             wall_ms() + run.execution_ms + 30_000,
@@ -379,7 +429,7 @@ async fn run_worker(
         if manifest.output_sha256.is_empty() {
             bail!("empty manifest commitment");
         }
-        fetch_output(&mut client, authority, &run.owner, run.generation, ordinal, op, &manifest, staging).await?;
+        fetch_output(&mut client, authority, &run.owner, run.generation, ordinal, op, &manifest, staging, run.test_stall_read_ms, (&run.events, started, worker as i64)).await?;
         let bytes = std::fs::read(out_path(staging, ordinal))?;
         if bytes != expected {
             bail!("chunk {ordinal} failed oracle byte verification");
@@ -389,10 +439,8 @@ async fn run_worker(
             log(&run.events, started, worker as i64, ordinal as i64, "first-usable-output", "");
         }
         log(&run.events, started, worker as i64, ordinal as i64, "chunk-verified", "");
-    }
-    if run.test_no_fetch {
-        log(&run.events, started, worker as i64, -1, "consumer-stopped", "admitted, not fetching");
-    }
+        } // for &ordinal (fetch phase)
+        } // else (not stopped)
     // One SQLite txn commit per submitted chunk plus one output fsync each;
     // the count below is measured evidence for the fsync accounting.
     log(&run.events, started, worker as i64, -1, "commits", &format!("{} chunks", ordinals.len()));
@@ -458,8 +506,8 @@ async fn main() -> Result<()> {
             key: run.tls.key.clone(),
             server_name: run.tls.server_name.clone(),
         };
-        let (seed, size, generation, execution_ms, resume, test_no_fetch) =
-            (run.seed, run.size, run.generation, run.execution_ms, run.resume, run.test_no_fetch);
+        let (seed, size, generation, execution_ms, resume, test_no_fetch, test_fetch_delay_ms, test_stall_read_ms) =
+            (run.seed, run.size, run.generation, run.execution_ms, run.resume, run.test_no_fetch, run.test_fetch_delay_ms, run.test_stall_read_ms);
         let swap_inputs = run.test_swap_inputs.clone();
         handles.push(tokio::spawn(async move {
             let run = Run {
@@ -483,12 +531,20 @@ async fn main() -> Result<()> {
                 test_swap_inputs: swap_inputs.clone(),
                 test_drop_input: run.test_drop_input,
                 test_no_fetch,
+                test_fetch_delay_ms,
+                test_stall_read_ms,
             };
             run_worker(&run, db, worker, &authority, &endpoint, seed, size, &staging, started).await
         }));
     }
     for handle in handles {
         handle.await??;
+    }
+    // TEST-ONLY stopped consumer: arrivals exist but nothing was fetched;
+    // refuse final assembly with a named reason instead of crashing on
+    // absent staged outputs.
+    if run.test_no_fetch {
+        bail!("TEST-ONLY test-no-fetch: admitted without fetching; refusing final assembly");
     }
     // Ordered, fsynced final assembly behind the oracle digest gate.
     let tmp = run.output.with_extension("partial");

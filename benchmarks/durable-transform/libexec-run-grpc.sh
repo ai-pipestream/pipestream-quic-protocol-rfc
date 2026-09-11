@@ -29,11 +29,15 @@ WORKER_RETENTION=()
 [ -n "${GRPC_RETENTION_MS:-}" ] && WORKER_RETENTION+=(--output-retention-ms "$GRPC_RETENTION_MS")
 for i in 0 1 2; do
   w=$(printf '%s' abc | cut -c $((i + 1))); port=$((18443 + i))
+  # TEST-ONLY slow worker: per-chunk work delay lands on worker-c only.
+  DELAY_C=()
+  [ "$w" = c ] && [ -n "${GRPC_WORK_DELAY_C_MS:-}" ] \
+    && DELAY_C=(--test-work-delay-ms "$GRPC_WORK_DELAY_C_MS")
   "$GRPC_WORKER" --bind "127.0.0.1:$port" --cert "$W/pki/grpc-server-$w.pem" \
     --key "$W/pki/grpc-server-$w.key" --client-ca "$W/pki/grpc-ca.pem" \
     --principal-map "$W/pki/grpc-principals.tsv" --authority "workload-$w" \
     --db "$W/grpc-$w.sqlite" --object-dir "$W/grpc-$w.obj" \
-    "${WORKER_FAULT[@]}" "${WORKER_RETENTION[@]}" \
+    "${WORKER_FAULT[@]}" "${WORKER_RETENTION[@]}" "${DELAY_C[@]}" \
     --ready-file "$W/grpc-$w.ready" > "$W/grpc-$w.log" 2>&1 &
   PIDS="$PIDS $!"
 done
@@ -52,13 +56,16 @@ COORD_DROP=()
 [ -n "${GRPC_DROP_INPUT:-}" ] && COORD_DROP+=(--test-drop-input "$GRPC_DROP_INPUT")
 COORD_NOFETCH=()
 [ "${GRPC_NO_FETCH:-0}" = 1 ] && COORD_NOFETCH+=(--test-no-fetch)
+COORD_STOP=()
+[ -n "${GRPC_FETCH_DELAY_MS:-}" ] && COORD_STOP+=(--test-fetch-delay-ms "$GRPC_FETCH_DELAY_MS")
+[ -n "${GRPC_STALL_READ_MS:-}" ] && COORD_STOP+=(--test-stall-read-ms "$GRPC_STALL_READ_MS")
 "$GRPC_COORD" run --ca "$W/pki/grpc-ca.pem" --cert "$W/pki/grpc-client.pem" \
   --key "$W/pki/grpc-client.key" --owner workload --db "$W/grpc-coord.sqlite" \
   --endpoint-a https://127.0.0.1:18443 --endpoint-b https://127.0.0.1:18444 \
   --endpoint-c https://127.0.0.1:18445 \
   --seed "$SEED" --size "$SIZE" --staging "$W/grpc-staging" \
   --output "$ART/grpc-final.bin" --events "$ART/grpc-events.tsv" \
-  "${COORD_SWAP[@]}" "${COORD_DROP[@]}" "${COORD_NOFETCH[@]}"
+  "${COORD_SWAP[@]}" "${COORD_DROP[@]}" "${COORD_NOFETCH[@]}" "${COORD_STOP[@]}"
 END_MS=$(ms_now)
 # Contract §6 negative controls: a dead metric collector or missing
 # per-worker samples fails the run instead of passing silently.
