@@ -39,6 +39,12 @@ PHYS_WAL_MIB="${PS_PHYS_WAL_MIB:-64}"
 # --db-mib/--wal-mib since Claude ab59dafb; defaults match too).
 JAVA_DB_MIB="${JAVA_PHYS_DB_MIB:-256}"
 JAVA_WAL_MIB="${JAVA_PHYS_WAL_MIB:-64}"
+# TEST-ONLY negative-control plumbing for the Rust workers.
+AUTH_FAULT=()
+[ "${PS_TEST_WRONG_TRANSFORM:-0}" = 1 ] && AUTH_FAULT+=(--test-wrong-transform)
+[ -n "${PS_WORK_DELAY_MS:-}" ] && AUTH_FAULT+=(--test-work-delay-ms "$PS_WORK_DELAY_MS")
+MIXED_NO_FETCH=()
+[ "${PS_NO_FETCH:-0}" = 1 ] && MIXED_NO_FETCH+=(--test-no-fetch)
 for i in 0 1 2; do
   w=$(printf '%s' abc | cut -c $((i + 1))); port=$((17443 + i))
   if [ "$w" = "$JWORK" ]; then
@@ -61,6 +67,7 @@ for i in 0 1 2; do
     "$PS_AUTH" serve --state-db "$W/ps-$w.sqlite" --object-dir "$W/ps-$w.obj" \
       --authority "workload-$w" --principal-map "$W/pki/ps-principals.tsv" \
       --trust-system-clock --db-mib "$PHYS_DB_MIB" --wal-mib "$PHYS_WAL_MIB" \
+      "${AUTH_FAULT[@]}" \
       --bind "127.0.0.1:$port" --cert "$W/pki/ps-server-$w.pem" \
       --key "$W/pki/ps-server-$w.key" --client-ca "$W/pki/ps-ca.pem" \
       --result-authority "localhost:$port" --ready-file "$W/ps-$w.ready" \
@@ -82,7 +89,11 @@ START_MS=$(ms_now)
   --journal-a "$W/ps-j0.sqlite" --journal-b "$W/ps-j1.sqlite" --journal-c "$W/ps-j2.sqlite" \
   --connect-a 127.0.0.1:17443 --connect-b 127.0.0.1:17444 --connect-c 127.0.0.1:17445 \
   --seed "$SEED" --size "$SIZE" --staging "$W/ps-staging" \
-  --output "$ART/mixed-final.bin" --events "$ART/mixed-events.tsv"
+  --output "$ART/mixed-final.bin" --events "$ART/mixed-events.tsv" \
+  ${PS_SWAP_INPUTS:+--test-swap-inputs "$PS_SWAP_INPUTS"} \
+  ${PS_EXECUTION_MS:+--execution-ms "$PS_EXECUTION_MS"} \
+  ${PS_DROP_INPUT:+--test-drop-input "$PS_DROP_INPUT"} \
+  "${MIXED_NO_FETCH[@]}"
 END_MS=$(ms_now)
 # Contract §6 negative controls: a dead metric collector or missing
 # per-worker samples fails the run instead of passing silently.

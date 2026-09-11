@@ -138,6 +138,21 @@ mod declare_tests {
     }
 
     #[test]
+    fn swap_inputs_exchanges_files() {
+        let dir = std::env::temp_dir().join("swap-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("chunk-000000.bin"), b"aaaa").unwrap();
+        std::fs::write(dir.join("chunk-000001.bin"), b"bbbb").unwrap();
+        assert_eq!(swap_inputs(&dir, "0:1").unwrap(), (0, 1));
+        assert_eq!(std::fs::read(dir.join("chunk-000000.bin")).unwrap(), b"bbbb");
+        assert_eq!(std::fs::read(dir.join("chunk-000001.bin")).unwrap(), b"aaaa");
+        assert!(swap_inputs(&dir, "0:0").is_err());
+        assert!(swap_inputs(&dir, "0:9").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn oversize_shard_walks_pages_in_order() {
         let ids: Vec<u64> = (1..=300).collect();
         assert_eq!(cursors(&ids), vec![0, 256]);
@@ -257,6 +272,23 @@ struct Run {
     /// Resume an interrupted run instead of starting fresh.
     #[arg(long, default_value_t = false)]
     resume: bool,
+    /// TEST-ONLY: swap two materialized input chunk files ("A:B") so the
+    /// run uploads them in swapped order (negative-control runs).
+    #[arg(long)]
+    test_swap_inputs: Option<String>,
+    /// TEST-ONLY: remove materialized input chunk N after generation so
+    /// the upload fails on a missing chunk (negative-control runs).
+    #[arg(long)]
+    test_drop_input: Option<u64>,
+    /// TEST-ONLY: abort the process right after the first verified result
+    /// (RESULT_VERIFIED boundary, fault F4). One-shot via a sentinel file
+    /// in staging, so the --resume restart proceeds past it.
+    #[arg(long, default_value_t = false)]
+    test_kill_after_first_verified: bool,
+    /// TEST-ONLY: admit all chunks then stop without fetching (stopped
+    /// consumer arm). Arrival rows exist, completion rows must not.
+    #[arg(long, default_value_t = false)]
+    test_no_fetch: bool,
 }
 
 struct Session {
@@ -662,12 +694,28 @@ async fn run_session(
         .await?;
         session.log("admitted", ordinal as i64, "");
     }
-    // Watch, fetch, and verify each chunk.
+    // Watch, fetch, and verify each chunk (skipped for stopped-consumer).
+    if run.test_no_fetch {
+        session.log("consumer-stopped", -1, "admitted, not fetching");
+        eprintln!("TEST-ONLY test-no-fetch: admitted, not fetching");
+        return Ok(());
+    }
     let mut first_usable = false;
     for &ordinal in &ordinals {
         let (attempt, _) = watch_terminal(&session, ordinal).await?;
         session.log("succeeded", ordinal as i64, &format!("attempt {}", attempt.0));
         fetch_verified(&session, seed, total, ordinal, attempt, staging, &mut first_usable).await?;
+        // TEST-ONLY F4 hook: abort at the first RESULT_VERIFIED boundary.
+        // The chunk-verified row above proves the boundary was reached.
+        // One-shot via sentinel so the --resume restart proceeds past it.
+        if run.test_kill_after_first_verified {
+            let sentinel = staging.join("kill-f4-fired");
+            if !sentinel.exists() {
+                std::fs::write(&sentinel, b"fired")?;
+                eprintln!("TEST-ONLY test-kill-after-first-verified: aborting");
+                std::process::abort();
+            }
+        }
     }
     // Checkpoint the sealed root scope, then assert durable completion.
     // Membership is observed page by page: one 256-member page cannot
@@ -770,6 +818,27 @@ fn materialize_chunks(seed: u64, total: u64, staging: &Path) -> Result<()> {
     }
     sync_dir(staging)?;
     Ok(())
+}
+
+/// TEST-ONLY: swap two materialized input files ("A:B") so the run uploads
+/// them in swapped order. Both files must exist and differ.
+fn swap_inputs(staging: &Path, spec: &str) -> Result<(u64, u64)> {
+    let (a, b) = spec.split_once(':').context("test-swap-inputs needs A:B")?;
+    let (a, b): (u64, u64) = (a.parse().context("bad swap A")?, b.parse().context("bad swap B")?);
+    if a == b {
+        bail!("test-swap-inputs needs distinct ordinals");
+    }
+    let pa = chunk_path(staging, a);
+    let pb = chunk_path(staging, b);
+    let ba = std::fs::read(&pa).with_context(|| format!("swap input {a} missing"))?;
+    let bb = std::fs::read(&pb).with_context(|| format!("swap input {b} missing"))?;
+    if ba == bb {
+        bail!("test-swap-inputs needs inputs that differ");
+    }
+    std::fs::write(&pa, &bb)?;
+    std::fs::write(&pb, &ba)?;
+    sync_dir(staging)?;
+    Ok((a, b))
 }
 
 async fn assemble_final(seed: u64, total: u64, staging: &Path, output: &Path, events: &Path) -> Result<()> {
@@ -1147,6 +1216,17 @@ async fn main() -> Result<()> {
     let started = Instant::now();
     let staging = run.staging.clone();
     materialize_chunks(run.seed, run.size, &staging)?;
+    if let Some(spec) = &run.test_swap_inputs {
+        let (a, b) = swap_inputs(&staging, spec)?;
+        eprintln!("TEST-ONLY test-swap-inputs enabled: chunk {a} and {b} exchanged");
+    }
+    if let Some(n) = run.test_drop_input {
+        let path = chunk_path(&staging, n);
+        std::fs::remove_file(&path)
+            .with_context(|| format!("test-drop-input chunk {n} missing already"))?;
+        sync_dir(&staging)?;
+        eprintln!("TEST-ONLY test-drop-input enabled: chunk {n} removed");
+    }
     let workers = [
         (0u64, run.authority_a.clone(), run.connect_a, run.journal_a.clone(), run.creation_a),
         (1u64, run.authority_b.clone(), run.connect_b, run.journal_b.clone(), run.creation_b),
@@ -1182,6 +1262,10 @@ async fn main() -> Result<()> {
             events: run.events.clone(),
             execution_ms: run.execution_ms,
             resume: run.resume,
+            test_swap_inputs: None,
+            test_drop_input: None,
+            test_kill_after_first_verified: run.test_kill_after_first_verified,
+            test_no_fetch: run.test_no_fetch,
         };
         handles.push(tokio::spawn(async move {
             let staging = run.staging.clone();

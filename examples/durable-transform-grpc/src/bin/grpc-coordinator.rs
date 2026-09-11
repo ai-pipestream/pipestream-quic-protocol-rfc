@@ -71,6 +71,38 @@ struct Run {
     execution_ms: u64,
     #[arg(long, default_value_t = false)]
     resume: bool,
+    /// TEST-ONLY: swap two materialized input chunk files ("A:B") so the
+    /// run uploads them in swapped order (negative-control runs).
+    #[arg(long)]
+    test_swap_inputs: Option<String>,
+    /// TEST-ONLY: remove materialized input chunk N after generation so
+    /// the upload fails on a missing chunk (negative-control runs).
+    #[arg(long)]
+    test_drop_input: Option<u64>,
+    /// TEST-ONLY: admit all chunks then stop without fetching (stopped
+    /// consumer arm). Arrival rows exist, completion rows must not.
+    #[arg(long, default_value_t = false)]
+    test_no_fetch: bool,
+}
+
+/// TEST-ONLY: swap two materialized input files ("A:B"). Both must exist
+/// and differ.
+fn swap_inputs(staging: &Path, spec: &str) -> Result<(u64, u64)> {
+    let (a, b) = spec.split_once(':').context("test-swap-inputs needs A:B")?;
+    let (a, b): (u64, u64) = (a.parse().context("bad swap A")?, b.parse().context("bad swap B")?);
+    if a == b {
+        bail!("test-swap-inputs needs distinct ordinals");
+    }
+    let pa = chunk_path(staging, a);
+    let pb = chunk_path(staging, b);
+    let ba = std::fs::read(&pa).with_context(|| format!("swap input {a} missing"))?;
+    let bb = std::fs::read(&pb).with_context(|| format!("swap input {b} missing"))?;
+    if ba == bb {
+        bail!("test-swap-inputs needs inputs that differ");
+    }
+    std::fs::write(&pa, &bb)?;
+    std::fs::write(&pb, &ba)?;
+    Ok((a, b))
 }
 
 type Client = proto::transform_worker_client::TransformWorkerClient<Channel>;
@@ -327,6 +359,9 @@ async fn run_worker(
                 rusqlite::params![op.as_slice(), reply.params_digest, COMMITTED, wall_ms() as i64],
             )?;
             log(&run.events, started, worker as i64, ordinal as i64, "admitted", "");
+            if run.test_no_fetch {
+                continue;
+            }
         }
         let manifest = wait_manifest(
             &mut client, authority, &run.owner, run.generation, ordinal, op,
@@ -346,6 +381,9 @@ async fn run_worker(
             log(&run.events, started, worker as i64, ordinal as i64, "first-usable-output", "");
         }
         log(&run.events, started, worker as i64, ordinal as i64, "chunk-verified", "");
+    }
+    if run.test_no_fetch {
+        log(&run.events, started, worker as i64, -1, "consumer-stopped", "admitted, not fetching");
     }
     // One SQLite txn commit per submitted chunk plus one output fsync each;
     // the count below is measured evidence for the fsync accounting.
@@ -379,6 +417,16 @@ async fn main() -> Result<()> {
         }
         std::fs::write(&path, &expected)?;
     }
+    if let Some(spec) = &run.test_swap_inputs {
+        let (a, b) = swap_inputs(&run.staging, spec)?;
+        eprintln!("TEST-ONLY test-swap-inputs enabled: chunk {a} and {b} exchanged");
+    }
+    if let Some(n) = run.test_drop_input {
+        let path = chunk_path(&run.staging, n);
+        std::fs::remove_file(&path)
+            .with_context(|| format!("test-drop-input chunk {n} missing already"))?;
+        eprintln!("TEST-ONLY test-drop-input enabled: chunk {n} removed");
+    }
     let workers = [
         (0u64, run.authority_a.clone(), run.endpoint_a.clone()),
         (1u64, run.authority_b.clone(), run.endpoint_b.clone()),
@@ -400,8 +448,8 @@ async fn main() -> Result<()> {
             key: run.tls.key.clone(),
             server_name: run.tls.server_name.clone(),
         };
-        let (seed, size, generation, execution_ms, resume) =
-            (run.seed, run.size, run.generation, run.execution_ms, run.resume);
+        let (seed, size, generation, execution_ms, resume, test_no_fetch) =
+            (run.seed, run.size, run.generation, run.execution_ms, run.resume, run.test_no_fetch);
         handles.push(tokio::spawn(async move {
             let run = Run {
                 tls,
@@ -421,6 +469,9 @@ async fn main() -> Result<()> {
                 events,
                 execution_ms,
                 resume,
+                test_swap_inputs: None,
+                test_drop_input: None,
+                test_no_fetch,
             };
             run_worker(&run, db, worker, &authority, &endpoint, seed, size, &staging, started).await
         }));
@@ -471,4 +522,24 @@ async fn main() -> Result<()> {
         .open(&run.events)?
         .write_all(line.as_bytes())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod swap_tests {
+    use super::*;
+
+    #[test]
+    fn swap_inputs_exchanges_files() {
+        let dir = std::env::temp_dir().join("grpc-swap-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("chunk-000000.bin"), b"aaaa").unwrap();
+        std::fs::write(dir.join("chunk-000001.bin"), b"bbbb").unwrap();
+        assert_eq!(swap_inputs(&dir, "0:1").unwrap(), (0, 1));
+        assert_eq!(std::fs::read(dir.join("chunk-000000.bin")).unwrap(), b"bbbb");
+        assert_eq!(std::fs::read(dir.join("chunk-000001.bin")).unwrap(), b"aaaa");
+        assert!(swap_inputs(&dir, "0:0").is_err());
+        assert!(swap_inputs(&dir, "0:9").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

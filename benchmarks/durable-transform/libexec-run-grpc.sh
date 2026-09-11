@@ -21,12 +21,19 @@ cleanup() {
   [ -n "$PIDS" ] && kill $PIDS 2>/dev/null || true
 }
 trap cleanup EXIT
+# TEST-ONLY negative-control plumbing. Defaults preserve measured behavior.
+WORKER_FAULT=()
+[ "${GRPC_TEST_WRONG_TRANSFORM:-0}" = 1 ] && WORKER_FAULT+=(--test-wrong-transform)
+[ -n "${GRPC_WORK_DELAY_MS:-}" ] && WORKER_FAULT+=(--test-work-delay-ms "$GRPC_WORK_DELAY_MS")
+WORKER_RETENTION=()
+[ -n "${GRPC_RETENTION_MS:-}" ] && WORKER_RETENTION+=(--output-retention-ms "$GRPC_RETENTION_MS")
 for i in 0 1 2; do
   w=$(printf '%s' abc | cut -c $((i + 1))); port=$((18443 + i))
   "$GRPC_WORKER" --bind "127.0.0.1:$port" --cert "$W/pki/grpc-server-$w.pem" \
     --key "$W/pki/grpc-server-$w.key" --client-ca "$W/pki/grpc-ca.pem" \
     --principal-map "$W/pki/grpc-principals.tsv" --authority "workload-$w" \
     --db "$W/grpc-$w.sqlite" --object-dir "$W/grpc-$w.obj" \
+    "${WORKER_FAULT[@]}" "${WORKER_RETENTION[@]}" \
     --ready-file "$W/grpc-$w.ready" > "$W/grpc-$w.log" 2>&1 &
   PIDS="$PIDS $!"
 done
@@ -39,12 +46,19 @@ done
 SAMPLER=$!
 ms_now() { date +%s%N | cut -c1-13; }
 START_MS=$(ms_now)
+COORD_SWAP=()
+[ -n "${GRPC_SWAP_INPUTS:-}" ] && COORD_SWAP+=(--test-swap-inputs "$GRPC_SWAP_INPUTS")
+COORD_DROP=()
+[ -n "${GRPC_DROP_INPUT:-}" ] && COORD_DROP+=(--test-drop-input "$GRPC_DROP_INPUT")
+COORD_NOFETCH=()
+[ "${GRPC_NO_FETCH:-0}" = 1 ] && COORD_NOFETCH+=(--test-no-fetch)
 "$GRPC_COORD" run --ca "$W/pki/grpc-ca.pem" --cert "$W/pki/grpc-client.pem" \
   --key "$W/pki/grpc-client.key" --owner workload --db "$W/grpc-coord.sqlite" \
   --endpoint-a https://127.0.0.1:18443 --endpoint-b https://127.0.0.1:18444 \
   --endpoint-c https://127.0.0.1:18445 \
   --seed "$SEED" --size "$SIZE" --staging "$W/grpc-staging" \
-  --output "$ART/grpc-final.bin" --events "$ART/grpc-events.tsv"
+  --output "$ART/grpc-final.bin" --events "$ART/grpc-events.tsv" \
+  "${COORD_SWAP[@]}" "${COORD_DROP[@]}" "${COORD_NOFETCH[@]}"
 END_MS=$(ms_now)
 # Contract §6 negative controls: a dead metric collector or missing
 # per-worker samples fails the run instead of passing silently.

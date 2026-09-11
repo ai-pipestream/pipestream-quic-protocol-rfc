@@ -40,9 +40,24 @@ const TRANSFORM_LABEL: &str = "transform/v2";
 
 /// Pure streaming transform over the admitted input. Chunk-relative offsets
 /// restart at zero per work item; restart re-execution yields identical bytes.
-struct Transform;
+/// `wrong` enables a TEST-ONLY fault (negative-control runs): bytes pass
+/// through untransformed so the coordinator oracle rejects them. Never set
+/// in measured cells; every use is recorded by run-negative.sh.
+struct Transform {
+    wrong: bool,
+    delay_ms: u64,
+}
 impl Application for Transform {
     fn execute(&self, context: &mut WorkContext) -> std::result::Result<ApplicationOutcome, StoreError> {
+        // TEST-ONLY slow worker: burn time in small steps, renewing the
+        // lease each step so the delay never becomes a lease expiry.
+        let mut remaining = self.delay_ms;
+        while remaining > 0 {
+            let step = remaining.min(100);
+            std::thread::sleep(std::time::Duration::from_millis(step));
+            context.renew()?;
+            remaining -= step;
+        }
         let input = context.input_descriptor().clone();
         context.begin_output(input.length, input.content_type)?;
         let mut bytes = [0; 8192];
@@ -55,7 +70,11 @@ impl Application for Transform {
                 break;
             }
             for (i, &b) in bytes[..count].iter().enumerate() {
-                staged[i] = transform_byte(b, offset + i as u64);
+                staged[i] = if self.wrong {
+                    b
+                } else {
+                    transform_byte(b, offset + i as u64)
+                };
             }
             context.write_output(&staged[..count])?;
             offset += count as u64;
@@ -66,13 +85,13 @@ impl Application for Transform {
     }
 }
 
-fn registry() -> Result<Arc<Applications>> {
+fn registry(wrong: bool, delay_ms: u64) -> Result<Arc<Applications>> {
     let mut apps = Applications::default();
     apps.register(
         ApplicationLabel(TRANSFORM_LABEL.into()),
         vec![Mode(0)],
         RestartSafety::Pure,
-        Arc::new(Transform),
+        Arc::new(Transform { wrong, delay_ms }),
     )?;
     Ok(Arc::new(apps))
 }
@@ -304,6 +323,15 @@ struct Network {
     ready_file: Option<PathBuf>,
     #[arg(long, default_value_t = 16*1024*1024)]
     object_limit: u64,
+    /// TEST-ONLY: pass admitted bytes through untransformed so the
+    /// coordinator oracle rejects them (negative-control runs).
+    #[arg(long, default_value_t = false)]
+    test_wrong_transform: bool,
+    /// TEST-ONLY: sleep this many ms per executed chunk while renewing the
+    /// lease (slow-worker arm). Must stay far below execution deadlines;
+    /// every use is recorded by run-slow.sh.
+    #[arg(long, default_value_t = 0)]
+    test_work_delay_ms: u64,
 }
 
 async fn serve(storage: Storage, network: Network) -> Result<()> {
@@ -324,11 +352,20 @@ async fn serve(storage: Storage, network: Network) -> Result<()> {
     let authority = Authority::new(store, payloads, 4)?;
     let mut options = Options::default();
     options.offer.object_limit = Number(network.object_limit);
+    if network.test_wrong_transform {
+        eprintln!("TEST-ONLY test-wrong-transform enabled: outputs will fail verification");
+    }
+    if network.test_work_delay_ms > 0 {
+        eprintln!(
+            "TEST-ONLY test-work-delay-ms enabled: {} ms per chunk",
+            network.test_work_delay_ms
+        );
+    }
     let server = Server::bind(
         network.bind,
         security,
         authority,
-        registry()?,
+        registry(network.test_wrong_transform, network.test_work_delay_ms)?,
         authority::execution::ResultEndpoint::new(network.result_authority)?,
         options,
     )?;

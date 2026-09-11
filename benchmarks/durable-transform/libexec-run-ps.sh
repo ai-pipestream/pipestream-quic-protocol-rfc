@@ -26,6 +26,18 @@ trap cleanup EXIT
 # historical funding; larger corpora raise these via env and record them.
 PHYS_DB_MIB="${PS_PHYS_DB_MIB:-256}"
 PHYS_WAL_MIB="${PS_PHYS_WAL_MIB:-64}"
+# TEST-ONLY negative-control plumbing. Defaults preserve measured behavior.
+AUTH_FAULT=()
+[ "${PS_TEST_WRONG_TRANSFORM:-0}" = 1 ] && AUTH_FAULT+=(--test-wrong-transform)
+[ -n "${PS_WORK_DELAY_MS:-}" ] && AUTH_FAULT+=(--test-work-delay-ms "$PS_WORK_DELAY_MS")
+COORD_NOFETCH=()
+[ "${PS_NO_FETCH:-0}" = 1 ] && COORD_NOFETCH+=(--test-no-fetch)
+COORD_SWAP=()
+[ -n "${PS_SWAP_INPUTS:-}" ] && COORD_SWAP+=(--test-swap-inputs "$PS_SWAP_INPUTS")
+COORD_EXEC=()
+[ -n "${PS_EXECUTION_MS:-}" ] && COORD_EXEC+=(--execution-ms "$PS_EXECUTION_MS")
+COORD_DROP=()
+[ -n "${PS_DROP_INPUT:-}" ] && COORD_DROP+=(--test-drop-input "$PS_DROP_INPUT")
 for i in 0 1 2; do
   w=$(printf '%s' abc | cut -c $((i + 1))); port=$((17443 + i))
   "$PS_AUTH" init-authority --state-db "$W/ps-$w.sqlite" --object-dir "$W/ps-$w.obj" \
@@ -34,6 +46,7 @@ for i in 0 1 2; do
   "$PS_AUTH" serve --state-db "$W/ps-$w.sqlite" --object-dir "$W/ps-$w.obj" \
     --authority "workload-$w" --principal-map "$W/pki/ps-principals.tsv" \
     --trust-system-clock --db-mib "$PHYS_DB_MIB" --wal-mib "$PHYS_WAL_MIB" \
+    "${AUTH_FAULT[@]}" \
     --bind "127.0.0.1:$port" --cert "$W/pki/ps-server-$w.pem" \
     --key "$W/pki/ps-server-$w.key" --client-ca "$W/pki/ps-ca.pem" \
     --result-authority "localhost:$port" --ready-file "$W/ps-$w.ready" \
@@ -54,7 +67,8 @@ START_MS=$(ms_now)
   --journal-a "$W/ps-j0.sqlite" --journal-b "$W/ps-j1.sqlite" --journal-c "$W/ps-j2.sqlite" \
   --connect-a 127.0.0.1:17443 --connect-b 127.0.0.1:17444 --connect-c 127.0.0.1:17445 \
   --seed "$SEED" --size "$SIZE" --staging "$W/ps-staging" \
-  --output "$ART/ps-final.bin" --events "$ART/ps-events.tsv"
+  --output "$ART/ps-final.bin" --events "$ART/ps-events.tsv" \
+  "${COORD_SWAP[@]}" "${COORD_EXEC[@]}" "${COORD_DROP[@]}" "${COORD_NOFETCH[@]}"
 END_MS=$(ms_now)
 # Contract §6 negative controls: a dead metric collector or missing
 # per-worker samples fails the run instead of passing silently.
