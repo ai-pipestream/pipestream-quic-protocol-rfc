@@ -172,3 +172,14 @@ used 1.97.1 against that closure. `cargo build` on the host will confirm.
    all milestones present, no refusals, no mismatch to report.
 3. When Kimi publishes driver checkpoints: run full comparative labels.
 4. Propose spec improvements (if any) in a separate note, not in this file.
+
+## 10. C15 report pointer (2026-09-11)
+
+C4 comparison report: `benchmarks/durable-transform/report.md`
+(correctness / measured performance / unmeasured assumptions).
+Clause-level proposals (none proposed):
+`benchmarks/durable-transform/spec-proposals.md`.
+Ladder: `benchmarks/durable-transform/ladder.md` (v2).
+Cell archives: `benchmarks/durable-transform/results/c4-*-seed6/`
+plus `results/cr13-c15-java-seed6/` and
+`results/c4-large64-attempts/`.
