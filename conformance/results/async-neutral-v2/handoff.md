@@ -61,7 +61,8 @@ gates and acceptance integration have passed, with evidence below.
 | 7544b134 | M18a: `r-memory-ladder` implemented against both subjects (payload and retained-inventory ladders, over-limit rung, group-window statistics); R row ids reconciled with the canonical matrix names |
 | 9deed6a0 | M18b: `r-staging-and-journal-bounds` implemented against both subjects (PARTIAL: journal/retained-byte ceilings recorded, not driven); the raw peer's tokio runtime is now driven continuously, which withdraws the M17b stalled-abort bracket as a client artefact |
 | 0d5dded6 | M18c: `r-stalled-principal-progress` re-run with non-writing probes on the driven client — both subjects enforce at their own negotiated idle bound inside a two-second bracket; every R row plus `g1-leaf-copy` re-run as the group regression |
-| this commit | M18d: `r-network-bytes` implemented against both subjects (PARTIAL: no network namespace and no packet capture on this host, both recorded by the checks that failed); new network scope with its own schema and validating reader |
+| 1d3569ee | M18d: `r-network-bytes` implemented against both subjects (PARTIAL: no network namespace and no packet capture on this host, both recorded by the checks that failed); new network scope with its own schema and validating reader |
+| this commit | M18e: `r-native-credit` implemented against both subjects (PARTIAL: no packet capture, and one endpoint's view only); group R is now four DONE and three PARTIAL, with every row implemented |
 
 ## 3. Verification evidence (M8 snapshot; superseded by §3c for the
 current milestone's gates, counts and subject pins)
@@ -902,6 +903,72 @@ never used to derive a network figure.
   artifact label must be relative to the scenario directory and contain a
   path separator.
 
+## 3h. Milestone 18e — r-native-credit (PARTIAL); group R complete
+
+The last of the four remaining R rows. With it every row of group R is
+implemented: four DONE (`r-capability-manifest`, `r-connection-ceiling`,
+`r-stalled-principal-progress`, `r-memory-ladder`) and three PARTIAL
+(`r-staging-and-journal-bounds`, `r-network-bytes`, `r-native-credit`), each
+PARTIAL carrying its reason in its own `observed.tsv` as well as here.
+
+Gates: `cargo fmt --all -- --check` exit 0; `cargo clippy --all-targets -p
+pipestream-conformance -- -D warnings` exit 0; `cargo test -p
+pipestream-conformance` exit 0, 92 passed / 0 failed; `cargo build --release`
+exit 0, reproducing the unchanged rust subject binary `097829fa45d8…`. Driver
+binary `1cf0757fe6cd9f8b0f266c0d5e89d72f9caafe98fd9949960fc246200e34f836`.
+
+Archived dev run `durable-18d42ff8392fc9ef` — `r-native-credit` both
+directions plus the `g1-leaf-copy` regression, exit 0, INCOMPLETE-labelled,
+118/118 manifest entries verified. No run directory deleted.
+
+### Observed
+
+1. A write returning is a QUEUEING event, not completion, and the row
+   measures the gap: 16,777,216 application bytes handed over in one call
+   that returned after 87.19 ms (rust) / 87.31 ms (java), with the transport
+   reporting the stream Open at that instant and actual completion following
+   the FIN by 565 µs (rust) / 26.73 ms (java).
+2. The transport sent more than the application queued: 17,220,072 B in
+   13,331 datagrams (rust) and 17,334,102 B in 11,959 (java) against
+   16,777,216 application bytes, with 15 packets (20,394 B) lost on the java
+   path — retransmission reported, not subtracted.
+3. Borrowed credit is visible as frames the peer put on the wire: 341
+   MAX_DATA and 2,047 MAX_STREAM_DATA from rust, 125 and 125 from java.
+   Neither side ever sent DATA_BLOCKED or STREAM_DATA_BLOCKED, so on
+   loopback the application never outran its lent credit — recorded as an
+   observation, not asserted as a property.
+4. Stream credit IS released after refused streams, pairing with the
+   `g6-stopped-control-and-transfers` MAX_STREAMS note: every object-stream
+   slot filled with a stream declaring four times the negotiated
+   `object_limit`, rust refusing 4/4 and java 16/16 with LIMIT_EXCEEDED plus
+   a STOP_SENDING per stream; after retiring them MAX_STREAMS_UNI arrived
+   (rust 0 → 2, java 1 → 2) and a further object stream DID open, so the
+   credit was usable and not merely reported.
+
+### Why PARTIAL
+
+No byte-for-byte packet capture on this host — the row runs
+`tcpdump -i lo -c 1 -w /dev/null` itself and archives its refusal — so the
+evidence is the source-pinned transport's own per-frame and per-datagram
+accounting rather than a capture; and it is one endpoint's view, so the
+SUBJECT's internal credit ledger is not observable. Both are named; neither
+is inferred or substituted.
+
+### Fixture defects found and fixed before the decisive run
+
+1. `execution_ms` above the session policy's 60 s execution limit is a
+   LIMIT_EXCEEDED refusal of the admission, not a longer deadline.
+2. A subject that refuses on the header can STOP_SENDING before the header
+   write returns; that is the refusal arriving through the transport channel
+   rather than the control channel, and it is counted as such rather than
+   treated as a fixture error. A stream can be refused on BOTH channels, so
+   the two counts are explicitly not disjoint.
+3. The refusal phase can leave a late FRAME_ERROR on control for a header
+   the peer stopped mid-write (the Java subject's header timeout is 10 s).
+   The row therefore does not use the control stream again for its own
+   housekeeping after that phase; it drains what it can, records the count,
+   and closes.
+
 ## 4. Interface and peer-review artifacts
 
 - interface-v1.md: event + schedule schemas; acknowledged by Claude
@@ -965,7 +1032,12 @@ never used to derive a network figure.
    handshake and retransmission separated, dead-collector and truncation
    proved in-row; no fixture-scoped interface counter and no packet capture
    on this host, both recorded by the checks that failed); `r-native-credit`
-   is SPEC (not started).
+   is PARTIAL (application queue bytes, borrowed flow credit and actual
+   transport completion separated and measured from the source-pinned
+   transport's own frame and datagram accounting, with stream-credit release
+   after refused streams observed and re-used; no packet capture on this
+   host and one endpoint's view only). EVERY R ROW IS NOW IMPLEMENTED:
+   four DONE, three PARTIAL, nothing skipped.
    `r-stalled-principal-progress` was RE-RUN at M18c on the fixed runtime
    with non-writing probes and now brackets both subjects inside two seconds
    of their own negotiated idle bound; the M17b 40-130 s bracket is
@@ -986,8 +1058,11 @@ Finish group R. `r-memory-ladder` is DONE (M18a) and
    lifetime+10 s. Both subjects enforce inside a two-second bracket at their
    own negotiated idle bound. What remains from it is a FULL 53-row matrix
    rerun on the fixed runtime, which no milestone here has done.
-2. DONE at M18d: `r-network-bytes`, PARTIAL for the named host-capability
-   reason. What is left of group R is `r-native-credit`.
+2. DONE at M18d and M18e: `r-network-bytes` and `r-native-credit`, both
+   PARTIAL for named host-capability reasons. Group R has no unimplemented
+   row left.
 
-Then acceptance-mode integration into conformance/run_all.sh and the final
-full-matrix run.
+The two things group R still needs before any acceptance claim are a FULL
+53-row matrix rerun on the fixed runtime (no milestone here has done one
+since the raw-client runtime fix at M18b) and acceptance-mode integration
+into conformance/run_all.sh.

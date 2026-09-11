@@ -191,6 +191,7 @@ pub fn rows() -> Vec<Row> {
         "r-memory-ladder",
         "r-staging-and-journal-bounds",
         "r-network-bytes",
+        "r-native-credit",
         "g2-crash-before-create-commit",
         "g2-crash-after-create-commit",
         "g2-drop-reply-declaration",
@@ -300,6 +301,7 @@ fn direction_coverage(row: &Row, context: &ScenarioContext) -> String {
             || row.id == "r-memory-ladder"
             || row.id == "r-staging-and-journal-bounds"
             || row.id == "r-network-bytes"
+            || row.id == "r-native-credit"
         {
             "rust-raw-client/rust-server, rust-raw-client/java-server".to_owned()
         } else {
@@ -416,6 +418,7 @@ fn run_rust_direction(row: &Row, context: &ScenarioContext) -> Result<()> {
         "r-memory-ladder" => r_memory_ladder(context),
         "r-staging-and-journal-bounds" => r_staging_and_journal_bounds(context),
         "r-network-bytes" => r_network_bytes(context),
+        "r-native-credit" => r_native_credit(context),
         other => bail!("scenario {other} has no rust direction implemented"),
     }
 }
@@ -21227,6 +21230,515 @@ fn r_network_bytes_direction(
     thread::sleep(STALL_CLOSE_SETTLE);
     stop_and_seal(context, scenario_dir, scenario_id, owned, events)
 }
+
+// ---------------------------------------------------------------------------
+// r-native-credit (milestone 18e)
+// ---------------------------------------------------------------------------
+//
+// Separates three quantities the matrix insists are not the same thing:
+//
+// - BORROWED NATIVE FLOW CREDIT: the MAX_DATA, MAX_STREAM_DATA and
+//   MAX_STREAMS frames the PEER actually put on the wire, counted by the
+//   source-pinned transport as it decoded them out of received packets, plus
+//   the DATA_BLOCKED / STREAM_DATA_BLOCKED frames this side put on the wire
+//   when the application outran the credit it had been lent.
+// - APPLICATION QUEUE BYTES: what the application handed to the transport.
+//   Known exactly, because this row wrote them.
+// - ACTUAL TRANSPORT COMPLETION: the peer acknowledging every byte of a
+//   finished stream, observed through quinn's `stopped()` future, and the
+//   UDP bytes the transport really sent.
+//
+// The counters come from `quinn::Connection::stats()` — quinn 0.11.11 /
+// quinn-proto 0.11.17, both pinned in this workspace's Cargo.lock — which is
+// the transport's own per-frame accounting, not a wrapper counting
+// application calls. What it is NOT is a byte-for-byte packet capture: this
+// host grants no CAP_NET_RAW (the exact failing check is recorded by
+// r-network-bytes and repeated here), and it is one endpoint's view, so the
+// SUBJECT's own credit accounting is not observable. Those two limits are
+// why this row is PARTIAL.
+
+/// Payload written in one application call to separate queueing from
+/// completion. Equal to the declared object limit of both subjects, so it is
+/// the largest single object either will accept.
+const CREDIT_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
+/// Bounded wait for actual transport completion of the finished stream.
+const CREDIT_ACK_WAIT: Duration = Duration::from_secs(30);
+/// Bounded wait used when asking whether completion has ALREADY happened.
+const CREDIT_INSTANT: Duration = Duration::from_millis(50);
+/// Bounded wait for the peer to return stream credit after refused streams.
+const CREDIT_RELEASE_WAIT: Duration = Duration::from_secs(15);
+
+fn r_native_credit(context: &ScenarioContext) -> Result<()> {
+    run_raw_directions(context, "r-native-credit", r_native_credit_direction)
+}
+
+/// Frame-level credit accounting of one connection, as the source-pinned
+/// transport counted it.
+fn credit_frame_text(stats: &quinn::ConnectionStats) -> String {
+    format!(
+        "rx[MAX_DATA={} MAX_STREAM_DATA={} MAX_STREAMS_UNI={} MAX_STREAMS_BIDI={} \
+         STOP_SENDING={} RESET_STREAM={} STREAM={} ACK={}] \
+         tx[DATA_BLOCKED={} STREAM_DATA_BLOCKED={} STREAMS_BLOCKED_UNI={} STREAM={} ACK={}]",
+        stats.frame_rx.max_data,
+        stats.frame_rx.max_stream_data,
+        stats.frame_rx.max_streams_uni,
+        stats.frame_rx.max_streams_bidi,
+        stats.frame_rx.stop_sending,
+        stats.frame_rx.reset_stream,
+        stats.frame_rx.stream,
+        stats.frame_rx.acks,
+        stats.frame_tx.data_blocked,
+        stats.frame_tx.stream_data_blocked,
+        stats.frame_tx.streams_blocked_uni,
+        stats.frame_tx.stream,
+        stats.frame_tx.acks
+    )
+}
+
+/// One checkpoint row of credit.tsv.
+#[allow(clippy::too_many_arguments)]
+fn credit_row(checkpoint: &str, elapsed_ms: u64, stats: &quinn::ConnectionStats) -> String {
+    format!(
+        "{checkpoint}\t{elapsed_ms}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+        stats.udp_tx.bytes,
+        stats.udp_rx.bytes,
+        stats.path.sent_packets,
+        stats.path.lost_packets,
+        stats.frame_rx.max_data,
+        stats.frame_rx.max_stream_data,
+        stats.frame_rx.max_streams_uni,
+        stats.frame_rx.stop_sending,
+        stats.frame_tx.data_blocked,
+        stats.frame_tx.stream_data_blocked,
+        stats.frame_tx.streams_blocked_uni,
+        stats.frame_tx.stream
+    )
+}
+
+fn r_native_credit_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+) -> Result<()> {
+    let scenario_id = "r-native-credit";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+
+    // The capture capability is re-checked here rather than assumed from
+    // r-network-bytes: a row states the method it used, on the run it used it.
+    let mut probes = String::new();
+    let capture = net_capability_probe(
+        &["tcpdump", "-i", "lo", "-c", "1", "-w", "/dev/null"],
+        &mut probes,
+    );
+    fs::write(artifacts.join("capability-probes.txt"), &probes)?;
+    let capture_available = capture.starts_with("exit exit status: 0");
+
+    let certs = mtls::generate(&scenario_dir.join("certs"), &[("alice", "alice")])?;
+    let fixture = AuthorityFixture::new(
+        &context.rust_bin,
+        context.java_jar.as_deref(),
+        &scenario_dir.join("subject"),
+        certs,
+        server,
+        Subject::Rust,
+    )?;
+    fixture.run_init_authority()?;
+    let owned = fixture.start_server()?;
+    ensure!(
+        fixture.next_sequence(&owned, "alice")? == 1,
+        "fresh authority must report NEXT_SEQUENCE 1"
+    );
+
+    let peer = Peer::new()?;
+    let mut conn = raw_negotiate_as(&peer, &fixture, &owned, &mut events, &artifacts, "alice")?;
+    let caps = *conn
+        .caps()
+        .context("capabilities selection was not recorded during negotiation")?;
+    let binding = raw_create_session(&mut conn)?;
+    let clock = Instant::now();
+    let mut table = String::from(
+        "checkpoint\telapsed_ms\tudp_tx_bytes\tudp_rx_bytes\tsent_packets\tlost_packets\t\
+         rx_max_data\trx_max_stream_data\trx_max_streams_uni\trx_stop_sending\ttx_data_blocked\t\
+         tx_stream_data_blocked\ttx_streams_blocked_uni\ttx_stream\n",
+    );
+    let checkpoint = |label: &str, stats: &quinn::ConnectionStats, table: &mut String| {
+        table.push_str(&credit_row(
+            label,
+            clock.elapsed().as_millis() as u64,
+            stats,
+        ));
+    };
+    checkpoint("session-established", &conn.stats(), &mut table);
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "evidence_source",
+                "quinn::Connection::stats() from the SOURCE-PINNED transport \
+                 (quinn 0.11.11 / quinn-proto 0.11.17, pinned in Cargo.lock): \
+                 the transport's own count of frames it decoded out of received \
+                 packets and encoded into sent ones, plus its UDP byte totals \
+                 and path loss counters. Not a wrapper counting application \
+                 calls, and not the subject's accounting"
+                    .into(),
+            ),
+            (
+                "borrowed_native_flow_credit",
+                "MAX_DATA, MAX_STREAM_DATA and MAX_STREAMS_UNI frames RECEIVED \
+                 from the peer, and DATA_BLOCKED / STREAM_DATA_BLOCKED / \
+                 STREAMS_BLOCKED_UNI frames SENT when the application outran the \
+                 credit it had been lent"
+                    .into(),
+            ),
+            (
+                "application_queue_bytes",
+                format!(
+                    "{CREDIT_PAYLOAD_LEN} bytes handed to the transport in one \
+                     application call; known exactly because this row wrote them"
+                ),
+            ),
+            (
+                "actual_transport_completion",
+                "the peer acknowledging EVERY byte of the finished stream, \
+                 observed through quinn's stopped() future resolving to \
+                 acknowledged; a write call returning is not completion and this \
+                 row measures the gap between them"
+                    .into(),
+            ),
+            (
+                "credit_release",
+                format!(
+                    "after {} refused object streams are retired, MAX_STREAMS_UNI \
+                     must arrive from the peer and a further stream must actually \
+                     open — pairing with the g6-stopped-* observation that refused \
+                     inputs return stream credit",
+                    caps.stream_limit
+                ),
+            ),
+            (
+                "not_established",
+                "byte-for-byte packet capture (no CAP_NET_RAW on this host; the \
+                 exact failing check is run by this row and archived) and the \
+                 SUBJECT's own credit accounting (not observable from one \
+                 endpoint). Both are named, neither is inferred"
+                    .into(),
+            ),
+        ],
+    )?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        (
+            "client_subject",
+            "rust raw peer (source-pinned quinn transport)".into(),
+        ),
+        (
+            "declared_limits",
+            format!(
+                "object_limit={} stream_limit={} pending_limit={} control_limit={}",
+                caps.object_limit, caps.stream_limit, caps.pending_limit, caps.control_limit
+            ),
+        ),
+        (
+            "capability_packet_capture",
+            format!(
+                "{}: `tcpdump -i lo -c 1 -w /dev/null` -> {capture}",
+                if capture_available {
+                    "AVAILABLE"
+                } else {
+                    "UNAVAILABLE"
+                }
+            ),
+        ),
+    ];
+
+    // ---- Phase A: application queue bytes vs actual transport completion ----
+    let declare_op = oracle::operation_id(context.seed, "credit-declare", 0);
+    raw_declare(
+        &mut conn,
+        2,
+        &declare_op,
+        0,
+        &[1, 2, 3, 4, 5, 6, 7, 8],
+        false,
+    )?;
+    let payload = oracle::dataset(context.seed ^ 0xc2ed, CREDIT_PAYLOAD_LEN);
+    let mut sha = [0u8; 32];
+    sha.copy_from_slice(&crate::decode_hex(&oracle::sha256_hex(&payload))?);
+    let operation = oracle::operation_id(context.seed, "credit-admit", 1);
+    let header = rawclient::input_header_framed(
+        binding.generation,
+        &operation,
+        (0, 0, 1),
+        CREDIT_PAYLOAD_LEN as u64,
+        &sha,
+        "application/octet-stream",
+        "copy/v2",
+        0,
+        // The session policy caps execution at 60 s; a larger value is a
+        // LIMIT_EXCEEDED refusal of the admission, not a longer deadline.
+        60_000,
+        1,
+        CREDIT_PAYLOAD_LEN as u64,
+    );
+    let mut stream = conn.open_uni()?;
+    let stream_id = u64::from(stream.id());
+    conn.write_stream(&mut stream, &header)?;
+    checkpoint("header-written", &conn.stats(), &mut table);
+    let write_started = Instant::now();
+    conn.write_stream(&mut stream, &payload)?;
+    let write_returned = write_started.elapsed();
+    let after_write = conn.stats();
+    checkpoint("payload-write-returned", &after_write, &mut table);
+    // The application has now handed over every byte. Ask, at this instant,
+    // whether the transport has completed: a write returning is a queueing
+    // event, not a completion event.
+    let at_write_return = conn.poll_stream_stopped(&stream, CREDIT_INSTANT)?;
+    conn.finish_stream(&mut stream)?;
+    let completion_started = Instant::now();
+    let completion = conn.poll_stream_stopped(&stream, CREDIT_ACK_WAIT)?;
+    let completion_took = completion_started.elapsed();
+    let after_completion = conn.stats();
+    checkpoint("transport-completion", &after_completion, &mut table);
+    observed.push((
+        "queue_vs_completion",
+        format!(
+            "the application handed {CREDIT_PAYLOAD_LEN} bytes to stream {stream_id} in one \
+             call, which returned after {write_returned:?}. At that instant the transport \
+             reported the stream as {at_write_return:?} — a write returning is a QUEUEING \
+             event. Actual transport completion (the peer acknowledging every byte) was \
+             {completion:?} and took a further {completion_took:?} after the FIN"
+        ),
+    ));
+    observed.push((
+        "transport_bytes_at_completion",
+        format!(
+            "udp_tx={}B/{}dg udp_rx={}B/{}dg sent_packets={} lost_packets={} lost_bytes={} \
+             against {CREDIT_PAYLOAD_LEN}B of application queue bytes",
+            after_completion.udp_tx.bytes,
+            after_completion.udp_tx.datagrams,
+            after_completion.udp_rx.bytes,
+            after_completion.udp_rx.datagrams,
+            after_completion.path.sent_packets,
+            after_completion.path.lost_packets,
+            after_completion.path.lost_bytes
+        ),
+    ));
+    observed.push((
+        "borrowed_credit_during_transfer",
+        format!(
+            "frames on the wire, counted by the source-pinned transport: {}",
+            credit_frame_text(&after_completion)
+        ),
+    ));
+    let receipt = rawclient::parse_admitted_stream(&conn.expect_control(FRAME_WORK)?)?;
+    ensure!(
+        receipt == stream_id,
+        "{scenario_id} {}: admission receipt names stream {receipt}, expected {stream_id}",
+        server.name()
+    );
+    checkpoint("admission-receipt", &conn.stats(), &mut table);
+    events.append("CREDIT_TRANSFER_MEASURED", None, None, None, None, None)?;
+
+    // ---- Phase B: credit release after refused streams ----
+    // Every object stream slot is filled with a stream the subject must
+    // refuse (a declared length above the negotiated object limit), then the
+    // streams are retired and the peer's MAX_STREAMS_UNI is watched for the
+    // returned credit. This is the same path g6-stopped-control-and-transfers
+    // observes for MAX_STREAMS after refused inputs.
+    let before_release = conn.stats();
+    checkpoint("before-refusals", &before_release, &mut table);
+    let oversize = caps.object_limit.saturating_mul(4).max(1);
+    let mut refused_streams: Vec<quinn::SendStream> = Vec::new();
+    let mut refusals = 0u64;
+    let mut transport_stopped = 0u64;
+    for slot in 0..caps.stream_limit {
+        let entity = 2 + slot;
+        let operation = oracle::operation_id(context.seed, "credit-oversize", entity as u32);
+        let header = rawclient::input_header_framed(
+            binding.generation,
+            &operation,
+            (0, 0, entity),
+            oversize,
+            &[0u8; 32],
+            "application/octet-stream",
+            "copy/v2",
+            0,
+            60_000,
+            1,
+            oversize,
+        );
+        let Some(mut oversize_stream) = conn.open_uni_ceiling()? else {
+            break;
+        };
+        // A subject that refuses on the header can STOP_SENDING before this
+        // write returns. That is the refusal arriving through the transport
+        // channel rather than the control channel, and it is counted as
+        // such, not treated as a fixture error.
+        if conn.write_stream(&mut oversize_stream, &header).is_err() {
+            transport_stopped += 1;
+        }
+        refused_streams.push(oversize_stream);
+    }
+    let opened_for_refusal = refused_streams.len() as u64;
+    for _ in 0..opened_for_refusal {
+        match conn.read_control_bounded(Duration::from_secs(5))? {
+            Some(Frame::Control(FRAME_REFUSAL, body)) => {
+                let refusal = rawclient::parse_refusal(&body)?;
+                ensure!(
+                    refusal.code == rawclient::CODE_LIMIT_EXCEEDED,
+                    "{scenario_id} {}: an oversize object stream was refused with code {} \
+                     ({:?}), expected LIMIT_EXCEEDED",
+                    server.name(),
+                    refusal.code,
+                    refusal.detail
+                );
+                refusals += 1;
+            }
+            Some(Frame::Control(kind, _)) => bail!(
+                "{scenario_id} {}: expected a refusal for an oversize object stream, got \
+                 control frame kind {kind}",
+                server.name()
+            ),
+            // Nothing more on control: whatever is left was refused through
+            // the transport channel instead, which the counts record.
+            Some(Frame::Fin) | None => break,
+        }
+    }
+    checkpoint("refusals-read", &conn.stats(), &mut table);
+    // Retire the refused streams and watch for the returned stream credit.
+    for mut refused in refused_streams.drain(..) {
+        let _ = conn.reset_stream(&mut refused, rawclient::CODE_LIMIT_EXCEEDED);
+    }
+    // Drain whatever the refusal phase still has in flight before the
+    // control stream is used for anything else. A stream the peer stopped
+    // mid-header can also produce a control refusal for the partial header
+    // it did read, so a stream may be refused on BOTH channels and the
+    // counts below are not disjoint.
+    let mut drained_late = 0u64;
+    let drain_deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < drain_deadline {
+        match conn.read_control_bounded(Duration::from_millis(300))? {
+            Some(Frame::Control(FRAME_REFUSAL, body)) => {
+                let refusal = rawclient::parse_refusal(&body)?;
+                drained_late += 1;
+                refusals += u64::from(refusal.code == rawclient::CODE_LIMIT_EXCEEDED);
+            }
+            Some(Frame::Control(..)) => drained_late += 1,
+            Some(Frame::Fin) => break,
+            None => continue,
+        }
+    }
+    let release_deadline = Instant::now() + CREDIT_RELEASE_WAIT;
+    let mut released = conn.stats();
+    while released.frame_rx.max_streams_uni <= before_release.frame_rx.max_streams_uni
+        && Instant::now() < release_deadline
+    {
+        thread::sleep(Duration::from_millis(200));
+        released = conn.stats();
+    }
+    checkpoint("credit-released", &released, &mut table);
+    let max_streams_gain = released
+        .frame_rx
+        .max_streams_uni
+        .saturating_sub(before_release.frame_rx.max_streams_uni);
+    // Credit that is reported but not usable is not credit: open one more.
+    let reopened = conn.open_uni_ceiling()?.is_some();
+    checkpoint("credit-reused", &conn.stats(), &mut table);
+    observed.push((
+        "credit_release_after_refusals",
+        format!(
+            "{opened_for_refusal} object streams opened against a negotiated stream_limit of \
+             {}: {refusals} refused LIMIT_EXCEEDED on the control channel and \
+             {transport_stopped} stopped by the peer on the transport channel before the \
+             header write returned ({drained_late} further control frames drained \
+             afterwards; the two counts are not disjoint), for an oversize declared length, \
+             then retired. \
+             MAX_STREAMS_UNI frames received from the peer rose by {max_streams_gain} (from \
+             {} to {}) within {:?}, and a further object stream {} open afterwards",
+            caps.stream_limit,
+            before_release.frame_rx.max_streams_uni,
+            released.frame_rx.max_streams_uni,
+            CREDIT_RELEASE_WAIT,
+            if reopened { "DID" } else { "did NOT" }
+        ),
+    ));
+    events.append("CREDIT_RELEASE_OBSERVED", None, None, None, None, None)?;
+
+    let final_stats = conn.stats();
+    checkpoint("end", &final_stats, &mut table);
+    fs::write(artifacts.join("credit.tsv"), &table)?;
+    observed.push(("frame_totals_at_end", credit_frame_text(&final_stats)));
+
+    // ---- assertions ----
+    ensure!(
+        completion == rawclient::StreamState::Acknowledged,
+        "{scenario_id} {}: the finished stream never reached actual transport completion \
+         within {CREDIT_ACK_WAIT:?}; observed {completion:?}",
+        server.name()
+    );
+    ensure!(
+        final_stats.frame_rx.max_data > 0 || final_stats.frame_rx.max_stream_data > 0,
+        "{scenario_id} {}: no MAX_DATA or MAX_STREAM_DATA frame was ever received, so no \
+         borrowed flow credit was observed on the wire at all",
+        server.name()
+    );
+    ensure!(
+        refusals + transport_stopped >= opened_for_refusal && opened_for_refusal > 0,
+        "{scenario_id} {}: {refusals} refused on control and {transport_stopped} stopped on \
+         the transport, of {opened_for_refusal} oversize object streams opened; the \
+         credit-release phase needs every one of them refused",
+        server.name()
+    );
+    ensure!(
+        max_streams_gain > 0 && reopened,
+        "{scenario_id} {}: stream credit was not returned after refused object streams were \
+         retired (MAX_STREAMS_UNI gain {max_streams_gain}, further stream opened: {reopened})",
+        server.name()
+    );
+    observed.push((
+        "row_status",
+        if capture_available {
+            "packet capture is available on this host; see the capability field".to_owned()
+        } else {
+            "PARTIAL: the credit evidence is the SOURCE-PINNED transport's own per-frame and \
+             per-datagram accounting, which is what it decoded from received packets and \
+             encoded into sent ones — not a wrapper counter, but also not a byte-for-byte \
+             packet capture, because this host grants no CAP_NET_RAW (exact failing check \
+             recorded above). It is also one endpoint's view: the SUBJECT's own credit \
+             accounting is not observable from here. Both limits are named, neither is \
+             inferred"
+                .to_owned()
+        },
+    ));
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    events.append(
+        "CREDIT_EVIDENCE",
+        None,
+        None,
+        None,
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/credit.tsv".into(),
+            len: table.len() as u64,
+            sha256: oracle::sha256_hex(table.as_bytes()),
+        }),
+    )?;
+    // The control stream is deliberately NOT used again: the refusal phase
+    // can leave a late FRAME_ERROR for a header the peer stopped mid-write,
+    // and a row that then reads control for its own housekeeping would fail
+    // on the subject's own refusal arriving on time. The single admitted
+    // work is one object copy; the close-and-settle below is more than
+    // enough for the execution pool to wind it down before SIGTERM.
+    conn.close_and_wait_idle(b"native credit row complete", Duration::from_secs(15))?;
+    thread::sleep(STALL_CLOSE_SETTLE);
+    stop_and_seal(context, scenario_dir, scenario_id, owned, events)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -21292,7 +21804,7 @@ mod tests {
             let row = rows.iter().find(|row| row.id == id).unwrap();
             assert!(row.rust_implemented, "{id} must be implemented");
         }
-        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 56);
+        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 57);
     }
 
     #[test]

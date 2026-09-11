@@ -167,8 +167,10 @@ Collectors live in `conformance/src/durable/resources.rs`:
 - Store scopes (`st_size` and `st_blocks*512` per file) at named
   scenario checkpoints into `store.tsv`.
 
-Still SPEC: `r-memory-ladder`, `r-staging-and-journal-bounds`,
-`r-network-bytes`, `r-native-credit`.
+Still SPEC at milestone 16: `r-memory-ladder`,
+`r-staging-and-journal-bounds`, `r-network-bytes`, `r-native-credit`. All
+four are implemented by milestone 18; see the milestone 18a-18e status
+blocks below for what each one establishes and what it does not.
 
 Observed in batch A (see the archived run, not quoted as acceptance):
 
@@ -769,6 +771,76 @@ capability and no namespace to scope an interface counter to the fixture, so
 the only fixture-scoped numbers here are one endpoint's own transport
 counters. That is the named reason for PARTIAL; it is not a skip and no
 figure is inferred to cover it.
+
+## Group R status (milestone 18e — r-native-credit, PARTIAL)
+
+`r-native-credit` is IMPLEMENTED against both subjects and green in dev,
+archived run `durable-18d42ff8392fc9ef` (118/118 manifest entries verified)
+with the `g1-leaf-copy` regression. Status PARTIAL for two named reasons
+given at the end. With it, every row of group R is implemented: four DONE
+and three PARTIAL.
+
+### The three quantities, kept apart
+
+- BORROWED NATIVE FLOW CREDIT — the MAX_DATA, MAX_STREAM_DATA and
+  MAX_STREAMS frames the PEER actually put on the wire, counted by the
+  source-pinned transport as it decoded them out of received packets, plus
+  the DATA_BLOCKED / STREAM_DATA_BLOCKED / STREAMS_BLOCKED frames this side
+  put on the wire when the application outran the credit it was lent.
+- APPLICATION QUEUE BYTES — what the application handed to the transport.
+  Known exactly, because the row wrote them.
+- ACTUAL TRANSPORT COMPLETION — the peer acknowledging every byte of a
+  finished stream, through quinn's `stopped()` future, plus the UDP bytes
+  the transport really sent.
+
+The counters come from `quinn::Connection::stats()` (quinn 0.11.11 /
+quinn-proto 0.11.17, both pinned in this workspace's Cargo.lock). That is
+the transport's own per-frame accounting of what it decoded from received
+packets and encoded into sent ones — not a wrapper counting application
+calls, which the matrix rules out explicitly.
+
+### Observed (dev evidence, never an acceptance claim)
+
+1. A WRITE RETURNING IS NOT COMPLETION, and the row measures the gap rather
+   than asserting the principle. The application handed 16,777,216 bytes to
+   one stream in a single call: the call returned after 87.19 ms (rust) /
+   87.31 ms (java) and AT THAT INSTANT the transport reported the stream as
+   Open, not acknowledged. Actual transport completion followed the FIN by
+   565 µs (rust) and 26.73 ms (java).
+2. THE TRANSPORT SENT MORE THAN THE APPLICATION QUEUED, which is the third
+   quantity being genuinely third: against 16,777,216 application bytes the
+   connection put 17,220,072 B in 13,331 datagrams on the wire to the rust
+   subject and 17,334,102 B in 11,959 datagrams to the java one — and for
+   java 15 of those packets were lost (20,394 B) on loopback, so some of
+   that is retransmission, reported and not subtracted.
+3. BORROWED CREDIT IS VISIBLE AS FRAMES, not as a wrapper's tally. Over the
+   transfer the rust subject granted 341 MAX_DATA and 2,047 MAX_STREAM_DATA
+   frames; the java subject granted 125 and 125. Neither side ever sent
+   DATA_BLOCKED or STREAM_DATA_BLOCKED, so on loopback the application never
+   outran the credit it was lent — recorded as the observation it is, not
+   asserted as a property.
+4. STREAM CREDIT IS RELEASED AFTER REFUSED STREAMS, which pairs with the
+   `g6-stopped-control-and-transfers` note about MAX_STREAMS after refused
+   inputs. Every object-stream slot was filled with a stream declaring four
+   times the negotiated `object_limit`: rust refused 4/4 and java 16/16 with
+   `LIMIT_EXCEEDED` on control, and both sent a STOP_SENDING per stream (4
+   and 16 received). After the streams were retired, MAX_STREAMS_UNI frames
+   arrived from the peer — rust 0 → 2, java 1 → 2 — and a further object
+   stream DID open afterwards on both, so the credit was not merely reported
+   but usable.
+
+### Why PARTIAL
+
+1. NO BYTE-FOR-BYTE PACKET CAPTURE ON THIS HOST. The row runs the check
+   itself and archives it: `tcpdump -i lo -c 1 -w /dev/null` exits 1 with
+   "You don't have permission to perform this capture on that device". The
+   evidence is therefore the pinned transport's per-frame and per-datagram
+   accounting, which is closer to the wire than any wrapper but is not a
+   capture.
+2. IT IS ONE ENDPOINT'S VIEW. The SUBJECT's own credit accounting — what it
+   believes it has lent and reclaimed — is not observable from here. The
+   row records what the peer put on the wire and what this side did with it,
+   and claims nothing about the subject's internal ledger.
 
 ## Measurement-scope rules (all R rows)
 - Rust heap, Java heap, whole-process RSS/HWM, native/direct, threads,
