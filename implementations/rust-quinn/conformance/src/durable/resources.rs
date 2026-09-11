@@ -906,6 +906,179 @@ pub fn counter_rate(
     Some((delta, span, delta.saturating_mul(1000) / span))
 }
 
+// ---------------------------------------------------------------------------
+// Network-byte scope (milestone 18d)
+// ---------------------------------------------------------------------------
+
+/// `network.tsv` schema. Separate from the process schema on purpose: network
+/// bytes are their own scope and are never mixed into a resources record.
+pub const NETWORK_HEADER: &str = "# pipestream-network-v1";
+/// Column count of one network.tsv record.
+pub const NETWORK_FIELDS: usize = 8;
+
+/// One interface's cumulative counters at one instant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterfaceCounters {
+    pub interface: String,
+    pub rx_bytes: u64,
+    pub rx_packets: u64,
+    pub tx_bytes: u64,
+    pub tx_packets: u64,
+}
+
+/// Parse `/proc/net/dev` into per-interface counters.
+///
+/// The header is two lines; every later line is `iface: rx_bytes rx_packets
+/// rx_errs rx_drop rx_fifo rx_frame rx_compressed rx_multicast tx_bytes
+/// tx_packets ...`. An interface name may abut its colon, so the split is on
+/// the colon rather than on whitespace.
+pub fn parse_net_dev(text: &str) -> Result<Vec<InterfaceCounters>> {
+    let mut interfaces = Vec::new();
+    for line in text.lines().skip(2) {
+        let Some((name, rest)) = line.split_once(':') else {
+            continue;
+        };
+        let fields = rest.split_whitespace().collect::<Vec<_>>();
+        ensure!(
+            fields.len() >= 10,
+            "/proc/net/dev record for {} has {} fields, expected at least 10",
+            name.trim(),
+            fields.len()
+        );
+        let number = |index: usize, what: &str| -> Result<u64> {
+            fields[index].parse::<u64>().with_context(|| {
+                format!("/proc/net/dev {what} is not numeric: {:?}", fields[index])
+            })
+        };
+        interfaces.push(InterfaceCounters {
+            interface: name.trim().to_owned(),
+            rx_bytes: number(0, "rx_bytes")?,
+            rx_packets: number(1, "rx_packets")?,
+            tx_bytes: number(8, "tx_bytes")?,
+            tx_packets: number(9, "tx_packets")?,
+        });
+    }
+    ensure!(!interfaces.is_empty(), "/proc/net/dev listed no interfaces");
+    Ok(interfaces)
+}
+
+/// Read one interface's counters from a pid's network namespace view.
+///
+/// The path is `/proc/<pid>/net/dev`, which reports the NAMESPACE the pid
+/// belongs to. On a host that grants no network namespace this is the same
+/// namespace as the driver's, which is exactly why a row using it must state
+/// that its scope is the host's loopback and not the fixture's.
+pub fn interface_counters(pid: u32, interface: &str) -> Result<InterfaceCounters> {
+    let path = format!("/proc/{pid}/net/dev");
+    let text =
+        fs::read_to_string(&path).with_context(|| format!("read interface counters {path}"))?;
+    parse_net_dev(&text)?
+        .into_iter()
+        .find(|counters| counters.interface == interface)
+        .with_context(|| format!("{path} has no interface {interface}"))
+}
+
+/// One network.tsv record: one interface sample at one named checkpoint, with
+/// the collection method on the line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkSample {
+    pub checkpoint: String,
+    pub method: String,
+    pub interface: String,
+    pub elapsed_ms: u64,
+    pub rx_bytes: u64,
+    pub rx_packets: u64,
+    pub tx_bytes: u64,
+    pub tx_packets: u64,
+}
+
+impl NetworkSample {
+    fn line(&self) -> String {
+        format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            self.checkpoint,
+            self.method,
+            self.interface,
+            self.elapsed_ms,
+            self.rx_bytes,
+            self.rx_packets,
+            self.tx_bytes,
+            self.tx_packets
+        )
+    }
+}
+
+/// Append one network sample, creating the file with its header on first use.
+pub fn append_network_sample(file: &Path, sample: &NetworkSample) -> Result<()> {
+    let existed = file.exists();
+    let mut writer = BufWriter::new(
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(file)
+            .with_context(|| format!("open network sample file {}", file.display()))?,
+    );
+    if !existed {
+        writeln!(writer, "{NETWORK_HEADER}")?;
+    }
+    writer.write_all(sample.line().as_bytes())?;
+    writer.flush()?;
+    Ok(())
+}
+
+/// Read and validate a network.tsv artifact. Same rules as the process
+/// reader: a torn final line, a wrong header, a wrong field count or a
+/// non-numeric counter is a rejection, so a truncated record can never pass
+/// silently as a smaller measurement.
+pub fn read_network_samples(path: &Path) -> Result<Vec<NetworkSample>> {
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("read network file {}", path.display()))?;
+    torn_guard(&text, path)?;
+    let mut samples = Vec::new();
+    for line in text.lines() {
+        if line.starts_with('#') {
+            ensure!(
+                line == NETWORK_HEADER,
+                "{}: network header is not {NETWORK_HEADER}: {line:?}",
+                path.display()
+            );
+            continue;
+        }
+        let fields = line.split('\t').collect::<Vec<_>>();
+        ensure!(
+            fields.len() == NETWORK_FIELDS,
+            "{}: network record must have {NETWORK_FIELDS} fields, got {}: {line:?}",
+            path.display(),
+            fields.len()
+        );
+        ensure!(
+            !fields[1].is_empty() && fields[1] != "-",
+            "{}: network record carries no collection method: {line:?}",
+            path.display()
+        );
+        let number = |index: usize| -> Result<u64> {
+            fields[index].parse::<u64>().with_context(|| {
+                format!(
+                    "{}: network counter is not a non-negative integer: {:?}",
+                    path.display(),
+                    fields[index]
+                )
+            })
+        };
+        samples.push(NetworkSample {
+            checkpoint: fields[0].to_owned(),
+            method: fields[1].to_owned(),
+            interface: fields[2].to_owned(),
+            elapsed_ms: number(3)?,
+            rx_bytes: number(4)?,
+            rx_packets: number(5)?,
+            tx_bytes: number(6)?,
+            tx_packets: number(7)?,
+        });
+    }
+    Ok(samples)
+}
+
 /// Nearest-rank percentile of an already sorted, non-empty series.
 fn nearest_rank(sorted: &[u64], percent: u64) -> u64 {
     let index = (sorted.len() as u64 * percent)
@@ -1478,6 +1651,80 @@ mod tests {
             format!("{error:#}").contains("no sampling tick"),
             "unexpected error: {error:#}"
         );
+    }
+
+    #[test]
+    fn net_dev_parser_reads_the_live_kernel_and_rejects_short_records() {
+        let text = fs::read_to_string("/proc/net/dev").unwrap();
+        let interfaces = parse_net_dev(&text).unwrap();
+        assert!(
+            interfaces.iter().any(|i| i.interface == "lo"),
+            "the live kernel lists a loopback interface"
+        );
+        // Column positions matter: rx is fields 0/1 and tx is fields 8/9.
+        let sample = parse_net_dev(
+            "Inter-|   Receive  |  Transmit\n \
+             face |bytes packets errs drop fifo frame compressed multicast|bytes packets\n\
+             \x20   lo: 11 22 0 0 0 0 0 0 33 44 0 0 0 0 0 0\n",
+        )
+        .unwrap();
+        assert_eq!(sample.len(), 1);
+        assert_eq!(sample[0].interface, "lo");
+        assert_eq!(sample[0].rx_bytes, 11);
+        assert_eq!(sample[0].rx_packets, 22);
+        assert_eq!(sample[0].tx_bytes, 33);
+        assert_eq!(sample[0].tx_packets, 44);
+        assert!(
+            parse_net_dev("a\nb\n   lo: 1 2 3\n").is_err(),
+            "a short record is rejected, not read with shifted offsets"
+        );
+        assert!(
+            parse_net_dev("a\nb\n").is_err(),
+            "an interface-free file is rejected rather than read as zero traffic"
+        );
+    }
+
+    #[test]
+    fn network_reader_rejects_truncation_and_a_missing_method() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("network.tsv");
+        let sample = NetworkSample {
+            checkpoint: "baseline".into(),
+            method: "proc-net-dev".into(),
+            interface: "lo".into(),
+            elapsed_ms: 10,
+            rx_bytes: 1,
+            rx_packets: 2,
+            tx_bytes: 3,
+            tx_packets: 4,
+        };
+        append_network_sample(&file, &sample).unwrap();
+        append_network_sample(&file, &sample).unwrap();
+        assert_eq!(read_network_samples(&file).unwrap().len(), 2);
+        // A dead collector that stopped mid-record must not read back as a
+        // smaller measurement.
+        let text = fs::read_to_string(&file).unwrap();
+        fs::write(&file, &text[..text.len() - 6]).unwrap();
+        let error = read_network_samples(&file).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("torn final line"),
+            "unexpected error: {error:#}"
+        );
+        // A record without a stated collection method is rejected: the
+        // method is recorded per sample and never inferred.
+        fs::write(
+            &file,
+            format!("{NETWORK_HEADER}\nbaseline\t-\tlo\t1\t2\t3\t4\t5\n"),
+        )
+        .unwrap();
+        assert!(read_network_samples(&file).is_err());
+        // A wrong header version is rejected outright.
+        fs::write(
+            &file,
+            "# pipestream-network-v0\nbaseline\tm\tlo\t1\t2\t3\t4\t5\n",
+        )
+        .unwrap();
+        assert!(read_network_samples(&file).is_err());
     }
 
     #[test]

@@ -1112,6 +1112,23 @@ impl RawConn {
         Ok(())
     }
 
+    /// Transport statistics straight from the SOURCE-PINNED QUIC transport
+    /// (quinn 0.11.11 / quinn-proto 0.11.17, both pinned in this workspace's
+    /// Cargo.lock) for THIS connection: UDP datagram byte totals in each
+    /// direction, per-frame-type receive and transmit counts, and path
+    /// loss/retransmission counters.
+    ///
+    /// This is the transport's own accounting of the frames it decoded out
+    /// of received packets and encoded into sent ones, not a fixture wrapper
+    /// counting application calls. `udp_tx`/`udp_rx` are wire bytes for this
+    /// connection alone, which is what makes them FIXTURE-SCOPED where an
+    /// interface counter is host-scoped. What they are NOT: a byte-for-byte
+    /// packet capture (no capability for one on this host), and not the
+    /// SUBJECT's accounting — they are one endpoint's view.
+    pub fn stats(&self) -> quinn::ConnectionStats {
+        self.connection.stats()
+    }
+
     /// NON-WRITING probe of one send stream's state.
     ///
     /// A probe that writes bytes to test whether a stream is still alive is

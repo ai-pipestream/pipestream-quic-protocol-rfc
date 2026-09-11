@@ -190,6 +190,7 @@ pub fn rows() -> Vec<Row> {
         "r-stalled-principal-progress",
         "r-memory-ladder",
         "r-staging-and-journal-bounds",
+        "r-network-bytes",
         "g2-crash-before-create-commit",
         "g2-crash-after-create-commit",
         "g2-drop-reply-declaration",
@@ -298,6 +299,7 @@ fn direction_coverage(row: &Row, context: &ScenarioContext) -> String {
         } else if row.id == "r-connection-ceiling"
             || row.id == "r-memory-ladder"
             || row.id == "r-staging-and-journal-bounds"
+            || row.id == "r-network-bytes"
         {
             "rust-raw-client/rust-server, rust-raw-client/java-server".to_owned()
         } else {
@@ -413,6 +415,7 @@ fn run_rust_direction(row: &Row, context: &ScenarioContext) -> Result<()> {
         "r-stalled-principal-progress" => r_stalled_principal_progress(context),
         "r-memory-ladder" => r_memory_ladder(context),
         "r-staging-and-journal-bounds" => r_staging_and_journal_bounds(context),
+        "r-network-bytes" => r_network_bytes(context),
         other => bail!("scenario {other} has no rust direction implemented"),
     }
 }
@@ -20738,6 +20741,492 @@ fn staging_recovery_probe(
         STAGING_RECOVERY_WAIT
     ))
 }
+
+// ---------------------------------------------------------------------------
+// r-network-bytes (milestone 18d)
+// ---------------------------------------------------------------------------
+//
+// Fixture-scoped network measurement, with the collection method recorded on
+// every sample and never substituted mid-row. Two methods are used side by
+// side and reported separately, never averaged or swapped:
+//
+// - `proc-net-dev`: the kernel's loopback interface counters. HOST-SCOPED on
+//   this host, not fixture-scoped, because no network namespace is
+//   available (the exact failing check is recorded). Loopback
+//   double-counting: every datagram on `lo` is counted once in that
+//   interface's RX and once in its TX, so an interface delta is twice the
+//   wire bytes; the row reports both the raw delta and the halved figure and
+//   never silently halves.
+// - `quinn-conn-udp`: the source-pinned transport's own per-connection UDP
+//   datagram byte totals. FIXTURE-SCOPED by construction — they belong to
+//   one connection — and one-sided, being this endpoint's view.
+//
+// Handshake, TLS and retransmission bytes are measured in their own phase and
+// recorded separately from logical payload bytes. Network bytes are never
+// inferred from payload size; the row records the logical payload it sent as
+// a separate number and compares, never derives.
+
+/// Idle window used to quantify how much of the host-scoped loopback counter
+/// is NOT this fixture.
+const NET_BASELINE: Duration = Duration::from_secs(10);
+/// Payload of the transfer phase. Large enough that framing, ACK and header
+/// overhead is a small fraction and a retransmission would be visible.
+const NET_PAYLOAD_LEN: usize = 4 * 1024 * 1024;
+
+fn r_network_bytes(context: &ScenarioContext) -> Result<()> {
+    run_raw_directions(context, "r-network-bytes", r_network_bytes_direction)
+}
+
+/// Run one host-capability probe and record its exact result.
+fn net_capability_probe(command: &[&str], transcript: &mut String) -> String {
+    let output = Command::new(command[0])
+        .args(&command[1..])
+        .stdin(Stdio::null())
+        .output();
+    match output {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            transcript.push_str(&format!(
+                "=== {} (exit {}) ===\n{stdout}{stderr}\n",
+                command.join(" "),
+                output.status
+            ));
+            let text = format!("{stdout}{stderr}");
+            let first = text
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("(no output)")
+                .trim()
+                .to_owned();
+            format!("exit {} — {first}", output.status)
+        }
+        Err(error) => {
+            transcript.push_str(&format!(
+                "=== {} (not runnable) ===\n{error}\n",
+                command.join(" ")
+            ));
+            format!("not runnable: {error}")
+        }
+    }
+}
+
+/// Sample the loopback interface into network.tsv and return the counters.
+fn net_sample(
+    file: &Path,
+    checkpoint: &str,
+    clock: Instant,
+    anchor: u32,
+) -> Result<resources::InterfaceCounters> {
+    let counters = resources::interface_counters(anchor, "lo")?;
+    resources::append_network_sample(
+        file,
+        &resources::NetworkSample {
+            checkpoint: checkpoint.to_owned(),
+            method: "proc-net-dev".to_owned(),
+            interface: counters.interface.clone(),
+            elapsed_ms: clock.elapsed().as_millis() as u64,
+            rx_bytes: counters.rx_bytes,
+            rx_packets: counters.rx_packets,
+            tx_bytes: counters.tx_bytes,
+            tx_packets: counters.tx_packets,
+        },
+    )?;
+    Ok(counters)
+}
+
+/// Interface delta between two samples, as (rx bytes, tx bytes, rx packets,
+/// tx packets).
+fn net_delta(
+    from: &resources::InterfaceCounters,
+    to: &resources::InterfaceCounters,
+) -> (u64, u64, u64, u64) {
+    (
+        to.rx_bytes.saturating_sub(from.rx_bytes),
+        to.tx_bytes.saturating_sub(from.tx_bytes),
+        to.rx_packets.saturating_sub(from.rx_packets),
+        to.tx_packets.saturating_sub(from.tx_packets),
+    )
+}
+
+/// One connection's UDP totals from the source-pinned transport.
+fn quinn_udp_text(stats: &quinn::ConnectionStats) -> String {
+    format!(
+        "udp_tx={}B/{}dg udp_rx={}B/{}dg sent_packets={} lost_packets={} lost_bytes={} \
+         congestion_events={} current_mtu={}",
+        stats.udp_tx.bytes,
+        stats.udp_tx.datagrams,
+        stats.udp_rx.bytes,
+        stats.udp_rx.datagrams,
+        stats.path.sent_packets,
+        stats.path.lost_packets,
+        stats.path.lost_bytes,
+        stats.path.congestion_events,
+        stats.path.current_mtu
+    )
+}
+
+fn r_network_bytes_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+) -> Result<()> {
+    let scenario_id = "r-network-bytes";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+
+    // ---- host capability manifest for THIS scope, before any measurement ----
+    // A method that is unavailable is recorded by the exact check that
+    // failed, never by a note saying it was not attempted.
+    let mut probes = String::new();
+    let netns_plain = net_capability_probe(&["unshare", "-n", "true"], &mut probes);
+    let netns_userns = net_capability_probe(&["unshare", "-r", "-n", "true"], &mut probes);
+    let capture = net_capability_probe(
+        &["tcpdump", "-i", "lo", "-c", "1", "-w", "/dev/null"],
+        &mut probes,
+    );
+    fs::write(artifacts.join("capability-probes.txt"), &probes)?;
+    let namespace_available = netns_plain.starts_with("exit exit status: 0")
+        || netns_userns.starts_with("exit exit status: 0");
+    let capture_available = capture.starts_with("exit exit status: 0");
+
+    let certs = mtls::generate(&scenario_dir.join("certs"), &[("alice", "alice")])?;
+    let fixture = AuthorityFixture::new(
+        &context.rust_bin,
+        context.java_jar.as_deref(),
+        &scenario_dir.join("subject"),
+        certs,
+        server,
+        Subject::Rust,
+    )?;
+    fixture.run_init_authority()?;
+    let owned = fixture.start_server()?;
+    ensure!(
+        fixture.next_sequence(&owned, "alice")? == 1,
+        "fresh authority must report NEXT_SEQUENCE 1"
+    );
+    let anchor = owned.pid()?;
+    let permissions = resources::proc_permissions(anchor);
+    ensure!(
+        permissions.net_dev,
+        "{scenario_id}: /proc/net/dev is unreadable, so the only remaining \
+         network-byte method on this host is gone; the row fails rather than \
+         recording zero bytes"
+    );
+    // The network scope lives under artifacts/ beside the capability probes
+    // it depends on, so an event record can reference it by a relative label.
+    let network_file = artifacts.join("network.tsv");
+    let clock = Instant::now();
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "method_rule",
+                "the collection method is recorded on EVERY sample line and is \
+                 never substituted mid-row; two methods are reported side by \
+                 side and never averaged or swapped"
+                    .into(),
+            ),
+            (
+                "method_proc_net_dev",
+                "kernel loopback interface counters read through \
+                 /proc/<subject pid>/net/dev, which reports that pid's network \
+                 NAMESPACE. On this host that namespace is the host's, so the \
+                 scope is HOST-WIDE, not fixture-wide; the row measures an idle \
+                 baseline to quantify what is not this fixture"
+                    .into(),
+            ),
+            (
+                "method_quinn_conn_udp",
+                "per-connection UDP datagram byte totals from the source-pinned \
+                 transport (quinn 0.11.11 / quinn-proto 0.11.17, pinned in \
+                 Cargo.lock). Fixture-scoped by construction because they belong \
+                 to one connection; one-sided, being this endpoint's view"
+                    .into(),
+            ),
+            (
+                "loopback_double_counting",
+                "every datagram on lo is counted once in that interface's RX and \
+                 once in its TX, so an interface delta is TWICE the wire bytes. \
+                 The row reports the raw delta and the halved figure side by \
+                 side and never silently halves"
+                    .into(),
+            ),
+            (
+                "handshake_and_retransmit",
+                "handshake, TLS and retry bytes are measured in their own phase, \
+                 before any payload exists, and recorded separately from logical \
+                 payload bytes. Retransmission is reported from the transport's \
+                 own lost_packets/lost_bytes counters"
+                    .into(),
+            ),
+            (
+                "never_inferred",
+                format!(
+                    "logical payload bytes ({NET_PAYLOAD_LEN}) are recorded as \
+                     their own number and COMPARED with measured transport bytes; \
+                     no network figure in this row is derived from a payload size"
+                ),
+            ),
+            (
+                "dead_collector_rule",
+                "the row proves its own detection: a deliberately truncated copy \
+                 of the network artifact must be REJECTED by the validating \
+                 reader, a record with no stated method must be rejected, and a \
+                 counter read against a non-existent interface must fail rather \
+                 than return zero"
+                    .into(),
+            ),
+        ],
+    )?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        (
+            "client_subject",
+            "rust raw peer (one connection per phase)".into(),
+        ),
+        (
+            "capability_network_namespace",
+            format!(
+                "{}: `unshare -n true` -> {netns_plain}; `unshare -r -n true` -> \
+                 {netns_userns}",
+                if namespace_available {
+                    "AVAILABLE"
+                } else {
+                    "UNAVAILABLE (so no fixture-scoped interface counter exists on this host)"
+                }
+            ),
+        ),
+        (
+            "capability_packet_capture",
+            format!(
+                "{}: `tcpdump -i lo -c 1 -w /dev/null` -> {capture}",
+                if capture_available {
+                    "AVAILABLE"
+                } else {
+                    "UNAVAILABLE (so packet-level byte accounting falls back to the \
+                     source-pinned transport's own per-connection UDP counters)"
+                }
+            ),
+        ),
+        (
+            "method_in_use",
+            "proc-net-dev (host-scoped interface counters) AND quinn-conn-udp \
+             (fixture-scoped per-connection transport counters), recorded per \
+             sample, reported separately"
+                .into(),
+        ),
+    ];
+
+    // ---- Phase 1: host idle baseline ----
+    let idle_from = net_sample(&network_file, "baseline-start", clock, anchor)?;
+    thread::sleep(NET_BASELINE);
+    let idle_to = net_sample(&network_file, "baseline-end", clock, anchor)?;
+    let (idle_rx, idle_tx, idle_rxp, idle_txp) = net_delta(&idle_from, &idle_to);
+    observed.push((
+        "host_idle_baseline",
+        format!(
+            "over {}s with no fixture traffic the host's lo moved rx={idle_rx}B/{idle_rxp}pkt \
+             tx={idle_tx}B/{idle_txp}pkt. That is the contamination floor of the host-scoped \
+             method and is why every figure below is reported alongside the fixture-scoped one",
+            NET_BASELINE.as_secs()
+        ),
+    ));
+
+    // ---- Phase 2: handshake, TLS and session establishment only ----
+    let peer = Peer::new()?;
+    let handshake_from = net_sample(&network_file, "handshake-start", clock, anchor)?;
+    let mut conn = raw_negotiate_as(&peer, &fixture, &owned, &mut events, &artifacts, "alice")?;
+    let binding = raw_create_session(&mut conn)?;
+    let handshake_stats = conn.stats();
+    let handshake_to = net_sample(&network_file, "handshake-end", clock, anchor)?;
+    let (hs_rx, hs_tx, hs_rxp, hs_txp) = net_delta(&handshake_from, &handshake_to);
+    observed.push((
+        "handshake_tls_bytes_interface",
+        format!(
+            "proc-net-dev, HOST-SCOPED: rx={hs_rx}B/{hs_rxp}pkt tx={hs_tx}B/{hs_txp}pkt over the \
+             mTLS handshake, ALPN, capability negotiation and session creation, with no payload \
+             in existence. Loopback double-counting: wire bytes are half the sum, \
+             {}B",
+            (hs_rx + hs_tx) / 2
+        ),
+    ));
+    observed.push((
+        "handshake_tls_bytes_transport",
+        format!(
+            "quinn-conn-udp, FIXTURE-SCOPED, same phase: {}",
+            quinn_udp_text(&handshake_stats)
+        ),
+    ));
+    events.append("NETWORK_HANDSHAKE_MEASURED", None, None, None, None, None)?;
+
+    // ---- Phase 3: one known payload ----
+    let payload = oracle::dataset(context.seed ^ 0x4e37, NET_PAYLOAD_LEN);
+    let mut sha = [0u8; 32];
+    sha.copy_from_slice(&crate::decode_hex(&oracle::sha256_hex(&payload))?);
+    let declare_op = oracle::operation_id(context.seed, "network-declare", 0);
+    raw_declare(&mut conn, 2, &declare_op, 0, &[1], false)?;
+    let transfer_from = net_sample(&network_file, "transfer-start", clock, anchor)?;
+    let before = conn.stats();
+    let operation = oracle::operation_id(context.seed, "network-admit", 1);
+    ladder_admit(
+        &mut conn,
+        binding.generation,
+        &operation,
+        (0, 0, 1),
+        &payload,
+        &sha,
+    )?;
+    let after = conn.stats();
+    let transfer_to = net_sample(&network_file, "transfer-end", clock, anchor)?;
+    let (tx_rx, tx_tx, tx_rxp, tx_txp) = net_delta(&transfer_from, &transfer_to);
+    let udp_tx_delta = after.udp_tx.bytes.saturating_sub(before.udp_tx.bytes);
+    let udp_rx_delta = after.udp_rx.bytes.saturating_sub(before.udp_rx.bytes);
+    let interface_wire = (tx_rx + tx_tx) / 2;
+    observed.push((
+        "logical_payload_bytes",
+        format!(
+            "{NET_PAYLOAD_LEN} bytes of application payload, plus its framed input header. This \
+             is recorded as its own number and compared with the measured figures below; no \
+             network figure in this row is derived from it"
+        ),
+    ));
+    observed.push((
+        "transfer_bytes_interface",
+        format!(
+            "proc-net-dev, HOST-SCOPED: rx={tx_rx}B/{tx_rxp}pkt tx={tx_tx}B/{tx_txp}pkt; wire \
+             bytes after the loopback double-counting rule = {interface_wire}B against \
+             {NET_PAYLOAD_LEN}B of logical payload"
+        ),
+    ));
+    observed.push((
+        "transfer_bytes_transport",
+        format!(
+            "quinn-conn-udp, FIXTURE-SCOPED: this connection sent {udp_tx_delta}B and received \
+             {udp_rx_delta}B of UDP payload during the transfer, against {NET_PAYLOAD_LEN}B of \
+             logical payload — overhead {}B ({}%)",
+            udp_tx_delta.saturating_sub(NET_PAYLOAD_LEN as u64),
+            udp_tx_delta
+                .saturating_sub(NET_PAYLOAD_LEN as u64)
+                .saturating_mul(100)
+                / (NET_PAYLOAD_LEN as u64)
+        ),
+    ));
+    observed.push((
+        "retransmission",
+        format!(
+            "transport path counters over the whole connection: sent_packets={} \
+             lost_packets={} lost_bytes={} congestion_events={} current_mtu={}. Retransmitted \
+             bytes are inside the measured transport and interface totals and are reported here \
+             rather than subtracted from them",
+            after.path.sent_packets,
+            after.path.lost_packets,
+            after.path.lost_bytes,
+            after.path.congestion_events,
+            after.path.current_mtu
+        ),
+    ));
+    events.append("NETWORK_TRANSFER_MEASURED", None, None, None, None, None)?;
+
+    // Let the admitted work settle so the subject is not signalled to stop
+    // mid-execution (fixture timing; no measurement is taken here).
+    let mut request = 3u64;
+    ladder_wait_settled(&mut conn, &mut request, 1, LADDER_QUIESCE)?;
+    let closing = conn.stats();
+    conn.close_and_wait_idle(b"network row complete", Duration::from_secs(15))?;
+    let final_sample = net_sample(&network_file, "end", clock, anchor)?;
+    let (all_rx, all_tx, _, _) = net_delta(&idle_from, &final_sample);
+    observed.push((
+        "whole_row_interface",
+        format!(
+            "proc-net-dev, HOST-SCOPED, first to last sample: rx={all_rx}B tx={all_tx}B (wire \
+             {}B after halving) — includes the idle baseline and anything else on this host's \
+             loopback, which is exactly the limitation the method carries here",
+            (all_rx + all_tx) / 2
+        ),
+    ));
+    observed.push((
+        "whole_row_transport",
+        format!(
+            "quinn-conn-udp, FIXTURE-SCOPED, whole connection: {}",
+            quinn_udp_text(&closing)
+        ),
+    ));
+
+    // ---- Dead-collector / truncation proof, run in-row ----
+    let samples = resources::read_network_samples(&network_file)?;
+    ensure!(
+        samples.len() >= 6,
+        "{scenario_id}: expected at least six network samples, got {}",
+        samples.len()
+    );
+    ensure!(
+        samples.iter().all(|sample| !sample.method.is_empty()),
+        "{scenario_id}: a network sample carries no collection method"
+    );
+    let truncated_path = artifacts.join("network-truncated-control.tsv");
+    let text = fs::read_to_string(&network_file)?;
+    fs::write(&truncated_path, &text[..text.len().saturating_sub(7)])?;
+    let truncation_rejected = resources::read_network_samples(&truncated_path).is_err();
+    let missing_interface = resources::interface_counters(anchor, "definitely-not-an-interface")
+        .err()
+        .map(|error| format!("{error:#}"))
+        .unwrap_or_else(|| "NOT DETECTED".to_owned());
+    ensure!(
+        truncation_rejected,
+        "{scenario_id}: the validating reader accepted a truncated network artifact; a dead \
+         collector would read back as a smaller measurement"
+    );
+    ensure!(
+        missing_interface != "NOT DETECTED",
+        "{scenario_id}: reading a non-existent interface returned counters instead of failing"
+    );
+    observed.push((
+        "dead_collector_control",
+        format!(
+            "PROVED in-row: a copy of the artifact truncated mid-record is REJECTED by the \
+             validating reader ({} good samples read from the intact file), and a counter read \
+             against a non-existent interface fails with: {missing_interface}",
+            samples.len()
+        ),
+    ));
+    events.append(
+        "NETWORK_EVIDENCE",
+        None,
+        None,
+        None,
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/network.tsv".into(),
+            len: text.len() as u64,
+            sha256: oracle::sha256_hex(text.as_bytes()),
+        }),
+    )?;
+
+    // ---- what this row does NOT establish ----
+    observed.push((
+        "row_status",
+        if namespace_available || capture_available {
+            "the host grants a fixture-scoped network method; see the capability fields".to_owned()
+        } else {
+            "PARTIAL: this host grants NEITHER a network namespace NOR packet capture (exact \
+             failing checks recorded above and in artifacts/capability-probes.txt), so the \
+             only fixture-SCOPED figures here are the source-pinned transport's own \
+             per-connection UDP counters, and the interface counters are host-scoped with an \
+             idle baseline quantifying the difference. Per-packet byte accounting of the \
+             SUBJECT's side is not observable at all. Named reason, never a skip"
+                .to_owned()
+        },
+    ));
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    thread::sleep(STALL_CLOSE_SETTLE);
+    stop_and_seal(context, scenario_dir, scenario_id, owned, events)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -20803,7 +21292,7 @@ mod tests {
             let row = rows.iter().find(|row| row.id == id).unwrap();
             assert!(row.rust_implemented, "{id} must be implemented");
         }
-        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 55);
+        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 56);
     }
 
     #[test]

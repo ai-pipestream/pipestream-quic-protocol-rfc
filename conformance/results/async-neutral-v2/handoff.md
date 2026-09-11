@@ -60,7 +60,8 @@ gates and acceptance integration have passed, with evidence below.
 | 73766f6a | M17b: Java subject re-pinned to `7585a9d`; R batch A + full matrix rerun; the Java stall enforcement kind is now per-stream and matches the Rust reference |
 | 7544b134 | M18a: `r-memory-ladder` implemented against both subjects (payload and retained-inventory ladders, over-limit rung, group-window statistics); R row ids reconciled with the canonical matrix names |
 | 9deed6a0 | M18b: `r-staging-and-journal-bounds` implemented against both subjects (PARTIAL: journal/retained-byte ceilings recorded, not driven); the raw peer's tokio runtime is now driven continuously, which withdraws the M17b stalled-abort bracket as a client artefact |
-| this commit | M18c: `r-stalled-principal-progress` re-run with non-writing probes on the driven client — both subjects enforce at their own negotiated idle bound inside a two-second bracket; every R row plus `g1-leaf-copy` re-run as the group regression |
+| 0d5dded6 | M18c: `r-stalled-principal-progress` re-run with non-writing probes on the driven client — both subjects enforce at their own negotiated idle bound inside a two-second bracket; every R row plus `g1-leaf-copy` re-run as the group regression |
+| this commit | M18d: `r-network-bytes` implemented against both subjects (PARTIAL: no network namespace and no packet capture on this host, both recorded by the checks that failed); new network scope with its own schema and validating reader |
 
 ## 3. Verification evidence (M8 snapshot; superseded by §3c for the
 current milestone's gates, counts and subject pins)
@@ -835,6 +836,72 @@ JVM limits `-Xms256m -Xmx2g` still frozen. Driver binary for this milestone:
   touches every raw row, so a full-matrix rerun is required before any
   acceptance claim; what exists here is the R group plus the G1 regression.
 
+## 3g. Milestone 18d — r-network-bytes (PARTIAL)
+
+Third of the four remaining R rows, and the first that needed a new
+measurement scope rather than a new use of an existing one.
+
+Gates: `cargo fmt --all -- --check` exit 0; `cargo clippy --all-targets -p
+pipestream-conformance -- -D warnings` exit 0; `cargo test -p
+pipestream-conformance` exit 0, 92 passed / 0 failed (90 at M18c; the two new
+tests cover the `/proc/net/dev` parser against the live kernel and the
+network artifact's truncation, missing-method and wrong-header rejections);
+`cargo build --release` exit 0, reproducing the unchanged rust subject binary
+`097829fa45d8…`. Driver binary
+`4dc7ddcf4ff5ed3c98b806d3c5e16663f28ede02bf64317b171f973670f900c1`.
+
+Archived dev run: `durable-18d42f5607941dc5` — `r-network-bytes` both
+directions plus the `g1-leaf-copy` regression, exit 0, INCOMPLETE-labelled,
+120/120 manifest entries verified after archiving. No run directory deleted.
+
+### The new scope
+
+`network.tsv` is its own schema (`# pipestream-network-v1`, eight columns:
+checkpoint, method, interface, elapsed_ms, rx_bytes, rx_packets, tx_bytes,
+tx_packets), separate from the process schema because network bytes are a
+separate scope and are never mixed into a resources record. Its validating
+reader rejects a torn final line, a wrong header version, a wrong field count
+and — new here — a record whose METHOD column is empty or `-`, so a
+collection method can never be inferred after the fact.
+
+Full design and observations are in scenario-matrix-g6-resource.md under
+"Group R status (milestone 18d)". In short: two methods side by side and
+never substituted — host-scoped kernel loopback counters with the loopback
+double-counting rule stated, and the source-pinned transport's own
+per-connection UDP byte totals, which are fixture-scoped by construction —
+with handshake/TLS measured in its own phase before any payload exists,
+retransmission reported from the transport's path counters rather than
+subtracted, and the logical payload recorded as its own number and compared,
+never used to derive a network figure.
+
+### Observed
+
+1. The host-scoped method is unusable alone here, and the row quantifies
+   that: the same 10 s idle baseline measured 0 B in the archived run and
+   150,144,677 B in a development run twenty minutes earlier.
+2. Handshake with no payload in existence: rust sent 8,473 B / 15 datagrams
+   and received 7,357 B / 13; java sent 10,945 B / 15 and received 2,967 B /
+   12, already with one lost packet and one congestion event.
+3. Against 4,194,304 B of logical payload the transfer cost 4,302,837 B of
+   UDP payload on rust (2% overhead) and 4,337,607 B on java (3%).
+4. Retransmission over the whole connection: rust 0 lost packets, java 9
+   (11,682 B) with 4 congestion events — on loopback.
+5. The dead-collector and truncation rules are PROVED in-row, not asserted:
+   a deliberately truncated copy of the artifact must be rejected by the
+   reader and a counter read against a non-existent interface must fail.
+
+### Deviations recorded
+
+- Row status PARTIAL: neither a network namespace nor packet capture is
+  granted on this host, so per-packet accounting of the SUBJECT's side is not
+  observable and no fixture-scoped INTERFACE counter exists. The exact
+  failing checks are run by the row and archived verbatim in
+  `artifacts/capability-probes.txt`.
+- `network.tsv` lives under `artifacts/` rather than at the scenario root
+  (where `resources.tsv` and `store.tsv` sit) because an event record's
+  artifact label must be relative to the scenario directory and contain a
+  path separator.
+
 ## 4. Interface and peer-review artifacts
 
 - interface-v1.md: event + schedule schemas; acknowledged by Claude
@@ -894,7 +961,11 @@ JVM limits `-Xms256m -Xmx2g` still frozen. Driver binary for this milestone:
    `r-stalled-principal-progress` and `r-memory-ladder` are DONE;
    `r-staging-and-journal-bounds` is PARTIAL (pending and staging ceilings
    driven and asserted; journal/retained-byte ceilings recorded, not
-   driven); `r-network-bytes` and `r-native-credit` are SPEC (not started).
+   driven); `r-network-bytes` is PARTIAL (two methods recorded per sample,
+   handshake and retransmission separated, dead-collector and truncation
+   proved in-row; no fixture-scoped interface counter and no packet capture
+   on this host, both recorded by the checks that failed); `r-native-credit`
+   is SPEC (not started).
    `r-stalled-principal-progress` was RE-RUN at M18c on the fixed runtime
    with non-writing probes and now brackets both subjects inside two seconds
    of their own negotiated idle bound; the M17b 40-130 s bracket is
@@ -915,11 +986,8 @@ Finish group R. `r-memory-ladder` is DONE (M18a) and
    lifetime+10 s. Both subjects enforce inside a two-second bracket at their
    own negotiated idle bound. What remains from it is a FULL 53-row matrix
    rerun on the fixed runtime, which no milestone here has done.
-2. `r-network-bytes` (needs a network-bytes collector, not built in batch A;
-   this host grants neither a network namespace nor packet capture, so the
-   row will be interface counters plus the source-pinned transport's own UDP
-   accounting, with the unavailable methods recorded by their exact failing
-   checks) and then `r-native-credit`.
+2. DONE at M18d: `r-network-bytes`, PARTIAL for the named host-capability
+   reason. What is left of group R is `r-native-credit`.
 
 Then acceptance-mode integration into conformance/run_all.sh and the final
 full-matrix run.

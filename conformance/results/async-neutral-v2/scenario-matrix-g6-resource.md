@@ -687,6 +687,89 @@ the fixed runtime.
   promises complete — which held in both runs. The rust staging ceiling
   itself is stable at attempt 5 (`"input transfer capacity exhausted"`).
 
+## Group R status (milestone 18d — r-network-bytes, PARTIAL)
+
+`r-network-bytes` is IMPLEMENTED against both subjects and green in dev,
+archived run `durable-18d42f5607941dc5` (120/120 manifest entries verified)
+with the `g1-leaf-copy` regression. Status PARTIAL, reason named in the row's
+own `observed.tsv` (`row_status`): this host grants neither a network
+namespace nor packet capture, so no fixture-scoped INTERFACE counter exists
+and no per-packet accounting of the SUBJECT's side is observable at all.
+
+### Host capability, recorded by the checks that failed
+
+The row runs the checks itself, before any measurement, and archives their
+verbatim output in `artifacts/capability-probes.txt`:
+
+- `unshare -n true` → exit 1, "unshare: unshare failed: Operation not
+  permitted".
+- `unshare -r -n true` → exit 1, "unshare: write failed /proc/self/uid_map:
+  Operation not permitted".
+- `tcpdump -i lo -c 1 -w /dev/null` → exit 1, "tcpdump: lo: You don't have
+  permission to perform this capture on that device".
+
+So: no fixture network namespace, and no CAP_NET_RAW.
+
+### The two methods, recorded per sample and never substituted
+
+`network.tsv` is its own schema (`# pipestream-network-v1`, eight columns)
+and every record carries its collection method; a record whose method column
+is empty or `-` is REJECTED by the validating reader, so a method can never
+be inferred after the fact.
+
+- `proc-net-dev` — the kernel's loopback counters read through
+  `/proc/<subject pid>/net/dev`, which reports that pid's network namespace.
+  With no namespace available that is the HOST's namespace, so the scope is
+  host-wide. LOOPBACK DOUBLE-COUNTING: every datagram on `lo` is counted once
+  in that interface's RX and once in its TX, so an interface delta is twice
+  the wire bytes; the row reports the raw delta and the halved figure side by
+  side and never silently halves.
+- `quinn-conn-udp` — per-connection UDP datagram byte totals from the
+  source-pinned transport (quinn 0.11.11 / quinn-proto 0.11.17, pinned in
+  Cargo.lock). Fixture-scoped by construction, because they belong to one
+  connection; one-sided, being this endpoint's view.
+
+### Observed (dev evidence, never an acceptance claim)
+
+1. THE HOST-SCOPED METHOD IS UNUSABLE ALONE ON THIS HOST, and the row
+   quantifies that rather than asserting it. The 10 s idle baseline with no
+   fixture traffic measured 0 B in the archived run and 150,144,677 B in a
+   development run twenty minutes earlier — the same check, the same host,
+   four orders of magnitude apart, because the loopback is shared with
+   whatever else is running. Every host-scoped figure in this row is
+   therefore reported beside the fixture-scoped one and never on its own.
+2. HANDSHAKE, ALPN, mTLS AND SESSION CREATION, MEASURED WITH NO PAYLOAD IN
+   EXISTENCE and recorded separately from payload bytes. rust: the
+   connection sent 8,473 B in 15 datagrams and received 7,357 B in 13.
+   java: sent 10,945 B in 15 and received 2,967 B in 12, with one packet
+   already lost (66 B) and one congestion event during the handshake alone.
+3. PAYLOAD TRANSFER against 4,194,304 B of logical payload: rust sent
+   4,302,837 B of UDP payload (2% overhead over the logical bytes), java
+   4,337,607 B (3%). Interface wire bytes for the same phase were 4,387,702 B
+   (rust) and 4,361,936 B (java) — larger than the transport figure because
+   the interface counts both endpoints' datagrams while `udp_tx` counts one
+   side's. The logical payload is recorded as its own number and COMPARED;
+   nothing in this row is derived from it.
+4. RETRANSMISSION IS REPORTED, NOT SUBTRACTED. Over the whole connection
+   rust lost 0 packets and java lost 9 (11,682 B) with 4 congestion events,
+   on loopback. Those bytes are inside the measured totals above and are
+   listed beside them.
+5. DEAD COLLECTORS AND TRUNCATION ARE PROVED IN-ROW, not asserted: the row
+   writes a copy of its own artifact truncated mid-record and requires the
+   validating reader to REJECT it, and requires a counter read against a
+   non-existent interface to FAIL rather than return zero. Both held on both
+   subjects, alongside seven good samples read back from the intact file.
+   The deliberately corrupt copy is archived as
+   `artifacts/network-truncated-control.tsv`.
+
+### What this row does not establish
+
+Per-packet byte accounting of the SUBJECT's side. There is no capture
+capability and no namespace to scope an interface counter to the fixture, so
+the only fixture-scoped numbers here are one endpoint's own transport
+counters. That is the named reason for PARTIAL; it is not a skip and no
+figure is inferred to cover it.
+
 ## Measurement-scope rules (all R rows)
 - Rust heap, Java heap, whole-process RSS/HWM, native/direct, threads,
   FDs, file lengths, allocated filesystem blocks, actual disk I/O, and
