@@ -262,6 +262,27 @@ public final class ClientCorrelation {
   }
 
   /**
+   * Longest server-side wait among the pending requests, or -1 when nothing is pending. A
+   * WATCH or CHECKPOINT may legitimately hold its response for its whole wait, so a local
+   * response deadline must add the wait before judging silence.
+   *
+   * @return maximum pending {@code waitMs}, 0 for pending requests without a wait, -1 if none
+   */
+  public long pendingWaitMs() {
+    long wait = -1;
+    for (Flight flight : pending.values()) {
+      long own =
+          switch (flight.request.control()) {
+            case Watch watch -> watch.waitMs();
+            case Checkpoint checkpoint -> checkpoint.waitMs();
+            case null, default -> 0L;
+          };
+      wait = Math.max(wait, own);
+    }
+    return wait;
+  }
+
+  /**
    * Start the one response stream for a pending result read. Commitment mismatch is delivery-local;
    * its slot remains occupied until abortResult. Unknown/wrong-kind/duplicate correlation is fatal.
    *

@@ -4,6 +4,7 @@ import static ai.pipestream.quic.v2.Messages.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.netty.buffer.Unpooled;
+import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.handler.codec.quic.QuicConnectionCloseEvent;
 import io.netty.handler.codec.quic.QuicStreamChannel;
@@ -12,6 +13,7 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -492,6 +494,7 @@ final class DurableWireNegativeTest {
       Records.Output output = view.manifest().outputs().get(0);
       // Three stalled inputs: a declared 256 KiB payload, 128 KiB sent, no FIN.
       long[] stalled = new long[3];
+      QuicStreamChannel[] stalledStreams = new QuicStreamChannel[3];
       for (int i = 0; i < 3; i++) {
         int index = i;
         QuicStreamChannel stream =
@@ -508,14 +511,29 @@ final class DurableWireNegativeTest {
                         Arrays.copyOf(stall, 128 * 1024),
                         false));
         stalled[i] = stream.streamId();
+        stalledStreams[i] = stream;
+      }
+      // Control for the post-refusal probe below: before any bound expires, a one-byte write on
+      // each stalled stream completes at once, so a write that hangs after the refusal is a
+      // state change caused by the refusal and not a peer-side buffer limit.
+      for (QuicStreamChannel stream : stalledStreams) {
+        ChannelFuture control = stream.writeAndFlush(Unpooled.wrappedBuffer(new byte[] {1}));
+        assertTrue(
+            control.await(1000) && control.isSuccess(),
+            "pre-refusal write on stream " + stream.streamId() + " did not complete: " + control.cause());
       }
       // A watch as long as the idle bound, held on declared-never-admitted work, and a result read
       // whose stream is never read.
       peer.send(new Watch(peer.request(), new Records.WorkKey(0, 0, 6), 0, 3000));
       peer.holdIncoming = true;
       peer.send(new Read(peer.request(), WORK, 1, 0, output.sha256()));
-      // Read control until every stalled stream has been refused, or the bound is missed.
-      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
+      // Read control until every stalled stream has been refused, or the bound is missed. Each
+      // refusal is timed from the last stalled byte: the idle bound is measured from that byte, and
+      // the tick interval is at most a tenth of the bound, so a refusal later than idle + 1 s means
+      // something else delayed it.
+      long established = System.nanoTime();
+      long deadline = established + TimeUnit.SECONDS.toNanos(8);
+      List<Long> refusalMillis = new ArrayList<>();
       int refused = 0;
       while (refused < 3) {
         long remaining = deadline - System.nanoTime();
@@ -529,6 +547,7 @@ final class DurableWireNegativeTest {
         if (message instanceof Refusal refusal && refusal.request().input()) {
           assertEquals(ProtocolError.Code.LIMIT_EXCEEDED, refusal.code(), refusal.toString());
           assertEquals("input receive deadline", refusal.detail());
+          refusalMillis.add(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - established));
           refused++;
         }
       }
@@ -536,6 +555,37 @@ final class DurableWireNegativeTest {
           peer.closed.isDone(),
           "connection closed before the refusals were read: "
               + (peer.closed.isDone() ? peer.closed.get() : ""));
+      assertTrue(
+          refusalMillis.get(2) <= 4000,
+          "stalled inputs refused later than idle + 1 s; refusal times ms " + refusalMillis);
+      // Each refusal aborts its stream (Section 12.1): after the refusal has been read, a one-byte
+      // write on the stalled stream no longer completes, where the identical write before the
+      // bound completed at once. The transport queues writes on an aborted stream rather than
+      // failing them, so the assertion is on progress, not on a failure cause.
+      for (QuicStreamChannel stream : stalledStreams) {
+        ChannelFuture probe = stream.writeAndFlush(Unpooled.wrappedBuffer(new byte[] {1}));
+        long probeStart = System.nanoTime();
+        boolean settled = probe.await(1000);
+        String outcome =
+            "stream "
+                + stream.streamId()
+                + " settled="
+                + settled
+                + " success="
+                + probe.isSuccess()
+                + " cause="
+                + probe.cause()
+                + " afterMs="
+                + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - probeStart)
+                + " open="
+                + stream.isOpen()
+                + " active="
+                + stream.isActive()
+                + " outputShutdown="
+                + stream.isOutputShutdown();
+        assertFalse(
+            settled && probe.isSuccess(), "write on refused stream still made progress: " + outcome);
+      }
       for (long id : stalled) assertTrue(id >= 0);
       // The neutral driver reads control only at the end of its window, long after the idle bound:
       // the refused streams and the expired watch leave nothing outstanding, and the connection

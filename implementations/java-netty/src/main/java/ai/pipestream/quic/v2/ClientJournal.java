@@ -995,6 +995,29 @@ public final class ClientJournal implements AutoCloseable {
   }
 
   /**
+   * Retained scopes whose observed parent is the given work.
+   *
+   * @param parent parent work key
+   * @return scope evidence for every retained child scope of that work
+   * @throws SQLException storage failure
+   */
+  public synchronized List<ScopeEvidence> childScopes(Records.WorkKey parent) throws SQLException {
+    live();
+    Objects.requireNonNull(parent);
+    List<Long> scopes = new ArrayList<>();
+    try (PreparedStatement select =
+        connection.prepareStatement("SELECT scope FROM ps_v2c_scopes WHERE parent=? ORDER BY scope")) {
+      select.setBytes(1, Wire.encodeRecord(parent, 256));
+      try (ResultSet rows = select.executeQuery()) {
+        while (rows.next()) scopes.add(rows.getLong(1));
+      }
+    }
+    List<ScopeEvidence> children = new ArrayList<>();
+    for (long scope : scopes) scope(scope).ifPresent(children::add);
+    return children;
+  }
+
+  /**
    * Observed members of a scope in increasing order.
    *
    * @param scope scope identity

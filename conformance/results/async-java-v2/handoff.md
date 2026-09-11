@@ -34,8 +34,11 @@ Commits (all plain author identity, no generated attribution):
 | `68821f3`, `d7ba2e0` | client recovery after the spec hardening: `--retry-budget`/`--retry-backoff-ms`, `REFUSED`/`UNRESOLVED`/`CAPABILITIES` launcher output, REFUSAL details naming the local bound, stream-credit observation on both stacks (`RawPeerRustAuthorityTest`, `ClientRecoveryTest`); CR04/CR06/CR10 scenarios on the Java authority; evidence `conformance/results/durable-work-v2-java-client-recovery-2026-09-09.txt` |
 | `0176855` | response to Kimi's milestone 16 resource rows: stream bounds judged before the connection, idle-control clock gated on outstanding work, named deadline reasons on REFUSAL and APPLICATION_CLOSE on both listeners, host-held query-only SQLite anchor stopping the per-call WAL-index rebuild (`DurableHostIdleWritesTest`), documented listener ceilings |
 | `7585a9dc` | durable-profile connections are never closed for control silence (core-only connections keep the control deadline); `DurableWireNegativeTest.stalledPrincipalIsRefusedPerStreamOnASurvivingConnection` replays the neutral driver's stalled-principal shape; full offline run 717 tests, 0 failures |
+| `ab59dafb` | client control deadline corrected (traceability defect D1: send renews the activity clock, no silence failure with nothing pending, pending requests due within wait + control deadline; `DurableClientControlDeadlineTest`); `--db-mib`/`--wal-mib` storage funding on `init-authority` and `serve` for Meta (`V2MainStorageFundingTest`); refusal timing and before/after write probes in the stalled-principal test; replayed-input stop and release assertions; clause-level Section 12 traceability (`docs/standards/section-12-java-traceability.md`, 373 statements); Kimi M17b question (2) answered (section 5) |
+| `0a088050` | client cross-checks scope pages before journaling them and views against retained child scopes (defect 8, `DurableClientContradictionTest`); STOP_SENDING alone is not admission evidence (`DurableClientControlDeadlineTest`, two cases, raw authority input and control script hooks); replayed-stream and D2/D3/D7 notes; handoff section 4 items 7-9 |
+| `a700f5f4` | store-level Section 12.6 tests: a replacement lease already expired at the final time observation is CONFLICT and commits nothing (`ExecutionStoreTest`); a cancellation fence on a STRICT parent keeps precedence over a later child failure, excludes new descendants and their outcome commits, and settles them through the bounded cascade (`ClosureReconciliationTest`) |
 
-Working tree at `7585a9dc`: clean. Nothing pushed (no push authorization was
+Working tree at `a700f5f4`: clean. Nothing pushed (no push authorization was
 given); no CI exists for this branch; no draft/deploy action taken; the
 shared feature branch and main were not merged.
 
@@ -99,6 +102,13 @@ native jar `e49d88b724cc79c936899542c1565a00454a93d512816de6e8cfefa637c51c50`.
 - Current subject pins at `7585a9dc` (transport `.4` unchanged): lib jar
   `a21ae9c38262d38218fa0cdad2fb3acf9dcf1a7206755eb377dacce5d6a915e9`, shaded
   all-jar `61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a`.
+  Superseded at `ab59dafb` (listener wire behaviour unchanged; client
+  deadline and launcher flags changed): lib jar `950b8fb8a2f2ad4bc13571775b1de66640ec26f3a760bb6716142687bedc8e18`, shaded all-jar
+  `e1763b4a460b524ba54c41287dc469a369c778eefce72e3cc2d4d3bc90c18779`. Meta: the 48 MiB mixed cell needs
+  `--db-mib 1024 --wal-mib 256` on both `init-authority` and `serve`.
+  `0a088050` changes only the Java client and tests, so the `ab59dafb` jar stays
+  the peer pin and is the build in `target/`; no new jar is issued until the
+  listener or launcher changes again.
   Kimi's driver (run by follow-on agents while Kimi is away) merged `0176855`
   at milestone 17 (`add98fd6`, archive `durable-18d3ea398f09f12e`, JVM heap
   frozen at `-Xms256m -Xmx2g`) and `7585a9dc` at milestone 17b.
@@ -178,6 +188,42 @@ no longer rewrites the WAL index on every store call. Full offline run at
 6. **Cancelled-scope declaration and replay codes** aside, no other refusal
    code disagreement was found between the Java and Rust reference endpoints
    in the exercised matrix.
+7. **Oversized private-type frames (traceability D2, needs a spec call).**
+   Section 12.1 says both "Validate lengths before allocating buffers" and
+   "Private types 0xC0..0xFF require an activated defining profile; otherwise
+   refuse EXTENSION_UNSUPPORTED". The Java decoder (`Wire.Decoder`) judges the
+   declared length against the negotiated control limit before it classifies
+   the type, so a private type whose body exceeds the limit is LIMIT_EXCEEDED,
+   and only an in-limit private type is EXTENSION_UNSUPPORTED. The Rust
+   reference was not compared on this input. Propose stating the precedence:
+   "length validation precedes type classification; an over-limit body is
+   LIMIT_EXCEEDED whatever its type". If the intent is the opposite (a peer
+   probing profile support with a large private frame should learn
+   EXTENSION_UNSUPPORTED), the Java decoder changes one branch. No code change
+   until decided; `V2WireTest` will pin whichever code is chosen.
+8. **Client-side seal mismatch on checkpoint (traceability D3, needs a spec
+   call).** Section 12.8 gives the authority's answer to a checkpoint over a
+   different seal (INTEGRITY_ERROR) and requires the client to verify identity,
+   seal, count partition and commitments "before acknowledging coverage". The
+   Java client also refuses *before sending* when its journal holds verified
+   membership under another seal, with NOT_READY "sealed membership not
+   verified for this seal", so the authority's INTEGRITY_ERROR is unreachable
+   through this client for a scope it has verified. Two questions: may a client
+   refuse locally (saving a round trip that can only fail), and if so which
+   code names the local refusal (NOT_READY as today, or INTEGRITY_ERROR to
+   mirror the authority)? Until decided the Java behaviour stays; the
+   authority side is covered by `SessionStoreTest`, and
+   `DurableBranchTest`'s comment at the checkpoint call is corrected to say
+   the refusal is local.
+9. **Overflow codes (traceability D7, resolved without a spec change).**
+   Section 12.9's "Checked arithmetic overflow is LIMIT_EXCEEDED before
+   commitment" is met: every store-side deadline and capacity sum
+   (`AdmissionStore.add`, `InputStore.add`, `RetirementStore` cutoff) refuses
+   LIMIT_EXCEEDED. `Checks.sum` raising FRAME_ERROR is reached only from
+   decoding peer-supplied aggregates (`Records.Counts`, manifest output
+   totals), where a value outside the schema range is a framing violation under
+   Section 12.2. `V2WireTest` should pin FRAME_ERROR there explicitly; the
+   traceability document records the mapping.
 
 ## 5. Defects found
 
@@ -230,6 +276,74 @@ no longer rewrites the WAL index on every store call. Full offline run at
    same signature under the same row (about 11.5 MB/s, 98 to 99 percent
    cancelled); raised with Meta on the board as a question.
 
+7. **Java client: control silence judged against the bare control deadline.**
+   `DurableClient.check()` failed its own connection with LIMIT_EXCEEDED
+   whenever no control frame had *arrived* for `controlTimeoutMs` (30 s),
+   regardless of whether anything was outstanding and regardless of the wait a
+   pending WATCH or CHECKPOINT legitimately carries (up to 30000 ms, Section
+   12.6). A client issuing the maximum legal wait therefore killed its own
+   connection at almost exactly the moment the conformant response was due,
+   and a durable connection held quietly with nothing outstanding died after
+   30 s. Found by the Section 12 clause-level traceability pass
+   (`docs/standards/section-12-java-traceability.md`, defect D1). Fixed in
+   `ab59dafb`: the activity clock is renewed on send as well as receive; a
+   durable connection with nothing pending is never failed for silence (the
+   listener already keeps such connections since `7585a9dc`, and the transport
+   idle timeout bounds a dead peer); a pending request is due within the
+   control deadline after its own wait, and the failure is named
+   `control response deadline`. Regression:
+   `DurableClientControlDeadlineTest` (three cases: idle silence, a delayed
+   answer inside a long wait, a withheld answer bounded and named), red on
+   `1e7d25a7`.
+8. **Java client: contradicting scope page journaled before it was
+   cross-checked; parent view never checked against retained child scopes.**
+   `DurableClient.page` called `journal.observePage` and only then compared the
+   page's parent against the retained parent view, so a page contradicting a
+   validated parent admission was refused INTEGRITY_ERROR but had already become
+   a durable observation (Section 12.8: the client MUST NOT replace prior
+   validated commitments with the contradictory observation). In the other
+   order, `DurableClient.relationships` checked a view only against the scope
+   it names as its child, never against retained scopes that name the view as
+   their parent, so a parent view allocating child scope 6 was accepted after
+   scope 5 had been paged with parent = that work. Found while writing the
+   tests for S12-292 to S12-295 (traceability gap list). Fixed in `0a088050`:
+   the page is cross-checked against retained evidence before it is journaled,
+   and a view is checked against every retained scope naming it as parent
+   (`ClientJournal.childScopes`). Regression: `DurableClientContradictionTest`
+   (two tests, both orders, membership and producer contradictions), red on
+   `ab59dafb`.
+
+Kimi's milestone 17b question (2), the per-stream abort of stalled inputs
+landing between idle+10 s and lifetime+10 s instead of at the 30 s idle bound,
+is answered and is not a Java defect. A timestamped reproduction (Java
+listener built with per-stream `System.err` diagnostics, the driver's raw
+client run under a `quinn` trace subscriber, `r-stalled-principal-progress`
+against both subjects) shows:
+
+- Java refuses each stalled input at idle + 0.1 s after its last payload byte
+  (`sinceProgressMs=30094`; REFUSAL frames on control at +30.03 s from the
+  headers) and its STOP_SENDING with code 0x204 (516) leaves in the next send.
+  The Java-side regression `stalledPrincipalIsRefusedPerStreamOnASurvivingConnection`
+  now times each refusal from the last stalled byte (all three within idle + 1 s
+  on a 3 s idle bound) and shows that a one-byte write on each stalled stream
+  completes before the bound and no longer makes progress after it.
+- The driver's raw client runs a tokio `new_current_thread` runtime that is
+  driven only inside `block_on` calls, and its enforcement loop sleeps between
+  probes outside the runtime; the `quinn` endpoint driver, which receives
+  packets and marks the send stream stopped, therefore runs only in bursts
+  (inbound activity during seven isolated seconds of a five-minute run; the
+  same STOP_SENDING for streams 6/10/14 retransmitted about twenty times and
+  all processed within one millisecond). A probe whose `write_all` completes
+  from local credit never yields to the driver, so the abort is observed only
+  at a later `block_on` that actually waits. The probes also write payload
+  bytes, which are progress and renew the idle clock when they land before
+  the bound.
+- Consequence for the row: drive the runtime continuously (multi-thread
+  runtime, or the current-thread runtime's `block_on` on a dedicated thread)
+  and make the probes non-writing (`SendStream::stopped()` with a bounded
+  wait) at idle+2 s, +5 s and +10 s. Sent to the milestone 18 driver run in
+  Kimi's worktree; the conformance crate is the only thing that changes.
+
 ## 6. Build and verification commands
 
 ```
@@ -255,7 +369,7 @@ Three branches carry this window's work, all based on `8eb5a17` on
 | branch | tip | content |
 |---|---|---|
 | `docs/client-recovery-guidance-2026-09` | `ff901451` | spec text: client recovery guidance, MAX_STREAMS correction |
-| `agent/rfc-claude-java-v2` | `7585a9dc` (code; this document follows on the same branch) | Java V2 durable authority, listener and client |
+| `agent/rfc-claude-java-v2` | `a700f5f4` (tests and this document on the same branch) | Java V2 durable authority, listener and client |
 | `agent/rfc-kimi-neutral-v2` | `73766f6a` | neutral conformance driver; contains `7585a9dc` by merge |
 
 `git merge-tree --write-tree feat/durable-work-results-v2 <branch>` reports

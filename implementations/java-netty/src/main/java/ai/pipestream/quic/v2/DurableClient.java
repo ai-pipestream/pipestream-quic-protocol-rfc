@@ -313,7 +313,17 @@ public final class DurableClient implements AutoCloseable {
       if (!authenticated) ObjectStream.before(now, started, core.handshakeTimeoutMs() * 1000000L);
       else {
         guard.requireAuthenticated();
-        ObjectStream.before(now, lastFrame, core.controlTimeoutMs() * 1000000L);
+        // Control silence alone never fails a durable connection with nothing outstanding: the
+        // authority keeps quiet durable connections too, and the transport idle timeout bounds a
+        // dead peer. A pending request is due within the control deadline after its own wait
+        // (a WATCH or CHECKPOINT may hold its response for up to 30000 ms), measured from the
+        // last activity in either direction.
+        long wait = correlation.pendingWaitMs();
+        if (wait >= 0) {
+          long elapsed = now - lastFrame;
+          if (elapsed < 0 || elapsed >= (core.controlTimeoutMs() + wait) * 1000000L)
+            throw new ProtocolError(LIMIT_EXCEEDED, "control response deadline");
+        }
         if (detachSent)
           ObjectStream.before(now, detachStart, selected.streamLifetimeMs() * 1000000L);
         if (control != null) control.writes.check(now);
@@ -485,6 +495,7 @@ public final class DurableClient implements AutoCloseable {
     long id = ClientCorrelation.requestId(request);
     byte[] frame = correlation.register(request, commitment);
     controls.put(id, new Continuation(response, result));
+    lastFrame = System.nanoTime();
     if (!control.writes.sendEncoded(
         frame,
         success -> {
@@ -879,6 +890,7 @@ public final class DurableClient implements AutoCloseable {
                       return;
                     }
                     inputTransfers.put(streamId, this);
+                    lastFrame = System.nanoTime();
                     writeHeader(Wire.encodeHeader(header));
                   }));
     }
@@ -1075,6 +1087,9 @@ public final class DurableClient implements AutoCloseable {
       Optional<ClientJournal.ScopeEvidence> child = journal.scope(view.child().scope());
       if (child.isPresent()) ClientValidation.relationship(view, child.get());
     }
+    // A retained scope that names this work as its parent binds the view's child allocation too.
+    for (ClientJournal.ScopeEvidence child : journal.childScopes(view.work()))
+      ClientValidation.relationship(view, child);
   }
 
   /**
@@ -1117,23 +1132,35 @@ public final class DurableClient implements AutoCloseable {
                           && page.declared() > 0
                           && !page.more())
                         throw new ProtocolError(INTEGRITY_ERROR, "sealed page without seal");
-                      journal.observePage(page);
-                      boundaries.committed(
-                          Boundaries.Boundary.OBSERVATION_JOURNALED, Boundaries.Details.NONE);
-                      ClientJournal.ScopeEvidence evidence = journal.scope(scope).orElseThrow();
-                      if (evidence.parent() != null) {
+                      // Section 12.8: verify against retained evidence before this observation
+                      // becomes durable; a contradicting page is never journaled.
+                      ClientJournal.ScopeEvidence offered =
+                          new ClientJournal.ScopeEvidence(
+                              scope,
+                              page.producer(),
+                              page.parent(),
+                              page.declared(),
+                              page.sealed(),
+                              page.seal(),
+                              false,
+                              null);
+                      if (offered.parent() != null) {
                         Optional<ClientJournal.Observed> parent =
-                            journal.observedWork(evidence.parent());
+                            journal.observedWork(offered.parent());
                         if (parent.isPresent())
-                          ClientValidation.relationship(parent.get().view(), evidence);
+                          ClientValidation.relationship(parent.get().view(), offered);
                       }
                       for (Entry entry : page.entries()) {
                         Optional<ClientJournal.Observed> member =
                             journal.observedWork(
                                 new Records.WorkKey(scope, page.producer(), entry.entity()));
                         if (member.isPresent())
-                          ClientValidation.membership(evidence, member.get().view(), true);
+                          ClientValidation.membership(offered, member.get().view(), true);
                       }
+                      journal.observePage(page);
+                      boundaries.committed(
+                          Boundaries.Boundary.OBSERVATION_JOURNALED, Boundaries.Details.NONE);
+                      ClientJournal.ScopeEvidence evidence = journal.scope(scope).orElseThrow();
                       return new ScopePage(
                           scope,
                           page.producer(),

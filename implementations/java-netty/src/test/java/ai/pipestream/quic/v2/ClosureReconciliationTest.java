@@ -174,6 +174,116 @@ final class ClosureReconciliationTest {
     }
   }
 
+  /**
+   * Section 12.5/12.6: a cancellation fence accepted on a STRICT parent whose child scope is still
+   * open leaves the parent CANCELLING with its admission intact (attempt, input, child scope) and
+   * excludes new descendants (a later child admission is CANCELLED) and every descendant outcome
+   * commit (the running child's failure is CANCELLED too); reconciliation then settles the child
+   * scope by cancellation, and its non-successful closure does not turn the parent into a STRICT
+   * failure: the parent settles CANCELLED from its fence, and the root closes counting the parent
+   * as cancelled.
+   */
+  @Test
+  void cancellationFenceOnStrictParentWinsOverALaterChildFailure() throws Exception {
+    try (Fixture fixture = new Fixture("strict-cancel")) {
+      Records.WorkKey parent = new Records.WorkKey(0, 0, 1);
+      fixture.sessions.declare(
+          access(),
+          SELECTED,
+          fixture.generation,
+          new Messages.Declare(1, operation(1), 0, List.of(1L), true));
+      fixture.admit(parent, operation(2), 1, 1000);
+      Records.WorkView waiting = fixture.view(parent);
+      assertEquals(Records.State.WAITING_CHILDREN, waiting.state());
+      Records.ChildScope child = waiting.child();
+      assertNotNull(child);
+      Records.WorkKey childWork = new Records.WorkKey(child.scope(), child.producer(), 2);
+      fixture.sessions.declare(
+          access(),
+          SELECTED,
+          fixture.generation,
+          new Messages.Declare(3, operation(3), child.scope(), List.of(2L, 3L), true));
+      // Member 2 is admitted and running before the fence; member 3 stays declared.
+      fixture.admit(childWork, operation(4), 0, 1000);
+      ExecutionStore.Lease running =
+          fixture.sessions.claimExecution(
+              execAccess(), fixture.generation, childWork, fixture.inputs, 500, clock(1050), ALLOW);
+
+      // The fence is accepted while the child scope is open, so the parent cannot settle yet.
+      Messages.CancelResponse accepted =
+          fixture.sessions.cancel(
+              access(),
+              SELECTED,
+              fixture.generation,
+              new Messages.Cancel(5, operation(5), parent),
+              clock(1100),
+              (binding, request) -> {});
+      Records.Cancelled outcome =
+          assertInstanceOf(Records.Cancelled.class, accepted.receipt().outcome());
+      assertEquals(0, outcome.disposition());
+      Records.WorkView cancelling = fixture.view(parent);
+      assertEquals(Records.State.CANCELLING, cancelling.state());
+      assertEquals(1, cancelling.attempt());
+      assertNotNull(cancelling.input());
+      assertNotNull(cancelling.admittedAt());
+      assertEquals(child, cancelling.child());
+      assertNull(cancelling.terminalAt());
+
+      // New descendants are excluded by the fence (Section 12.5).
+      Records.WorkKey lateChild = new Records.WorkKey(child.scope(), child.producer(), 3);
+      ProtocolError excluded =
+          assertThrows(ProtocolError.class, () -> fixture.admit(lateChild, operation(6), 0, 1150));
+      assertEquals(ProtocolError.Code.CANCELLED, excluded.code(), excluded.toString());
+      // The running child's own outcome is excluded as well: its failure cannot commit under the
+      // fenced parent, so the child settles by cancellation, not by failure.
+      ProtocolError fenced =
+          assertThrows(
+              ProtocolError.class,
+              () ->
+                  fixture.sessions.failExecution(
+                      execAccess(),
+                      running,
+                      new Records.Diagnostic(9, "member failed"),
+                      false,
+                      clock(1200),
+                      ALLOW));
+      assertEquals(ProtocolError.Code.CANCELLED, fenced.code(), fenced.toString());
+      // Descendants settle through the bounded cancellation cascade (Section 12.6 "bounded
+      // descendant settlement"), never through their own outcome commits: the running child and
+      // its declared sibling both settle CANCELLED, the child scope closes, and the parent's
+      // fence settles it.
+      FenceStore.Cursor fences = new FenceStore.Cursor();
+      ClosureStore.Cursor cursor = new ClosureStore.Cursor();
+      for (int calls = 0; calls < 16; calls++) {
+        fixture.sessions.reconcileCancellation(fences, 1, clock(1300));
+        fixture.sessions.reconcileClosures(cursor, 1, clock(1300));
+        if (fixture.view(parent).state().terminal()) break;
+      }
+      assertEquals(Records.State.CANCELLED, fixture.view(childWork).state());
+      assertEquals(Records.State.CANCELLED, fixture.view(lateChild).state());
+      Records.WorkView settled = fixture.view(parent);
+      assertEquals(
+          Records.State.CANCELLED,
+          settled.state(),
+          settled + " child " + fixture.view(childWork) + " late " + fixture.view(lateChild));
+      assertNotNull(settled.terminalAt());
+      assertNull(settled.manifest());
+      Records.Digest childSeal =
+          seal(fixture.binding, child.scope(), child.producer(), parent, List.of(2L, 3L));
+      Records.ScopeSummary childSummary =
+          fixture.sessions.scopeSummary(
+              access(), SELECTED, fixture.generation, child.scope(), childSeal);
+      assertEquals(new Records.Counts(0, 0, 2, 0), childSummary.counts());
+
+      reconcileUntilClosed(fixture, 0, clock(1300));
+      Records.Digest rootSeal = seal(fixture.binding, 0, 0, null, List.of(1L));
+      Records.ScopeSummary root =
+          fixture.sessions.scopeSummary(access(), SELECTED, fixture.generation, 0, rootSeal);
+      assertEquals(new Records.Counts(0, 0, 1, 0), root.counts());
+      assertEquals(Records.State.CANCELLED, fixture.view(parent).state());
+    }
+  }
+
   @Test
   void realEmptyChildClosureMakesStrictParentEligibleForExecution() throws Exception {
     try (Fixture fixture = new Fixture("empty-child")) {
