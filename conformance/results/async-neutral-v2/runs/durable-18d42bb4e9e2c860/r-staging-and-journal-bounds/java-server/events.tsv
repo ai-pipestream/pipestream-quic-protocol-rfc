@@ -1,0 +1,6 @@
+1	durable-18d42bb4e9e2c860	r-staging-and-journal-bounds	rust	client	2988431-18d42be10a110ce9	1	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d42bb4e9e2c860	r-staging-and-journal-bounds	rust	client	2988431-18d42be10a110ce9	2	LIMIT_REFUSAL_OBSERVED							
+1	durable-18d42bb4e9e2c860	r-staging-and-journal-bounds	rust	client	2988431-18d42be10a110ce9	3	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d42bb4e9e2c860	r-staging-and-journal-bounds	rust	client	2988431-18d42be10a110ce9	4	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d42bb4e9e2c860	r-staging-and-journal-bounds	rust	client	2988431-18d42be10a110ce9	5	LIMIT_REFUSAL_OBSERVED							
+1	durable-18d42bb4e9e2c860	r-staging-and-journal-bounds	rust	client	2988431-18d42be10a110ce9	6	CEILING_EVIDENCE					artifacts/ceilings.tsv	15341	4141558d7aaaef7bfcf1aef937efd3e84b429778a4855d6ac68277dfa19c9ecc

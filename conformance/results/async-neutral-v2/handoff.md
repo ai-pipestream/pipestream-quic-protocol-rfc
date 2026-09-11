@@ -58,7 +58,8 @@ gates and acceptance integration have passed, with evidence below.
 | 5993042 | M16: R batch A — resource collectors (`durable/resources.rs`) plus `r-capability-manifest`, `r-connection-ceiling` and `r-stalled-principal-progress` against both servers |
 | add98fd | M17: Java subject re-pinned to `0176855`; JVM heap frozen before measurement; resources schema v2 (`cancelled_write_bytes`); R batch A + full matrix rerun |
 | 73766f6a | M17b: Java subject re-pinned to `7585a9d`; R batch A + full matrix rerun; the Java stall enforcement kind is now per-stream and matches the Rust reference |
-| this commit | M18a: `r-memory-ladder` implemented against both subjects (payload and retained-inventory ladders, over-limit rung, group-window statistics); R row ids reconciled with the canonical matrix names |
+| 7544b134 | M18a: `r-memory-ladder` implemented against both subjects (payload and retained-inventory ladders, over-limit rung, group-window statistics); R row ids reconciled with the canonical matrix names |
+| this commit | M18b: `r-staging-and-journal-bounds` implemented against both subjects (PARTIAL: journal/retained-byte ceilings recorded, not driven); the raw peer's tokio runtime is now driven continuously, which withdraws the M17b stalled-abort bracket as a client artefact |
 
 ## 3. Verification evidence (M8 snapshot; superseded by §3c for the
 current milestone's gates, counts and subject pins)
@@ -601,6 +602,147 @@ three are recorded rather than quietly patched.
   above. The row says so in `expected.tsv` rather than implying it held 64
   works in flight.
 
+## 3e. Milestone 18b — r-staging-and-journal-bounds (PARTIAL) and a raw-client measurement fix
+
+Second of the four remaining R rows, plus a driver-side measurement fix that
+applies to every raw row.
+
+Gates on this tree: `cargo fmt --all -- --check` exit 0; `cargo clippy
+--all-targets -p pipestream-conformance -- -D warnings` exit 0; `cargo test -p
+pipestream-conformance` exit 0, 90 passed / 0 failed (unchanged from M18a);
+`cargo build --release` exit 0.
+
+Subject pins are unchanged from M18a — rust `pipestream-quinn`
+`097829fa45d8…` (rebuilt from committed sources, byte-identical), java
+all-jar `61ab64a312908dad…` copied from Claude's read-only tree and
+hash-verified, JVM launch limits `-Xms256m -Xmx2g` still frozen. The driver
+binary at this milestone is `bd2a6ae050dea92b5d31a03ad9d883a7d17c98b5e45d0a021f3612c95d04e786`.
+
+Archived dev runs — ALL THREE ARE KEPT, including the two that are not the
+decisive one, and each MANIFEST.sha256 verifies after archiving:
+
+- `durable-18d42cb15342e2b8` — DECISIVE: `r-staging-and-journal-bounds`
+  (both directions) plus the `g1-leaf-copy` regression, exit 0, 142/142
+  manifest entries verified.
+- `durable-18d42c12afac14aa` — FAILED and recorded as failed: the row's own
+  session attach was refused `LIMIT_EXCEEDED "metadata concurrency
+  exhausted"` because the connection it needed was attached after the
+  pending phase had already filled the subject's control capacity. 101/101
+  manifest entries verified.
+- `durable-18d42bb4e9e2c860` — SUPERSEDED: the row reported SCENARIO OK, but
+  its rust reconciliation evidence was wrong (the probe read its own
+  `"input receive deadline"` refusal as a capacity refusal, and every later
+  attempt then hit an immutable-intent CONFLICT from a re-used operation
+  id). It is kept because it is the evidence for fixture defects 5 and 6
+  below, and because the row was not asserting reconciliation at all at that
+  point — which is itself the finding that produced the assertion.
+  138/138 manifest entries verified.
+
+### The row
+
+Design and full observations are in scenario-matrix-g6-resource.md under
+"Group R status (milestone 18b)". Status PARTIAL, with the reason carried in
+the row's own `observed.tsv` (`row_status`): the pending-control-work and
+staging-object ceilings are driven to exhaustion and every property the
+matrix asks for is asserted around them — a named refusal for NEW work with
+the attempt number it arrived on, existing promises still completing, file
+handles returning to baseline, capacity still charged while the transfers
+are held, and capacity reconciling after safe cleanup and after a restart on
+the same roots — but the JOURNAL and RETAINED-BYTE ceilings are recorded from
+the subject's declarations and sampled per file at six checkpoints rather
+than driven to exhaustion, because driving them needs hundreds of megabytes
+of committed records.
+
+The driver now parses the session binding receipt's retained-record limits
+(`scopes`, `entities`, `operations`, `input_bytes`, `output_bytes`,
+`active_jobs`), so the ceilings the row quotes come from the subject on the
+wire rather than from a library default.
+
+Headline numbers: rust refuses the 17th pending control request
+(`"connection pending limit"`, declared `pending_limit` 16) and the 5th
+concurrent incomplete transfer of one owner (`"input transfer capacity
+exhausted"`, documented `active_per_owner` 4); java refuses the 33rd
+(`"request refused"`, declared `pending_limit` 32) and the 129th
+(`"input handle capacity exhausted"`, documented 128 handles). 16/16 and
+32/32 granted waits were answered afterwards. FDs: rust 12 → 17 held → 14
+released; java 18 → 150 held → 22 released.
+
+### Client-side observation defect fixed — affects every raw row
+
+The coordinating owner supplied a timestamped reproduction (Java DIAG build
+plus a quinn trace subscriber on a copy of the driver) showing that the Java
+subject refuses each stalled input at idle+0.1 s
+(`sinceProgressMs=30094`), retransmits its STOP_SENDING 0x204 for about a
+minute, and that every "got frame StopSending" line in the client's own
+trace lands within one millisecond of the others. Root cause is in the
+conformance crate: `rawclient::Peer` built a `new_current_thread` tokio
+runtime, so quinn's endpoint driver — the task that reads inbound packets
+and applies their frames — only progressed while a `block_on` was pending on
+the scenario thread. A row that slept between probes, or whose probe
+returned immediately out of local send credit, left inbound packets
+unprocessed until the next call that actually waited, and then reported the
+time of its own probe as the time of the subject's action.
+
+Fix: `Peer` now builds a two-worker multi-threaded runtime, so the driver
+runs while the scenario thread sleeps. Only the conformance crate changed.
+The tokio dependency gained the `rt-multi-thread` FEATURE of a crate it
+already depends on — no new crate — and `Cargo.lock` is byte-identical
+before and after, as is the rust subject binary.
+
+Consequence for the record: the 40–130 s bracket that
+`r-stalled-principal-progress` reported for the Java input receive deadline
+at M17b was an OBSERVATION ARTEFACT OF THIS DRIVER, not the subject's
+timing. The bracket is WITHDRAWN rather than restated. That row is not
+re-run in this milestone; re-running it properly needs the second half of
+the fix as well — probes that poll the send stream's stopped state instead
+of writing payload bytes (which are progress and renew the Java deadline),
+with intermediate probes at idle+2 s, +5 s and +10 s and first-observation
+brackets recorded. Kimi's M17b request (2) to Claude is ANSWERED and closed
+by his finding; what remains open is this driver-side re-run, which is
+Kimi's own work and not a question to Claude.
+
+### Fixture defects found and fixed before the decisive run
+
+1. A filler watch waiting past a revision that could never arrive can only
+   be answered by its own deadline, which proves nothing about a promise
+   being kept; the watches now wait past the DECLARATION revision so the
+   admission answers them.
+2. `WaitMs` is bounded at 30 s by the protocol — a 60 s wait is a
+   FRAME_ERROR, not a longer wait.
+3. Reading one control frame after a burst of attempts attributes an early
+   refusal to the last attempt. Refusals carry the request or input-stream
+   tag they belong to, and the row now matches on that tag and asserts the
+   match before recording an attempt number.
+4. A per-attempt control wait made the staging sweep outlast the Java
+   subject's own input receive deadline, which reaped the earliest transfers
+   while later ones were still being opened; batched opens with one bounded
+   drain per batch keep the sweep inside the deadline.
+5. A probe holding an incomplete transfer open for longer than the subject's
+   object idle bound reads the subject's `"input receive deadline"` refusal
+   as a capacity refusal; probe waits are now 2 s, below the smaller of the
+   two negotiated idle bounds (rust 5 s).
+6. Each recovery attempt declares a new entity and therefore needs a new
+   operation id; re-using one is an immutable-intent CONFLICT that masks the
+   capacity answer entirely.
+7. Reconciliation after cleanup and after restart was recorded but not
+   ASSERTED, so a run whose reconciliation evidence was wrong still reported
+   SCENARIO OK. Both are now assertions, conditional on the ceiling having
+   actually been reached.
+
+### Deviations recorded
+
+- Row status PARTIAL: the journal/retained-BYTE ceilings are recorded, not
+  driven. Named above and in the row's `observed.tsv`.
+- The java-direction sweep reaches the 128-handle ceiling only by walking to
+  a second principal, because the per-owner CONNECTION ceiling (8) turns the
+  ninth alice connection away first. That turn-away is logged as
+  `setup-refused` with the peer's text and is not counted as a staging
+  refusal.
+- `r-stalled-principal-progress` is NOT re-run at this milestone even though
+  the runtime fix changes what it would observe. Its M17b numbers therefore
+  stand in §3c as recorded, with the bracket withdrawn here; the row is
+  re-run before any acceptance claim.
+
 ## 4. Interface and peer-review artifacts
 
 - interface-v1.md: event + schedule schemas; acknowledged by Claude
@@ -656,10 +798,14 @@ three are recorded rather than quietly patched.
    subject exposes a PUBLICATION reply pair to withhold (publication is
    observed via watch, not a correlated reply); the kill-at-boundary
    variant is the delivered evidence.
-9. Group R at M18a: `r-capability-manifest`, `r-connection-ceiling`,
+9. Group R at M18b: `r-capability-manifest`, `r-connection-ceiling`,
    `r-stalled-principal-progress` and `r-memory-ladder` are DONE;
-   `r-staging-and-journal-bounds`, `r-network-bytes` and `r-native-credit`
-   are SPEC (not started). NAMED GAPS in group R: the Rust heap scope has no
+   `r-staging-and-journal-bounds` is PARTIAL (pending and staging ceilings
+   driven and asserted; journal/retained-byte ceilings recorded, not
+   driven); `r-network-bytes` and `r-native-credit` are SPEC (not started).
+   `r-stalled-principal-progress` needs a RE-RUN before any acceptance
+   claim: the raw peer's runtime fix at M18b changes what its probes can
+   observe, and its M17b 40-130 s bracket is withdrawn as a client artefact. NAMED GAPS in group R: the Rust heap scope has no
    black-box collector; Java native/direct is unavailable on this host
    because NMT is off and the launch flags are frozen; incomplete-handshake
    accounting is not observable through the quinn client. None of the three
@@ -667,17 +813,20 @@ three are recorded rather than quietly patched.
 
 ## 6. Safe next action
 
-Finish group R. `r-memory-ladder` is DONE at M18a. The next row is
-`r-staging-and-journal-bounds`: drive staging objects, journals and retained
-data to their configured ceilings on each subject, show that exhaustion
-refuses NEW work with a named refusal while existing promises complete, that
-file handles stay bounded, and that capacity stays charged while physical
-I/O is busy and reconciles after safe cleanup and after restart. Two of its
-ceilings already surfaced as evidence during M18a development and are the
-obvious starting points: the rust input service refuses `LIMIT_EXCEEDED`
-"input transfer capacity exhausted" at its configured active/per-owner
-transfer counts, and the java admission store refuses `LIMIT_EXCEEDED`
-"retained input, output or executor capacity" at its session job ceiling.
-Then `r-network-bytes` (needs a network-bytes collector, not built in batch
-A) and `r-native-credit`. Then acceptance-mode integration into
-conformance/run_all.sh and the final full-matrix run.
+Finish group R. `r-memory-ladder` is DONE (M18a) and
+`r-staging-and-journal-bounds` is PARTIAL (M18b). Two things are queued:
+
+1. RE-RUN `r-stalled-principal-progress` on the fixed runtime, with
+   non-writing enforcement probes (poll the send stream's stopped state with
+   a bounded wait instead of writing payload bytes, which are progress and
+   renew the Java receive deadline) at idle+2 s, +5 s and +10 s, and record
+   first-observation brackets. The M17b 40-130 s bracket is withdrawn until
+   that run exists.
+2. `r-network-bytes` (needs a network-bytes collector, not built in batch A;
+   this host grants neither a network namespace nor packet capture, so the
+   row will be interface counters plus the source-pinned transport's own UDP
+   accounting, with the unavailable methods recorded by their exact failing
+   checks) and then `r-native-credit`.
+
+Then acceptance-mode integration into conformance/run_all.sh and the final
+full-matrix run.

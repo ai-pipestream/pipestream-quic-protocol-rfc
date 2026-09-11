@@ -25,8 +25,8 @@ Scenario matrix details: scenario-matrix-g1.md, -g2.md, -g3.md, -g4.md,
 | V2-RESULT 1–7 | manifest commitments; local-vs-remote copies; read pins; expiry refusal; integrity; cross-authority references | g1-zero-output DONE, g1-empty-input DONE, g7-read-pin-past-expiry SPEC, g7-receipt-before-output-expiry SPEC, g5-cross-authority-reference SPEC, g8-complete-with-pending SPEC | 2 DONE |
 | V2-CLOSE 1–5 | exact root complete; child-cut/altered CONFLICT; pending NOT_READY; detach semantics; half-close; fence precedence over STRICT | g8-* (6 rows), g4-ancestor-fence-publication | SPEC |
 | V2-TIME 1–6 | deadline independence; unsafe clock; queue time; cleanup refund; unsafe-time non-destructivity | g7-* (7 rows) | SPEC (fixture clock proposal needed for g7-unsafe-clock-refusal) |
-| V2-STORE 1–7 | crash both sides of commits; restart reconciliation; ownership; cleanup replay; retirement order; measured limits; separate metric scopes | g2 crash rows DONE (7), g3-* (6 rows) batch A impl, r-capability-manifest DONE (separate scopes recorded per sample; mandatory-metric and dead-collector rules enforced by the validating reader; resources schema v2 adds cancelled_write_bytes and the frozen JVM limits are recorded here; re-verified unchanged at the 7585a9dc Java pin), r-connection-ceiling DONE, r-stalled-principal-progress DONE (re-observed at the 7585a9dc Java pin; both subjects now enforce per stalled stream on a surviving connection, 3/3 named LIMIT_EXCEEDED refusals readable on each), r-memory-ladder DONE (payload and retained-inventory ladders against the limits the subject declares on the wire; allowances frozen before the first rung; over-limit rung refused LIMIT_EXCEEDED on both, details differ and are recorded verbatim), r-staging-and-journal-bounds/-network-bytes/-native-credit SPEC | 11 DONE |
-| V2-RESOURCE (x-cut) | capacity ceilings; journal single-owner; adapter byte ceilings; cleanup credits | r-connection-ceiling DONE (both servers; bounds and refusal classes recorded, recovery asserted), r-stalled-principal-progress DONE (both servers), r-memory-ladder DONE (both servers; memory plateaus at the configured bounds under a 256x payload ladder and a 1->64 retained-inventory ladder), g3-store-ownership impl, r-staging-and-journal-bounds SPEC | 3 DONE |
+| V2-STORE 1–7 | crash both sides of commits; restart reconciliation; ownership; cleanup replay; retirement order; measured limits; separate metric scopes | g2 crash rows DONE (7), g3-* (6 rows) batch A impl, r-capability-manifest DONE (separate scopes recorded per sample; mandatory-metric and dead-collector rules enforced by the validating reader; resources schema v2 adds cancelled_write_bytes and the frozen JVM limits are recorded here; re-verified unchanged at the 7585a9dc Java pin), r-connection-ceiling DONE, r-stalled-principal-progress DONE (re-observed at the 7585a9dc Java pin; both subjects now enforce per stalled stream on a surviving connection, 3/3 named LIMIT_EXCEEDED refusals readable on each), r-memory-ladder DONE (payload and retained-inventory ladders against the limits the subject declares on the wire; allowances frozen before the first rung; over-limit rung refused LIMIT_EXCEEDED on both, details differ and are recorded verbatim), r-staging-and-journal-bounds PARTIAL (pending and staging ceilings driven to exhaustion on both subjects with the attempt number and verbatim detail recorded, existing promises kept, handles returning to baseline, capacity charged while busy and reconciling after cleanup and after restart; journal/retained-byte ceilings recorded, not driven), r-network-bytes/-native-credit SPEC | 11 DONE, 1 PARTIAL |
+| V2-RESOURCE (x-cut) | capacity ceilings; journal single-owner; adapter byte ceilings; cleanup credits | r-connection-ceiling DONE (both servers; bounds and refusal classes recorded, recovery asserted), r-stalled-principal-progress DONE (both servers), r-memory-ladder DONE (both servers; memory plateaus at the configured bounds under a 256x payload ladder and a 1->64 retained-inventory ladder), r-staging-and-journal-bounds PARTIAL (both servers; pending-control-work and staging-object ceilings driven to a named LIMIT_EXCEEDED refusal, existing promises kept, handles bounded, capacity charged while busy and reconciled after cleanup and restart; journal/retained-byte ceilings recorded, not driven), g3-store-ownership impl | 3 DONE, 1 PARTIAL |
 
 ## Explicit gaps (visible, not waived)
 
@@ -88,6 +88,23 @@ Scenario matrix details: scenario-matrix-g1.md, -g2.md, -g3.md, -g4.md,
    archived, never inferred from RSS minus heap. Re-freezing WITH NMT and
    rerunning every R row is a future milestone's decision, not a mid-matrix
    substitution.
+3d. Added at M18b, and it changes an earlier RECORD rather than adding a new
+   gap. A driver-side measurement defect was found by the coordinating
+   owner's timestamped reproduction: the raw peer built a current-thread
+   tokio runtime, so quinn's endpoint driver only progressed inside
+   `block_on`, and a row that slept between probes observed the subject's
+   STOP_SENDING or refusal at the time of its own next blocking call rather
+   than at the time the subject acted. The 40-130 s bracket that
+   `r-stalled-principal-progress` reported for the Java input receive
+   deadline at M17b is therefore WITHDRAWN as a client artefact; the Java
+   subject in fact refuses at idle+0.1 s. The peer now runs a two-worker
+   multi-threaded runtime (conformance crate only; the tokio dependency
+   gained a feature of a crate it already used and Cargo.lock is unchanged).
+   Re-running the row also needs non-writing enforcement probes, because the
+   existing ones write payload bytes that legitimately renew the Java
+   deadline; until that run exists the row's enforcement TIMING is unclaimed
+   while its enforcement KIND (per stalled stream, on a surviving
+   connection, with 3/3 named LIMIT_EXCEEDED refusals) stands.
 4. Client-side boundaries for rust/java clients are driver-side only until
    client hooks exist (Java client hooks promised in Claude's next
    checkpoint; rust client hooks not proposed — client-death rows use

@@ -451,6 +451,156 @@ drain assertion with `transport_idle: false` and everything else idle — the
 same mechanism milestone 17 recorded for the stall row. No measurement is
 taken during that wait, and the collector windows have already closed.
 
+## Group R status (milestone 18b — r-staging-and-journal-bounds, PARTIAL)
+
+`r-staging-and-journal-bounds` is IMPLEMENTED against both subjects and green
+in dev, archived run `durable-18d42cb15342e2b8` (142/142 manifest entries
+verified) with the `g1-leaf-copy` regression. Its status is PARTIAL, not
+DONE, and the reason is named in the row's own `observed.tsv` (`row_status`)
+as well as here: the pending-control-work and staging-object ceilings are
+driven to exhaustion and every property the matrix asks for is asserted
+around them, but the JOURNAL and RETAINED-BYTE ceilings are recorded rather
+than driven.
+
+A DRIVER-SIDE MEASUREMENT DEFECT WAS FIXED IN THIS MILESTONE AND AFFECTS
+EVERY RAW ROW: the raw peer's tokio runtime was current-thread, so quinn's
+endpoint driver — the task that reads inbound packets and applies their
+frames — only progressed while some `block_on` was pending on the scenario
+thread. See "Client-side observation defect" below; it is the root cause of
+the 40–130 s bracket `r-stalled-principal-progress` reported at M17b.
+
+### Ceilings driven, and the ones only recorded
+
+Every ceiling is read off the wire before it is driven: the capability
+selection (`pending_limit`, `stream_limit`, `object_limit`) and the session
+binding receipt's retained-record limits, which the driver now parses
+(`scopes`, `entities`, `operations`, `input_bytes`, `output_bytes`,
+`active_jobs`). Both subjects report the same session limits here:
+`scopes=4096 entities=1000000 operations=1000000 input_bytes=1073741824
+output_bytes=1073741824 active_jobs=16`.
+
+- PENDING CONTROL WORK. Filled with watches on a declared-never-admitted
+  work, waiting past the revision its declaration produced so each stays
+  genuinely pending. Each attempt is checked for its OWN refusal before the
+  next is sent, because a refusal carries the request tag it belongs to and
+  reading one frame after a whole burst attributes an early refusal to the
+  last attempt (an earlier iteration of this row did exactly that and
+  reported a refusal for request 19 that in fact answered request 7).
+- STAGING OBJECTS. Incomplete input transfers — header plus a 4 KiB prefix
+  of a declared 64 KiB payload, never FINed — opened in per-connection
+  batches across up to four principals, with one bounded control drain per
+  batch matching each refusal to its attempt by input-stream tag. Hard caps
+  200 streams and 8 connections per principal; a cap is not a bound, and if
+  one were reached the arm would be recorded NOT REACHED, never as a pass.
+- JOURNALS AND RETAINED BYTES: NOT DRIVEN. The configured file ceilings are
+  recorded (the Java subject's bounded-SQLite policy of 256 MiB database /
+  64 MiB WAL / 64 MiB rollback journal / 512 KiB shared memory and its
+  object-store policy of 8 GiB bytes / 10,000 files / 128 handles; the Rust
+  authority's record-completion capacity) and the ACTUAL retained bytes are
+  sampled per file at six checkpoints, but driving any of them to exhaustion
+  needs hundreds of megabytes of committed records, which is outside this
+  row's bounded budget. That is the named reason the row is PARTIAL.
+
+### Observed (dev evidence, never an acceptance claim)
+
+1. PENDING CEILINGS DIFFER AND SO DO THE REFUSAL TEXTS. rust: declared
+   `pending_limit` 16, 16 waits granted and left unanswered, attempt 17
+   (request 19) refused `LIMIT_EXCEEDED (4) "connection pending limit"`.
+   java: declared `pending_limit` 32, 32 granted, attempt 33 (request 35)
+   refused `LIMIT_EXCEEDED (4) "request refused"` — the Java refusal detail
+   for a control request tag is generic where the Rust one names the bound.
+   Both refusals carry the control request tag (kind 0) of the attempt they
+   refuse, which the row asserts before attributing them.
+2. EXISTING PROMISES ARE KEPT AT THE PENDING CEILING. Every wait granted
+   before exhaustion was answered once the watched work was admitted on a
+   second connection: 16/16 on rust, 32/32 on java, 0 other control frames.
+3. STAGING CEILINGS. rust refuses the FIFTH concurrent incomplete transfer
+   of one owner — `LIMIT_EXCEEDED (4) "input transfer capacity exhausted"`
+   on attempt 5, which is the documented `active_per_owner` of 4 — and the
+   refusal arrives on the second connection because the first is already at
+   its four-stream transport geometry. java accepts 128 and refuses the
+   129th with `LIMIT_EXCEEDED (4) "input handle capacity exhausted"`, which
+   is its documented 128-handle object-store policy, reached over 8 alice
+   connections (the ninth alice connection is turned away by the per-owner
+   CONNECTION ceiling, logged as such) plus bob's. Both refusals carry the
+   input-stream tag (kind 1) of the attempt they refuse.
+4. EXISTING PROMISES ARE KEPT AT THE STAGING CEILING TOO. On both subjects
+   the last transfer accepted before exhaustion completed to an admission
+   receipt naming its own stream while NEW work stayed refused.
+5. CAPACITY STAYS CHARGED WHILE THE TRANSFERS ARE HELD. A further attempt
+   from the same owner, on a connection reserved for the purpose, is refused
+   again with the same named detail on both subjects.
+6. CAPACITY RECONCILES AFTER SAFE CLEANUP AND AFTER RESTART, and this is
+   asserted rather than merely recorded: after releasing the transfers and a
+   20 s cleanup settle a fresh staging transfer is accepted on attempt 1 on
+   both subjects, and after stopping and restarting the subject on the same
+   roots it is accepted on attempt 1 again. Store file lengths across the
+   restart: rust 275,685 B before and after (unchanged); java 246,852 B
+   before and 873,540 B after, which is the Java authority materialising its
+   recovery state on reopen rather than a leak the row asserts anything
+   about.
+7. FILE HANDLES ARE BOUNDED AND COME BACK. rust FDs baseline median 12 →
+   17 (p90, max 21) while the transfers are held → 14 after release; java 18
+   → 150 (max 150) → 22. The row asserts the RETURN (released p90 ≤ baseline
+   median + 8), because a peak is load and the return is the bound. Java's
+   150 held handles against its own declared 128-handle ceiling is the
+   ceiling being reached with the fixture's own connections alongside.
+8. Collector health: 0 error lines in both the pre-restart and post-restart
+   collectors on both subjects; the restart is measured by a second
+   collector anchored on the new pid, and the two are separate artifacts
+   (`resources.tsv`, `resources-after-restart.tsv`) rather than one file
+   spanning two processes.
+
+### Client-side observation defect fixed (affects every raw row)
+
+Reported by the coordinating owner with a timestamped reproduction (Java DIAG
+build plus a quinn trace subscriber on a copy of the driver): the Java subject
+refuses each stalled input at idle+0.1 s (`sinceProgressMs=30094`) and its
+STOP_SENDING 0x204 is retransmitted for a minute, yet every "got frame
+StopSending" line in the client trace lands within one millisecond of the
+others. The raw peer built a `new_current_thread` tokio runtime, so quinn's
+endpoint driver only ran inside `block_on`; a probe that slept between
+attempts, or whose write returned immediately out of local send credit, left
+inbound packets unprocessed until the next call that actually waited. The
+peer now builds a two-worker multi-threaded runtime so the driver runs while
+the scenario thread sleeps. Only the conformance crate changed; the tokio
+dependency gained the `rt-multi-thread` FEATURE of a crate already depended
+on, no new crate, and `Cargo.lock` is byte-identical.
+
+The consequence for the record: the 40–130 s bracket `r-stalled-principal-
+progress` reported for the Java input receive deadline at M17b was an
+OBSERVATION ARTEFACT of the client, not the subject's timing. That row is not
+re-run in this milestone; §3d of the handoff records what re-running it
+requires (non-writing probes at idle+2 s / +5 s / +10 s) and the bracket
+stands withdrawn rather than restated.
+
+### Fixture defects found and fixed before the decisive run
+
+1. A filler watch asking to wait past a revision that could never arrive was
+   only ever going to be answered by its own deadline, which proves nothing
+   about a promise being kept. The watches now wait past the DECLARATION
+   revision, so the admission answers them.
+2. `WaitMs` is bounded at 30 s by the protocol; a 60 s wait is a FRAME_ERROR,
+   not a longer wait.
+3. A per-attempt control wait made the staging sweep outlast the Java
+   subject's own input receive deadline, which reaped the earliest transfers
+   while later ones were still being opened. Batched opens with one drain per
+   batch keep the sweep inside the deadline and lose no attribution.
+4. The reserved probe connection is attached BEFORE the pending phase fills
+   the subject's control capacity. An attach afterwards is itself refused
+   (rust: `LIMIT_EXCEEDED "metadata concurrency exhausted"`), which made the
+   row's own scaffolding a casualty of the ceiling it was measuring; the
+   archived run `durable-18d42c12afac14aa` is that failure, kept.
+5. A probe that holds an incomplete transfer open while waiting longer than
+   the subject's object idle bound reads the subject's own
+   `"input receive deadline"` refusal as a capacity refusal. Probe waits are
+   now 2 s, below the smaller of the two negotiated idle bounds (rust 5 s).
+6. Each recovery attempt declares a new entity and so must carry a new
+   operation id; re-using one is an immutable-intent CONFLICT that masks the
+   capacity answer. Archived run `durable-18d42bb4e9e2c860` shows both
+   defects 5 and 6 (reconciliation reported as refused when the ceiling had
+   in fact cleared) and is kept as superseded.
+
 ## Measurement-scope rules (all R rows)
 - Rust heap, Java heap, whole-process RSS/HWM, native/direct, threads,
   FDs, file lengths, allocated filesystem blocks, actual disk I/O, and

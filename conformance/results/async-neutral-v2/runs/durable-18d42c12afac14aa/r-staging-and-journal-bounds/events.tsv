@@ -1,0 +1,3 @@
+1	durable-18d42c12afac14aa	r-staging-and-journal-bounds	rust	client	3032375-18d42c12b04763d6	1	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d42c12afac14aa	r-staging-and-journal-bounds	rust	client	3032375-18d42c12b04763d6	2	LIMIT_REFUSAL_OBSERVED							
+1	durable-18d42c12afac14aa	r-staging-and-journal-bounds	rust	client	3032375-18d42c12b04763d6	3	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb

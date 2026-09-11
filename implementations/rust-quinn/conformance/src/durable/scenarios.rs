@@ -189,6 +189,7 @@ pub fn rows() -> Vec<Row> {
         "r-connection-ceiling",
         "r-stalled-principal-progress",
         "r-memory-ladder",
+        "r-staging-and-journal-bounds",
         "g2-crash-before-create-commit",
         "g2-crash-after-create-commit",
         "g2-drop-reply-declaration",
@@ -294,7 +295,10 @@ fn direction_coverage(row: &Row, context: &ScenarioContext) -> String {
     } else if row.id.starts_with("r-") && context.java_jar.is_some() {
         if row.id == "r-capability-manifest" {
             "host-capability measurement (no subject direction; informs every R row)".to_owned()
-        } else if row.id == "r-connection-ceiling" || row.id == "r-memory-ladder" {
+        } else if row.id == "r-connection-ceiling"
+            || row.id == "r-memory-ladder"
+            || row.id == "r-staging-and-journal-bounds"
+        {
             "rust-raw-client/rust-server, rust-raw-client/java-server".to_owned()
         } else {
             "rust-cli-client(bob)+rust-raw-client(alice)/rust-server, \
@@ -408,6 +412,7 @@ fn run_rust_direction(row: &Row, context: &ScenarioContext) -> Result<()> {
         "r-connection-ceiling" => r_connection_ceiling(context),
         "r-stalled-principal-progress" => r_stalled_principal_progress(context),
         "r-memory-ladder" => r_memory_ladder(context),
+        "r-staging-and-journal-bounds" => r_staging_and_journal_bounds(context),
         other => bail!("scenario {other} has no rust direction implemented"),
     }
 }
@@ -19360,6 +19365,1257 @@ fn java_native_memory_probe(pid: u32, artifacts: &Path) -> Result<String> {
     fs::write(&path, &transcript)?;
     Ok(format!("{summary} (transcript artifacts/jcmd-native.txt)"))
 }
+
+// ---------------------------------------------------------------------------
+// r-staging-and-journal-bounds (milestone 18b)
+// ---------------------------------------------------------------------------
+//
+// Drives the ceilings each subject DECLARES — the capability selection's
+// pending_limit and the session binding receipt's retained-record limits —
+// until new work is refused, and proves the four properties the matrix asks
+// for: a named refusal for NEW work, EXISTING promises still completing,
+// bounded file handles, and capacity that stays charged while physical I/O
+// is busy and reconciles after safe cleanup and after restart.
+//
+// Every ceiling in this row is read off the wire, never quoted from a
+// library default: `r-memory-ladder` already found the Java listener
+// advertising a pending_limit its own `DurableOptions.defaults()` does not.
+
+/// Declared length of one staging input. The prefix below is what is
+/// actually sent, so every staging stream stays an incomplete transfer
+/// holding a staging object without ever committing one.
+const STAGING_DECLARED_LEN: usize = 64 * 1024;
+const STAGING_PREFIX_LEN: usize = 4 * 1024;
+/// Hard cap on the connections this row opens per principal. Both subjects
+/// enforce a per-principal connection ceiling of their own
+/// (r-connection-ceiling: rust 4, java 8), so the row walks principals when
+/// one principal's connections run out.
+const STAGING_MAX_CONNECTIONS_PER_PRINCIPAL: u64 = 8;
+/// Hard cap on staging streams opened in total. A cap is not a bound: if it
+/// is reached without a refusal, the staging arm is recorded as NOT REACHED
+/// with the cap and the declared ceilings, never as a pass.
+const STAGING_MAX_STREAMS: u64 = 200;
+/// Bounded wait for a refusal or an admission receipt on control.
+const STAGING_REPLY_WAIT: Duration = Duration::from_secs(10);
+/// Bounded wait for a single-shot probe transfer.
+///
+/// It must stay BELOW the smaller of the two subjects. negotiated object
+/// idle bounds (rust 5 s, java 30 s). A probe holds an incomplete transfer
+/// open while it waits, so a longer wait lets the subject reap that very
+/// transfer at its input receive deadline and the probe reads a
+/// LIMIT_EXCEEDED "input receive deadline" refusal as if capacity had been
+/// refused. A capacity refusal is immediate; a deadline refusal is not.
+const STAGING_PROBE_WAIT: Duration = Duration::from_secs(2);
+/// Bounded drain after each per-connection batch of staging attempts. The
+/// row drains once per batch rather than waiting after every attempt: a
+/// refusal carries the input-stream tag it belongs to, so batching loses no
+/// attribution, and a per-attempt wait made the sweep last longer than the
+/// subject's own input receive deadline, which then reaped the earliest
+/// transfers while later ones were still being opened.
+const STAGING_BATCH_DRAIN: Duration = Duration::from_millis(500);
+/// Deadline on the watches that fill the pending-response ceiling. The
+/// protocol bounds a wait at 30 s (`WaitMs`), and a larger value is a
+/// FRAME_ERROR rather than a longer wait, so this is the maximum a filler
+/// watch may ask for.
+const STAGING_PENDING_DEADLINE_MS: u64 = 30_000;
+/// Revision the filler watches wait PAST. A declared-never-admitted work
+/// sits at the revision its declaration produced, so a watch for anything
+/// after that revision stays genuinely pending until the work changes — and
+/// then it is answered, which is how this row shows the granted waits were
+/// kept. A revision that can never arrive would only ever be answered by the
+/// wait deadline, which proves nothing about the promise.
+const STAGING_PENDING_AFTER_REVISION: u64 = 1;
+/// Bounded drain for the waits granted before exhaustion. It is longer than
+/// the filler watches' own deadline, so a wait answered at its deadline
+/// rather than at the next revision still counts as a promise kept.
+const STAGING_PENDING_DRAIN: Duration = Duration::from_secs(50);
+/// Quiet window after releasing the staging streams, so safe cleanup can run
+/// before the row asks whether capacity came back.
+const STAGING_CLEANUP_SETTLE: Duration = Duration::from_secs(20);
+/// Bounded wait for capacity to come back after cleanup / after restart.
+const STAGING_RECOVERY_WAIT: Duration = Duration::from_secs(60);
+
+fn r_staging_and_journal_bounds(context: &ScenarioContext) -> Result<()> {
+    run_raw_directions(
+        context,
+        "r-staging-and-journal-bounds",
+        r_staging_and_journal_bounds_direction,
+    )
+}
+
+/// One staging attempt: an input header plus a partial payload and no FIN.
+/// The stream is returned held open. `reply_wait` is `Some` only for the
+/// single-shot probes, which must see their own answer immediately; the
+/// sweep passes `None` and drains the whole batch's control frames once,
+/// matching each refusal to its attempt by input-stream tag.
+struct StagingAttempt {
+    stream: quinn::SendStream,
+    stream_id: u64,
+    refusal: Option<rawclient::Refusal>,
+}
+
+fn staging_open(
+    conn: &mut RawConn,
+    generation: u64,
+    operation: &[u8; 16],
+    work: (u64, u64, u64),
+    payload_sha: &[u8; 32],
+    prefix: &[u8],
+    reply_wait: Option<Duration>,
+) -> Result<StagingAttempt> {
+    let header = rawclient::input_header_framed(
+        generation,
+        operation,
+        work,
+        STAGING_DECLARED_LEN as u64,
+        payload_sha,
+        "application/octet-stream",
+        "copy/v2",
+        0,
+        60_000,
+        1,
+        STAGING_DECLARED_LEN as u64,
+    );
+    let mut stream = conn.open_uni()?;
+    let stream_id = u64::from(stream.id());
+    conn.write_stream(&mut stream, &header)?;
+    conn.write_stream(&mut stream, prefix)?;
+    // A subject that refuses the staging reservation answers on control
+    // straight away; one that accepts it stays silent until the transfer
+    // FINs, because an incomplete input is not an admission.
+    let refusal = match reply_wait {
+        Some(wait) => match conn.read_control_bounded(wait)? {
+            Some(Frame::Control(FRAME_REFUSAL, body)) => Some(rawclient::parse_refusal(&body)?),
+            _ => None,
+        },
+        None => None,
+    };
+    Ok(StagingAttempt {
+        stream,
+        stream_id,
+        refusal,
+    })
+}
+
+/// One held connection of the staging phase.
+struct StagingConn {
+    /// Recorded on every ceilings.tsv line this connection produced.
+    #[allow(dead_code)]
+    principal: String,
+    conn: RawConn,
+    streams: Vec<quinn::SendStream>,
+}
+
+fn r_staging_and_journal_bounds_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+) -> Result<()> {
+    let scenario_id = "r-staging-and-journal-bounds";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+    let certs = mtls::generate(
+        &scenario_dir.join("certs"),
+        &[
+            ("alice", "alice"),
+            ("bob", "bob"),
+            ("carol", "carol"),
+            ("dave", "dave"),
+        ],
+    )?;
+    let fixture = AuthorityFixture::new(
+        &context.rust_bin,
+        context.java_jar.as_deref(),
+        &scenario_dir.join("subject"),
+        certs,
+        server,
+        Subject::Rust,
+    )?;
+    fixture.run_init_authority()?;
+    let mut owned = fixture.start_server()?;
+    ensure!(
+        fixture.next_sequence(&owned, "alice")? == 1,
+        "fresh authority must report NEXT_SEQUENCE 1"
+    );
+
+    let anchor = owned.pid()?;
+    let permissions = resources::proc_permissions(anchor);
+    ensure!(
+        permissions.status && permissions.fd && permissions.io,
+        "{scenario_id}: mandatory /proc scopes unreadable for the server pid {anchor} \
+         (status={} fd={} io={})",
+        permissions.status,
+        permissions.fd,
+        permissions.io
+    );
+    let store_file = scenario_dir.join("store.tsv");
+    let collector = resources::ProcessCollector::start(
+        anchor,
+        resources::SAMPLE_INTERVAL,
+        &scenario_dir.join("resources.tsv"),
+    )?;
+    let clock = Instant::now();
+    let elapsed_ms = |instant: Instant| instant.duration_since(clock).as_millis() as u64;
+    resources::sample_store(
+        "start",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+    // Baseline handles/RSS before the row opens anything.
+    thread::sleep(Duration::from_secs(10));
+    let baseline_to_ms = elapsed_ms(Instant::now());
+
+    let peer = Peer::with_keep_alive(Duration::from_secs(5))?;
+    let mut alice = raw_negotiate_as(&peer, &fixture, &owned, &mut events, &artifacts, "alice")?;
+    let caps = *alice
+        .caps()
+        .context("capabilities selection was not recorded during negotiation")?;
+    let binding = raw_create_session(&mut alice)?;
+    let session_limits = binding.limits;
+
+    let mut log = String::from("phase\tattempt\tprincipal\tconnection\toutcome\tdetail\n");
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        (
+            "client_subject",
+            "rust raw peer (several connections, incomplete staging transfers held open)".into(),
+        ),
+        (
+            "declared_pending_limit",
+            format!(
+                "{} (capability selection, read on the wire)",
+                caps.pending_limit
+            ),
+        ),
+        (
+            "declared_stream_limit",
+            format!("{} (capability selection)", caps.stream_limit),
+        ),
+        (
+            "declared_session_limits",
+            format!("{} (session binding receipt)", session_limits.text()),
+        ),
+        (
+            "java_memory_freeze",
+            match server {
+                Subject::Java => format!(
+                    "{} (frozen before the run)",
+                    crate::durable::process::java_memory_flags_text()
+                ),
+                Subject::Rust => "not applicable: no JVM in this subject group".to_owned(),
+            },
+        ),
+    ];
+
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "declared_ceilings_source",
+                "every ceiling this row drives is read off the wire before it is driven: \
+                 the capability selection (pending_limit, stream_limit, object_limit) and \
+                 the session binding receipt's retained-record limits. No library default \
+                 is quoted as a subject bound"
+                    .into(),
+            ),
+            ("pending_limit", caps.pending_limit.to_string()),
+            ("stream_limit", caps.stream_limit.to_string()),
+            ("session_limits", session_limits.text()),
+            (
+                "new_work_refusal",
+                format!(
+                    "at exhaustion a NEW request or a NEW staging transfer is refused with \
+                     LIMIT_EXCEEDED (code {}) and the subject's detail string is recorded \
+                     verbatim, together with the attempt number the refusal arrived on",
+                    rawclient::CODE_LIMIT_EXCEEDED
+                ),
+            ),
+            (
+                "existing_promises",
+                "the requests already granted before exhaustion still answer, and a staging \
+                 transfer already accepted before exhaustion still completes to an admission \
+                 receipt when it FINs"
+                    .into(),
+            ),
+            (
+                "handles_bounded",
+                "the server group's FD tail p90 returns to within baseline median + 8 after \
+                 the staging streams are released and their connections closed"
+                    .into(),
+            ),
+            (
+                "charge_while_busy",
+                "while the staging transfers are held the ceiling stays charged: a further \
+                 attempt is refused again with the same named code"
+                    .into(),
+            ),
+            (
+                "reconcile_after_cleanup",
+                format!(
+                    "after the staging streams are released and a {}s cleanup settle, a fresh \
+                     staging transfer is accepted within {}s",
+                    STAGING_CLEANUP_SETTLE.as_secs(),
+                    STAGING_RECOVERY_WAIT.as_secs()
+                ),
+            ),
+            (
+                "reconcile_after_restart",
+                "after the subject is stopped and restarted on the same roots, a fresh \
+                 staging transfer is accepted again — the charge did not survive as a leak — \
+                 and the store's file lengths and allocated blocks are sampled either side \
+                 of the restart"
+                    .into(),
+            ),
+            (
+                "journal_ceiling_scope",
+                "the journal/retained-BYTE ceilings are recorded from the binding receipt \
+                 and the subject's configuration and the actual retained bytes are sampled \
+                 at every checkpoint, but they are NOT driven to exhaustion by this row: \
+                 doing so needs hundreds of megabytes of committed records. That arm is \
+                 PARTIAL with this reason, never a skip and never a pass"
+                    .into(),
+            ),
+        ],
+    )?;
+
+    // Two further connections of the SAME owner are attached now, BEFORE
+    // the pending phase fills the subject's control-side capacity: one that
+    // will admit the watched work so the granted waits can be kept, and one
+    // reserved for the "is the capacity still charged?" probe. An attach
+    // attempted after the fill is itself refused (the rust authority answers
+    // LIMIT_EXCEEDED "metadata concurrency exhausted"), which would make the
+    // row's own scaffolding a casualty of the ceiling it is measuring.
+    let mut admitter = raw_negotiate_as(&peer, &fixture, &owned, &mut events, &artifacts, "alice")?;
+    admitter.send_control(
+        FRAME_SESSION,
+        &rawclient::session_attach(1, &binding.authority, &binding.owner, binding.generation),
+    )?;
+    let attached = rawclient::parse_binding(&admitter.expect_control(FRAME_SESSION)?)?;
+    ensure!(
+        attached.generation == binding.generation,
+        "attach receipt generation {} differs from {}",
+        attached.generation,
+        binding.generation
+    );
+    let mut prober = raw_negotiate_as(&peer, &fixture, &owned, &mut events, &artifacts, "alice")?;
+    prober.send_control(
+        FRAME_SESSION,
+        &rawclient::session_attach(1, &binding.authority, &binding.owner, binding.generation),
+    )?;
+    rawclient::parse_binding(&prober.expect_control(FRAME_SESSION)?)?;
+    let prober_request = 2u64;
+
+    // ---- Phase A: the pending-control-work ceiling ----
+    // Filled with watches on a declared-never-admitted work, waiting past the
+    // revision its declaration produced, so each one stays genuinely pending
+    // until the work changes. Each attempt is checked for its OWN refusal
+    // before the next is sent: a refusal carries the request tag it belongs
+    // to, and reading one frame after a whole burst would attribute an early
+    // refusal to the last attempt. The declared pending_limit is recorded
+    // beside the ceiling that actually fires, which need not be the same
+    // thing — the rust authority refuses on metadata concurrency first.
+    let declare_op = oracle::operation_id(context.seed, "staging-declare-a", 0);
+    let mut request = 2u64;
+    raw_declare(&mut alice, request, &declare_op, 0, &[1], false)?;
+    request += 1;
+    let pending_target = caps.pending_limit;
+    let mut pending_accepted = 0u64;
+    let mut pending_answered_early = 0u64;
+    let mut pending_refusal: Option<(u64, u64, rawclient::Refusal)> = None;
+    for attempt in 1..=(pending_target + 4) {
+        let watch_request = request;
+        request += 1;
+        alice.send_control(
+            FRAME_WORK,
+            &rawclient::work_watch(
+                watch_request,
+                (0, 0, 1),
+                STAGING_PENDING_AFTER_REVISION,
+                STAGING_PENDING_DEADLINE_MS,
+            ),
+        )?;
+        match alice.read_control_bounded(Duration::from_millis(400))? {
+            Some(Frame::Control(FRAME_REFUSAL, body)) => {
+                let refusal = rawclient::parse_refusal(&body)?;
+                log.push_str(&format!(
+                    "pending-fill\t{attempt}\talice\t0\trefused\trequest {watch_request} \
+                     tag_kind={} tag_id={} code={} detail={:?}\n",
+                    refusal.tag_kind, refusal.tag_id, refusal.code, refusal.detail
+                ));
+                pending_refusal = Some((attempt, watch_request, refusal));
+                break;
+            }
+            Some(Frame::Control(FRAME_WORK, _)) => {
+                pending_answered_early += 1;
+                log.push_str(&format!(
+                    "pending-fill\t{attempt}\talice\t0\tanswered\trequest {watch_request} was \
+                     answered immediately and is not holding a pending slot\n"
+                ));
+            }
+            Some(Frame::Control(kind, body)) => log.push_str(&format!(
+                "pending-fill\t{attempt}\talice\t0\tframe\trequest {watch_request} kind={kind} \
+                 len={}\n",
+                body.len()
+            )),
+            Some(Frame::Fin) => {
+                log.push_str("pending-fill\t-\talice\t0\tfin\tcontrol FIN\n");
+                break;
+            }
+            None => {
+                pending_accepted += 1;
+                log.push_str(&format!(
+                    "pending-fill\t{attempt}\talice\t0\tpending\trequest {watch_request} \
+                     granted and unanswered (after_revision {STAGING_PENDING_AFTER_REVISION}, \
+                     wait {STAGING_PENDING_DEADLINE_MS}ms)\n"
+                ));
+            }
+        }
+    }
+    match &pending_refusal {
+        Some((attempt, watch_request, refusal)) => {
+            ensure!(
+                refusal.code == rawclient::CODE_LIMIT_EXCEEDED,
+                "{scenario_id} {}: pending control work was refused with code {} ({:?}) on \
+                 attempt {attempt}, expected LIMIT_EXCEEDED ({})",
+                server.name(),
+                refusal.code,
+                refusal.detail,
+                rawclient::CODE_LIMIT_EXCEEDED
+            );
+            ensure!(
+                refusal.tag_kind == 0 && refusal.tag_id == *watch_request,
+                "{scenario_id} {}: the refusal names request tag ({}, {}) but it answered \
+                 request {watch_request}; the row will not attribute a refusal to an attempt \
+                 it does not name",
+                server.name(),
+                refusal.tag_kind,
+                refusal.tag_id
+            );
+            observed.push((
+                "pending_ceiling",
+                format!(
+                    "declared pending_limit {pending_target}; {pending_accepted} waits granted \
+                     and left unanswered ({pending_answered_early} answered immediately and \
+                     held no slot), and attempt {attempt} (request {watch_request}) was refused \
+                     LIMIT_EXCEEDED (4) detail={:?}. The ceiling that fires is not necessarily \
+                     the declared pending_limit and the row does not claim it is",
+                    refusal.detail
+                ),
+            ));
+            events.append("LIMIT_REFUSAL_OBSERVED", None, None, None, None, None)?;
+        }
+        None => observed.push((
+            "pending_ceiling",
+            format!(
+                "NOT REACHED: {pending_accepted} waits were granted and left unanswered \
+                 against a declared pending_limit of {pending_target} over \
+                 {} attempts, with no refusal. Recorded as not reached, never as a pass; \
+                 see artifacts/ceilings.tsv",
+                pending_target + 4
+            ),
+        )),
+    }
+    fs::write(artifacts.join("ceilings.tsv"), &log)?;
+
+    // EXISTING PROMISES: the queued watches must still answer. They are
+    // waiting on a revision that only an admission can produce, so this
+    // connection is left as it is and the SECOND connection of the same
+    // owner — attached before the fill, see above — admits the work; the
+    // first connection then drains its granted waits.
+    let promise_payload = oracle::dataset(context.seed ^ 0x5a, STAGING_DECLARED_LEN);
+    let mut promise_sha = [0u8; 32];
+    promise_sha.copy_from_slice(&crate::decode_hex(&oracle::sha256_hex(&promise_payload))?);
+    let promise_op = oracle::operation_id(context.seed, "staging-promise", 1);
+    ladder_admit(
+        &mut admitter,
+        binding.generation,
+        &promise_op,
+        (0, 0, 1),
+        &promise_payload,
+        &promise_sha,
+    )?;
+    // The admitter has done its one job. It is closed immediately, because
+    // both subjects enforce a per-owner CONNECTION ceiling of their own
+    // (r-connection-ceiling: rust 4, java 8) and the staging phase below
+    // needs those slots for staging connections, not for a connection that
+    // is finished with.
+    admitter.close_application(b"staging row: admission delivered")?;
+    // Drain what the first connection had been promised. Watches waiting on
+    // the declaration revision answer as soon as the admission moves the
+    // work on, or at their own deadline; both are the promise being kept,
+    // and the row records how many were.
+    let mut answered = 0u64;
+    let mut drained_other = 0u64;
+    let drain_deadline = Instant::now() + STAGING_PENDING_DRAIN;
+    while answered < pending_accepted && Instant::now() < drain_deadline {
+        match alice.read_control_bounded(Duration::from_secs(5))? {
+            Some(Frame::Control(FRAME_WORK, _)) => answered += 1,
+            Some(Frame::Control(FRAME_REFUSAL, body)) => {
+                let refusal = rawclient::parse_refusal(&body)?;
+                log.push_str(&format!(
+                    "pending-drain\t-\talice\t0\trefusal\tcode={} detail={:?}\n",
+                    refusal.code, refusal.detail
+                ));
+                drained_other += 1;
+            }
+            Some(Frame::Control(kind, _)) => {
+                log.push_str(&format!("pending-drain\t-\talice\t0\tframe\tkind={kind}\n"));
+                drained_other += 1;
+            }
+            Some(Frame::Fin) => break,
+            // Nothing yet: a granted wait may answer at the work's next
+            // revision or at its own deadline, and the row waits for either
+            // rather than concluding the promise was dropped.
+            None => continue,
+        }
+    }
+    log.push_str(&format!(
+        "pending-drain\t-\talice\t0\tsummary\t{answered}/{pending_accepted} granted waits \
+         answered, {drained_other} other frames\n"
+    ));
+    observed.push((
+        "pending_existing_promises",
+        format!(
+            "{answered}/{pending_accepted} waits granted before exhaustion were answered \
+             after the watched work was admitted on a second connection ({drained_other} \
+             other control frames drained and logged)"
+        ),
+    ));
+    ensure!(
+        answered >= pending_accepted,
+        "{scenario_id} {}: only {answered}/{pending_accepted} granted waits were answered \
+         after exhaustion; existing promises were not kept",
+        server.name()
+    );
+    fs::write(artifacts.join("ceilings.tsv"), &log)?;
+    resources::sample_store(
+        "pending-ceiling",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+
+    // ---- Phase B: the staging-object ceiling ----
+    // Incomplete input transfers are staging objects: the header reserves,
+    // the payload never finishes, nothing commits. They are opened in
+    // per-connection batches and the control stream is drained once per
+    // batch, because a refusal carries the INPUT STREAM tag it belongs to
+    // and can therefore be attributed exactly. Batching also matters for the
+    // measurement: a per-attempt wait made the sweep outlast the subject's
+    // own input receive deadline, which then reaped the earliest transfers
+    // while the row was still opening later ones.
+    let staging_payload = oracle::dataset(context.seed ^ 0x57, STAGING_DECLARED_LEN);
+    let mut staging_sha = [0u8; 32];
+    staging_sha.copy_from_slice(&crate::decode_hex(&oracle::sha256_hex(&staging_payload))?);
+    let prefix = &staging_payload[..STAGING_PREFIX_LEN];
+    let mut held: Vec<StagingConn> = Vec::new();
+    let mut staging_refusal: Option<(u64, String, rawclient::Refusal)> = None;
+    let mut staging_open_count = 0u64;
+    let mut staging_reaped = 0u64;
+    let mut last_accepted: Option<(usize, usize, u64, u64)> = None;
+    // Entity ids must strictly increase within a scope across declaration
+    // batches, so every later phase allocates from this cursor and never
+    // re-uses a lower id.
+    let mut entity_cursor = 100_000u64;
+    'principals: for principal in ["alice", "bob", "carol", "dave"] {
+        for connection_index in 0..STAGING_MAX_CONNECTIONS_PER_PRINCIPAL {
+            if staging_open_count >= STAGING_MAX_STREAMS {
+                log.push_str(&format!(
+                    "staging\t{staging_open_count}\t{principal}\t{connection_index}\tcap\t\
+                     hard cap {STAGING_MAX_STREAMS} streams reached without a refusal\n"
+                ));
+                break 'principals;
+            }
+            let mut conn = match peer.connect(&fixture.certs, principal, &owned.address) {
+                Ok(conn) => conn,
+                Err(error) => {
+                    log.push_str(&format!(
+                        "staging\t-\t{principal}\t{connection_index}\tconnect-refused\t{error:#}\n"
+                    ));
+                    continue 'principals;
+                }
+            };
+            let batch: Vec<u64> = (0..caps.stream_limit)
+                .map(|slot| entity_cursor + slot + 1)
+                .collect();
+            entity_cursor += caps.stream_limit + 1;
+            // A connection that authenticates and is then turned away by a
+            // per-owner ceiling fails on its first control read. That is
+            // this row walking into ANOTHER subject bound, not a fixture
+            // error: it is logged and the row moves to the next principal.
+            let prepared = (|| -> Result<u64> {
+                let offer = rawclient::frozen("capabilities-offer")?;
+                conn.send_frozen(&offer.frame)?;
+                let selection =
+                    rawclient::parse_capabilities(&conn.expect_control(FRAME_CAPABILITIES)?)?;
+                conn.set_caps(selection);
+                // Per-principal session: alice attaches to the existing one,
+                // a fresh principal creates its own.
+                let generation = if principal == "alice" {
+                    conn.send_control(
+                        FRAME_SESSION,
+                        &rawclient::session_attach(
+                            1,
+                            &binding.authority,
+                            &binding.owner,
+                            binding.generation,
+                        ),
+                    )?;
+                    rawclient::parse_binding(&conn.expect_control(FRAME_SESSION)?)?.generation
+                } else {
+                    raw_create_session(&mut conn)?.generation
+                };
+                let declare = oracle::operation_id(
+                    context.seed,
+                    "staging-declare-b",
+                    (batch[0] + principal.len() as u64) as u32,
+                );
+                raw_declare(&mut conn, 2, &declare, 0, &batch, false)?;
+                Ok(generation)
+            })();
+            let generation = match prepared {
+                Ok(generation) => generation,
+                Err(error) => {
+                    log.push_str(&format!(
+                        "staging\t-\t{principal}\t{connection_index}\tsetup-refused\t{error:#}\n"
+                    ));
+                    continue 'principals;
+                }
+            };
+            // Open this connection's whole batch, then read control once.
+            let mut streams: Vec<quinn::SendStream> = Vec::new();
+            let mut opened: Vec<(u64, u64, u64)> = Vec::new(); // attempt, entity, stream id
+            let mut transport_failed: Option<String> = None;
+            for entity in &batch {
+                if staging_open_count >= STAGING_MAX_STREAMS {
+                    break;
+                }
+                let operation = oracle::operation_id(context.seed, "staging-input", *entity as u32);
+                match staging_open(
+                    &mut conn,
+                    generation,
+                    &operation,
+                    (0, 0, *entity),
+                    &staging_sha,
+                    prefix,
+                    None,
+                ) {
+                    Ok(attempt) => {
+                        staging_open_count += 1;
+                        opened.push((staging_open_count, *entity, attempt.stream_id));
+                        streams.push(attempt.stream);
+                    }
+                    Err(error) => {
+                        // The subject stopped this transfer as it was being
+                        // written. That is the subject's own enforcement,
+                        // recorded rather than treated as a fixture error.
+                        staging_reaped += 1;
+                        transport_failed = Some(format!("{error:#}"));
+                        break;
+                    }
+                }
+            }
+            if let Some(error) = &transport_failed {
+                log.push_str(&format!(
+                    "staging\t{staging_open_count}\t{principal}\t{connection_index}\treaped\t\
+                     a staging transfer was stopped by the subject while it was being \
+                     written: {error}\n"
+                ));
+            }
+            // One bounded drain, matched to the attempts by input-stream tag.
+            let mut refused_here: Vec<(u64, rawclient::Refusal)> = Vec::new();
+            for _ in 0..(caps.stream_limit * 2 + 2) {
+                match conn.read_control_bounded(STAGING_BATCH_DRAIN)? {
+                    Some(Frame::Control(FRAME_REFUSAL, body)) => {
+                        let refusal = rawclient::parse_refusal(&body)?;
+                        let attempt = opened
+                            .iter()
+                            .find(|(_, _, stream_id)| {
+                                refusal.tag_kind == rawclient::TAG_INPUT_STREAM
+                                    && *stream_id == refusal.tag_id
+                            })
+                            .map(|(attempt, _, _)| *attempt);
+                        log.push_str(&format!(
+                            "staging\t{}\t{principal}\t{connection_index}\trefused\t\
+                             tag_kind={} tag_id={} code={} detail={:?}\n",
+                            attempt
+                                .map(|a| a.to_string())
+                                .unwrap_or_else(|| "unmatched".into()),
+                            refusal.tag_kind,
+                            refusal.tag_id,
+                            refusal.code,
+                            refusal.detail
+                        ));
+                        if let Some(attempt) = attempt {
+                            refused_here.push((attempt, refusal));
+                        }
+                    }
+                    Some(Frame::Control(kind, body)) => log.push_str(&format!(
+                        "staging\t-\t{principal}\t{connection_index}\tframe\tkind={kind} len={}\n",
+                        body.len()
+                    )),
+                    Some(Frame::Fin) => {
+                        log.push_str(&format!(
+                            "staging\t-\t{principal}\t{connection_index}\tfin\tcontrol FIN\n"
+                        ));
+                        break;
+                    }
+                    None => break,
+                }
+            }
+            refused_here.sort_by_key(|(attempt, _)| *attempt);
+            let refused_attempts: BTreeSet<u64> =
+                refused_here.iter().map(|(attempt, _)| *attempt).collect();
+            for (attempt, entity, stream_id) in &opened {
+                if refused_attempts.contains(attempt) {
+                    continue;
+                }
+                log.push_str(&format!(
+                    "staging\t{attempt}\t{principal}\t{connection_index}\tstaged\tstream={stream_id} \
+                     work=0:0:{entity} {STAGING_PREFIX_LEN}/{STAGING_DECLARED_LEN} bytes, no FIN\n"
+                ));
+                let slot = opened
+                    .iter()
+                    .position(|(a, _, _)| a == attempt)
+                    .expect("the attempt came from this list");
+                last_accepted = Some((held.len(), slot, *entity, *stream_id));
+            }
+            let first_refusal = refused_here.into_iter().next();
+            held.push(StagingConn {
+                principal: principal.to_owned(),
+                conn,
+                streams,
+            });
+            if let Some((attempt, refusal)) = first_refusal {
+                staging_refusal = Some((attempt, principal.to_owned(), refusal));
+                break 'principals;
+            }
+            if transport_failed.is_some() {
+                break 'principals;
+            }
+        }
+    }
+    fs::write(artifacts.join("ceilings.tsv"), &log)?;
+    let staging_held: u64 = held.iter().map(|c| c.streams.len() as u64).sum();
+    observed.push((
+        "staging_streams_opened",
+        format!(
+            "{staging_open_count} incomplete input transfers over {} connections \
+             ({staging_held} still held at the end of the sweep, {staging_reaped} stopped by \
+             the subject while being written); hard caps {STAGING_MAX_STREAMS} streams / \
+             {STAGING_MAX_CONNECTIONS_PER_PRINCIPAL} connections per principal",
+            held.len()
+        ),
+    ));
+    let staging_partial = match &staging_refusal {
+        Some((attempt, principal, refusal)) => {
+            ensure!(
+                refusal.code == rawclient::CODE_LIMIT_EXCEEDED,
+                "{scenario_id} {}: staging exhaustion was refused with code {} ({:?}), \
+                 expected LIMIT_EXCEEDED ({})",
+                server.name(),
+                refusal.code,
+                refusal.detail,
+                rawclient::CODE_LIMIT_EXCEEDED
+            );
+            observed.push((
+                "staging_ceiling",
+                format!(
+                    "NEW work refused on staging attempt {attempt} (principal {principal}) with \
+                     LIMIT_EXCEEDED (4), tag_kind={} tag_id={} detail={:?}",
+                    refusal.tag_kind, refusal.tag_id, refusal.detail
+                ),
+            ));
+            events.append("LIMIT_REFUSAL_OBSERVED", None, None, None, None, None)?;
+            false
+        }
+        None => {
+            observed.push((
+                "staging_ceiling",
+                format!(
+                    "NOT REACHED: {staging_open_count} incomplete transfers were accepted \
+                     without any count ceiling being refused, up to this row's hard caps \
+                     ({STAGING_MAX_STREAMS} streams, {STAGING_MAX_CONNECTIONS_PER_PRINCIPAL} \
+                     connections per principal), with {staging_reaped} transfer(s) stopped by \
+                     the subject's own input receive deadline during the sweep. A cap is not a \
+                     bound: recorded as not reached, never as a pass. What this shows about \
+                     the subject is that it bounds incomplete staging transfers by TIME rather \
+                     than by a count this row can reach"
+                ),
+            ));
+            true
+        }
+    };
+    resources::sample_store(
+        "staging-full",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+    let staging_full_ms = elapsed_ms(Instant::now());
+
+    // ---- Phase C: capacity stays charged while the transfers are busy ----
+    let recharge = if staging_refusal.is_some() {
+        let entity = entity_cursor + 1;
+        entity_cursor += 2;
+        // The probe runs on the RESERVED connection, not on a held staging
+        // connection: every staging connection has all `stream_limit` of its
+        // object-stream slots occupied by transfers this row is holding, and
+        // an open that waits for transport stream credit would time out and
+        // be reported as the subject refusing capacity when it is the
+        // fixture's own stream geometry. It must also be the SAME owner
+        // whose capacity is exhausted, so a different principal is not an
+        // option either.
+        let declare = oracle::operation_id(context.seed, "staging-recharge-declare", 0);
+        let declared = raw_declare(&mut prober, prober_request, &declare, 0, &[entity], false);
+        match declared {
+            Ok(()) => {
+                let operation = oracle::operation_id(context.seed, "staging-recharge", 0);
+                let attempt = staging_open(
+                    &mut prober,
+                    binding.generation,
+                    &operation,
+                    (0, 0, entity),
+                    &staging_sha,
+                    prefix,
+                    Some(STAGING_PROBE_WAIT),
+                )?;
+                let text = match attempt.refusal {
+                    Some(refusal) => format!(
+                        "still charged: a further staging attempt while every transfer is held \
+                         is refused again, code={} detail={:?}",
+                        refusal.code, refusal.detail
+                    ),
+                    None => "NOT still charged: a further staging attempt was accepted while \
+                             every earlier transfer is still held"
+                        .to_owned(),
+                };
+                log.push_str(&format!("charged\t-\t-\t-\tprobe\t{text}\n"));
+                drop(attempt.stream);
+                text
+            }
+            Err(error) => {
+                let text = format!(
+                    "still charged: the recharge probe could not even declare its entity — \
+                     {error:#}"
+                );
+                log.push_str(&format!("charged\t-\t-\t-\tprobe\t{text}\n"));
+                text
+            }
+        }
+    } else {
+        "not applicable: the staging ceiling was never reached".to_owned()
+    };
+    observed.push(("capacity_charged_while_busy", recharge));
+
+    // EXISTING PROMISES at the staging ceiling: a transfer accepted BEFORE
+    // exhaustion still completes when it FINs.
+    let promise_outcome = match last_accepted {
+        Some((conn_index, slot, entity, stream_id)) => {
+            // A transfer the subject already stopped is not a fixture error:
+            // it is the subject's own deadline enforcement and is recorded
+            // as such rather than propagated.
+            let completion = (|| -> Result<String> {
+                let target = held
+                    .get_mut(conn_index)
+                    .context("the accepted staging transfer's connection is gone")?;
+                let stream = target
+                    .streams
+                    .get_mut(slot)
+                    .context("the accepted staging transfer's stream is gone")?;
+                target
+                    .conn
+                    .write_stream(stream, &staging_payload[STAGING_PREFIX_LEN..])?;
+                target.conn.finish_stream(stream)?;
+                Ok(
+                    match target.conn.read_control_bounded(STAGING_REPLY_WAIT)? {
+                        Some(Frame::Control(FRAME_WORK, body)) => {
+                            let admitted = rawclient::parse_admitted_stream(&body)?;
+                            format!(
+                                "kept: the staging transfer accepted before exhaustion (work \
+                             0:0:{entity}, stream {stream_id}) completed to an admission receipt \
+                             naming stream {admitted} while NEW work stayed refused"
+                            )
+                        }
+                        Some(Frame::Control(FRAME_REFUSAL, body)) => {
+                            let refusal = rawclient::parse_refusal(&body)?;
+                            format!(
+                                "BROKEN: the staging transfer accepted before exhaustion was refused \
+                             on completion, code={} detail={:?}",
+                                refusal.code, refusal.detail
+                            )
+                        }
+                        Some(Frame::Control(kind, _)) => {
+                            format!("unexpected control frame kind={kind} on completion")
+                        }
+                        Some(Frame::Fin) => "control FIN before the completion receipt".to_owned(),
+                        None => format!("no receipt within {STAGING_REPLY_WAIT:?}"),
+                    },
+                )
+            })();
+            match completion {
+                Ok(text) => text,
+                Err(error) => format!(
+                    "not completable: the transfer (work 0:0:{entity}, stream {stream_id}) could \
+                     not be finished — {error:#}. Recorded as the subject's own enforcement on \
+                     an incomplete transfer, not as a promise broken at the ceiling"
+                ),
+            }
+        }
+        None => "not applicable: no staging transfer was accepted before exhaustion".to_owned(),
+    };
+    log.push_str(&format!(
+        "existing\t-\t-\t-\tcompletion\t{promise_outcome}\n"
+    ));
+    observed.push(("staging_existing_promises", promise_outcome.clone()));
+    if last_accepted.is_some() && staging_refusal.is_some() {
+        ensure!(
+            promise_outcome.starts_with("kept:"),
+            "{scenario_id} {}: a staging transfer accepted before exhaustion did not complete \
+             — {promise_outcome}",
+            server.name()
+        );
+    }
+    fs::write(artifacts.join("ceilings.tsv"), &log)?;
+
+    // ---- Phase D: release, settle, and ask whether capacity came back ----
+    let fd_peak_from_ms = elapsed_ms(Instant::now());
+    for connection in held.drain(..) {
+        let StagingConn { conn, streams, .. } = connection;
+        drop(streams);
+        conn.close_application(b"staging row: releasing held transfers")?;
+    }
+    prober.close_application(b"staging row: releasing the reserved prober")?;
+    thread::sleep(STAGING_CLEANUP_SETTLE);
+    let after_cleanup_ms = elapsed_ms(Instant::now());
+    resources::sample_store(
+        "after-cleanup",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+    let recovery_after_cleanup = staging_recovery_probe(
+        &peer,
+        &fixture,
+        &owned,
+        &binding,
+        &staging_sha,
+        prefix,
+        entity_cursor,
+        context.seed,
+        "after-cleanup",
+        &mut log,
+    )?;
+    observed.push(("reconcile_after_cleanup", recovery_after_cleanup.clone()));
+
+    // ---- Phase E: restart and ask again ----
+    resources::sample_store(
+        "before-restart",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+    let before_restart: u64 = resources::read_store_samples(&store_file)?
+        .iter()
+        .filter(|record| record.checkpoint == "before-restart")
+        .map(|record| record.len)
+        .sum();
+    // The collector is anchored on the old pid, so it stops with the old
+    // process; the restarted subject is measured by a fresh collector.
+    let summary_before = collector.stop()?;
+    owned.stop()?;
+    owned = fixture.start_server()?;
+    let anchor_after = owned.pid()?;
+    let collector_after = resources::ProcessCollector::start(
+        anchor_after,
+        resources::SAMPLE_INTERVAL,
+        &scenario_dir.join("resources-after-restart.tsv"),
+    )?;
+    resources::sample_store(
+        "after-restart",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+    let after_restart: u64 = resources::read_store_samples(&store_file)?
+        .iter()
+        .filter(|record| record.checkpoint == "after-restart")
+        .map(|record| record.len)
+        .sum();
+    let recovery_after_restart = staging_recovery_probe(
+        &peer,
+        &fixture,
+        &owned,
+        &binding,
+        &staging_sha,
+        prefix,
+        entity_cursor + 1_000,
+        context.seed,
+        "after-restart",
+        &mut log,
+    )?;
+    observed.push(("reconcile_after_restart", recovery_after_restart.clone()));
+    observed.push((
+        "retained_bytes_across_restart",
+        format!(
+            "store file lengths total {before_restart} B before the restart and \
+             {after_restart} B after it (separate scope from allocated blocks; both are in \
+             store.tsv per file and per checkpoint)"
+        ),
+    ));
+    let summary_after = collector_after.stop()?;
+    fs::write(artifacts.join("ceilings.tsv"), &log)?;
+
+    // Reconciliation is an ASSERTION, not just a record: capacity charged at
+    // exhaustion must come back after safe cleanup and must not survive a
+    // restart as a leak. Only meaningful once the ceiling was actually
+    // reached — a capacity that was never exhausted has nothing to reconcile.
+    if staging_refusal.is_some() {
+        ensure!(
+            recovery_after_cleanup.contains("accepted"),
+            "{scenario_id} {}: staging capacity did not come back after the transfers were \
+             released and a {:?} cleanup settle — {recovery_after_cleanup}",
+            server.name(),
+            STAGING_CLEANUP_SETTLE
+        );
+        ensure!(
+            recovery_after_restart.contains("accepted"),
+            "{scenario_id} {}: staging capacity did not reconcile across a restart on the \
+             same roots — {recovery_after_restart}",
+            server.name()
+        );
+    }
+
+    // ---- measurement close-out ----
+    ensure!(
+        summary_before.error_lines == 0 && summary_after.error_lines == 0,
+        "{scenario_id}: dead collector — {} + {} sampling error lines",
+        summary_before.error_lines,
+        summary_after.error_lines
+    );
+    observed.push((
+        "collector",
+        format!(
+            "pre-restart {} ticks / {} lines / {} errors; post-restart {} ticks / {} lines / \
+             {} errors",
+            summary_before.ticks,
+            summary_before.lines,
+            summary_before.error_lines,
+            summary_after.ticks,
+            summary_after.lines,
+            summary_after.error_lines
+        ),
+    ));
+    let samples = resources::read_process_samples(&scenario_dir.join("resources.tsv"))?;
+    ensure!(
+        samples.iter().all(|sample| sample.rss_kb.is_some()
+            && sample.hwm_kb.is_some()
+            && sample.fds.is_some()
+            && sample.threads.is_some()
+            && sample.io_write_bytes.is_some()
+            && sample.io_cancelled_write_bytes.is_some()),
+        "{scenario_id}: a sample is missing a MANDATORY scope"
+    );
+    let baseline = resources::group_window_stats(&samples, 0, baseline_to_ms, "baseline")?;
+    let loaded = resources::group_window_stats(
+        &samples,
+        staging_full_ms.saturating_sub(5_000),
+        fd_peak_from_ms,
+        "staging-held",
+    )?;
+    let released = resources::group_window_stats(
+        &samples,
+        after_cleanup_ms.saturating_sub(5_000),
+        after_cleanup_ms,
+        "after-cleanup",
+    )?;
+    observed.push((
+        "fds",
+        format!(
+            "baseline median={} -> staging held p90={} (max {}) -> after release p90={} \
+             (max {})",
+            baseline.fd_median, loaded.fd_p90, loaded.fd_max, released.fd_p90, released.fd_max
+        ),
+    ));
+    observed.push((
+        "rss_kib",
+        format!(
+            "baseline median={} -> staging held p90={} -> after release p90={}",
+            baseline.rss_median_kb, loaded.rss_p90_kb, released.rss_p90_kb
+        ),
+    ));
+    observed.push((
+        "threads",
+        format!(
+            "baseline median={} -> staging held max={} -> after release max={}",
+            baseline.threads_median, loaded.threads_max, released.threads_max
+        ),
+    ));
+    ensure!(
+        released.fd_p90 <= baseline.fd_median + 8,
+        "{scenario_id} {}: file handles did not come back after the staging transfers were \
+         released (baseline median {} -> released p90 {}); handles are not bounded",
+        server.name(),
+        baseline.fd_median,
+        released.fd_p90
+    );
+
+    // ---- journal / retained-byte ceilings: recorded, not driven ----
+    let store_records = resources::read_store_samples(&store_file)?;
+    let checkpoints: BTreeSet<&str> = store_records
+        .iter()
+        .map(|record| record.checkpoint.as_str())
+        .collect();
+    let journal_peak = store_records
+        .iter()
+        .filter(|record| record.path.ends_with("authority.sqlite"))
+        .map(|record| record.len)
+        .max()
+        .unwrap_or(0);
+    observed.push((
+        "journal_ceiling_declared",
+        format!(
+            "session binding receipt: {}. Configured file ceilings that this row does NOT \
+             drive to exhaustion: the java subject's bounded-SQLite policy (256 MiB database, \
+             64 MiB WAL, 64 MiB rollback journal, 512 KiB shared memory) and its object store \
+             policy (8 GiB bytes, 10,000 files, 128 handles); the rust authority's equivalent \
+             record-completion capacity. Driving any of them needs hundreds of megabytes of \
+             committed records, which is outside this row's bounded budget",
+            session_limits.text()
+        ),
+    ));
+    observed.push((
+        "journal_observed_peak",
+        format!(
+            "largest authority.sqlite length observed across {} checkpoints: {journal_peak} B \
+             (file length and allocated blocks are separate scopes, both per file in store.tsv)",
+            checkpoints.len()
+        ),
+    ));
+    observed.push((
+        "store_checkpoints",
+        format!(
+            "{} records across {}",
+            store_records.len(),
+            checkpoints.into_iter().collect::<Vec<_>>().join(", ")
+        ),
+    ));
+    let row_status = if staging_partial {
+        "PARTIAL: the staging ceiling was not reached inside this row's hard caps, and the \
+         journal/retained-BYTE ceilings are recorded rather than driven (see \
+         journal_ceiling_declared). Named reasons, never skips"
+    } else {
+        "PARTIAL: the pending-response and staging-object ceilings are driven to exhaustion \
+         and their refusals, promise-keeping, handle bounds and reconciliation are asserted, \
+         but the journal/retained-BYTE ceilings are recorded rather than driven (see \
+         journal_ceiling_declared). Named reason, never a skip"
+    };
+    observed.push(("row_status", row_status.to_owned()));
+
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    events.append(
+        "CEILING_EVIDENCE",
+        None,
+        None,
+        None,
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/ceilings.tsv".into(),
+            len: log.len() as u64,
+            sha256: oracle::sha256_hex(log.as_bytes()),
+        }),
+    )?;
+    thread::sleep(STALL_CLOSE_SETTLE);
+    stop_and_seal(context, scenario_dir, scenario_id, owned, events)
+}
+
+/// Ask whether staging capacity has come back: a fresh connection, a fresh
+/// declaration and one staging transfer. Returns the outcome text.
+#[allow(clippy::too_many_arguments)]
+fn staging_recovery_probe(
+    peer: &Peer,
+    fixture: &AuthorityFixture,
+    owned: &OwnedServer,
+    binding: &rawclient::Binding,
+    staging_sha: &[u8; 32],
+    prefix: &[u8],
+    entity: u64,
+    seed: u64,
+    label: &str,
+    log: &mut String,
+) -> Result<String> {
+    let deadline = Instant::now() + STAGING_RECOVERY_WAIT;
+    let mut last;
+    let mut attempt_number = 0u64;
+    loop {
+        attempt_number += 1;
+        let outcome = (|| -> Result<String> {
+            let mut conn = peer.connect(&fixture.certs, "alice", &owned.address)?;
+            let offer = rawclient::frozen("capabilities-offer")?;
+            conn.send_frozen(&offer.frame)?;
+            let selection =
+                rawclient::parse_capabilities(&conn.expect_control(FRAME_CAPABILITIES)?)?;
+            conn.set_caps(selection);
+            conn.send_control(
+                FRAME_SESSION,
+                &rawclient::session_attach(
+                    1,
+                    &binding.authority,
+                    &binding.owner,
+                    binding.generation,
+                ),
+            )?;
+            let attached = rawclient::parse_binding(&conn.expect_control(FRAME_SESSION)?)?;
+            // Each attempt declares a NEW entity, so it must also carry a NEW
+            // operation id: re-using one with different parameters is an
+            // immutable-intent CONFLICT, which would mask whatever the
+            // capacity answer actually is.
+            let declare = oracle::operation_id(
+                seed,
+                "staging-recovery-declare",
+                (entity + attempt_number) as u32,
+            );
+            raw_declare(&mut conn, 2, &declare, 0, &[entity + attempt_number], false)?;
+            let operation =
+                oracle::operation_id(seed, "staging-recovery", (entity + attempt_number) as u32);
+            let probe = staging_open(
+                &mut conn,
+                attached.generation,
+                &operation,
+                (0, 0, entity + attempt_number),
+                staging_sha,
+                prefix,
+                Some(STAGING_PROBE_WAIT),
+            )?;
+            let text = match probe.refusal {
+                Some(refusal) => format!(
+                    "refused on attempt {attempt_number}: code={} detail={:?}",
+                    refusal.code, refusal.detail
+                ),
+                None => format!(
+                    "accepted on attempt {attempt_number} (staging transfer {} opened)",
+                    probe.stream_id
+                ),
+            };
+            drop(probe.stream);
+            conn.close_application(b"staging recovery probe complete")?;
+            Ok(text)
+        })();
+        last = match outcome {
+            Ok(text) => text,
+            Err(error) => format!("attempt {attempt_number} failed: {error:#}"),
+        };
+        log.push_str(&format!(
+            "recovery-{label}\t{attempt_number}\talice\t-\tprobe\t{last}\n"
+        ));
+        if last.starts_with("accepted") || Instant::now() >= deadline {
+            break;
+        }
+        thread::sleep(Duration::from_secs(5));
+    }
+    Ok(format!(
+        "{label}: {last} (bounded wait {:?})",
+        STAGING_RECOVERY_WAIT
+    ))
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -19425,7 +20681,7 @@ mod tests {
             let row = rows.iter().find(|row| row.id == id).unwrap();
             assert!(row.rust_implemented, "{id} must be implemented");
         }
-        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 54);
+        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 55);
     }
 
     #[test]

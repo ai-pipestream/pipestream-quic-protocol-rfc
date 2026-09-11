@@ -505,6 +505,38 @@ pub struct Binding {
     pub authority: String,
     pub owner: String,
     pub generation: u64,
+    pub creation_sequence: u64,
+    /// The session's retained-record ceilings as the SUBJECT declares them in
+    /// the binding receipt: scopes, entities, operations, input bytes, output
+    /// bytes, active jobs. These are the numbers an R row quotes as a
+    /// subject's declared limits, rather than any documented default.
+    pub limits: SessionLimits,
+}
+
+/// Session limits echoed in a `Session::Binding` receipt (a 6-array).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionLimits {
+    pub scopes: u64,
+    pub entities: u64,
+    pub operations: u64,
+    pub input_bytes: u64,
+    pub output_bytes: u64,
+    pub active_jobs: u64,
+}
+
+impl SessionLimits {
+    /// Evidence text for an artifact line.
+    pub fn text(&self) -> String {
+        format!(
+            "scopes={} entities={} operations={} input_bytes={} output_bytes={} active_jobs={}",
+            self.scopes,
+            self.entities,
+            self.operations,
+            self.input_bytes,
+            self.output_bytes,
+            self.active_jobs
+        )
+    }
 }
 
 pub fn parse_binding(body: &[u8]) -> Result<Binding> {
@@ -515,11 +547,27 @@ pub fn parse_binding(body: &[u8]) -> Result<Binding> {
     let authority = r.text()?;
     let owner = r.text()?;
     let generation = r.uint()?;
+    let creation_sequence = r.uint()?;
+    r.skip().context("session receipt policy")?;
+    ensure!(
+        r.array_len()? == 6,
+        "session receipt limits is not a 6-array"
+    );
+    let limits = SessionLimits {
+        scopes: r.uint()?,
+        entities: r.uint()?,
+        operations: r.uint()?,
+        input_bytes: r.uint()?,
+        output_bytes: r.uint()?,
+        active_jobs: r.uint()?,
+    };
     Ok(Binding {
         request,
         authority,
         owner,
         generation,
+        creation_sequence,
+        limits,
     })
 }
 
@@ -685,8 +733,31 @@ impl Peer {
         Self::build(Some(interval))
     }
 
+    /// The peer's runtime is MULTI-THREADED on purpose, and this is a
+    /// measurement property, not a performance choice.
+    ///
+    /// quinn spawns its endpoint driver — the task that reads inbound
+    /// packets and applies the frames in them — onto whatever runtime the
+    /// endpoint is created in. On a current-thread runtime that task only
+    /// progresses while some `block_on` is pending on this thread, so a row
+    /// that sleeps between probes, or whose probe returns immediately out of
+    /// local send credit, leaves inbound packets unprocessed for as long as
+    /// it is not inside `block_on`. The subject's STOP_SENDING or refusal is
+    /// then observed at the NEXT call that happens to wait, and the row
+    /// reports the time of its own probe rather than the time of the
+    /// subject's action.
+    ///
+    /// That is exactly how `r-stalled-principal-progress` came to bracket
+    /// the Java input receive deadline between 40 s and 130 s when the
+    /// subject was in fact refusing at 30.1 s: the STOP_SENDING frames had
+    /// been arriving and being retransmitted for a minute and were all
+    /// applied within one millisecond of each other the moment the client
+    /// next blocked. Worker threads keep the driver running while the
+    /// scenario thread sleeps, so an observation timestamp is the subject's
+    /// timing and not the fixture's scheduling.
     fn build(keep_alive: Option<Duration>) -> Result<Self> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
             .enable_all()
             .build()?;
         Ok(Self {
