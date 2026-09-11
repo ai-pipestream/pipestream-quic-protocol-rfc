@@ -321,6 +321,136 @@ change.
   ops) and 150.648 ms (java, 38 rounds × 5 ops) against the 10 s deadline
   (M17: 150.534 / 150.677 ms).
 
+## Group R status (milestone 18a — r-memory-ladder)
+
+`r-memory-ladder` is IMPLEMENTED and green in dev against both subjects
+(rust-raw-client/rust-server and rust-raw-client/java-server), archived run
+`durable-18d428da0717c79d` (421/421 manifest entries verified) together with
+the `g1-leaf-copy` regression. Row statuses are now four DONE
+(`r-capability-manifest`, `r-connection-ceiling`,
+`r-stalled-principal-progress`, `r-memory-ladder`) and three SPEC
+(`r-staging-and-journal-bounds`, `r-network-bytes`, `r-native-credit`).
+
+Registered row ids were reconciled with this document, which is canonical:
+the milestone-16 placeholders `r-pending-ceiling`, `r-staging-quota` and
+`r-journal-bounds` were never implemented under those ids and are retired
+from `scenarios.rs`; the registry now carries exactly the seven names above.
+The mapping is recorded in traceability.md.
+
+### What the row does
+
+Two ladders on one raw-peer connection per direction, against the limits the
+SUBJECT declares in the capability selection the row reads on the wire (it
+never assumes a documented default):
+
+- payload ladder 64 KiB / 1 MiB / 16 MiB, four admissions per rung;
+- an over-limit rung: one input header declaring 64 MiB against a declared
+  `object_limit` of 16 MiB, payload never sent (the rung measures a refusal,
+  not memory);
+- inventory ladder 1 / 16 / 64 cumulative resident works at a fixed 64 KiB
+  payload.
+
+Admissions are paced in batches of two and each batch is settled to a
+terminal state before the next. Both subjects declare a concurrent-job
+ceiling far below the top inventory rung — an unpaced 48-admission burst was
+refused `LIMIT_EXCEEDED` "retained input, output or executor capacity" by the
+Java subject during development — and a memory ladder that tripped a
+concurrency ceiling would be measuring that refusal instead of memory. Those
+ceilings are `r-staging-and-journal-bounds`, not this row. What the inventory
+ladder therefore varies is RETAINED inventory.
+
+Each rung is measured over the last 6 s of a 12 s quiet settle, so a rung's
+plateau statistics contain none of its own transfer activity, and every
+figure is a per-tick SUM over the whole sampled process group (anchor plus
+every transitive descendant) before it is a statistic — summing per-pid
+statistics would invent a number no instant had. Per-rung ticks, group size,
+RSS median/p90/max, HWM, threads, FDs and Java heap are in
+`artifacts/rungs.tsv`.
+
+### Frozen before the decisive run
+
+`expected.tsv` is written after negotiation and BEFORE the first rung's
+traffic, and the allowances in it are derived from the declared limits, not
+from what the run produced:
+
+- payload allowance = `stream_limit x object_limit` (the in-flight object
+  bytes the subject is configured to hold) + per-subject slack;
+- inventory allowance = `pending_limit x control_limit` (the in-flight
+  control state it is configured to hold) + the same slack;
+- slack is 64 MiB (rust: allocator retention and page-cache-backed store
+  mappings in a native process with no heap ceiling) and 256 MiB (java: JVM
+  warm-up, code cache, GC sawtooth and metaspace under the frozen 2 GiB max
+  heap).
+
+That gives rust 131,072 KiB / 66,560 KiB and java 524,288 KiB / 278,528 KiB.
+The JVM heap ceiling itself is the milestone-17 freeze `-Xms256m -Xmx2g`,
+unchanged; `jcmd VM.flags` on the live subject confirms it in the archive
+(`MaxHeapSize=2147483648`, `InitialHeapSize=268435456`).
+
+### Observed (dev evidence, never an acceptance claim)
+
+1. Declared limits differ between the subjects and are recorded from the wire
+   rather than from source: rust `object_limit=16777216 stream_limit=4
+   pending_limit=16 control_limit=65536 idle_ms=5000 lifetime_ms=30000`;
+   java `object_limit=16777216 stream_limit=16 pending_limit=32
+   control_limit=524288 idle_ms=30000 lifetime_ms=120000`. The java
+   `pending_limit` and `stream_lifetime_ms` the LISTENER offers (32 /
+   120000 ms) are not `DurableOptions.defaults()` (64 / 300000 ms), which is
+   why the row reads the selection instead of quoting the library defaults.
+2. MEMORY DOES NOT SCALE WITH PAYLOAD on either subject. A 256x payload
+   increase (65,536 B -> 16,777,216 B per admission, four admissions per
+   rung) moved the group's tail p90 RSS by 1,568 KiB on rust (18,924 ->
+   20,492) and 25,008 KiB on java (341,944 -> 366,952). A subject that merely
+   buffered one payload once would have grown by at least 16,320 KiB, and one
+   that held `stream_limit` of them by 65,280 KiB (rust) / 261,120 KiB
+   (java). Both are inside their frozen allowances (131,072 / 524,288 KiB).
+3. MEMORY DOES NOT SCALE WITH RETAINED INVENTORY. 1 -> 64 resident works at a
+   fixed payload moved tail p90 RSS by 1,532 KiB on rust (20,896 -> 22,428)
+   and by nothing measurable on java (367,532 -> 341,948, i.e. the 64-work
+   rung sat BELOW the 1-work rung; recorded as growth 0, never as a negative
+   number). Allowances 66,560 / 278,528 KiB.
+4. The over-limit rung is refused by both, and the two detail strings differ
+   and are recorded verbatim: rust `LIMIT_EXCEEDED (4) "input exceeds
+   retained duration, bytes or response limits"`, java `LIMIT_EXCEEDED (4)
+   "input exceeds negotiated object limit"`. Both name the input stream tag
+   (kind 1). Membership is checked before length on both subjects — an
+   undeclared entity is refused `CONFLICT` "input membership was not
+   declared" first — so the row declares the over-limit entity like any
+   other.
+5. Handles and threads stay bounded across the whole ladder: rust FDs
+   baseline median 12 -> last-rung p90 15 (max 20), threads 49 -> 50; java
+   FDs 18 -> 22 (max 24), threads 32 -> 44. HWM over the run: rust 16,260 ->
+   23,692 KiB, java 386,004 -> 621,300 KiB (HWM is a high-water mark and
+   never falls; it is reported as a separate scope from RSS).
+6. Java heap through the rung windows: 42 jstat ticks, 0 probe gaps, min
+   10,637 KiB, max 156,058 KiB against the frozen 2 GiB ceiling. The Rust
+   heap scope remains a NAMED GAP — there is no black-box allocator counter
+   for the subject binary and RSS/HWM is never substituted for it.
+7. JAVA NATIVE/DIRECT IS UNAVAILABLE ON THIS HOST, with the exact check
+   recorded: `jcmd <pid> VM.native_memory summary` answers "Native memory
+   tracking is not enabled". Enabling it requires adding
+   `-XX:NativeMemoryTracking` to the JVM launch flags, which are FROZEN
+   before this matrix's measurement rows; changing them here would re-open
+   every earlier R row's frozen environment, and NMT also adds its own
+   overhead to the measurement it would be added to serve. Recorded as a
+   named gap with the jcmd transcript archived
+   (`artifacts/jcmd-native.txt`), never inferred from RSS minus heap. A
+   future milestone may re-freeze the launch flags WITH NMT and rerun every R
+   row against the new freeze; it is not a mid-matrix substitution.
+8. Collector health: 1,014 ticks / 1,014 sample lines / 0 error lines (rust)
+   and 997 / 997 / 0 (java), every sample carrying all five mandatory scopes.
+
+### Fixture timing recorded, never evidence
+
+After the last rung's window closes, the row waits (bounded, 120 s) for every
+admitted work to reach a terminal state before it signals the subject to
+stop. Without that wait the rust authority's fixed 5 s shutdown grace was
+observed to be consumed by the execution-pool wind-down of 76 works before
+its transport wait even started, and `OwnedServer::stop` then failed its
+drain assertion with `transport_idle: false` and everything else idle — the
+same mechanism milestone 17 recorded for the stall row. No measurement is
+taken during that wait, and the collector windows have already closed.
+
 ## Measurement-scope rules (all R rows)
 - Rust heap, Java heap, whole-process RSS/HWM, native/direct, threads,
   FDs, file lengths, allocated filesystem blocks, actual disk I/O, and

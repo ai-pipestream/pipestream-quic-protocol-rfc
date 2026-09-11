@@ -743,6 +743,14 @@ pub struct RawConn {
 /// Negotiated capability selection fields the R rows assert against.
 #[derive(Debug, Clone, Copy)]
 pub struct SelectionCaps {
+    /// Maximum control body bytes the subject will accept.
+    pub control_limit: u64,
+    /// Concurrent object streams per direction per connection.
+    pub stream_limit: u64,
+    /// Maximum pending control responses on one connection.
+    pub pending_limit: u64,
+    /// Maximum input/result object payload bytes.
+    pub object_limit: u64,
     pub idle_ms: u64,
     pub lifetime_ms: u64,
 }
@@ -764,11 +772,15 @@ pub fn parse_capabilities(body: &[u8]) -> Result<SelectionCaps> {
     for _ in 0..r.array_len()? {
         r.uint().context("required profile id")?;
     }
-    r.uint()?; // control_limit
-    r.uint()?; // stream_limit
-    r.uint()?; // pending_limit
-    r.uint()?; // object_limit
+    let control_limit = r.uint()?;
+    let stream_limit = r.uint()?;
+    let pending_limit = r.uint()?;
+    let object_limit = r.uint()?;
     Ok(SelectionCaps {
+        control_limit,
+        stream_limit,
+        pending_limit,
+        object_limit,
         idle_ms: r.uint()?,
         lifetime_ms: r.uint()?,
     })

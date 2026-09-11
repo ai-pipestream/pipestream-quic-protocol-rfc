@@ -160,15 +160,20 @@ pub fn rows() -> Vec<Row> {
     );
     push(
         &mut rows,
+        // Row ids are the CANONICAL matrix names of
+        // scenario-matrix-g6-resource.md. Three milestone-16 placeholders
+        // (`r-pending-ceiling`, `r-staging-quota`, `r-journal-bounds`) were
+        // never implemented under those ids and are retired here; the
+        // mapping is recorded in traceability.md.
         "R",
         &[
             "r-capability-manifest",
             "r-connection-ceiling",
-            "r-pending-ceiling",
             "r-stalled-principal-progress",
             "r-memory-ladder",
-            "r-staging-quota",
-            "r-journal-bounds",
+            "r-staging-and-journal-bounds",
+            "r-network-bytes",
+            "r-native-credit",
         ],
     );
     for id in [
@@ -183,6 +188,7 @@ pub fn rows() -> Vec<Row> {
         "r-capability-manifest",
         "r-connection-ceiling",
         "r-stalled-principal-progress",
+        "r-memory-ladder",
         "g2-crash-before-create-commit",
         "g2-crash-after-create-commit",
         "g2-drop-reply-declaration",
@@ -288,7 +294,7 @@ fn direction_coverage(row: &Row, context: &ScenarioContext) -> String {
     } else if row.id.starts_with("r-") && context.java_jar.is_some() {
         if row.id == "r-capability-manifest" {
             "host-capability measurement (no subject direction; informs every R row)".to_owned()
-        } else if row.id == "r-connection-ceiling" {
+        } else if row.id == "r-connection-ceiling" || row.id == "r-memory-ladder" {
             "rust-raw-client/rust-server, rust-raw-client/java-server".to_owned()
         } else {
             "rust-cli-client(bob)+rust-raw-client(alice)/rust-server, \
@@ -401,6 +407,7 @@ fn run_rust_direction(row: &Row, context: &ScenarioContext) -> Result<()> {
         "r-capability-manifest" => r_capability_manifest(context),
         "r-connection-ceiling" => r_connection_ceiling(context),
         "r-stalled-principal-progress" => r_stalled_principal_progress(context),
+        "r-memory-ladder" => r_memory_ladder(context),
         other => bail!("scenario {other} has no rust direction implemented"),
     }
 }
@@ -18370,6 +18377,989 @@ fn r_stalled_principal_progress_direction(
     stop_and_seal(context, scenario_dir, scenario_id, owned, events)
 }
 
+// ---------------------------------------------------------------------------
+// r-memory-ladder (milestone 18a)
+// ---------------------------------------------------------------------------
+//
+// Two ladders against the limits the subject itself declares in the
+// capability selection this row reads on the wire (object_limit,
+// stream_limit, pending_limit, control_limit) plus the JVM heap ceiling
+// frozen in `process::JAVA_MEMORY_FLAGS` before any measurement row. The
+// ladder, the limits and the environment allowance are written into
+// expected.tsv BEFORE the first rung's traffic and are never re-chosen from
+// what the run produced.
+//
+// What the row asserts is that memory PLATEAUS at those bounds: the group's
+// tail RSS at the largest rung may exceed the smallest rung's only by the
+// frozen allowance, which is itself derived from the declared limits
+// (stream_limit x object_limit of in-flight object bytes, pending_limit x
+// control_limit of in-flight control state) plus a stated per-subject slack.
+// Internal counters are not used as RSS evidence anywhere in this row: every
+// figure comes from /proc of the whole sampled process group, and the Java
+// heap scope is jstat only.
+
+/// Measured payload rungs. 64 MiB is deliberately NOT a measured rung: both
+/// subjects declare `object_limit` = 16 MiB in the selection this row reads,
+/// so a 64 MiB object never becomes resident anywhere and measuring it would
+/// measure a refusal. It is probed once as the over-limit rung instead, and
+/// the refusal is recorded verbatim.
+const LADDER_PAYLOADS: [usize; 3] = [64 * 1024, 1024 * 1024, 16 * 1024 * 1024];
+/// Admissions per payload rung: more than one, because a single payload
+/// proves nothing about constant memory.
+const LADDER_REPEATS: usize = 4;
+/// Declared length of the over-limit probe (4x the declared object_limit).
+const LADDER_OVER_LIMIT: u64 = 64 * 1024 * 1024;
+/// Cumulative resident admitted works at the end of each inventory rung.
+const LADDER_INVENTORY: [u64; 3] = [1, 16, 64];
+/// Fixed payload of every inventory-ladder admission, so that ladder varies
+/// inventory alone.
+const LADDER_INVENTORY_PAYLOAD: usize = 64 * 1024;
+/// Entities are declared in batches this size: the rust authority's single
+/// transaction cap binds well below the protocol's 256/batch schema bound
+/// (g1-declaration-capacity), so the row never relies on one large batch.
+const LADDER_DECLARE_BATCH: usize = 16;
+/// Idle window measured after readiness and before the first rung.
+const LADDER_BASELINE: Duration = Duration::from_secs(15);
+/// Quiet settle after each rung's traffic.
+const LADDER_SETTLE: Duration = Duration::from_secs(12);
+/// Plateau statistics are taken over the LAST part of each rung's settle, so
+/// the tail contains no transfer activity of its own rung.
+const LADDER_TAIL: Duration = Duration::from_secs(6);
+/// Bounded wait for the over-limit refusal.
+const LADDER_REFUSAL_WAIT: Duration = Duration::from_secs(10);
+/// Bounded wait, AFTER every measurement window, for the ladder's admitted
+/// works to reach a terminal state, so the subject is not signalled to stop
+/// while its execution pool is still winding them down. Fixture timing, never
+/// evidence.
+const LADDER_QUIESCE: Duration = Duration::from_secs(120);
+/// Admissions per pacing batch. Both subjects declare a concurrent-job
+/// ceiling (the Java session ceiling is the lowest at four executor jobs per
+/// owner), so the ladders admit in batches of this size and settle each batch
+/// before the next. Concurrency is not what these ladders vary.
+const LADDER_ADMIT_BATCH: u64 = 2;
+
+/// One ladder rung's window on the collector's clock.
+struct Rung {
+    label: String,
+    kind: &'static str,
+    payload_bytes: u64,
+    admissions: u64,
+    resident_works: u64,
+    start_ms: u64,
+    tail_from_ms: u64,
+    end_ms: u64,
+}
+
+fn r_memory_ladder(context: &ScenarioContext) -> Result<()> {
+    run_raw_directions(context, "r-memory-ladder", r_memory_ladder_direction)
+}
+
+/// Admit one input over the raw peer and read its admission receipt.
+/// Returns the stream id the receipt named.
+#[allow(clippy::too_many_arguments)]
+fn ladder_admit(
+    alice: &mut RawConn,
+    generation: u64,
+    operation: &[u8; 16],
+    work: (u64, u64, u64),
+    payload: &[u8],
+    sha: &[u8; 32],
+) -> Result<u64> {
+    let header = rawclient::input_header_framed(
+        generation,
+        operation,
+        work,
+        payload.len() as u64,
+        sha,
+        "application/octet-stream",
+        "copy/v2",
+        0,
+        60_000,
+        1,
+        payload.len() as u64,
+    );
+    let mut stream = alice.open_uni()?;
+    let stream_id = u64::from(stream.id());
+    alice.write_stream(&mut stream, &header)?;
+    alice.write_stream(&mut stream, payload)?;
+    alice.finish_stream(&mut stream)?;
+    let admitted = rawclient::parse_admitted_stream(&alice.expect_control(FRAME_WORK)?)?;
+    ensure!(
+        admitted == stream_id,
+        "admission receipt names stream {admitted}, expected {stream_id}"
+    );
+    Ok(stream_id)
+}
+
+/// Bounded wait for every ladder work up to `admitted` to reach a terminal
+/// state (5..=8), polling the scope page.
+///
+/// The ladders vary PAYLOAD and INVENTORY, never executor concurrency: both
+/// subjects declare a concurrent-job ceiling well below the inventory ladder's
+/// top rung (the Java session's `activeJobs` and per-owner executor bounds
+/// refuse the excess with LIMIT_EXCEEDED "retained input, output or executor
+/// capacity"), and a memory ladder that tripped a concurrency ceiling would
+/// be measuring that refusal instead of memory. Admissions are therefore
+/// paced in small batches and each batch is settled before the next, so the
+/// rung's resident inventory is retained work, not work in flight. The
+/// concurrency ceilings themselves are `r-staging-and-journal-bounds`.
+fn ladder_wait_settled(
+    alice: &mut RawConn,
+    request: &mut u64,
+    admitted: u64,
+    deadline: Duration,
+) -> Result<u64> {
+    let until = Instant::now() + deadline;
+    loop {
+        let (_declared, members) = raw_page(alice, *request, 0)?;
+        *request += 1;
+        let terminal = members
+            .iter()
+            .filter(|(entity, state)| *entity <= admitted && (5..=8).contains(state))
+            .count() as u64;
+        if terminal >= admitted {
+            return Ok(terminal);
+        }
+        ensure!(
+            Instant::now() < until,
+            "only {terminal}/{admitted} ladder works reached a terminal state \
+             within {deadline:?}; the ladder cannot pace its admissions"
+        );
+        thread::sleep(Duration::from_millis(250));
+    }
+}
+
+fn r_memory_ladder_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+) -> Result<()> {
+    let scenario_id = "r-memory-ladder";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, scenario_id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, scenario_id)?;
+    let certs = mtls::generate(&scenario_dir.join("certs"), &[("alice", "alice")])?;
+    let fixture = AuthorityFixture::new(
+        &context.rust_bin,
+        context.java_jar.as_deref(),
+        &scenario_dir.join("subject"),
+        certs,
+        server,
+        Subject::Rust,
+    )?;
+    fixture.run_init_authority()?;
+    let owned = fixture.start_server()?;
+    let sequence = fixture.next_sequence(&owned, "alice")?;
+    ensure!(
+        sequence == 1,
+        "fresh authority must report NEXT_SEQUENCE 1, got {sequence}"
+    );
+
+    // Measurement gates before any rung: mandatory /proc scopes readable for
+    // the anchor, collector clean.
+    let anchor = owned.pid()?;
+    let permissions = resources::proc_permissions(anchor);
+    ensure!(
+        permissions.status && permissions.fd && permissions.io,
+        "{scenario_id}: mandatory /proc scopes unreadable for the server pid \
+         {anchor} (status={} fd={} io={}); an unavailable mandatory metric \
+         fails the row, never recorded as zero",
+        permissions.status,
+        permissions.fd,
+        permissions.io
+    );
+    let store_file = scenario_dir.join("store.tsv");
+    let collector = resources::ProcessCollector::start(
+        anchor,
+        resources::SAMPLE_INTERVAL,
+        &scenario_dir.join("resources.tsv"),
+    )?;
+    let clock = Instant::now();
+    let elapsed_ms = |instant: Instant| instant.duration_since(clock).as_millis() as u64;
+    resources::sample_store(
+        "start",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+
+    // Keep-alive: the ladder is quiet for LADDER_SETTLE between rungs and the
+    // fixture's own transport must not be what ends the connection. PINGs are
+    // transport traffic and carry no object-stream data.
+    let peer = Peer::with_keep_alive(Duration::from_secs(5))?;
+    let mut alice = raw_negotiate_as(&peer, &fixture, &owned, &mut events, &artifacts, "alice")?;
+    let caps = *alice
+        .caps()
+        .context("capabilities selection was not recorded during negotiation")?;
+
+    // ---- FROZEN before the first rung: ladder, limits, allowances ----
+    // The allowances are derived from the limits the SUBJECT declared, plus a
+    // stated per-subject slack; they are never widened later to fit what the
+    // run produced.
+    let in_flight_object_bound = caps.stream_limit.saturating_mul(caps.object_limit);
+    let in_flight_control_bound = caps.pending_limit.saturating_mul(caps.control_limit);
+    let (slack_kb, slack_reason) = match server {
+        Subject::Rust => (
+            64 * 1024,
+            "64 MiB: allocator retention and page-cache-backed store mappings \
+             in a native process with no heap ceiling to bound them",
+        ),
+        Subject::Java => (
+            256 * 1024,
+            "256 MiB: JVM warm-up, code cache, GC sawtooth and metaspace \
+             growth under a 2 GiB max heap; the heap ceiling itself is the \
+             frozen -Xmx and is not re-chosen here",
+        ),
+    };
+    let payload_allowance_kb = in_flight_object_bound / 1024 + slack_kb;
+    let inventory_allowance_kb = in_flight_control_bound / 1024 + slack_kb;
+    let ladder_text = LADDER_PAYLOADS
+        .iter()
+        .map(|bytes| format!("{bytes}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let inventory_text = LADDER_INVENTORY
+        .iter()
+        .map(|count| format!("{count}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "frozen_before_decisive_run",
+                "this file is written after negotiation and BEFORE the first \
+                 rung's traffic; the ladder, the declared limits it is sized \
+                 against and the allowances below are fixed here and are never \
+                 re-chosen from what the run produced"
+                    .into(),
+            ),
+            ("payload_ladder_bytes", ladder_text.clone()),
+            ("payload_repeats_per_rung", LADDER_REPEATS.to_string()),
+            ("inventory_ladder_resident_works", inventory_text.clone()),
+            (
+                "inventory_payload_bytes",
+                LADDER_INVENTORY_PAYLOAD.to_string(),
+            ),
+            (
+                "admission_pacing",
+                format!(
+                    "admissions are issued in batches of {LADDER_ADMIT_BATCH} and every \
+                     batch is settled to a terminal state before the next; these ladders \
+                     vary payload and RETAINED inventory, never executor concurrency, and \
+                     both subjects declare a concurrent-job ceiling below the top inventory \
+                     rung (that ceiling is r-staging-and-journal-bounds, not this row)"
+                ),
+            ),
+            (
+                "declared_object_limit",
+                format!(
+                    "{} (subject's capability selection, read on the wire)",
+                    caps.object_limit
+                ),
+            ),
+            ("declared_stream_limit", caps.stream_limit.to_string()),
+            ("declared_pending_limit", caps.pending_limit.to_string()),
+            ("declared_control_limit", caps.control_limit.to_string()),
+            (
+                "over_limit_rung",
+                format!(
+                    "one input header declaring {LADDER_OVER_LIMIT} bytes, \
+                     {}x the declared object_limit {}: expected LIMIT_EXCEEDED \
+                     (code {}) naming the input stream, recorded verbatim. The \
+                     payload is never sent, so this rung measures a refusal, \
+                     not memory",
+                    LADDER_OVER_LIMIT / caps.object_limit.max(1),
+                    caps.object_limit,
+                    rawclient::CODE_LIMIT_EXCEEDED
+                ),
+            ),
+            (
+                "java_memory_freeze",
+                format!(
+                    "{} on every Java subject process, frozen before any \
+                     measurement row (milestone 17) and unchanged here",
+                    crate::durable::process::java_memory_flags_text()
+                ),
+            ),
+            (
+                "payload_plateau_allowance_kib",
+                format!(
+                    "{payload_allowance_kb} = stream_limit {} x object_limit {} \
+                     ({in_flight_object_bound} B of in-flight object bytes the \
+                     subject is configured to hold) + {slack_kb} KiB slack \
+                     ({slack_reason})",
+                    caps.stream_limit, caps.object_limit
+                ),
+            ),
+            (
+                "inventory_plateau_allowance_kib",
+                format!(
+                    "{inventory_allowance_kb} = pending_limit {} x control_limit \
+                     {} ({in_flight_control_bound} B of in-flight control state \
+                     the subject is configured to hold) + {slack_kb} KiB slack \
+                     ({slack_reason})",
+                    caps.pending_limit, caps.control_limit
+                ),
+            ),
+            (
+                "plateau_assertion",
+                "for each ladder, the group's tail p90 RSS at the LARGEST rung \
+                 minus the tail p90 at the SMALLEST rung must not exceed that \
+                 ladder's frozen allowance; a subject whose memory scaled with \
+                 payload or inventory beyond its configured bounds exceeds it"
+                    .into(),
+            ),
+            (
+                "fd_assertion",
+                "group FD tail p90 at the last rung <= baseline median + 16".into(),
+            ),
+            (
+                "thread_assertion",
+                "group thread tail p90 at the last rung <= baseline median + 64 \
+                 (a fixture-chosen bound above both subjects' declared worker \
+                 pools, stated rather than derived)"
+                    .into(),
+            ),
+            (
+                "measurement_scope",
+                "whole sampled process group (anchor pid plus every transitive \
+                 descendant), per-tick group SUM then statistic; RSS/HWM, \
+                 threads, FDs, disk I/O and Java heap are separate scopes and \
+                 none is substituted for another"
+                    .into(),
+            ),
+            (
+                "native_direct_scope",
+                "Java native/direct allocation is probed once per direction \
+                 with jcmd VM.native_memory summary and its exact result is \
+                 recorded; it is never inferred from RSS minus heap"
+                    .into(),
+            ),
+            (
+                "rust_heap_scope",
+                "NAMED GAP: no black-box Rust heap collector exists for the \
+                 subject binary; RSS/HWM is a separate scope and is never \
+                 reported as Rust heap"
+                    .into(),
+            ),
+        ],
+    )?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        (
+            "client_subject",
+            "rust raw peer (one connection, sequential admissions)".into(),
+        ),
+        (
+            "declared_limits",
+            format!(
+                "object_limit={} stream_limit={} pending_limit={} \
+                 control_limit={} idle_ms={} lifetime_ms={}",
+                caps.object_limit,
+                caps.stream_limit,
+                caps.pending_limit,
+                caps.control_limit,
+                caps.idle_ms,
+                caps.lifetime_ms
+            ),
+        ),
+        (
+            "java_memory_freeze",
+            match server {
+                Subject::Java => format!(
+                    "{} (frozen before the run; applies to this server process)",
+                    crate::durable::process::java_memory_flags_text()
+                ),
+                Subject::Rust => format!(
+                    "not applicable: no JVM in this subject group (the frozen \
+                     Java limits are {})",
+                    crate::durable::process::java_memory_flags_text()
+                ),
+            },
+        ),
+        ("payload_ladder_bytes", ladder_text),
+        ("inventory_ladder_resident_works", inventory_text),
+        (
+            "payload_plateau_allowance_kib",
+            payload_allowance_kb.to_string(),
+        ),
+        (
+            "inventory_plateau_allowance_kib",
+            inventory_allowance_kb.to_string(),
+        ),
+    ];
+
+    // ---- baseline rung: idle, no ladder traffic ----
+    let mut rungs: Vec<Rung> = Vec::new();
+    let baseline_start = elapsed_ms(Instant::now());
+    thread::sleep(LADDER_BASELINE);
+    let baseline_end = elapsed_ms(Instant::now());
+    rungs.push(Rung {
+        label: "baseline-idle".into(),
+        kind: "baseline",
+        payload_bytes: 0,
+        admissions: 0,
+        resident_works: 0,
+        start_ms: baseline_start,
+        tail_from_ms: baseline_end.saturating_sub(LADDER_TAIL.as_millis() as u64),
+        end_ms: baseline_end,
+    });
+
+    let binding = raw_create_session(&mut alice)?;
+    let mut request = 2u64;
+    let total_entities = (LADDER_PAYLOADS.len() * LADDER_REPEATS) as u64
+        + LADDER_INVENTORY[LADDER_INVENTORY.len() - 1];
+    // One entity beyond the ladders is declared for the over-limit probe.
+    // Membership is checked before the declared length is, so an undeclared
+    // entity would be refused CONFLICT ("input membership was not declared")
+    // and the row would never reach the object_limit decision it is there to
+    // observe.
+    let declare_target = total_entities + 1;
+    let mut declared = 0u64;
+    while declared < declare_target {
+        let batch: Vec<u64> =
+            (declared + 1..=(declared + LADDER_DECLARE_BATCH as u64).min(declare_target)).collect();
+        let operation = oracle::operation_id(context.seed, "ladder-declare", declared as u32);
+        raw_declare(&mut alice, request, &operation, 0, &batch, false)?;
+        request += 1;
+        declared += batch.len() as u64;
+    }
+    events.append("DECLARATION_COMMITTED", None, None, None, None, None)?;
+    observed.push(("declared_entities", declared.to_string()));
+
+    // ---- payload ladder ----
+    let mut entity = 0u64;
+    let mut resident = 0u64;
+    for payload_bytes in LADDER_PAYLOADS {
+        let payload = oracle::dataset(context.seed ^ payload_bytes as u64, payload_bytes);
+        let mut sha = [0u8; 32];
+        sha.copy_from_slice(&crate::decode_hex(&oracle::sha256_hex(&payload))?);
+        let start = elapsed_ms(Instant::now());
+        for repeat in 0..LADDER_REPEATS {
+            entity += 1;
+            let operation = oracle::operation_id(
+                context.seed,
+                "ladder-payload",
+                (entity * 16 + repeat as u64) as u32,
+            );
+            ladder_admit(
+                &mut alice,
+                binding.generation,
+                &operation,
+                (0, 0, entity),
+                &payload,
+                &sha,
+            )?;
+            resident += 1;
+            if resident.is_multiple_of(LADDER_ADMIT_BATCH) {
+                ladder_wait_settled(&mut alice, &mut request, resident, LADDER_QUIESCE)?;
+            }
+        }
+        ladder_wait_settled(&mut alice, &mut request, resident, LADDER_QUIESCE)?;
+        thread::sleep(LADDER_SETTLE);
+        let end = elapsed_ms(Instant::now());
+        rungs.push(Rung {
+            label: format!("payload-{payload_bytes}"),
+            kind: "payload",
+            payload_bytes: payload_bytes as u64,
+            admissions: LADDER_REPEATS as u64,
+            resident_works: resident,
+            start_ms: start,
+            tail_from_ms: end.saturating_sub(LADDER_TAIL.as_millis() as u64),
+            end_ms: end,
+        });
+        resources::sample_store(
+            &format!("payload-{payload_bytes}"),
+            &[&fixture.state_db, &fixture.object_dir],
+            &store_file,
+        )?;
+    }
+    events.append("ADMISSION_COMMITTED", None, None, None, None, None)?;
+
+    // ---- over-limit rung: declared length above the declared object_limit ----
+    // The payload is never sent: the refusal is a decision about the declared
+    // parameters, and sending 64 MiB the subject has already refused would
+    // measure the fixture, not the subject.
+    let over_entity = total_entities + 1;
+    let over_operation = oracle::operation_id(context.seed, "ladder-over-limit", 0);
+    let over_header = rawclient::input_header_framed(
+        binding.generation,
+        &over_operation,
+        (0, 0, over_entity),
+        LADDER_OVER_LIMIT,
+        &[0u8; 32],
+        "application/octet-stream",
+        "copy/v2",
+        0,
+        60_000,
+        1,
+        LADDER_OVER_LIMIT,
+    );
+    let mut over_stream = alice.open_uni()?;
+    let over_stream_id = u64::from(over_stream.id());
+    alice.write_stream(&mut over_stream, &over_header)?;
+    let over_outcome = match alice.read_control_bounded(LADDER_REFUSAL_WAIT)? {
+        Some(Frame::Control(FRAME_REFUSAL, body)) => {
+            let refusal = rawclient::parse_refusal(&body)?;
+            ensure!(
+                refusal.code == rawclient::CODE_LIMIT_EXCEEDED,
+                "{scenario_id} {}: the over-limit rung was refused with code {} \
+                 ({:?}), expected LIMIT_EXCEEDED ({})",
+                server.name(),
+                refusal.code,
+                refusal.detail,
+                rawclient::CODE_LIMIT_EXCEEDED
+            );
+            format!(
+                "refused: tag_kind={} tag_id={} code={} detail={:?} \
+                 (stream {over_stream_id})",
+                refusal.tag_kind, refusal.tag_id, refusal.code, refusal.detail
+            )
+        }
+        Some(other) => bail!(
+            "{scenario_id} {}: the over-limit rung produced {other:?} instead of \
+             a refusal",
+            server.name()
+        ),
+        None => bail!(
+            "{scenario_id} {}: no refusal within {:?} for an input declaring \
+             {LADDER_OVER_LIMIT} bytes against a declared object_limit of {}; \
+             the row records no memory figure for this rung",
+            server.name(),
+            LADDER_REFUSAL_WAIT,
+            caps.object_limit
+        ),
+    };
+    let _ = alice.reset_stream(&mut over_stream, rawclient::CODE_LIMIT_EXCEEDED);
+    observed.push(("over_limit_rung", over_outcome));
+    events.append("LIMIT_REFUSAL_OBSERVED", None, None, None, None, None)?;
+
+    // ---- inventory ladder: fixed payload, growing resident inventory ----
+    let inv_payload = oracle::dataset(context.seed ^ 0x1_0000, LADDER_INVENTORY_PAYLOAD);
+    let mut inv_sha = [0u8; 32];
+    inv_sha.copy_from_slice(&crate::decode_hex(&oracle::sha256_hex(&inv_payload))?);
+    let inventory_base = resident;
+    for target in LADDER_INVENTORY {
+        let start = elapsed_ms(Instant::now());
+        let mut admitted_here = 0u64;
+        while resident - inventory_base < target {
+            entity += 1;
+            let operation = oracle::operation_id(context.seed, "ladder-inventory", entity as u32);
+            ladder_admit(
+                &mut alice,
+                binding.generation,
+                &operation,
+                (0, 0, entity),
+                &inv_payload,
+                &inv_sha,
+            )?;
+            resident += 1;
+            admitted_here += 1;
+            if resident.is_multiple_of(LADDER_ADMIT_BATCH) {
+                ladder_wait_settled(&mut alice, &mut request, resident, LADDER_QUIESCE)?;
+            }
+        }
+        ladder_wait_settled(&mut alice, &mut request, resident, LADDER_QUIESCE)?;
+        thread::sleep(LADDER_SETTLE);
+        let end = elapsed_ms(Instant::now());
+        rungs.push(Rung {
+            label: format!("inventory-{target}"),
+            kind: "inventory",
+            payload_bytes: LADDER_INVENTORY_PAYLOAD as u64,
+            admissions: admitted_here,
+            resident_works: resident,
+            start_ms: start,
+            tail_from_ms: end.saturating_sub(LADDER_TAIL.as_millis() as u64),
+            end_ms: end,
+        });
+        resources::sample_store(
+            &format!("inventory-{target}"),
+            &[&fixture.state_db, &fixture.object_dir],
+            &store_file,
+        )?;
+    }
+    observed.push(("resident_works_final", resident.to_string()));
+
+    // ---- quiesce before the close-out ----
+    // Every measurement window has closed. The ladder leaves the authority
+    // with `resident` admitted works, and a subject signalled to stop while
+    // its execution pool is still winding those down spends its fixed
+    // shutdown grace on the pool instead of on the transport wait — which
+    // reads as a failed drain and is fixture timing, not a subject defect
+    // (the same mechanism milestone 17 recorded for the stall row). The row
+    // therefore waits, bounded, for every admitted work to be terminal
+    // before it signals anything. This is after the last rung's window: no
+    // measurement is taken here.
+    let quiesce_deadline = Instant::now() + LADDER_QUIESCE;
+    let terminal_works = loop {
+        let (_declared, members) = raw_page(&mut alice, request, 0)?;
+        request += 1;
+        let terminal = members
+            .iter()
+            .filter(|(entity, state)| *entity <= resident && (5..=8).contains(state))
+            .count();
+        if terminal as u64 >= resident || Instant::now() >= quiesce_deadline {
+            break terminal;
+        }
+        thread::sleep(Duration::from_secs(2));
+    };
+    observed.push((
+        "quiesce_before_stop",
+        format!(
+            "{terminal_works}/{resident} admitted works terminal within {:?} \
+             (fixture timing after every measurement window; never evidence)",
+            LADDER_QUIESCE
+        ),
+    ));
+
+    // ---- Java native/direct scope: probed, never inferred ----
+    let native_scope = match server {
+        Subject::Rust => "not applicable: no JVM in the subject process group".to_owned(),
+        Subject::Java => java_native_memory_probe(anchor, &artifacts)?,
+    };
+    observed.push(("java_native_direct_scope", native_scope));
+
+    // ---- measurement close-out ----
+    alice.close_and_wait_idle(b"memory ladder complete", Duration::from_secs(15))?;
+    let summary = collector.stop()?;
+    ensure!(
+        summary.error_lines == 0,
+        "{scenario_id}: dead collector — {} sampling error lines in resources.tsv",
+        summary.error_lines
+    );
+    observed.push((
+        "collector",
+        format!(
+            "{} ticks, {} sample lines, {} error lines",
+            summary.ticks, summary.lines, summary.error_lines
+        ),
+    ));
+    let samples = resources::read_process_samples(&scenario_dir.join("resources.tsv"))?;
+    ensure!(
+        samples.iter().all(|sample| sample.rss_kb.is_some()
+            && sample.hwm_kb.is_some()
+            && sample.fds.is_some()
+            && sample.threads.is_some()
+            && sample.io_write_bytes.is_some()
+            && sample.io_cancelled_write_bytes.is_some()),
+        "{scenario_id}: a sample is missing a MANDATORY scope \
+         (rss/hwm/fd/threads/write_bytes/cancelled_write_bytes)"
+    );
+
+    // Per-rung plateau evidence over the whole process group.
+    let mut table = String::from(
+        "rung\tkind\tpayload_bytes\tadmissions\tresident_works\tstart_ms\ttail_from_ms\tend_ms\t\
+         ticks\tpids_min\tpids_max\trss_median_kib\trss_p90_kib\trss_max_kib\thwm_max_kib\t\
+         threads_median\tthreads_max\tfd_median\tfd_p90\theap_ticks\theap_min_kib\theap_max_kib\t\
+         heap_gap_ticks\n",
+    );
+    let mut stats_by_label: Vec<(String, resources::WindowStats)> = Vec::new();
+    for rung in &rungs {
+        let stats =
+            resources::group_window_stats(&samples, rung.tail_from_ms, rung.end_ms, &rung.label)?;
+        table.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            rung.label,
+            rung.kind,
+            rung.payload_bytes,
+            rung.admissions,
+            rung.resident_works,
+            rung.start_ms,
+            rung.tail_from_ms,
+            rung.end_ms,
+            stats.ticks,
+            stats.pids_min,
+            stats.pids_max,
+            stats.rss_median_kb,
+            stats.rss_p90_kb,
+            stats.rss_max_kb,
+            stats.hwm_max_kb,
+            stats.threads_median,
+            stats.threads_max,
+            stats.fd_median,
+            stats.fd_p90,
+            stats.heap_ticks,
+            stats
+                .heap_min_kb
+                .map(|kb| kb.to_string())
+                .unwrap_or_else(|| "-".into()),
+            stats
+                .heap_max_kb
+                .map(|kb| kb.to_string())
+                .unwrap_or_else(|| "-".into()),
+            stats.heap_gap_ticks,
+        ));
+        stats_by_label.push((rung.label.clone(), stats));
+    }
+    fs::write(artifacts.join("rungs.tsv"), &table)?;
+    events.append(
+        "LADDER_EVIDENCE",
+        None,
+        None,
+        None,
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/rungs.tsv".into(),
+            len: table.len() as u64,
+            sha256: oracle::sha256_hex(table.as_bytes()),
+        }),
+    )?;
+
+    let find = |label: &str| -> Result<&resources::WindowStats> {
+        stats_by_label
+            .iter()
+            .find(|(name, _)| name == label)
+            .map(|(_, stats)| stats)
+            .with_context(|| format!("rung {label} has no window statistics"))
+    };
+    let baseline = find("baseline-idle")?;
+    let payload_first = find(&format!("payload-{}", LADDER_PAYLOADS[0]))?;
+    let payload_last = find(&format!(
+        "payload-{}",
+        LADDER_PAYLOADS[LADDER_PAYLOADS.len() - 1]
+    ))?;
+    let inventory_first = find(&format!("inventory-{}", LADDER_INVENTORY[0]))?;
+    let inventory_last = find(&format!(
+        "inventory-{}",
+        LADDER_INVENTORY[LADDER_INVENTORY.len() - 1]
+    ))?;
+
+    let payload_growth = payload_last
+        .rss_p90_kb
+        .saturating_sub(payload_first.rss_p90_kb);
+    let inventory_growth = inventory_last
+        .rss_p90_kb
+        .saturating_sub(inventory_first.rss_p90_kb);
+    observed.push((
+        "baseline_rss_kib",
+        format!(
+            "median={} p90={} max={} over {} ticks",
+            baseline.rss_median_kb, baseline.rss_p90_kb, baseline.rss_max_kb, baseline.ticks
+        ),
+    ));
+    observed.push((
+        "payload_ladder_rss_kib",
+        format!(
+            "{}B tail_p90={} ({} ticks) -> {}B tail_p90={} ({} ticks), growth={} \
+             against the frozen allowance {}",
+            LADDER_PAYLOADS[0],
+            payload_first.rss_p90_kb,
+            payload_first.ticks,
+            LADDER_PAYLOADS[LADDER_PAYLOADS.len() - 1],
+            payload_last.rss_p90_kb,
+            payload_last.ticks,
+            payload_growth,
+            payload_allowance_kb
+        ),
+    ));
+    observed.push((
+        "payload_ladder_scaling",
+        format!(
+            "payload grew by {} B per admission ({}x); group tail p90 RSS grew by \
+             {} KiB. A subject that buffered each payload once would have grown \
+             by at least {} KiB",
+            LADDER_PAYLOADS[LADDER_PAYLOADS.len() - 1] - LADDER_PAYLOADS[0],
+            LADDER_PAYLOADS[LADDER_PAYLOADS.len() - 1] / LADDER_PAYLOADS[0],
+            payload_growth,
+            (LADDER_PAYLOADS[LADDER_PAYLOADS.len() - 1] - LADDER_PAYLOADS[0]) / 1024
+        ),
+    ));
+    observed.push((
+        "inventory_ladder_rss_kib",
+        format!(
+            "{} resident tail_p90={} ({} ticks) -> {} resident tail_p90={} ({} \
+             ticks), growth={} against the frozen allowance {}",
+            LADDER_INVENTORY[0],
+            inventory_first.rss_p90_kb,
+            inventory_first.ticks,
+            LADDER_INVENTORY[LADDER_INVENTORY.len() - 1],
+            inventory_last.rss_p90_kb,
+            inventory_last.ticks,
+            inventory_growth,
+            inventory_allowance_kb
+        ),
+    ));
+    observed.push((
+        "hwm_kib",
+        format!(
+            "baseline={} payload_last={} inventory_last={}",
+            baseline.hwm_max_kb, payload_last.hwm_max_kb, inventory_last.hwm_max_kb
+        ),
+    ));
+    observed.push((
+        "threads",
+        format!(
+            "baseline median={} -> last rung median={} max={}",
+            baseline.threads_median, inventory_last.threads_median, inventory_last.threads_max
+        ),
+    ));
+    observed.push((
+        "fds",
+        format!(
+            "baseline median={} -> last rung p90={} max={}",
+            baseline.fd_median, inventory_last.fd_p90, inventory_last.fd_max
+        ),
+    ));
+    observed.push((
+        "heap_scope",
+        match server {
+            Subject::Rust => "not applicable: no JVM in the subject process group. Rust heap is a \
+                              NAMED GAP (no black-box allocator counter); RSS/HWM is a separate \
+                              scope and is never substituted for it"
+                .to_owned(),
+            Subject::Java => {
+                let ticks: usize = stats_by_label.iter().map(|(_, s)| s.heap_ticks).sum();
+                let gaps: usize = stats_by_label.iter().map(|(_, s)| s.heap_gap_ticks).sum();
+                let min = stats_by_label
+                    .iter()
+                    .filter_map(|(_, s)| s.heap_min_kb)
+                    .min();
+                let max = stats_by_label
+                    .iter()
+                    .filter_map(|(_, s)| s.heap_max_kb)
+                    .max();
+                format!(
+                    "java heap via jstat -gc (S0U+S1U+EU+OU) inside the measured rung \
+                     windows: {ticks} heap ticks, {gaps} probe gaps, min {} KiB, max {} \
+                     KiB, against the frozen -Xmx ceiling",
+                    min.map(|kb| kb.to_string()).unwrap_or_else(|| "-".into()),
+                    max.map(|kb| kb.to_string()).unwrap_or_else(|| "-".into()),
+                )
+            }
+        },
+    ));
+
+    // ---- assertions ----
+    ensure!(
+        payload_growth <= payload_allowance_kb,
+        "{scenario_id} {}: group RSS scaled with PAYLOAD beyond the configured \
+         bound — tail p90 {} KiB at {} B grew to {} KiB at {} B (growth {} KiB, \
+         frozen allowance {} KiB)",
+        server.name(),
+        payload_first.rss_p90_kb,
+        LADDER_PAYLOADS[0],
+        payload_last.rss_p90_kb,
+        LADDER_PAYLOADS[LADDER_PAYLOADS.len() - 1],
+        payload_growth,
+        payload_allowance_kb
+    );
+    ensure!(
+        inventory_growth <= inventory_allowance_kb,
+        "{scenario_id} {}: group RSS scaled with INVENTORY beyond the configured \
+         bound — tail p90 {} KiB at {} resident works grew to {} KiB at {} \
+         resident works (growth {} KiB, frozen allowance {} KiB)",
+        server.name(),
+        inventory_first.rss_p90_kb,
+        LADDER_INVENTORY[0],
+        inventory_last.rss_p90_kb,
+        LADDER_INVENTORY[LADDER_INVENTORY.len() - 1],
+        inventory_growth,
+        inventory_allowance_kb
+    );
+    ensure!(
+        inventory_last.fd_p90 <= baseline.fd_median + 16,
+        "{scenario_id} {}: group FDs grew across the ladder (baseline median {} \
+         -> last rung p90 {})",
+        server.name(),
+        baseline.fd_median,
+        inventory_last.fd_p90
+    );
+    ensure!(
+        inventory_last.threads_max <= baseline.threads_median + 64,
+        "{scenario_id} {}: group threads grew across the ladder (baseline median \
+         {} -> last rung max {})",
+        server.name(),
+        baseline.threads_median,
+        inventory_last.threads_max
+    );
+    if server == Subject::Java {
+        let gaps: usize = stats_by_label.iter().map(|(_, s)| s.heap_gap_ticks).sum();
+        let ticks: usize = stats_by_label.iter().map(|(_, s)| s.heap_ticks).sum();
+        ensure!(
+            gaps == 0 && ticks > 0,
+            "{scenario_id} java: the Java heap scope is MANDATORY for a JVM \
+             subject and must be collected on every heap tick ({ticks} collected, \
+             {gaps} gaps)"
+        );
+    }
+
+    resources::sample_store(
+        "end",
+        &[&fixture.state_db, &fixture.object_dir],
+        &store_file,
+    )?;
+    let store_records = resources::read_store_samples(&store_file)?;
+    observed.push((
+        "store_checkpoints",
+        format!(
+            "{} records across the rung checkpoints",
+            store_records.len()
+        ),
+    ));
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    thread::sleep(STALL_CLOSE_SETTLE);
+    stop_and_seal(context, scenario_dir, scenario_id, owned, events)
+}
+
+/// Java native/direct allocation probe. The exact command and its exact
+/// result are recorded; nothing is inferred from RSS minus heap, and the
+/// frozen launch flags are NOT changed to enable a collector mid-matrix.
+fn java_native_memory_probe(pid: u32, artifacts: &Path) -> Result<String> {
+    let Some(jcmd) = resources::tool_on_path("jcmd") else {
+        return Ok("UNAVAILABLE: no jcmd on PATH (named gap; never inferred from RSS)".to_owned());
+    };
+    let mut transcript = String::new();
+    let mut summary = String::new();
+    for (label, arguments) in [
+        ("VM.native_memory", vec!["VM.native_memory", "summary"]),
+        ("VM.flags", vec!["VM.flags"]),
+    ] {
+        let output = std::process::Command::new(&jcmd)
+            .arg(pid.to_string())
+            .args(&arguments)
+            .output()
+            .with_context(|| format!("run jcmd {} {label}", pid))?;
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        transcript.push_str(&format!(
+            "=== jcmd {pid} {} (exit {}) ===\n{stdout}{stderr}\n",
+            arguments.join(" "),
+            output.status
+        ));
+        if label == "VM.native_memory" {
+            let text = format!("{stdout}{stderr}");
+            summary = if text.contains("Native memory tracking is not enabled") {
+                "UNAVAILABLE: jcmd VM.native_memory summary reports \"Native memory \
+                 tracking is not enabled\". Enabling it needs -XX:NativeMemoryTracking \
+                 added to the JVM launch flags, which are FROZEN before this matrix's \
+                 measurement rows (-Xms256m -Xmx2g); changing them mid-matrix would \
+                 re-open every earlier R row's frozen environment. Recorded as a named \
+                 gap, never inferred from RSS minus heap"
+                    .to_owned()
+            } else if output.status.success() {
+                let total = text
+                    .lines()
+                    .find(|line| line.trim_start().starts_with("Total:"))
+                    .unwrap_or("(no Total: line)")
+                    .trim()
+                    .to_owned();
+                format!("collected by jcmd VM.native_memory summary: {total}")
+            } else {
+                format!(
+                    "UNAVAILABLE: jcmd VM.native_memory summary exited {} — {}",
+                    output.status,
+                    text.lines().next().unwrap_or("(no output)")
+                )
+            };
+        }
+    }
+    let path = artifacts.join("jcmd-native.txt");
+    fs::write(&path, &transcript)?;
+    Ok(format!("{summary} (transcript artifacts/jcmd-native.txt)"))
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -18435,7 +19425,7 @@ mod tests {
             let row = rows.iter().find(|row| row.id == id).unwrap();
             assert!(row.rust_implemented, "{id} must be implemented");
         }
-        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 53);
+        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 54);
     }
 
     #[test]

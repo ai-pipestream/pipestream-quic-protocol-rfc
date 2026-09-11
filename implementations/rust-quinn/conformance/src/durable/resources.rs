@@ -906,6 +906,155 @@ pub fn counter_rate(
     Some((delta, span, delta.saturating_mul(1000) / span))
 }
 
+/// Nearest-rank percentile of an already sorted, non-empty series.
+fn nearest_rank(sorted: &[u64], percent: u64) -> u64 {
+    let index = (sorted.len() as u64 * percent)
+        .div_ceil(100)
+        .saturating_sub(1) as usize;
+    sorted[index.min(sorted.len() - 1)]
+}
+
+/// Statistics of one measurement window over the WHOLE sampled process group.
+///
+/// Every figure is a per-tick group SUM first and a statistic second: the RSS
+/// of a process group at one instant is the sum of its members' RSS at that
+/// same tick, so summing per-pid statistics would mix ticks and invent a
+/// number no instant ever had. `pids_min`/`pids_max` make the group size
+/// visible, because a window whose group changed size is a different
+/// measurement from one whose group did not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowStats {
+    /// Sampling ticks inside the window (not sample lines).
+    pub ticks: usize,
+    pub pids_min: usize,
+    pub pids_max: usize,
+    pub rss_median_kb: u64,
+    pub rss_p90_kb: u64,
+    pub rss_max_kb: u64,
+    pub hwm_max_kb: u64,
+    pub threads_median: u64,
+    pub threads_max: u64,
+    pub fd_median: u64,
+    pub fd_p90: u64,
+    pub fd_max: u64,
+    /// Ticks on which the Java heap scope was collected (jstat cadence).
+    pub heap_ticks: usize,
+    pub heap_min_kb: Option<u64>,
+    pub heap_max_kb: Option<u64>,
+    /// Ticks that recorded a named heap gap (`gap:heap:...`).
+    pub heap_gap_ticks: usize,
+}
+
+/// Group window statistics over `[from_ms, to_ms]` (inclusive).
+///
+/// Fails when the window contains no tick: a measurement window with no
+/// samples is an unmeasured window, and an unmeasured window is never
+/// reported as zero.
+pub fn group_window_stats(
+    samples: &[ProcessSample],
+    from_ms: u64,
+    to_ms: u64,
+    label: &str,
+) -> Result<WindowStats> {
+    struct Tick {
+        elapsed_ms: u64,
+        pids: usize,
+        rss_kb: u64,
+        hwm_kb: u64,
+        threads: u64,
+        fds: u64,
+        heap_kb: Option<u64>,
+        heap_gap: bool,
+    }
+    let mut ticks: BTreeMap<u64, Tick> = BTreeMap::new();
+    for sample in samples {
+        if sample.elapsed_ms < from_ms || sample.elapsed_ms > to_ms {
+            continue;
+        }
+        let tick = ticks.entry(sample.seq).or_insert(Tick {
+            elapsed_ms: sample.elapsed_ms,
+            pids: 0,
+            rss_kb: 0,
+            hwm_kb: 0,
+            threads: 0,
+            fds: 0,
+            heap_kb: None,
+            heap_gap: false,
+        });
+        tick.pids += 1;
+        tick.elapsed_ms = tick.elapsed_ms.min(sample.elapsed_ms);
+        tick.rss_kb += sample.rss_kb.unwrap_or(0);
+        tick.hwm_kb += sample.hwm_kb.unwrap_or(0);
+        tick.threads += sample.threads.unwrap_or(0);
+        tick.fds += sample.fds.unwrap_or(0);
+        if let Some(heap) = sample.heap_kb {
+            tick.heap_kb = Some(tick.heap_kb.unwrap_or(0) + heap);
+        }
+        if sample.note.contains("gap:heap") {
+            tick.heap_gap = true;
+        }
+    }
+    ensure!(
+        !ticks.is_empty(),
+        "window {label} [{from_ms}ms, {to_ms}ms] contains no sampling tick; an \
+         unmeasured window is never reported as zero"
+    );
+    let mut rss: Vec<u64> = Vec::with_capacity(ticks.len());
+    let mut threads: Vec<u64> = Vec::with_capacity(ticks.len());
+    let mut fds: Vec<u64> = Vec::with_capacity(ticks.len());
+    let mut heap: Vec<u64> = Vec::new();
+    let mut hwm_max = 0;
+    let mut heap_gap_ticks = 0;
+    let mut pids_min = usize::MAX;
+    let mut pids_max = 0;
+    for tick in ticks.values() {
+        rss.push(tick.rss_kb);
+        threads.push(tick.threads);
+        fds.push(tick.fds);
+        hwm_max = hwm_max.max(tick.hwm_kb);
+        if let Some(value) = tick.heap_kb {
+            heap.push(value);
+        }
+        if tick.heap_gap {
+            heap_gap_ticks += 1;
+        }
+        pids_min = pids_min.min(tick.pids);
+        pids_max = pids_max.max(tick.pids);
+    }
+    let ticks_count = ticks.len();
+    rss.sort_unstable();
+    threads.sort_unstable();
+    fds.sort_unstable();
+    Ok(WindowStats {
+        ticks: ticks_count,
+        pids_min,
+        pids_max,
+        rss_median_kb: median(&rss),
+        rss_p90_kb: nearest_rank(&rss, 90),
+        rss_max_kb: *rss.last().expect("non-empty"),
+        hwm_max_kb: hwm_max,
+        threads_median: median(&threads),
+        threads_max: *threads.last().expect("non-empty"),
+        fd_median: median(&fds),
+        fd_p90: nearest_rank(&fds, 90),
+        fd_max: *fds.last().expect("non-empty"),
+        heap_ticks: heap.len(),
+        heap_min_kb: heap.iter().min().copied(),
+        heap_max_kb: heap.iter().max().copied(),
+        heap_gap_ticks,
+    })
+}
+
+/// Median of a sorted, non-empty series.
+fn median(sorted: &[u64]) -> u64 {
+    let mid = sorted.len() / 2;
+    if sorted.len().is_multiple_of(2) {
+        (sorted[mid - 1] + sorted[mid]) / 2
+    } else {
+        sorted[mid]
+    }
+}
+
 /// Read and validate a store.tsv artifact (same truncation/field rules).
 pub fn read_store_samples(path: &Path) -> Result<Vec<StoreRecord>> {
     let text = fs::read_to_string(path)
@@ -1263,5 +1412,81 @@ mod tests {
             samples.iter().all(|sample| sample.seq >= 1),
             "every record carries its tick sequence"
         );
+    }
+
+    fn sample(
+        seq: u64,
+        elapsed_ms: u64,
+        pid: u32,
+        rss_kb: u64,
+        heap_kb: Option<u64>,
+    ) -> ProcessSample {
+        ProcessSample {
+            seq,
+            elapsed_ms,
+            pid,
+            ppid: Some(1),
+            pgrp: Some(1),
+            rss_kb: Some(rss_kb),
+            hwm_kb: Some(rss_kb + 10),
+            threads: Some(4),
+            fds: Some(7),
+            io_read_bytes: Some(0),
+            io_write_bytes: Some(0),
+            io_cancelled_write_bytes: Some(0),
+            heap_kb,
+            note: if heap_kb.is_some() {
+                "heap:jstat".into()
+            } else {
+                String::new()
+            },
+        }
+    }
+
+    #[test]
+    fn group_window_stats_sums_each_tick_before_taking_statistics() {
+        // Two pids per tick: the group RSS at a tick is their SUM, so the
+        // window median must be a sum that an instant really had (300, 400,
+        // 500), never a sum of per-pid medians.
+        let samples = vec![
+            sample(1, 0, 10, 100, None),
+            sample(1, 0, 11, 200, None),
+            sample(2, 100, 10, 150, Some(64)),
+            sample(2, 100, 11, 250, None),
+            sample(3, 200, 10, 200, None),
+            sample(3, 200, 11, 300, None),
+        ];
+        let stats = group_window_stats(&samples, 0, 200, "all").unwrap();
+        assert_eq!(stats.ticks, 3);
+        assert_eq!(stats.pids_min, 2);
+        assert_eq!(stats.pids_max, 2);
+        assert_eq!(stats.rss_median_kb, 400);
+        assert_eq!(stats.rss_max_kb, 500);
+        assert_eq!(stats.hwm_max_kb, 520);
+        assert_eq!(stats.threads_max, 8);
+        assert_eq!(stats.fd_max, 14);
+        assert_eq!(stats.heap_ticks, 1);
+        assert_eq!(stats.heap_min_kb, Some(64));
+        assert_eq!(stats.heap_gap_ticks, 0);
+        // A sub-window selects only the ticks inside it.
+        let tail = group_window_stats(&samples, 200, 200, "tail").unwrap();
+        assert_eq!(tail.ticks, 1);
+        assert_eq!(tail.rss_median_kb, 500);
+        // An empty window is a measurement failure, never a zero row.
+        let error = group_window_stats(&samples, 900, 1000, "gap").unwrap_err();
+        assert!(
+            format!("{error:#}").contains("no sampling tick"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn nearest_rank_percentile_never_leaves_the_series() {
+        assert_eq!(nearest_rank(&[1], 90), 1);
+        assert_eq!(nearest_rank(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 90), 9);
+        assert_eq!(nearest_rank(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 100), 10);
+        assert_eq!(nearest_rank(&[1, 2, 3], 50), 2);
+        assert_eq!(median(&[1, 2, 3, 4]), 2);
+        assert_eq!(median(&[1, 2, 3]), 2);
     }
 }
