@@ -16,9 +16,11 @@ lo_before=$(awk -F: '/lo:/{split($2,f," "); print f[1]":"f[9]}' /proc/net/dev)
 
 PIDS=""
 SAMPLER=""
+COORD_PID=""
 cleanup() {
   [ -n "$SAMPLER" ] && kill "$SAMPLER" 2>/dev/null || true
   [ -n "$PIDS" ] && kill $PIDS 2>/dev/null || true
+  [ -n "$COORD_PID" ] && kill "$COORD_PID" 2>/dev/null || true
 }
 trap cleanup EXIT
 # TEST-ONLY negative-control plumbing. Defaults preserve measured behavior.
@@ -46,8 +48,9 @@ for i in 0 1 2; do
   for _ in $(seq 1 100); do [ -f "$W/grpc-$w.ready" ] && break; sleep 0.1; done
   [ -f "$W/grpc-$w.ready" ] || { echo "worker $w did not start (see $W/grpc-$w.log)"; exit 1; }
 done
-"$HERE/sample.sh" "$ART/grpc-sample.tsv" $PIDS &
-SAMPLER=$!
+# C16f: the coordinator runs in the background so the sampler records it
+# too (coordinator RSS/threads/CPU were UNAVAILABLE). Its exit status is
+# captured via wait and still fails the run; its PID joins the sampled set.
 ms_now() { date +%s%N | cut -c1-13; }
 START_MS=$(ms_now)
 COORD_SWAP=()
@@ -67,8 +70,14 @@ COORD_STOP=()
   --endpoint-c https://127.0.0.1:18445 \
   --seed "$SEED" --size "$SIZE" --staging "$W/grpc-staging" \
   --output "$ART/grpc-final.bin" --events "$ART/grpc-events.tsv" \
-  "${COORD_SWAP[@]}" "${COORD_DROP[@]}" "${COORD_NOFETCH[@]}" "${COORD_STOP[@]}"
+  "${COORD_SWAP[@]}" "${COORD_DROP[@]}" "${COORD_NOFETCH[@]}" "${COORD_STOP[@]}" &
+COORD_PID=$!
+"$HERE/sample.sh" "$ART/grpc-sample.tsv" $PIDS "$COORD_PID" &
+SAMPLER=$!
+COORD_RC=0
+wait "$COORD_PID" || COORD_RC=$?
 END_MS=$(ms_now)
+[ "$COORD_RC" -eq 0 ] || { echo "gRPC coordinator exit $COORD_RC"; exit "$COORD_RC"; }
 # Contract §6 negative controls: a dead metric collector or missing
 # per-worker samples fails the run instead of passing silently.
 check_samples() {
@@ -80,7 +89,7 @@ check_samples() {
     grep -q -m1 "[[:space:]]$pid[[:space:]]" "$f" || { echo "missing metric samples for worker $pid"; return 1; }
   done
 }
-check_samples "$ART/grpc-sample.tsv" $PIDS || exit 1
+check_samples "$ART/grpc-sample.tsv" $PIDS "$COORD_PID" || exit 1
 kill "$SAMPLER" 2>/dev/null || true
 kill $PIDS 2>/dev/null || true
 wait 2>/dev/null || true

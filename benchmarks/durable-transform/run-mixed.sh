@@ -24,9 +24,12 @@ lo_before=$(awk -F: '/lo:/{split($2,f," "); print f[1]":"f[9]}' /proc/net/dev)
 
 PIDS=""
 SAMPLER=""
+COORD_PID=""
+JAVA_WORKER_PID=""
 cleanup() {
   [ -n "$SAMPLER" ] && kill "$SAMPLER" 2>/dev/null || true
   [ -n "$PIDS" ] && kill $PIDS 2>/dev/null || true
+  [ -n "$COORD_PID" ] && kill "$COORD_PID" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -65,6 +68,7 @@ for i in 0 1 2; do
       --db-mib "$JAVA_DB_MIB" --wal-mib "$JAVA_WAL_MIB" \
       --ready-file "$W/ps-$w.ready" \
       > "$W/ps-$w.log" 2>&1 &
+    JAVA_WORKER_PID=$!
   else
     "$PS_AUTH" init-authority --state-db "$W/ps-$w.sqlite" --object-dir "$W/ps-$w.obj" \
       --authority "workload-$w" --principal-map "$W/pki/ps-principals.tsv" \
@@ -85,8 +89,9 @@ for i in 0 1 2; do
   for _ in $(seq 1 300); do [ -f "$W/ps-$w.ready" ] && break; sleep 0.1; done
   [ -f "$W/ps-$w.ready" ] || { echo "worker $w did not start (see $W/ps-$w.log)"; exit 1; }
 done
-"$HERE/sample.sh" "$ART/mixed-sample.tsv" $PIDS &
-SAMPLER=$!
+# C16f: the coordinator runs in the background so the sampler records it
+# too (coordinator RSS/threads/CPU were UNAVAILABLE). Its exit status is
+# captured via wait and still fails the run; its PID joins the sampled set.
 ms_now() { date +%s%N | cut -c1-13; }
 START_MS=$(ms_now)
 "$PS_COORD" run --ca "$W/pki/ps-ca.pem" --cert "$W/pki/ps-client.pem" \
@@ -98,8 +103,16 @@ START_MS=$(ms_now)
   ${PS_SWAP_INPUTS:+--test-swap-inputs "$PS_SWAP_INPUTS"} \
   ${PS_EXECUTION_MS:+--execution-ms "$PS_EXECUTION_MS"} \
   ${PS_DROP_INPUT:+--test-drop-input "$PS_DROP_INPUT"} \
-  "${MIXED_NO_FETCH[@]}" "${MIXED_KILL[@]}" "${MIXED_PIPE[@]}"
+  "${MIXED_NO_FETCH[@]}" "${MIXED_KILL[@]}" "${MIXED_PIPE[@]}" &
+COORD_PID=$!
+[ -n "$JAVA_WORKER_PID" ] || { echo "MIXED: java worker PID not captured"; exit 1; }
+SAMPLE_JAVA_PID="$JAVA_WORKER_PID" SAMPLE_GC_OUT="$ART/mixed-gc.tsv" \
+  "$HERE/sample.sh" "$ART/mixed-sample.tsv" $PIDS "$COORD_PID" &
+SAMPLER=$!
+COORD_RC=0
+wait "$COORD_PID" || COORD_RC=$?
 END_MS=$(ms_now)
+[ "$COORD_RC" -eq 0 ] || { echo "MIXED coordinator exit $COORD_RC"; exit "$COORD_RC"; }
 # Contract §6 negative controls: a dead metric collector or missing
 # per-worker samples fails the run instead of passing silently.
 check_samples() {
@@ -111,7 +124,12 @@ check_samples() {
     grep -q -m1 "[[:space:]]$pid[[:space:]]" "$f" || { echo "missing metric samples for worker $pid"; return 1; }
   done
 }
-check_samples "$ART/mixed-sample.tsv" $PIDS || exit 1
+check_samples "$ART/mixed-sample.tsv" $PIDS "$COORD_PID" || exit 1
+# C16f: a jstat gap fails the sample (never zero-filled).
+[ -s "$ART/mixed-gc.tsv" ] || { echo "metric gc sample file empty"; exit 1; }
+grep -q -m1 "JSTAT_GAP" "$ART/mixed-gc.tsv" && { echo "jstat gap in metric sample"; exit 1; }
+grep -q -m1 "[[:space:]]$JAVA_WORKER_PID[[:space:]]" "$ART/mixed-gc.tsv" \
+  || { echo "missing jstat samples for java worker $JAVA_WORKER_PID"; exit 1; }
 kill "$SAMPLER" 2>/dev/null || true
 kill $PIDS 2>/dev/null || true
 wait 2>/dev/null || true

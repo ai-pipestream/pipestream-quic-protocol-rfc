@@ -14,6 +14,7 @@ path = "src/main.rs"
 anyhow = "1.0.104"
 clap = { version = "4.6.6", features = ["derive"] }
 pipestream-quinn = { path = "../../../implementations/rust-quinn/quinn" }
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 rustls = { version = "0.23.43", default-features = false, features = ["ring", "std"] }
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "signal"] }
 workload-core = { path = "../workload-core" }

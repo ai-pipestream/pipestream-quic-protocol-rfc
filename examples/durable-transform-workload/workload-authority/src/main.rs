@@ -7,6 +7,7 @@
 //! It is not a plugin inside the shipped CLI's fixed registry.
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
+use rusqlite::OpenFlags;
 use pipestream_quic::{
     persistence::PhysicalLimits,
     v2::*,
@@ -370,10 +371,33 @@ struct Network {
     test_kill_after_output_installed: u64,
 }
 
+/// Idle-IO anchor (C16f): the library opens one SQLite connection per
+/// operation and pools none, so every maintenance pass creates and deletes
+/// the -wal/-shm sidecars (~12 MB/s write_bytes, ~100% cancelled, idle).
+/// Holding one idle connection keeps the sidecars alive without touching
+/// protocol state: it is read-only and never opens a transaction, so it
+/// holds no locks and cannot block checkpoints or store operations.
+fn idle_anchor(state_db: &Path) -> Result<rusqlite::Connection> {
+    let anchor = rusqlite::Connection::open_with_flags(
+        state_db,
+        OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    let mode: String = anchor.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
+    if mode.to_uppercase() != "WAL" {
+        bail!("idle anchor requires WAL mode, found {mode}");
+    }
+    // Materialize the WAL-index shared memory once so later opens reuse it.
+    anchor.query_row("SELECT count(*) FROM sqlite_master", [], |row| {
+        row.get::<_, i64>(0)
+    })?;
+    Ok(anchor)
+}
+
 async fn serve(storage: Storage, network: Network) -> Result<()> {
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
     let (store, payloads, principals) = storage.open(false)?;
+    let _anchor = idle_anchor(&storage.state_db).context("idle IO anchor")?;
     let authentication = ClientAuthentication::new(
         IdentityLabel(storage.authority),
         roots(&network.client_ca)?,

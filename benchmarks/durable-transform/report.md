@@ -98,6 +98,45 @@ records FDs/IO but not threads), coordinator RSS/heap,
 CPU-time split, JVM heap detail (no jstat capture),
 per-record funding breakdown.
 
+C16f measured columns (extended sampler, 0.2 s ticks;
+standard cell only, one rep per arm, seed 6, pipelined
+mode, anchored authority binary; results/c16f-standard-seed6;
+CPU seconds from /proc utime+stime at 100 Hz; NOT backfilled
+onto older runs):
+- ps rep (wall 18.5 s): authorities 54-55 threads, RSS max
+  ~21 MB (HWM ~23 MB), ~4.2 CPU-s each; coordinator
+  40 threads, RSS/HWM ~18.8 MB, 2.26 CPU-s.
+- grpc rep (wall 1.5 s): workers 33 threads, RSS ~14 MB,
+  ~0.06 CPU-s each; coordinator 33 threads, RSS ~27 MB,
+  0.14 CPU-s.
+- mixed rep (wall 17.1 s): Rust authorities ~21 MB / 4.0 CPU-s;
+  Java worker 53 threads, RSS/HWM 434 MB, 9.87 CPU-s;
+  coordinator 40 threads, ~17 MB, 1.77 CPU-s. jstat -gc
+  every tick, 34 rows, zero gaps: Eden 112->149 MB, Old
+  ~107 MB, Metaspace ~10->20 MB, 8 young GCs totaling
+  0.11 s, 0 full GCs.
+- Rust heap stays a named gap: no allocator counter crate
+  (no jemalloc/mimalloc dependency anywhere in the
+  workload crates). Per-record funding breakdown stays a
+  named gap (not sampler-collectible).
+
+C16f idle write_bytes (Claude's question; /proc/pid/io on a
+serving-but-uncontacted Rust authority, 60 s):
+- before: write_bytes ~12.0 MB/s with ~99.9% cancelled
+  (717.8 of 718.4 MB), every 1 s tick 9.7-12.9 MB;
+  read_bytes 0. Yes, rusqlite opens per call: no persistent
+  DB fd is ever held (only the payload root.lock), and
+  a.sqlite-wal/-shm flicker in and out of existence as each
+  maintenance pass (3 components x 20 ms) opens and closes.
+- fix in our own code (subject untouched): workload-authority
+  serve() holds one read-only anchor connection for process
+  lifetime (idle_anchor; never opens a transaction, holds no
+  locks, cannot block checkpoints). One-line lock-file edge:
+  rusqlite 0.40.2 direct dependency, same version.
+- after: write_bytes 0/s, cancelled 0/s, syscw 2973/s -> 50/s;
+  -wal/-shm persist; rchar unchanged (~12.8 MB/s page-cache
+  WAL-index rebuild reads, zero storage reads).
+
 ## 3. Unmeasured deployment assumptions
 
 Loopback only (no WAN/production claim); shared host with
