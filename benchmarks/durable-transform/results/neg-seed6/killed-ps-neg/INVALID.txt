@@ -1,0 +1,1 @@
+INVALID: metric sampler died mid-run (exit 1)

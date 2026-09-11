@@ -1,0 +1,1 @@
+INVALID: truncated artifact fails sha256 verification

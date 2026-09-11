@@ -32,6 +32,8 @@ AUTH_FAULT=()
 [ -n "${PS_WORK_DELAY_MS:-}" ] && AUTH_FAULT+=(--test-work-delay-ms "$PS_WORK_DELAY_MS")
 COORD_NOFETCH=()
 [ "${PS_NO_FETCH:-0}" = 1 ] && COORD_NOFETCH+=(--test-no-fetch)
+COORD_KILL=()
+[ "${PS_KILL_AFTER_FIRST_VERIFIED:-0}" = 1 ] && COORD_KILL+=(--test-kill-after-first-verified)
 COORD_SWAP=()
 [ -n "${PS_SWAP_INPUTS:-}" ] && COORD_SWAP+=(--test-swap-inputs "$PS_SWAP_INPUTS")
 COORD_EXEC=()
@@ -68,7 +70,7 @@ START_MS=$(ms_now)
   --connect-a 127.0.0.1:17443 --connect-b 127.0.0.1:17444 --connect-c 127.0.0.1:17445 \
   --seed "$SEED" --size "$SIZE" --staging "$W/ps-staging" \
   --output "$ART/ps-final.bin" --events "$ART/ps-events.tsv" \
-  "${COORD_SWAP[@]}" "${COORD_EXEC[@]}" "${COORD_DROP[@]}" "${COORD_NOFETCH[@]}"
+  "${COORD_SWAP[@]}" "${COORD_EXEC[@]}" "${COORD_DROP[@]}" "${COORD_NOFETCH[@]}" "${COORD_KILL[@]}"
 END_MS=$(ms_now)
 # Contract §6 negative controls: a dead metric collector or missing
 # per-worker samples fails the run instead of passing silently.

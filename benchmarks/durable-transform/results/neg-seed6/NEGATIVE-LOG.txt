@@ -1,0 +1,32 @@
+POSITIVE swapped-order-ps/ps: exit 0
+NEGATIVE swapped-order-ps/ps: INVALID as designed (file does not match admission intent)
+POSITIVE swapped-order-grpc/grpc: exit 0
+NEGATIVE swapped-order-grpc/grpc: INVALID as designed (failed oracle byte verification)
+POSITIVE wrong-transform-ps/ps: exit 0
+NEGATIVE wrong-transform-ps/ps: INVALID as designed (failed byte verification)
+POSITIVE wrong-transform-grpc/grpc: exit 0
+NEGATIVE wrong-transform-grpc/grpc: INVALID as designed (failed oracle byte verification)
+POSITIVE missing-chunk-ps/ps: exit 0
+NEGATIVE missing-chunk-ps/ps: INVALID as designed (missing)
+POSITIVE missing-chunk-grpc/grpc: exit 0
+NEGATIVE missing-chunk-grpc/grpc: INVALID as designed (missing)
+POSITIVE trunc-ps: exit 0, digest recorded
+POSITIVE trunc-ps verifier: intact file verifies
+NEGATIVE truncated-artifact-ps: INVALID as designed
+NEGATIVE stale-hash-ps: INVALID as designed
+POSITIVE trunc-grpc: exit 0, digest recorded
+POSITIVE trunc-grpc verifier: intact file verifies
+NEGATIVE truncated-artifact-grpc: INVALID as designed
+NEGATIVE stale-hash-grpc: INVALID as designed
+NEGATIVE killed-collector-ps: INVALID as designed
+NEGATIVE killed-collector-grpc: INVALID as designed
+NEGATIVE missing-metrics: INVALID by authentic C15 evidence (see missing-metrics-EVIDENCE.txt)
+POSITIVE revoked-reader-grpc/grpc: exit 0
+NEGATIVE revoked-reader-grpc: INVALID as designed
+POSITIVE revoked-reader-ps/ps: exit 0
+NEGATIVE revoked-reader-ps: INVALID as designed
+POSITIVE expired-output-grpc/grpc: exit 0
+NEGATIVE expired-output-grpc: INVALID as designed
+POSITIVE expired-output-ps/ps: exit 0
+NEGATIVE expired-output-ps: INVALID as designed
+DONE: 31 checks passed, 0 failed

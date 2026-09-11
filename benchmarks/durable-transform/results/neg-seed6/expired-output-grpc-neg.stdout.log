@@ -1,0 +1,2 @@
+PKI ready in benchmarks/durable-transform/results/neg-seed6/expired-output-grpc-neg/work/pki (valid ~2 days, loopback only)
+Error: manifest ordinal 0: code: 'The system is not in a state required for the operation's execution', message: "EXPIRED"

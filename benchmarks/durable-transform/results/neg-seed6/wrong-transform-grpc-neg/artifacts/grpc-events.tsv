@@ -1,0 +1,6 @@
+30	1789121887251	1	-1	session-open	workload-b
+30	1789121887251	0	-1	session-open	workload-a
+30	1789121887251	2	-1	session-open	workload-c
+49	1789121887270	1	1	admitted	
+57	1789121887278	0	0	admitted	
+64	1789121887285	2	2	admitted	

@@ -1,0 +1,13 @@
+155	1789121885683	1	-1	session-open	workload-b
+162	1789121885690	2	-1	session-open	workload-c
+170	1789121885697	0	-1	session-open	workload-a
+214	1789121885741	1	-1	declared	batch 0: 1 entities
+228	1789121885756	2	-1	declared	batch 0: 1 entities
+233	1789121885760	0	-1	declared	batch 0: 2 entities
+307	1789121885835	1	1	admitted	
+324	1789121885851	2	2	admitted	
+338	1789121885866	0	0	admitted	
+439	1789121885967	1	1	succeeded	attempt 1
+464	1789121885992	2	2	succeeded	attempt 1
+505	1789121886032	0	3	admitted	
+532	1789121886059	0	0	succeeded	attempt 1

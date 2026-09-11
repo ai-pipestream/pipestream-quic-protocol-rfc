@@ -1,0 +1,4 @@
+INVALID (authentic, C15): missing metric samples for worker <pid>
+c4-tiny-seed6/rep-0-grpc (exit 1, milestones present, final 55d2e6e9 byte-identical)
+c4-uneven-seed6/rep-0-grpc (exit 1, milestones present, final 65283733 byte-identical)
+Replacement reps (rep-5-grpc) pass; failed runs kept visible in the table.

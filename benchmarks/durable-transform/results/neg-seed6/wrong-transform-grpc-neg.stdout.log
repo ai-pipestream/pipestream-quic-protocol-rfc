@@ -1,0 +1,2 @@
+PKI ready in benchmarks/durable-transform/results/neg-seed6/wrong-transform-grpc-neg/work/pki (valid ~2 days, loopback only)
+Error: chunk 0 failed oracle byte verification

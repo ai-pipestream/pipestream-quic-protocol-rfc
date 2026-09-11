@@ -59,8 +59,10 @@ neg() {
 }
 
 # ---- swapped chunk order: inputs uploaded in swapped order ----
+# (grpc detects the swap at the coordinator oracle, the same detector as
+# wrong-transform: distinct injections, shared honest detector)
 pos swapped-order-ps ps
-neg swapped-order-ps ps "failed byte verification" PS_SWAP_INPUTS="0:1"
+neg swapped-order-ps ps "file does not match admission intent" PS_SWAP_INPUTS="0:1"
 pos swapped-order-grpc grpc
 neg swapped-order-grpc grpc "failed oracle byte verification" GRPC_SWAP_INPUTS="0:1"
 
@@ -87,17 +89,19 @@ for arm in ps grpc; do
       >"$WORK/trunc-$arm-pos.stdout.log" 2>&1
     FIN="$WORK/trunc-$arm-pos/artifacts/grpc-final.bin"
   fi
-  sha256sum "$FIN" > "$WORK/trunc-$arm.sha256"
+  (cd "$WORK/trunc-$arm-pos/artifacts" && sha256sum "$(basename "$FIN")") > "$WORK/trunc-$arm.sha256"
   note "POSITIVE trunc-$arm: exit 0, digest recorded"
   PASS=$((PASS + 1))
-  if (cd "$WORK/trunc-$arm-pos/artifacts" && sha256sum -c "$WORK/trunc-$arm.sha256" >/dev/null 2>&1); then
+  TRUNCSHA="$(cd "$WORK" && pwd)/trunc-$arm.sha256"
+  if (cd "$WORK/trunc-$arm-pos/artifacts" && sha256sum -c "$TRUNCSHA" >/dev/null 2>&1); then
     note "POSITIVE trunc-$arm verifier: intact file verifies"
     PASS=$((PASS + 1))
   else
     note "GATE BROKEN trunc-$arm: intact file does not verify"; exit 1
   fi
   head -c 100000 "$FIN" > "$FIN.truncated"
-  if (cd "$WORK/trunc-$arm-pos/artifacts" && echo "$(cut -d' ' -f1 "$WORK/trunc-$arm.sha256")  $(basename "$FIN.truncated")" | sha256sum -c - >/dev/null 2>&1); then
+  TRUNCH="$(cut -d' ' -f1 "$TRUNCSHA")"
+  if (cd "$WORK/trunc-$arm-pos/artifacts" && echo "$TRUNCH  $(basename "$FIN.truncated")" | sha256sum -c - >/dev/null 2>&1); then
     note "GATE BROKEN truncated-artifact-$arm: truncated file verified"; exit 1
   else
     echo "INVALID: truncated artifact fails sha256 verification" > "$WORK/truncated-artifact-$arm-INVALID.txt"
@@ -166,8 +170,8 @@ pos revoked-reader-grpc grpc
 bash "$HERE/libexec-run-grpc.sh" "$WORK/revoked-reader-grpc-neg" "$SEED" "$SIZE" \
   >"$WORK/revoked-reader-grpc-neg.stdout.log" 2>&1 &
 RUNPID=$!
-for _ in $(seq 1 200); do
-  [ -d "$WORK/revoked-reader-grpc-neg/work/pki" ] && break
+for _ in $(seq 1 600); do
+  [ -f "$WORK/revoked-reader-grpc-neg/work/pki/grpc-principals.tsv" ] && break
   sleep 0.1
 done
 head -1 "$WORK/revoked-reader-grpc-neg/work/pki/grpc-principals.tsv" \

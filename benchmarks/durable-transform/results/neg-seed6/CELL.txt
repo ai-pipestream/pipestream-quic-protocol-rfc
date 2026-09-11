@@ -1,0 +1,19 @@
+cell: negative controls (seed 6, 200000 bytes, 4 chunks; runner benchmarks/durable-transform/run-negative.sh)
+binaries: see ../neg-seed6.bin.sha256 (workload-authority, workload-coordinator, grpc-worker, grpc-coordinator release builds)
+result: PASS. 31 checks, 0 failed. Every control is a real run with a positive twin (exit 0) on the same
+configuration plus an injected run that must FAIL with a named reason, recorded as INVALID. Full log: NEGATIVE-LOG.txt.
+pairs:
+- swapped-order ps/grpc: PS_SWAP_INPUTS / GRPC_SWAP_INPUTS reorder inputs at upload (grpc swaps
+  upload ordinals end-to-end). ps caught at admission intent; grpc caught at the coordinator oracle
+  ("failed oracle byte verification", shared honest detector with wrong-transform; distinct injections).
+- wrong-transform ps/grpc: PS_TEST_WRONG_TRANSFORM / GRPC_TEST_WRONG_TRANSFORM pass bytes through.
+- missing-chunk ps/grpc: PS_DROP_INPUT / GRPC_DROP_INPUT remove one input after materialization.
+- truncated-artifact + stale-hash ps/grpc: post-run sha256sum -c verifier; intact verifies, truncated/forged do not.
+- killed-collector ps/grpc: sampler SIGKILLed mid-run; run fails with "metric sampler died mid-run".
+- missing-metrics: INVALID by authentic C15 evidence (c4-tiny/c4-uneven rep-0-grpc sampler race); see missing-metrics-EVIDENCE.txt.
+- revoked-reader grpc: principal map rewritten header-only mid-run (worker re-reads per request); ps: principal
+  absent at read time (map loads at open; revoked == absent, framed honestly). Revoked maps archived in revoked-*-neg/work/pki/.
+- expired-output grpc: GRPC_RETENTION_MS=1, fetch lands after commit; ps: PS_EXECUTION_MS=1 execution deadline
+  enforced as expiry (real negative, not UNAVAILABLE).
+state DBs (*.sqlite*, object stores), key material (*.pem/*.key), input staging, and worker logs excluded from
+archive (reproducible from seed 6 + run-negative.sh); artifacts + stdout logs + INVALID markers archived.

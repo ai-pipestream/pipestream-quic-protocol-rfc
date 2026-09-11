@@ -1,0 +1,6 @@
+119	1789121882184	1	-1	session-open	workload-b
+136	1789121882201	0	-1	session-open	workload-a
+139	1789121882203	2	-1	session-open	workload-c
+180	1789121882244	1	-1	declared	batch 0: 1 entities
+187	1789121882251	2	-1	declared	batch 0: 1 entities
+197	1789121882261	0	-1	declared	batch 0: 2 entities

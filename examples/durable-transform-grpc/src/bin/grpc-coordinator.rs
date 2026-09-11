@@ -85,23 +85,13 @@ struct Run {
     test_no_fetch: bool,
 }
 
-/// TEST-ONLY: swap two materialized input files ("A:B"). Both must exist
-/// and differ.
-fn swap_inputs(staging: &Path, spec: &str) -> Result<(u64, u64)> {
+/// TEST-ONLY: parse an "A:B" ordinal pair with distinct ordinals.
+fn parse_swap_pair(spec: &str) -> Result<(u64, u64)> {
     let (a, b) = spec.split_once(':').context("test-swap-inputs needs A:B")?;
     let (a, b): (u64, u64) = (a.parse().context("bad swap A")?, b.parse().context("bad swap B")?);
     if a == b {
         bail!("test-swap-inputs needs distinct ordinals");
     }
-    let pa = chunk_path(staging, a);
-    let pb = chunk_path(staging, b);
-    let ba = std::fs::read(&pa).with_context(|| format!("swap input {a} missing"))?;
-    let bb = std::fs::read(&pb).with_context(|| format!("swap input {b} missing"))?;
-    if ba == bb {
-        bail!("test-swap-inputs needs inputs that differ");
-    }
-    std::fs::write(&pa, &bb)?;
-    std::fs::write(&pb, &ba)?;
     Ok((a, b))
 }
 
@@ -311,10 +301,28 @@ async fn run_worker(
     let ordinals: Vec<u64> = (0..chunk_count(total))
         .filter(|o| o % 3 == worker)
         .collect();
+    let swap = run
+        .test_swap_inputs
+        .as_deref()
+        .map(parse_swap_pair)
+        .transpose()?;
     let mut first_usable = false;
     for &ordinal in &ordinals {
         let op = operation_id(seed, worker, "submit", ordinal);
         let expected = expected_chunk(seed, total, ordinal);
+        // TEST-ONLY missing chunk: never submit this ordinal, so the
+        // final assembly fails on its absent output.
+        if run.test_drop_input == Some(ordinal) {
+            bail!("test-drop-input: chunk {ordinal} missing, not submitted");
+        }
+        // TEST-ONLY swapped order: upload the other ordinal's bytes.
+        // (This coordinator regenerates inputs from the oracle, so the
+        // swap applies here, not to staging files.)
+        let upload_ordinal = match swap {
+            Some((a, b)) if ordinal == a => b,
+            Some((a, b)) if ordinal == b => a,
+            _ => ordinal,
+        };
         // Resume shortcut: byte-verified staged output.
         if run.resume {
             if let Ok(bytes) = std::fs::read(out_path(staging, ordinal)) {
@@ -333,7 +341,7 @@ async fn run_worker(
             )
             .optional()
             .map_err(anyhow::Error::from)?;
-        let input = generate_chunk(seed, ordinal, chunk_len(total, ordinal));
+        let input = generate_chunk(seed, upload_ordinal, chunk_len(total, ordinal));
         if known.as_deref() != Some(COMMITTED) {
             let reply = submit_chunk(
                 &mut client, authority, &run.owner, run.generation,
@@ -418,14 +426,16 @@ async fn main() -> Result<()> {
         std::fs::write(&path, &expected)?;
     }
     if let Some(spec) = &run.test_swap_inputs {
-        let (a, b) = swap_inputs(&run.staging, spec)?;
+        // Validated here; applied per ordinal in run_worker, because this
+        // coordinator regenerates inputs from the oracle instead of
+        // uploading staging files (swapping files would be a no-op).
+        let (a, b) = parse_swap_pair(spec)?;
         eprintln!("TEST-ONLY test-swap-inputs enabled: chunk {a} and {b} exchanged");
     }
     if let Some(n) = run.test_drop_input {
-        let path = chunk_path(&run.staging, n);
-        std::fs::remove_file(&path)
-            .with_context(|| format!("test-drop-input chunk {n} missing already"))?;
-        eprintln!("TEST-ONLY test-drop-input enabled: chunk {n} removed");
+        // Enforced per ordinal in run_worker (this coordinator uploads
+        // regenerated inputs, so removing a staging file would be a no-op).
+        eprintln!("TEST-ONLY test-drop-input enabled: chunk {n} will not be submitted");
     }
     let workers = [
         (0u64, run.authority_a.clone(), run.endpoint_a.clone()),
@@ -450,6 +460,7 @@ async fn main() -> Result<()> {
         };
         let (seed, size, generation, execution_ms, resume, test_no_fetch) =
             (run.seed, run.size, run.generation, run.execution_ms, run.resume, run.test_no_fetch);
+        let swap_inputs = run.test_swap_inputs.clone();
         handles.push(tokio::spawn(async move {
             let run = Run {
                 tls,
@@ -469,8 +480,8 @@ async fn main() -> Result<()> {
                 events,
                 execution_ms,
                 resume,
-                test_swap_inputs: None,
-                test_drop_input: None,
+                test_swap_inputs: swap_inputs.clone(),
+                test_drop_input: run.test_drop_input,
                 test_no_fetch,
             };
             run_worker(&run, db, worker, &authority, &endpoint, seed, size, &staging, started).await
@@ -529,17 +540,11 @@ mod swap_tests {
     use super::*;
 
     #[test]
-    fn swap_inputs_exchanges_files() {
-        let dir = std::env::temp_dir().join("grpc-swap-test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("chunk-000000.bin"), b"aaaa").unwrap();
-        std::fs::write(dir.join("chunk-000001.bin"), b"bbbb").unwrap();
-        assert_eq!(swap_inputs(&dir, "0:1").unwrap(), (0, 1));
-        assert_eq!(std::fs::read(dir.join("chunk-000000.bin")).unwrap(), b"bbbb");
-        assert_eq!(std::fs::read(dir.join("chunk-000001.bin")).unwrap(), b"aaaa");
-        assert!(swap_inputs(&dir, "0:0").is_err());
-        assert!(swap_inputs(&dir, "0:9").is_err());
-        let _ = std::fs::remove_dir_all(&dir);
+    fn parse_swap_pair_accepts_distinct_ordinals() {
+        assert_eq!(parse_swap_pair("0:1").unwrap(), (0, 1));
+        assert_eq!(parse_swap_pair("3:11").unwrap(), (3, 11));
+        assert!(parse_swap_pair("0:0").is_err());
+        assert!(parse_swap_pair("0").is_err());
+        assert!(parse_swap_pair("a:b").is_err());
     }
 }
