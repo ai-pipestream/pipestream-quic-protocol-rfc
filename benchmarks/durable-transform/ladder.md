@@ -15,8 +15,16 @@ why; cells run under different ladder versions are not pooled.
 - Seeds: smoke seed 7 (matches `run-quick.sh`); all ladder cells seed 6.
 - JVM freeze (Kimi `async-neutral-v2` handoff §freeze, same values):
   `JAVA_TOOL_OPTIONS="-Xms256m -Xmx2g"` exported for every Java launch.
-  Pinned jar `61ab64a3…` (Claude `7585a9dc`), copied per run dir,
-  hash-verified pre-run, never rebuilt.
+  Pinned jar `61ab64a3…` (Claude `7585a9dc`) for cells through standard;
+  jar `e1763b4a…` (Claude `ab59dafb`, wire behaviour unchanged since
+  `7585a9dc`) for large cells, copied per run dir, hash-verified
+  pre-run, never rebuilt. Each cell record states its jar.
+- Java authority funding (Claude `ab59dafb`): `V2Main
+  init-authority/serve` accept `--db-mib/--wal-mib` (defaults
+  256/64 match). Large cells pass 1024/256 to BOTH Java
+  commands (the retained file policy cannot change on
+  reopen) and to the Rust authorities, recorded per run.
+  Cells through standard run all authorities at defaults.
 - Rust binaries (rebuilt 2026-09-10 from synced tree, `--locked --offline`):
   authority `e7175dd7…`, coordinator `54330cbf…`, grpc-worker `e48b226d…`,
   grpc-coordinator `03321977…` (full hashes in run artifacts).
@@ -51,6 +59,7 @@ why; cells run under different ladder versions are not pooled.
 | quick | 200_000 | 4 (partial tail) | parity with `run-quick.sh` gate |
 | standard | 8_388_608 | 128 | primary comparison cell (matches §8 evidence) |
 | large | 50_331_648 | 768 (256/worker) | object >> window, streamed from disk |
+| xlarge | 67_108_864 | 1024 (~341/worker) | ladder v3: returns now that declares are batched and both authorities fund 1024/256; states batch count and TX fit relied on |
 
 ## Explicit ceilings (chosen before measuring, with reasons)
 
@@ -64,6 +73,11 @@ why; cells run under different ladder versions are not pooled.
   largest block that fits both funding and realistic lock windows.
   Anything larger is UNAVAILABLE, not extrapolated. The failed 64 MiB
   attempts stay archived (c4-large64-attempts), not pooled.
+- Ladder v3 amends the ceiling above: the xlarge cell (64 MiB)
+  runs with 100-entity declare batches (4/worker, seal-last;
+  each fits a single transaction with margin) and 1024/256
+  MiB funding on both Rust and Java authorities. Repeats stay
+  3/arm (time ceiling).
 - Corpus exceeding the 2g Java heap (the "larger than allowed heap" case
   at full scale) is UNAVAILABLE on this host: a >2 GiB loopback run would
   hold BENCHMARK.lock for hours and starve the shared host. The large
