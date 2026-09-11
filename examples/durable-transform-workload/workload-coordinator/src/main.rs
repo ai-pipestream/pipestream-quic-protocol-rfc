@@ -64,6 +64,26 @@ fn operation_id(seed: u64, worker: u64, kind: &str, ordinal: u64) -> OperationId
     OperationId(id)
 }
 
+/// Cursor starts for observing a shard's scope membership page by page.
+/// Pages hold at most 256 members in ascending entity order, so each
+/// cursor after the first is the previous page's last entity (0 starts
+/// the walk). An empty shard still observes once, preserving the
+/// historical single-page behavior.
+fn page_cursors(entity_ids: &[u64]) -> Vec<Number> {
+    let mut cursors = Vec::new();
+    let mut after = Number(0);
+    for batch in entity_ids.chunks(256) {
+        cursors.push(after);
+        if let Some(last) = batch.last() {
+            after = Number(*last);
+        }
+    }
+    if cursors.is_empty() {
+        cursors.push(after);
+    }
+    cursors
+}
+
 /// Split a worker shard's ordinals into Declare batches of at most
 /// DECLARE_BATCH entity IDs with strictly increasing IDs, sealing only the
 /// last batch (sealing earlier would conflict the following batches on the
@@ -95,6 +115,40 @@ fn declare_plan(seed: u64, worker: u64, ordinals: &[u64]) -> Vec<(OperationId, V
 #[cfg(test)]
 mod declare_tests {
     use super::*;
+
+    fn cursors(entity_ids: &[u64]) -> Vec<u64> {
+        page_cursors(entity_ids).iter().map(|n| n.0).collect()
+    }
+
+    #[test]
+    fn empty_shard_observes_once_from_zero() {
+        assert_eq!(cursors(&[]), vec![0]);
+    }
+
+    #[test]
+    fn small_shard_observes_once_from_zero() {
+        let ids: Vec<u64> = (1..=43).collect();
+        assert_eq!(cursors(&ids), vec![0]);
+    }
+
+    #[test]
+    fn exact_page_bound_observes_once() {
+        let ids: Vec<u64> = (1..=256).collect();
+        assert_eq!(cursors(&ids), vec![0]);
+    }
+
+    #[test]
+    fn oversize_shard_walks_pages_in_order() {
+        let ids: Vec<u64> = (1..=300).collect();
+        assert_eq!(cursors(&ids), vec![0, 256]);
+        // Spaced worker-shard IDs walk the same way.
+        let spaced: Vec<u64> = (0..300).filter(|o| o % 3 == 0).map(|o| o + 1).collect();
+        assert_eq!(spaced.len(), 100);
+        assert_eq!(cursors(&spaced), vec![0]);
+        let big: Vec<u64> = (0..1024).filter(|o| o % 3 == 0).map(|o| o + 1).collect();
+        assert_eq!(big.len(), 342);
+        assert_eq!(cursors(&big), vec![0, big[255]]);
+    }
 
     #[test]
     fn empty_shard_keeps_single_empty_sealed_declare() {
@@ -616,8 +670,24 @@ async fn run_session(
         fetch_verified(&session, seed, total, ordinal, attempt, staging, &mut first_usable).await?;
     }
     // Checkpoint the sealed root scope, then assert durable completion.
-    let page = session.client.scope_page(Number(0), Number(0), PageLimit(256)).await?;
-    let seal = page.seal.context("root scope has no committed seal")?;
+    // Membership is observed page by page: one 256-member page cannot
+    // cover a larger shard, and closure requires every member observed
+    // before the seal verifies.
+    let entity_ids: Vec<u64> = ordinals.iter().map(|o| o + 1).collect();
+    let mut seal = None;
+    let mut pages = 0u32;
+    for after in page_cursors(&entity_ids) {
+        let page = session
+            .client
+            .scope_page(Number(0), after, PageLimit(256))
+            .await?;
+        pages += 1;
+        if seal.is_none() {
+            seal = page.seal;
+        }
+    }
+    session.log("scope-pages", -1, &format!("{} pages", pages));
+    let seal = seal.context("root scope has no committed seal")?;
     let summary = session.client.checkpoint(Number(0), seal, WaitMs(30_000)).await?;
     session.log("checkpoint", -1, &format!("declared {}", summary.declared.0));
     let completed = session.client.complete().await?;
