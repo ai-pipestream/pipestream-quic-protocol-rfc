@@ -33,6 +33,12 @@ const TRANSFORM_LABEL: &str = "transform/v2";
 const CONTENT_TYPE: &str = "application/octet-stream";
 const OBJECT_LIMIT: u64 = 16 * 1024 * 1024;
 const WORKERS: usize = 3;
+/// Max entity IDs in one Declare mutation. The V2 wire bounds every list at
+/// 256 entries, and the authority additionally funds a single transaction
+/// below that: a 254-entity declare fails with physical-database
+/// LIMIT_EXCEEDED while 115 succeeds (conformance durable scenarios), so
+/// batches stay at 100 to keep single-transaction fit with margin.
+const DECLARE_BATCH: usize = 100;
 
 fn wall_ms() -> u64 {
     SystemTime::now()
@@ -56,6 +62,88 @@ fn operation_id(seed: u64, worker: u64, kind: &str, ordinal: u64) -> OperationId
         id[15] = 1;
     }
     OperationId(id)
+}
+
+/// Split a worker shard's ordinals into Declare batches of at most
+/// DECLARE_BATCH entity IDs with strictly increasing IDs, sealing only the
+/// last batch (sealing earlier would conflict the following batches on the
+/// authority). Batch 0 keeps the historical ("declare", 0) identity, so
+/// shards that fit in one batch send frame-identical declares. A zero-chunk
+/// shard keeps the historical single empty sealed declare.
+fn declare_plan(seed: u64, worker: u64, ordinals: &[u64]) -> Vec<(OperationId, Vec<Id>, bool)> {
+    let mut batches: Vec<Vec<Id>> = ordinals
+        .chunks(DECLARE_BATCH)
+        .map(|chunk| chunk.iter().map(|o| Id(o + 1)).collect())
+        .collect();
+    if batches.is_empty() {
+        batches.push(Vec::new());
+    }
+    let last = batches.len() - 1;
+    batches
+        .into_iter()
+        .enumerate()
+        .map(|(b, ids)| {
+            (
+                operation_id(seed, worker, "declare", b as u64),
+                ids,
+                b == last,
+            )
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod declare_tests {
+    use super::*;
+
+    #[test]
+    fn empty_shard_keeps_single_empty_sealed_declare() {
+        let plan = declare_plan(6, 0, &[]);
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].0, operation_id(6, 0, "declare", 0));
+        assert!(plan[0].1.is_empty());
+        assert!(plan[0].2);
+    }
+
+    #[test]
+    fn single_batch_matches_historical_identity() {
+        let ordinals: Vec<u64> = (0..43).collect();
+        let plan = declare_plan(6, 1, &ordinals);
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].0, operation_id(6, 1, "declare", 0));
+        assert_eq!(plan[0].1.len(), 43);
+        assert!(plan[0].2);
+    }
+
+    #[test]
+    fn exact_bound_stays_single_batch() {
+        let ordinals: Vec<u64> = (0..DECLARE_BATCH as u64).collect();
+        let plan = declare_plan(6, 0, &ordinals);
+        assert_eq!(plan.len(), 1);
+        assert!(plan[0].2);
+    }
+
+    #[test]
+    fn oversize_shard_splits_with_last_only_seal() {
+        let ordinals: Vec<u64> = (0..300).collect();
+        let plan = declare_plan(6, 2, &ordinals);
+        assert_eq!(plan.len(), 3);
+        assert_eq!(plan[0].1.len(), DECLARE_BATCH);
+        assert!(!plan[0].2);
+        assert_eq!(plan[1].1.len(), DECLARE_BATCH);
+        assert!(!plan[1].2);
+        assert_eq!(plan[2].1.len(), 300 - 2 * DECLARE_BATCH);
+        assert!(plan[2].2);
+        assert_eq!(plan[0].0, operation_id(6, 2, "declare", 0));
+        assert_eq!(plan[2].0, operation_id(6, 2, "declare", 2));
+        // IDs strictly increase across batch boundaries.
+        assert!(*plan[0].1.last().unwrap() < plan[1].1[0]);
+        assert!(*plan[1].1.last().unwrap() < plan[2].1[0]);
+        for batch in plan.iter().map(|(_, ids, _)| ids) {
+            // Wire bound (256) always holds; storage fit is stricter.
+            assert!(batch.len() <= DECLARE_BATCH && batch.len() <= 256);
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -255,7 +343,8 @@ async fn open_session(
 async fn replay_unresolved(
     session: &Session,
     staging: &Path,
-    declaration: OperationId,
+    ordinals: &[u64],
+    declare_ops: &[OperationId],
 ) -> Result<std::collections::HashSet<[u8; 16]>> {
     let mut replayed = std::collections::HashSet::new();
     let pending = session.client.unresolved(Number(0), PageLimit(256)).await?;
@@ -269,7 +358,18 @@ async fn replay_unresolved(
                     operation: intent.operation,
                     mutation: Mutation::Admit(params.clone()),
                 };
-                send_admission(session, &path, &replay_intent, declaration, ordinal).await?;
+                let pos = ordinals
+                    .iter()
+                    .position(|&o| o == ordinal)
+                    .context("replayed ordinal not in shard")?;
+                send_admission(
+                    session,
+                    &path,
+                    &replay_intent,
+                    declare_ops[pos / DECLARE_BATCH],
+                    ordinal,
+                )
+                .await?;
                 session.log("replayed-admit", ordinal as i64, "");
             }
             _ => {
@@ -436,28 +536,40 @@ async fn run_session(
     )
     .await?;
     session.log("session-open", -1, authority);
-    let declaration = operation_id(seed, worker, "declare", 0);
+    // Shard membership is declared in increasing batches of at most
+    // DECLARE_BATCH entities: a larger entity_ids list violates the V2
+    // 256-entry bound and is rejected before it reaches the wire. Batch 0
+    // keeps the historical ("declare", 0) identity, so shards that fit in
+    // one batch send frame-identical declares. Only the last batch seals
+    // the scope: sealing earlier would conflict the following batches.
     // Declare (fresh runs only) then replay anything the journal still
     // holds as uncertain.
+    let plan = declare_plan(seed, worker, &ordinals);
     if fresh {
-        let ids: Vec<Id> = ordinals.iter().map(|o| Id(o + 1)).collect();
-        session
-            .client
-            .mutate(journal::Intent {
-                operation: declaration,
-                mutation: Mutation::Declare {
-                    scope: Number(0),
-                    entity_ids: ids,
-                    seal: true,
-                },
-            })
-            .await?;
-        session.log("declared", -1, &format!("{} entities", ordinals.len()));
+        for (b, (op, ids, seal)) in plan.iter().enumerate() {
+            session
+                .client
+                .mutate(journal::Intent {
+                    operation: *op,
+                    mutation: Mutation::Declare {
+                        scope: Number(0),
+                        entity_ids: ids.clone(),
+                        seal: *seal,
+                    },
+                })
+                .await?;
+            session.log(
+                "declared",
+                -1,
+                &format!("batch {b}: {} entities", ids.len()),
+            );
+        }
     }
-    let replayed = replay_unresolved(&session, staging, declaration).await?;
+    let declare_ops: Vec<OperationId> = plan.iter().map(|(op, _, _)| *op).collect();
+    let replayed = replay_unresolved(&session, staging, &ordinals, &declare_ops).await?;
     // Admit every chunk of this shard under its frozen identity, except
     // terminal work and just-replayed operations.
-    for &ordinal in &ordinals {
+    for (pos, &ordinal) in ordinals.iter().enumerate() {
         let admitted = session.client.observed_work(work_key(ordinal)).await?;
         let terminal = admitted.map(|o| (5..=8).contains(&o.view.state.0)).unwrap_or(false);
         if terminal {
@@ -490,7 +602,7 @@ async fn run_session(
             &session,
             &chunk_path(staging, ordinal),
             &intent,
-            declaration,
+            declare_ops[pos / DECLARE_BATCH],
             ordinal,
         )
         .await?;
