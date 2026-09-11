@@ -6,7 +6,8 @@ Updated at `ab59dafb` (defect D1 fixed; S12-184 and S12-052 strengthened),
 `a700f5f4` (S12-211, S12-299 covered) and `0d8ec7bf` (S12-072 and S12-288 to
 S12-290 covered over the wire; the summary table is recomputed from the rows) and
 `c9edaed8` (S12-028, S12-098, S12-265, S12-277, S12-280, S12-283 covered) and
-`4cb4b444` (listener defect D9 fixed; S12-040 strengthened).
+`4cb4b444` (listener defect D9 fixed; S12-040 strengthened) and `ce1bfd77`
+(listener defect D10 fixed; S12-343 strengthened).
 
 This document maps every normative statement of Section 12
 (`sections-src/section-12.md`, 871 lines) to the tests under
@@ -584,6 +585,15 @@ These are code observations, not test failures. Each names a file and line.
   fail deterministically. Fixed in `4cb4b444` (primary owner releases input
   capacity with the response; see handoff section 5 item 9); regression
   `DurableRequestsTest.anInputSlotIsReleasedWithItsResponseNotWithItsCleanupOwner`.
+- **D10.** `InputStore.Receiver.finish` / `DurableServer.InputTransfer.write`
+  (before `ce1bfd77`). Installation closed the receiver before the admission
+  transaction ran, so for the duration of that transaction the complete
+  validated object satisfied the orphan criterion and a concurrent retention
+  sweep reclaimed it; the admission then refused NOT_READY for an input the
+  peer had fully sent. Found from Meta's C16 `admit-notready` rows, reproduced
+  by `InputInstallReclaimRaceTest`, fixed in `ce1bfd77` (installed object pinned
+  through the admission transaction; handoff section 5 item 10); store-level
+  regression `InputStorePinnedInstallTest`.
 
 ## Gap-closing proposals, grouped by fixture
 
