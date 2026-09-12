@@ -1,0 +1,45 @@
+REPRODUCTION for Claude: Java authority defect 11 still refuses at xlarge64 scale on jar 32360ec3
+
+Cell: C17a xlarge64 r2 (SIZE=67108864, 1024 chunks, ~341/worker, seed 6,
+ladder v3, pipelined coordinator). Jar: 32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+(ada67cec), copied into each run dir and hash-verified before every run.
+Funding: --db-mib 1024 --wal-mib 256 on BOTH V2Main init-authority and
+V2Main serve, and 1024/256 on the Rust authorities. Stores on
+/home/krickert/.rfc-tmp (ext4 root drive, ~5 ms fsync; probe 5.34 ms).
+JAVA_TOOL_OPTIONS="-Xms256m -Xmx2g -Djava.io.tmpdir=/home/krickert/.rfc-tmp".
+
+Exact refusal text (stderr of run-mixed.sh, coordinator exit 1):
+  Error: authority refusal LIMIT_EXCEEDED: SQLite file capacity exhausted
+Event row (mixed-events.tsv, worker 2 = Java worker-c):
+  1301536  1789239173485  2  638  admit-budget-out-send  authority refusal LIMIT_EXCEEDED: SQLite file capacity exhausted
+
+Attempt history, warmup-mixed (fresh state dirs every attempt):
+- attempt 1: capacity refusal at 332 admitted (4 declare batches accepted:
+  100+100+100+41 = 341 entities; ordinal 326 in budget-out row)
+- attempts 2-4: transient INTERNAL_ERROR storage at 277 / 280 / 57 admits
+  (known storage-busy flake family, also seen on fast disk in D10; disk
+  probe healthy at the time)
+- attempt 5: capacity refusal again at exactly 332 admitted
+Old jar e1763b4a (C16a partial): 4 batches + 333 admits, twice
+deterministic. New jar: 332 / 332. Same bound within one chunk.
+
+Database state at refusal (attempt 5, work/java-c.root/):
+authority.sqlite 4.3 MiB, objects/ 25 MiB, no -wal file present:
+nearly empty, matching the defect-11 diagnosis (permitted log length
+shrank while actual length grew; truncating checkpoint from the
+retention sweep does not appear to have moved this bound at 341-entity
+scope under continuous polling).
+
+Control evidence that the cell setup is otherwise sound:
+- warmup-ps on the same jar PASSED (154 s), final digest
+  b28b0b7b1f2dd65cd36c1099246147c11b5d58428eb64097e14b94ecd04d6f69
+  (the expected pin), so the corpus, funding and coordinator path are good.
+
+Minimal repro command shape (mirrors the C16a request):
+  run-mixed.sh WORK 6 67108864 c   # with JAVA_JAR=32360ec3 jar,
+  JAVA_PHYS_DB_MIB=1024 JAVA_PHYS_WAL_MIB=256, PS_PHYS_DB_MIB=1024 PS_PHYS_WAL_MIB=256
+
+Full state (all FAILED-attemptN work dirs with sqlite + objects + logs):
+/home/krickert/.rfc-tmp/c17a-xlarge64/warmup-mixed.FAILED-attempt{1..5}/
+This archive carries the artifacts + stdout logs; work/ dirs pruned as in C16g.
+Cell STOPPED per brief section 3. No ladder resize.

@@ -1,0 +1,9 @@
+cell: xlarge64 r2 (SIZE=67108864, 1024 chunks, ~341/worker, seed 6, ladder v3)
+jar: 32360ec3 (ada67cec, defect 11+12 fixes), copied per run dir, hash-verified
+funding: 1024/256 on both Java commands and Rust authorities
+stores: /home/krickert/.rfc-tmp/c17a-xlarge64 on ext4 (/dev/nvme3n1p2)
+expected final: b28b0b7b1f2dd65cd36c1099246147c11b5d58428eb64097e14b94ecd04d6f69
+order: warmup+rep1+rep3 ps,mixed,grpc; rep2 grpc,mixed,ps (mirror-rotated)
+ceiling: 3600 s per run (timeout), recorded as failure if hit
+result: STOPPED at warmup-mixed (defect-11 reproduction, see REPRO-DEFECT11.txt). warmup-ps PASS digest-verified. Do not pool with partial (different jar).
+warmup-ps final digest verified b28b0b7b1f2dd65cd36c1099246147c11b5d58428eb64097e14b94ecd04d6f69 (bin pruned as in partial)
