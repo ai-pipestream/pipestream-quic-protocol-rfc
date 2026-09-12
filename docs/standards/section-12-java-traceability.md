@@ -20,7 +20,8 @@ by the existing transport-close assertion). Updated at `6174d92d` (S12-294 cover
 Updated at `3f8846e2` (thirteen store-level partials closed by unit tests, P-STORE-3 and
 P-STORE-5 to P-STORE-16; S12-248 recorded as not producible, D13). Updated at `7583b00f`
 (S12-017, S12-145, S12-193 and S12-215 covered by `SchemaBoundsAndRegistryTest`). Updated at `aa05d201`
-(S12-024, S12-068, S12-077, S12-082 and S12-321 covered by `PeerRuleWireTest`).
+(S12-024, S12-068, S12-077, S12-082 and S12-321 covered by `PeerRuleWireTest`). Updated at `d26c5a92`
+(S12-076, S12-239, S12-284 and S12-285 covered).
 
 This document maps every normative statement of Section 12
 (`sections-src/section-12.md`, 871 lines) to the tests under
@@ -159,7 +160,7 @@ including most of the refusal-code taxonomy.
 | S12-073 | "The same named error used as a QUIC application error has numeric value `0x200 + code`; graceful transport close uses 0." | `ProtocolError.Code.applicationError`; `CoreClient`/`DurableClient` decode `0x200..0x212` | `V2CoreServerTest.allProfileDependentCoreRequestsReceiveCorrelatedRefusalsWithoutClosing` (0x201); `DurableServerTest.requiredDurableWithoutIdentityClosesUnauthorizedBeforeCapabilities` (0x203); `DurableWireNegativeTest.controlSilenceIsIdleOnlyWithNothingOutstanding` (0x204 plus the close reason string) | COVERED | Graceful close with 0 is exercised by `DurableClientTest` detach/closed but not asserted as the numeric code. |
 | S12-074 | "Malformed control, wrong message direction, negotiation failure, lost control framing, and an unusable Control Stream terminate the connection. Use CONTROL_RESET when Stream 0 is reset." | `CoreServer.Control`/`DurableServer.Control` `channelInactive`/`exceptionCaught`; `CoreClient.Control` | `V2CoreServerTest.resetAndStopOfControlAreFatalWithoutBecomingWorkOutcomes`; `V2CoreClientTest.resetAndStopOfControlRemainNamedProtocolFailures`; `V2CoreServerTest.malformedNegotiation...` | COVERED | Both RESET_STREAM and STOP_SENDING on Stream 0, in both roles, map to CONTROL_RESET. |
 | S12-075 | "A valid but refused request returns REFUSAL without closing unrelated work." | `DurableRequests.accept` refusal path; `DurableServer.Connection.respondRefusal` | `V2CoreServerTest.allProfileDependentCoreRequestsReceiveCorrelatedRefusalsWithoutClosing`; `DurableLifecycleTest.storageWorkerExhaustionRefusesRequestsInsteadOfBlockingTheLoop`; `DurableWireNegativeTest.resultReadRefusalsAndCompleteExclusionAreExact` | COVERED | `assertTrue(peer.connection.isActive())` after each of 15 refusals. |
-| S12-076 | "Stream abort uses RESET_STREAM for the sender and STOP_SENDING for the receiver ...; a receiver does not send RESET_STREAM for a receive-only stream." | `StreamTransport.Data.abort` (`local ? shutdownOutput : shutdownInput`) | `StreamTransportTest.localResetSettlesQueuedWriteBeforeExplicitSlotRelease` | PARTIAL | The sender side is asserted with the exact cause; no test observes the peer-side direction of a receive-only abort. |
+| S12-076 | "Stream abort uses RESET_STREAM for the sender and STOP_SENDING for the receiver ...; a receiver does not send RESET_STREAM for a receive-only stream." | `StreamTransport.Data.abort` (`local ? shutdownOutput : shutdownInput`) | `StreamTransportTest.localResetSettlesQueuedWriteBeforeExplicitSlotRelease`; `PeerRuleWireTest.aReceiverAbortOfAResultReadIsAnsweredByASenderReset` | COVERED | The sender side with the exact cause, and the receiver side: a STOP_SENDING from the peer on a flow-control-stalled result read makes the listener release the read with most of the object unsent and no control response; the pinned codec does not expose the RESET_STREAM code to the receiver, so the release and the partial object are the observable half. |
 | S12-077 | "The server also sends a correlated REFUSAL for an invalid input unless it already sent that input's admission response." | `DurableServer.InputTransfer.refuse` -> `sendInputRefusal` | `DurableServerTest.inputRefusalsAreCorrelatedByStreamAndLeaveDeclarationsIntact`; `DurableWireNegativeTest.stalledInputsExpireWithoutBlockingAHealthyConnection`; `RawPeerRustAuthorityTest` (gated); `PeerRuleWireTest.anInputWhoseAdmissionResponseWasSentGetsNoSecondRefusal` | COVERED | Seven correlated refusals, and the exclusion: the same header replayed with a payload that would be refused if read gets the retained admission response and no second control message. |
 | S12-078 | "A client rejecting a result aborts reception and reports local delivery failure; it does not send a server-to-client REFUSAL in the wrong direction." | `DurableClient.ResultTransfer.abort`; `ClientCorrelation.abortResult` | `DurableClientResultNegativeTest.payloadsThatDoNotMatchTheHeaderFailOnlyThatDelivery`; `.headersContradictingTheSelectionFailOnlyThatDelivery` | COVERED | Both methods assert over every frame the raw authority recorded that the client sent no REFUSAL, while its reads are recorded. |
 | S12-079 | "After a result header has started its response, subsequent sender errors abort the stream rather than send a second control response." | `DurableServer.ResultTransfer.abort(..., refusable)` | `ResultAbortWireTest.senderFailureAfterTheHeaderAbortsTheStreamWithoutASecondControlResponse` (RESULT_HEADER_SENT hook truncates the published object) | COVERED | The header is received, the stream ends without FIN short of the declared length, no control message follows within two seconds, and the work is still SUCCEEDED on the live connection. |
@@ -342,7 +343,7 @@ including most of the refusal-code taxonomy.
 | S12-236 | "An already accepted own or ancestor fence MUST NOT be overwritten with FAILED while its descendants are settling." | `ExecutionStore.eligible` CANCELLING branch | `FenceStoreTest.acceptedFenceImmediatelyExcludesOldLeasePublicationAndConflictingFence` | COVERED | Past-deadline expiry on CANCELLING work refuses CANCELLED and the state stays CANCELLING. |
 | S12-237 | "Revocation applies an owner-independent root cancellation fence, seals existing scope membership and settles all unresolved declarations as well as admitted work. It does not leave unadmitted obligations waiting for a now-unauthorized caller." | `SessionStore.revoke`; `FenceReconciliation.Sessions` resolver ignores caller authorization | `CancellationReconciliationTest.revocationDeniesTheOwnerWhileBoundedMaintenanceSealsAndSettlesUnadmittedWork` | PARTIAL | Unadmitted declarations are settled by owner-independent maintenance; both members in the test are unadmitted, so "as well as admitted work" is not asserted in the same test. |
 | S12-238 | "A deadline failure of one work item does not implicitly cancel other obligations; the enclosing scope still requires their closure." | `AdmissionStore.ancestors` | `ExecutionClosureTest.authoritativeParentDeadlineFailureDoesNotCancelCallerChildObligations`; `ClosureReconciliationTest.preexistingParentFailureIsPreservedWhileLaterChildClosureStillCommits` | COVERED | |
-| S12-239 | "WORK operation 4 reads a work view or waits up to 30000 ms for its revision to change." | `Messages.Watch` (`range(waitMs, 0, 30000)`); `ControlWaitService.watch` | `ControlWaitServiceTest.watchImmediateTimeoutChangeFutureAndSignedWrapUseFreshAuthorizedViews` | PARTIAL | Immediate, unchanged-at-timeout and change-before-deadline are all asserted, but with a 1000 ms wait; the 30000 ms bound is a schema constant no test drives. Defect D1 is fixed at ab59dafb: `DurableClientControlDeadlineTest` drives a 10 s wait answered after 5 s on a 2 s control deadline and a 1 s wait that is never answered. |
+| S12-239 | "WORK operation 4 reads a work view or waits up to 30000 ms for its revision to change." | `Messages.Watch` (`range(waitMs, 0, 30000)`); `ControlWaitService.watch` | `ControlWaitServiceTest.watchImmediateTimeoutChangeFutureAndSignedWrapUseFreshAuthorizedViews`; `SchemaBoundsAndRegistryTest.watchAndCheckpointWaitsAreBoundedAtThirtySeconds` | COVERED | Immediate, unchanged-at-timeout and change-before-deadline at 1 s, a 10 s wait answered late in the control-deadline test, and the 30 000 ms bound itself: it encodes and decodes, 30 001 and -1 are FRAME_ERROR at the schema. |
 | S12-240 | "Revision starts at 1 on declaration and strictly increases on observable durable change." | `DeclarationStore.snapshot`; `ps_v2_entities` revision column | `DeclarationStoreTest.declareReplayLookupPageAndImmediateSnapshotAreExact` (`revision == 1` on declaration); `ControlWaitServiceTest.watchImmediate...` (a greater revision after `failExecution`) | PARTIAL | Start at 1 and one increase are asserted; nothing asserts monotonicity across a sequence of durable changes. |
 | S12-241 | "`after-revision` 0 requests an immediate snapshot; a value greater than current revision is CONFLICT." | `ControlWaitService.watch`; `DeclarationStore.snapshot` | `ControlWaitServiceTest.watchImmediate...`; `DeclarationStoreTest.declareReplayLookup...`; `DurableMutationTest.skipWithoutPermissionIsUnauthorizedAndDeadlineExpiryFailsAuthoritatively` | COVERED | Proven at the store, at the wait service and over the wire. |
 | S12-242 | "Operation 5 returns a consistent current revision/view; a wait timeout returns the unchanged view, not failure." | `ControlWaitService.watch` expiry branch returns a freshly read view | `ControlWaitServiceTest.watchImmediateTimeoutChangeFutureAndSignedWrapUseFreshAuthorizedViews`; `DurableWireNegativeTest.controlSilenceIsIdleOnlyWithNothingOutstanding`; `DurableMutationTest.skipWithoutPermission...` | COVERED | The wire test additionally asserts the wait really lasted >= 3500 ms of a 4000 ms request. |
@@ -392,8 +393,8 @@ including most of the refusal-code taxonomy.
 | S12-281 | "Cross-authority delegation and other storage schemes require a separately specified profile; they are not implicit reference conformance." | not implemented | - | N/A-JAVA | A statement that a capability is out of scope; nothing to assert. |
 | S12-282 | "An application retaining or sharing an output reference MUST retain the authenticated manifest and selected output index, not only its locator string." | `ClientJournal.select` persists the manifest and index | `DurableClientTest.javaClientCompletes...`; `ClientJournalFaultTest` phase (c) (a journal fault at `select` is a local INTERNAL_ERROR and the later `read` cannot proceed) | COVERED | |
 | S12-283 | "The consumer obtains owner credentials and trusted authority-to-endpoint configuration separately; it MUST NOT infer either from an untrusted URI." | `ClientOptions` takes `--connect`, `--ca`, `--cert`, `--key` explicitly; `DurableClient.connect(address, authentication, ...)`; `Locator` is never resolved | `DurableClientLocatorTest.aLocatorNamingAnotherEndpointIsNeverDereferencedOrSentCredentials` | COVERED | Since c9edaed8: the client connected to the configured address with configured credentials reads the output there even though the served locator names another endpoint, which sees no traffic at all; the endpoint and credentials were never inferred from the URI. |
-| S12-284 | "A bare locator is not sufficient recovery evidence and this profile defines no anonymous identity-discovery call." | `DurableClient.read` requires a journaled selection | `ClientJournalFaultTest` phase (c) recovery | PARTIAL | A read without a saved selection is NOT_FOUND, which is the closest available proof; no test starts from only a locator string. |
-| S12-285 | "Output expiry and session revocation govern access at the authority; they cannot recall bytes already delivered to a recipient." | `RetentionService`; `ResultFiles.localCopy` | `DurableWireNegativeTest.outputRetentionExpiryWhilePinnedByAReadCompletesTheTransferThenExpires` | PARTIAL | Delivery completing across expiry is proven; nothing asserts the delivered local file survives a subsequent revocation. |
+| S12-284 | "A bare locator is not sufficient recovery evidence and this profile defines no anonymous identity-discovery call." | `DurableClient.read` requires a journaled selection | `ClientJournalFaultTest` phase (c) recovery; `AuthorityRuleClientTest.aBareLocatorIsNotRecoveryEvidenceAndTriggersNoDiscoveryCall` | COVERED | A read with no saved selection is NOT_FOUND locally, no Read and no GetManifest reaches the authority, and no file is created. |
+| S12-285 | "Output expiry and session revocation govern access at the authority; they cannot recall bytes already delivered to a recipient." | `RetentionService`; `ResultFiles.localCopy` | `DurableWireNegativeTest.outputRetentionExpiryWhilePinnedByAReadCompletesTheTransferThenExpires`; `AuthorityRuleClientTest.deliveredBytesSurviveALaterRevocationAtTheAuthority` | COVERED | Delivery across expiry, and now revocation: after a delivered result the authority answers everything UNAUTHORIZED, a new read is refused, and the delivered file is byte-identical. |
 | S12-286 | "A locally retained copy does not grant a new remote read, renew output availability, or prove current authorization. Clients MUST distinguish use of such a local copy from a newly authorized result transfer." | `ResultFiles.localCopy` returns `Delivered(local=true)`; `Staging.install` returns `local=false` | `DurableClientTest.javaClientCompletesTheWholeSelectedCombinationAgainstJavaAuthority` | COVERED | The only place the `local` flag distinction is asserted, with matching digests on both paths. |
 | S12-287 | "Applications that require deletion or time-limited use of local copies need a separate local policy; this profile does not provide remote erasure or enforcement of usage restrictions after delivery." | not implemented | - | N/A-JAVA | A statement that a capability is out of scope. |
 
@@ -499,17 +500,17 @@ including most of the refusal-code taxonomy.
 |---|---|---|---|---|---|
 | Scope and profiles (preamble, lines 1-28) | 5 | 0 | 0 | 1 | 6 |
 | 12.1 Core Mapping and Negotiation | 42 | 8 | 1 | 0 | 51 |
-| 12.2 Correlation and Error Scope | 28 | 1 | 0 | 0 | 29 |
+| 12.2 Correlation and Error Scope | 29 | 0 | 0 | 0 | 29 |
 | 12.3 Authenticated Sessions and Non-Reusable Identity | 36 | 1 | 0 | 0 | 37 |
 | 12.4 Immutable Operations and Replay | 17 | 3 | 0 | 0 | 20 |
 | 12.5 Declaration, Admission and Descendant Scopes | 46 | 3 | 0 | 0 | 49 |
-| 12.6 Attempts, Cancellation and Authoritative Outcomes | 53 | 6 | 1 | 1 | 61 |
-| 12.7 Result Publication, Streams and References | 26 | 5 | 0 | 3 | 34 |
+| 12.6 Attempts, Cancellation and Authoritative Outcomes | 54 | 5 | 1 | 1 | 61 |
+| 12.7 Result Publication, Streams and References | 28 | 3 | 0 | 3 | 34 |
 | 12.8 Sealed Closure, Counts and Shutdown | 42 | 2 | 0 | 2 | 46 |
 | 12.9 Lifetimes, Clocks and Crash-Safe Accounting | 37 | 3 | 0 | 0 | 40 |
-| **all subsections** | **332** | **32** | **2** | **7** | **373** |
+| **all subsections** | **336** | **28** | **2** | **7** | **373** |
 
-Read the `PARTIAL` column as the real work queue: 32 clauses have a test whose
+Read the `PARTIAL` column as the real work queue: 28 clauses have a test whose
 name suggests coverage but whose assertions stop short. The 2 `GAP` rows are
 in most cases cheaper to close than the partials.
 
@@ -604,7 +605,7 @@ proposed as tests.
   transfer to show autotuning stays inert.
 - **P2-PEER-5** (S12-068). DONE at `aa05d201`. Open and finish 2 000 input streams on one
   connection and assert every stream id is unique and increasing.
-- **P2-PEER-6** (S12-076). Abort a result read from the peer side with
+- **P2-PEER-6** (S12-076). DONE at `d26c5a92`. Abort a result read from the peer side with
   STOP_SENDING and assert the listener answers with RESET_STREAM (not a
   RESET from the receiver), through `Incoming` failure causes.
 - **P2-PEER-7** (S12-077). DONE at `aa05d201`. Send an input whose admission response has already
@@ -619,7 +620,7 @@ proposed as tests.
 - **P2-PEER-10** (S12-184). Not observable through the pinned Netty codec,
   which does not expose the STOP_SENDING application error to the receiver;
   keep the "write no longer completes" assertion and record the limit.
-- **P2-PEER-11** (S12-239). Drive a 30 000 ms watch answered at 29 s through
+- **P2-PEER-11** (S12-239). DONE at `d26c5a92`. Drive a 30 000 ms watch answered at 29 s through
   the control-deadline test's injected clock (the wire bound, not 10 s).
 - **P2-PEER-12** (S12-321). DONE at `aa05d201`. Assert the numeric application error 0 on the
   client's close after a completed drain, from the listener's close event.
@@ -627,10 +628,10 @@ proposed as tests.
 
 ### Raw authority against the Java client
 
-- **P2-AUTH-1** (S12-284). Start a client with only a locator string and no
+- **P2-AUTH-1** (S12-284). DONE at `d26c5a92`. Start a client with only a locator string and no
   saved selection and assert it makes no discovery call and reports NOT_FOUND
   locally.
-- **P2-AUTH-2** (S12-285). After a delivered result, revoke the session at the
+- **P2-AUTH-2** (S12-285). DONE at `d26c5a92`. After a delivered result, revoke the session at the
   raw authority and assert the installed local file is untouched.
 
 ### Spec-owner decisions, not tests

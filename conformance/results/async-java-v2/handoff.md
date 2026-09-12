@@ -55,6 +55,7 @@ shared feature branch and main were not merged.
 | `3f8846e2` | thirteen store-level traceability partials closed by unit tests written in a separate worktree and reviewed here (P-STORE-3, 5 to 16; each confirmed red by inverting its load-bearing assertion): S12-100, 112, 169, 170, 171, 177, 206, 218, 219, 226, 247, 249, 251, 345, 346, 347, 355, 361; `ResultFixture` takes a policy; S12-248 not producible (D13, spec-owner question); traceability 321/43/2/7 |
 | `7583b00f` | `SchemaBoundsAndRegistryTest`: work-view nullable sweep with null and boolean refusals (S12-017), the 256-id declaration bound (S12-145), the nine-state integer registry (S12-193), the WORK operation numbers 8 to 11 read off encoded frames (S12-215); traceability 327/37/2/7 |
 | `aa05d201` | `PeerRuleWireTest` (raw peer and raw authority): ignorable frame activates no profile (S12-024), a hundred never-reused stream ids (S12-068), no second refusal for a replayed admitted input (S12-077), unrecognised close code releases slots without implying success (S12-082), client drain close is application error 0 observed at the authority (S12-321); traceability 332/32/2/7 |
+| `d26c5a92` | receiver-side abort of a stalled result read releases the listener's read with no control response (S12-076); 30 000 ms wait bound at the schema (S12-239); client makes no discovery call from a bare locator (S12-284) and keeps delivered bytes across a later revocation (S12-285); traceability 336/28/2/7 |
 
 ## 1. Contract to source to tests to evidence
 
