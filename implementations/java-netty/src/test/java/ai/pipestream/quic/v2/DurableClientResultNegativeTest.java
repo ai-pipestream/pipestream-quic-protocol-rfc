@@ -191,7 +191,14 @@ final class DurableClientResultNegativeTest {
           Files.readAllBytes(
               DurableClientTest.get(session.client.read(WORK, 1, 0, session.destination("d.bin")))
                   .path()));
-      session.assertOnlyInstalled("d.bin");
+      // S12-078: every rejected delivery was aborted locally; the client never answered the
+      // authority with a REFUSAL in the wrong direction. The raw authority records every frame.
+      assertTrue(
+          session.authority.received.stream().noneMatch(Messages.Refusal.class::isInstance),
+          "client sent a refusal: " + session.authority.received);
+      assertTrue(
+          session.authority.received.stream().filter(Messages.Read.class::isInstance).count() >= 4,
+          "the reads were recorded: " + session.authority.received);
       DurableClientTest.get(session.client.detach());
     }
   }
@@ -263,6 +270,10 @@ final class DurableClientResultNegativeTest {
               DurableClientTest.get(session.client.read(WORK, 1, 0, session.destination("d.bin")))
                   .path()));
       session.assertOnlyInstalled("d.bin");
+      // S12-078 again for payload failures: aborted locally, never answered with a REFUSAL.
+      assertTrue(
+          session.authority.received.stream().noneMatch(Messages.Refusal.class::isInstance),
+          "client sent a refusal: " + session.authority.received);
       DurableClientTest.get(session.client.detach());
     }
   }
