@@ -254,7 +254,14 @@ No pushes (no authorization); no history rewritten.
   serial and pipe, standard and large48): a listener bug, not client or
   storage pressure. Coordinator retry on NOT_READY stays correct client
   behavior (all affected runs completed byte-exact); report must say so
-  and expect zero such rows on the 28c3369b jar.
+  and expect zero such rows on the 28c3369b jar. CONFIRMED 2026-09-12
+  by Muse: D10 reran all 24 mixed-arm cells (seed 6, stores under
+  /home/krickert/.rfc-tmp per host-fsync note) on the verified 28c3369b
+  jar — 24/24 DONE, zero admit-notready rows in all 20 rep cells
+  (event-tsv + stdout scan). Transient INTERNAL_ERROR storage flakes
+  needed retries (large48/pipe rep1: 5 attempts, rep3: 3); all
+  FAILED-attemptN evidence preserved in /home/krickert/.rfc-tmp/d10-seed6/.
+  xlarge64 mixed still blocked pending the post-4fb8f747 pin.
 - Deviations fixed en route (all in-tree, committed or pending with the
   C16g commit): sampler `set --` clobbered the PID list (died tick 2);
   sampler missed sub-second processes (t=0 burst + pidfile + wall-

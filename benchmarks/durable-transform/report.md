@@ -85,7 +85,12 @@ Before/after pipelining (pipeline suite, wall medians, n=5):
   "NOT_READY: complete validated input is unavailable") are
   listener defect 10 (fixed at ce1bfd77), not client or storage
   pressure. Retry on NOT_READY stays correct client behavior (all
-  affected runs byte-exact); expect zero on the 28c3369b jar.
+  affected runs byte-exact); confirmed zero on the 28c3369b jar:
+  D10 reran all 24 mixed-arm cells (seed 6, stores on fast disk)
+  with zero admit-notready rows in all 20 rep event logs and
+  stdout logs (evidence: /home/krickert/.rfc-tmp/d10-seed6/,
+  D10-LOG.txt; FAILED-attemptN dirs preserve the transient
+  INTERNAL_ERROR storage retries seen en route).
 - No uncategorized LIMIT_EXCEEDED anywhere: every refusal detail
   is named and counted, so the defect-9 retransmission window did
   not pollute the e1763b4a measurements.
