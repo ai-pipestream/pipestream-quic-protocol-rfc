@@ -58,6 +58,7 @@ shared feature branch and main were not merged.
 | `d26c5a92` | receiver-side abort of a stalled result read releases the listener's read with no control response (S12-076); 30 000 ms wait bound at the schema (S12-239); client makes no discovery call from a bare locator (S12-284) and keeps delivered bytes across a later revocation (S12-285); traceability 336/28/2/7 |
 | `ea55c57d` | CLIENT FIX defect 14: the client sent an input on the caller's word that a declaration covered it (the journal checked only the session generation); a first send is now refused NOT_READY unless the named declaration's receipt is held for the input's scope and producer, resends unaffected (S12-150, red before at a raw authority); the raw test authority answers declarations with genuine receipts; reconnect offers require every journaled profile (S12-038) |
 | `54267a72` | second store-level round from the agent worktree, reviewed and cherry-picked (P2-STORE-1 to 3, 5 to 11, 13 to 15, P2-WIRE-5; each confirmed red): S12-114, 139, 140, 141, 199, 204, 227, 237, 240, 263, 276, 278, 300, 316, 348, 353; S12-164 not producible (child scope row is inserted in the parent's admission transaction); D4 and D6 closed; traceability 354/10/2/7 |
+| `77ee4830` | `PeerRuleWireTest`: a 1 MiB object over a 64 KiB stream window both ways with bounded credit (S12-041); control answered within a second with every data slot held open, then every slot returned (S12-043, S12-044, S12-045); traceability 358/6/2/7 |
 
 ## 1. Contract to source to tests to evidence
 
