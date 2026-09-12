@@ -486,7 +486,33 @@ final class SessionStore {
    * @throws SQLException for storage failure, with no successful receipt returned
    */
   Binding create(Access access, Capabilities selected, Create request) throws SQLException {
-    return transaction(
+    return createCommit(access, selected, request).value();
+  }
+
+  /**
+   * A mutation's correlated result and whether it committed a new durable record rather than
+   * replaying a retained one. Fixture boundaries named "committed" fire only for fresh commits.
+   *
+   * @param value correlated response
+   * @param fresh true when this call committed the record, false for a replay
+   * @param <T> response type
+   */
+  record Commit<T>(T value, boolean fresh) {}
+
+  /**
+   * Create a session or replay its creation receipt, saying which happened.
+   *
+   * @param access current verified owner gate
+   * @param selected completed capability selection whose durable combination is retained
+   * @param request immutable creation sequence and exact policy
+   * @return correlated receipt and whether it was committed by this call
+   * @throws SQLException for storage failure, with no successful receipt returned
+   */
+  Commit<Binding> createCommit(Access access, Capabilities selected, Create request)
+      throws SQLException {
+    boolean[] fresh = {false};
+    Binding created =
+        transaction(
         access,
         selected,
         true,
@@ -527,6 +553,7 @@ final class SessionStore {
           if (highWater == 0
               && count(connection, "SELECT count(*) FROM ps_v2_owners") >= config.maxOwners())
             throw ProtocolError.limit("non-reusable owner history capacity");
+          fresh[0] = true;
           long generation = increment(meta(connection));
           Binding binding =
               new Binding(
@@ -594,6 +621,7 @@ final class SessionStore {
           }
           return correlate(binding, request.request());
         });
+    return new Commit<>(created, fresh[0]);
   }
 
   /**
@@ -634,17 +662,37 @@ final class SessionStore {
    */
   DeclarationResponse declare(
       Access access, Capabilities selected, long generation, Declare request) throws SQLException {
-    return sessionTransaction(
-        access,
-        selected,
-        generation,
-        true,
-        (connection, binding) -> {
-          boolean replay =
-              DeclarationStore.operation(connection, binding, request.operation()) != null;
-          if (!replay) AdmissionStore.checkDeclaration(connection, binding, request.scope());
-          return DeclarationStore.declare(connection, config.files(), binding, selected, request);
-        });
+    return declareCommit(access, selected, generation, request).value();
+  }
+
+  /**
+   * Declare members or replay the declaration receipt, saying which happened.
+   *
+   * @param access current owner authorization
+   * @param selected completed capability selection
+   * @param generation retained session generation
+   * @param request immutable declaration
+   * @return correlated receipt and whether it was committed by this call
+   * @throws SQLException for storage failure or corrupt retained evidence
+   */
+  Commit<DeclarationResponse> declareCommit(
+      Access access, Capabilities selected, long generation, Declare request) throws SQLException {
+    boolean[] fresh = {false};
+    DeclarationResponse response =
+        sessionTransaction(
+            access,
+            selected,
+            generation,
+            true,
+            (connection, binding) -> {
+              boolean replay =
+                  DeclarationStore.operation(connection, binding, request.operation()) != null;
+              if (!replay) AdmissionStore.checkDeclaration(connection, binding, request.scope());
+              fresh[0] = !replay;
+              return DeclarationStore.declare(
+                  connection, config.files(), binding, selected, request);
+            });
+    return new Commit<>(response, fresh[0]);
   }
 
   /**
@@ -683,6 +731,29 @@ final class SessionStore {
    * @throws SQLException failed storage transaction or corrupt retained evidence
    */
   RetryResponse retry(
+      Access access,
+      Capabilities selected,
+      long generation,
+      Retry request,
+      AdmissionStore.Clock clock,
+      AdmissionStore.Authorization authorization)
+      throws SQLException {
+    return retryCommit(access, selected, generation, request, clock, authorization).value();
+  }
+
+  /**
+   * Retry or replay the retry receipt, saying which happened.
+   *
+   * @param access current owner authorization for retry
+   * @param selected completed compatible capability selection
+   * @param generation retained session generation
+   * @param request immutable retry intent
+   * @param clock trusted UTC source for a new mutation
+   * @param authorization current application retry policy
+   * @return correlated receipt and whether it was committed by this call
+   * @throws SQLException failed storage transaction or corrupt retained evidence
+   */
+  Commit<RetryResponse> retryCommit(
       Access access,
       Capabilities selected,
       long generation,
@@ -744,7 +815,7 @@ final class SessionStore {
           AdmissionStore.remember(connection, config, binding.authority(), committedAt);
         }
         statement.execute("COMMIT");
-        return response;
+        return new Commit<>(response, prior == null);
       } catch (SQLException | RuntimeException | Error failure) {
         rollback(connection, failure);
         throw failure;
@@ -781,8 +852,32 @@ final class SessionStore {
       AdmissionStore.Clock clock,
       FenceStore.Authorization authorization)
       throws SQLException {
-    return (CancelResponse)
+    return cancelCommit(access, selected, generation, request, clock, authorization).value();
+  }
+
+  /**
+   * Accept or replay a cancellation, saying which happened.
+   *
+   * @param access current owner authorization
+   * @param selected compatible negotiated profiles
+   * @param generation retained session
+   * @param request immutable cancellation intent
+   * @param clock trusted UTC source
+   * @param authorization explicit application cancellation policy
+   * @return correlated receipt and whether it was committed by this call
+   * @throws SQLException for storage failure or corrupt retained evidence
+   */
+  Commit<CancelResponse> cancelCommit(
+      Access access,
+      Capabilities selected,
+      long generation,
+      Cancel request,
+      AdmissionStore.Clock clock,
+      FenceStore.Authorization authorization)
+      throws SQLException {
+    Commit<Message> fence =
         fenceTransaction(access, selected, generation, request, clock, authorization);
+    return new Commit<>((CancelResponse) fence.value(), fence.fresh());
   }
 
   /**
@@ -805,8 +900,32 @@ final class SessionStore {
       AdmissionStore.Clock clock,
       FenceStore.Authorization authorization)
       throws SQLException {
-    return (SkipResponse)
+    return skipCommit(access, selected, generation, request, clock, authorization).value();
+  }
+
+  /**
+   * Accept or replay a skip, saying which happened.
+   *
+   * @param access current owner authorization
+   * @param selected compatible negotiated profiles
+   * @param generation retained session
+   * @param request immutable skip intent
+   * @param clock trusted UTC source
+   * @param authorization explicit application skip policy
+   * @return correlated receipt and whether it was committed by this call
+   * @throws SQLException for storage failure or corrupt retained evidence
+   */
+  Commit<SkipResponse> skipCommit(
+      Access access,
+      Capabilities selected,
+      long generation,
+      Skip request,
+      AdmissionStore.Clock clock,
+      FenceStore.Authorization authorization)
+      throws SQLException {
+    Commit<Message> fence =
         fenceTransaction(access, selected, generation, request, clock, authorization);
+    return new Commit<>((SkipResponse) fence.value(), fence.fresh());
   }
 
   /**
@@ -829,11 +948,35 @@ final class SessionStore {
       AdmissionStore.Clock clock,
       FenceStore.Authorization authorization)
       throws SQLException {
-    return (CancelScopeResponse)
-        fenceTransaction(access, selected, generation, request, clock, authorization);
+    return cancelScopeCommit(access, selected, generation, request, clock, authorization).value();
   }
 
-  private Message fenceTransaction(
+  /**
+   * Accept or replay a scope cancellation, saying which happened.
+   *
+   * @param access current owner authorization
+   * @param selected compatible negotiated profiles
+   * @param generation retained session
+   * @param request immutable scope cancellation intent
+   * @param clock trusted UTC source
+   * @param authorization explicit application cancellation policy
+   * @return correlated receipt and whether it was committed by this call
+   * @throws SQLException for storage failure or corrupt retained evidence
+   */
+  Commit<CancelScopeResponse> cancelScopeCommit(
+      Access access,
+      Capabilities selected,
+      long generation,
+      CancelScope request,
+      AdmissionStore.Clock clock,
+      FenceStore.Authorization authorization)
+      throws SQLException {
+    Commit<Message> fence =
+        fenceTransaction(access, selected, generation, request, clock, authorization);
+    return new Commit<>((CancelScopeResponse) fence.value(), fence.fresh());
+  }
+
+  private Commit<Message> fenceTransaction(
       Access access,
       Capabilities selected,
       long generation,
@@ -847,7 +990,9 @@ final class SessionStore {
     Objects.requireNonNull(request);
     Objects.requireNonNull(authorization);
     AdmissionStore.Clock checkedClock = AdmissionStore.checkedClock(clock);
-    return maintenanceTransaction(
+    boolean[] fresh = {false};
+    Message committed =
+        maintenanceTransaction(
         connection -> {
           access.check();
           Retained retained = visible(connection, generation, access.owner());
@@ -863,6 +1008,7 @@ final class SessionStore {
               DeclarationStore.operation(connection, binding, FenceStore.operation(request));
           if (prior != null && !prior.receipt().requestDigest().equals(digest))
             throw error(ProtocolError.Code.CONFLICT, "fence operation parameters differ");
+          fresh[0] = prior == null;
           FenceStore.Accepted accepted =
               prior == null
                   ? FenceStore.accept(
@@ -890,6 +1036,7 @@ final class SessionStore {
           }
           return response;
         });
+    return new Commit<>(committed, fresh[0]);
   }
 
   /**

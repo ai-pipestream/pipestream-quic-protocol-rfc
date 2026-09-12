@@ -17,6 +17,7 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -173,6 +174,65 @@ class HookPlacementTest {
           assertInstanceOf(Records.Cancelled.class, response.receipt().outcome());
       other.call(new Detach(other.request()));
       return cancelled;
+    }
+  }
+
+  /** Committed boundaries fire for a fresh durable commit only, never for a replay. */
+  @Test
+  void committedBoundariesFireOnceAcrossReplays() throws Exception {
+    java.util.concurrent.ConcurrentHashMap<Boundaries.Boundary, AtomicInteger> counts =
+        new java.util.concurrent.ConcurrentHashMap<>();
+    Boundaries counting =
+        new Boundaries() {
+          @Override
+          public void committed(Boundary boundary, Details details) {
+            counts.computeIfAbsent(boundary, b -> new AtomicInteger()).incrementAndGet();
+          }
+
+          @Override
+          public void sent(Boundary boundary, Details details) {}
+
+          @Override
+          public boolean withhold(Boundary boundary) {
+            return false;
+          }
+        };
+    try (DurableHost host = host("replays", ReferenceApplications.all(), 0);
+        DurableServer server = server(host, counting);
+        RawDurablePeer peer = peer(server, "alice")) {
+      // Every mutation twice: the second is a replay that commits nothing. A bound connection
+      // refuses a second creation, so the creation replay comes from a fresh connection, as a
+      // client reconnecting after a lost reply would send it.
+      assertInstanceOf(Binding.class, peer.call(new Create(peer.request(), 1, POLICY)));
+      try (RawDurablePeer again = peer(server, "alice")) {
+        assertInstanceOf(Binding.class, again.call(new Create(again.request(), 1, POLICY)));
+        assertInstanceOf(Detached.class, again.call(new Detach(again.request())));
+      }
+      for (int i = 0; i < 2; i++)
+        assertInstanceOf(
+            DeclarationResponse.class,
+            peer.call(
+                new Declare(
+                    peer.request(), DurableServerTest.operation(1), 0, List.of(1L, 2L), true)));
+      for (int i = 0; i < 2; i++)
+        assertInstanceOf(
+            CancelResponse.class,
+            peer.call(new Cancel(peer.request(), DurableServerTest.operation(2), WORK)));
+      for (int i = 0; i < 2; i++)
+        assertInstanceOf(
+            SkipResponse.class,
+            peer.call(
+                new Skip(
+                    peer.request(), DurableServerTest.operation(3), new Records.WorkKey(0, 0, 2))));
+      for (int i = 0; i < 2; i++)
+        assertInstanceOf(
+            CancelScopeResponse.class,
+            peer.call(new CancelScope(peer.request(), DurableServerTest.operation(4), 0)));
+      assertEquals(1, counts.get(Boundaries.Boundary.SESSION_COMMITTED).get(), counts.toString());
+      assertEquals(
+          1, counts.get(Boundaries.Boundary.DECLARATION_COMMITTED).get(), counts.toString());
+      assertEquals(3, counts.get(Boundaries.Boundary.FENCE_COMMITTED).get(), counts.toString());
+      assertInstanceOf(Detached.class, peer.call(new Detach(peer.request())));
     }
   }
 
