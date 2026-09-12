@@ -67,6 +67,9 @@ final class RawDurableAuthority implements AutoCloseable {
   private final Records.Policy policy;
   private final Channel listener;
   final BlockingQueue<Message> received = new LinkedBlockingQueue<>();
+  /** The client connection's close event, as the transport reported it to this authority. */
+  final java.util.concurrent.CompletableFuture<io.netty.handler.codec.quic.QuicConnectionCloseEvent>
+      clientClosed = new java.util.concurrent.CompletableFuture<>();
   volatile ResultScript script = (read, stream) -> stream.shutdownOutput().sync();
   /** Default: stop the input at once (STOP_SENDING 0) and never answer it. */
   volatile InputScript inputs = (header, stream, reply) -> stream.close();
@@ -96,6 +99,19 @@ final class RawDurableAuthority implements AutoCloseable {
                   protected void initChannel(QuicChannel channel) {
                     TlsAuthentication.Guard guard = authentication.guard();
                     channel.pipeline().addLast(guard, new Control(guard));
+                    channel
+                        .pipeline()
+                        .addLast(
+                            new io.netty.channel.ChannelInboundHandlerAdapter() {
+                              @Override
+                              public void userEventTriggered(
+                                  io.netty.channel.ChannelHandlerContext ctx, Object event) {
+                                if (event
+                                    instanceof io.netty.handler.codec.quic.QuicConnectionCloseEvent
+                                        close) clientClosed.complete(close);
+                                ctx.fireUserEventTriggered(event);
+                              }
+                            });
                   }
                 })
             .streamHandler(
