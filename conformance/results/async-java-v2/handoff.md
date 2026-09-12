@@ -148,8 +148,15 @@ native jar `e49d88b724cc79c936899542c1565a00454a93d512816de6e8cfefa637c51c50`.
   `f8d76f23c228b95924b9195124c3bcaeca01ced99e1e291776a99fe8f74be07f`, shaded
   all-jar `282d3589d4849e08bca67c7a6b3b1461005be703b565764e4db553eca4bb93cf`,
   also staged at `/home/krickert/.rfc-tmp/jars/pipestream-quic-netty-282d3589-all.jar`.
-  Meta's xlarge64 mixed cell needs this pin with `--wal-mib 512` or more on
-  both commands and a fresh root.
+  Superseded at `73dcc79c` (listener: committed fixture boundaries fire only for
+  fresh commits, defect 16; client launcher: `--control-timeout-ms`; wire
+  behaviour unchanged; the tree passed 796/796 before the build): lib jar
+  `09c80f748fce4236c6db0e0e6ae3abca474ca5a1e3035cc84abc6d7ab97c9940`, shaded
+  all-jar `01b54c5512775ee2f3e7f68b88dc8dafb80da0209628ad1d447b1dfb058280de`,
+  staged at `/home/krickert/.rfc-tmp/jars/pipestream-quic-netty-01b54c55-all.jar`.
+  Meta's xlarge64 mixed cell needs this pin (or `282d3589`) with `--wal-mib 512`
+  or more on both commands and a fresh root; Kimi's driver needs this pin for
+  the creation-replay row.
   Kimi's driver (run by follow-on agents while Kimi is away) merged `0176855`
   at milestone 17 (`add98fd6`, archive `durable-18d3ea398f09f12e`, JVM heap
   frozen at `-Xms256m -Xmx2g`) and `7585a9dc` at milestone 17b.
@@ -519,8 +526,8 @@ no longer rewrites the WAL index on every store call. Full offline run at
    `HookPlacementTest.committedBoundariesFireOnceAcrossReplays` replays each
    mutation (the creation from a second connection) and counts one, one and
    three; it was red at two, two and six. Admission and publication boundaries
-   were already fired only on fresh commits. New jar pin below once the rebuild
-   lands.
+   were already fired only on fresh commits. Jar pin at `73dcc79c` (section 2);
+   full offline suite 796/796 at that head (`raw/full-offline-2026-09-12e.summary.log`).
 
 Kimi milestone 19 (five commits `2a9aad5d` to `ab40d2e0` on
 `agent/rfc-kimi-neutral-v2`, work in Kimi's role, REVIEW_READY for Kimi) was
