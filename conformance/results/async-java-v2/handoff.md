@@ -1,3 +1,4 @@
+| `4fb8f747` | authority fix for defect 11: the session write-ahead log is restarted with a truncating checkpoint by the retention service once it exceeds one sixty-fourth of its bound (`SessionStore.restartLog`, `RetentionService`, `DurableHost.Status.logRestarts`), because SQLite restarts it only when no reader holds it and a continuously polled authority never reaches that moment; root cause of Meta's C16a xlarge64 mixed refusal LIMIT_EXCEEDED `SQLite file capacity exhausted` after 4 declare batches and 333 admissions at 1024/256 MiB funding (Meta request 3); reproduced with six unpaused readers over 100 work units (`SessionLogGrowthTest`: 12.7 MiB before, under 8 MiB after, restarts counted); gate: 108 tests in 30 store, retention, host and wire classes green, full run queued behind the benchmark lock; jar pin unchanged until the rebuild (section 2) |
 # Handoff: Java V2 durable endpoints (A-SERVER + A-CLIENT)
 
 Owner: Claude (A). Branch `agent/rfc-claude-java-v2`, worktree
@@ -119,6 +120,9 @@ native jar `e49d88b724cc79c936899542c1565a00454a93d512816de6e8cfefa637c51c50`.
   Superseded at `ce1bfd77` (listener: an installed input stays pinned through its
   admission transaction so a retention sweep cannot reclaim it, defect 10; wire
   behaviour otherwise unchanged): lib jar `a2d98870649a479347d437511df55fa7a63fc656232e0e21732ba72af628a722`, shaded all-jar `28c3369bd95210ab50e3e3fc9026c5150a9fc91bac1810b796a23adfe19b002c`.
+  The `4fb8f747` authority fix (defect 11) is not yet in a jar: the rebuild waits
+  for the benchmark lock (a driver run is using the pinned jar); the next pin
+  supersedes `28c3369b` and is the one Meta's xlarge64 mixed cell needs.
   Kimi's driver (run by follow-on agents while Kimi is away) merged `0176855`
   at milestone 17 (`add98fd6`, archive `durable-18d3ea398f09f12e`, JVM heap
   frozen at `-Xms256m -Xmx2g`) and `7585a9dc` at milestone 17b.
@@ -370,6 +374,28 @@ no longer rewrites the WAL index on every store call. Full offline run at
    installation and commit still leaves a reclaimable orphan (S12-365).
    Store-level regression `InputStorePinnedInstallTest`. Listener wire
    behaviour otherwise unchanged; new jar pin below.
+
+11. **Java authority: the session write-ahead log grew until its bound under
+   continuous readers.** SQLite restarts the WAL only when a writer finds no
+   reader holding it. Meta's pipelined coordinator polls without pause, so
+   the Java authority never saw that moment and every commit appended to the
+   log; the fixed-record model reserves the retained promises' share of the
+   WAL (`FixedRecords.install` -> `walCeiling(usable - retained)`), so as
+   declarations and admissions accumulated the permitted length shrank while
+   the actual length grew, and the next write was refused LIMIT_EXCEEDED
+   `SQLite file capacity exhausted` with the database itself nearly empty.
+   That is Meta's C16a xlarge64 mixed refusal after four declare batches and
+   333 admissions at 1024/256 MiB (its request 3, "raise or expose Java
+   storage funding for >=341-entity scopes"): the funding was sufficient, the
+   log was never restarted. Reproduced with six readers paging without pause
+   over 100 copy/v2 units (`SessionLogGrowthTest`, red before the fix at
+   12.7 MiB of log). Fixed in `4fb8f747`: `SessionStore.restartLog` runs
+   `PRAGMA wal_checkpoint(TRUNCATE)` from the retention sweep once the log
+   exceeds one sixty-fourth of its bound (at least 1 MiB); it waits, within
+   the busy timeout, only for readers already on the log, later readers use
+   the database file, and a busy checkpoint is not counted. `DurableHost.Status`
+   gains `logRestarts`. Funding knobs are unchanged; 1024/256 MiB funds the
+   xlarge64 cell. New jar pin below once the rebuild lands.
 
 Kimi's milestone 17b question (2), the per-stream abort of stalled inputs
 landing between idle+10 s and lifetime+10 s instead of at the 30 s idle bound,
