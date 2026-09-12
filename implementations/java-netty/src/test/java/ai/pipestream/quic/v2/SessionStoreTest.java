@@ -77,11 +77,29 @@ final class SessionStoreTest {
     assertCode(
         ProtocolError.Code.CONFLICT,
         () -> store.create(alice, durable(8192, 1 << 20), new Messages.Create(13, 3, POLICY)));
+    // Section 12.3: an attach whose limits cannot hold the retained representations is refused
+    // LIMIT_EXCEEDED "without changing the session": the durable session row, the retained
+    // operation count and the binding a later attach returns are byte for byte what they were.
+    String operations = "SELECT count(*) FROM ps_v2_operations WHERE generation=1";
+    List<String> rowBefore = sessionRow(path);
+    long operationsBefore = scalar(path, operations);
     assertCode(
         ProtocolError.Code.LIMIT_EXCEEDED,
         () ->
             store.attach(
                 alice, durable(4096, 1 << 20), new Messages.Attach(14, "issuer-a", "alice", 1)));
+    assertEquals(rowBefore, sessionRow(path));
+    assertEquals(operationsBefore, scalar(path, operations));
+    assertEquals(
+        rowBefore.get(sessionColumn(path, "operation_count")),
+        Long.toString(
+            scalar(path, "SELECT operation_count FROM ps_v2_sessions WHERE generation=1")));
+    Messages.Binding reattached =
+        store.attach(
+            alice, durable(8192, 512 << 10), new Messages.Attach(15, "issuer-a", "alice", 1));
+    assertEquals(created, withRequest(reattached, 2));
+    assertArrayEquals(
+        Wire.encode(withRequest(created, 15), 8192), Wire.encode(reattached, 8192));
   }
 
   @Test
@@ -640,6 +658,43 @@ final class SessionStoreTest {
         var rows = statement.executeQuery(sql)) {
       assertTrue(rows.next());
       return rows.getLong(1);
+    }
+  }
+
+  private static long scalar(Path path, String sql) throws Exception {
+    try (var connection = BoundedSqlite.open(path, configuration(8, 8, 4).files()).connect()) {
+      return scalar(connection, sql);
+    }
+  }
+
+  /** Every column of generation 1's session row, blobs rendered as hex, in declaration order. */
+  private static List<String> sessionRow(Path path) throws Exception {
+    try (var connection = BoundedSqlite.open(path, configuration(8, 8, 4).files()).connect();
+        var statement = connection.createStatement();
+        var rows = statement.executeQuery("SELECT * FROM ps_v2_sessions WHERE generation=1")) {
+      assertTrue(rows.next());
+      List<String> values = new java.util.ArrayList<>();
+      for (int column = 1; column <= rows.getMetaData().getColumnCount(); column++) {
+        Object value = rows.getObject(column);
+        values.add(
+            value instanceof byte[] bytes
+                ? java.util.HexFormat.of().formatHex(bytes)
+                : String.valueOf(value));
+      }
+      assertFalse(rows.next());
+      return values;
+    }
+  }
+
+  /** Zero-based position of a named column in {@link #sessionRow}. */
+  private static int sessionColumn(Path path, String name) throws Exception {
+    try (var connection = BoundedSqlite.open(path, configuration(8, 8, 4).files()).connect();
+        var statement = connection.createStatement();
+        var rows = statement.executeQuery("SELECT * FROM ps_v2_sessions WHERE generation=1")) {
+      var metadata = rows.getMetaData();
+      for (int column = 1; column <= metadata.getColumnCount(); column++)
+        if (metadata.getColumnName(column).equals(name)) return column - 1;
+      return fail("ps_v2_sessions lacks column " + name);
     }
   }
 

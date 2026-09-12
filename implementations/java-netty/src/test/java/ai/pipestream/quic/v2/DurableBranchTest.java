@@ -47,12 +47,17 @@ final class DurableBranchTest {
     final DurableClient client;
 
     Session(String name, long sequence) throws Exception {
+      this(name, sequence, DurableHost.Configuration.defaults("issuer-a", "localhost:7443"));
+    }
+
+    Session(String name, long sequence, DurableHost.Configuration configuration)
+        throws Exception {
       DurableHost.OwnerPolicy owners =
           DurableHost.OwnerPolicy.fromPrincipals(() -> principals, true);
       host =
           DurableHost.initialize(
               directory.resolve(name),
-              DurableHost.Configuration.defaults("issuer-a", "localhost:7443"),
+              configuration,
               ReferenceApplications.all(),
               owners,
               DurableHost.UtcClock.system(true));
@@ -109,16 +114,34 @@ final class DurableBranchTest {
       return Files.readAllBytes(output);
     }
 
+    /**
+     * Bottom-up coverage of one scope: page its whole membership (following {@code more()}, since
+     * one page is never completeness evidence), wait for every member, cover each child scope
+     * first, then checkpoint over the seal. Members walked for the scope are left in {@link
+     * #covered}.
+     */
     Records.ScopeSummary coverage(long scope) throws Exception {
       DurableClient.ScopePage page = get(client.page(scope, 0, 256));
       assertTrue(page.sealed(), "scope " + scope + " must be sealed before checkpoint");
-      for (Messages.Entry entry : page.entries()) {
+      List<Messages.Entry> entries = new ArrayList<>(page.entries());
+      while (page.more()) {
+        page = get(client.page(scope, entries.getLast().entity(), 256));
+        assertTrue(page.sealed(), "scope " + scope + " must stay sealed across pages");
+        entries.addAll(page.entries());
+      }
+      assertEquals(page.declared(), entries.size(), "scope " + scope + " membership incomplete");
+      assertTrue(page.membershipVerified(), "scope " + scope + " membership not verified");
+      for (Messages.Entry entry : entries) {
         Records.WorkKey member = new Records.WorkKey(scope, page.producer(), entry.entity());
         ClientJournal.Observed observed = DurableClientTest.awaitTerminal(client, member);
         if (observed.view().child() != null) coverage(observed.view().child().scope());
       }
+      covered.clear();
+      for (Messages.Entry entry : entries) covered.add(entry.entity());
       return get(client.checkpoint(scope, page.seal(), 10_000));
     }
+
+    final List<Long> covered = new ArrayList<>();
 
     @Override
     public void close() throws java.io.IOException, java.sql.SQLException {
@@ -328,6 +351,83 @@ final class DurableBranchTest {
       for (Messages.Entry entry : get(s.client.page(0, 0, 256)).entries())
         members.add(entry.entity());
       assertEquals(List.of(1L), members);
+      get(s.client.detach());
+    }
+  }
+
+  /**
+   * Section 12.8: the client verifies identity, seal, count partition and known commitments before
+   * acknowledging coverage. A root scope of 257 members does not fit one page, so coverage must
+   * follow {@code more()} before the journal can verify the membership and the checkpoint can be
+   * sent; the seal and the status root the authority returns then equal the ones recomputed here
+   * from the members actually walked.
+   */
+  @Test
+  void coverageFollowsMoreAcrossPagesAndRecomputesTheSealAndStatusRoot() throws Exception {
+    List<Long> first = new ArrayList<>();
+    for (long entity = 1; entity <= 256; entity++) first.add(entity);
+    // A 256-member declaration reserves more WAL than the reference file policy allows, so the
+    // host gets the file limits DeclarationStoreTest uses for its thousand-member scope.
+    DurableHost.Configuration defaults =
+        DurableHost.Configuration.defaults("issuer-a", "localhost:7443");
+    DurableHost.Configuration roomy =
+        new DurableHost.Configuration(
+            defaults.authority(),
+            defaults.resultAuthority(),
+            defaults.sessionLimits(),
+            defaults.maximumPolicy(),
+            defaults.maxOwners(),
+            defaults.maxSessions(),
+            defaults.maxSessionsPerOwner(),
+            new ai.pipestream.quic.BoundedSqlite.Limits(
+                256L << 20, 512L << 20, 64L << 20, 4L << 20),
+            defaults.objects(),
+            defaults.maxJobs(),
+            defaults.maxJobsPerOwner(),
+            defaults.execution(),
+            defaults.scheduler(),
+            defaults.retention(),
+            defaults.results(),
+            defaults.waits(),
+            defaults.storageWorkers(),
+            defaults.producer());
+    try (Session s = new Session("paged-coverage", 1, roomy)) {
+      get(s.client.declare(op(1), 0, first, false));
+      get(s.client.declare(op(2), 0, List.of(257L), true));
+      DurableClient.ScopePage single = get(s.client.page(0, 0, 256));
+      assertTrue(single.sealed());
+      assertTrue(single.more());
+      assertEquals(256, single.entries().size());
+      assertEquals(257, single.declared());
+      assertFalse(single.membershipVerified(), "one page of 256 is not the membership");
+      assertEquals(
+          ProtocolError.Code.NOT_READY,
+          DurableClientTest.refusal(s.client.checkpoint(0, single.seal(), 0)).code());
+
+      get(s.client.cancelScope(op(3), 0));
+      Records.ScopeSummary root = s.coverage(0);
+      List<Long> expected = new ArrayList<>(first);
+      expected.add(257L);
+      assertEquals(expected, s.covered);
+      assertEquals(257, root.declared());
+      assertEquals(new Records.Counts(0, 0, 257, 0), root.counts());
+
+      Commitments.Context context =
+          new Commitments.Context("issuer-a", "alice", get(s.client.binding()).generation());
+      Commitments.Seal seal = new Commitments.Seal(context, 0, 0, null, s.covered.size());
+      Commitments.StatusTree tree = new Commitments.StatusTree(0, 0, s.covered.size());
+      for (long entity : s.covered) {
+        seal.add(entity);
+        Records.WorkView view =
+            get(s.client.watch(new Records.WorkKey(0, 0, entity), 0, 0)).view();
+        assertEquals(Records.State.CANCELLED, view.state());
+        tree.add(view, null);
+      }
+      assertEquals(seal.finish(), root.seal());
+      Commitments.Status status = tree.finish();
+      assertEquals(status.root(), root.statusRoot());
+      assertEquals(status.counts(), root.counts());
+      assertEquals(root, get(s.client.complete()));
       get(s.client.detach());
     }
   }

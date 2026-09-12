@@ -63,7 +63,7 @@ final class PublicationStoreTest {
         assertEquals(payloads[index].length, output.length());
         assertEquals(digest(payloads[index]), output.sha256());
         assertEquals("application/octet-stream", output.contentType());
-        assertTrue(output.locator().value().contains("results.example:7443"));
+        assertLocator(output.locator(), manifest, index);
       }
       assertEquals(funded, inputs.usage(), "publication consumes retained funding, not new quota");
     }
@@ -272,6 +272,26 @@ final class PublicationStoreTest {
       assertEquals(payload.length, stored.length());
       assertEquals(digest(payload), stored.sha256());
     }
+  }
+
+  /**
+   * Section 11.6: a produced locator names the publishing endpoint's host and port and exactly
+   * the manifest's session generation, work key, attempt and output index, field by field.
+   */
+  private static void assertLocator(Locator locator, Records.Manifest manifest, int index) {
+    String value = locator.value();
+    String authority = value.substring("pipestream://".length(), value.indexOf('/', 13));
+    int colon = authority.lastIndexOf(':');
+    assertEquals("results.example", authority.substring(0, colon));
+    assertEquals(7443, Integer.parseInt(authority.substring(colon + 1)));
+    Locator.Target target = locator.target();
+    assertEquals(manifest.generation(), target.generation());
+    assertEquals(WORK.scope(), target.work().scope());
+    assertEquals(WORK.producer(), target.work().producer());
+    assertEquals(WORK.entity(), target.work().entity());
+    assertEquals(manifest.attempt(), target.attempt());
+    assertEquals(index, target.index());
+    assertEquals(new Locator.Target(1, WORK, 1, index), target);
   }
 
   private static Records.WorkView view(SessionStore sessions, Messages.Capabilities selected)
