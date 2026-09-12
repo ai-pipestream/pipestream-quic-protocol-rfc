@@ -1,0 +1,113 @@
+launch-utc 2026-09-12T09:49:52Z pid 438469
+driver_sha256 3e2a31918c428a8e65bdf92e5e5622cb3786e690d39b5892d8f63e00e8426fd8
+rust_sha256 097829fa45d8c03eb0a5594badf0cfceababdc6d8c4898d8ce497426ec7406d7
+java_sha256 28c3369bd95210ab50e3e3fc9026c5150a9fc91bac1810b796a23adfe19b002c
+TMPDIR=/home/krickert/.rfc-tmp artifacts=/home/krickert/.rfc-tmp/kimi-rerun/full-matrix-acceptance-2026-09-12 archive=/work/worktrees/pipestream-rfc-kimi/conformance/results/async-neutral-v2/runs
+waiting for BENCHMARK.lock 2026-09-12T09:49:53Z
+lock-acquired-utc 2026-09-12T09:49:53Z
+self-check negative controls behaved as required (nc-torn-event-line rejected, subject hash fresh)
+INCOMPLETE g2-crash-before-create-commit java-client-rust-server: process timed out
+stdout:
+
+stderr:
+
+INCOMPLETE g2-crash-after-create-commit java-client-rust-server: g2-crash-after-create-commit changed-policy replay must refuse named CONFLICT:
+exit=exit status: 0
+stdout:
+BINDING Binding[request=1, authority=issuer-a, owner=alice, generation=1, creationSequence=1, policy=Policy[executionLimit=60000, outputRetention=3600000, receiptRetention=86400000], limits=Limits[scopes=4096, entities=1000000, operations=1000000, inputBytes=1073741824, outputBytes=1073741824, activeJobs=16]]
+
+stderr:
+
+INCOMPLETE g2-crash-after-create-commit rust-client-java-server: replayed binding after reply loss failed (exit status: 1)
+stdout:
+
+stderr:
+CANCELLED: client transport closed
+
+INCOMPLETE g2-kill-after-admission-before-publication java-client-rust-server: post-restart watch did not report a deadline
+INCOMPLETE g2-kill-at-publication-commit java-client-rust-server: post-restart watch did not report a deadline
+INCOMPLETE g4-stale-attempt-retry rust-client-java-server: stale retry (expected-attempt 1, attempt 2 live) must name CONFLICT (7)
+exit=exit status: 1
+stdout:
+
+stderr:
+authority refusal ALREADY_TERMINAL: logical work is already terminal
+
+INCOMPLETE g4-revocation-vs-publication rust-client-java-server: rust-client/java-server is a named gap for this row: neither Java CLI (V2Main/ClientCommands) exposes an operator revoke command; DurableHost.revoke(long) is host-internal only. The row evidence is the rust-client/rust-server direction.
+INCOMPLETE g8-timeout-no-completion-claim kill-variant-rust-client-java-server: process timed out
+stdout:
+
+stderr:
+
+PASS g1-leaf-copy rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g1-empty-input rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g1-zero-output rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g1-mode1-branch rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g1-mode2-descendants rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g1-oversize-payload rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g1-out-of-order-pages rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g1-declaration-capacity rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g2-crash-before-create-commit rust-client/rust-server, java-client/rust-server
+PASS g2-crash-after-create-commit rust-client/rust-server, java-client/rust-server, rust-client/java-server
+PASS g2-drop-reply-declaration rust-client/rust-server, java-client/rust-server, rust-client/java-server
+PASS g2-drop-reply-admission rust-client/rust-server, java-client/rust-server, rust-client/java-server
+PASS g2-kill-after-admission-before-publication rust-client/rust-server, java-client/rust-server, rust-client/java-server
+PASS g2-kill-at-publication-commit rust-client/rust-server, java-client/rust-server, rust-client/java-server
+INCOMPLETE g2-drop-reply-publication: g2-drop-reply-publication rust-client/rust-server not implemented yet
+PASS g2-kill-client-after-request-sent rust-client/rust-server, java-client/rust-server
+PASS g2-duplicate-op-changed-params rust-client/rust-server
+PASS g2-simultaneous-duplicate rust-client/rust-server
+PASS g2-kill-server-after-admission-recovery rust-client/rust-server
+INCOMPLETE g2-not-found-in-flight: g2-not-found-in-flight rust-client/rust-server not implemented yet
+PASS g3-input-before-metadata rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g3-orphan-cleanup rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g3-terminal-cleanup rust-client/rust-server, rust-client/java-server
+PASS g3-partial-retirement rust-client/rust-server, rust-client/java-server
+FAIL g3-restart-same-roots: g3-restart-same-roots: g3-restart-same-roots: restart fabricated a failure outcome for 0:0:3: WORK revision=4 state=6 attempt=1 child=2:1
+VIEW WorkView { work: WorkKey { scope: Number(0), producer: Producer(0), entity: Id(3) }, state: State(6), attempt: Number(1), input: Some(Input { length: Number(200000), sha256: Digest([29, 237, 242, 32, 156, 38, 9, 205, 128, 67, 125, 145, 24, 103, 247, 82, 20, 187, 201, 28, 56, 76, 122, 83, 177, 13, 106, 22, 252, 83, 253, 52]), content_type: ApplicationLabel("application/octet-stream") }), admitted_at: Some(Number(1789207179772)), deadline: Some(Number(1789207239772)), terminal_at: Some(Number(1789207181488)), receipt_until: Some(Number(1789293581488)), output_until: None, child: Some(ChildScope { scope: Id(2), producer: Producer(1) }), manifest: None, diagnostic: Some(Diagnostic { code: DiagnosticCode(7), detail: Detail("STRICT child scope contains non-successful work") }) }
+
+PASS g3-store-ownership rust-client/rust-server, rust-client/java-server
+PASS g3-nonreusable-history rust-client/rust-server, rust-client/java-server
+PASS g4-publication-vs-cancel rust-client/rust-server, rust-client/java-server
+PASS g4-publication-vs-skip rust-client/rust-server, rust-client/java-server
+PASS g4-stale-attempt-retry rust-client/rust-server, rust-client/java-server
+PASS g4-ancestor-fence-publication rust-client/rust-server, rust-client/java-server
+PASS g4-deadline-settlement rust-client/rust-server, rust-client/java-server
+PASS g4-revocation-vs-publication rust-client/rust-server (rust-client/java-server: named gap — the Java subject exposes no operator revoke command)
+PASS g4-eventual-settlement rust-client/rust-server, rust-client/java-server
+INCOMPLETE g5-cert-rotation-same-owner: g5-cert-rotation-same-owner rust-client/rust-server not implemented yet
+PASS g5-missing-client-cert rust-client/rust-server, rust-client/java-server
+PASS g5-unmapped-principal rust-client/rust-server, rust-client/java-server
+PASS g5-foreign-owner rust-client/rust-server, rust-client/java-server
+PASS g5-untrusted-identity rust-client/rust-server, rust-client/java-server
+INCOMPLETE g5-expired-identity: g5-expired-identity rust-client/rust-server not implemented yet
+INCOMPLETE g5-remapped-owner: g5-remapped-owner rust-client/rust-server not implemented yet
+INCOMPLETE g5-cross-authority-reference: g5-cross-authority-reference rust-client/rust-server not implemented yet
+PASS g5-no-existence-disclosure rust-client/rust-server, rust-client/java-server
+PASS g6-canonical-violations rust-probe/rust-server, rust-probe/java-server
+PASS g6-direction-and-correlation rust-probe/rust-server, rust-probe/java-server
+PASS g6-stream-identity-and-fin rust-probe/rust-server, rust-probe/java-server
+PASS g6-stopped-control-and-transfers rust-probe/rust-server, rust-probe/java-server
+PASS g7-receipt-before-output-expiry rust-client/rust-server, rust-client/java-server
+PASS g7-output-before-receipt-expiry rust-client/rust-server, rust-client/java-server
+INCOMPLETE g7-read-pin-past-expiry: g7-read-pin-past-expiry rust-client/rust-server not implemented yet
+INCOMPLETE g7-unsafe-clock-refusal: g7-unsafe-clock-refusal rust-client/rust-server not implemented yet
+INCOMPLETE g7-deadline-queue-time: g7-deadline-queue-time rust-client/rust-server not implemented yet
+INCOMPLETE g7-cleanup-interrupted-refund: g7-cleanup-interrupted-refund rust-client/rust-server not implemented yet
+PASS g7-no-deadline-extension rust-client/rust-server, rust-client/java-server
+PASS g8-exact-root-complete rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g8-child-cut-conflict rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g8-complete-with-pending rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g8-detach-drains rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g8-half-close-preserves-responses rust-client/rust-server, rust-client/java-server, java-client/rust-server, raw-probe/rust-server, raw-probe/java-server (wire-level FIN MUST)
+PASS g8-timeout-no-completion-claim rust-client/rust-server (kill variants: lost-reply outcome recording and strict restart-sequence assertions), rust-client/java-server (kill variant)
+PASS r-capability-manifest host-capability measurement (no subject direction; informs every R row)
+PASS r-connection-ceiling rust-raw-client/rust-server, rust-raw-client/java-server
+PASS r-stalled-principal-progress rust-cli-client(bob)+rust-raw-client(alice)/rust-server, rust-cli-client(bob)+rust-raw-client(alice)/java-server
+PASS r-memory-ladder rust-raw-client/rust-server, rust-raw-client/java-server
+PASS r-staging-and-journal-bounds rust-raw-client/rust-server, rust-raw-client/java-server
+PASS r-network-bytes rust-raw-client/rust-server, rust-raw-client/java-server
+PASS r-native-credit rust-raw-client/rust-server, rust-raw-client/java-server
+acceptance run durable-18d489eaaffc93e8: /home/krickert/.rfc-tmp/kimi-rerun/full-matrix-acceptance-2026-09-12/runs/durable-18d489eaaffc93e8
+durable run recorded FAIL rows; see "/home/krickert/.rfc-tmp/kimi-rerun/full-matrix-acceptance-2026-09-12/runs/durable-18d489eaaffc93e8"
+driver-exit 1 2026-09-12T10:25:52Z

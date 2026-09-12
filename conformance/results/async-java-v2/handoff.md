@@ -1,4 +1,3 @@
-| `4fb8f747` | authority fix for defect 11: the session write-ahead log is restarted with a truncating checkpoint by the retention service once it exceeds one sixty-fourth of its bound (`SessionStore.restartLog`, `RetentionService`, `DurableHost.Status.logRestarts`), because SQLite restarts it only when no reader holds it and a continuously polled authority never reaches that moment; root cause of Meta's C16a xlarge64 mixed refusal LIMIT_EXCEEDED `SQLite file capacity exhausted` after 4 declare batches and 333 admissions at 1024/256 MiB funding (Meta request 3); reproduced with six unpaused readers over 100 work units (`SessionLogGrowthTest`: 12.7 MiB before, under 8 MiB after, restarts counted); gate: 108 tests in 30 store, retention, host and wire classes green, full run queued behind the benchmark lock; jar pin unchanged until the rebuild (section 2) |
 # Handoff: Java V2 durable endpoints (A-SERVER + A-CLIENT)
 
 Owner: Claude (A). Branch `agent/rfc-claude-java-v2`, worktree
@@ -46,6 +45,8 @@ Commits (all plain author identity, no generated attribution):
 Working tree at `a700f5f4`: clean. Nothing pushed (no push authorization was
 given); no CI exists for this branch; no draft/deploy action taken; the
 shared feature branch and main were not merged.
+| `4fb8f747` | authority fix for defect 11: the session write-ahead log is restarted with a truncating checkpoint by the retention service once it exceeds one sixty-fourth of its bound (`SessionStore.restartLog`, `RetentionService`, `DurableHost.Status.logRestarts`), because SQLite restarts it only when no reader holds it and a continuously polled authority never reaches that moment; root cause of Meta's C16a xlarge64 mixed refusal LIMIT_EXCEEDED `SQLite file capacity exhausted` after 4 declare batches and 333 admissions at 1024/256 MiB funding (Meta request 3); reproduced with six unpaused readers over 100 work units (`SessionLogGrowthTest`: 12.7 MiB before, under 8 MiB after, restarts counted); gate: 108 tests in 30 store, retention, host and wire classes green, full run queued behind the benchmark lock; jar pin unchanged until the rebuild (section 2) |
+| `ada67cec` | reference-application fix for defect 12: `chunk-copy/v2` admitted every expansion child with a fixed 1,000 ms execution duration, so a child admitted just before an authority restart expired while the process came back (Kimi driver `g3-restart-same-roots` rust-client/java-server on `28c3369b`: child 2:1:3 FAILED `execution deadline reached`, STRICT parent FAILED); children now carry the parent's execution duration through `DurableHost.Production.executionMs`, as the Rust reference does; `DurableBranchTest` asserts it on every child (red before at 1,000 ms); full offline suite 745/745 (`raw/full-offline-2026-09-12b.summary.log`); new jar pin (section 2) |
 
 ## 1. Contract to source to tests to evidence
 
@@ -120,9 +121,12 @@ native jar `e49d88b724cc79c936899542c1565a00454a93d512816de6e8cfefa637c51c50`.
   Superseded at `ce1bfd77` (listener: an installed input stays pinned through its
   admission transaction so a retention sweep cannot reclaim it, defect 10; wire
   behaviour otherwise unchanged): lib jar `a2d98870649a479347d437511df55fa7a63fc656232e0e21732ba72af628a722`, shaded all-jar `28c3369bd95210ab50e3e3fc9026c5150a9fc91bac1810b796a23adfe19b002c`.
-  The `4fb8f747` authority fix (defect 11) is not yet in a jar: the rebuild waits
-  for the benchmark lock (a driver run is using the pinned jar); the next pin
-  supersedes `28c3369b` and is the one Meta's xlarge64 mixed cell needs.
+  Superseded at `ada67cec` (authority: the session log is restarted under
+  continuous readers, defect 11; reference application: chunk-copy children
+  carry the parent's execution duration, defect 12; wire behaviour otherwise
+  unchanged; the tree passed 745/745 before the build): lib jar `03f8c85b29469563075f96fa1d52e582aa9ebd4d0a9f44a00fdf7a811a032b1f`,
+  shaded all-jar `32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c`.
+  This is the pin Meta's xlarge64 mixed cell needs.
   Kimi's driver (run by follow-on agents while Kimi is away) merged `0176855`
   at milestone 17 (`add98fd6`, archive `durable-18d3ea398f09f12e`, JVM heap
   frozen at `-Xms256m -Xmx2g`) and `7585a9dc` at milestone 17b.
@@ -395,7 +399,43 @@ no longer rewrites the WAL index on every store call. Full offline run at
    the busy timeout, only for readers already on the log, later readers use
    the database file, and a busy checkpoint is not counted. `DurableHost.Status`
    gains `logRestarts`. Funding knobs are unchanged; 1024/256 MiB funds the
-   xlarge64 cell. New jar pin below once the rebuild lands.
+   xlarge64 cell. Jar pin at `ada67cec` (section 2).
+
+12. **Java reference application: chunk-copy children could not survive an
+   authority restart.** `ReferenceApplications.chunkCopy` admitted every
+   expansion child with a fixed 1,000 ms execution duration. In Kimi's driver
+   row `g3-restart-same-roots` (rust-client/java-server, `28c3369b` jar, run
+   `durable-18d489eaaffc93e8`) the seeded kill landed while the expansion was
+   admitting children; child 2:1:3 was admitted 1,000 ms before its deadline
+   and the restarted process could not claim it in time (deadline 13 ms before
+   its terminal write), so the recovered authority settled it FAILED
+   `execution deadline reached` (11) and the STRICT parent 0:0:3 FAILED
+   `STRICT child scope contains non-successful work` (7): exactly the
+   "restart fabricated a failure outcome" the row forbids. Verified by decoding
+   the archived authority store (all four children, the parent and their job
+   records). Earlier runs of the same seed passed because the kill landed
+   before or after the vulnerable window. The Rust reference gives children
+   the parent's execution duration (`ExpansionContext::execution_duration`).
+   Fixed in `ada67cec`: `DurableHost.Production.executionMs` exposes the
+   parent's fixed duration and chunk-copy admits children with it;
+   `DurableBranchTest.authorityExpandedChunksProduceChildrenAndParentReassembly`
+   asserts the inherited duration on every expanded child (red before at
+   1,000 ms, green after). Full offline suite 745/745 at `ada67cec`; jar pin
+   in section 2. Driver evidence: `raw/kimi-driver-acceptance-2026-09-12.log`
+   and `.run.tsv` (the driver does not archive a run with a FAIL row).
+
+The 53-row driver run on `28c3369b` (2026-09-12, stores on the root drive)
+otherwise matched the milestone 17b baseline: 52 rows PASS on every
+implemented direction, the INCOMPLETE directions identical to the baseline
+(named Java CLI gaps and the driver's Rust-only view parser for the Java
+client direction), and one new INCOMPLETE that is not a Java defect:
+`g4-stale-attempt-retry` rust-client/java-server answered ALREADY_TERMINAL
+instead of CONFLICT because the driver waits until attempt 2 is live and
+then spawns a client subprocess for the stale retry; on the fast store the
+copy under attempt 2 finished first. Both authorities check terminal state
+before the attempt mismatch (Rust `retry_work`: `eligible` precedes
+"retry attempt changed"), so the row needs a way to hold attempt 2 live
+(noted for Kimi's branch on the board).
 
 Kimi's milestone 17b question (2), the per-stream abort of stalled inputs
 landing between idle+10 s and lifetime+10 s instead of at the 30 s idle bound,

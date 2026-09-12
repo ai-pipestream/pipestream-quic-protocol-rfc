@@ -1,4 +1,4 @@
-# Section 12 clause-level traceability: Java V2
+; `DurableBranchTest.authorityExpandedChunksProduceChildrenAndParentReassembly` (expansion children carry the parent's execution duration, D12)# Section 12 clause-level traceability: Java V2
 
 Date: 2026-09-11. Java branch `agent/rfc-claude-java-v2` at commit `1e7d25a7`.
 Updated at `ab59dafb` (defect D1 fixed; S12-184 and S12-052 strengthened),
@@ -8,7 +8,8 @@ S12-290 covered over the wire; the summary table is recomputed from the rows) an
 `c9edaed8` (S12-028, S12-098, S12-265, S12-277, S12-280, S12-283 covered) and
 `4cb4b444` (listener defect D9 fixed; S12-040 strengthened) and `ce1bfd77`
 (listener defect D10 fixed; S12-343 strengthened) and `4fb8f747` (authority
-defect D11 fixed; S12-368 strengthened by `SessionLogGrowthTest`).
+defect D11 fixed; S12-368 strengthened by `SessionLogGrowthTest`) and `ada67cec`
+(reference-application defect D12 fixed; S12-175 strengthened).
 
 This document maps every normative statement of Section 12
 (`sections-src/section-12.md`, 871 lines) to the tests under
@@ -604,6 +605,19 @@ These are code observations, not test failures. Each names a file and line.
   12.7 MiB of log), fixed in `4fb8f747` (truncating checkpoint from the
   retention sweep above one sixty-fourth of the bound; `logRestarts` in the
   host status). S12-368 row references the test.
+- **D12.** `ReferenceApplications.chunkCopy` admitted every expansion child
+  with a fixed 1,000 ms execution duration. A child admitted just before an
+  authority restart had its deadline elapse while the process came back, so
+  the recovered authority settled it FAILED `execution deadline reached` and
+  the STRICT parent failed with it (Kimi driver `g3-restart-same-roots`
+  rust-client/java-server on the `28c3369b` jar: child 2:1:3, deadline 13 ms
+  before the restarted process could claim it). The Rust reference gives
+  children the parent's execution duration. Fixed in `ada67cec`:
+  `DurableHost.Production.executionMs` exposes the parent's fixed duration
+  and chunk-copy admits children with it;
+  `DurableBranchTest.authorityExpandedChunksProduceChildrenAndParentReassembly`
+  asserts the inherited duration on every expanded child (red before at
+  1,000 ms). S12-175 row references the assertion.
 
 ## Gap-closing proposals, grouped by fixture
 
