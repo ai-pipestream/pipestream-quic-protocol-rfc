@@ -11,7 +11,9 @@ S12-290 covered over the wire; the summary table is recomputed from the rows) an
 defect D11 fixed; S12-368 strengthened by `SessionLogGrowthTest`) and `ada67cec`
 (reference-application defect D12 fixed; S12-175 strengthened). Updated at
 `52d4776d` (S12-158, S12-208, S12-221 and S12-311 covered by `HookPlacementTest`
-boundary hooks; the summary table is recomputed from the rows).
+boundary hooks; the summary table is recomputed from the rows). Updated at
+`62412c14` (S12-046 covered by `LossyTransportCreditTest`; S12-011 left PARTIAL by
+decision, see its row).
 
 This document maps every normative statement of Section 12
 (`sections-src/section-12.md`, 871 lines) to the tests under
@@ -80,7 +82,7 @@ including most of the refusal-code taxonomy.
 | S12-008 | "no application 0-RTT" | `TlsAuthentication` client `sessionCacheSize(0)`; no early-data path | - | GAP | No test offers or rejects 0-RTT application data. |
 | S12-009 | "server identity verification under {{RFC9525}}" | `TlsAuthentication.verify` -> `TlsPeerIdentity.verify` | `V2TlsTest.serverTrustUsageAndSanAreHandshakeChecksNotCommonNameFallback` | COVERED | SAN-only (CN fallback refused), wrong EKU refused, foreign roots refused, DNS compared case-insensitively, IP SAN accepted. |
 | S12-010 | "Connection migration does not change authenticated identity." | `TlsAuthentication.Guard` holds the verified chain per connection | - | GAP | No test migrates a connection. |
-| S12-011 | "The client opens bidirectional Stream 0 for control. Other bidirectional streams are forbidden." | `DurableServer.Connection.stream` (`streamId != 0 \|\| control != null` -> FRAME_ERROR); `StreamTransport.Limits.configure` sets `initialMaxStreamsBidirectional` | `DurableWireNegativeTest.correlationAndFramingViolationsAreFatalWhileRefusedRequestsConsumeIds` | PARTIAL | The client transport refuses with STREAM_LIMIT before the server's application-level FRAME_ERROR is reachable; that branch is never exercised. |
+| S12-011 | "The client opens bidirectional Stream 0 for control. Other bidirectional streams are forbidden." | `DurableServer.Connection.stream` (`streamId != 0 \|\| control != null` -> FRAME_ERROR); `StreamTransport.Limits.configure` sets `initialMaxStreamsBidirectional` | `DurableWireNegativeTest.correlationAndFramingViolationsAreFatalWhileRefusedRequestsConsumeIds` | PARTIAL | The client transport refuses with STREAM_LIMIT before the server's application-level FRAME_ERROR is reachable; that branch is never exercised. Left PARTIAL by decision at `62412c14`: reaching the branch means offering more than one bidirectional stream in the production transport parameters, which is the very thing the clause forbids; the transport-level enforcement is the proven behaviour. |
 | S12-012 | "Unidirectional streams carry profile-defined input or result objects; Core alone defines no application object format." | `DurableServer.Connection.stream` -> EXTENSION_UNSUPPORTED without the durable profile | `DurableServerTest.anonymousCallerGetsCoreOnlyAndCannotOpenInputStreams` | COVERED | Opening a uni stream on a Core-only connection closes it with EXTENSION_UNSUPPORTED. |
 | S12-013 | "Every control frame is one type octet, a four-octet unsigned big-endian body length, then exactly that many body octets." | `Wire.Decoder.feed` | `V2WireTest.everyControlCutAndBytewiseDeliveryUsesTheSameTypedDecoder` | COVERED | Every accepted control vector is re-fed split at every byte offset and one byte at a time. |
 | S12-014 | "Known bodies are exactly one deterministically encoded CBOR item under {{RFC8949}}, Section 4.2." | `Cbor.Reader`/`Cbor.Writer`; `Wire.decode` | `V2WireTest.allFrozenExpectationsAndExactRoundTrips` | COVERED | 46 accepted frozen rows re-encode byte-identically. |
@@ -115,7 +117,7 @@ including most of the refusal-code taxonomy.
 | S12-043 | "QUIC stream priority alone does not supply connection credit." | `StreamTransport.Limits.nativeSendLimits`; `configure(...).pairReceiveCredit(true)` | `StreamTransportTest.limitsValidateGeometryAndNativeReservation`; `TransportDependencyTest.runtimeUsesOnlySourcePinnedTransportExtension` | PARTIAL | Configuration arithmetic and transport provenance only; no contention measurement. |
 | S12-044 | "Reserved control capacity MUST cover both local send admission and the receiver's connection-level credit, in addition to control-stream credit." | `StreamTransport.Limits` (`nativeSendLimits().reserved()`, `receiveWindowBytes()`) | `StreamTransportTest.limitsValidateGeometryAndNativeReservation` | PARTIAL | Asserts the reservation is an explicit native parameter (4096 reserved of 4224 total) but never observes it peer-side. |
 | S12-045 | "Endpoints MUST preserve that reservation as they consume data, replenish credit and retire or replace streams ... independently batched stream and connection credit updates MUST NOT allow replacement data to consume the control reservation." | `StreamTransport.Data.releaseIfReady`; patched transport `pairReceiveCredit` | `DurableWireNegativeTest.sequentialInputsBeyondTheConcurrentLimitReplenishStreamCredit`; `RawPeerRustAuthorityTest.refusedInputsReturnStreamCreditOnTheRustAuthority` (gated) | PARTIAL | Credit return across 3x the stream allowance is measured, Java-to-Java and Java peer to Rust authority. The control reservation surviving batched updates is not measured. |
-| S12-046 | "The reservation MUST hold for peer-observable credit updates under packet loss and reordering, including retransmitted updates and replacement streams after FIN or reset ... Any such strategy MUST also account for the initially permitted streams and windows." | `StreamTransport.Limits.configure`; pinned transport | - | GAP | No test injects loss or reordering. `StreamTransport.java:121` records the same gap in a source comment. |
+| S12-046 | "The reservation MUST hold for peer-observable credit updates under packet loss and reordering, including retransmitted updates and replacement streams after FIN or reset ... Any such strategy MUST also account for the initially permitted streams and windows." | `StreamTransport.Limits.configure`; pinned transport | `LossyTransportCreditTest.creditReservationHoldsUnderDatagramLossAndReordering` (seeded UDP relay: 8% drops, every seventh datagram held behind its successor, both directions) | COVERED | 2n+1 transfers on an allowance of n (refused, reset and admitted in rotation) open without a stream-limit failure, every refusal is correlated, credit before open never falls below n/2, and the relay counts about 190 drops and 90 reorders per run. Measured, not assumed: the listener delivers MAX_STREAMS updates in batches, and a reset that loss delays past the idle bound is refused at that bound (handoff section 5, observation O-1). |
 | S12-047 | "Receive bounds MUST account for any window autotuning, including the limits used for later credit replenishment, not only the initial transport parameters." | `StreamTransport.Limits.configure` pins `maxConnectionWindow` and `maxStreamWindow` | `StreamTransportTest.limitsValidateGeometryAndNativeReservation` | PARTIAL | The pinning is configured; nothing observes autotuning staying inert during a long transfer. |
 | S12-048 | "Send admission accounting MUST include transport-owned data still charged against the shared capacity. Completion of an application write MUST NOT be treated as releasing that capacity unless the transport API guarantees the release." | `StreamTransport.Data.abort`/`releaseIfReady` | `StreamTransportTest.localResetSettlesQueuedWriteBeforeExplicitSlotRelease` | COVERED | The slot stays charged after the abort and is released only on the explicit `release()`. |
 | S12-049 | "Implementations MUST bound waiting and queued control state for such a connection and isolate that waiting from other connections." | `DurableServer.Connection.check`; `ControlWrites`; `CoreServer` per-owner and global ceilings | `V2CoreServerTest.nonReadingControlPeerHitsBoundedCountAndByteQueuesWithoutBlockingAnotherConnection`; `DurableWireNegativeTest.stalledInputsExpireWithoutBlockingAHealthyConnection`; `.stalledPrincipalIsRefusedPerStreamOnASurvivingConnection` | COVERED | A second owner completes a full admission while the first owner's streams stall. |
@@ -489,7 +491,7 @@ including most of the refusal-code taxonomy.
 | subsection | COVERED | PARTIAL | GAP | N/A-JAVA | total |
 |---|---|---|---|---|---|
 | Scope and profiles (preamble, lines 1-28) | 4 | 0 | 1 | 1 | 6 |
-| 12.1 Core Mapping and Negotiation | 37 | 11 | 3 | 0 | 51 |
+| 12.1 Core Mapping and Negotiation | 38 | 11 | 2 | 0 | 51 |
 | 12.2 Correlation and Error Scope | 23 | 5 | 1 | 0 | 29 |
 | 12.3 Authenticated Sessions and Non-Reusable Identity | 34 | 3 | 0 | 0 | 37 |
 | 12.4 Immutable Operations and Replay | 17 | 3 | 0 | 0 | 20 |
@@ -498,10 +500,10 @@ including most of the refusal-code taxonomy.
 | 12.7 Result Publication, Streams and References | 26 | 5 | 0 | 3 | 34 |
 | 12.8 Sealed Closure, Counts and Shutdown | 39 | 4 | 1 | 2 | 46 |
 | 12.9 Lifetimes, Clocks and Crash-Safe Accounting | 31 | 9 | 0 | 0 | 40 |
-| **all subsections** | **296** | **62** | **8** | **7** | **373** |
+| **all subsections** | **297** | **62** | **7** | **7** | **373** |
 
 Read the `PARTIAL` column as the real work queue: 62 clauses have a test whose
-name suggests coverage but whose assertions stop short. The 8 `GAP` rows are
+name suggests coverage but whose assertions stop short. The 7 `GAP` rows are
 in most cases cheaper to close than the partials.
 
 ## Clauses where the Java code looks wrong, not merely untested
