@@ -1,0 +1,25 @@
+jar: 32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+C17a ps : exit 1
+jar: 32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+C17a ps warmup-ps: exit 1
+OPERATOR-NOTE: warmup-ps attempt1 INTERNAL_ERROR storage (transient); evidence in warmup-ps.FAILED-attempt1/
+jar: 32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+C17a ps warmup-ps: PASS done in 153549 ms
+C17a mixed warmup-mixed: exit 1
+OPERATOR-NOTE: warmup-mixed attempt1 Java LIMIT_EXCEEDED SQLite file capacity exhausted at ordinal 326 (332 admits); evidence in warmup-mixed.FAILED-attempt1/
+jar: 32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+C17a ps warmup-ps: SKIP
+C17a mixed warmup-mixed: exit 1
+OPERATOR-NOTE: warmup-mixed attempt2 INTERNAL_ERROR storage at 277 admits (transient, inconclusive on defect 11); evidence in warmup-mixed.FAILED-attempt2/
+jar: 32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+C17a ps warmup-ps: SKIP
+C17a mixed warmup-mixed: exit 1
+OPERATOR-NOTE: warmup-mixed attempt3 INTERNAL_ERROR storage at 280 admits (transient); evidence in warmup-mixed.FAILED-attempt3/
+jar: 32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+C17a ps warmup-ps: SKIP
+C17a mixed warmup-mixed: exit 1
+OPERATOR-NOTE: warmup-mixed attempt4 INTERNAL_ERROR storage at 57 admits (transient; disk healthy 5.3ms); evidence in warmup-mixed.FAILED-attempt4/
+jar: 32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+C17a ps warmup-ps: SKIP
+C17a mixed warmup-mixed: exit 1
+OPERATOR-NOTE: warmup-mixed attempt5 LIMIT_EXCEEDED SQLite file capacity exhausted at 332 admits (2nd capacity refusal, deterministic); cell STOPPED per brief s3; evidence in warmup-mixed.FAILED-attempt5/
