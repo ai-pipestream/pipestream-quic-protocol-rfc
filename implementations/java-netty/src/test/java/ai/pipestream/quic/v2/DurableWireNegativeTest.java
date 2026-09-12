@@ -702,9 +702,16 @@ final class DurableWireNegativeTest {
       }
       assertInstanceOf(AdmissionResponse.class, stalled.next());
       assertEquals(Records.State.SUCCEEDED, DurableServerTest.awaitTerminal(stalled, WORK).state());
+      // The admitted transfer's listener slot is released just after its response, on the event
+      // loop: wait for it rather than sampling the instant the work settled.
+      long released = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
       DurableServer.Snapshot snapshot =
           authority.server.snapshot().toCompletableFuture().get(5, TimeUnit.SECONDS);
-      assertEquals(0, snapshot.inputs());
+      while (snapshot.inputs() != 0) {
+        assertTrue(System.nanoTime() < released, "input slot not released: " + snapshot);
+        Thread.sleep(20);
+        snapshot = authority.server.snapshot().toCompletableFuture().get(5, TimeUnit.SECONDS);
+      }
       assertEquals(0, authority.host.inputs().usage().handles());
       stalled.call(new Detach(stalled.request()));
       healthy.call(new Detach(healthy.request()));
