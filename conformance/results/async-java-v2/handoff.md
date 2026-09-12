@@ -139,9 +139,16 @@ native jar `e49d88b724cc79c936899542c1565a00454a93d512816de6e8cfefa637c51c50`.
   carry the parent's execution duration, defect 12; wire behaviour otherwise
   unchanged; the tree passed 745/745 before the build): lib jar `03f8c85b29469563075f96fa1d52e582aa9ebd4d0a9f44a00fdf7a811a032b1f`,
   shaded all-jar `32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c`.
-  This pin still cannot run Meta's xlarge64 mixed cell: its launcher caps the
-  usable log at about 257 MiB (defect 15); the next rebuild, at `1cbb389f` or
-  later, supersedes it and needs `--wal-mib 512` or more for that cell.
+  That pin cannot run Meta's xlarge64 mixed cell: its launcher caps the usable
+  log at about 257 MiB (defect 15). Superseded at `c9d432d0` (launcher: the
+  shared-memory index scales with `--wal-mib`, defect 15; client: an input is
+  sent only with its covering declaration receipt held, defect 14; authority
+  wire behaviour unchanged; the tree passed 794/794 before the build): lib jar
+  `f8d76f23c228b95924b9195124c3bcaeca01ced99e1e291776a99fe8f74be07f`, shaded
+  all-jar `282d3589d4849e08bca67c7a6b3b1461005be703b565764e4db553eca4bb93cf`,
+  also staged at `/home/krickert/.rfc-tmp/jars/pipestream-quic-netty-282d3589-all.jar`.
+  Meta's xlarge64 mixed cell needs this pin with `--wal-mib 512` or more on
+  both commands and a fresh root.
   Kimi's driver (run by follow-on agents while Kimi is away) merged `0176855`
   at milestone 17 (`add98fd6`, archive `durable-18d3ea398f09f12e`, JVM heap
   frozen at `-Xms256m -Xmx2g`) and `7585a9dc` at milestone 17b.
@@ -490,7 +497,8 @@ no longer rewrites the WAL index on every store call. Full offline run at
    under 2048 MiB. Sizing rule for Meta: fund about 1 MiB of `--wal-mib` per
    unit a session will hold at once, so xlarge64 (341 units per worker) needs
    `--wal-mib 512` at least on the next jar, and the retained file policy
-   means a fresh root per funding. New jar pin below once the rebuild lands.
+   means a fresh root per funding. Jar pin at `c9d432d0` (section 2); full
+   offline suite 794/794 at that head (`raw/full-offline-2026-09-12d.summary.log`).
 
 The 53-row driver run on `28c3369b` (2026-09-12, stores on the root drive)
 otherwise matched the milestone 17b baseline: 52 rows PASS on every
