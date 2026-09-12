@@ -49,3 +49,15 @@ follows a small write. Flush-only workloads (SQLite journals, this suite's
 durable stores, the conformance driver's authorities) take the slow path; a
 box that is writing continuously masks it. Timing gates on `/work` stay noisy
 until `/work` moves to a drive without this behaviour.
+
+## Mitigation that works (2026-09-12 02:26Z)
+
+Every test store lives under JUnit's `@TempDir`, which follows
+`java.io.tmpdir`. Pointing it at the Samsung root drive
+(`JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=/home/krickert/.rfc-tmp`, no pom change)
+gives 5 ms per fsync instead of 31 ms, and the full suite at `2ce4d318`
+passed 744/744 in ten minutes (`full-offline-2026-09-12.summary.log`) where
+the same tree on `/work` took forty minutes and failed 21 timing tests. The
+same move applies to the conformance driver's and the workload's authority
+directories: keep them off `/work` until it is on a drive that flushes
+properly.
