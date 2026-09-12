@@ -583,16 +583,24 @@ fn setup_session_serve_args(
 /// execution limit `--execution-ms` (ClientCommands.java usage); the Rust
 /// client spells it `--max-execution-ms` (server/src/v2.rs ClientJournal).
 /// Both take the two retention flags identically.
+/// The execution-limit policy flag as each client spells it. A probe that
+/// uses the Rust spelling against the Java client changes nothing: the Java
+/// option parser ignores unknown keys and the intent keeps the default
+/// policy, so a "changed-policy" replay is an identical replay.
+fn execution_limit_flag(client: Subject) -> &'static str {
+    match client {
+        Subject::Rust => "--max-execution-ms",
+        Subject::Java => "--execution-ms",
+    }
+}
+
 fn policy_args(
     client: Subject,
     max_execution_ms: u64,
     output_retention_ms: u64,
     receipt_retention_ms: u64,
 ) -> Vec<String> {
-    let execution_flag = match client {
-        Subject::Rust => "--max-execution-ms",
-        Subject::Java => "--execution-ms",
-    };
+    let execution_flag = execution_limit_flag(client);
     vec![
         execution_flag.to_owned(),
         max_execution_ms.to_string(),
@@ -4723,7 +4731,8 @@ fn binding_attempt(
             .fixture
             .journal_args(journal, "alice", creation_sequence),
     );
-    init.extend(["--max-execution-ms".into(), max_execution_ms.to_string()]);
+    let flag = execution_limit_flag(session.fixture.client);
+    init.extend([flag.into(), max_execution_ms.to_string()]);
     crate::run_output_owned(&session.fixture.root, &init, OP_WAIT)?;
     let mut command = session.fixture.client_base()?;
     command.push("client".into());
@@ -4732,7 +4741,7 @@ fn binding_attempt(
             .fixture
             .journal_args(journal, "alice", creation_sequence),
     );
-    command.extend(["--max-execution-ms".into(), max_execution_ms.to_string()]);
+    command.extend([flag.into(), max_execution_ms.to_string()]);
     command.extend(session.connection.iter().cloned());
     command.push("binding".into());
     crate::run_output_owned(&session.fixture.root, &command, OP_WAIT)
@@ -25011,6 +25020,17 @@ mod tests {
             stale_retry_hold_rows(&context, "g4-stale-attempt-retry", Subject::Rust).is_empty()
         );
         assert!(STALE_RETRY_RUST_HOLD_GAP.contains("REPLY_PAIRS"));
+    }
+
+    #[test]
+    fn changed_policy_probe_spells_the_execution_flag_per_client() {
+        // The Java client ignores an unknown --max-execution-ms and would
+        // replay the default policy, turning a changed-policy probe into an
+        // identical replay that the server rightly answers with the binding.
+        assert_eq!(execution_limit_flag(Subject::Java), "--execution-ms");
+        assert_eq!(execution_limit_flag(Subject::Rust), "--max-execution-ms");
+        assert_eq!(policy_args(Subject::Java, 1, 2, 3)[0], "--execution-ms");
+        assert_eq!(policy_args(Subject::Rust, 1, 2, 3)[0], "--max-execution-ms");
     }
 
     #[test]
