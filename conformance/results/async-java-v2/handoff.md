@@ -59,6 +59,7 @@ shared feature branch and main were not merged.
 | `ea55c57d` | CLIENT FIX defect 14: the client sent an input on the caller's word that a declaration covered it (the journal checked only the session generation); a first send is now refused NOT_READY unless the named declaration's receipt is held for the input's scope and producer, resends unaffected (S12-150, red before at a raw authority); the raw test authority answers declarations with genuine receipts; reconnect offers require every journaled profile (S12-038) |
 | `54267a72` | second store-level round from the agent worktree, reviewed and cherry-picked (P2-STORE-1 to 3, 5 to 11, 13 to 15, P2-WIRE-5; each confirmed red): S12-114, 139, 140, 141, 199, 204, 227, 237, 240, 263, 276, 278, 300, 316, 348, 353; S12-164 not producible (child scope row is inserted in the parent's admission transaction); D4 and D6 closed; traceability 354/10/2/7 |
 | `77ee4830` | `PeerRuleWireTest`: a 1 MiB object over a 64 KiB stream window both ways with bounded credit (S12-041); control answered within a second with every data slot held open, then every slot returned (S12-043, S12-044, S12-045); traceability 358/6/2/7 |
+| `1cbb389f` | LAUNCHER FIX defect 15: `--wal-mib` above about 257 MiB was capped by the fixed 512 KiB shared-memory sidecar that indexes the log, so Meta's xlarge64 cell refused at 332 admissions on every jar; the sidecar now scales with the funded log (`BoundedSqlite.Limits.sharedMemoryFor`, 16 MiB ceiling); `FundingScaleTest` (arithmetic plus 2 000 declarations over the wire) |
 
 ## 1. Contract to source to tests to evidence
 
@@ -138,7 +139,9 @@ native jar `e49d88b724cc79c936899542c1565a00454a93d512816de6e8cfefa637c51c50`.
   carry the parent's execution duration, defect 12; wire behaviour otherwise
   unchanged; the tree passed 745/745 before the build): lib jar `03f8c85b29469563075f96fa1d52e582aa9ebd4d0a9f44a00fdf7a811a032b1f`,
   shaded all-jar `32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c`.
-  This is the pin Meta's xlarge64 mixed cell needs.
+  This pin still cannot run Meta's xlarge64 mixed cell: its launcher caps the
+  usable log at about 257 MiB (defect 15); the next rebuild, at `1cbb389f` or
+  later, supersedes it and needs `--wal-mib 512` or more for that cell.
   Kimi's driver (run by follow-on agents while Kimi is away) merged `0176855`
   at milestone 17 (`add98fd6`, archive `durable-18d3ea398f09f12e`, JVM heap
   frozen at `-Xms256m -Xmx2g`) and `7585a9dc` at milestone 17b.
@@ -411,7 +414,12 @@ no longer rewrites the WAL index on every store call. Full offline run at
    the busy timeout, only for readers already on the log, later readers use
    the database file, and a busy checkpoint is not counted. `DurableHost.Status`
    gains `logRestarts`. Funding knobs are unchanged; 1024/256 MiB funds the
-   xlarge64 cell. Jar pin at `ada67cec` (section 2).
+   xlarge64 cell. Jar pin at `ada67cec` (section 2). Correction at `1cbb389f`:
+   the log restart is real and stays, but it was not what refused Meta's
+   xlarge64 cell. That cell refuses at the same count (332 admissions) with
+   and without this fix, with the store nearly empty and no log file present:
+   the bound is the shared-memory index cap, defect 15 below, and 1024/256 MiB
+   never funded more than about 257 MiB of usable log.
 
 12. **Java reference application: chunk-copy children could not survive an
    authority restart.** `ReferenceApplications.chunkCopy` admitted every
@@ -461,6 +469,28 @@ no longer rewrites the WAL index on every store call. Full offline run at
    sealed). Wire behaviour of the authority is unchanged; the jar pin stays
    `32360ec3` for the server subject, and the client CLI in the same jar gains
    the check at the next rebuild.
+
+15. **Java launcher: `--wal-mib` above about 257 MiB was silently ineffective.**
+   SQLite indexes the write-ahead log through the shared-memory sidecar, in
+   32 KiB regions of 4096 frames (4062 in the first); `V2Main` scaled the
+   log bound with `--wal-mib` but kept the sidecar at the reference 512 KiB,
+   which indexes about 257 MiB of log at the 4096-byte page. `FixedRecords`
+   computes the usable log as the smaller of the funded bound and what the
+   sidecar indexes, and reserves the retained promises' share of it (about
+   86 KiB per rewrite credit, roughly 0.8 MiB per admitted unit with its job,
+   view and fence records), so one authority topped out near 330 admitted
+   units whatever the flag said. That is Meta's xlarge64 mixed refusal
+   (`c4-xlarge64-seed6-r2/REPRO-DEFECT11.txt`: 332 admissions on jar
+   `e1763b4a` and again on `32360ec3`, deterministic, store 4.3 MiB, no log
+   file). Fixed in `1cbb389f`: `BoundedSqlite.Limits.sharedMemoryFor` sizes
+   the sidecar for the funded log (never below 512 KiB, a 64 KiB multiple,
+   never above the 16 MiB ceiling that indexes about 8 GiB) and the launcher
+   applies it. `FundingScaleTest` pins the arithmetic and shows twenty
+   hundred-member declarations refused under a 256 MiB log and all accepted
+   under 2048 MiB. Sizing rule for Meta: fund about 1 MiB of `--wal-mib` per
+   unit a session will hold at once, so xlarge64 (341 units per worker) needs
+   `--wal-mib 512` at least on the next jar, and the retained file policy
+   means a fresh root per funding. New jar pin below once the rebuild lands.
 
 The 53-row driver run on `28c3369b` (2026-09-12, stores on the root drive)
 otherwise matched the milestone 17b baseline: 52 rows PASS on every
