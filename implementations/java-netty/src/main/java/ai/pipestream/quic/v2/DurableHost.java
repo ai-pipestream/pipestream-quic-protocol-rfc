@@ -612,6 +612,14 @@ public final class DurableHost implements AutoCloseable {
     Records.Input input();
 
     /**
+     * Parent execution duration. Children admitted by the expansion carry this duration so an
+     * authority restart during the expansion cannot expire them.
+     *
+     * @return milliseconds fixed at parent admission
+     */
+    long executionMs();
+
+    /**
      * Child scope allocated at parent admission.
      *
      * @return scope identity
@@ -1591,6 +1599,11 @@ public final class DurableHost implements AutoCloseable {
     @Override
     public Records.Input input() {
       return context.input();
+    }
+
+    @Override
+    public long executionMs() {
+      return context.executionMs();
     }
 
     @Override

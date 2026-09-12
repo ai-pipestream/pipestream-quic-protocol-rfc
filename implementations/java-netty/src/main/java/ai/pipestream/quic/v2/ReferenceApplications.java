@@ -132,7 +132,9 @@ public final class ReferenceApplications {
 
   /**
    * {@code chunk-copy/v2}, mode 2: the authority declares and admits producer-1 children of at most
-   * 65,536 bytes each (at most 256); children copy and the parent verifies reassembly.
+   * 65,536 bytes each (at most 256); children copy and the parent verifies reassembly. Children
+   * carry the parent's execution duration, so an authority restart during the expansion cannot
+   * expire them.
    *
    * @return contract
    */
@@ -218,7 +220,7 @@ public final class ReferenceApplications {
               new Records.Input(chunkLength, new Records.Digest(digest.digest()), OCTET_STREAM),
               "chunk-copy/v2",
               0,
-              1000,
+              production.executionMs(),
               new Records.OutputBudget(1, chunkLength));
       Optional<Records.OperationReceipt> retained =
           production.beginInput(operation(i, production), parameters);

@@ -197,6 +197,13 @@ final class DurableBranchTest {
       assertEquals(3, page.declared());
       assertTrue(page.membershipVerified());
       assertEquals(parent, page.parent());
+      // Children carry the parent's execution duration: a restart during the expansion must not
+      // expire them (defect 12).
+      for (Messages.Entry entry : page.entries()) {
+        Records.WorkKey member = new Records.WorkKey(child, 1, entry.entity());
+        var view = get(s.client.watch(member, 0, 0)).view();
+        assertEquals(20_000, view.deadline() - view.admittedAt(), String.valueOf(view));
+      }
       byte[] chunk = s.read(new Records.WorkKey(child, 1, 2), 1);
       assertArrayEquals(
           Arrays.copyOfRange(whole, ReferenceApplications.CHUNK, 2 * ReferenceApplications.CHUNK),
