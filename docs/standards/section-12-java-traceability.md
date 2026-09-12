@@ -13,7 +13,9 @@ defect D11 fixed; S12-368 strengthened by `SessionLogGrowthTest`) and `ada67cec`
 `52d4776d` (S12-158, S12-208, S12-221 and S12-311 covered by `HookPlacementTest`
 boundary hooks; the summary table is recomputed from the rows). Updated at
 `62412c14` (S12-046 covered by `LossyTransportCreditTest`; S12-011 left PARTIAL by
-decision, see its row).
+decision, see its row). Updated at `dce9d384` (S12-078 and S12-079 covered by
+`DurableClientResultNegativeTest` and `ResultAbortWireTest`; S12-056 recognised as covered
+by the existing transport-close assertion).
 
 This document maps every normative statement of Section 12
 (`sections-src/section-12.md`, 871 lines) to the tests under
@@ -127,7 +129,7 @@ including most of the refusal-code taxonomy.
 | S12-053 | "Implementations MUST also bound the time and bytes spent receiving headers, pending result-stream creation, per-principal connections, staging files, metadata, queued work, retained bytes and storage journals." | `ObjectStream.HeaderReader.checkDeadline`; `ResultService.begin`; `CoreClient` admission; `CoreServer` ceilings; `InputStore.Limits`; `FixedRecords.forecast`; `DurableHost.Workers` | `DurableWireNegativeTest.stalledInputsExpireWithoutBlockingAHealthyConnection`; `ResultServiceTest.acquisitionTimeStoragePressureAndUtcExpiryNeverLeakDeliveryCapacity`; `V2CoreServerTest.globalAndOwnerConnectionCeilingsPreserveExistingConnectionsAndReleaseExactlyOnce`; `V2CoreClientTest.processClientCountAdmissionReleasesOnlyAfterOwnedTermination`; `InputStoreTest.quotasAreReservedBeforeReceptionAndReleasedByAbort`; `FixedRecordsTest.ordinaryProtectedWritesSaturatePinnedWalButPromisedRewriteStillCommits` | COVERED | Each named resource has at least one bound with an exact assertion. |
 | S12-054 | "Global and per-principal exhaustion refuses new work, not existing promises." | `DurableHost.Workers.submit`; `ExecutionRuntime.acquire`; `ControlWaitService.begin`; `AdmissionStore.check` | `DurableLifecycleTest.storageWorkerExhaustionRefusesRequestsInsteadOfBlockingTheLoop`; `ControlWaitServiceTest.capacityIsGlobalAndPerOwnerAndCloseOfRunningReadRemainsCharged`; `ExecutionRuntimeTest.perOwnerCeilingDoesNotConsumeTheIndependentGlobalWorkerSlot`; `AdmissionCapacityTest` (all 6) | COVERED | The lifecycle test asserts the three already-queued declarations all still complete after the fourth is refused. |
 | S12-055 | "Negotiated limits are ceilings, not an unconditional reservation against aggregate deployment quotas." | `CoreClient` ctor aggregate buffer budget | `V2CoreClientTest.configuredBufferAdmissionCanBindBeforeTheCountCeiling` | COVERED | A large per-connection control limit makes the byte budget bind at 7 connections instead of the 64-connection count ceiling. |
-| S12-056 | "Connection admission can be refused before caller authentication. A server rejecting a new QUIC connection SHOULD use transport error CONNECTION_REFUSED ..., not a fabricated authenticated application REFUSAL. This transport rejection does not report a durable work outcome." | `DurableServer.accept`; `CoreServer` connection admission | `V2CoreServerTest.stalledHandshakeReleasesItsGlobalSlotWithoutApplicationActivation`; `.globalAndOwnerConnectionCeilingsPreserveExistingConnectionsAndReleaseExactlyOnce` | PARTIAL | Pre-authentication refusal and exactly-once slot release are proven; no test reads the transport error code and asserts it is CONNECTION_REFUSED rather than an application close. |
+| S12-056 | "Connection admission can be refused before caller authentication. A server rejecting a new QUIC connection SHOULD use transport error CONNECTION_REFUSED ..., not a fabricated authenticated application REFUSAL. This transport rejection does not report a durable work outcome." | `DurableServer.accept`; `CoreServer` connection admission | `V2CoreServerTest.stalledHandshakeReleasesItsGlobalSlotWithoutApplicationActivation`; `.globalAndOwnerConnectionCeilingsPreserveExistingConnectionsAndReleaseExactlyOnce` | COVERED | The ceiling test requires the actual close event and asserts it is not an application close and carries transport error 0x02 (CONNECTION_REFUSED), with no application message on the refused connection. |
 | S12-057 | "Implementations MUST account for incomplete handshakes and temporary refusal state in their documented connection resource bounds." | `CoreServer` handshake timer plus admission slot | `V2CoreServerTest.stalledHandshakeReleasesItsGlobalSlotWithoutApplicationActivation` | COVERED | A stalled handshake releases its global slot with no application activation. |
 
 ## 12.2 Correlation and Error Scope
@@ -154,8 +156,8 @@ including most of the refusal-code taxonomy.
 | S12-075 | "A valid but refused request returns REFUSAL without closing unrelated work." | `DurableRequests.accept` refusal path; `DurableServer.Connection.respondRefusal` | `V2CoreServerTest.allProfileDependentCoreRequestsReceiveCorrelatedRefusalsWithoutClosing`; `DurableLifecycleTest.storageWorkerExhaustionRefusesRequestsInsteadOfBlockingTheLoop`; `DurableWireNegativeTest.resultReadRefusalsAndCompleteExclusionAreExact` | COVERED | `assertTrue(peer.connection.isActive())` after each of 15 refusals. |
 | S12-076 | "Stream abort uses RESET_STREAM for the sender and STOP_SENDING for the receiver ...; a receiver does not send RESET_STREAM for a receive-only stream." | `StreamTransport.Data.abort` (`local ? shutdownOutput : shutdownInput`) | `StreamTransportTest.localResetSettlesQueuedWriteBeforeExplicitSlotRelease` | PARTIAL | The sender side is asserted with the exact cause; no test observes the peer-side direction of a receive-only abort. |
 | S12-077 | "The server also sends a correlated REFUSAL for an invalid input unless it already sent that input's admission response." | `DurableServer.InputTransfer.refuse` -> `sendInputRefusal` | `DurableServerTest.inputRefusalsAreCorrelatedByStreamAndLeaveDeclarationsIntact`; `DurableWireNegativeTest.stalledInputsExpireWithoutBlockingAHealthyConnection`; `RawPeerRustAuthorityTest` (gated) | PARTIAL | Seven invalid-input refusals are correlated; the "unless it already sent that input's admission response" exclusion is never driven. |
-| S12-078 | "A client rejecting a result aborts reception and reports local delivery failure; it does not send a server-to-client REFUSAL in the wrong direction." | `DurableClient.ResultTransfer.abort`; `ClientCorrelation.abortResult` | `DurableClientResultNegativeTest.payloadsThatDoNotMatchTheHeaderFailOnlyThatDelivery` | PARTIAL | The local failure and staging cleanup are asserted; no test asserts the absence of a client-to-server REFUSAL frame, although `RawDurableAuthority.received` records every frame and could. |
-| S12-079 | "After a result header has started its response, subsequent sender errors abort the stream rather than send a second control response." | `DurableServer.ResultTransfer.abort(..., refusable)` | - | GAP | No test makes the server fail after it has already written a result header. |
+| S12-078 | "A client rejecting a result aborts reception and reports local delivery failure; it does not send a server-to-client REFUSAL in the wrong direction." | `DurableClient.ResultTransfer.abort`; `ClientCorrelation.abortResult` | `DurableClientResultNegativeTest.payloadsThatDoNotMatchTheHeaderFailOnlyThatDelivery`; `.headersContradictingTheSelectionFailOnlyThatDelivery` | COVERED | Both methods assert over every frame the raw authority recorded that the client sent no REFUSAL, while its reads are recorded. |
+| S12-079 | "After a result header has started its response, subsequent sender errors abort the stream rather than send a second control response." | `DurableServer.ResultTransfer.abort(..., refusable)` | `ResultAbortWireTest.senderFailureAfterTheHeaderAbortsTheStreamWithoutASecondControlResponse` (RESULT_HEADER_SENT hook truncates the published object) | COVERED | The header is received, the stream ends without FIN short of the declared length, no control message follows within two seconds, and the work is still SUCCEEDED on the live connection. |
 | S12-080 | "If FIN already ended the stream, a receiver still discards unverified output and records local failure even when a transport abort no longer has an effect." | `ObjectStream.Payload.finish`; `ResultFiles.Staging.close` | `V2ClientCorrelationTest.corruptedFinResetAndDeadlineNeverCompleteWorkOrUnrelatedRequests`; `DurableClientResultNegativeTest.payloadsThatDoNotMatchTheHeaderFailOnlyThatDelivery` | COVERED | A digest mismatch detected at FIN leaves nothing installed and no `.part` file, polled for 5 s. |
 | S12-081 | "Neither stream abort, connection loss nor timeout modifies a declared obligation, commits failure, or authorizes a new attempt." | `DurableServer.Connection.stopActivity`; `InputTransfer.connectionLost` | `DurableLifecycleTest.disconnectDuringInputAndBusyWaitReleasesOnlyConnectionState`; `DurableWireNegativeTest.controlFinBeforeDetachFailsTheConnectionAndDropsOnlyThePendingResponse`; `.stalledInputsExpireWithoutBlockingAHealthyConnection` | COVERED | After an abrupt close mid-input the work is still DECLARED, handles return to zero, and the retransmission admits with attempt 1. |
 | S12-082 | "An unrecognized QUIC error still ends that transport, without implying success." | `CoreClient`/`DurableClient` close decoding (only `0x200 < e <= 0x212` is named) | `V2CoreClientTest.resetAndStopOfControlRemainNamedProtocolFailures` (peer error 42) | PARTIAL | An unrecognized stream error is surfaced as CONTROL_RESET; no test sends an unrecognized *connection* close code. |
@@ -491,8 +493,8 @@ including most of the refusal-code taxonomy.
 | subsection | COVERED | PARTIAL | GAP | N/A-JAVA | total |
 |---|---|---|---|---|---|
 | Scope and profiles (preamble, lines 1-28) | 4 | 0 | 1 | 1 | 6 |
-| 12.1 Core Mapping and Negotiation | 38 | 11 | 2 | 0 | 51 |
-| 12.2 Correlation and Error Scope | 23 | 5 | 1 | 0 | 29 |
+| 12.1 Core Mapping and Negotiation | 39 | 10 | 2 | 0 | 51 |
+| 12.2 Correlation and Error Scope | 25 | 4 | 0 | 0 | 29 |
 | 12.3 Authenticated Sessions and Non-Reusable Identity | 34 | 3 | 0 | 0 | 37 |
 | 12.4 Immutable Operations and Replay | 17 | 3 | 0 | 0 | 20 |
 | 12.5 Declaration, Admission and Descendant Scopes | 41 | 7 | 1 | 0 | 49 |
@@ -500,10 +502,10 @@ including most of the refusal-code taxonomy.
 | 12.7 Result Publication, Streams and References | 26 | 5 | 0 | 3 | 34 |
 | 12.8 Sealed Closure, Counts and Shutdown | 39 | 4 | 1 | 2 | 46 |
 | 12.9 Lifetimes, Clocks and Crash-Safe Accounting | 31 | 9 | 0 | 0 | 40 |
-| **all subsections** | **297** | **62** | **7** | **7** | **373** |
+| **all subsections** | **300** | **60** | **6** | **7** | **373** |
 
-Read the `PARTIAL` column as the real work queue: 62 clauses have a test whose
-name suggests coverage but whose assertions stop short. The 7 `GAP` rows are
+Read the `PARTIAL` column as the real work queue: 60 clauses have a test whose
+name suggests coverage but whose assertions stop short. The 6 `GAP` rows are
 in most cases cheaper to close than the partials.
 
 ## Clauses where the Java code looks wrong, not merely untested
@@ -726,7 +728,7 @@ connection-close code assertions. Every proposal below needs only those.
   the same type with an oversized body and pin whichever code the spec intends.
 - **P-PEER-5** (S12-028). Send a CAPABILITIES offer with a 33-entry supported
   list, and one with a decreasing list. Assert FRAME_ERROR on the connection.
-- **P-PEER-6** (S12-079). Request a result, let the header be written, then make
+- **P-PEER-6** (S12-079). DONE at `dce9d384` (`ResultAbortWireTest`). Request a result, let the header be written, then make
   the sender fail mid-payload. Assert the stream is reset and that no second
   control response arrives for that request id.
 - **P-PEER-7** (S12-288, S12-289, S12-290). Declare 300 entities across two
@@ -741,7 +743,7 @@ connection-close code assertions. Every proposal below needs only those.
 - **P-PEER-9** (S12-277, new reads after revocation). Revoke the session, then
   send a fresh `Read`. Assert UNAUTHORIZED and that `ResultService.usage()` did
   not grow.
-- **P-PEER-10** (S12-056). Fill the connection ceiling and attempt one more QUIC
+- **P-PEER-10** (S12-056). DONE: the existing ceiling test already asserts transport error 0x02 on a non-application close. Fill the connection ceiling and attempt one more QUIC
   connection; assert the transport close is CONNECTION_REFUSED rather than an
   application close.
 - **P-PEER-11** (S12-072). Send a REFUSAL-shaped frame carrying code 19 and
@@ -756,7 +758,7 @@ unsolicited unidirectional streams, and it records every frame the client sent
 in `received`. It cannot yet forge CAPABILITIES or answer non-result control
 requests; the two proposals that need a hook say so.
 
-- **P-AUTH-1** (S12-078). On a contradicting header, after the client aborts,
+- **P-AUTH-1** (S12-078). DONE at `dce9d384`. On a contradicting header, after the client aborts,
   assert `received` contains no client-to-server `Refusal` at all. No new hook
   is needed; this is a negative assertion over an existing queue.
 - **P-AUTH-2** (S12-292, S12-293, S12-294, S12-295). Answer `Page` and `Watch`
