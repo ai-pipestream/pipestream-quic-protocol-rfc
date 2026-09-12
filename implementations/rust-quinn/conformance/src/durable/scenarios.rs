@@ -818,20 +818,79 @@ fn parse_state(stdout: &str) -> Result<u64> {
         .context("watch state is not decimal")
 }
 
+/// One `u64` field of a printed work view or receipt, in either client's
+/// rendering. The Rust CLI prints `Debug` forms: `deadline: Some(Number(N))`
+/// in a `WorkView`, `deadline: Number(N)` in an `Outcome::Admitted` receipt,
+/// and `deadline: None` for an absent optional. The Java CLI prints a Java
+/// record (`Records.WorkView`, fields `work, state, attempt, input,
+/// admittedAt, deadline, terminalAt, receiptUntil, outputUntil, child,
+/// manifest, diagnostic`), so the same field reads `deadline=N` or
+/// `deadline=null`. `field` is always the Rust snake_case name; the Java
+/// camelCase spelling is derived from it. Absent or null is `Ok(None)`; a
+/// present field that is not decimal is an error.
 fn parse_field_u64(stdout: &str, field: &str) -> Result<Option<u64>> {
-    let pattern = format!("{field}: Some(Number(");
-    let Some(start) = stdout.find(&pattern) else {
-        return Ok(None);
-    };
-    let digits = &stdout[start + pattern.len()..];
-    let end = digits
-        .find(')')
-        .context("malformed {field} value in watch view")?;
-    Ok(Some(
-        digits[..end]
+    for pattern in [
+        format!("{field}: Some(Number("),
+        format!("{field}: Number("),
+    ] {
+        if let Some(start) = stdout.find(&pattern) {
+            let digits = &stdout[start + pattern.len()..];
+            let end = digits
+                .find(')')
+                .with_context(|| format!("malformed {field} value in watch view"))?;
+            return digits[..end]
+                .parse::<u64>()
+                .map(Some)
+                .with_context(|| format!("malformed {field} decimal"));
+        }
+    }
+    let camel = snake_to_camel(field);
+    let pattern = format!("{camel}=");
+    let mut search = 0;
+    while let Some(found) = stdout[search..].find(&pattern) {
+        let start = search + found;
+        // A field name is preceded by a record opener or a separator, never
+        // by another identifier character (`deadline=` must not match inside
+        // `xdeadline=`).
+        let bounded = start == 0
+            || stdout[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|previous| matches!(previous, ' ' | '[' | ','));
+        if !bounded {
+            search = start + pattern.len();
+            continue;
+        }
+        let value = &stdout[start + pattern.len()..];
+        if value.starts_with("null") {
+            return Ok(None);
+        }
+        let end = value
+            .find(|ch: char| !ch.is_ascii_digit())
+            .unwrap_or(value.len());
+        return value[..end]
             .parse::<u64>()
-            .context("malformed {field} decimal")?,
-    ))
+            .map(Some)
+            .with_context(|| format!("malformed {field} decimal in the Java record form"));
+    }
+    Ok(None)
+}
+
+/// `admitted_at` -> `admittedAt`: the Java record spelling of a Rust field.
+fn snake_to_camel(field: &str) -> String {
+    let mut camel = String::with_capacity(field.len());
+    let mut upper_next = false;
+    for ch in field.chars() {
+        if ch == '_' {
+            upper_next = true;
+        } else if upper_next {
+            camel.extend(ch.to_uppercase());
+            upper_next = false;
+        } else {
+            camel.push(ch);
+        }
+    }
+    camel
 }
 
 /// Watch until terminal success (state=5), never past the failure state (6).
@@ -4273,17 +4332,48 @@ fn wait_subject_record(events: &Path, boundary: &str, timeout: Duration) -> Resu
 }
 
 /// Release a paused boundary by writing the release file the subject polls.
-/// No milestone-6 row schedules `pause` (the subject only accepts pause at
-/// reply-pair boundaries, and no row needs one); exercised by the unit tests
-/// below and kept for the pause rows to come.
-#[allow(dead_code)]
+/// The two subjects spell the file differently: the Rust hooks poll
+/// `release-<BOUNDARY>` (src/v2/fixture.rs `reply_gate`), Claude's Java
+/// FixtureMain polls `release-<target>-<BOUNDARY>` with the fixture target
+/// `server` (the interface-v1 reconciliation is still proposed, not landed).
+/// Both names are written so a release reaches whichever subject is paused;
+/// the pause rows of milestone 19 are the first drivers of this function.
 fn write_release(events: &Path, boundary: &str) -> Result<()> {
-    let release = events
-        .parent()
-        .context("events path has a parent directory")?
-        .join(format!("release-{boundary}"));
-    fs::write(&release, b"released by the neutral driver\n")?;
+    for name in release_file_names(boundary) {
+        let release = events
+            .parent()
+            .context("events path has a parent directory")?
+            .join(name);
+        fs::write(&release, b"released by the neutral driver\n")?;
+    }
     Ok(())
+}
+
+/// Remove a release written by [`write_release`] so a LATER pause row on the
+/// same boundary holds again (the Java hold proceeds as soon as the file
+/// exists, so a stale release file would let the next hold through).
+fn clear_release(events: &Path, boundary: &str) -> Result<()> {
+    for name in release_file_names(boundary) {
+        let release = events
+            .parent()
+            .context("events path has a parent directory")?
+            .join(name);
+        match fs::remove_file(&release) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+/// The release file names both subjects poll for one boundary: the Rust
+/// spelling first, the Java FixtureMain spelling second.
+fn release_file_names(boundary: &str) -> [String; 2] {
+    [
+        format!("release-{boundary}"),
+        format!("release-server-{boundary}"),
+    ]
 }
 
 /// Named-code refusal evidence for codes beyond CONFLICT: the transcript must
@@ -10258,13 +10348,73 @@ fn g4_stale_attempt_retry(context: &ScenarioContext) -> Result<()> {
     )
 }
 
+/// Hold bound for the attempt-2 pause of g4-stale-attempt-retry, well above
+/// the stale-retry round trip it covers.
+const STALE_HOLD_DEADLINE_MS: u64 = 60_000;
+
+/// Input length of the hook-free attempt-2 window on the Rust server: the
+/// negotiated object limit, so the copy under attempt 2 runs for as long as
+/// the subject allows an input to be.
+const STALE_RETRY_WINDOW_INPUT_LEN: usize = 16 * 1024 * 1024;
+
+/// Why the Rust server direction has no deterministic attempt-2 hold: the
+/// Rust fixture hooks accept `pause` only at the three reply-pair boundaries.
+const STALE_RETRY_RUST_HOLD_GAP: &str = "named gap: the Rust subject's fixture hooks accept \
+    pause only at SESSION_COMMITTED, DECLARATION_COMMITTED and ADMISSION_COMMITTED \
+    (src/v2/fixture.rs REPLY_PAIRS; a pause at EXECUTION_CLAIMED is rejected at schedule \
+    parse), so attempt 2 is kept live by a 16 MiB copy (the negotiated object limit) rather \
+    than a hold; a deterministic hold needs a server-crate hook extension";
+
+/// Schedule rows that hold attempt 2 live at EXECUTION_CLAIMED for the
+/// stale-retry round trip. The Java FixtureMain pauses at ANY committed
+/// boundary and consumes one `pause` row per reached boundary, so the first
+/// row holds attempt 1's claim (released as soon as it is reached) and the
+/// second holds attempt 2's; the `release` row between them is the
+/// driver-side ordering rule of interface-v1. The Rust subject rejects a
+/// pause outside its reply pairs, so its direction gets no rows and keeps
+/// attempt 2 live with the object-limit input instead (a named gap).
+fn stale_retry_hold_rows(
+    context: &ScenarioContext,
+    id: &str,
+    server: Subject,
+) -> Vec<schedule::ScheduleRow> {
+    match server {
+        Subject::Rust => Vec::new(),
+        Subject::Java => {
+            let row = |action: schedule::Action| schedule::ScheduleRow {
+                run_id: context.run_id.clone(),
+                scenario_id: id.to_owned(),
+                target: "server".into(),
+                boundary: "EXECUTION_CLAIMED".into(),
+                action,
+                seed: context.seed,
+                deadline_ms: STALE_HOLD_DEADLINE_MS,
+            };
+            vec![
+                row(schedule::Action::Pause),
+                row(schedule::Action::Release),
+                row(schedule::Action::Pause),
+            ]
+        }
+    }
+}
+
 /// g4-stale-attempt-retry: retry retry-copy/v2 to attempt 2 (the attempt-1
 /// application outcome is retryable), then attempt a SECOND retry naming
 /// expected-attempt 1 with a new operation id while attempt 2 is live. The
 /// stale expected-attempt refuses CONFLICT (7); replaying the FIRST retry
 /// operation returns its original receipt without advancing the fence again;
-/// the work ends at exactly attempt 2, never 3. Fully deterministic: the
-/// large input keeps attempt 2 live across the stale-retry round trip.
+/// the work ends at exactly attempt 2, never 3.
+///
+/// Attempt 2 is held live deterministically on the Java server: a schedule
+/// row pauses the server at EXECUTION_CLAIMED for attempt 2 (see
+/// [`stale_retry_hold_rows`]), the stale retry is sent into the hold, the
+/// CONFLICT is observed, and only then is the hold released. Both authorities
+/// check terminal state before the attempt mismatch, so without the hold a
+/// fast copy answers ALREADY_TERMINAL instead (the milestone-17b
+/// rust-client/java-server result). The Rust server has no such hook and
+/// keeps attempt 2 live with a 16 MiB copy; the mechanism used is recorded in
+/// expected.tsv and observed.tsv per direction.
 fn g4_stale_attempt_retry_direction(
     context: &ScenarioContext,
     scenario_dir: &Path,
@@ -10275,9 +10425,46 @@ fn g4_stale_attempt_retry_direction(
     let artifacts = scenario_dir.join("artifacts");
     fs::create_dir_all(&artifacts)?;
     let mut events = open_events(context, scenario_dir, id, client)?;
-    enforce_no_fault_schedule(context, id)?;
-    let session = setup_session(context, scenario_dir, server, client)?;
-    let input = oracle::dataset(context.seed, 8 * 1024 * 1024);
+    let hold_rows = stale_retry_hold_rows(context, id, server);
+    let (session, events_path, hold_mechanism) = if hold_rows.is_empty() {
+        enforce_no_fault_schedule(context, id)?;
+        let session = setup_session(context, scenario_dir, server, client)?;
+        (
+            session,
+            scenario_dir.join("events.tsv"),
+            format!(
+                "hook-free {STALE_RETRY_WINDOW_INPUT_LEN}-byte copy window ({STALE_RETRY_RUST_HOLD_GAP})"
+            ),
+        )
+    } else {
+        let hooked = setup_hooked(
+            context,
+            scenario_dir,
+            id,
+            server,
+            client,
+            &hold_rows,
+            "schedule.tsv",
+            true,
+        )?;
+        let (session, events_path) = split_hooked(hooked);
+        (
+            session,
+            events_path,
+            "schedule pause at EXECUTION_CLAIMED for attempt 2 (second pause row), released \
+             after the stale retry's CONFLICT"
+                .to_owned(),
+        )
+    };
+    let held = !hold_rows.is_empty();
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "client binding")?;
+    let input_len = if held {
+        INPUT_LEN
+    } else {
+        STALE_RETRY_WINDOW_INPUT_LEN
+    };
+    let input = oracle::dataset(context.seed, input_len);
     let input_sha256 = oracle::sha256_hex(&input);
     let input_path = artifacts.join("input.bin");
     fs::write(&input_path, &input)?;
@@ -10289,6 +10476,7 @@ fn g4_stale_attempt_retry_direction(
             ("mode", "0".into()),
             ("input_len", input.len().to_string()),
             ("input_sha256", input_sha256.clone()),
+            ("attempt_2_hold", hold_mechanism.clone()),
             (
                 "attempt_1_outcome",
                 "retryable → state AWAITING_RETRY(2)".into(),
@@ -10358,6 +10546,15 @@ fn g4_stale_attempt_retry_direction(
         None,
     )?;
 
+    // Attempt 1's claim is the FIRST pause row on a held server: release it
+    // as soon as the subject records it, then clear the release so the
+    // second pause row (attempt 2) holds again.
+    if held {
+        wait_subject_record(&events_path, "EXECUTION_CLAIMED", KILL_TIMEOUT)
+            .context("subject never reached EXECUTION_CLAIMED for attempt 1")?;
+        write_release(&events_path, "EXECUTION_CLAIMED")?;
+    }
+
     // Attempt 1 reports retryable: the work parks in AWAITING_RETRY (state 2).
     let deadline = Instant::now() + RECOVERY_TIMEOUT;
     let awaiting = loop {
@@ -10378,6 +10575,9 @@ fn g4_stale_attempt_retry_direction(
         thread::sleep(Duration::from_millis(25));
     };
     fs::write(artifacts.join("awaiting-retry-view.txt"), &awaiting)?;
+    if held {
+        clear_release(&events_path, "EXECUTION_CLAIMED")?;
+    }
 
     // R1: explicit retry naming expected attempt 1 fences attempt 1 and
     // admits attempt 2.
@@ -10413,26 +10613,44 @@ fn g4_stale_attempt_retry_direction(
         None,
     )?;
 
-    // Wait until attempt 2 is live (ACTIVE under attempt 2), then race the
-    // stale retry into the live window.
-    let deadline = Instant::now() + RECOVERY_TIMEOUT;
-    loop {
-        let stdout = session.watch("0:0:1")?;
-        let state = parse_state(&stdout)?;
-        let attempt = parse_attempt(&stdout)?;
-        if state == 1 && attempt == 2 {
-            break;
+    // Attempt 2 live: on a held server the subject's second EXECUTION_CLAIMED
+    // record is the evidence (the claim is committed and the worker is held
+    // before the application runs); on the Rust server the watch must show
+    // ACTIVE under attempt 2 and the stale retry races the copy.
+    let attempt_2_live = if held {
+        let deadline = Instant::now() + KILL_TIMEOUT;
+        loop {
+            if subject_record_count(&events_path, "EXECUTION_CLAIMED")? >= 2 {
+                break;
+            }
+            ensure!(
+                Instant::now() < deadline,
+                "g4-stale-attempt-retry: attempt 2 was not claimed within {KILL_TIMEOUT:?}"
+            );
+            thread::sleep(Duration::from_millis(25));
         }
-        ensure!(
-            state != 6,
-            "g4-stale-attempt-retry: attempt 2 fabricated a failure:\n{stdout}"
-        );
-        ensure!(
-            Instant::now() < deadline,
-            "g4-stale-attempt-retry: attempt 2 did not start within {RECOVERY_TIMEOUT:?}"
-        );
-        thread::sleep(Duration::from_millis(10));
-    }
+        "EXECUTION_CLAIMED recorded twice by the subject; attempt 2 held at its claim".to_owned()
+    } else {
+        let deadline = Instant::now() + RECOVERY_TIMEOUT;
+        loop {
+            let stdout = session.watch("0:0:1")?;
+            let state = parse_state(&stdout)?;
+            let attempt = parse_attempt(&stdout)?;
+            if state == 1 && attempt == 2 {
+                break;
+            }
+            ensure!(
+                state != 6,
+                "g4-stale-attempt-retry: attempt 2 fabricated a failure:\n{stdout}"
+            );
+            ensure!(
+                Instant::now() < deadline,
+                "g4-stale-attempt-retry: attempt 2 did not start within {RECOVERY_TIMEOUT:?}"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        "watch showed ACTIVE(1) under attempt 2; the stale retry raced the copy".to_owned()
+    };
     let retry_two = oracle::operation_hex(oracle::operation_id(context.seed, "retry", 2));
     events.append(
         "REQUEST_SENT",
@@ -10470,6 +10688,10 @@ fn g4_stale_attempt_retry_direction(
         Some(7),
         None,
     )?;
+    if held {
+        // The CONFLICT was observed with attempt 2 held; only now may it run.
+        write_release(&events_path, "EXECUTION_CLAIMED")?;
+    }
 
     // Attempt 2 now settles successfully under exactly attempt 2.
     let terminal = watch_terminal(&session, &mut events, "0:0:1", &admit, RECOVERY_TIMEOUT)?;
@@ -10528,6 +10750,8 @@ fn g4_stale_attempt_retry_direction(
         ("client_subject", client.name().into()),
         ("attempt_1_state", "AWAITING_RETRY (2)".into()),
         ("r1_replacement_attempt", "2".into()),
+        ("attempt_2_hold", hold_mechanism),
+        ("attempt_2_live_evidence", attempt_2_live),
         ("stale_retry_refusal", named),
         ("terminal_attempt", final_attempt.to_string()),
         ("terminal_state", "SUCCEEDED (5)".into()),
@@ -21844,8 +22068,57 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let events = dir.join("events.tsv");
         write_release(&events, "SESSION_COMMITTED").unwrap();
+        // The Rust hooks poll release-<BOUNDARY>; the Java FixtureMain polls
+        // release-<target>-<BOUNDARY> with target `server`. A release the
+        // driver writes must reach whichever subject is paused.
         assert!(dir.join("release-SESSION_COMMITTED").is_file());
+        assert!(dir.join("release-server-SESSION_COMMITTED").is_file());
+        // Clearing removes both so a later pause on the same boundary holds
+        // again; clearing an absent release is not an error.
+        clear_release(&events, "SESSION_COMMITTED").unwrap();
+        assert!(!dir.join("release-SESSION_COMMITTED").exists());
+        assert!(!dir.join("release-server-SESSION_COMMITTED").exists());
+        clear_release(&events, "SESSION_COMMITTED").unwrap();
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn stale_retry_hold_pauses_the_second_execution_claim_on_java_only() {
+        let context = ScenarioContext {
+            run_id: "run-a".into(),
+            run_root: std::env::temp_dir(),
+            seed: 7,
+            rust_bin: PathBuf::from("/nonexistent/pipestream-quinn"),
+            java_jar: None,
+        };
+        // The Java FixtureMain consumes one pause row per reached boundary,
+        // so attempt 1 takes the first pause and attempt 2 the second; the
+        // release between them is the interface-v1 ordering rule, and the
+        // rows must validate under the driver-side schedule checks.
+        let java = stale_retry_hold_rows(&context, "g4-stale-attempt-retry", Subject::Java);
+        assert_eq!(
+            java.iter().map(|row| row.action).collect::<Vec<_>>(),
+            vec![
+                schedule::Action::Pause,
+                schedule::Action::Release,
+                schedule::Action::Pause
+            ]
+        );
+        assert!(java.iter().all(|row| row.boundary == "EXECUTION_CLAIMED"
+            && row.target == "server"
+            && row.deadline_ms == STALE_HOLD_DEADLINE_MS));
+        schedule::validate(&java).unwrap();
+        let rendered = schedule::render(&java).unwrap();
+        assert_eq!(
+            schedule::parse(&rendered, "run-a", "g4-stale-attempt-retry").unwrap(),
+            java
+        );
+        // The Rust subject rejects a pause outside its reply pairs, so its
+        // direction gets no rows and names the gap instead of arming one.
+        assert!(
+            stale_retry_hold_rows(&context, "g4-stale-attempt-retry", Subject::Rust).is_empty()
+        );
+        assert!(STALE_RETRY_RUST_HOLD_GAP.contains("REPLY_PAIRS"));
     }
 
     #[test]
@@ -21882,6 +22155,72 @@ mod tests {
         );
         assert_eq!(parse_field_u64(view, "terminal_at").unwrap(), None);
         assert!(parse_field_u64(view, "attempt").is_ok());
+        // The Rust admission receipt renders the same field without Some().
+        let receipt = "RECEIPT OperationReceipt { body: Admitted { attempt: Id(1), \
+                       admitted_at: Number(1789034836504), deadline: Number(1789034896504), \
+                       child: None } }";
+        assert_eq!(
+            parse_field_u64(receipt, "deadline").unwrap(),
+            Some(1789034896504)
+        );
+        assert_eq!(
+            parse_field_u64(receipt, "admitted_at").unwrap(),
+            Some(1789034836504)
+        );
+        // The Java client prints Records.WorkView as a Java record: the same
+        // field reads deadline=N, an absent optional reads deadline=null, and
+        // the snake_case names are camelCase there.
+        let java = "WORK revision=4 state=5 attempt=1 child=none\n\
+                    VIEW WorkView[work=WorkKey[scope=0, producer=0, entity=1], state=SUCCEEDED, \
+                    attempt=1, input=Input[length=65536, sha256=Digest[bytes=[1, 2]], \
+                    contentType=application/octet-stream], admittedAt=1789034836504, \
+                    deadline=1789034896504, terminalAt=1789034836900, \
+                    receiptUntil=1789121236900, outputUntil=1789038436900, child=null, \
+                    manifest=Manifest[work=WorkKey[scope=0, producer=0, entity=1], attempt=1], \
+                    diagnostic=null]";
+        assert_eq!(
+            parse_field_u64(java, "deadline").unwrap(),
+            Some(1789034896504)
+        );
+        assert_eq!(
+            parse_field_u64(java, "admitted_at").unwrap(),
+            Some(1789034836504)
+        );
+        assert_eq!(
+            parse_field_u64(java, "terminal_at").unwrap(),
+            Some(1789034836900)
+        );
+        assert_eq!(
+            parse_field_u64(java, "receipt_until").unwrap(),
+            Some(1789121236900)
+        );
+        assert_eq!(
+            parse_field_u64(java, "output_until").unwrap(),
+            Some(1789038436900)
+        );
+        assert_eq!(parse_field_u64(java, "attempt").unwrap(), Some(1));
+        let java_pending = "WORK revision=2 state=1 attempt=1 child=none\n\
+                            VIEW WorkView[work=WorkKey[scope=0, producer=0, entity=1], \
+                            state=ACTIVE, attempt=1, admittedAt=1789034836504, \
+                            deadline=1789034896504, terminalAt=null, receiptUntil=null, \
+                            outputUntil=null, child=null, manifest=null, diagnostic=null]";
+        assert_eq!(
+            parse_field_u64(java_pending, "deadline").unwrap(),
+            Some(1789034896504)
+        );
+        assert_eq!(parse_field_u64(java_pending, "terminal_at").unwrap(), None);
+        assert_eq!(
+            parse_field_u64(java_pending, "receipt_until").unwrap(),
+            None
+        );
+        // A field name inside another identifier is not that field.
+        assert_eq!(
+            parse_field_u64("VIEW X[xdeadline=5, other=1]", "deadline").unwrap(),
+            None
+        );
+        assert!(parse_field_u64("VIEW X[deadline=soon]", "deadline").is_err());
+        assert_eq!(snake_to_camel("receipt_until"), "receiptUntil");
+        assert_eq!(snake_to_camel("deadline"), "deadline");
     }
 
     #[test]
