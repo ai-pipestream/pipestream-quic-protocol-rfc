@@ -1,0 +1,6 @@
+positive_wall_ms=101 median_chunk_ms=26 slow_delay_ms=1000
+rep1 wall_ms=1064 exposed_ms=963 hidden_ms=37 slow_chunk_ms=999
+rep2 wall_ms=1065 exposed_ms=964 hidden_ms=36 slow_chunk_ms=1000
+rep3 wall_ms=1063 exposed_ms=962 hidden_ms=38 slow_chunk_ms=992
+rep4 wall_ms=1066 exposed_ms=965 hidden_ms=35 slow_chunk_ms=1001
+rep5 wall_ms=1062 exposed_ms=961 hidden_ms=39 slow_chunk_ms=997

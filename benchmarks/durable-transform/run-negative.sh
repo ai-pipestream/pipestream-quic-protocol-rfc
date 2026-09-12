@@ -170,9 +170,18 @@ pos revoked-reader-grpc grpc
 bash "$HERE/libexec-run-grpc.sh" "$WORK/revoked-reader-grpc-neg" "$SEED" "$SIZE" \
   >"$WORK/revoked-reader-grpc-neg.stdout.log" 2>&1 &
 RUNPID=$!
-for _ in $(seq 1 600); do
-  [ -f "$WORK/revoked-reader-grpc-neg/work/pki/grpc-principals.tsv" ] && break
-  sleep 0.1
+# Revoke after all three workers are serving (ready files) but before the
+# coordinator's first request can complete: the worker checks the map file
+# on every request, so this deterministically refuses mid-run. Waiting for
+# the principals file races worker startup (startup failure, wrong gate);
+# waiting for event rows races run end (200 KB grpc finishes in ~110 ms).
+for w in a b c; do
+  for _ in $(seq 1 600); do
+    [ -f "$WORK/revoked-reader-grpc-neg/work/grpc-$w.ready" ] && break
+    sleep 0.05
+  done
+  [ -f "$WORK/revoked-reader-grpc-neg/work/grpc-$w.ready" ] \
+    || { note "GATE BROKEN revoked-reader-grpc: worker $w never ready"; exit 1; }
 done
 head -1 "$WORK/revoked-reader-grpc-neg/work/pki/grpc-principals.tsv" \
   > "$WORK/revoked-reader-grpc-neg/work/pki/grpc-principals.tsv.revoked"

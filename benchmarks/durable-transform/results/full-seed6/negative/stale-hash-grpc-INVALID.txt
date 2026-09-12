@@ -1,0 +1,1 @@
+INVALID: stale recorded hash fails sha256 verification

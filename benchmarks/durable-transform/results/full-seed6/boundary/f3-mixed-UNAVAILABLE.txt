@@ -1,0 +1,5 @@
+UNAVAILABLE: F3 targets worker-c at PUBLICATION_COMMITTED on the authority
+side. Against the Java authority this needs the neutral fixture adapter
+(FixtureMain, Kimi interface-v1), which is not reachable from the
+production launcher (V2Main serve has no commit-time kill flag and must
+not gain a TEST-ONLY one from this lane). No run faked.

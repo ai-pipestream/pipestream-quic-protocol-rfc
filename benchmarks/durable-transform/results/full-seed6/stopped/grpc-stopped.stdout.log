@@ -1,0 +1,3 @@
+PKI ready in benchmarks/durable-transform/results/full-seed6/stopped/grpc-stopped/work/pki (valid ~2 days, loopback only)
+Error: TEST-ONLY test-no-fetch: admitted without fetching; refusing final assembly
+gRPC coordinator exit 1

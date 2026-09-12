@@ -3,7 +3,10 @@
 # plus jstat -gc per tick for one Java PID when provided.
 # Usage: sample.sh OUTFILE PID...
 # Env: SAMPLE_JAVA_PID (JVM pid, must be among PID... when set),
-#      SAMPLE_GC_OUT (gc TSV path; required with SAMPLE_JAVA_PID).
+#      SAMPLE_GC_OUT (gc TSV path; required with SAMPLE_JAVA_PID),
+#      SAMPLE_PIDFILE (file holding extra PIDs, one line, space-separated;
+#      re-read at the START of every pass so a coordinator spawned after
+#      the sampler still gets sampled).
 # A missed jstat row while the JVM lives is recorded as a JSTAT_GAP row;
 # runners fail the run on any JSTAT_GAP (a gap fails the sample, never
 # zero-filled). Ticks stretch past 0.2 s rather than skip jstat.
@@ -12,6 +15,7 @@ OUT="$1"; shift
 echo -e "t_ms\tpid\tcomm\tthreads\trss_kb\thwm_kb\tvsz_kb\tfds\tutime\tstime\trchar\twchar\tread_bytes\twrite_bytes" > "$OUT"
 JAVA_PID="${SAMPLE_JAVA_PID:-}"
 GC_OUT="${SAMPLE_GC_OUT:-}"
+PIDFILE="${SAMPLE_PIDFILE:-}"
 if [ -n "$JAVA_PID" ]; then
   [ -n "$GC_OUT" ] || { echo "SAMPLE_JAVA_PID needs SAMPLE_GC_OUT"; exit 1; }
   command -v jstat >/dev/null || { echo "MISSING jstat on PATH"; exit 1; }
@@ -19,9 +23,17 @@ if [ -n "$JAVA_PID" ]; then
 fi
 ms_now() { date +%s%N | cut -c1-13; }
 START=$(ms_now)
-while true; do
-  NOW=$(ms_now)
-  for pid in "$@"; do
+# One synchronous pass over a PID list. "$@" is never assigned inside
+# (see the stat-parse note below), so callers may pass it through.
+sample_once() {
+  local NOW="$1"; shift
+  local pid
+  # Late arrivals (a coordinator spawned after the sampler) join every pass.
+  local extra=()
+  if [ -n "$PIDFILE" ] && [ -f "$PIDFILE" ]; then
+    read -ra extra < "$PIDFILE" || true
+  fi
+  for pid in "$@" "${extra[@]}"; do
     if [ -d "/proc/$pid" ]; then
       COMM=$(tr '\0' ' ' < "/proc/$pid/comm" 2>/dev/null || echo "?")
       THREADS=$(awk '/^Threads:/{print $2}' "/proc/$pid/status" 2>/dev/null || echo 0)
@@ -49,5 +61,12 @@ while true; do
       echo -e "$((NOW - START))\t$JAVA_PID\tJSTAT_GAP" >> "$GC_OUT"
     fi
   fi
+}
+# t=0 burst first: a short-lived coordinator (empty corpus, ~100 ms) may
+# be gone before the first 0.2 s tick; without this its rows never exist
+# and check_samples fails the run honestly but spuriously.
+sample_once "$(ms_now)" "$@"
+while true; do
+  sample_once "$(ms_now)" "$@"
   sleep 0.2
 done

@@ -1,0 +1,12 @@
+warmup large48/ps
+warmup large48/mixed
+warmup large48/grpc
+rep1 large48/ps
+rep1 large48/mixed
+rep1 large48/grpc
+rep2 large48/grpc
+rep2 large48/mixed
+rep2 large48/ps
+rep3 large48/ps
+rep3 large48/mixed
+rep3 large48/grpc

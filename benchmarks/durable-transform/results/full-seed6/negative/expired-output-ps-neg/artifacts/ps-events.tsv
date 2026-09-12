@@ -1,0 +1,10 @@
+108	1789135429197	0	-1	session-open	workload-a
+114	1789135429202	1	-1	session-open	workload-b
+130	1789135429218	2	-1	session-open	workload-c
+166	1789135429255	0	-1	declared	batch 0: 2 entities
+177	1789135429265	2	-1	declared	batch 0: 1 entities
+182	1789135429270	1	-1	declared	batch 0: 1 entities
+266	1789135429354	0	3	admitted	admit=98ms
+276	1789135429365	1	1	admitted	admit=93ms
+284	1789135429372	2	2	admitted	admit=106ms
+311	1789135429399	0	0	admitted	admit=143ms

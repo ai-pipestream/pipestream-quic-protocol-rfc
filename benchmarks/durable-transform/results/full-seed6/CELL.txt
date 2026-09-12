@@ -1,0 +1,41 @@
+cell: C16g full matrix (seed 6; driver benchmarks/durable-transform/run-full.sh)
+suites, in order: smoke (run-quick) -> ladder empty/tiny/uneven/quick/standard
+(5 reps x 3 arms + 3 warmups each; 19 DONE per cell) -> ladder large48
+(3 reps x 3 arms + 3 warmups; 13 DONE) -> negative (31 checks) -> boundary
+(15/15) -> stopped -> slow -> cr13-rust -> cr13-java -> pipeline (72 reps:
+standard+large48, serial+pipe, 3 arms, 5 reps, warmups; 73 DONE incl. suite
+marker). C16f metrics cited from c16f-standard-seed6 (ran on these binaries,
+hash-verified by the driver at startup; not re-run). xlarge64 UNAVAILABLE
+(Java storage, 2nd Claude request open).
+binaries: see full.bin.sha256. Pin check enforced by the driver: authority
+must equal the anchored C16f build (c16f.bin.sha256), the other three must
+equal the C16e trio (pipeline-seed6.bin.sha256). Java jars: standard
+61ab64a3, large48 e1763b4a (both valid subjects; defect-9/10 jars noted for
+next-cell adoption, not used here). Per-rep digest pins in artifacts/.
+result: FULL MATRIX PASS. 14/14 suite DONEs. Every measured rep:
+first-usable-output (except SIZE=0, vacuous by design, ALLOW_VACUOUS=1) +
+final-verified + digest match. Stats: pipeline/PIPELINE-SUMMARY.txt
+(per-chunk admit/watch/fetch/span p50/p95/p99 + wall medians, n=640/3840);
+per-cell order.log files record arm order.
+slow-fsync episode (mechanism, not luck): pipeline large48/pipe/ps rep2-ps
+failed 6 consecutive attempts (INTERNAL_ERROR storage, admit- and
+execution-commit paths) under sustained quantized ~31 ms fsync (healthy
+~1 ms; NVMe raid0, no resync, no cgroup throttle, device-level contention;
+survived a host reboot). synchronous=FULL stretches write-txn lock holds
+until 16-in-flight convoys exceed the 5 s busy_timeout; serial and small
+cells pass throughout (no contention). WALs in dead reps ~3.7 MB (not a
+funding breach). Attempts 1-5 preserved as rep2-ps.FAILED-attemptN (+
+stdout-log siblings) with OPERATOR-NOTEs; attempt 6 (ungated probe) also
+failed. A fsync-gated waiter (/tmp/full-waiter.sh, detached) found a
+2-3 ms window and the matrix went FULL PASS 2026-09-11T18:54:41Z
+(rep2-ps 74 s, rep3-5 all PASS), re-verified SKIP-clean post-reboot.
+ladder-large48/mixed rep1-mixed attempt1 preserved as FAILED-attempt1
+(chunk 426 state 6=FAILED, worker-a diagnostic "application storage
+failure"; same transient family; passed on retry).
+negative-suite fix en route: revoked-reader-grpc injection raced worker
+startup (startup failure) and run end (110 ms run); now triggers on
+all-three-ready and refuses deterministically mid-run.
+state DBs (*.sqlite*), object stores, key material, staging, worker logs,
+rep work/ dirs excluded (reproducible from seed 6 + run-full.sh + pinned
+binaries + jar pins); artifacts (events/sample/gc/net/run-record/
+bin.sha256/finals) + stdout logs + DONE + FAILED snapshots + logs archived.

@@ -1,0 +1,21 @@
+224	1789135709237	2	-1	session-open	workload-c
+225	1789135709238	1	-1	session-open	workload-b
+225	1789135709238	0	-1	session-open	workload-a
+245	1789135709258	2	2	admitted	admit=20ms
+250	1789135709263	1	1	admitted	admit=25ms
+264	1789135709277	0	3	admitted	admit=38ms
+269	1789135709282	0	0	admitted	admit=44ms
+272	1789135709285	2	2	first-usable-output	
+272	1789135709285	2	2	chunk-verified	fetch=26ms
+272	1789135709285	2	-1	commits	1 chunks
+272	1789135709285	2	-1	session-close	
+282	1789135709296	1	1	first-usable-output	
+282	1789135709296	1	1	chunk-verified	fetch=32ms
+282	1789135709296	1	-1	commits	1 chunks
+282	1789135709296	1	-1	session-close	
+294	1789135709307	0	3	first-usable-output	
+294	1789135709307	0	3	chunk-verified	fetch=24ms
+302	1789135709316	0	0	chunk-verified	fetch=33ms
+302	1789135709316	0	-1	commits	2 chunks
+302	1789135709316	0	-1	session-close	
+0	1789135709321	-	-	final-verified	200000 bytes

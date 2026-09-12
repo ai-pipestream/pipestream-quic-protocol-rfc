@@ -1,0 +1,7 @@
+PKI ready in benchmarks/durable-transform/results/full-seed6/pipeline/large48-serial/rep1-mixed/work/pki (valid ~2 days, loopback only)
+INITIALIZED
+INITIALIZED
+Picked up JAVA_TOOL_OPTIONS: -Xms256m -Xmx2g
+INITIALIZED /work/worktrees/pipestream-muse/benchmarks/durable-transform/results/full-seed6/pipeline/large48-serial/rep1-mixed/work/java-c.root
+benchmarks/durable-transform/results/full-seed6/pipeline/large48-serial/rep1-mixed/artifacts/mixed-final.bin: OK
+MIXED arm done in 67523 ms (java worker: c)

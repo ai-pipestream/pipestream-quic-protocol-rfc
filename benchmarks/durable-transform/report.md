@@ -1,167 +1,156 @@
-# C4 comparative report (C15)
+# C16 comparative report (2026-09-11)
 
-Base 85887911 + C15 commits, seed 6 (smoke seed 7), ladder v1/v2 frozen
-before measuring. Raw artifacts with verified MANIFEST.sha256 under
-`benchmarks/durable-transform/results/`. No WAN claim, no marketing,
-no statement about IETF acceptance.
+Binaries pinned in `results/full-seed6/full.bin.sha256` (anchored
+workload-authority + C16e coordinator/grpc trio; run-full.sh verifies
+both pins at startup). Seed 6 throughout. Raw artifacts with verified
+MANIFEST.sha256 under `benchmarks/durable-transform/results/full-seed6/`
+(2241 files). Java jars: standard `61ab64a3`, large48 `e1763b4a` (both
+valid subjects; defect-9/10 jars noted for next-cell adoption). No WAN
+claim, no marketing, no statement about IETF acceptance.
 
 ## 1. Proven correctness
 
 | cell | result | final digest |
 |------|--------|--------------|
-| empty (0 B) | PARTIAL, gate vacuous | 0-byte finals exact |
-| tiny (1 kB) | PASS + 1 kept infra fail | 55d2e6e9… |
-| uneven (100 kB) | PASS + 1 kept infra fail | 65283733… |
-| quick (200 kB) | PASS 18/18 | 3cde15aa… |
-| standard (8 MiB) | PASS 18/18, repros 09-09 pin | b3dd5e34… |
-| large (48 MiB) | PARTIAL, mixed blocked | acc15911… (ps+grpc) |
+| empty (0 B) | PASS (first-usable vacuous, ALLOW_VACUOUS=1) | e3b0c442… (0-byte finals exact, all arms) |
+| tiny (1 kB) | PASS 15/15 + warmups | 55d2e6e9… |
+| uneven (100 kB) | PASS 15/15 + warmups | 65283733… |
+| quick (200 kB) | PASS 15/15 + warmups | 3cde15aa… |
+| standard (8 MiB) | PASS 15/15 + warmups, repros C15 pin | b3dd5e34… |
+| large48 (48 MiB) | PASS 9/9 + warmups, all 3 arms incl. mixed | acc15911… |
 
-- Every passing event stream carries `first-usable-output` and
-  `final-verified`. Empty has `final-verified 0 bytes` on all arms;
-  `first-usable-output` cannot exist for zero chunks (PARTIAL reason).
-- The two kept infra fails are sampler races on sub-second runs
-  (0.2 s sampler, no rows for one worker PID); milestones present,
-  finals byte-identical, replacements pass. Failed runs stay in the
-  table, never discarded.
-- CR13 closed vs Java at 7585a9dc (4/4 arms, session survives the
-  30.015 s kill). Earlier divergence at 63d03a0.
-- Mixed Java/Rust passes at all cells through 8 MiB (42+ chunks
-  through Java transform/v2 at standard). At 48 MiB the Java
-  authority refuses 100-entity declares
-  (`SQLite file capacity exhausted`, bound in (43,100]); request
-  to Claude is open. Kimi review labels PENDING (unavailable
-  until ~2026-09-17), recorded as pending, never passed.
-- Faults: F1/F2 time-armed demonstrations from §8 stand (not
-  re-run in C15). F3/F4 boundary-armed runs are UNIMPLEMENTED
-  (no runner support); against the C4 requirement they are
-  missing, not passed.
-- Negative controls: killed-collector gate proven, cancel-neg
-  proven via CR13, swapped-order and wrong-transform covered by
-  unit tests only (PARTIAL), missing-chunk / truncated-artifact /
-  stale-hash / revoked-reader / expired-output runs UNIMPLEMENTED.
-- Stopped-consumer and slow-worker arms UNIMPLEMENTED.
-- 64 MiB attempts (1024 chunks) archived separately, not pooled:
-  they measured the real bounds (V2 256-entry list, single-TX
-  fit, cumulative record funding) that produced the coordinator
-  batching fix and ladder v2.
+- Every measured rep carries `first-usable-output` (except SIZE=0,
+  where zero chunks admit nothing) and `final-verified`, plus a
+  digest match against the cell pin. The C15 empty PARTIAL is closed:
+  the gate was vacuous, not the behavior.
+- C15 large48 mixed PARTIAL is closed: with 1024/256 MiB funding on
+  the Java worker, mixed passes 48 MiB on all reps (digest acc15911…).
+  xlarge64 stays UNAVAILABLE with the reason (Java >=341-entity
+  storage; 2nd Claude request open), not passed.
+- Negative controls 31/31 (`results/full-seed6/negative/`): every
+  control is a positive twin (exit 0) plus an injected run that must
+  FAIL with a named reason (INVALID markers). The revoked-reader-grpc
+  injection was fixed en route: triggering on principals-file
+  appearance raced worker startup (wrong gate), triggering on event
+  rows raced run end (110 ms run); it now triggers on all-three-ready
+  and refuses deterministically mid-run.
+- Boundary faults F3/F4 15/15: armed run dies at the boundary, restart
+  on the same state dirs + coordinator resume completes byte-exact.
+- Stopped-consumer and slow-worker arms green (5 positive twins +
+  delay runs + stall-read probes per arm; worker-c at 1/10 pace,
+  exactly-once chunks, exposed-vs-hidden slowdown).
+- CR13 closed vs Rust and vs Java (cancel-neg/complete/idle/lifetime
+  probes in `cr13-rust/`, `cr13-java/`; session survives the kill,
+  post-kill session refused).
+- Kimi review labels PENDING (unavailable until ~2026-09-17),
+  recorded as pending, never passed.
+- Failed runs stay in the table, never discarded: pipeline
+  large48/pipe/ps rep2-ps FAILED-attempt1..5 plus ladder-large48
+  mixed rep1-mixed FAILED-attempt1, with OPERATOR-NOTEs (slow-fsync
+  storage flakes, mechanism in §2).
 
 ## 2. Measured performance (with dispersion)
 
 Loopback, shared host without cgroup limits. Raw observations only;
-deltas are findings, never grounds to weaken a guarantee.
+deltas are findings, never grounds to weaken a guarantee. Ladder
+cells run pipelined (pending-limit 16) on the anchored binaries.
 
-Coordinator-arm wall_ms by rep (warmup excluded):
+Coordinator-arm wall_ms, sorted reps (warmups excluded):
 
-- tiny: ps ~1 s, mixed ~1-2 s, grpc ~0-1 s (sub-second arms).
-- uneven: ps ~0-1 s, mixed ~1-2 s, grpc ~0-1 s.
-- quick: ps ~0-1 s, mixed ~1-2 s, grpc ~0-1 s.
-- standard: ps 1869,1807,1971,2086,2062; mixed
-  2290,2546,2039,2178,2220; grpc 199,200,200,200,223.
-- large48: ps 18185,18311,18171; grpc 1099,1101,1087.
-  (mixed has no passing large run.)
+- empty: ps 278-316, mixed 427-937, grpc 35-38.
+- tiny: ps 405-439, mixed 497-562, grpc 58-83.
+- uneven: ps 477-532, mixed 515-586, grpc 72-77.
+- quick: ps 605-623, mixed 646-702, grpc 96-104.
+- standard: ps 10540-11216, mixed 13982-16004, grpc 1406-1523.
+- large48: ps 70151-76274, mixed 75416-82149, grpc 8290-8724.
 
-Per-chunk admit-to-verified latency, pooled across reps:
+Before/after pipelining (pipeline suite, wall medians, n=5):
 
-- tiny (n=5/5/6): ps p50 31 ms, mixed p50 34 ms, grpc p50 1 ms.
-- uneven (n=10/10/12): ps p50 39 ms, mixed p50 44 ms,
-  grpc p50 2 ms.
-- quick (n=20): ps p50 47 ms p95 57 ms, mixed p50 53 ms
-  p95 131 ms, grpc p50 2 ms p95 3 ms.
-- standard (n=640): ps p50 875 ms p95 1061 ms p99 1114 ms;
-  mixed p50 915 ms p95 1139 ms p99 1299 ms;
-  grpc p50 2 ms p95 3 ms p99 3 ms.
-- large48 (n=2304): ps p50 10207 ms p95 11251 ms p99 11453 ms;
-  grpc p50 2 ms p95 3 ms p99 3 ms.
-- p99 from n<100 (tiny, uneven) is reported with its count
-  and is not meaningful.
+- standard ps: serial 9696 -> pipe 11283. grpc: 2077 -> 1488.
+  mixed: 11128 -> 14560.
+- large48 ps: serial 59092 -> pipe 72409. grpc: 12443 -> 8854
+  (max 42007 in one rep). mixed: 66912 -> 76710.
+- Pipe collapses grpc tails but not ps walls: the authority's
+  admission capacity, not coordinator serialism, is the ps
+  bottleneck. Serial ps sees ZERO backpressure in 4480 admissions;
+  pipelined large48 ps has 60% of admissions hit >= 1 refusal
+  (5485 "aggregate admission capacity exhausted", 338 "metadata
+  concurrency exhausted", standard pipe 52%). Admit p50 119 ->
+  658 ms, watch p50 21 -> 267 ms, fetch p50 47 -> 565 ms; 16-way
+  concurrency absorbs most of it, net wall +9-23%.
+- Fetch-path backpressure shares the admit-* labels (a "stalled
+  read ordinal N" row logged as admit-refused is a fetch retry,
+  not an admission refusal; 5 per storm in the large cells).
+- The 37 admit-notready rows (all mixed-arm, Java worker-c:
+  "NOT_READY: complete validated input is unavailable") are
+  listener defect 10 (fixed at ce1bfd77), not client or storage
+  pressure. Retry on NOT_READY stays correct client behavior (all
+  affected runs byte-exact); expect zero on the 28c3369b jar.
+- No uncategorized LIMIT_EXCEEDED anywhere: every refusal detail
+  is named and counted, so the defect-9 retransmission window did
+  not pollute the e1763b4a measurements.
+- Storage regime caveat (measured, read-only probes): the host
+  sat in sustained quantized ~31 ms fsync (healthy ~1 ms; NVMe
+  raid0, no resync, no cgroup throttle on us) across a reboot.
+  synchronous=FULL stretches write-txn lock holds until
+  16-in-flight convoys exceed the 5 s busy_timeout: pipe/large48
+  ps then fails always (6 consecutive INTERNAL_ERROR flakes at
+  admit and execution commit, WALs ~3.7 MB so not funding),
+  while serial and small cells pass throughout. A fsync-gated
+  waiter completed the matrix in the next 2-3 ms window
+  (FULL MATRIX PASS 2026-09-11T18:54:41Z). Pipe/large48 timings
+  above come from that window; do not compare them against
+  numbers taken in a different fsync regime.
 
-Structure behind the gap: the workload coordinator admits
-and verifies serially per shard, so per-chunk latency grows
-with shard length (standard p50 875 ms at 43/shard, large
-p50 10.2 s at 256/shard). The gRPC baseline retrieves
-concurrently (flat ~2 ms at all sizes). This is the
-application's coordination shape, not a transport verdict;
-confounders include per-rep JVM startup in mixed arms and
-shared-host contention.
+Worker/coordinator resources (extended sampler, C16f standard
+rerun, one rep per arm; CPU seconds from utime+stime at 100 Hz):
 
-Loopback bytes per run (rep-0 standard): ps 17.88 MB,
-mixed 18.03 MB, grpc 17.15 MB for 8.39 MB payload
-(~2.0-2.2x in each direction, all arms; includes
-handshakes, retries, coordination).
-
-Worker RSS high-water (sampler, 0.2 s): ps authority
-~19 MB at 8 MiB, ~28 MB at 48 MiB; grpc worker ~9 MB
-at 8 MiB, ~10 MB at 48 MiB.
-
-UNAVAILABLE (not zero-filled): thread counts (sampler
-records FDs/IO but not threads), coordinator RSS/heap,
-CPU-time split, JVM heap detail (no jstat capture),
-per-record funding breakdown.
-
-C16f measured columns (extended sampler, 0.2 s ticks;
-standard cell only, one rep per arm, seed 6, pipelined
-mode, anchored authority binary; results/c16f-standard-seed6;
-CPU seconds from /proc utime+stime at 100 Hz; NOT backfilled
-onto older runs):
-- ps rep (wall 18.5 s): authorities 54-55 threads, RSS max
-  ~21 MB (HWM ~23 MB), ~4.2 CPU-s each; coordinator
-  40 threads, RSS/HWM ~18.8 MB, 2.26 CPU-s.
-- grpc rep (wall 1.5 s): workers 33 threads, RSS ~14 MB,
-  ~0.06 CPU-s each; coordinator 33 threads, RSS ~27 MB,
-  0.14 CPU-s.
+- ps rep (wall 18.5 s): authorities 54-55 threads, RSS max ~21 MB
+  (HWM ~23 MB), ~4.2 CPU-s each; coordinator 40 threads,
+  RSS/HWM ~18.8 MB, 2.26 CPU-s.
+- grpc rep (wall 1.5 s): workers 33 threads, RSS ~14 MB, ~0.06
+  CPU-s each; coordinator 33 threads, RSS ~27 MB, 0.14 CPU-s.
 - mixed rep (wall 17.1 s): Rust authorities ~21 MB / 4.0 CPU-s;
-  Java worker 53 threads, RSS/HWM 434 MB, 9.87 CPU-s;
-  coordinator 40 threads, ~17 MB, 1.77 CPU-s. jstat -gc
-  every tick, 34 rows, zero gaps: Eden 112->149 MB, Old
-  ~107 MB, Metaspace ~10->20 MB, 8 young GCs totaling
-  0.11 s, 0 full GCs.
-- Rust heap stays a named gap: no allocator counter crate
-  (no jemalloc/mimalloc dependency anywhere in the
-  workload crates). Per-record funding breakdown stays a
-  named gap (not sampler-collectible).
+  Java worker 53 threads, RSS/HWM 434 MB, 9.87 CPU-s; coordinator
+  40 threads, ~17 MB, 1.77 CPU-s. jstat -gc every tick, 34 rows,
+  zero gaps: Eden 112->149 MB, Old ~107 MB, Metaspace ~10->20 MB,
+  8 young GCs totaling 0.11 s, 0 full GCs.
+- Rust heap stays a named gap (no allocator counter crate).
+  Per-record funding breakdown stays a named gap.
 
-C16f idle write_bytes (Claude's question; /proc/pid/io on a
-serving-but-uncontacted Rust authority, 60 s):
-- before: write_bytes ~12.0 MB/s with ~99.9% cancelled
-  (717.8 of 718.4 MB), every 1 s tick 9.7-12.9 MB;
-  read_bytes 0. Yes, rusqlite opens per call: no persistent
-  DB fd is ever held (only the payload root.lock), and
-  a.sqlite-wal/-shm flicker in and out of existence as each
-  maintenance pass (3 components x 20 ms) opens and closes.
-- fix in our own code (subject untouched): workload-authority
-  serve() holds one read-only anchor connection for process
-  lifetime (idle_anchor; never opens a transaction, holds no
-  locks, cannot block checkpoints). One-line lock-file edge:
-  rusqlite 0.40.2 direct dependency, same version.
-- after: write_bytes 0/s, cancelled 0/s, syscw 2973/s -> 50/s;
-  -wal/-shm persist; rchar unchanged (~12.8 MB/s page-cache
-  WAL-index rebuild reads, zero storage reads).
+Idle write_bytes (Claude's question; /proc/pid/io, serving but
+uncontacted, 60 s): before ~12.0 MB/s with ~99.9% cancelled
+(per-call rusqlite opens churn -wal/-shm on every 20 ms
+maintenance pass); after a read-only anchor connection held by
+workload-authority serve(): 0/s writes, 0/s cancelled (subject
+untouched; before/after TSVs in c16f-standard-seed6/).
+
+Loopback bytes are ~2.1x payload on both sides; no byte advantage
+is claimed for either side.
 
 ## 3. Unmeasured deployment assumptions
 
-Loopback only (no WAN/production claim); shared host with
-no CPU/cgroup isolation; corpus above the 2 GiB Java heap
-never run; F3/F4 boundary recovery time never measured;
-six of eight negative controls never run; stopped-consumer
-and slow-worker behavior never run; 60-minute per-run
-timeout never approached (max observed arm ~19 s).
+Loopback only (no WAN/production claim); shared host with no
+CPU/cgroup isolation and an fsync regime that moves pipe/large48
+results by regime (see §2 caveat); corpus above 48 MiB never run;
+per-record funding breakdown never measured; 60-minute per-run
+timeout never approached (max observed arm ~85 s).
 
-Where PipeStream reduces application coordination:
-durable sessions with same-identity backpressure retry
-(transient aggregate-capacity refusals absorbed and
-retried to byte-exact finals in the funded 48 MiB runs),
-journaled replay with frozen operation identities,
-scope seals with checkpoint proof. The unfunded 48 MiB
+Where PipeStream reduces application coordination: durable
+sessions with same-identity backpressure retry (thousands of
+aggregate-capacity refusals absorbed and retried to byte-exact
+finals in the funded 48 MiB runs), journaled replay with frozen
+operation identities, scope seals with checkpoint proof,
+coordinator resume after boundary death. The unfunded 48 MiB
 grind (418 refusals, zero admissions) was terminated as
-unsalvageable and is archived in the terminated
-/tmp/c4-large48 partials, not in results/.
+unsalvageable and stays archived in the terminated /tmp
+partials, not in results/.
 
-Where it adds bytes, state, or latency: Declare framing
-in ≤100-entity batches with last-only seal; seal plus
-checkpoint round trips per run; authority state funding
-that must be sized to the corpus (256/64 MiB defaults
-hold through 8 MiB; 48 MiB needed 1024/256 MiB on the
-Rust authorities); per-chunk latency that scales with
-shard length under the serial admit/verify loop.
-Loopback bytes are ~2.1x payload on both sides; no byte
-advantage is claimed for either side.
+Where it adds bytes, state, or latency: Declare framing in
+≤100-entity batches with last-only seal; seal plus checkpoint
+round trips per run; authority state funding that must be sized
+to the corpus (256/64 MiB defaults hold through 8 MiB; 48 MiB
+needed 1024/256 MiB on the Rust authorities and the Java
+worker); per-chunk latency that scales with shard length, plus
+admission-capacity backoff under pipelining (61% refused
+admissions at 16-in-flight on large48).

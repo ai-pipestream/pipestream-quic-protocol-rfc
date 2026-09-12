@@ -162,7 +162,111 @@ used 1.97.1 against that closure. `cargo build` on the host will confirm.
   death instants unobservable); (3) server-side enforcement and the
   download direction are untested by these arms.
 
-## 9. Safe next actions
+## 9. C16 (2026-09-11): milestones, commits, run ids, gates, deviations
+
+Branch `agent/rfc-meta-workload-v2`, base `8eb5a17`. Brief
+`/work/worktrees/pipestream-rfc-coordination/MUSE-BRIEF-2026-09-11.md`.
+No pushes (no authorization); no history rewritten.
+
+- C16a (funded large cells): `69372f27` ladder v3 + jar pins + Java
+  funding flags; `ac2d64f1` scope-page pagination; `cacdd1a0` large48 r2
+  PASS 12/12 (digest matches C15); `7ddcd3be` xlarge64 PARTIAL (batched
+  declares proven via b28b0b7b pin; mixed blocked on Java storage,
+  2nd request to Claude open). Archives: `results/c4-large48-seed6/`,
+  `results/c4-large48-seed6-r2/`, `results/c4-large64-attempts/`.
+- C16b (negative controls): `ec8229e4` TEST-ONLY hooks (swap/drop/kill/
+  nofetch/delay) + runner plumbing; `64ec8d96` green 31/31 + archive
+  `results/neg-seed6/` (CELL.txt + MANIFEST.sha256 verified, state/PKI
+  pruned). Every control: positive twin (exit 0) + injected run that
+  must FAIL with a named reason (INVALID markers).
+- C16c (boundary faults F3/F4): `f5a46589` green 15/15 + archive
+  `results/boundary-seed6/`. Armed run dies at the boundary; restart on
+  the same state dirs + coordinator resume completes byte-exact.
+- C16d (stopped/slow): `3e6b0e10` green + archives `results/stopped-seed6/`
+  (per arm 5 positive twins + 5 delay runs + 5 stall-read probes + no-fetch
+  gate demo), `results/slow-seed6/` (worker-c at 1/10 pace, exactly-once
+  chunks, exposed-vs-hidden slowdown per arm).
+- C16e (pipelining): `5062e65e` green 72/72 + archive
+  `results/pipeline-seed6/` (602 files, MANIFEST verified, 9.2G -> 2.1G
+  pruned). Both coordinators pipeline to `--pending-limit` 16 by default,
+  `--serial` reproduces old order, durability rules unchanged, grpc gets
+  the same concurrency (contract.md §12 change log). Headline: grpc wall
+  ~2x better + tail collapse (large48 serial grpc max 72770 ms -> pipe
+  max 9081 ms); ps wall ~unchanged (+8-11%) — authority admission
+  capacity is the bottleneck (61% of pipelined large48 admits refused
+  vs 0% serial; all refusal details named/counted, no uncategorized
+  LIMIT_EXCEEDED, so Claude's defect-9 window did not pollute).
+- C16f (metrics + idle): `2211f5c1`. sample.sh extended (threads, VmHWM,
+  utime/stime, per-tick jstat -gc, t=0 burst, pidfile late-PIDs, JSTAT_GAP
+  fails the run); all runners sample coordinators too (bg + wait +
+  wall-conditional coord gate); `results/c16f-standard-seed6/` 3/3 PASS
+  (threads/RSS/CPU/JVM heap in report.md; Rust heap + per-record funding
+  stay named gaps). Idle write_bytes ANSWERED for Kimi: unanchored
+  authority ~12.0 MB/s, ~99.9% cancelled (per-call rusqlite opens churn
+  -wal/-shm on every 20 ms maintenance pass); read-only anchor in
+  workload-authority serve() -> 0/s (subject untouched; before/after TSVs
+  archived). Pinned binaries for C16g: anchored authority (hash in
+  c16f-standard-seed6/c16f.bin.sha256) + C16e trio (hashes in
+  pipeline-seed6.bin.sha256); run-full.sh verifies both at startup.
+- C16g (final run/report/handoff/board): `run-full.sh` rewritten as the
+  real full-matrix driver (smoke -> ladder 6 cells -> negative ->
+  boundary -> stopped -> slow -> cr13 rust+java -> pipeline; per-rep and
+  per-suite DONE resume; driver never holds BENCHMARK.lock, self-locking
+  children would deadlock; non-locking children flock-wrapped). Archive
+  `results/full-seed6/` (2241 files, MANIFEST verified, 14G -> 2.9G
+  pruned): FULL MATRIX PASS 2026-09-11T18:54:41Z, re-verified SKIP-clean
+  post-reboot. The matrix parked 6 attempts at pipeline large48/pipe/ps
+  rep2-ps (INTERNAL_ERROR storage flakes, admit- and execution-commit
+  paths; diagnostics "authority storage operation failed" /
+  "application storage failure" swallow the StoreError; only the
+  maintenance path treats contention as retryable) under sustained
+  quantized ~31 ms fsync (healthy ~1 ms; NVMe raid0, no resync, no
+  cgroup throttle on us, device-level contention, survived a reboot):
+  synchronous=FULL stretches write-txn lock holds until 16-in-flight
+  convoys exceed the 5 s busy_timeout; serial/small cells pass
+  throughout. Failed reps preserved (FAILED-attemptN snapshots +
+  OPERATOR-NOTEs, none discarded). A fsync-gated waiter found a 2-3 ms
+  window and everything went green (rep2-ps 74 s, rep3-5 all PASS).
+  Pipe/large48 timings are regime-qualified in report.md §2.
+  xlarge64 stays UNAVAILABLE (Java storage, 2nd request open).
+- Answers delivered: Kimi cancelled_write_bytes (yes, per-call opens;
+  anchor fix; numbers above — closes Kimi M18 request 1); Kimi pending-
+  ceiling variability independently corroborated (631 ps + 233 mixed
+  "metadata concurrency exhausted" vs "aggregate admission capacity
+  exhausted" rows in C16e data). Still open: Claude Java >=341-entity
+  storage (2nd request); Kimi labels PENDING (~2026-09-17); new Java jar
+  02a410fc (defect 9) noted but NOT adopted mid-matrix (C16a-e all ran
+  e1763b4a; both valid per Claude, differ only in the retransmission
+  window; our refusal details show no uncategorized LIMIT_EXCEEDED).
+  New pin verified available 2026-09-11, adoption at next jar-sensitive
+  cell: all-jar 02a410fc711a at
+  /work/worktrees/pipestream-rfc-claude/implementations/java-netty/target/
+  pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar, source commit 4cb4b444
+  ("Release an input's connection slot with its response, not after
+  storage cleanup"), with storage-funding flags. Running pipeline suite
+  on e1763b4a stays a valid subject.
+  Superseded 2026-09-11 for next-cell adoption: all-jar 28c3369bd952
+  (source ce1bfd77 "Keep an installed input pinned until its admission
+  transaction ends", descends from 4cb4b444, adds listener defect-10 fix;
+  artifact hash verified). Listener defect 10 explains the 37
+  admit-notready rows in C16 mixed-arm data (all worker-c/Java:
+  "authority refusal NOT_READY: complete validated input is unavailable";
+  serial and pipe, standard and large48): a listener bug, not client or
+  storage pressure. Coordinator retry on NOT_READY stays correct client
+  behavior (all affected runs completed byte-exact); report must say so
+  and expect zero such rows on the 28c3369b jar.
+- Deviations fixed en route (all in-tree, committed or pending with the
+  C16g commit): sampler `set --` clobbered the PID list (died tick 2);
+  sampler missed sub-second processes (t=0 burst + pidfile + wall-
+  conditional coord gate); empty corpus first-usable gate vacuous
+  (ALLOW_VACUOUS=1, final-verified + empty digest govern; C4 empty was
+  PARTIAL on this); revoked-reader-grpc injection raced startup and run
+  end (now triggers on all-three-ready, deterministic); run-negative.sh
+  stays mode 644, driver invokes suites via bash.
+- Unit tests on final tree: workload-coordinator 9/9, workload-authority
+  5/5, grpc-coordinator 1/1 (`--locked --offline`).
+
+## 10. Safe next actions
 
 1. DONE: repeats + fault demonstrations (see §8).
 2. DONE 2026-09-09: mixed run against Claude `63d03a0` (.4 transport,
@@ -173,7 +277,7 @@ used 1.97.1 against that closure. `cargo build` on the host will confirm.
 3. When Kimi publishes driver checkpoints: run full comparative labels.
 4. Propose spec improvements (if any) in a separate note, not in this file.
 
-## 10. C15 report pointer (2026-09-11)
+## 11. C15 report pointer (2026-09-11)
 
 C4 comparison report: `benchmarks/durable-transform/report.md`
 (correctness / measured performance / unmeasured assumptions).

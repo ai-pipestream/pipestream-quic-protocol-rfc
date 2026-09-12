@@ -1,0 +1,8 @@
+PKI ready in benchmarks/durable-transform/results/full-seed6/stopped/ps-delay-rep4/work/pki (valid ~2 days, loopback only)
+INITIALIZED
+INITIALIZED
+INITIALIZED
+TEST-ONLY test-fetch-delay-ms: admitted, holding fetch 5000 ms
+TEST-ONLY test-fetch-delay-ms: admitted, holding fetch 5000 ms
+TEST-ONLY test-fetch-delay-ms: admitted, holding fetch 5000 ms
+PS arm done in 6293 ms

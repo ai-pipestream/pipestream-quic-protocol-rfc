@@ -43,14 +43,18 @@ for i in 0 1 2; do
     --ready-file "$W/grpc-$w.ready" > "$W/grpc-$w.log" 2>&1 &
   PIDS="$PIDS $!"
 done
+# C16f: the sampler starts before the ready-wait so short-lived workers
+# are caught by the t=0 burst; the coordinator (spawned later) joins via
+# the pidfile, re-read every pass. Coordinator rows required only when it
+# lived >= 1 s (see libexec-run-ps.sh).
+: > "$W/sampler-pids.txt"
+SAMPLE_PIDFILE="$W/sampler-pids.txt" "$HERE/sample.sh" "$ART/grpc-sample.tsv" $PIDS &
+SAMPLER=$!
 for i in 0 1 2; do
   w=$(printf '%s' abc | cut -c $((i + 1)))
   for _ in $(seq 1 100); do [ -f "$W/grpc-$w.ready" ] && break; sleep 0.1; done
   [ -f "$W/grpc-$w.ready" ] || { echo "worker $w did not start (see $W/grpc-$w.log)"; exit 1; }
 done
-# C16f: the coordinator runs in the background so the sampler records it
-# too (coordinator RSS/threads/CPU were UNAVAILABLE). Its exit status is
-# captured via wait and still fails the run; its PID joins the sampled set.
 ms_now() { date +%s%N | cut -c1-13; }
 START_MS=$(ms_now)
 COORD_SWAP=()
@@ -72,8 +76,7 @@ COORD_STOP=()
   --output "$ART/grpc-final.bin" --events "$ART/grpc-events.tsv" \
   "${COORD_SWAP[@]}" "${COORD_DROP[@]}" "${COORD_NOFETCH[@]}" "${COORD_STOP[@]}" &
 COORD_PID=$!
-"$HERE/sample.sh" "$ART/grpc-sample.tsv" $PIDS "$COORD_PID" &
-SAMPLER=$!
+echo "$COORD_PID" > "$W/sampler-pids.txt"
 COORD_RC=0
 wait "$COORD_PID" || COORD_RC=$?
 END_MS=$(ms_now)
@@ -81,21 +84,30 @@ END_MS=$(ms_now)
 # Contract §6 negative controls: a dead metric collector or missing
 # per-worker samples fails the run instead of passing silently.
 check_samples() {
-  local f="$1"; shift
+  local f="$1" wall="$2" coord="$3"; shift 3
   kill -0 "$SAMPLER" 2>/dev/null || { echo "metric sampler died mid-run"; return 1; }
   [ -s "$f" ] || { echo "metric sample file empty: $f"; return 1; }
   local pid
   for pid in "$@"; do
     grep -q -m1 "[[:space:]]$pid[[:space:]]" "$f" || { echo "missing metric samples for worker $pid"; return 1; }
   done
+  if [ "$wall" -ge 1000 ]; then
+    grep -q -m1 "[[:space:]]$coord[[:space:]]" "$f" \
+      || { echo "missing metric samples for coordinator $coord"; return 1; }
+  else
+    echo "coordinator short-lived (${wall} ms): coordinator sample rows optional"
+  fi
 }
-check_samples "$ART/grpc-sample.tsv" $PIDS "$COORD_PID" || exit 1
+check_samples "$ART/grpc-sample.tsv" "$((END_MS - START_MS))" "$COORD_PID" $PIDS || exit 1
 kill "$SAMPLER" 2>/dev/null || true
 kill $PIDS 2>/dev/null || true
 wait 2>/dev/null || true
 lo_after=$(awk -F: '/lo:/{split($2,f," "); print f[1]":"f[9]}' /proc/net/dev)
 echo -e "wall_ms=$((END_MS - START_MS))\nlo_rx_tx_before=$lo_before\nlo_rx_tx_after=$lo_after" > "$ART/grpc-net.txt"
 echo -e "restart-safety: Pure (deterministic re-execution, no external effects)\nfixture-schedule-schema: kimi interface-v1 1452f60 (c566751a...)" > "$ART/run-record.txt"
-grep -q "first-usable-output" "$ART/grpc-events.tsv" || { echo "gRPC: no first-usable"; exit 1; }
+# ALLOW_VACUOUS=1 (empty corpus): see libexec-run-ps.sh.
+if [ "${ALLOW_VACUOUS:-0}" != 1 ]; then
+  grep -q "first-usable-output" "$ART/grpc-events.tsv" || { echo "gRPC: no first-usable"; exit 1; }
+fi
 grep -q "final-verified" "$ART/grpc-events.tsv" || { echo "gRPC: no final-verified"; exit 1; }
 echo "gRPC arm done in $((END_MS - START_MS)) ms"

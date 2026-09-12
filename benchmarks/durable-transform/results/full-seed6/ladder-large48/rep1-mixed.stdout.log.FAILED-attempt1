@@ -1,0 +1,7 @@
+PKI ready in benchmarks/durable-transform/results/full-seed6/ladder-large48/rep1-mixed/work/pki (valid ~2 days, loopback only)
+INITIALIZED
+INITIALIZED
+Picked up JAVA_TOOL_OPTIONS: -Xms256m -Xmx2g
+INITIALIZED /work/worktrees/pipestream-muse/benchmarks/durable-transform/results/full-seed6/ladder-large48/rep1-mixed/work/java-c.root
+Error: chunk 426 terminal state 6 (attempt 1)
+MIXED coordinator exit 1

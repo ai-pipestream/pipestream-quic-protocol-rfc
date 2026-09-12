@@ -1,0 +1,33 @@
+schedule: benchmarks/durable-transform/results/full-seed6/boundary/fault-schedule-c16.tsv (*F3 hook at OUTPUT_INSTALLED, one commit before scheduled PUBLICATION_COMMITTED; see header note)
+F3 f3-ps-rep1: worker-c aborted at OUTPUT_INSTALLED (wall 1789135460592), run failed as designed (rc=1)
+F3 f3-ps-rep1 PASS: resume byte-exact, recovery 1118 ms from boundary
+F3 f3-ps-rep2: worker-c aborted at OUTPUT_INSTALLED (wall 1789135492718), run failed as designed (rc=1)
+F3 f3-ps-rep2 PASS: resume byte-exact, recovery 1154 ms from boundary
+F3 f3-ps-rep3: worker-c aborted at OUTPUT_INSTALLED (wall 1789135524892), run failed as designed (rc=1)
+F3 f3-ps-rep3 PASS: resume byte-exact, recovery 1104 ms from boundary
+F3 f3-ps-rep4: worker-c aborted at OUTPUT_INSTALLED (wall 1789135557026), run failed as designed (rc=1)
+F3 f3-ps-rep4 PASS: resume byte-exact, recovery 1248 ms from boundary
+F3 f3-ps-rep5: worker-c aborted at OUTPUT_INSTALLED (wall 1789135589215), run failed as designed (rc=1)
+F3 f3-ps-rep5 PASS: resume byte-exact, recovery 1277 ms from boundary
+F4 f4-ps-rep1: coordinator dead (exit 134) at RESULT_VERIFIED epoch 1789135591609
+F4 f4-ps-rep1 PASS: resume byte-exact, recovery 1684 ms from boundary
+F4 f4-ps-rep2: coordinator dead (exit 134) at RESULT_VERIFIED epoch 1789135594391
+F4 f4-ps-rep2 PASS: resume byte-exact, recovery 1735 ms from boundary
+F4 f4-ps-rep3: coordinator dead (exit 134) at RESULT_VERIFIED epoch 1789135597267
+F4 f4-ps-rep3 PASS: resume byte-exact, recovery 1701 ms from boundary
+F4 f4-ps-rep4: coordinator dead (exit 134) at RESULT_VERIFIED epoch 1789135600034
+F4 f4-ps-rep4 PASS: resume byte-exact, recovery 1701 ms from boundary
+F4 f4-ps-rep5: coordinator dead (exit 134) at RESULT_VERIFIED epoch 1789135602836
+F4 f4-ps-rep5 PASS: resume byte-exact, recovery 1695 ms from boundary
+F4 f4-mixed-rep1: coordinator dead (exit 134) at RESULT_VERIFIED epoch 1789135606219
+F4 f4-mixed-rep1 PASS: resume byte-exact, recovery 2091 ms from boundary
+F4 f4-mixed-rep2: coordinator dead (exit 134) at RESULT_VERIFIED epoch 1789135609964
+F4 f4-mixed-rep2 PASS: resume byte-exact, recovery 2105 ms from boundary
+F4 f4-mixed-rep3: coordinator dead (exit 134) at RESULT_VERIFIED epoch 1789135613655
+F4 f4-mixed-rep3 PASS: resume byte-exact, recovery 2097 ms from boundary
+F4 f4-mixed-rep4: coordinator dead (exit 134) at RESULT_VERIFIED epoch 1789135617345
+F4 f4-mixed-rep4 PASS: resume byte-exact, recovery 2111 ms from boundary
+F4 f4-mixed-rep5: coordinator dead (exit 134) at RESULT_VERIFIED epoch 1789135621110
+F4 f4-mixed-rep5 PASS: resume byte-exact, recovery 2131 ms from boundary
+F3 mixed: UNAVAILABLE (FixtureMain not reachable; see f3-mixed-UNAVAILABLE.txt)
+BOUNDARY SUITE PASS

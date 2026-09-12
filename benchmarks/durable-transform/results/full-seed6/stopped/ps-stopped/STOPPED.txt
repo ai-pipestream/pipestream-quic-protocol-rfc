@@ -1,0 +1,1 @@
+STOPPED (exit 1): 4 admitted, consumer-stopped, no completion

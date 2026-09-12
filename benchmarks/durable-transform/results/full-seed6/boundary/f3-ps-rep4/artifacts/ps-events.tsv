@@ -1,0 +1,54 @@
+113	1789135526829	2	-1	session-open	workload-c
+116	1789135526832	1	-1	session-open	workload-b
+116	1789135526832	0	-1	session-open	workload-a
+165	1789135526880	0	-1	declared	batch 0: 2 entities
+173	1789135526889	1	-1	declared	batch 0: 1 entities
+182	1789135526897	2	-1	declared	batch 0: 1 entities
+260	1789135526976	0	3	admitted	admit=95ms
+266	1789135526981	1	1	admitted	admit=92ms
+279	1789135526994	2	2	admitted	admit=96ms
+300	1789135527016	0	0	admitted	admit=134ms
+371	1789135527086	0	3	succeeded	attempt 1 watch=70ms
+397	1789135527113	1	1	succeeded	attempt 1 watch=131ms
+432	1789135527148	1	1	first-usable-output	
+432	1789135527148	1	1	chunk-verified	fetch=35ms
+443	1789135527158	1	-1	scope-pages	1 pages
+461	1789135527177	0	3	first-usable-output	
+461	1789135527177	0	3	chunk-verified	fetch=90ms
+461	1789135527177	1	-1	checkpoint	declared 1
+462	1789135527178	1	-1	complete	declared 1
+462	1789135527178	1	-1	commits	1 chunks
+467	1789135527182	0	0	succeeded	attempt 1 watch=166ms
+491	1789135527206	0	0	chunk-verified	fetch=24ms
+501	1789135527216	0	-1	scope-pages	1 pages
+532	1789135527248	0	-1	checkpoint	declared 2
+533	1789135527249	0	-1	complete	declared 2
+533	1789135527249	0	-1	commits	2 chunks
+543	1789135527258	1	-1	session-close	
+613	1789135527329	0	-1	session-close	
+121	1789135557779	2	-1	session-open	workload-c
+121	1789135557779	0	-1	session-open	workload-a
+122	1789135557780	1	-1	session-open	workload-b
+123	1789135557781	2	2	admitted	admit=1ms
+123	1789135557781	1	1	succeeded	attempt 1 watch=0ms
+123	1789135557781	0	3	succeeded	attempt 1 watch=1ms
+124	1789135557782	0	0	succeeded	attempt 1 watch=1ms
+124	1789135557782	1	-1	scope-pages	1 pages
+125	1789135557783	0	-1	scope-pages	1 pages
+125	1789135557783	1	-1	checkpoint	declared 1
+126	1789135557784	0	-1	checkpoint	declared 2
+126	1789135557784	1	-1	complete	declared 1
+126	1789135557784	1	-1	commits	1 chunks
+127	1789135557785	0	-1	complete	declared 2
+127	1789135557785	0	-1	commits	2 chunks
+212	1789135557870	0	-1	session-close	
+213	1789135557871	1	-1	session-close	
+473	1789135558132	2	2	succeeded	attempt 1 watch=350ms
+507	1789135558165	2	2	first-usable-output	
+507	1789135558165	2	2	chunk-verified	fetch=33ms
+517	1789135558175	2	-1	scope-pages	1 pages
+526	1789135558185	2	-1	checkpoint	declared 1
+527	1789135558185	2	-1	complete	declared 1
+527	1789135558185	2	-1	commits	1 chunks
+607	1789135558265	2	-1	session-close	
+0	1789135558274	-	-	final-verified	200000 bytes

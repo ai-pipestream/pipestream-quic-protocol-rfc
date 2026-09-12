@@ -1,0 +1,7 @@
+PKI ready in benchmarks/durable-transform/results/full-seed6/negative/swapped-order-ps-neg/work/pki (valid ~2 days, loopback only)
+INITIALIZED
+INITIALIZED
+INITIALIZED
+TEST-ONLY test-swap-inputs enabled: chunk 0 and 1 exchanged
+Error: INTEGRITY_ERROR: file does not match admission intent
+PS coordinator exit 1
