@@ -1,0 +1,43 @@
+95	1789135659611	2	-1	session-open	workload-c
+106	1789135659622	1	-1	session-open	workload-b
+117	1789135659633	0	-1	session-open	workload-a
+152	1789135659667	2	-1	declared	batch 0: 1 entities
+160	1789135659676	1	-1	declared	batch 0: 1 entities
+169	1789135659684	0	-1	declared	batch 0: 2 entities
+238	1789135659753	2	2	admitted	admit=85ms
+238	1789135659753	2	-1	consumer-stopped	admitted, holding fetch 5000 ms
+251	1789135659767	1	1	admitted	admit=90ms
+251	1789135659767	1	-1	consumer-stopped	admitted, holding fetch 5000 ms
+281	1789135659796	0	3	admitted	admit=111ms
+301	1789135659816	0	0	admitted	admit=131ms
+301	1789135659816	0	-1	consumer-stopped	admitted, holding fetch 5000 ms
+5240	1789135664755	2	-1	consumer-resumed	fetching after hold
+5252	1789135664768	1	-1	consumer-resumed	fetching after hold
+5302	1789135664817	0	-1	consumer-resumed	fetching after hold
+5439	1789135664954	1	1	succeeded	attempt 1 watch=186ms
+5502	1789135665017	2	2	succeeded	attempt 1 watch=262ms
+5597	1789135665112	0	3	succeeded	attempt 1 watch=294ms
+5846	1789135665361	0	0	succeeded	attempt 1 watch=543ms
+5917	1789135665432	1	1	first-usable-output	
+5917	1789135665432	1	1	chunk-verified	fetch=478ms
+5920	1789135665435	2	2	first-usable-output	
+5920	1789135665435	2	2	chunk-verified	fetch=418ms
+5991	1789135665507	1	-1	scope-pages	1 pages
+5994	1789135665510	2	-1	scope-pages	1 pages
+6158	1789135665673	1	-1	checkpoint	declared 1
+6159	1789135665675	1	-1	complete	declared 1
+6159	1789135665675	1	-1	commits	1 chunks
+6162	1789135665677	2	-1	checkpoint	declared 1
+6163	1789135665678	2	-1	complete	declared 1
+6163	1789135665678	2	-1	commits	1 chunks
+6164	1789135665680	0	3	first-usable-output	
+6164	1789135665680	0	3	chunk-verified	fetch=567ms
+6179	1789135665694	0	0	chunk-verified	fetch=332ms
+6189	1789135665704	0	-1	scope-pages	1 pages
+6199	1789135665714	0	-1	checkpoint	declared 2
+6200	1789135665715	0	-1	complete	declared 2
+6200	1789135665715	0	-1	commits	2 chunks
+6246	1789135665761	1	-1	session-close	
+6247	1789135665763	2	-1	session-close	
+6279	1789135665795	0	-1	session-close	
+0	1789135665802	-	-	final-verified	200000 bytes

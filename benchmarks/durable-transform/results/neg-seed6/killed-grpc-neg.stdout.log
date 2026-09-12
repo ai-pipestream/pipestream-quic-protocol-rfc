@@ -1,0 +1,3 @@
+PKI ready in benchmarks/durable-transform/results/neg-seed6/killed-grpc-neg/work/pki (valid ~2 days, loopback only)
+/work/worktrees/pipestream-muse/benchmarks/durable-transform/libexec-run-grpc.sh: line 62: 150632 Killed                     "$HERE/sample.sh" "$ART/grpc-sample.tsv" $PIDS
+metric sampler died mid-run

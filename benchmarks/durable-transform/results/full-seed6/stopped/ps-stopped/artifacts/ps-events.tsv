@@ -1,0 +1,13 @@
+106	1789135701613	0	-1	session-open	workload-a
+112	1789135701618	2	-1	session-open	workload-c
+117	1789135701623	1	-1	session-open	workload-b
+152	1789135701658	2	-1	declared	batch 0: 1 entities
+166	1789135701672	1	-1	declared	batch 0: 1 entities
+169	1789135701675	0	-1	declared	batch 0: 2 entities
+259	1789135701765	2	2	admitted	admit=106ms
+259	1789135701765	2	-1	consumer-stopped	admitted, not fetching
+265	1789135701771	1	1	admitted	admit=98ms
+265	1789135701771	1	-1	consumer-stopped	admitted, not fetching
+273	1789135701780	0	3	admitted	admit=104ms
+288	1789135701794	0	0	admitted	admit=118ms
+288	1789135701794	0	-1	consumer-stopped	admitted, not fetching

@@ -1,0 +1,6 @@
+cell: empty (SIZE=0, seed 6, base 85887911+C15)
+arms: ps-all-Rust, ps-mixed (Java worker c, jar 61ab64a3, JAVA_TOOL_OPTIONS=-Xms256m -Xmx2g), grpc
+order: warmups ps/mixed/grpc, then reps mirror-rotated (even ps,mixed,grpc / odd grpc,mixed,ps); see order.log
+result: PARTIAL. All 18 runs exit=1 on the runner first-usable-output gate, which cannot fire for a zero-chunk corpus (vacuous milestone).
+Every run records final-verified 0 bytes and a 0-byte final, byte-exact across all arms and reps. Application behavior correct; runner gate too strict for SIZE=0.
+state DBs/PKI excluded from archive (kept in /tmp/c4-empty run dirs); artifacts + stdout logs archived.

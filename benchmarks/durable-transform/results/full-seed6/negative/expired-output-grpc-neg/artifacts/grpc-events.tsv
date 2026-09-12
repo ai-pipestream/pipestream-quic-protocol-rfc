@@ -1,0 +1,7 @@
+23	1789135427037	2	-1	session-open	workload-c
+24	1789135427037	1	-1	session-open	workload-b
+24	1789135427037	0	-1	session-open	workload-a
+41	1789135427055	2	2	admitted	admit=18ms
+47	1789135427060	0	3	admitted	admit=23ms
+50	1789135427063	1	1	admitted	admit=26ms
+52	1789135427066	0	0	admitted	admit=28ms

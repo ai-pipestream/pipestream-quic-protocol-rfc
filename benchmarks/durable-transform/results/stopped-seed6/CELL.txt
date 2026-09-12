@@ -1,0 +1,30 @@
+cell: stopped consumer (seed 6, 200000 bytes, 4 chunks; runner run-stopped.sh).
+binaries: see ../stopped-seed6.bin.sha256.
+result: PASS. Per arm (ps, grpc): 5 positive twins PASS (pin holds), 5 delay
+runs PASS (5000 ms consumer hold after full admission, then resume,
+byte-exact), 5 stall-read probes recorded, 1 no-fetch gate demonstration.
+Stall interval framing: 5000 ms is ~100x past normal first-fetch latency
+(pos walls: ps ~1050-1500 ms total, grpc ~100 ms total) and far inside
+grpc output retention (default 1 h); the ps authority has no
+expiry/retention knob, so the hold is indefinite-safe there.
+delay runs: 4 admitted rows, consumer-stopped + consumer-resumed rows,
+first-usable-output + final-verified present, every ordinal verified
+exactly once (no loss, no duplication), finals equal the quick pin
+3cde15aae8059eb0d8cfbb62fa897bbf4df1e1dfd5e3de30a4784faa314ad192,
+and no refusal/backpressure rows (capacity charged during the hold and
+reconciled after: nothing refused, everything completed).
+walls (ms): ps pos 1204,1502,1395,1271,1050 / delay 6121,6210,6385,6215,6206;
+grpc pos 97,105,102,99,107 / delay 5513,5471,5354,5399,5101. The hold is
+fully exposed on both arms (delay wall ~= pos wall + 5000).
+stall probes (5000 ms hold of the first read on every chunk; 4
+stalled-read rows per run): BOTH peers show quiet patience -- no refusal,
+no error, connections survive, all finals pin-exact (see
+ps-stall-peer.txt, grpc-stall-peer.txt). The brief's expected per-stream
+LIMIT_EXCEEDED on the stalled read (§12.1) was NOT triggered by this
+harness at 5 s on either arm; that refusal path is not exercised here.
+no-fetch gate: 4 admitted, consumer-stopped, no completion rows; the
+coordinator refuses final assembly with the named reason
+("refusing final assembly", exit nonzero) instead of crashing on absent
+staged outputs. See ps-stopped/STOPPED.txt, grpc-stopped/STOPPED.txt.
+state DBs, key material, staging, worker logs excluded (reproducible from
+seed 6 + runner); artifacts + stdout logs + wall tables archived.

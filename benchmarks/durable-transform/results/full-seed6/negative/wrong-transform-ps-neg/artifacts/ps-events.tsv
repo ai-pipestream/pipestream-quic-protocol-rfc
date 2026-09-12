@@ -1,0 +1,13 @@
+126	1789135413776	1	-1	session-open	workload-b
+129	1789135413779	0	-1	session-open	workload-a
+132	1789135413782	2	-1	session-open	workload-c
+181	1789135413831	1	-1	declared	batch 0: 1 entities
+195	1789135413845	2	-1	declared	batch 0: 1 entities
+198	1789135413848	0	-1	declared	batch 0: 2 entities
+278	1789135413928	1	1	admitted	admit=96ms
+292	1789135413942	2	2	admitted	admit=95ms
+320	1789135413970	0	3	admitted	admit=121ms
+346	1789135413996	0	0	admitted	admit=147ms
+380	1789135414030	0	3	succeeded	attempt 1 watch=33ms
+405	1789135414055	1	1	succeeded	attempt 1 watch=126ms
+439	1789135414089	2	2	succeeded	attempt 1 watch=147ms

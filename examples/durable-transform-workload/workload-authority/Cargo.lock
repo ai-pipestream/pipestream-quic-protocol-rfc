@@ -1323,6 +1323,7 @@ dependencies = [
  "anyhow",
  "clap",
  "pipestream-quinn",
+ "rusqlite",
  "rustix",
  "rustls",
  "tokio",

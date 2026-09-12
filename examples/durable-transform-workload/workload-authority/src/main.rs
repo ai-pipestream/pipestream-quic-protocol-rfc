@@ -7,6 +7,7 @@
 //! It is not a plugin inside the shipped CLI's fixed registry.
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
+use rusqlite::OpenFlags;
 use pipestream_quic::{
     persistence::PhysicalLimits,
     v2::*,
@@ -40,9 +41,34 @@ const TRANSFORM_LABEL: &str = "transform/v2";
 
 /// Pure streaming transform over the admitted input. Chunk-relative offsets
 /// restart at zero per work item; restart re-execution yields identical bytes.
-struct Transform;
+/// `wrong` enables a TEST-ONLY fault (negative-control runs): bytes pass
+/// through untransformed so the coordinator oracle rejects them. Never set
+/// in measured cells; every use is recorded by run-negative.sh.
+/// TEST-ONLY one-shot kill predicate, unit-tested below: with arming
+/// `kill_after > 0`, the execution that completes the kill_after-th output
+/// install fires exactly once (counts start at 1).
+fn kill_now(installed: u64, kill_after: u64) -> bool {
+    kill_after > 0 && installed == kill_after
+}
+
+struct Transform {
+    wrong: bool,
+    delay_ms: u64,
+    /// TEST-ONLY: abort after the kill_after-th OUTPUT_INSTALLED (0 = off).
+    kill_after: u64,
+    installed: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
 impl Application for Transform {
     fn execute(&self, context: &mut WorkContext) -> std::result::Result<ApplicationOutcome, StoreError> {
+        // TEST-ONLY slow worker: burn time in small steps, renewing the
+        // lease each step so the delay never becomes a lease expiry.
+        let mut remaining = self.delay_ms;
+        while remaining > 0 {
+            let step = remaining.min(100);
+            std::thread::sleep(std::time::Duration::from_millis(step));
+            context.renew()?;
+            remaining -= step;
+        }
         let input = context.input_descriptor().clone();
         context.begin_output(input.length, input.content_type)?;
         let mut bytes = [0; 8192];
@@ -55,24 +81,48 @@ impl Application for Transform {
                 break;
             }
             for (i, &b) in bytes[..count].iter().enumerate() {
-                staged[i] = transform_byte(b, offset + i as u64);
+                staged[i] = if self.wrong {
+                    b
+                } else {
+                    transform_byte(b, offset + i as u64)
+                };
             }
             context.write_output(&staged[..count])?;
             offset += count as u64;
             context.renew()?;
         }
         context.finish_output()?;
+        // TEST-ONLY F3 hook: abort at the kill_after-th OUTPUT_INSTALLED
+        // boundary (fault F3's PUBLICATION_COMMITTED lives in framework
+        // code past execute()'s return, so this is the nearest app-visible
+        // prior commit; the restart re-executes purely). One-shot: the
+        // process dies here, and the restart runs without the flag.
+        let installed = self
+            .installed
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        if kill_now(installed, self.kill_after) {
+            eprintln!(
+                "TEST-ONLY test-kill-after-output-installed: aborting after output {installed}"
+            );
+            std::process::abort();
+        }
         Ok(ApplicationOutcome::Succeeded)
     }
 }
 
-fn registry() -> Result<Arc<Applications>> {
+fn registry(wrong: bool, delay_ms: u64, kill_after: u64) -> Result<Arc<Applications>> {
     let mut apps = Applications::default();
     apps.register(
         ApplicationLabel(TRANSFORM_LABEL.into()),
         vec![Mode(0)],
         RestartSafety::Pure,
-        Arc::new(Transform),
+        Arc::new(Transform {
+            wrong,
+            delay_ms,
+            kill_after,
+            installed: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }),
     )?;
     Ok(Arc::new(apps))
 }
@@ -203,6 +253,30 @@ struct Storage {
     payload_objects: u64,
     #[arg(long, default_value_t=8*1024*1024*1024)]
     payload_bytes: u64,
+    /// Physical SQLite database file cap in MiB. Funds record growth for
+    /// large corpora; defaults preserve historical behavior.
+    #[arg(long, default_value_t = 256)]
+    db_mib: u64,
+    /// Physical SQLite WAL file cap in MiB.
+    #[arg(long, default_value_t = 64)]
+    wal_mib: u64,
+}
+
+/// Physical file-length funding from CLI MiB caps. (256, 64) reproduces
+/// `PhysicalLimits::default()` exactly.
+fn physical_limits(db_mib: u64, wal_mib: u64) -> Result<PhysicalLimits> {
+    let limits = PhysicalLimits {
+        database_bytes: db_mib
+            .checked_mul(1 << 20)
+            .filter(|n| *n >= 65536 && *n <= (16 << 30) && *n % 65536 == 0)
+            .context("db-mib out of funded range")?,
+        wal_bytes: wal_mib
+            .checked_mul(1 << 20)
+            .filter(|n| *n >= 65536 && *n <= (16 << 30) && *n % 65536 == 0)
+            .context("wal-mib out of funded range")?,
+        ..PhysicalLimits::default()
+    };
+    Ok(limits)
 }
 
 impl Storage {
@@ -240,7 +314,7 @@ impl Storage {
             &self.state_db,
             IdentityLabel(self.authority.clone()),
             policy,
-            PhysicalLimits::default(),
+            physical_limits(self.db_mib, self.wal_mib)?,
             Arc::new(TrustedSystemClock),
             access,
         )?;
@@ -280,12 +354,50 @@ struct Network {
     ready_file: Option<PathBuf>,
     #[arg(long, default_value_t = 16*1024*1024)]
     object_limit: u64,
+    /// TEST-ONLY: pass admitted bytes through untransformed so the
+    /// coordinator oracle rejects them (negative-control runs).
+    #[arg(long, default_value_t = false)]
+    test_wrong_transform: bool,
+    /// TEST-ONLY: sleep this many ms per executed chunk while renewing the
+    /// lease (slow-worker arm). Must stay far below execution deadlines;
+    /// every use is recorded by run-slow.sh.
+    #[arg(long, default_value_t = 0)]
+    test_work_delay_ms: u64,
+    /// TEST-ONLY: abort the process after the Nth OUTPUT_INSTALLED commit
+    /// (boundary-armed fault F3; 0 = off). One-shot: the restart is
+    /// expected to run without this flag. Never set in measured cells;
+    /// every use is recorded by run-faults-boundary.sh.
+    #[arg(long, default_value_t = 0)]
+    test_kill_after_output_installed: u64,
+}
+
+/// Idle-IO anchor (C16f): the library opens one SQLite connection per
+/// operation and pools none, so every maintenance pass creates and deletes
+/// the -wal/-shm sidecars (~12 MB/s write_bytes, ~100% cancelled, idle).
+/// Holding one idle connection keeps the sidecars alive without touching
+/// protocol state: it is read-only and never opens a transaction, so it
+/// holds no locks and cannot block checkpoints or store operations.
+fn idle_anchor(state_db: &Path) -> Result<rusqlite::Connection> {
+    let anchor = rusqlite::Connection::open_with_flags(
+        state_db,
+        OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    let mode: String = anchor.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
+    if mode.to_uppercase() != "WAL" {
+        bail!("idle anchor requires WAL mode, found {mode}");
+    }
+    // Materialize the WAL-index shared memory once so later opens reuse it.
+    anchor.query_row("SELECT count(*) FROM sqlite_master", [], |row| {
+        row.get::<_, i64>(0)
+    })?;
+    Ok(anchor)
 }
 
 async fn serve(storage: Storage, network: Network) -> Result<()> {
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
     let (store, payloads, principals) = storage.open(false)?;
+    let _anchor = idle_anchor(&storage.state_db).context("idle IO anchor")?;
     let authentication = ClientAuthentication::new(
         IdentityLabel(storage.authority),
         roots(&network.client_ca)?,
@@ -300,11 +412,24 @@ async fn serve(storage: Storage, network: Network) -> Result<()> {
     let authority = Authority::new(store, payloads, 4)?;
     let mut options = Options::default();
     options.offer.object_limit = Number(network.object_limit);
+    if network.test_wrong_transform {
+        eprintln!("TEST-ONLY test-wrong-transform enabled: outputs will fail verification");
+    }
+    if network.test_work_delay_ms > 0 {
+        eprintln!(
+            "TEST-ONLY test-work-delay-ms enabled: {} ms per chunk",
+            network.test_work_delay_ms
+        );
+    }
     let server = Server::bind(
         network.bind,
         security,
         authority,
-        registry()?,
+        registry(
+            network.test_wrong_transform,
+            network.test_work_delay_ms,
+            network.test_kill_after_output_installed,
+        )?,
         authority::execution::ResultEndpoint::new(network.result_authority)?,
         options,
     )?;
@@ -358,5 +483,59 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::Serve { storage, network } => serve(storage, network).await,
+    }
+}
+
+#[cfg(test)]
+mod funding_tests {
+    use super::*;
+
+    #[test]
+    fn defaults_reproduce_historical_funding() {
+        assert_eq!(
+            physical_limits(256, 64).unwrap(),
+            PhysicalLimits::default()
+        );
+    }
+
+    #[test]
+    fn larger_funding_maps_mib_to_bytes() {
+        let limits = physical_limits(1024, 256).unwrap();
+        assert_eq!(limits.database_bytes, 1024 << 20);
+        assert_eq!(limits.wal_bytes, 256 << 20);
+        // Untouched lanes stay at default.
+        assert_eq!(
+            limits.journal_bytes,
+            PhysicalLimits::default().journal_bytes
+        );
+    }
+
+    #[test]
+    fn zero_and_overflow_funding_rejected() {
+        assert!(physical_limits(0, 64).is_err());
+        assert!(physical_limits(256, 0).is_err());
+        assert!(physical_limits(u64::MAX, 64).is_err());
+    }
+}
+
+#[cfg(test)]
+mod kill_hook_tests {
+    use super::*;
+
+    #[test]
+    fn disarmed_never_fires() {
+        for installed in [0, 1, 2, u64::MAX] {
+            assert!(!kill_now(installed, 0));
+        }
+    }
+
+    #[test]
+    fn fires_exactly_once_at_armed_count() {
+        assert!(!kill_now(0, 1));
+        assert!(kill_now(1, 1));
+        assert!(!kill_now(2, 1));
+        assert!(!kill_now(2, 3));
+        assert!(kill_now(3, 3));
+        assert!(!kill_now(4, 3));
     }
 }

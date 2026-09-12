@@ -1,0 +1,13 @@
+25	1789135411602	1	-1	session-open	workload-b
+25	1789135411602	0	-1	session-open	workload-a
+25	1789135411602	2	-1	session-open	workload-c
+42	1789135411619	0	3	admitted	admit=17ms
+48	1789135411625	2	2	admitted	admit=22ms
+51	1789135411627	1	1	admitted	admit=25ms
+59	1789135411636	0	0	admitted	admit=34ms
+73	1789135411650	2	2	first-usable-output	
+73	1789135411650	2	2	chunk-verified	fetch=25ms
+73	1789135411650	2	-1	commits	1 chunks
+73	1789135411650	2	-1	session-close	
+79	1789135411656	0	3	first-usable-output	
+79	1789135411656	0	3	chunk-verified	fetch=20ms

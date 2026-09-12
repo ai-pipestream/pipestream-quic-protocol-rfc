@@ -1,0 +1,9 @@
+binaries:
+680135d13a1b0ea13ef9788cd5851774410f88ddb0c8fe8cdf899428b2167e85  /work/worktrees/pipestream-muse/examples/durable-transform-workload/workload-authority/target/release/workload-authority
+6d72aa5b133ca36fca02e11cb39b06a1aa35e5dba0e6af7c79b194e3d88e1c95  /work/worktrees/pipestream-muse/examples/durable-transform-workload/workload-coordinator/target/release/workload-coordinator
+53bf47ea4cfa54044cd27649f3e0543965afe59f9a3037b24baf073c4719eee2  /work/worktrees/pipestream-muse/examples/durable-transform-grpc/target/release/grpc-worker
+add21d143ce551ded328b6d41ace9cbdc4ab00b6115e3b8f1ce0c7fc49dd0224  /work/worktrees/pipestream-muse/examples/durable-transform-grpc/target/release/grpc-coordinator
+toolchains:
+rustc 1.97.1 (8bab26f4f 2026-07-14)
+OpenSSL 3.5.5 27 Jan 2026 (Library: OpenSSL 3.5.5 27 Jan 2026)
+Linux krick 7.0.0-31-generic #31-Ubuntu SMP PREEMPT_DYNAMIC Sat Aug  1 04:26:38 UTC 2026 x86_64 GNU/Linux

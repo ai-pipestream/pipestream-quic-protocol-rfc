@@ -1,0 +1,61 @@
+308	1789135858771	0	-1	probe-arm-start	idle
+392	1789135858855	0	-1	probe-declared	probe-idle
+619	1789135859082	0	-1	probe-control-committed	probe-idle
+3629	1789135862092	0	-1	probe-alive	idle arm: stream alive after 3 s stall
+3629	1789135862092	0	-1	probe-stalled	idle arm: payload stopped, mixed control traffic continues
+4151	1789135862614	0	0	probe-traffic	scope-page declared=2
+4670	1789135863133	0	1	probe-traffic	watch state=5
+5175	1789135863638	0	2	probe-traffic	scope-page declared=2
+5680	1789135864143	0	3	probe-traffic	watch state=5
+6184	1789135864647	0	4	probe-traffic	scope-page declared=2
+6689	1789135865152	0	5	probe-traffic	watch state=5
+7194	1789135865656	0	6	probe-traffic	scope-page declared=2
+7697	1789135866160	0	7	probe-traffic	watch state=5
+8201	1789135866664	0	8	probe-traffic	scope-page declared=2
+8705	1789135867168	0	9	probe-traffic	watch state=5
+9210	1789135867673	0	10	probe-traffic	scope-page declared=2
+9713	1789135868176	0	11	probe-traffic	watch state=5
+10218	1789135868680	0	12	probe-traffic	scope-page declared=2
+10721	1789135869184	0	13	probe-traffic	watch state=5
+10721	1789135869184	0	-1	probe-deadline-observed	idle
+10721	1789135869184	0	-1	probe-stream-dead	idle: Error { code: Cancelled, detail: "client transport closed" } alive_at=3629ms dead_at=7091ms
+10722	1789135869185	0	-1	probe-session-survived	idle
+10813	1789135869276	0	-1	probe-pass	idle
+159	1789135870236	0	-1	probe-arm-start	lifetime
+187	1789135870265	0	-1	probe-declared	probe-lifetime
+249	1789135870327	0	-1	probe-control-committed	probe-lifetime
+2259	1789135872337	0	0	probe-progress	lifetime arm
+4261	1789135874339	0	1	probe-progress	lifetime arm
+6261	1789135876339	0	2	probe-progress	lifetime arm
+8262	1789135878340	0	3	probe-progress	lifetime arm
+10263	1789135880341	0	4	probe-progress	lifetime arm
+12265	1789135882342	0	5	probe-progress	lifetime arm
+14265	1789135884343	0	6	probe-progress	lifetime arm
+16267	1789135886345	0	7	probe-progress	lifetime arm
+18268	1789135888346	0	8	probe-progress	lifetime arm
+20269	1789135890347	0	9	probe-progress	lifetime arm
+22271	1789135892349	0	10	probe-progress	lifetime arm
+24272	1789135894349	0	11	probe-progress	lifetime arm
+26272	1789135896350	0	12	probe-progress	lifetime arm
+28273	1789135898351	0	13	probe-progress	lifetime arm
+30274	1789135900352	0	-1	probe-deadline-observed	lifetime
+30275	1789135900352	0	-1	probe-stream-dead	lifetime: Error { code: Cancelled, detail: "client transport closed" } alive_at=257ms dead_at=30017ms
+30288	1789135900366	0	-1	probe-session-survived	lifetime
+30378	1789135900456	0	-1	probe-pass	lifetime
+172	1789135901370	0	-1	probe-arm-start	complete
+200	1789135901397	0	-1	probe-declared	probe-complete
+263	1789135901460	0	-1	probe-control-committed	probe-complete
+1776	1789135902974	0	0	probe-progress	complete arm
+3277	1789135904475	0	1	probe-progress	complete arm
+4779	1789135905976	0	2	probe-progress	complete arm
+6280	1789135907477	0	3	probe-progress	complete arm
+6321	1789135907518	0	-1	probe-complete	committed operation [8a, 7b, 58, c7, f3, 24, 3e, 3f, bf, 0e, ce, 43, ea, 61, a0, 54]
+6460	1789135907657	0	-1	probe-pass	complete
+113	1789135908518	0	-1	probe-arm-start	cancel-neg
+143	1789135908548	0	-1	probe-declared	probe-cancel-neg
+207	1789135908612	0	-1	probe-control-committed	probe-cancel-neg
+3219	1789135911624	0	-1	probe-alive	cancel-neg arm: stream alive after 3 s stall
+8385	1789135916790	0	-1	probe-injected-shutdown	cancel-neg arm: session shut down mid-stall
+13386	1789135921792	0	-1	probe-stream-dead	cancel-neg: Error { code: Cancelled, detail: "client transport closed" } alive_at=3219ms dead_at=5001ms
+13387	1789135921792	0	-1	probe-cancel-rejected	unrelated cancellation correctly rejected
+13387	1789135921792	0	-1	probe-pass	cancel-neg

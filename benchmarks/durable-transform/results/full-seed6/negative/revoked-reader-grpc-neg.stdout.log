@@ -1,0 +1,3 @@
+PKI ready in benchmarks/durable-transform/results/full-seed6/negative/revoked-reader-grpc-neg/work/pki (valid ~2 days, loopback only)
+Error: submit ordinal 3: code: 'The request does not have valid authentication credentials', message: "UNAUTHORIZED"
+gRPC coordinator exit 1

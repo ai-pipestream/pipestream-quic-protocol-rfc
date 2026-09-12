@@ -1,0 +1,43 @@
+990	1789137551140	1	-1	session-open	workload-b
+1016	1789137551166	2	-1	session-open	workload-c
+1019	1789137551168	0	-1	session-open	workload-a
+1493	1789137551642	1	-1	declared	batch 0: 100 entities
+1558	1789137551708	2	-1	declared	batch 0: 100 entities
+1587	1789137551736	0	-1	declared	batch 0: 100 entities
+1958	1789137552107	1	-1	declared	batch 1: 100 entities
+2024	1789137552173	0	-1	declared	batch 1: 100 entities
+2095	1789137552245	2	-1	declared	batch 1: 100 entities
+2285	1789137552435	1	-1	declared	batch 2: 56 entities
+2489	1789137552638	0	-1	declared	batch 2: 56 entities
+2697	1789137552846	2	-1	declared	batch 2: 56 entities
+4436	1789137554585	0	12	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+4913	1789137555063	0	18	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+5823	1789137555972	0	45	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+5953	1789137556102	2	41	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+6390	1789137556539	0	42	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+6694	1789137556844	2	23	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+6871	1789137557021	1	19	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+6937	1789137557086	2	20	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+7199	1789137557348	1	16	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+7292	1789137557441	2	26	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+7558	1789137557707	0	9	admitted	admit=5068ms
+7682	1789137557832	1	4	admitted	admit=5396ms
+7682	1789137557832	2	29	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+7737	1789137557886	0	0	admitted	admit=5246ms
+7861	1789137558010	1	46	admitted	admit=5574ms
+7923	1789137558072	2	32	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8022	1789137558172	0	24	admitted	admit=5532ms
+8059	1789137558209	1	7	admitted	admit=5772ms
+8143	1789137558292	2	47	admitted	admit=5444ms
+8239	1789137558388	1	1	admitted	admit=5952ms
+8239	1789137558389	0	3	admitted	admit=5749ms
+8302	1789137558451	2	2	admitted	admit=5603ms
+8441	1789137558591	1	13	admitted	admit=6154ms
+8441	1789137558591	0	21	admitted	admit=5950ms
+8628	1789137558777	2	8	admitted	admit=5929ms
+8721	1789137558870	0	30	admitted	admit=6230ms
+8870	1789137559019	1	10	admitted	admit=6582ms
+9033	1789137559182	2	11	admitted	admit=6335ms
+9033	1789137559182	0	15	admitted	admit=6542ms
+9105	1789137559255	1	37	admitted	admit=6818ms
+9143	1789137559292	0	6	admit-fatal-send	Refused(Refusal { request: Input { stream: StreamId(14) }, code: InternalError, detail: Detail("authority storage operation failed") })

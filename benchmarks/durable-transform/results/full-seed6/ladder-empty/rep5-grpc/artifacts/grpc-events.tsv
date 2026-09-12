@@ -1,0 +1,10 @@
+22	1789133932682	2	-1	session-open	workload-c
+22	1789133932682	0	-1	session-open	workload-a
+22	1789133932682	2	-1	commits	0 chunks
+22	1789133932682	2	-1	session-close	
+22	1789133932682	0	-1	commits	0 chunks
+22	1789133932682	0	-1	session-close	
+22	1789133932682	1	-1	session-open	workload-b
+22	1789133932682	1	-1	commits	0 chunks
+22	1789133932682	1	-1	session-close	
+0	1789133932687	-	-	final-verified	0 bytes

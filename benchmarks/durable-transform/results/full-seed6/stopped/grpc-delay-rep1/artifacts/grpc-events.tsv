@@ -1,0 +1,27 @@
+25	1789135702918	0	-1	session-open	workload-a
+25	1789135702918	2	-1	session-open	workload-c
+25	1789135702918	1	-1	session-open	workload-b
+45	1789135702938	0	3	admitted	admit=20ms
+48	1789135702941	0	0	admitted	admit=22ms
+48	1789135702941	0	-1	consumer-stopped	admitted, holding fetch 5000 ms
+51	1789135702944	1	1	admitted	admit=25ms
+51	1789135702944	1	-1	consumer-stopped	admitted, holding fetch 5000 ms
+53	1789135702946	2	2	admitted	admit=28ms
+53	1789135702946	2	-1	consumer-stopped	admitted, holding fetch 5000 ms
+5049	1789135707942	0	-1	consumer-resumed	fetching after hold
+5051	1789135707944	1	-1	consumer-resumed	fetching after hold
+5055	1789135707948	2	-1	consumer-resumed	fetching after hold
+5389	1789135708282	2	2	first-usable-output	
+5389	1789135708282	2	2	chunk-verified	fetch=334ms
+5389	1789135708282	2	-1	commits	1 chunks
+5389	1789135708282	2	-1	session-close	
+5461	1789135708354	0	3	first-usable-output	
+5461	1789135708354	1	1	first-usable-output	
+5461	1789135708354	0	3	chunk-verified	fetch=412ms
+5461	1789135708354	1	1	chunk-verified	fetch=409ms
+5461	1789135708354	0	0	chunk-verified	fetch=412ms
+5461	1789135708354	1	-1	commits	1 chunks
+5461	1789135708354	1	-1	session-close	
+5461	1789135708354	0	-1	commits	2 chunks
+5461	1789135708354	0	-1	session-close	
+0	1789135708391	-	-	final-verified	200000 bytes

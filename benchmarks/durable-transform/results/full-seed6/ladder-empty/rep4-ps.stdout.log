@@ -1,0 +1,6 @@
+PKI ready in benchmarks/durable-transform/results/full-seed6/ladder-empty/rep4-ps/work/pki (valid ~2 days, loopback only)
+INITIALIZED
+INITIALIZED
+INITIALIZED
+coordinator short-lived (289 ms): coordinator sample rows optional
+PS arm done in 289 ms

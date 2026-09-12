@@ -1,0 +1,6 @@
+java-worker: c
+java-jar: benchmarks/durable-transform/results/full-seed6/pipeline/large48-jar-e1763b4a.jar
+restart-safety: Pure (Rust) / IDEMPOTENT (Java transform/v2)
+fixture-schedule-schema: kimi interface-v1 1452f60 (c566751a...)
+rust-phys-funding-mib: db=1024 wal=256
+java-phys-funding-mib: db=1024 wal=256

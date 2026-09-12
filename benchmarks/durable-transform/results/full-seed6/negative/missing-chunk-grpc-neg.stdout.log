@@ -1,0 +1,4 @@
+PKI ready in benchmarks/durable-transform/results/full-seed6/negative/missing-chunk-grpc-neg/work/pki (valid ~2 days, loopback only)
+TEST-ONLY test-drop-input enabled: chunk 2 will not be submitted
+Error: test-drop-input: chunk 2 missing, not submitted
+gRPC coordinator exit 1

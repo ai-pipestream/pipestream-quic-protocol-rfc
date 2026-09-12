@@ -1,0 +1,6 @@
+22	1789121883467	2	-1	session-open	workload-c
+22	1789121883467	0	-1	session-open	workload-a
+23	1789121883467	1	-1	session-open	workload-b
+36	1789121883480	0	0	admitted	
+40	1789121883485	2	2	admitted	
+43	1789121883487	1	1	admitted	

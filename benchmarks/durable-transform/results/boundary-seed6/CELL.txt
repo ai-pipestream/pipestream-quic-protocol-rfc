@@ -1,0 +1,29 @@
+cell: boundary-armed faults F3/F4, 5 repeats each (seed 6, 200000 bytes, 4 chunks;
+runner benchmarks/durable-transform/run-faults-boundary.sh; schedule fault-schedule-c16.tsv
+in interface-v1 / fault-schedule-v1 columns; F1/F2 time-armed demonstrations stand per brief).
+binaries: see ../boundary-seed6.bin.sha256 (Rust authority/coordinator release + Java jar 61ab64a3).
+result: PASS 15/15. Every rep: armed run dies at the boundary, restart on the same state dirs +
+coordinator --resume on the same journals (frozen operation identities), final byte-exact
+against the quick pin 3cde15aae8059eb0d8cfbb62fa897bbf4df1e1dfd5e3de30a4784faa314ad192.
+F3 (worker-c authority side, ps): FLAG-armed --test-kill-after-output-installed 1 aborts
+worker-c right after its first OUTPUT_INSTALLED commit. Framed honestly: the scheduled
+PUBLICATION_COMMITTED lives in framework code past execute()'s return and has no
+app-visible hook point; the hook fires at the nearest app-owned prior commit (see
+F3-BOUNDARY-NOTE.txt). The coordinator fail-fasts on the dead worker (no masking);
+recovery = worker restart + resume. Recovery kill-wall to final-verified (ms):
+rep1 1212, rep2 773, rep3 1052, rep4 880, rep5 547.
+F4 (coordinator RESULT_VERIFIED, ps): FLAG-armed --test-kill-after-first-verified, abort
+(SIGABRT, exit 134) at the first chunk-verified row, one-shot via staging sentinel.
+Recovery boundary-epoch to final-verified (ms): rep1 1786, rep2 1873, rep3 1786,
+rep4 1827, rep5 1892.
+F4 on mixed (coordinator side, Java worker c, jar 61ab64a3): same hook through
+run-mixed.sh. Recovery (ms): rep1 2256, rep2 2259, rep3 2117, rep4 2112, rep5 2104.
+F3 on mixed (Java authority side): UNAVAILABLE -- needs the neutral fixture adapter
+(FixtureMain, interface-v1), not reachable from the production launcher; see
+f3-mixed-UNAVAILABLE.txt. No run faked.
+No false completion: chunk 2 never shows succeeded before the F3 kill (checked per
+rep); oracle byte verification + pin hold on every resumed final. Runner serializes
+restarts with a worker-drain wait (libexec TERMs without waiting; documented in script).
+state DBs (*.sqlite*, object stores), key material, input staging, Java roots, and
+worker logs excluded (reproducible from seed 6 + runner); artifacts + stdout logs +
+RECOVERY tables archived.

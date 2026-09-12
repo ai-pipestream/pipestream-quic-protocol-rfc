@@ -1,0 +1,6 @@
+PKI ready in benchmarks/durable-transform/results/full-seed6/negative/killed-ps-neg/work/pki (valid ~2 days, loopback only)
+INITIALIZED
+INITIALIZED
+INITIALIZED
+/work/worktrees/pipestream-muse/benchmarks/durable-transform/libexec-run-ps.sh: line 90: 2413988 Killed                     SAMPLE_PIDFILE="$W/sampler-pids.txt" "$HERE/sample.sh" "$ART/ps-sample.tsv" $PIDS
+metric sampler died mid-run

@@ -1,0 +1,21 @@
+23	1789121895528	1	-1	session-open	workload-b
+24	1789121895528	0	-1	session-open	workload-a
+24	1789121895528	2	-1	session-open	workload-c
+36	1789121895541	1	1	admitted	
+41	1789121895546	0	0	admitted	
+49	1789121895554	2	2	admitted	
+54	1789121895559	1	1	first-usable-output	
+54	1789121895559	1	1	chunk-verified	
+54	1789121895559	1	-1	commits	1 chunks
+54	1789121895559	1	-1	session-close	
+64	1789121895569	0	0	first-usable-output	
+64	1789121895569	0	0	chunk-verified	
+72	1789121895577	2	2	first-usable-output	
+72	1789121895577	2	2	chunk-verified	
+72	1789121895577	2	-1	commits	1 chunks
+72	1789121895577	2	-1	session-close	
+77	1789121895582	0	3	admitted	
+88	1789121895593	0	3	chunk-verified	
+88	1789121895593	0	-1	commits	2 chunks
+88	1789121895593	0	-1	session-close	
+0	1789121895598	-	-	final-verified	200000 bytes

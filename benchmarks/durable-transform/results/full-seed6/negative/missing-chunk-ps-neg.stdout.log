@@ -1,0 +1,7 @@
+PKI ready in benchmarks/durable-transform/results/full-seed6/negative/missing-chunk-ps-neg/work/pki (valid ~2 days, loopback only)
+INITIALIZED
+INITIALIZED
+INITIALIZED
+TEST-ONLY test-drop-input enabled: chunk 2 removed
+Error: NOT_FOUND: client file operation failed
+PS coordinator exit 1

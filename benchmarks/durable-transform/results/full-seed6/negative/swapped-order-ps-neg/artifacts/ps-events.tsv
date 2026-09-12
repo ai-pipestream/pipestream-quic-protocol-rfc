@@ -1,0 +1,5 @@
+126	1789135410447	1	-1	session-open	workload-b
+129	1789135410450	0	-1	session-open	workload-a
+135	1789135410455	2	-1	session-open	workload-c
+201	1789135410521	0	-1	declared	batch 0: 2 entities
+201	1789135410522	0	0	admit-fatal-send	Protocol(Error { code: IntegrityError, detail: "file does not match admission intent" })

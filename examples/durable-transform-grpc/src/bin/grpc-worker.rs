@@ -50,6 +50,14 @@ struct Args {
     execution_ceiling_ms: u64,
     #[arg(long, default_value_t = 3600000)]
     output_retention_ms: u64,
+    /// TEST-ONLY: pass admitted bytes through untransformed so the
+    /// coordinator oracle rejects them (negative-control runs).
+    #[arg(long, default_value_t = false)]
+    test_wrong_transform: bool,
+    /// TEST-ONLY: sleep this many ms per executed chunk (slow-worker arm).
+    /// Must stay far below execution deadlines.
+    #[arg(long, default_value_t = 0)]
+    test_work_delay_ms: u64,
 }
 
 struct Worker {
@@ -60,6 +68,8 @@ struct Worker {
     object_dir: PathBuf,
     execution_ceiling_ms: u64,
     output_retention_ms: u64,
+    test_wrong_transform: bool,
+    test_work_delay_ms: u64,
 }
 
 fn owner_of_request<T>(request: &Request<T>, map: &Path) -> Result<String, Status> {
@@ -216,8 +226,19 @@ impl proto::transform_worker_server::TransformWorker for Svc {
             return Err(Status::data_loss("input hash mismatch"));
         }
         // Execute the shared deterministic transform (same code as measured).
+        // TEST-ONLY test_wrong_transform passes bytes through so the
+        // coordinator oracle rejects them (negative-control runs).
         let input = std::fs::read(&staging_path).map_err(|e| Status::internal(e.to_string()))?;
-        let output = transform_chunk(&input, 0);
+        // TEST-ONLY slow worker: burn time before committing. Must stay
+        // far below execution deadlines; named here and in run records.
+        if self.test_work_delay_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(self.test_work_delay_ms));
+        }
+        let output = if self.test_wrong_transform {
+            input.clone()
+        } else {
+            transform_chunk(&input, 0)
+        };
         let out_hash: [u8; 32] = Sha256::digest(&output).into();
         let out_path = self.object_dir.join(format!("out-{:06}-{}", id.ordinal, hex_id(&op)));
         std::fs::write(&out_path, &output).map_err(|e| Status::internal(e.to_string()))?;
@@ -511,7 +532,15 @@ async fn main() -> Result<()> {
         object_dir: args.object_dir.clone(),
         execution_ceiling_ms: args.execution_ceiling_ms,
         output_retention_ms: args.output_retention_ms,
+        test_wrong_transform: args.test_wrong_transform,
+        test_work_delay_ms: args.test_work_delay_ms,
     });
+    if args.test_wrong_transform {
+        eprintln!("TEST-ONLY test-wrong-transform enabled: outputs will fail verification");
+    }
+    if args.test_work_delay_ms > 0 {
+        eprintln!("TEST-ONLY test-work-delay-ms enabled: {} ms per chunk", args.test_work_delay_ms);
+    }
     let tls = ServerTlsConfig::new()
         .identity(Identity::from_pem(
             std::fs::read(&args.cert).context("read server cert")?,

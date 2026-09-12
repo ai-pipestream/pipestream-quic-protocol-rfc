@@ -1,0 +1,13 @@
+11	1789096788576	0	-1	session-open	workload-a
+11	1789096788577	2	-1	session-open	workload-c
+11	1789096788577	1	-1	session-open	workload-b
+11	1789096788577	2	-1	commits	0 chunks
+11	1789096788577	1	-1	commits	0 chunks
+11	1789096788577	2	-1	session-close	
+11	1789096788577	1	-1	session-close	
+12	1789096788578	0	0	admitted	
+14	1789096788579	0	0	first-usable-output	
+14	1789096788579	0	0	chunk-verified	
+14	1789096788579	0	-1	commits	1 chunks
+14	1789096788579	0	-1	session-close	
+0	1789096788580	-	-	final-verified	1000 bytes

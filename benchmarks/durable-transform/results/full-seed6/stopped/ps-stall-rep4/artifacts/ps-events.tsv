@@ -1,0 +1,41 @@
+116	1789135687874	2	-1	session-open	workload-c
+119	1789135687877	0	-1	session-open	workload-a
+122	1789135687879	1	-1	session-open	workload-b
+172	1789135687930	1	-1	declared	batch 0: 1 entities
+175	1789135687933	2	-1	declared	batch 0: 1 entities
+178	1789135687935	0	-1	declared	batch 0: 2 entities
+269	1789135688026	1	1	admitted	admit=96ms
+283	1789135688040	0	3	admitted	admit=104ms
+296	1789135688054	2	2	admitted	admit=120ms
+318	1789135688075	0	0	admitted	admit=139ms
+389	1789135688147	0	3	succeeded	attempt 1 watch=71ms
+400	1789135688158	1	1	succeeded	attempt 1 watch=131ms
+411	1789135688169	0	3	stalled-read	selected, holding first read 5000 ms
+422	1789135688180	1	1	stalled-read	selected, holding first read 5000 ms
+476	1789135688233	2	2	succeeded	attempt 1 watch=179ms
+487	1789135688244	2	2	stalled-read	selected, holding first read 5000 ms
+613	1789135688370	0	0	succeeded	attempt 1 watch=294ms
+628	1789135688385	0	0	stalled-read	selected, holding first read 5000 ms
+5670	1789135693427	0	3	first-usable-output	
+5670	1789135693428	0	3	chunk-verified	fetch=5280ms
+5705	1789135693463	2	2	first-usable-output	
+5705	1789135693463	2	2	chunk-verified	fetch=5229ms
+5765	1789135693522	1	1	first-usable-output	
+5765	1789135693522	1	1	chunk-verified	fetch=5364ms
+5891	1789135693648	0	0	chunk-verified	fetch=5278ms
+6017	1789135693774	1	-1	scope-pages	1 pages
+6049	1789135693806	2	-1	scope-pages	1 pages
+6153	1789135693910	0	-1	scope-pages	1 pages
+6184	1789135693941	1	-1	checkpoint	declared 1
+6185	1789135693943	1	-1	complete	declared 1
+6185	1789135693943	1	-1	commits	1 chunks
+6187	1789135693944	2	-1	checkpoint	declared 1
+6188	1789135693945	2	-1	complete	declared 1
+6188	1789135693945	2	-1	commits	1 chunks
+6190	1789135693947	0	-1	checkpoint	declared 2
+6191	1789135693948	0	-1	complete	declared 2
+6191	1789135693948	0	-1	commits	2 chunks
+6268	1789135694026	2	-1	session-close	
+6268	1789135694026	1	-1	session-close	
+6274	1789135694031	0	-1	session-close	
+0	1789135694038	-	-	final-verified	200000 bytes

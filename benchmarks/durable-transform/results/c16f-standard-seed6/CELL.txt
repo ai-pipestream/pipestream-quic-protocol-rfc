@@ -1,0 +1,19 @@
+cell: C16f standard metrics rerun (seed 6, 8 MiB, 128 chunks, pipelined mode; driver /tmp/c16f-standard.sh,
+one-off, not archived; runners benchmarks/durable-transform/{libexec-run-ps,libexec-run-grpc,run-mixed}.sh)
+one rep per arm (ps/grpc/mixed), no warmup (metrics run, not timing stats).
+binaries: see c16f.bin.sha256 (anchored workload-authority + workload-coordinator + grpc pair;
+authority rebuilt with the read-only idle anchor; rusqlite 0.40.2 direct edge, same version).
+standard jar/redigest pin re-verified (jar 61ab64a3, digest b3dd5e34...); mixed EXPECTED_SHA enforced.
+result: PASS 3/3 (ps 18475 ms, grpc 1535 ms, mixed 17063 ms;
+first-usable-output + final-verified + digest gates per rep; jstat 34 rows, zero JSTAT_GAP).
+sampler: extended sample.sh (threads, VmHWM, utime/stime, jstat -gc per tick for the Java worker;
+coordinators backgrounded into the sampled set with wait-propagated exit status).
+attempt history: first cell attempt failed honestly on the new sampler itself (set -- clobbered
+the PID list; fixed with indexed read + guarded fd listing) and is NOT archived; this archive
+is the clean re-run with coordinator sampling on all three arms.
+idle write_bytes probes (serving-but-uncontacted authority, /proc/pid/io, 1 s x 60):
+idle-before.tsv (unanchored binary): write_bytes ~12.0 MB/s, ~99.9% cancelled; idle-after.tsv
+(anchored binary): write_bytes 0/s, cancelled 0/s. See report.md performance section.
+state DBs, object stores, key material, staging, worker logs, rep work/ dirs excluded
+(reproducible from seed 6 + runners + pinned binaries); artifacts (events/sample/gc/net/
+run-record/bin.sha256/finals) + stdout logs + DONE + idle TSVs archived.

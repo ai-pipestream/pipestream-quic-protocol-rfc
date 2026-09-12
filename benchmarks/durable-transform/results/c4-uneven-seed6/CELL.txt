@@ -1,0 +1,6 @@
+cell: uneven (SIZE=100000, 2 chunks with partial tail, seed 6, base 85887911+C15)
+arms: ps-all-Rust, ps-mixed (Java worker c, jar 61ab64a3, JAVA_TOOL_OPTIONS=-Xms256m -Xmx2g), grpc
+order: warmups ps/mixed/grpc, then mirror-rotated reps; rep-5-grpc replacement run last; see order.log
+result: PASS with one visible failed run. rep-0-grpc exit=1 (missing metric samples for one worker on a ~1 s run; same 0.2 s-sampler infra flake as tiny cell). Replacement rep-5-grpc exit=0 (arm 17 ms).
+All 19 finals sha256 652837331fe96df99a99cb09ebe6898e87f1c0968047dd28aa49c619fdb8eb9d (100000 bytes), byte-exact across arms and reps; every event stream has first-usable-output + final-verified.
+state DBs/PKI excluded from archive (kept in /tmp/c4-uneven run dirs); artifacts + stdout logs archived.

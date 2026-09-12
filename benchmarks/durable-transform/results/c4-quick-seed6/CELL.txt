@@ -1,0 +1,6 @@
+cell: quick (SIZE=200000, 4 chunks with partial tail, seed 6, base 85887911+C15; parity with run-quick.sh seed-7 gate)
+arms: ps-all-Rust, ps-mixed (Java worker c, jar 61ab64a3, JAVA_TOOL_OPTIONS=-Xms256m -Xmx2g), grpc
+order: warmups ps/mixed/grpc, then mirror-rotated reps (even ps,mixed,grpc / odd grpc,mixed,ps); see order.log
+result: PASS, 18/18 exit=0, no failed runs.
+All 18 finals sha256 3cde15aae8059eb0d8cfbb62fa897bbf4df1e1dfd5e3de30a4784faa314ad192 (200000 bytes), byte-exact across arms and reps; every event stream has first-usable-output + final-verified.
+state DBs/PKI excluded from archive (kept in /tmp/c4-quick run dirs); artifacts + stdout logs archived.

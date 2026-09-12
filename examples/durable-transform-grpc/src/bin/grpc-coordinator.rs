@@ -71,6 +71,49 @@ struct Run {
     execution_ms: u64,
     #[arg(long, default_value_t = false)]
     resume: bool,
+    /// TEST-ONLY: swap two materialized input chunk files ("A:B") so the
+    /// run uploads them in swapped order (negative-control runs).
+    #[arg(long)]
+    test_swap_inputs: Option<String>,
+    /// TEST-ONLY: remove materialized input chunk N after generation so
+    /// the upload fails on a missing chunk (negative-control runs).
+    #[arg(long)]
+    test_drop_input: Option<u64>,
+    /// TEST-ONLY: admit all chunks then stop without fetching (stopped
+    /// consumer arm). Arrival rows exist, completion rows must not.
+    #[arg(long, default_value_t = false)]
+    test_no_fetch: bool,
+    /// TEST-ONLY: after admitting everything, hold the consumer still for
+    /// this many ms (stopped-consumer arm) before fetching. The stall
+    /// interval is logged; workers hold the results meanwhile.
+    #[arg(long, default_value_t = 0)]
+    test_fetch_delay_ms: u64,
+    /// TEST-ONLY: after the first stream message arrives, stall this many
+    /// ms mid-drain before reading on (stalled-read probe). Whatever the
+    /// peer does to the stalled stream is logged verbatim.
+    #[arg(long, default_value_t = 0)]
+    test_stall_read_ms: u64,
+    /// Admit and verify serially (one chunk at a time), reproducing the
+    /// pre-pipelining behavior and numbers. Default (off) pipelines both
+    /// phases up to --pending-limit. Same concurrency as the PipeStream
+    /// coordinator (fairness).
+    #[arg(long, default_value_t = false)]
+    serial: bool,
+    /// Coordinator-side cap on in-flight admissions/verifications per
+    /// worker task. Local concurrency cap, not a negotiated protocol
+    /// limit.
+    #[arg(long, default_value_t = 16)]
+    pending_limit: usize,
+}
+
+/// TEST-ONLY: parse an "A:B" ordinal pair with distinct ordinals.
+fn parse_swap_pair(spec: &str) -> Result<(u64, u64)> {
+    let (a, b) = spec.split_once(':').context("test-swap-inputs needs A:B")?;
+    let (a, b): (u64, u64) = (a.parse().context("bad swap A")?, b.parse().context("bad swap B")?);
+    if a == b {
+        bail!("test-swap-inputs needs distinct ordinals");
+    }
+    Ok((a, b))
 }
 
 type Client = proto::transform_worker_client::TransformWorkerClient<Channel>;
@@ -211,6 +254,8 @@ async fn fetch_output(
     op: [u8; 16],
     manifest: &proto::OutputManifest,
     staging: &Path,
+    stall_read_ms: u64,
+    log_ctx: (&Path, Instant, i64),
 ) -> Result<()> {
     let path = out_path(staging, ordinal);
     let mut stream = client
@@ -232,11 +277,34 @@ async fn fetch_output(
     let mut hasher = Sha256::new();
     let mut len: u64 = 0;
     let mut fin = false;
+    let mut first = true;
     while let Some(chunk) = stream
         .message()
         .await
         .map_err(|e| anyhow::anyhow!("stream ordinal {ordinal}: {e}"))?
     {
+        // TEST-ONLY stalled-read probe: the stream is open and the first
+        // message has arrived; hold the drain still, then read on.
+        // Whatever the peer does is logged verbatim (here and in any
+        // error the drain returns below).
+        if first {
+            first = false;
+            if stall_read_ms > 0 {
+                let (events, started, worker) = log_ctx;
+                log(
+                    events,
+                    started,
+                    worker,
+                    ordinal as i64,
+                    "stalled-read",
+                    &format!("stream open, holding drain {stall_read_ms} ms"),
+                );
+                eprintln!(
+                    "TEST-ONLY test-stall-read-ms: holding drain {stall_read_ms} ms"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(stall_read_ms)).await;
+            }
+        }
         file.write_all(&chunk.content)?;
         hasher.update(&chunk.content);
         len += chunk.content.len() as u64;
@@ -262,6 +330,126 @@ async fn fetch_output(
     Ok(())
 }
 
+/// Submit and admit one chunk (frozen submit identity). Shared by the
+/// serial and pipelined paths; the admit latency is recorded on the row.
+#[allow(clippy::too_many_arguments)]
+async fn grpc_admit_one(
+    client: &mut Client,
+    db: &std::sync::Arc<std::sync::Mutex<Connection>>,
+    authority: &str,
+    owner: &str,
+    generation: u64,
+    seed: u64,
+    worker: u64,
+    execution_ms: u64,
+    total: u64,
+    staging: &Path,
+    events: &Path,
+    started: Instant,
+    swap: Option<(u64, u64)>,
+    drop_input: Option<u64>,
+    resume: bool,
+    ordinal: u64,
+) -> Result<()> {
+    let t = Instant::now();
+    let op = operation_id(seed, worker, "submit", ordinal);
+    let expected = expected_chunk(seed, total, ordinal);
+    if drop_input == Some(ordinal) {
+        bail!("test-drop-input: chunk {ordinal} missing, not submitted");
+    }
+    let upload_ordinal = match swap {
+        Some((a, b)) if ordinal == a => b,
+        Some((a, b)) if ordinal == b => a,
+        _ => ordinal,
+    };
+    if resume {
+        if let Ok(bytes) = std::fs::read(out_path(staging, ordinal)) {
+            if bytes == expected {
+                return Ok(());
+            }
+        }
+    }
+    let known: Option<String> = db
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT state FROM operations WHERE op_id = ?1",
+            [op.as_slice()],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(anyhow::Error::from)?;
+    let input = generate_chunk(seed, upload_ordinal, chunk_len(total, ordinal));
+    if known.as_deref() != Some(COMMITTED) {
+        let reply = submit_chunk(
+            client, authority, owner, generation,
+            ordinal, op, &input, execution_ms,
+        )
+        .await?;
+        if reply.outcome != COMMITTED {
+            let looked = client
+                .lookup(tonic::Request::new(proto::LookupRequest {
+                    operation_id: hex_id(&op),
+                }))
+                .await
+                .map_err(|e| anyhow::anyhow!("lookup: {e}"))?
+                .into_inner();
+            if looked.outcome != COMMITTED {
+                bail!("chunk {ordinal} not committed: {}", looked.outcome);
+            }
+        }
+        db.lock().unwrap().execute(
+            "INSERT OR REPLACE INTO operations(op_id, params_digest, kind, state, attempt, committed_at_ms, detail)
+             VALUES(?1, ?2, 'submit', ?3, 1, ?4, '')",
+            rusqlite::params![op.as_slice(), reply.params_digest, COMMITTED, wall_ms() as i64],
+        )?;
+        log(events, started, worker as i64, ordinal as i64, "admitted", &format!("admit={}ms", t.elapsed().as_millis()));
+    }
+    Ok(())
+}
+
+/// Wait for one chunk's manifest, fetch, and oracle-verify it. Shared by
+/// the serial and pipelined paths; first_usable fires once per worker.
+#[allow(clippy::too_many_arguments)]
+async fn grpc_fetch_one(
+    client: &mut Client,
+    authority: &str,
+    owner: &str,
+    generation: u64,
+    seed: u64,
+    worker: u64,
+    execution_ms: u64,
+    total: u64,
+    staging: &Path,
+    events: &Path,
+    started: Instant,
+    stall_read_ms: u64,
+    first_usable: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ordinal: u64,
+) -> Result<()> {
+    let t = Instant::now();
+    let op = operation_id(seed, worker, "submit", ordinal);
+    let expected = expected_chunk(seed, total, ordinal);
+    let manifest = wait_manifest(
+        client, authority, owner, generation, ordinal, op,
+        wall_ms() + execution_ms + 30_000,
+    )
+    .await?;
+    if manifest.output_sha256.is_empty() {
+        bail!("empty manifest commitment");
+    }
+    fetch_output(client, authority, owner, generation, ordinal, op, &manifest, staging, stall_read_ms, (events, started, worker as i64)).await?;
+    let bytes = std::fs::read(out_path(staging, ordinal))?;
+    if bytes != expected {
+        bail!("chunk {ordinal} failed oracle byte verification");
+    }
+    if !first_usable.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        log(events, started, worker as i64, ordinal as i64, "first-usable-output", "");
+    }
+    log(events, started, worker as i64, ordinal as i64, "chunk-verified", &format!("fetch={}ms", t.elapsed().as_millis()));
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_worker(
     run: &Run,
@@ -279,74 +467,85 @@ async fn run_worker(
     let ordinals: Vec<u64> = (0..chunk_count(total))
         .filter(|o| o % 3 == worker)
         .collect();
-    let mut first_usable = false;
-    for &ordinal in &ordinals {
-        let op = operation_id(seed, worker, "submit", ordinal);
-        let expected = expected_chunk(seed, total, ordinal);
-        // Resume shortcut: byte-verified staged output.
-        if run.resume {
-            if let Ok(bytes) = std::fs::read(out_path(staging, ordinal)) {
-                if bytes == expected {
-                    continue;
+    let swap = run
+        .test_swap_inputs
+        .as_deref()
+        .map(parse_swap_pair)
+        .transpose()?;
+    let first_usable = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // Admit phase: pipelined by default (up to pending-limit in flight);
+    // --serial keeps the old one-at-a-time order.
+    if run.serial {
+        for &ordinal in &ordinals {
+            grpc_admit_one(&mut client, &db, authority, &run.owner, run.generation, seed, worker, run.execution_ms, total, staging, &run.events, started, swap, run.test_drop_input, run.resume, ordinal).await?;
+        }
+    } else {
+        let limit = run.pending_limit.max(1);
+        let mut set = tokio::task::JoinSet::new();
+        for &ordinal in &ordinals {
+            while set.len() >= limit {
+                if let Some(r) = set.join_next().await {
+                    r??;
                 }
             }
+            let mut c = client.clone();
+            let d = db.clone();
+            let auth = authority.to_string();
+            let own = run.owner.clone();
+            let ev = run.events.clone();
+            let st = staging.to_path_buf();
+            let (generation, ems, drop_in, res) = (run.generation, run.execution_ms, run.test_drop_input, run.resume);
+            set.spawn(async move {
+                grpc_admit_one(&mut c, &d, &auth, &own, generation, seed, worker, ems, total, &st, &ev, started, swap, drop_in, res, ordinal).await
+            });
         }
-        let known: Option<String> = db
-            .lock()
-            .unwrap()
-            .query_row(
-                "SELECT state FROM operations WHERE op_id = ?1",
-                [op.as_slice()],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(anyhow::Error::from)?;
-        let input = generate_chunk(seed, ordinal, chunk_len(total, ordinal));
-        if known.as_deref() != Some(COMMITTED) {
-            let reply = submit_chunk(
-                &mut client, authority, &run.owner, run.generation,
-                ordinal, op, &input, run.execution_ms,
-            )
-            .await?;
-            if reply.outcome != COMMITTED {
-                // Committed-but-unobserved ambiguity: resolve, never reinvent.
-                let looked = client
-                    .lookup(tonic::Request::new(proto::LookupRequest {
-                        operation_id: hex_id(&op),
-                    }))
-                    .await
-                    .map_err(|e| anyhow::anyhow!("lookup: {e}"))?
-                    .into_inner();
-                if looked.outcome != COMMITTED {
-                    bail!("chunk {ordinal} not committed: {}", looked.outcome);
-                }
-            }
-            db.lock().unwrap().execute(
-                "INSERT OR REPLACE INTO operations(op_id, params_digest, kind, state, attempt, committed_at_ms, detail)
-                 VALUES(?1, ?2, 'submit', ?3, 1, ?4, '')",
-                rusqlite::params![op.as_slice(), reply.params_digest, COMMITTED, wall_ms() as i64],
-            )?;
-            log(&run.events, started, worker as i64, ordinal as i64, "admitted", "");
+        while let Some(r) = set.join_next().await {
+            r??;
         }
-        let manifest = wait_manifest(
-            &mut client, authority, &run.owner, run.generation, ordinal, op,
-            wall_ms() + run.execution_ms + 30_000,
-        )
-        .await?;
-        if manifest.output_sha256.is_empty() {
-            bail!("empty manifest commitment");
-        }
-        fetch_output(&mut client, authority, &run.owner, run.generation, ordinal, op, &manifest, staging).await?;
-        let bytes = std::fs::read(out_path(staging, ordinal))?;
-        if bytes != expected {
-            bail!("chunk {ordinal} failed oracle byte verification");
-        }
-        if !first_usable {
-            first_usable = true;
-            log(&run.events, started, worker as i64, ordinal as i64, "first-usable-output", "");
-        }
-        log(&run.events, started, worker as i64, ordinal as i64, "chunk-verified", "");
     }
+        // Fetch phase over the same ordinals (admit phase above is
+        // complete for this worker). Skipped for stopped-consumer.
+        if run.test_no_fetch {
+            log(&run.events, started, worker as i64, -1, "consumer-stopped", "admitted, not fetching");
+        } else {
+        // TEST-ONLY stopped consumer: everything is admitted and the
+        // workers hold the results; hold still the stated interval
+        // (logged) before the first fetch, then complete normally.
+        if run.test_fetch_delay_ms > 0 {
+            log(&run.events, started, worker as i64, -1, "consumer-stopped", &format!("admitted, holding fetch {} ms", run.test_fetch_delay_ms));
+            eprintln!("TEST-ONLY test-fetch-delay-ms: admitted, holding fetch {} ms", run.test_fetch_delay_ms);
+            tokio::time::sleep(std::time::Duration::from_millis(run.test_fetch_delay_ms)).await;
+            log(&run.events, started, worker as i64, -1, "consumer-resumed", "fetching after hold");
+        }
+        if run.serial {
+            for &ordinal in &ordinals {
+                grpc_fetch_one(&mut client, authority, &run.owner, run.generation, seed, worker, run.execution_ms, total, staging, &run.events, started, run.test_stall_read_ms, &first_usable, ordinal).await?;
+            }
+        } else {
+            let limit = run.pending_limit.max(1);
+            let mut set = tokio::task::JoinSet::new();
+            for &ordinal in &ordinals {
+                while set.len() >= limit {
+                    if let Some(r) = set.join_next().await {
+                        r??;
+                    }
+                }
+                let mut c = client.clone();
+                let auth = authority.to_string();
+                let own = run.owner.clone();
+                let ev = run.events.clone();
+                let st = staging.to_path_buf();
+                let fu = first_usable.clone();
+                let (generation, ems, stall) = (run.generation, run.execution_ms, run.test_stall_read_ms);
+                set.spawn(async move {
+                    grpc_fetch_one(&mut c, &auth, &own, generation, seed, worker, ems, total, &st, &ev, started, stall, &fu, ordinal).await
+                });
+            }
+            while let Some(r) = set.join_next().await {
+                r??;
+            }
+        }
+        } // else (not stopped)
     // One SQLite txn commit per submitted chunk plus one output fsync each;
     // the count below is measured evidence for the fsync accounting.
     log(&run.events, started, worker as i64, -1, "commits", &format!("{} chunks", ordinals.len()));
@@ -379,6 +578,18 @@ async fn main() -> Result<()> {
         }
         std::fs::write(&path, &expected)?;
     }
+    if let Some(spec) = &run.test_swap_inputs {
+        // Validated here; applied per ordinal in run_worker, because this
+        // coordinator regenerates inputs from the oracle instead of
+        // uploading staging files (swapping files would be a no-op).
+        let (a, b) = parse_swap_pair(spec)?;
+        eprintln!("TEST-ONLY test-swap-inputs enabled: chunk {a} and {b} exchanged");
+    }
+    if let Some(n) = run.test_drop_input {
+        // Enforced per ordinal in run_worker (this coordinator uploads
+        // regenerated inputs, so removing a staging file would be a no-op).
+        eprintln!("TEST-ONLY test-drop-input enabled: chunk {n} will not be submitted");
+    }
     let workers = [
         (0u64, run.authority_a.clone(), run.endpoint_a.clone()),
         (1u64, run.authority_b.clone(), run.endpoint_b.clone()),
@@ -400,8 +611,9 @@ async fn main() -> Result<()> {
             key: run.tls.key.clone(),
             server_name: run.tls.server_name.clone(),
         };
-        let (seed, size, generation, execution_ms, resume) =
-            (run.seed, run.size, run.generation, run.execution_ms, run.resume);
+        let (seed, size, generation, execution_ms, resume, test_no_fetch, test_fetch_delay_ms, test_stall_read_ms) =
+            (run.seed, run.size, run.generation, run.execution_ms, run.resume, run.test_no_fetch, run.test_fetch_delay_ms, run.test_stall_read_ms);
+        let swap_inputs = run.test_swap_inputs.clone();
         handles.push(tokio::spawn(async move {
             let run = Run {
                 tls,
@@ -421,12 +633,25 @@ async fn main() -> Result<()> {
                 events,
                 execution_ms,
                 resume,
+                test_swap_inputs: swap_inputs.clone(),
+                test_drop_input: run.test_drop_input,
+                test_no_fetch,
+                test_fetch_delay_ms,
+                test_stall_read_ms,
+                serial: run.serial,
+                pending_limit: run.pending_limit,
             };
             run_worker(&run, db, worker, &authority, &endpoint, seed, size, &staging, started).await
         }));
     }
     for handle in handles {
         handle.await??;
+    }
+    // TEST-ONLY stopped consumer: arrivals exist but nothing was fetched;
+    // refuse final assembly with a named reason instead of crashing on
+    // absent staged outputs.
+    if run.test_no_fetch {
+        bail!("TEST-ONLY test-no-fetch: admitted without fetching; refusing final assembly");
     }
     // Ordered, fsynced final assembly behind the oracle digest gate.
     let tmp = run.output.with_extension("partial");
@@ -471,4 +696,18 @@ async fn main() -> Result<()> {
         .open(&run.events)?
         .write_all(line.as_bytes())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod swap_tests {
+    use super::*;
+
+    #[test]
+    fn parse_swap_pair_accepts_distinct_ordinals() {
+        assert_eq!(parse_swap_pair("0:1").unwrap(), (0, 1));
+        assert_eq!(parse_swap_pair("3:11").unwrap(), (3, 11));
+        assert!(parse_swap_pair("0:0").is_err());
+        assert!(parse_swap_pair("0").is_err());
+        assert!(parse_swap_pair("a:b").is_err());
+    }
 }

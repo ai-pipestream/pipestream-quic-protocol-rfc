@@ -1,0 +1,13 @@
+SLOW ps positive: PASS pin holds, wall 699ms, median chunk 172ms -> slow delay 1720ms on worker-c
+SLOW ps rep1: complete pin-exact, slow chunk 1964ms (delay 1720ms), exposed 1663ms hidden 57ms
+SLOW ps rep2: complete pin-exact, slow chunk 1968ms (delay 1720ms), exposed 1649ms hidden 71ms
+SLOW ps rep3: complete pin-exact, slow chunk 1966ms (delay 1720ms), exposed 1611ms hidden 109ms
+SLOW ps rep4: complete pin-exact, slow chunk 1949ms (delay 1720ms), exposed 1624ms hidden 96ms
+SLOW ps rep5: complete pin-exact, slow chunk 1956ms (delay 1720ms), exposed 1675ms hidden 45ms
+SLOW grpc positive: PASS pin holds, wall 101ms, median chunk 26ms -> slow delay 1000ms on worker-c
+SLOW grpc rep1: complete pin-exact, slow chunk 999ms (delay 1000ms), exposed 963ms hidden 37ms
+SLOW grpc rep2: complete pin-exact, slow chunk 1000ms (delay 1000ms), exposed 964ms hidden 36ms
+SLOW grpc rep3: complete pin-exact, slow chunk 992ms (delay 1000ms), exposed 962ms hidden 38ms
+SLOW grpc rep4: complete pin-exact, slow chunk 1001ms (delay 1000ms), exposed 965ms hidden 35ms
+SLOW grpc rep5: complete pin-exact, slow chunk 997ms (delay 1000ms), exposed 961ms hidden 39ms
+SLOW SUITE PASS

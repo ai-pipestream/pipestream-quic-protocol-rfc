@@ -1,0 +1,3 @@
+PKI ready in benchmarks/durable-transform/results/full-seed6/negative/wrong-transform-grpc-pos/work/pki (valid ~2 days, loopback only)
+coordinator short-lived (91 ms): coordinator sample rows optional
+gRPC arm done in 91 ms

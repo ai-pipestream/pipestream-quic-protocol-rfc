@@ -16,54 +16,98 @@ lo_before=$(awk -F: '/lo:/{split($2,f," "); print f[1]":"f[9]}' /proc/net/dev)
 
 PIDS=""
 SAMPLER=""
+COORD_PID=""
 cleanup() {
   [ -n "$SAMPLER" ] && kill "$SAMPLER" 2>/dev/null || true
   [ -n "$PIDS" ] && kill $PIDS 2>/dev/null || true
+  [ -n "$COORD_PID" ] && kill "$COORD_PID" 2>/dev/null || true
 }
 trap cleanup EXIT
+# TEST-ONLY negative-control plumbing. Defaults preserve measured behavior.
+WORKER_FAULT=()
+[ "${GRPC_TEST_WRONG_TRANSFORM:-0}" = 1 ] && WORKER_FAULT+=(--test-wrong-transform)
+[ -n "${GRPC_WORK_DELAY_MS:-}" ] && WORKER_FAULT+=(--test-work-delay-ms "$GRPC_WORK_DELAY_MS")
+WORKER_RETENTION=()
+[ -n "${GRPC_RETENTION_MS:-}" ] && WORKER_RETENTION+=(--output-retention-ms "$GRPC_RETENTION_MS")
 for i in 0 1 2; do
   w=$(printf '%s' abc | cut -c $((i + 1))); port=$((18443 + i))
+  # TEST-ONLY slow worker: per-chunk work delay lands on worker-c only.
+  DELAY_C=()
+  [ "$w" = c ] && [ -n "${GRPC_WORK_DELAY_C_MS:-}" ] \
+    && DELAY_C=(--test-work-delay-ms "$GRPC_WORK_DELAY_C_MS")
   "$GRPC_WORKER" --bind "127.0.0.1:$port" --cert "$W/pki/grpc-server-$w.pem" \
     --key "$W/pki/grpc-server-$w.key" --client-ca "$W/pki/grpc-ca.pem" \
     --principal-map "$W/pki/grpc-principals.tsv" --authority "workload-$w" \
     --db "$W/grpc-$w.sqlite" --object-dir "$W/grpc-$w.obj" \
+    "${WORKER_FAULT[@]}" "${WORKER_RETENTION[@]}" "${DELAY_C[@]}" \
     --ready-file "$W/grpc-$w.ready" > "$W/grpc-$w.log" 2>&1 &
   PIDS="$PIDS $!"
 done
+# C16f: the sampler starts before the ready-wait so short-lived workers
+# are caught by the t=0 burst; the coordinator (spawned later) joins via
+# the pidfile, re-read every pass. Coordinator rows required only when it
+# lived >= 1 s (see libexec-run-ps.sh).
+: > "$W/sampler-pids.txt"
+SAMPLE_PIDFILE="$W/sampler-pids.txt" "$HERE/sample.sh" "$ART/grpc-sample.tsv" $PIDS &
+SAMPLER=$!
 for i in 0 1 2; do
   w=$(printf '%s' abc | cut -c $((i + 1)))
   for _ in $(seq 1 100); do [ -f "$W/grpc-$w.ready" ] && break; sleep 0.1; done
   [ -f "$W/grpc-$w.ready" ] || { echo "worker $w did not start (see $W/grpc-$w.log)"; exit 1; }
 done
-"$HERE/sample.sh" "$ART/grpc-sample.tsv" $PIDS &
-SAMPLER=$!
 ms_now() { date +%s%N | cut -c1-13; }
 START_MS=$(ms_now)
+COORD_SWAP=()
+[ -n "${GRPC_SWAP_INPUTS:-}" ] && COORD_SWAP+=(--test-swap-inputs "$GRPC_SWAP_INPUTS")
+COORD_DROP=()
+[ -n "${GRPC_DROP_INPUT:-}" ] && COORD_DROP+=(--test-drop-input "$GRPC_DROP_INPUT")
+COORD_NOFETCH=()
+[ "${GRPC_NO_FETCH:-0}" = 1 ] && COORD_NOFETCH+=(--test-no-fetch)
+COORD_STOP=()
+[ -n "${GRPC_FETCH_DELAY_MS:-}" ] && COORD_STOP+=(--test-fetch-delay-ms "$GRPC_FETCH_DELAY_MS")
+[ -n "${GRPC_STALL_READ_MS:-}" ] && COORD_STOP+=(--test-stall-read-ms "$GRPC_STALL_READ_MS")
+[ "${GRPC_SERIAL:-0}" = 1 ] && COORD_STOP+=(--serial)
+[ -n "${GRPC_PENDING_LIMIT:-}" ] && COORD_STOP+=(--pending-limit "$GRPC_PENDING_LIMIT")
 "$GRPC_COORD" run --ca "$W/pki/grpc-ca.pem" --cert "$W/pki/grpc-client.pem" \
   --key "$W/pki/grpc-client.key" --owner workload --db "$W/grpc-coord.sqlite" \
   --endpoint-a https://127.0.0.1:18443 --endpoint-b https://127.0.0.1:18444 \
   --endpoint-c https://127.0.0.1:18445 \
   --seed "$SEED" --size "$SIZE" --staging "$W/grpc-staging" \
-  --output "$ART/grpc-final.bin" --events "$ART/grpc-events.tsv"
+  --output "$ART/grpc-final.bin" --events "$ART/grpc-events.tsv" \
+  "${COORD_SWAP[@]}" "${COORD_DROP[@]}" "${COORD_NOFETCH[@]}" "${COORD_STOP[@]}" &
+COORD_PID=$!
+echo "$COORD_PID" > "$W/sampler-pids.txt"
+COORD_RC=0
+wait "$COORD_PID" || COORD_RC=$?
 END_MS=$(ms_now)
+[ "$COORD_RC" -eq 0 ] || { echo "gRPC coordinator exit $COORD_RC"; exit "$COORD_RC"; }
 # Contract §6 negative controls: a dead metric collector or missing
 # per-worker samples fails the run instead of passing silently.
 check_samples() {
-  local f="$1"; shift
+  local f="$1" wall="$2" coord="$3"; shift 3
   kill -0 "$SAMPLER" 2>/dev/null || { echo "metric sampler died mid-run"; return 1; }
   [ -s "$f" ] || { echo "metric sample file empty: $f"; return 1; }
   local pid
   for pid in "$@"; do
     grep -q -m1 "[[:space:]]$pid[[:space:]]" "$f" || { echo "missing metric samples for worker $pid"; return 1; }
   done
+  if [ "$wall" -ge 1000 ]; then
+    grep -q -m1 "[[:space:]]$coord[[:space:]]" "$f" \
+      || { echo "missing metric samples for coordinator $coord"; return 1; }
+  else
+    echo "coordinator short-lived (${wall} ms): coordinator sample rows optional"
+  fi
 }
-check_samples "$ART/grpc-sample.tsv" $PIDS || exit 1
+check_samples "$ART/grpc-sample.tsv" "$((END_MS - START_MS))" "$COORD_PID" $PIDS || exit 1
 kill "$SAMPLER" 2>/dev/null || true
 kill $PIDS 2>/dev/null || true
 wait 2>/dev/null || true
 lo_after=$(awk -F: '/lo:/{split($2,f," "); print f[1]":"f[9]}' /proc/net/dev)
 echo -e "wall_ms=$((END_MS - START_MS))\nlo_rx_tx_before=$lo_before\nlo_rx_tx_after=$lo_after" > "$ART/grpc-net.txt"
 echo -e "restart-safety: Pure (deterministic re-execution, no external effects)\nfixture-schedule-schema: kimi interface-v1 1452f60 (c566751a...)" > "$ART/run-record.txt"
-grep -q "first-usable-output" "$ART/grpc-events.tsv" || { echo "gRPC: no first-usable"; exit 1; }
+# ALLOW_VACUOUS=1 (empty corpus): see libexec-run-ps.sh.
+if [ "${ALLOW_VACUOUS:-0}" != 1 ]; then
+  grep -q "first-usable-output" "$ART/grpc-events.tsv" || { echo "gRPC: no first-usable"; exit 1; }
+fi
 grep -q "final-verified" "$ART/grpc-events.tsv" || { echo "gRPC: no final-verified"; exit 1; }
 echo "gRPC arm done in $((END_MS - START_MS)) ms"

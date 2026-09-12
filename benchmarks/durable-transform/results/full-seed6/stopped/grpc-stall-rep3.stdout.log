@@ -1,0 +1,6 @@
+PKI ready in benchmarks/durable-transform/results/full-seed6/stopped/grpc-stall-rep3/work/pki (valid ~2 days, loopback only)
+TEST-ONLY test-stall-read-ms: holding drain 5000 ms
+TEST-ONLY test-stall-read-ms: holding drain 5000 ms
+TEST-ONLY test-stall-read-ms: holding drain 5000 ms
+TEST-ONLY test-stall-read-ms: holding drain 5000 ms
+gRPC arm done in 5390 ms

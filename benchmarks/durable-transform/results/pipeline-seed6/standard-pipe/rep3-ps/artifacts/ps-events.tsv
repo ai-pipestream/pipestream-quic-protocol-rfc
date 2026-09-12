@@ -1,0 +1,782 @@
+152	1789125881363	0	-1	session-open	workload-a
+154	1789125881366	1	-1	session-open	workload-b
+159	1789125881371	2	-1	session-open	workload-c
+225	1789125881437	0	-1	declared	batch 0: 43 entities
+228	1789125881440	2	-1	declared	batch 0: 42 entities
+234	1789125881445	1	-1	declared	batch 0: 43 entities
+474	1789125881685	0	21	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+518	1789125881729	1	46	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+705	1789125881917	1	40	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+710	1789125881922	0	27	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+737	1789125881949	1	1	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+740	1789125881951	0	42	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+816	1789125882028	1	34	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+846	1789125882057	1	19	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+859	1789125882070	0	0	admitted	admit=632ms
+880	1789125882092	2	8	admitted	admit=651ms
+888	1789125882100	1	13	admitted	admit=653ms
+891	1789125882103	0	9	admitted	admit=664ms
+914	1789125882126	2	26	admitted	admit=685ms
+926	1789125882138	1	4	admitted	admit=691ms
+926	1789125882138	0	18	admitted	admit=699ms
+939	1789125882151	2	47	admitted	admit=710ms
+955	1789125882167	1	28	admitted	admit=719ms
+961	1789125882172	0	6	admitted	admit=734ms
+977	1789125882189	1	10	admitted	admit=741ms
+977	1789125882189	2	29	admitted	admit=747ms
+990	1789125882202	0	15	admitted	admit=763ms
+1001	1789125882213	1	22	admitted	admit=765ms
+1004	1789125882215	2	38	admitted	admit=774ms
+1014	1789125882226	0	12	admitted	admit=787ms
+1028	1789125882239	2	11	admitted	admit=797ms
+1030	1789125882242	1	25	admitted	admit=793ms
+1043	1789125882255	0	30	admitted	admit=816ms
+1048	1789125882260	2	32	admitted	admit=818ms
+1051	1789125882263	1	37	admitted	admit=814ms
+1072	1789125882284	0	24	admitted	admit=845ms
+1077	1789125882288	2	2	admitted	admit=846ms
+1082	1789125882294	1	43	admitted	admit=845ms
+1086	1789125882298	1	40	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1087	1789125882298	1	1	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1087	1789125882298	1	34	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1087	1789125882299	1	19	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1103	1789125882315	0	33	admitted	admit=876ms
+1122	1789125882333	2	5	admitted	admit=891ms
+1138	1789125882350	0	45	admitted	admit=910ms
+1151	1789125882363	2	35	admitted	admit=920ms
+1154	1789125882366	1	52	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1177	1789125882389	0	36	admitted	admit=949ms
+1180	1789125882392	2	14	admitted	admit=949ms
+1208	1789125882420	0	3	admitted	admit=982ms
+1223	1789125882435	2	41	admitted	admit=992ms
+1261	1789125882472	0	48	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1266	1789125882478	2	44	admitted	admit=1035ms
+1290	1789125882501	2	17	admitted	admit=1058ms
+1292	1789125882504	1	64	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1295	1789125882507	0	51	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1330	1789125882542	2	23	admitted	admit=1098ms
+1333	1789125882545	1	67	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1367	1789125882578	2	20	admitted	admit=1134ms
+1401	1789125882613	1	7	admitted	admit=1166ms
+1441	1789125882653	1	46	admit-retried	succeeded after 1 refusals
+1441	1789125882653	1	46	admitted	admit=1205ms
+1485	1789125882697	1	49	admitted	admit=402ms
+1491	1789125882702	0	66	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1523	1789125882734	1	55	admitted	admit=439ms
+1539	1789125882750	0	69	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1539	1789125882751	2	56	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+1552	1789125882764	1	61	admitted	admit=468ms
+1555	1789125882767	0	72	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1587	1789125882798	1	16	admitted	admit=1351ms
+1597	1789125882809	0	75	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1631	1789125882842	1	70	admitted	admit=546ms
+1631	1789125882842	0	42	admit-retried	succeeded after 1 refusals
+1631	1789125882842	0	42	admitted	admit=1403ms
+1634	1789125882845	1	1	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1634	1789125882845	1	40	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1634	1789125882846	1	19	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1634	1789125882846	1	64	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1635	1789125882847	1	67	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1644	1789125882856	2	62	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+1657	1789125882868	2	65	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+1664	1789125882876	0	21	admit-retried	succeeded after 1 refusals
+1664	1789125882876	0	21	admitted	admit=1437ms
+1699	1789125882911	2	68	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+1703	1789125882915	0	78	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1706	1789125882918	1	76	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1722	1789125882934	2	71	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+1733	1789125882945	0	27	admit-retried	succeeded after 1 refusals
+1733	1789125882945	0	27	admitted	admit=1505ms
+1739	1789125882950	1	79	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1776	1789125882988	0	57	admitted	admit=637ms
+1807	1789125883019	0	81	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1810	1789125883021	0	48	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1810	1789125883022	0	51	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1811	1789125883022	0	66	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1811	1789125883023	0	69	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1811	1789125883023	0	72	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1811	1789125883023	0	75	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1812	1789125883023	0	78	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1813	1789125883024	1	85	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1842	1789125883053	0	84	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1847	1789125883059	2	86	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1847	1789125883059	1	58	admitted	admit=763ms
+1856	1789125883067	2	77	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+1864	1789125883075	0	87	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1887	1789125883098	0	90	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1917	1789125883129	0	93	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1918	1789125883130	0	81	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1949	1789125883161	1	73	admitted	admit=396ms
+1954	1789125883166	0	39	admitted	admit=1726ms
+1957	1789125883169	2	95	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1989	1789125883201	1	34	admit-retried	succeeded after 2 refusals
+1989	1789125883201	0	96	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1989	1789125883201	1	34	admitted	admit=1751ms
+1991	1789125883202	0	87	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1991	1789125883202	0	90	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+1992	1789125883203	2	50	admitted	admit=661ms
+2008	1789125883220	1	31	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2011	1789125883223	0	48	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2012	1789125883223	0	66	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2012	1789125883223	0	51	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2014	1789125883226	0	78	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2014	1789125883226	0	69	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2014	1789125883226	0	75	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2015	1789125883226	0	72	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2019	1789125883230	0	93	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2026	1789125883238	2	53	admitted	admit=659ms
+2029	1789125883240	1	82	admitted	admit=397ms
+2035	1789125883247	2	89	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2047	1789125883259	2	59	admitted	admit=679ms
+2058	1789125883269	1	52	admit-retried	succeeded after 1 refusals
+2058	1789125883270	1	52	admitted	admit=975ms
+2071	1789125883283	2	80	admitted	admit=702ms
+2079	1789125883291	1	88	admitted	admit=446ms
+2083	1789125883294	1	79	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2084	1789125883295	1	85	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2091	1789125883302	0	96	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2111	1789125883322	2	92	admitted	admit=741ms
+2114	1789125883326	2	65	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2115	1789125883326	2	68	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2115	1789125883326	2	71	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2115	1789125883327	2	86	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2116	1789125883327	2	77	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2116	1789125883328	1	94	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2116	1789125883328	2	95	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2117	1789125883328	1	1	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2117	1789125883329	1	40	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2117	1789125883329	1	19	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2120	1789125883332	0	81	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2158	1789125883369	1	97	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2163	1789125883374	2	98	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2183	1789125883395	0	63	admitted	admit=1005ms
+2189	1789125883400	2	101	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2189	1789125883400	1	100	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2203	1789125883414	1	76	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2230	1789125883442	2	56	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2247	1789125883458	1	106	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2255	1789125883466	0	60	admitted	admit=1076ms
+2256	1789125883467	0	87	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2256	1789125883468	0	93	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2294	1789125883506	0	102	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2295	1789125883506	0	96	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2299	1789125883511	1	109	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2299	1789125883511	2	110	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2301	1789125883512	1	31	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2301	1789125883513	1	94	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2302	1789125883513	1	97	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2302	1789125883513	1	79	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2302	1789125883513	1	85	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2302	1789125883514	1	100	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2313	1789125883524	1	103	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2321	1789125883532	2	107	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2323	1789125883534	2	62	admit-retried	succeeded after 1 refusals
+2323	1789125883534	2	62	admitted	admit=955ms
+2328	1789125883540	2	98	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2328	1789125883540	2	101	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2328	1789125883540	2	71	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2329	1789125883540	2	65	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2329	1789125883540	2	68	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2329	1789125883540	2	86	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2329	1789125883541	2	77	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2329	1789125883541	2	95	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2362	1789125883574	2	113	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2392	1789125883604	2	74	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2396	1789125883608	0	102	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2408	1789125883620	2	89	admit-retried	succeeded after 1 refusals
+2408	1789125883620	2	89	admitted	admit=1039ms
+2413	1789125883625	0	51	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2414	1789125883625	0	48	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2414	1789125883625	0	66	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2417	1789125883629	0	78	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2417	1789125883629	0	72	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2417	1789125883629	0	69	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2417	1789125883629	0	75	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2434	1789125883646	1	91	admitted	admit=801ms
+2436	1789125883648	1	76	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2436	1789125883648	1	103	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2449	1789125883660	2	107	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2449	1789125883661	2	56	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2463	1789125883674	1	112	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2464	1789125883676	2	113	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2474	1789125883685	2	110	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2482	1789125883693	2	116	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2502	1789125883714	1	31	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2503	1789125883715	1	97	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2503	1789125883715	1	94	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2504	1789125883716	1	100	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2514	1789125883726	1	106	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2522	1789125883734	0	81	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2530	1789125883741	1	109	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2531	1789125883742	2	98	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2539	1789125883751	2	74	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2565	1789125883776	0	54	admitted	admit=1426ms
+2598	1789125883810	0	102	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2623	1789125883834	2	83	admitted	admit=1254ms
+2625	1789125883837	1	112	admit-retried	succeeded after 1 refusals
+2625	1789125883837	1	112	admitted	admit=190ms
+2634	1789125883846	2	116	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2666	1789125883878	2	113	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2675	1789125883887	2	110	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2686	1789125883898	0	105	admitted	admit=120ms
+2687	1789125883899	0	93	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2703	1789125883915	1	85	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2704	1789125883915	1	79	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2716	1789125883928	1	106	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2724	1789125883935	1	67	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2725	1789125883937	0	108	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2726	1789125883937	0	96	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2733	1789125883945	2	95	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2733	1789125883945	2	77	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2734	1789125883945	2	86	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2734	1789125883945	2	71	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2734	1789125883945	2	65	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2734	1789125883946	2	68	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2741	1789125883952	2	74	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2742	1789125883954	2	101	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2747	1789125883959	1	115	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2770	1789125883982	0	87	admit-retried	succeeded after 3 refusals
+2770	1789125883982	0	87	admitted	admit=962ms
+2790	1789125884001	1	103	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2800	1789125884012	1	109	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2827	1789125884039	0	108	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2851	1789125884062	2	56	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2873	1789125884085	0	111	admitted	admit=102ms
+2906	1789125884117	1	94	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2906	1789125884117	1	97	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2906	1789125884118	1	100	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2918	1789125884130	1	1	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2919	1789125884130	1	40	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2919	1789125884130	1	19	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2933	1789125884144	2	98	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+2960	1789125884172	1	64	admit-retried	succeeded after 2 refusals
+2960	1789125884172	1	64	admitted	admit=1876ms
+2980	1789125884192	1	76	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+2995	1789125884207	0	114	admitted	admit=121ms
+3022	1789125884234	0	102	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3024	1789125884235	2	104	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3029	1789125884241	0	108	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3038	1789125884249	2	116	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3113	1789125884325	0	117	admitted	admit=117ms
+3122	1789125884333	2	110	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3126	1789125884337	1	67	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3132	1789125884344	2	113	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3144	1789125884356	2	101	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3185	1789125884397	0	84	admit-retried	succeeded after 1 refusals
+3185	1789125884397	0	84	admitted	admit=1377ms
+3194	1789125884406	2	104	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3198	1789125884410	1	106	admit-retried	succeeded after 3 refusals
+3198	1789125884410	1	106	admitted	admit=1117ms
+3232	1789125884444	1	121	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3232	1789125884444	1	109	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3243	1789125884455	2	74	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3248	1789125884460	1	103	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3251	1789125884462	0	120	admitted	admit=137ms
+3253	1789125884465	0	51	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3253	1789125884465	0	48	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3253	1789125884465	0	78	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3254	1789125884465	0	72	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3254	1789125884465	0	75	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3254	1789125884465	0	69	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3270	1789125884482	1	115	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3286	1789125884497	0	126	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3300	1789125884511	2	107	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3305	1789125884517	0	66	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3313	1789125884524	0	123	admitted	admit=126ms
+3361	1789125884573	0	81	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3396	1789125884607	1	121	admit-retried	succeeded after 1 refusals
+3396	1789125884607	1	121	admitted	admit=196ms
+3426	1789125884637	0	126	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3479	1789125884691	2	116	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3495	1789125884707	2	119	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3502	1789125884714	2	104	admit-retried	succeeded after 2 refusals
+3502	1789125884714	2	104	admitted	admit=1390ms
+3505	1789125884717	1	79	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3505	1789125884717	1	85	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3527	1789125884739	0	96	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3538	1789125884750	2	95	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3538	1789125884750	2	77	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3539	1789125884750	2	68	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3575	1789125884787	1	115	admit-retried	succeeded after 2 refusals
+3575	1789125884787	1	115	admitted	admit=949ms
+3583	1789125884795	0	93	admit-retried	succeeded after 4 refusals
+3583	1789125884795	0	93	admitted	admit=1774ms
+3598	1789125884809	2	119	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3618	1789125884829	1	31	admit-retried	succeeded after 3 refusals
+3618	1789125884829	1	31	admitted	admit=3381ms
+3624	1789125884835	2	86	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3636	1789125884848	2	65	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3678	1789125884889	0	126	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3681	1789125884893	1	127	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3687	1789125884898	0	99	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3694	1789125884906	1	124	admitted	admit=298ms
+3729	1789125884941	2	122	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3738	1789125884949	2	107	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3742	1789125884954	2	56	admit-retried	succeeded after 4 refusals
+3742	1789125884954	2	56	admitted	admit=2375ms
+3801	1789125885012	1	94	admit-retried	succeeded after 4 refusals
+3801	1789125885012	1	94	admitted	admit=1810ms
+3802	1789125885013	1	127	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3832	1789125885043	2	122	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3850	1789125885062	1	76	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3856	1789125885067	2	119	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3859	1789125885070	0	102	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3868	1789125885080	0	108	admit-retried	succeeded after 3 refusals
+3868	1789125885080	0	108	admitted	admit=1181ms
+3880	1789125885091	0	99	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3919	1789125885131	1	97	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+3934	1789125885146	2	113	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3946	1789125885157	2	101	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3997	1789125885208	1	67	admit-retried	succeeded after 4 refusals
+3997	1789125885208	1	67	admitted	admit=2912ms
+4029	1789125885241	2	125	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+4031	1789125885243	2	98	admit-retried	succeeded after 4 refusals
+4031	1789125885243	2	98	admitted	admit=1920ms
+4038	1789125885250	2	110	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+4050	1789125885261	1	103	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+4079	1789125885291	1	118	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+4118	1789125885329	2	74	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+4118	1789125885330	1	109	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+4126	1789125885337	2	122	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+4168	1789125885380	0	126	admit-retried	succeeded after 3 refusals
+4168	1789125885380	0	126	admitted	admit=916ms
+4193	1789125885405	1	127	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+4202	1789125885414	2	125	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+4226	1789125885437	1	118	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+4252	1789125885464	2	71	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+4265	1789125885476	0	99	admit-retried	succeeded after 2 refusals
+4265	1789125885476	0	99	admitted	admit=2081ms
+4343	1789125885555	2	119	admit-retried	succeeded after 3 refusals
+4343	1789125885555	2	119	admitted	admit=1720ms
+4471	1789125885683	2	125	admit-retried	succeeded after 2 refusals
+4471	1789125885683	2	125	admitted	admit=728ms
+4521	1789125885733	1	40	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+4570	1789125885781	1	118	admit-retried	succeeded after 2 refusals
+4570	1789125885781	1	118	admitted	admit=1608ms
+4588	1789125885799	0	90	admit-retried	succeeded after 2 refusals
+4588	1789125885799	0	90	admitted	admit=2779ms
+4594	1789125885805	1	19	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+4609	1789125885820	1	1	admit-retried	succeeded after 5 refusals
+4609	1789125885820	1	1	admitted	admit=4371ms
+4638	1789125885849	2	122	admit-retried	succeeded after 3 refusals
+4638	1789125885849	2	122	admitted	admit=1135ms
+4655	1789125885866	1	127	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+4741	1789125885953	1	100	admit-retried	succeeded after 4 refusals
+4741	1789125885953	1	100	admitted	admit=2661ms
+4858	1789125886069	0	69	admit-ceiling	LIMIT_EXCEEDED: client outgoing stream ceiling
+4858	1789125886070	0	78	admit-ceiling	LIMIT_EXCEEDED: client outgoing stream ceiling
+4907	1789125886119	0	66	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+4909	1789125886121	2	116	admit-retried	succeeded after 4 refusals
+4909	1789125886121	2	116	admitted	admit=2500ms
+4964	1789125886175	0	81	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+5033	1789125886245	0	72	admit-retried	succeeded after 5 refusals
+5033	1789125886245	0	72	admitted	admit=3854ms
+5153	1789125886365	2	107	admit-retried	succeeded after 4 refusals
+5154	1789125886365	2	107	admitted	admit=3040ms
+5168	1789125886380	0	51	admit-retried	succeeded after 5 refusals
+5169	1789125886380	0	51	admitted	admit=4064ms
+5221	1789125886433	1	79	admit-retried	succeeded after 5 refusals
+5221	1789125886433	1	79	admitted	admit=3590ms
+5238	1789125886450	2	65	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+5266	1789125886477	1	85	admit-retried	succeeded after 5 refusals
+5266	1789125886477	1	85	admitted	admit=3633ms
+5313	1789125886525	2	95	admit-retried	succeeded after 5 refusals
+5313	1789125886525	2	95	admitted	admit=3944ms
+5333	1789125886545	2	68	admit-retried	succeeded after 5 refusals
+5333	1789125886545	2	68	admitted	admit=3965ms
+5387	1789125886598	2	86	admit-retried	succeeded after 5 refusals
+5387	1789125886598	2	86	admitted	admit=4018ms
+5506	1789125886718	0	75	admit-retried	succeeded after 5 refusals
+5507	1789125886718	0	75	admitted	admit=4298ms
+5524	1789125886735	1	76	admit-retried	succeeded after 5 refusals
+5524	1789125886735	1	76	admitted	admit=3936ms
+5527	1789125886738	0	102	admit-retried	succeeded after 5 refusals
+5527	1789125886738	0	102	admitted	admit=3271ms
+5553	1789125886765	1	127	admit-retried	succeeded after 4 refusals
+5553	1789125886765	1	127	admitted	admit=1934ms
+5583	1789125886794	0	96	admit-retried	succeeded after 5 refusals
+5583	1789125886794	0	96	admitted	admit=3627ms
+5609	1789125886821	0	48	admit-retried	succeeded after 5 refusals
+5609	1789125886821	0	48	admitted	admit=4504ms
+5643	1789125886855	2	101	admit-refused	authority refusal LIMIT_EXCEEDED: aggregate admission capacity exhausted
+5645	1789125886857	2	113	admit-retried	succeeded after 5 refusals
+5645	1789125886857	2	113	admitted	admit=3319ms
+5732	1789125886944	1	103	admit-retried	succeeded after 5 refusals
+5732	1789125886944	1	103	admitted	admit=3651ms
+5751	1789125886963	2	110	admit-retried	succeeded after 5 refusals
+5751	1789125886963	2	110	admitted	admit=3637ms
+5806	1789125887018	1	109	admit-retried	succeeded after 5 refusals
+5806	1789125887018	1	109	admitted	admit=3724ms
+5838	1789125887050	2	74	admit-retried	succeeded after 5 refusals
+5838	1789125887050	2	74	admitted	admit=4469ms
+5954	1789125887165	2	71	admit-retried	succeeded after 5 refusals
+5954	1789125887165	2	71	admitted	admit=4585ms
+5971	1789125887183	1	97	admit-retried	succeeded after 5 refusals
+5971	1789125887183	1	97	admitted	admit=3891ms
+7096	1789125888307	2	77	admit-retried	succeeded after 5 refusals
+7096	1789125888307	2	77	admitted	admit=5727ms
+7775	1789125888986	1	40	admit-retried	succeeded after 6 refusals
+7775	1789125888986	1	40	admitted	admit=7537ms
+7905	1789125889117	1	19	admit-retried	succeeded after 6 refusals
+7905	1789125889117	1	19	admitted	admit=7667ms
+7905	1789125889117	1	10	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+7905	1789125889117	1	28	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+7906	1789125889117	1	40	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+7906	1789125889117	1	46	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+7906	1789125889117	1	43	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+7906	1789125889117	1	19	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+7906	1789125889117	1	31	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+7906	1789125889117	1	16	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+7906	1789125889117	1	22	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+7906	1789125889117	1	25	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+7906	1789125889117	1	7	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+7926	1789125889137	1	1	succeeded	attempt 1 watch=20ms
+7946	1789125889158	1	34	succeeded	attempt 1 watch=41ms
+7962	1789125889173	1	4	succeeded	attempt 1 watch=56ms
+7977	1789125889189	1	13	succeeded	attempt 1 watch=72ms
+7995	1789125889207	1	37	succeeded	attempt 1 watch=90ms
+8007	1789125889219	1	16	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8007	1789125889219	1	25	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8007	1789125889219	1	46	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8007	1789125889219	1	19	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8007	1789125889219	1	31	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8007	1789125889219	1	40	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8007	1789125889219	1	10	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8111	1789125889322	1	7	succeeded	attempt 1 watch=205ms
+8140	1789125889351	1	43	succeeded	attempt 1 watch=234ms
+8163	1789125889375	1	22	succeeded	attempt 1 watch=258ms
+8163	1789125889375	0	69	admit-retried	succeeded after 6 refusals
+8163	1789125889375	0	69	admitted	admit=6985ms
+8187	1789125889399	1	28	succeeded	attempt 1 watch=282ms
+8189	1789125889401	1	37	admit-refused	stalled read ordinal 37
+8190	1789125889402	0	66	admit-retried	succeeded after 6 refusals
+8190	1789125889402	0	66	admitted	admit=7012ms
+8209	1789125889420	1	19	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8209	1789125889420	1	31	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8209	1789125889421	1	40	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8242	1789125889454	1	34	first-usable-output	
+8242	1789125889454	1	34	chunk-verified	fetch=296ms
+8251	1789125889462	1	1	chunk-verified	fetch=325ms
+8271	1789125889482	1	13	chunk-verified	fetch=293ms
+8277	1789125889488	0	78	admit-retried	succeeded after 6 refusals
+8277	1789125889488	0	78	admitted	admit=7067ms
+8317	1789125889529	1	4	chunk-verified	fetch=355ms
+8326	1789125889538	1	10	succeeded	attempt 1 watch=421ms
+8347	1789125889558	1	16	succeeded	attempt 1 watch=441ms
+8364	1789125889576	0	81	admit-retried	succeeded after 6 refusals
+8364	1789125889576	0	81	admitted	admit=7153ms
+8365	1789125889576	0	36	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8365	1789125889576	0	15	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8365	1789125889576	0	6	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8365	1789125889576	0	12	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8365	1789125889576	0	0	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8365	1789125889576	0	33	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8365	1789125889576	0	39	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8365	1789125889576	0	42	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8365	1789125889576	0	18	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8365	1789125889576	0	21	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8365	1789125889577	0	27	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8376	1789125889587	1	25	succeeded	attempt 1 watch=470ms
+8399	1789125889610	0	3	succeeded	attempt 1 watch=34ms
+8401	1789125889613	1	46	succeeded	attempt 1 watch=496ms
+8419	1789125889631	0	24	succeeded	attempt 1 watch=54ms
+8425	1789125889637	1	49	succeeded	attempt 1 watch=182ms
+8451	1789125889663	0	30	succeeded	attempt 1 watch=87ms
+8454	1789125889666	1	52	succeeded	attempt 1 watch=203ms
+8460	1789125889672	1	7	chunk-verified	fetch=349ms
+8466	1789125889678	0	36	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8466	1789125889678	0	6	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8466	1789125889678	0	42	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8466	1789125889678	0	15	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8466	1789125889678	0	18	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8466	1789125889678	0	27	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8466	1789125889678	0	39	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8486	1789125889697	0	9	succeeded	attempt 1 watch=121ms
+8489	1789125889700	1	55	succeeded	attempt 1 watch=217ms
+8503	1789125889715	1	43	chunk-verified	fetch=363ms
+8517	1789125889729	1	58	succeeded	attempt 1 watch=199ms
+8523	1789125889734	1	22	chunk-verified	fetch=359ms
+8526	1789125889737	0	45	succeeded	attempt 1 watch=161ms
+8548	1789125889759	2	65	admit-retried	succeeded after 6 refusals
+8548	1789125889759	2	65	admitted	admit=7180ms
+8556	1789125889768	1	28	chunk-verified	fetch=368ms
+8633	1789125889845	0	21	succeeded	attempt 1 watch=268ms
+8665	1789125889876	0	33	succeeded	attempt 1 watch=300ms
+8668	1789125889879	0	27	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8668	1789125889879	0	18	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8668	1789125889879	0	42	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8691	1789125889902	0	12	succeeded	attempt 1 watch=326ms
+8722	1789125889933	0	0	succeeded	attempt 1 watch=357ms
+8740	1789125889951	1	61	succeeded	attempt 1 watch=279ms
+8795	1789125890006	0	3	first-usable-output	
+8795	1789125890006	0	3	chunk-verified	fetch=395ms
+8806	1789125890018	1	64	succeeded	attempt 1 watch=302ms
+8806	1789125890018	0	24	chunk-verified	fetch=386ms
+8820	1789125890032	1	37	chunk-verified	fetch=825ms
+8832	1789125890043	0	30	chunk-verified	fetch=380ms
+8857	1789125890069	0	6	succeeded	attempt 1 watch=492ms
+8866	1789125890077	1	67	succeeded	attempt 1 watch=342ms
+8880	1789125890092	0	39	succeeded	attempt 1 watch=516ms
+8898	1789125890109	1	70	succeeded	attempt 1 watch=341ms
+8913	1789125890124	0	15	succeeded	attempt 1 watch=548ms
+8913	1789125890124	1	10	chunk-verified	fetch=586ms
+8930	1789125890141	1	40	succeeded	attempt 1 watch=1024ms
+8935	1789125890147	1	16	chunk-verified	fetch=588ms
+8938	1789125890150	0	36	succeeded	attempt 1 watch=574ms
+8955	1789125890167	1	31	succeeded	attempt 1 watch=1050ms
+8958	1789125890170	2	101	admit-retried	succeeded after 6 refusals
+8958	1789125890170	2	101	admitted	admit=6846ms
+8959	1789125890170	2	2	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8959	1789125890170	2	38	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8959	1789125890170	2	20	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8959	1789125890170	2	41	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8959	1789125890170	2	23	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8959	1789125890170	2	35	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8959	1789125890170	2	29	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8959	1789125890170	2	8	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8959	1789125890170	2	14	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8959	1789125890171	2	17	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+8959	1789125890171	2	11	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+9004	1789125890215	1	19	succeeded	attempt 1 watch=1098ms
+9004	1789125890215	2	5	succeeded	attempt 1 watch=45ms
+9035	1789125890247	2	32	succeeded	attempt 1 watch=76ms
+9041	1789125890253	1	25	chunk-verified	fetch=665ms
+9047	1789125890258	0	48	succeeded	attempt 1 watch=252ms
+9056	1789125890267	0	9	chunk-verified	fetch=569ms
+9059	1789125890271	2	29	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+9060	1789125890271	2	2	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+9060	1789125890271	2	20	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+9060	1789125890271	2	38	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+9060	1789125890271	2	8	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+9060	1789125890272	2	11	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+9060	1789125890272	2	17	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+9075	1789125890287	1	73	succeeded	attempt 1 watch=254ms
+9075	1789125890287	2	44	succeeded	attempt 1 watch=116ms
+9081	1789125890293	1	46	chunk-verified	fetch=679ms
+9089	1789125890301	0	51	succeeded	attempt 1 watch=283ms
+9107	1789125890318	2	26	succeeded	attempt 1 watch=148ms
+9110	1789125890321	1	49	chunk-verified	fetch=684ms
+9172	1789125890383	0	54	succeeded	attempt 1 watch=339ms
+9172	1789125890383	0	45	chunk-verified	fetch=646ms
+9180	1789125890392	1	52	chunk-verified	fetch=726ms
+9191	1789125890403	2	47	succeeded	attempt 1 watch=233ms
+9194	1789125890406	1	58	chunk-verified	fetch=676ms
+9194	1789125890406	0	21	chunk-verified	fetch=561ms
+9212	1789125890423	0	33	chunk-verified	fetch=546ms
+9214	1789125890426	1	55	chunk-verified	fetch=725ms
+9261	1789125890473	2	20	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+9261	1789125890473	2	11	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+9261	1789125890473	2	17	admit-refused	authority refusal LIMIT_EXCEEDED: metadata concurrency exhausted
+9262	1789125890474	1	76	succeeded	attempt 1 watch=349ms
+9291	1789125890502	2	14	succeeded	attempt 1 watch=332ms
+9319	1789125890531	2	41	succeeded	attempt 1 watch=360ms
+9336	1789125890547	1	79	succeeded	attempt 1 watch=400ms
+9336	1789125890547	0	12	chunk-verified	fetch=645ms
+9350	1789125890562	2	23	succeeded	attempt 1 watch=391ms
+9353	1789125890565	0	0	chunk-verified	fetch=631ms
+9356	1789125890567	0	57	succeeded	attempt 1 watch=300ms
+9376	1789125890588	0	42	succeeded	attempt 1 watch=1012ms
+9376	1789125890588	2	35	succeeded	attempt 1 watch=418ms
+9415	1789125890627	0	18	succeeded	attempt 1 watch=1051ms
+9432	1789125890644	1	82	succeeded	attempt 1 watch=391ms
+9455	1789125890667	0	27	succeeded	attempt 1 watch=1090ms
+9458	1789125890669	1	61	chunk-verified	fetch=718ms
+9495	1789125890706	1	85	succeeded	attempt 1 watch=413ms
+9519	1789125890730	2	29	succeeded	attempt 1 watch=560ms
+9533	1789125890744	1	88	succeeded	attempt 1 watch=422ms
+9533	1789125890745	2	5	first-usable-output	
+9533	1789125890745	2	5	chunk-verified	fetch=529ms
+9553	1789125890764	2	38	succeeded	attempt 1 watch=594ms
+9559	1789125890770	0	60	succeeded	attempt 1 watch=386ms
+9561	1789125890773	1	91	succeeded	attempt 1 watch=381ms
+9561	1789125890773	2	32	chunk-verified	fetch=526ms
+9580	1789125890791	1	64	chunk-verified	fetch=773ms
+9585	1789125890797	2	2	succeeded	attempt 1 watch=627ms
+9591	1789125890803	1	94	succeeded	attempt 1 watch=397ms
+9594	1789125890806	0	63	succeeded	attempt 1 watch=399ms
+9625	1789125890837	2	8	succeeded	attempt 1 watch=666ms
+9631	1789125890842	1	97	succeeded	attempt 1 watch=416ms
+9634	1789125890845	0	66	succeeded	attempt 1 watch=421ms
+9635	1789125890847	0	48	admit-refused	stalled read ordinal 48
+9645	1789125890857	1	67	chunk-verified	fetch=779ms
+9662	1789125890873	0	69	succeeded	attempt 1 watch=325ms
+9673	1789125890884	1	70	chunk-verified	fetch=775ms
+9676	1789125890887	0	6	chunk-verified	fetch=818ms
+9682	1789125890893	0	72	succeeded	attempt 1 watch=328ms
+9702	1789125890913	1	40	chunk-verified	fetch=772ms
+9702	1789125890913	0	39	chunk-verified	fetch=821ms
+9722	1789125890934	0	15	chunk-verified	fetch=809ms
+9744	1789125890956	0	36	chunk-verified	fetch=806ms
+9747	1789125890959	1	31	chunk-verified	fetch=792ms
+9756	1789125890967	1	100	succeeded	attempt 1 watch=297ms
+9775	1789125890987	1	19	chunk-verified	fetch=771ms
+9787	1789125890998	1	73	chunk-verified	fetch=711ms
+9795	1789125891007	2	44	chunk-verified	fetch=720ms
+9810	1789125891021	2	50	succeeded	attempt 1 watch=276ms
+9821	1789125891033	2	26	chunk-verified	fetch=714ms
+9841	1789125891053	2	53	succeeded	attempt 1 watch=279ms
+9844	1789125891056	2	47	chunk-verified	fetch=652ms
+9853	1789125891065	0	51	chunk-verified	fetch=763ms
+9884	1789125891096	1	103	succeeded	attempt 1 watch=304ms
+9887	1789125891099	0	54	chunk-verified	fetch=715ms
+9962	1789125891173	2	20	succeeded	attempt 1 watch=1003ms
+9964	1789125891176	0	75	succeeded	attempt 1 watch=288ms
+9978	1789125891190	2	14	chunk-verified	fetch=687ms
+9990	1789125891201	2	17	succeeded	attempt 1 watch=1031ms
+9993	1789125891204	1	106	succeeded	attempt 1 watch=347ms
+10016	1789125891228	2	11	succeeded	attempt 1 watch=1057ms
+10019	1789125891231	0	78	succeeded	attempt 1 watch=317ms
+10031	1789125891242	1	109	succeeded	attempt 1 watch=357ms
+10039	1789125891251	1	76	chunk-verified	fetch=776ms
+10056	1789125891267	2	56	succeeded	attempt 1 watch=260ms
+10064	1789125891275	1	112	succeeded	attempt 1 watch=361ms
+10067	1789125891278	2	41	chunk-verified	fetch=747ms
+10072	1789125891284	0	81	succeeded	attempt 1 watch=349ms
+10086	1789125891298	0	57	chunk-verified	fetch=730ms
+10092	1789125891304	2	23	chunk-verified	fetch=742ms
+10114	1789125891325	1	115	succeeded	attempt 1 watch=366ms
+10125	1789125891337	0	84	succeeded	attempt 1 watch=380ms
+10130	1789125891342	1	79	chunk-verified	fetch=794ms
+10130	1789125891342	2	35	chunk-verified	fetch=754ms
+10139	1789125891351	2	29	chunk-verified	fetch=620ms
+10145	1789125891357	1	82	chunk-verified	fetch=712ms
+10154	1789125891365	2	59	succeeded	attempt 1 watch=332ms
+10157	1789125891368	0	87	succeeded	attempt 1 watch=303ms
+10171	1789125891383	0	42	chunk-verified	fetch=794ms
+10191	1789125891403	2	62	succeeded	attempt 1 watch=346ms
+10191	1789125891403	0	90	succeeded	attempt 1 watch=303ms
+10192	1789125891404	0	69	admit-refused	stalled read ordinal 69
+10194	1789125891406	1	118	succeeded	attempt 1 watch=418ms
+10194	1789125891406	0	63	chunk-verified	fetch=600ms
+10222	1789125891434	0	18	chunk-verified	fetch=806ms
+10233	1789125891445	1	85	chunk-verified	fetch=738ms
+10233	1789125891445	0	66	chunk-verified	fetch=599ms
+10236	1789125891448	1	121	succeeded	attempt 1 watch=449ms
+10261	1789125891473	0	27	chunk-verified	fetch=806ms
+10267	1789125891478	2	38	chunk-verified	fetch=713ms
+10273	1789125891484	2	65	succeeded	attempt 1 watch=294ms
+10294	1789125891505	2	8	chunk-verified	fetch=668ms
+10299	1789125891511	0	72	chunk-verified	fetch=617ms
+10299	1789125891511	1	88	chunk-verified	fetch=766ms
+10320	1789125891531	2	2	chunk-verified	fetch=734ms
+10320	1789125891531	1	94	chunk-verified	fetch=728ms
+10331	1789125891542	0	48	chunk-verified	fetch=1284ms
+10337	1789125891548	1	91	chunk-verified	fetch=775ms
+10356	1789125891568	1	97	chunk-verified	fetch=725ms
+10365	1789125891576	0	93	succeeded	attempt 1 watch=278ms
+10378	1789125891590	0	60	chunk-verified	fetch=819ms
+10410	1789125891622	2	68	succeeded	attempt 1 watch=343ms
+10424	1789125891636	1	124	succeeded	attempt 1 watch=385ms
+10438	1789125891650	2	71	succeeded	attempt 1 watch=346ms
+10462	1789125891673	0	96	succeeded	attempt 1 watch=290ms
+10481	1789125891693	2	74	succeeded	attempt 1 watch=350ms
+10487	1789125891699	1	127	succeeded	attempt 1 watch=356ms
+10487	1789125891699	2	50	chunk-verified	fetch=677ms
+10532	1789125891744	1	100	chunk-verified	fetch=776ms
+10543	1789125891755	2	77	succeeded	attempt 1 watch=404ms
+10546	1789125891758	0	99	succeeded	attempt 1 watch=351ms
+10576	1789125891788	1	115	admit-refused	stalled read ordinal 115
+10581	1789125891792	0	102	succeeded	attempt 1 watch=358ms
+10597	1789125891809	2	80	succeeded	attempt 1 watch=330ms
+10603	1789125891815	1	103	chunk-verified	fetch=718ms
+10613	1789125891824	2	53	chunk-verified	fetch=771ms
+10621	1789125891833	1	124	admit-refused	stalled read ordinal 124
+10621	1789125891833	1	127	admit-refused	stalled read ordinal 127
+10623	1789125891835	0	105	succeeded	attempt 1 watch=389ms
+10635	1789125891846	1	106	chunk-verified	fetch=641ms
+10641	1789125891853	1	112	chunk-verified	fetch=577ms
+10641	1789125891853	2	20	chunk-verified	fetch=679ms
+10655	1789125891867	1	118	chunk-verified	fetch=460ms
+10668	1789125891880	0	108	succeeded	attempt 1 watch=406ms
+10671	1789125891883	0	75	chunk-verified	fetch=706ms
+10676	1789125891888	2	83	succeeded	attempt 1 watch=382ms
+10683	1789125891894	1	121	chunk-verified	fetch=446ms
+10709	1789125891921	0	111	succeeded	attempt 1 watch=409ms
+10709	1789125891921	2	86	succeeded	attempt 1 watch=389ms
+10715	1789125891926	1	115	chunk-verified	fetch=601ms
+10723	1789125891935	0	78	chunk-verified	fetch=704ms
+10740	1789125891951	0	114	succeeded	attempt 1 watch=408ms
+10753	1789125891965	2	17	chunk-verified	fetch=763ms
+10753	1789125891965	0	81	chunk-verified	fetch=681ms
+10762	1789125891973	1	124	chunk-verified	fetch=337ms
+10771	1789125891982	2	11	chunk-verified	fetch=754ms
+10785	1789125891996	1	127	chunk-verified	fetch=297ms
+10801	1789125892013	0	117	succeeded	attempt 1 watch=423ms
+10804	1789125892016	2	56	chunk-verified	fetch=748ms
+10837	1789125892049	1	109	chunk-verified	fetch=806ms
+10857	1789125892069	0	84	chunk-verified	fetch=731ms
+10868	1789125892080	2	89	succeeded	attempt 1 watch=380ms
+10871	1789125892083	0	90	chunk-verified	fetch=679ms
+10880	1789125892091	1	-1	scope-pages	1 pages
+10903	1789125892114	0	87	chunk-verified	fetch=745ms
+10925	1789125892137	2	59	chunk-verified	fetch=771ms
+10931	1789125892143	1	-1	checkpoint	declared 43
+10937	1789125892149	2	62	chunk-verified	fetch=745ms
+10940	1789125892151	1	-1	complete	declared 43
+10940	1789125892151	1	-1	commits	43 chunks
+10968	1789125892179	2	92	succeeded	attempt 1 watch=355ms
+10976	1789125892188	0	120	succeeded	attempt 1 watch=304ms
+11001	1789125892212	0	69	chunk-verified	fetch=1338ms
+11003	1789125892215	2	95	succeeded	attempt 1 watch=362ms
+11019	1789125892231	1	-1	session-close	
+11047	1789125892259	2	65	chunk-verified	fetch=774ms
+11056	1789125892267	0	123	succeeded	attempt 1 watch=332ms
+11076	1789125892287	2	98	succeeded	attempt 1 watch=322ms
+11096	1789125892307	2	68	chunk-verified	fetch=685ms
+11104	1789125892316	2	101	succeeded	attempt 1 watch=333ms
+11107	1789125892318	0	126	succeeded	attempt 1 watch=353ms
+11143	1789125892354	2	104	succeeded	attempt 1 watch=338ms
+11147	1789125892358	0	105	admit-refused	stalled read ordinal 105
+11162	1789125892374	0	93	chunk-verified	fetch=797ms
+11173	1789125892385	2	71	chunk-verified	fetch=734ms
+11182	1789125892393	0	96	chunk-verified	fetch=720ms
+11208	1789125892419	0	99	chunk-verified	fetch=661ms
+11211	1789125892422	2	107	succeeded	attempt 1 watch=285ms
+11211	1789125892422	2	74	chunk-verified	fetch=729ms
+11222	1789125892434	0	108	chunk-verified	fetch=553ms
+11225	1789125892436	2	77	chunk-verified	fetch=681ms
+11247	1789125892458	2	110	succeeded	attempt 1 watch=309ms
+11247	1789125892458	2	80	chunk-verified	fetch=649ms
+11250	1789125892462	0	123	admit-refused	stalled read ordinal 123
+11251	1789125892463	0	105	admit-refused	stalled read ordinal 105
+11252	1789125892464	0	111	chunk-verified	fetch=542ms
+11265	1789125892477	0	114	chunk-verified	fetch=525ms
+11282	1789125892493	0	117	chunk-verified	fetch=480ms
+11327	1789125892539	0	120	chunk-verified	fetch=351ms
+11344	1789125892556	0	126	chunk-verified	fetch=237ms
+11353	1789125892564	2	113	succeeded	attempt 1 watch=305ms
+11361	1789125892573	0	102	chunk-verified	fetch=780ms
+11367	1789125892579	2	83	chunk-verified	fetch=690ms
+11376	1789125892587	2	86	chunk-verified	fetch=666ms
+11387	1789125892599	0	123	chunk-verified	fetch=331ms
+11390	1789125892601	2	116	succeeded	attempt 1 watch=294ms
+11428	1789125892640	2	119	succeeded	attempt 1 watch=254ms
+11471	1789125892683	2	89	chunk-verified	fetch=603ms
+11474	1789125892686	2	122	succeeded	attempt 1 watch=263ms
+11526	1789125892738	2	125	succeeded	attempt 1 watch=301ms
+11529	1789125892741	0	105	chunk-verified	fetch=906ms
+11552	1789125892764	0	-1	scope-pages	1 pages
+11584	1789125892796	2	92	chunk-verified	fetch=616ms
+11590	1789125892801	0	-1	checkpoint	declared 43
+11598	1789125892810	0	-1	complete	declared 43
+11598	1789125892810	0	-1	commits	43 chunks
+11600	1789125892812	2	95	chunk-verified	fetch=597ms
+11616	1789125892827	2	98	chunk-verified	fetch=540ms
+11624	1789125892835	2	101	chunk-verified	fetch=519ms
+11645	1789125892856	2	104	chunk-verified	fetch=501ms
+11653	1789125892864	2	107	chunk-verified	fetch=442ms
+11663	1789125892875	2	122	admit-refused	stalled read ordinal 122
+11663	1789125892875	2	125	admit-refused	stalled read ordinal 125
+11677	1789125892889	0	-1	session-close	
+11687	1789125892898	2	110	chunk-verified	fetch=440ms
+11713	1789125892925	2	116	chunk-verified	fetch=323ms
+11721	1789125892933	2	113	chunk-verified	fetch=368ms
+11738	1789125892950	2	119	chunk-verified	fetch=310ms
+11792	1789125893003	2	125	chunk-verified	fetch=265ms
+11802	1789125893014	2	122	chunk-verified	fetch=328ms
+11822	1789125893034	2	-1	scope-pages	1 pages
+11843	1789125893054	2	-1	checkpoint	declared 42
+11851	1789125893063	2	-1	complete	declared 42
+11851	1789125893063	2	-1	commits	42 chunks
+11931	1789125893142	2	-1	session-close	
+0	1789125893167	-	-	final-verified	8388608 bytes

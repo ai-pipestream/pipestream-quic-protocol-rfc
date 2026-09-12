@@ -1,0 +1,1 @@
+INVALID: reader revoked mid-run, run rejected (exit 1)

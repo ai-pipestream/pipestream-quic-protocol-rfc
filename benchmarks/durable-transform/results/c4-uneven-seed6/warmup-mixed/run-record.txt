@@ -1,0 +1,4 @@
+java-worker: c
+java-jar: /tmp/c4-uneven/pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar
+restart-safety: Pure (Rust) / IDEMPOTENT (Java transform/v2)
+fixture-schedule-schema: kimi interface-v1 1452f60 (c566751a...)

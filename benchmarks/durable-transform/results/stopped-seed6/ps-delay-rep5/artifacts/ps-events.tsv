@@ -1,0 +1,43 @@
+202	1789123980920	1	-1	session-open	workload-b
+205	1789123980923	2	-1	session-open	workload-c
+225	1789123980943	0	-1	session-open	workload-a
+307	1789123981025	1	-1	declared	batch 0: 1 entities
+322	1789123981040	2	-1	declared	batch 0: 1 entities
+344	1789123981062	0	-1	declared	batch 0: 2 entities
+455	1789123981173	2	2	admitted	
+455	1789123981173	2	-1	consumer-stopped	admitted, holding fetch 5000 ms
+481	1789123981199	1	1	admitted	
+481	1789123981199	1	-1	consumer-stopped	admitted, holding fetch 5000 ms
+488	1789123981206	0	0	admitted	
+694	1789123981412	0	3	admitted	
+694	1789123981412	0	-1	consumer-stopped	admitted, holding fetch 5000 ms
+5456	1789123986174	2	-1	consumer-resumed	fetching after hold
+5482	1789123986200	1	-1	consumer-resumed	fetching after hold
+5496	1789123986214	2	2	succeeded	attempt 1
+5529	1789123986247	1	1	succeeded	attempt 1
+5619	1789123986337	2	2	first-usable-output	
+5619	1789123986337	2	2	chunk-verified	
+5646	1789123986364	1	1	first-usable-output	
+5646	1789123986364	1	1	chunk-verified	
+5688	1789123986406	2	-1	scope-pages	1 pages
+5696	1789123986413	0	-1	consumer-resumed	fetching after hold
+5722	1789123986439	1	-1	scope-pages	1 pages
+5748	1789123986466	2	-1	checkpoint	declared 1
+5750	1789123986467	2	-1	complete	declared 1
+5750	1789123986467	2	-1	commits	1 chunks
+5753	1789123986471	0	0	succeeded	attempt 1
+5777	1789123986495	1	-1	checkpoint	declared 1
+5778	1789123986496	1	-1	complete	declared 1
+5778	1789123986496	1	-1	commits	1 chunks
+5832	1789123986550	2	-1	session-close	
+5860	1789123986578	1	-1	session-close	
+5898	1789123986616	0	0	first-usable-output	
+5898	1789123986616	0	0	chunk-verified	
+5929	1789123986647	0	3	succeeded	attempt 1
+6018	1789123986735	0	3	chunk-verified	
+6056	1789123986774	0	-1	scope-pages	1 pages
+6096	1789123986814	0	-1	checkpoint	declared 2
+6098	1789123986815	0	-1	complete	declared 2
+6098	1789123986815	0	-1	commits	2 chunks
+6180	1789123986898	0	-1	session-close	
+0	1789123986919	-	-	final-verified	200000 bytes

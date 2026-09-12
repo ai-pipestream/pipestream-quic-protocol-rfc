@@ -1,0 +1,27 @@
+23	1789124054991	0	-1	session-open	workload-a
+23	1789124054991	1	-1	session-open	workload-b
+23	1789124054991	2	-1	session-open	workload-c
+39	1789124055006	0	0	admitted	
+41	1789124055009	2	2	admitted	
+41	1789124055009	2	-1	consumer-stopped	admitted, holding fetch 5000 ms
+46	1789124055014	1	1	admitted	
+46	1789124055014	1	-1	consumer-stopped	admitted, holding fetch 5000 ms
+52	1789124055019	0	3	admitted	
+52	1789124055019	0	-1	consumer-stopped	admitted, holding fetch 5000 ms
+5043	1789124060010	2	-1	consumer-resumed	fetching after hold
+5047	1789124060015	1	-1	consumer-resumed	fetching after hold
+5053	1789124060020	0	-1	consumer-resumed	fetching after hold
+5270	1789124060237	2	2	first-usable-output	
+5270	1789124060237	2	2	chunk-verified	
+5270	1789124060237	2	-1	commits	1 chunks
+5270	1789124060237	2	-1	session-close	
+5364	1789124060332	1	1	first-usable-output	
+5364	1789124060332	1	1	chunk-verified	
+5364	1789124060332	1	-1	commits	1 chunks
+5364	1789124060332	1	-1	session-close	
+5365	1789124060332	0	0	first-usable-output	
+5365	1789124060332	0	0	chunk-verified	
+5400	1789124060367	0	3	chunk-verified	
+5400	1789124060367	0	-1	commits	2 chunks
+5400	1789124060367	0	-1	session-close	
+0	1789124060402	-	-	final-verified	200000 bytes

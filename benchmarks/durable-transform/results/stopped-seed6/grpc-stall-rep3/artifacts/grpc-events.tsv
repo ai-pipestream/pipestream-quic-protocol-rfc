@@ -1,0 +1,25 @@
+24	1789124102974	0	-1	session-open	workload-a
+24	1789124102974	2	-1	session-open	workload-c
+24	1789124102974	1	-1	session-open	workload-b
+43	1789124102993	0	0	admitted	
+45	1789124102996	1	1	admitted	
+51	1789124103001	2	2	admitted	
+61	1789124103012	0	3	admitted	
+64	1789124103014	2	2	stalled-read	stream open, holding drain 5000 ms
+64	1789124103015	1	1	stalled-read	stream open, holding drain 5000 ms
+70	1789124103020	0	0	stalled-read	stream open, holding drain 5000 ms
+5145	1789124108095	2	2	first-usable-output	
+5145	1789124108095	1	1	first-usable-output	
+5145	1789124108095	2	2	chunk-verified	
+5145	1789124108095	1	1	chunk-verified	
+5145	1789124108095	2	-1	commits	1 chunks
+5145	1789124108095	2	-1	session-close	
+5145	1789124108095	1	-1	commits	1 chunks
+5145	1789124108096	1	-1	session-close	
+5145	1789124108096	0	0	first-usable-output	
+5145	1789124108096	0	0	chunk-verified	
+5209	1789124108159	0	3	stalled-read	stream open, holding drain 5000 ms
+10224	1789124113175	0	3	chunk-verified	
+10224	1789124113175	0	-1	commits	2 chunks
+10225	1789124113175	0	-1	session-close	
+0	1789124113208	-	-	final-verified	200000 bytes

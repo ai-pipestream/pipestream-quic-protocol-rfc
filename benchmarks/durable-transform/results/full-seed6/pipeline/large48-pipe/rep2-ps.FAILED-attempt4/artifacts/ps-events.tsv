@@ -1,0 +1,107 @@
+670	1789137695401	0	-1	session-open	workload-a
+676	1789137695406	2	-1	session-open	workload-c
+701	1789137695432	1	-1	session-open	workload-b
+851	1789137695582	0	-1	declared	batch 0: 100 entities
+861	1789137695592	2	-1	declared	batch 0: 100 entities
+898	1789137695629	1	-1	declared	batch 0: 100 entities
+1330	1789137696061	2	-1	declared	batch 1: 100 entities
+1376	1789137696106	0	-1	declared	batch 1: 100 entities
+1407	1789137696137	1	-1	declared	batch 1: 100 entities
+1575	1789137696306	2	-1	declared	batch 2: 56 entities
+1589	1789137696319	1	-1	declared	batch 2: 56 entities
+1656	1789137696387	0	-1	declared	batch 2: 56 entities
+3301	1789137698032	0	30	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3659	1789137698390	2	20	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3844	1789137698574	1	43	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+3844	1789137698574	2	35	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+4141	1789137698872	1	19	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+4429	1789137699159	2	23	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+4500	1789137699231	0	45	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+4647	1789137699378	2	11	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+4650	1789137699380	0	9	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+4823	1789137699554	2	14	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+4823	1789137699554	0	6	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+5425	1789137700155	2	8	admitted	admit=3848ms
+5425	1789137700155	0	0	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+5616	1789137700347	2	2	admitted	admit=4039ms
+5693	1789137700423	1	22	admitted	admit=4103ms
+5824	1789137700554	0	3	admitted	admit=4166ms
+5855	1789137700586	2	5	admitted	admit=4278ms
+5866	1789137700597	1	25	admitted	admit=4276ms
+5981	1789137700711	2	38	admitted	admit=4404ms
+6074	1789137700805	0	21	admitted	admit=4416ms
+6148	1789137700879	1	10	admitted	admit=4558ms
+6273	1789137701004	2	47	admitted	admit=4696ms
+6418	1789137701148	1	37	admitted	admit=4828ms
+6418	1789137701148	0	12	admitted	admit=4760ms
+6423	1789137701154	2	29	admitted	admit=4845ms
+6502	1789137701232	2	26	admitted	admit=4924ms
+6504	1789137701235	1	46	admitted	admit=4914ms
+6507	1789137701237	0	18	admitted	admit=4849ms
+6566	1789137701296	2	17	admitted	admit=4987ms
+6569	1789137701299	2	35	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+6569	1789137701299	2	23	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+6569	1789137701299	2	11	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+6569	1789137701300	2	14	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+6597	1789137701327	1	40	admitted	admit=5006ms
+6597	1789137701327	0	39	admitted	admit=4939ms
+6737	1789137701467	2	50	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+6740	1789137701470	1	31	admitted	admit=5150ms
+6780	1789137701510	0	42	admitted	admit=5121ms
+7074	1789137701805	2	53	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+7105	1789137701836	1	16	admitted	admit=5514ms
+7183	1789137701914	0	33	admitted	admit=5525ms
+7283	1789137702013	2	56	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+7283	1789137702013	1	28	admitted	admit=5692ms
+7322	1789137702053	0	36	admitted	admit=5663ms
+7377	1789137702107	1	34	admitted	admit=5787ms
+7377	1789137702107	2	59	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+7448	1789137702178	0	15	admitted	admit=5789ms
+7451	1789137702181	0	9	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+7451	1789137702182	0	6	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+7451	1789137702182	0	0	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+7453	1789137702184	1	4	admitted	admit=5862ms
+7487	1789137702218	2	62	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+7543	1789137702273	0	48	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+7572	1789137702303	2	65	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+7575	1789137702306	1	7	admitted	admit=5984ms
+7783	1789137702513	0	51	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+7814	1789137702545	2	68	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+7824	1789137702555	1	1	admitted	admit=6233ms
+8079	1789137702810	2	71	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8082	1789137702813	2	35	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8083	1789137702813	2	11	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8083	1789137702813	2	23	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8083	1789137702814	2	14	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8083	1789137702814	2	50	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8083	1789137702814	2	53	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8083	1789137702814	2	56	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8084	1789137702814	2	59	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8084	1789137702814	2	62	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8084	1789137702814	2	65	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8084	1789137702814	2	68	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8116	1789137702846	0	54	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8181	1789137702911	2	71	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8189	1789137702920	1	52	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8195	1789137702925	0	57	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8255	1789137702985	0	60	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8300	1789137703030	2	32	admitted	admit=6721ms
+8347	1789137703077	0	63	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8347	1789137703077	1	58	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8507	1789137703238	2	41	admit-fatal-send	Refused(Refusal { request: Input { stream: StreamId(30) }, code: InternalError, detail: Detail("authority storage operation failed") })
+8669	1789137703399	1	61	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8700	1789137703430	0	66	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8845	1789137703575	0	69	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8905	1789137703636	1	67	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8907	1789137703638	0	72	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8910	1789137703640	0	48	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8910	1789137703640	0	0	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8910	1789137703641	0	9	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8910	1789137703641	0	6	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8911	1789137703641	0	51	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8911	1789137703641	0	54	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8911	1789137703642	0	57	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8911	1789137703642	0	60	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8911	1789137703642	0	63	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8911	1789137703642	0	66	admit-ceiling	LIMIT_EXCEEDED: client unresolved admission ceiling
+8941	1789137703671	0	24	admit-fatal-send	Refused(Refusal { request: Input { stream: StreamId(26) }, code: InternalError, detail: Detail("authority storage operation failed") })

@@ -1,0 +1,3 @@
+PKI ready in benchmarks/durable-transform/results/full-seed6/ladder-tiny/rep5-grpc/work/pki (valid ~2 days, loopback only)
+coordinator short-lived (59 ms): coordinator sample rows optional
+gRPC arm done in 59 ms

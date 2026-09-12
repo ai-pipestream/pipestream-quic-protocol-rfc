@@ -1,0 +1,4 @@
+PKI ready in benchmarks/durable-transform/results/full-seed6/negative/swapped-order-grpc-neg/work/pki (valid ~2 days, loopback only)
+TEST-ONLY test-swap-inputs enabled: chunk 0 and 1 exchanged
+Error: chunk 0 failed oracle byte verification
+gRPC coordinator exit 1

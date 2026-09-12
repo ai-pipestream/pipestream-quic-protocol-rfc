@@ -1,0 +1,6 @@
+cell: tiny (SIZE=1000, 1 chunk, seed 6, base 85887911+C15)
+arms: ps-all-Rust, ps-mixed (Java worker c, jar 61ab64a3, JAVA_TOOL_OPTIONS=-Xms256m -Xmx2g), grpc
+order: warmups ps/mixed/grpc, then mirror-rotated reps (even ps,mixed,grpc / odd grpc,mixed,ps); rep-5-grpc replacement run last; see order.log
+result: PASS with one visible failed run. rep-0-grpc exit=1: sampler (0.2 s interval) recorded no rows for one worker PID on a sub-second run; milestones present, final byte-identical, so measurement-infra flake, not subject failure. Replacement rep-5-grpc exit=0.
+All 19 finals sha256 55d2e6e9cea9d2d08cbaf40c7c0dc5df3c1ed0fb64206ee1b3657cdb4cd3603f, byte-exact across arms and reps; every event stream has first-usable-output + final-verified.
+state DBs/PKI excluded from archive (kept in /tmp/c4-tiny run dirs); artifacts + stdout logs archived.

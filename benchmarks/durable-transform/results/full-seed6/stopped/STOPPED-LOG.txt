@@ -1,0 +1,17 @@
+STOPPED ps delay rep1: held 5000ms, resumed, byte-exact, no loss/dup/refusal
+STOPPED ps delay rep2: held 5000ms, resumed, byte-exact, no loss/dup/refusal
+STOPPED ps delay rep3: held 5000ms, resumed, byte-exact, no loss/dup/refusal
+STOPPED ps delay rep4: held 5000ms, resumed, byte-exact, no loss/dup/refusal
+STOPPED ps delay rep5: held 5000ms, resumed, byte-exact, no loss/dup/refusal
+STOPPED ps positive: 5/5 PASS, digest pin holds
+STOPPED ps stall: peer quiet at 5000ms, connection survived
+STOPPED ps no-fetch: gate holds (arrival without completion)
+STOPPED grpc delay rep1: held 5000ms, resumed, byte-exact, no loss/dup/refusal
+STOPPED grpc delay rep2: held 5000ms, resumed, byte-exact, no loss/dup/refusal
+STOPPED grpc delay rep3: held 5000ms, resumed, byte-exact, no loss/dup/refusal
+STOPPED grpc delay rep4: held 5000ms, resumed, byte-exact, no loss/dup/refusal
+STOPPED grpc delay rep5: held 5000ms, resumed, byte-exact, no loss/dup/refusal
+STOPPED grpc positive: 5/5 PASS, digest pin holds
+STOPPED grpc stall: peer quiet at 5000ms, connection survived
+STOPPED grpc no-fetch: gate holds (arrival without completion)
+STOPPED SUITE PASS

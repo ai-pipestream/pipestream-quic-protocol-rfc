@@ -1,0 +1,6 @@
+26	1789121899714	1	-1	session-open	workload-b
+26	1789121899714	2	-1	session-open	workload-c
+26	1789121899714	0	-1	session-open	workload-a
+41	1789121899729	2	2	admitted	
+46	1789121899734	0	0	admitted	
+49	1789121899737	1	1	admitted	

@@ -1,0 +1,8 @@
+PKI ready in benchmarks/durable-transform/results/stopped-seed6/ps-stopped/work/pki (valid ~2 days, loopback only)
+INITIALIZED
+INITIALIZED
+INITIALIZED
+TEST-ONLY test-no-fetch: admitted, not fetching
+TEST-ONLY test-no-fetch: admitted, not fetching
+TEST-ONLY test-no-fetch: admitted, not fetching
+Error: TEST-ONLY test-no-fetch: admitted without fetching; refusing final assembly

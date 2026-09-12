@@ -1,0 +1,13 @@
+39	1789133939991	1	-1	session-open	workload-b
+39	1789133939991	2	-1	session-open	workload-c
+39	1789133939991	0	-1	session-open	workload-a
+39	1789133939991	1	-1	commits	0 chunks
+39	1789133939991	2	-1	commits	0 chunks
+39	1789133939991	1	-1	session-close	
+39	1789133939991	2	-1	session-close	
+59	1789133940011	0	0	admitted	admit=20ms
+70	1789133940022	0	0	first-usable-output	
+70	1789133940022	0	0	chunk-verified	fetch=10ms
+70	1789133940022	0	-1	commits	1 chunks
+70	1789133940022	0	-1	session-close	
+0	1789133940027	-	-	final-verified	1000 bytes

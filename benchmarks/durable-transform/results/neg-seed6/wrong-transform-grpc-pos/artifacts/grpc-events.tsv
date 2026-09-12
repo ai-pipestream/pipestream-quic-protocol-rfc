@@ -1,0 +1,21 @@
+21	1789121886647	0	-1	session-open	workload-a
+21	1789121886647	1	-1	session-open	workload-b
+21	1789121886647	2	-1	session-open	workload-c
+34	1789121886660	1	1	admitted	
+36	1789121886662	0	0	admitted	
+41	1789121886667	2	2	admitted	
+53	1789121886679	1	1	first-usable-output	
+53	1789121886679	1	1	chunk-verified	
+53	1789121886679	1	-1	commits	1 chunks
+53	1789121886679	1	-1	session-close	
+63	1789121886689	2	2	first-usable-output	
+63	1789121886689	2	2	chunk-verified	
+63	1789121886689	0	0	first-usable-output	
+63	1789121886689	2	-1	commits	1 chunks
+63	1789121886689	2	-1	session-close	
+63	1789121886689	0	0	chunk-verified	
+71	1789121886697	0	3	admitted	
+81	1789121886707	0	3	chunk-verified	
+81	1789121886707	0	-1	commits	2 chunks
+81	1789121886707	0	-1	session-close	
+0	1789121886711	-	-	final-verified	200000 bytes

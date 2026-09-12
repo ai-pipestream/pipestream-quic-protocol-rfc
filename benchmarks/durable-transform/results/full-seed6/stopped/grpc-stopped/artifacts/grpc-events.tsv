@@ -1,0 +1,16 @@
+82	1789135767835	1	-1	session-open	workload-b
+82	1789135767836	0	-1	session-open	workload-a
+82	1789135767836	2	-1	session-open	workload-c
+239	1789135767993	1	1	admitted	admit=157ms
+239	1789135767993	1	-1	consumer-stopped	admitted, not fetching
+239	1789135767993	1	-1	commits	1 chunks
+239	1789135767993	1	-1	session-close	
+283	1789135768036	2	2	admitted	admit=200ms
+283	1789135768036	2	-1	consumer-stopped	admitted, not fetching
+283	1789135768036	2	-1	commits	1 chunks
+283	1789135768036	2	-1	session-close	
+286	1789135768040	0	3	admitted	admit=204ms
+289	1789135768042	0	0	admitted	admit=206ms
+289	1789135768042	0	-1	consumer-stopped	admitted, not fetching
+289	1789135768042	0	-1	commits	2 chunks
+289	1789135768042	0	-1	session-close	

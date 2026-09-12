@@ -1,0 +1,8 @@
+C16F standard/ps: start
+C16F standard/ps: PASS done in 18475 ms
+C16F standard/grpc: start
+C16F standard/grpc: PASS done in 1535 ms
+C16F standard/mixed: start
+C16F mixed: jstat rows=34, gaps=0
+C16F standard/mixed: PASS done in 17063 ms
+C16F STANDARD CELL PASS

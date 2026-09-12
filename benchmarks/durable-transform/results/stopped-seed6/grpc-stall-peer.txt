@@ -1,0 +1,6 @@
+rep1: 4 stalled reads, exit 0, final pin holds
+rep2: 4 stalled reads, exit 0, final pin holds
+rep3: 4 stalled reads, exit 0, final pin holds
+rep4: 4 stalled reads, exit 0, final pin holds
+rep5: 4 stalled reads, exit 0, final pin holds
+peer: quiet patience at 5000ms -- no refusal, no error; connection survived, all finals pin-exact

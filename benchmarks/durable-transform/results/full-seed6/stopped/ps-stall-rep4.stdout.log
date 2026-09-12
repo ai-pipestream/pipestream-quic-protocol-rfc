@@ -1,0 +1,9 @@
+PKI ready in benchmarks/durable-transform/results/full-seed6/stopped/ps-stall-rep4/work/pki (valid ~2 days, loopback only)
+INITIALIZED
+INITIALIZED
+INITIALIZED
+TEST-ONLY test-stall-read-ms: holding first read 5000 ms
+TEST-ONLY test-stall-read-ms: holding first read 5000 ms
+TEST-ONLY test-stall-read-ms: holding first read 5000 ms
+TEST-ONLY test-stall-read-ms: holding first read 5000 ms
+PS arm done in 6285 ms

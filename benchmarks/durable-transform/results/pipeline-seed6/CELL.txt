@@ -1,0 +1,46 @@
+cell: coordinator pipelining before/after (C16e; seed 6; runner benchmarks/durable-transform/run-pipeline.sh)
+standard: 8 MiB, 128 chunks; large48: 48 MiB, 768 chunks. Modes: serial (PS_SERIAL=1 /
+GRPC_SERIAL=1, old order) then pipe (pending-limit 16, default). Arms ps/grpc/mixed, 5 measured
+reps each, mirror-rotated arm order per rep, one warmup per arm excluded from stats.
+binaries: see ../pipeline-seed6.bin.sha256 (workload-authority, workload-coordinator, grpc-worker,
+grpc-coordinator release builds). Same pinned binaries both modes; per-rep digest pin in
+artifacts/bin.sha256; every final digest-matched (sha256 pin per cell) with first-usable-output
+and final-verified gates per rep.
+result: PASS. 72/72 DONE (2 cells x 2 modes x 3 arms x (1 warmup + 5 reps)).
+Full log: PIPELINE-LOG.txt (includes fail-fast lines + OPERATOR-NOTEs). Stats: PIPELINE-SUMMARY.txt
+(per-chunk admit/watch/fetch/span p50/p95/p99, wall medians, n=640 standard / n=3840 large48).
+before/after wall medians (5 reps):
+- standard ps: serial 11144 ms -> pipe 12083 ms. grpc: 2041 -> 1535. mixed: 12274 -> 16099.
+- large48 ps: serial 69238 -> pipe 77140. grpc: 16902 -> 8783. mixed: 147396 -> 79890.
+- pipe collapses long tails: large48 serial grpc max 72770 -> pipe max 9081; serial mixed max
+  817163 -> pipe max 82965. ps arm wall roughly unchanged (standard +8%, large48 +11%).
+where the ps time goes (coordinator-side measurements, not inference):
+- serial ps sees ZERO backpressure in 4480 admissions (no ceiling/refused/retried rows).
+- pipe ps: 52% (standard) / 61% (large48) of admissions hit >= 1 refusal; per 5 reps:
+  large48 2933 client-ceiling + 6046 authority-refused (LIMIT_EXCEEDED aggregate capacity) +
+  2379 admit-retried; admit p50 137 -> 683 ms, watch p50 32 -> 367 ms, fetch p50 73 -> 757 ms.
+- reading: the authority's admission capacity, not coordinator serialism, is the ps bottleneck;
+  pipelined admission queues into LIMIT_EXCEEDED refusals plus 100 ms..5 s backoff, and the
+  16-way concurrency only just absorbs the inflated latencies. grpc (never refused in either
+  mode) converts the same concurrency into ~2x wall win plus tail collapse.
+- authority-internal split (storage commit vs transport vs coordinator) is UNMEASURED: the
+  authority has no timing logging; the INTERNAL_ERROR detail below shows why that is also a
+  diagnosability gap. No inference recorded beyond the refusal counts above.
+transients (all preserved, none discarded):
+- large48/serial/ps rep4-ps attempt1: INTERNAL_ERROR storage refusal; passed on retry.
+- large48/pipe/ps rep3-ps attempts1-2: same refusal (~10 s, admit-fatal-send); passed attempt3.
+- large48/pipe/ps rep5-ps attempts1-3: same refusal (10 s / 80 s / 93.5 s variants, last with
+  657 chunk-verified + session-close but no final-verified); passed attempt4.
+- 6 flakes in ~16 large48-ps attempts. Identical seed-6 workloads pass and fail, so this is
+  load/timing-dependent, not deterministic. Probable SQLite lock contention on the authority DB
+  under 16-in-flight admission + verify + fetch + maintenance on a shared host (load 5-8); the
+  request path maps every non-protocol StoreError to a static INTERNAL_ERROR with no retry and
+  no server-side logging (v2_authority.rs storage()), while only the maintenance path treats
+  contention as recoverable (is_storage_contention). Follow-up, NOT changed here (binary pin):
+  bounded contention retry on the request path + log the underlying StoreError.
+- evidence: rep3-ps.FAILED-attempt{1,2}/ + .stdout.log siblings; rep5-ps.FAILED-attempt{1,2,3}/
+  + .stdout.log siblings; OPERATOR-NOTE lines in PIPELINE-LOG.txt.
+state DBs (*.sqlite*), object stores, key material (*.pem/*.key), input staging, worker logs, and
+all rep work/ dirs excluded from archive (reproducible from seed 6 + run-pipeline.sh + pinned
+binaries); per-rep jars copied at cell root; artifacts (events/sample/net/run-record/bin.sha256/
+finals) + stdout logs + DONE markers + FAILED snapshots archived.

@@ -1,0 +1,13 @@
+141	1789124046792	0	-1	session-open	workload-a
+153	1789124046804	1	-1	session-open	workload-b
+167	1789124046818	2	-1	session-open	workload-c
+214	1789124046865	0	-1	declared	batch 0: 2 entities
+224	1789124046875	1	-1	declared	batch 0: 1 entities
+239	1789124046891	2	-1	declared	batch 0: 1 entities
+332	1789124046983	0	0	admitted	
+357	1789124047009	2	2	admitted	
+357	1789124047009	2	-1	consumer-stopped	admitted, not fetching
+358	1789124047009	1	1	admitted	
+358	1789124047009	1	-1	consumer-stopped	admitted, not fetching
+452	1789124047103	0	3	admitted	
+452	1789124047103	0	-1	consumer-stopped	admitted, not fetching

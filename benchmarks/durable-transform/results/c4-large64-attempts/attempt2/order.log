@@ -1,0 +1,12 @@
+warmup-ps exit=1 wall_s=1
+warmup-mixed exit=1 wall_s=1
+warmup-grpc exit=0 wall_s=2
+rep-0-ps exit=1 wall_s=0
+rep-0-mixed exit=1 wall_s=1
+rep-0-grpc exit=0 wall_s=2
+rep-1-grpc exit=0 wall_s=2
+rep-1-mixed exit=1 wall_s=1
+rep-1-ps exit=1 wall_s=1
+rep-2-ps exit=1 wall_s=0
+rep-2-mixed exit=1 wall_s=2
+rep-2-grpc exit=0 wall_s=2
