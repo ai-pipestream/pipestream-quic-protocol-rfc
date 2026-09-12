@@ -207,6 +207,8 @@ class DurableClientControlDeadlineTest {
                     delay,
                     TimeUnit.MILLISECONDS);
           };
+      DurableClientTest.get(
+          session.client.declare(DurableServerTest.operation(1), 0, List.of(1L), true));
       InputSource source = InputSource.file(input, "application/octet-stream", 16L << 20);
       Records.OperationId operation = DurableServerTest.operation(2);
       var admitted =
@@ -232,6 +234,8 @@ class DurableClientControlDeadlineTest {
     Path input = directory.resolve("stopped-unanswered.bin");
     java.nio.file.Files.write(input, new byte[10_000]);
     try (Session session = new Session("unanswered")) {
+      DurableClientTest.get(
+          session.client.declare(DurableServerTest.operation(1), 0, List.of(1L), true));
       InputSource source = InputSource.file(input, "application/octet-stream", 16L << 20);
       Records.OperationId operation = DurableServerTest.operation(2);
       long started = System.nanoTime();

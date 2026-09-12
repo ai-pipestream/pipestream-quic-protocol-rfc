@@ -212,6 +212,27 @@ final class RawDurableAuthority implements AutoCloseable {
       };
     }
 
+    /**
+     * A genuine declaration receipt for a scope-0 declaration: the digest the client journals for
+     * the normalized request, the accepted count, and the seal over the declared members when
+     * sealed, so a client can hold its covering receipt before sending an input.
+     */
+    private Records.OperationReceipt declared(Declare d) {
+      Commitments.Context context =
+          new Commitments.Context(manifest.authority(), manifest.owner(), manifest.generation());
+      Records.Digest seal = null;
+      if (d.seal()) {
+        Commitments.Seal sealing =
+            new Commitments.Seal(context, d.scope(), 0, null, d.entityIds().size());
+        for (long member : d.entityIds()) sealing.add(member);
+        seal = sealing.finish();
+      }
+      return new Records.OperationReceipt(
+          d.operation(),
+          Commitments.operation(context, 0, ClientJournal.withRequest(d, 1)),
+          new Records.Declared(d.scope(), 0, d.entityIds().size(), d.entityIds().size(), seal));
+    }
+
     private void handle(Message message) {
       received.add(message);
       if (selected == null) {
@@ -248,6 +269,7 @@ final class RawDurableAuthority implements AutoCloseable {
                     policy,
                     LIMITS));
         case GetManifest g -> send(new ManifestResponse(g.request(), manifest));
+        case Declare d -> send(new DeclarationResponse(d.request(), declared(d)));
         case Read r -> {
           ResultScript current = script;
           stream

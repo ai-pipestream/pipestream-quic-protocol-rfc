@@ -291,9 +291,11 @@ final class DurableBranchTest {
                   s.admit(2, 1, parent, whole, "reassemble/v2", 1, 1).outcome())
               .child()
               .scope();
-      // Input into the child scope before any declaration: CONFLICT (undeclared).
+      // Input into the child scope before any declaration: the client refuses NOT_READY locally
+      // because it holds no covering declaration receipt (S12-150); the authority's own CONFLICT
+      // for an undeclared input is proven from a raw peer in DurableServerTest.
       assertEquals(
-          ProtocolError.Code.CONFLICT,
+          ProtocolError.Code.NOT_READY,
           DurableClientTest.refusal(
                   s.client.admit(
                       op(3),
