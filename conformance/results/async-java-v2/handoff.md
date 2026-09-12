@@ -50,6 +50,7 @@ shared feature branch and main were not merged.
 | `52d4776d` | `HookPlacementTest`: boundary hooks pin four ordering clauses deterministically (S12-221 fence-first and publication-first, S12-208 control progress with a parked callback, S12-158 input-store usage unchanged at the refusal, S12-311 checkpoint wait counted from acceptance behind a parked storage worker); traceability 296/62/8/7 at `c7c059a4` |
 | `62412c14` | `LossyTransportCreditTest`: a seeded UDP relay drops 8% and reorders every seventh datagram in both directions while 2n+1 transfers (refused, reset, admitted) run on an allowance of n; no stream-limit failure, correlated refusals, credit never below n/2, injection counted (about 190 drops and 90 reorders per run); observation O-1 recorded (section 5); S12-046 covered, S12-011 left PARTIAL by decision; traceability 297/62/7/7 |
 | `dce9d384` | `ResultAbortWireTest` (a RESULT_HEADER_SENT hook truncates the published object: the result stream aborts without FIN, no second control response, work still SUCCEEDED; S12-079) and the no-wrong-direction-refusal assertions over every frame the raw authority recorded (S12-078); S12-056 recognised as covered by the ceiling test's transport-close assertion; traceability 300/60/6/7 |
+| `6174d92d` | `DurableClientContradictionTest`: a child scope naming an unadmitted parent stays pending evidence (no synthesized parent commitment) and is concluded only by the parent's own view, for and against (S12-294); traceability 301/60/5/7 |
 
 ## 1. Contract to source to tests to evidence
 

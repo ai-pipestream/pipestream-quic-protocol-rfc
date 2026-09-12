@@ -15,7 +15,8 @@ boundary hooks; the summary table is recomputed from the rows). Updated at
 `62412c14` (S12-046 covered by `LossyTransportCreditTest`; S12-011 left PARTIAL by
 decision, see its row). Updated at `dce9d384` (S12-078 and S12-079 covered by
 `DurableClientResultNegativeTest` and `ResultAbortWireTest`; S12-056 recognised as covered
-by the existing transport-close assertion).
+by the existing transport-close assertion). Updated at `6174d92d` (S12-294 covered by
+`DurableClientContradictionTest.childMetadataNeverProvesTheParentUntilTheParentItselfIsObserved`).
 
 This document maps every normative statement of Section 12
 (`sections-src/section-12.md`, 871 lines) to the tests under
@@ -402,7 +403,7 @@ including most of the refusal-code taxonomy.
 | S12-291 | "Observation order is not creation order: a client MAY learn a child's metadata before receiving its parent's scope metadata or admission record." | `ClientValidation.relationship` pending case | `DurableBranchTest.authorityExpandedChunksProduceChildrenAndParentReassembly` | COVERED | The child scope is paged before the parent scope and `membershipVerified()` still holds. |
 | S12-292 | "A child's parent work key MUST agree with any already known parent-scope producer and, when that scope's full sealed membership has been verified, MUST name one of its declared members. The child's scope ID and producer MUST agree with any known immutable child allocation in its parent's admission record or work view." | `DurableClient.relationships`; `DurableClient.page`; `ClientValidation.relationship` | `DurableBranchTest.authorityExpandedChunks...`; `DurableClientContradictionTest.childScopeContradictingTheParentAdmissionIsIntegrityErrorInBothOrders`; `.memberOutsideTheVerifiedSealedMembershipIsIntegrityError` | COVERED | Since 0a088050: a child scope naming a parent whose view allocates another child scope is INTEGRITY_ERROR in both orders; a member outside the verified sealed membership and a member with the wrong producer are INTEGRITY_ERROR. |
 | S12-293 | "The client MUST check these relationships in both directions: when child metadata arrives and when later parent evidence makes a retained relationship checkable." | `DurableClient.relationships` (child arrival) and `DurableClient.page` (later parent evidence) | `DurableBranchTest.authorityExpandedChunks...` | COVERED | Since 0a088050 both directions are exercised negatively: view then page (the page cross-checks the retained parent view) and page then view (the view cross-checks every retained scope that names it as parent, added at 0a088050 via `ClientJournal.childScopes`). |
-| S12-294 | "Missing parent observations do not prove parent membership or admission; the client MUST NOT synthesize those commitments from child metadata. It MAY retain bounded pending relationship information without claiming that the missing commitments have been verified." | `ClientValidation.relationship` defers on a not-yet-admitted parent | - | GAP | The deferral branch is never driven to a conclusion by a test. |
+| S12-294 | "Missing parent observations do not prove parent membership or admission; the client MUST NOT synthesize those commitments from child metadata. It MAY retain bounded pending relationship information without claiming that the missing commitments have been verified." | `ClientValidation.relationship` defers on a not-yet-admitted parent | `DurableClientContradictionTest.childMetadataNeverProvesTheParentUntilTheParentItselfIsObserved` | COVERED | After the child page the journal holds the scope's parent key and no parent observation; an unadmitted parent view is accepted and stays pending; a leaf admission or one owning another scope is refused INTEGRITY_ERROR with the journaled view unchanged; the matching admission is accepted. |
 | S12-295 | "A contradictory combination is INTEGRITY_ERROR; the client MUST NOT replace prior validated commitments with the contradictory observation or use it to acknowledge coverage." | `ClientValidation.relationship`/`membership`/`summary` | `DurableClientContradictionTest` (both tests) | COVERED | Since 0a088050 the contradicting page or view is refused INTEGRITY_ERROR and is NOT journaled (`journal.scope(5)` and `journal.observedWork(parent)` stay empty); before 0a088050 `DurableClient.page` journaled the page before cross-checking it, which the test caught red. |
 | S12-296 | "A scope closes only when sealed, every declared member is terminal, and every descendant scope has closed." | `ClosureStore.fold` | `CheckpointObservationTest.unsealedAndSealedMissingInputMembershipHaveDistinctImmediateObservations`; `ClosureReconciliationTest.sealedUnadmittedMembershipRemainsOpenAndNewCursorRecomputesIt`; `.chunkedFoldPublishesNothingUntilAllRealTerminalMembersWereVisited`; `.failedStrictChildClosesThenAtomicallyFailsParentAndAllowsRootClosure` | COVERED | All three conditions, including the bottom-up descendant walk. |
 | S12-297 | "A success rehydration under this profile's STRICT policy additionally requires all children to succeed. Partial completion policies are not inherited from version 1." | `BranchStore.scope` (`summary.counts().success() != summary.declared()` -> NOT_READY) | `BranchExecutionTest.reconstructsTwoPagedChildOutputs...`; `DurableBranchTest.callerExpandedChildrenAreReassembledAndCoveredBottomUp`; `ClosureReconciliationTest.realEmptyChildClosureMakesStrictParentEligibleForExecution` | COVERED | Also the zero-children case: an empty sealed child scope satisfies STRICT. |
@@ -500,12 +501,12 @@ including most of the refusal-code taxonomy.
 | 12.5 Declaration, Admission and Descendant Scopes | 41 | 7 | 1 | 0 | 49 |
 | 12.6 Attempts, Cancellation and Authoritative Outcomes | 44 | 15 | 1 | 1 | 61 |
 | 12.7 Result Publication, Streams and References | 26 | 5 | 0 | 3 | 34 |
-| 12.8 Sealed Closure, Counts and Shutdown | 39 | 4 | 1 | 2 | 46 |
+| 12.8 Sealed Closure, Counts and Shutdown | 40 | 4 | 0 | 2 | 46 |
 | 12.9 Lifetimes, Clocks and Crash-Safe Accounting | 31 | 9 | 0 | 0 | 40 |
-| **all subsections** | **300** | **60** | **6** | **7** | **373** |
+| **all subsections** | **301** | **60** | **5** | **7** | **373** |
 
 Read the `PARTIAL` column as the real work queue: 60 clauses have a test whose
-name suggests coverage but whose assertions stop short. The 6 `GAP` rows are
+name suggests coverage but whose assertions stop short. The 5 `GAP` rows are
 in most cases cheaper to close than the partials.
 
 ## Clauses where the Java code looks wrong, not merely untested
@@ -761,7 +762,7 @@ requests; the two proposals that need a hook say so.
 - **P-AUTH-1** (S12-078). DONE at `dce9d384`. On a contradicting header, after the client aborts,
   assert `received` contains no client-to-server `Refusal` at all. No new hook
   is needed; this is a negative assertion over an existing queue.
-- **P-AUTH-2** (S12-292, S12-293, S12-294, S12-295). Answer `Page` and `Watch`
+- **P-AUTH-2** (S12-292, S12-293, S12-294, S12-295). DONE at `6174d92d` for S12-294 (the others were covered earlier); the existing control-script hook sufficed. Answer `Page` and `Watch`
   with a contradictory parent/child combination: a child scope whose `parent`
   work key names an entity absent from the parent's verified sealed membership.
   Assert the client raises INTEGRITY_ERROR, that its journal still holds the
