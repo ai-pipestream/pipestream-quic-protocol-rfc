@@ -47,6 +47,8 @@ given); no CI exists for this branch; no draft/deploy action taken; the
 shared feature branch and main were not merged.
 | `4fb8f747` | authority fix for defect 11: the session write-ahead log is restarted with a truncating checkpoint by the retention service once it exceeds one sixty-fourth of its bound (`SessionStore.restartLog`, `RetentionService`, `DurableHost.Status.logRestarts`), because SQLite restarts it only when no reader holds it and a continuously polled authority never reaches that moment; root cause of Meta's C16a xlarge64 mixed refusal LIMIT_EXCEEDED `SQLite file capacity exhausted` after 4 declare batches and 333 admissions at 1024/256 MiB funding (Meta request 3); reproduced with six unpaused readers over 100 work units (`SessionLogGrowthTest`: 12.7 MiB before, under 8 MiB after, restarts counted); gate: 108 tests in 30 store, retention, host and wire classes green, full run queued behind the benchmark lock; jar pin unchanged until the rebuild (section 2) |
 | `ada67cec` | reference-application fix for defect 12: `chunk-copy/v2` admitted every expansion child with a fixed 1,000 ms execution duration, so a child admitted just before an authority restart expired while the process came back (Kimi driver `g3-restart-same-roots` rust-client/java-server on `28c3369b`: child 2:1:3 FAILED `execution deadline reached`, STRICT parent FAILED); children now carry the parent's execution duration through `DurableHost.Production.executionMs`, as the Rust reference does; `DurableBranchTest` asserts it on every child (red before at 1,000 ms); full offline suite 745/745 (`raw/full-offline-2026-09-12b.summary.log`); new jar pin (section 2) |
+| `52d4776d` | `HookPlacementTest`: boundary hooks pin four ordering clauses deterministically (S12-221 fence-first and publication-first, S12-208 control progress with a parked callback, S12-158 input-store usage unchanged at the refusal, S12-311 checkpoint wait counted from acceptance behind a parked storage worker); traceability 296/62/8/7 at `c7c059a4` |
+| `62412c14` | `LossyTransportCreditTest`: a seeded UDP relay drops 8% and reorders every seventh datagram in both directions while 2n+1 transfers (refused, reset, admitted) run on an allowance of n; no stream-limit failure, correlated refusals, credit never below n/2, injection counted (about 190 drops and 90 reorders per run); observation O-1 recorded (section 5); S12-046 covered, S12-011 left PARTIAL by decision; traceability 297/62/7/7 |
 
 ## 1. Contract to source to tests to evidence
 
@@ -441,6 +443,27 @@ copy under attempt 2 finished first. Both authorities check terminal state
 before the attempt mismatch (Rust `retry_work`: `eligible` precedes
 "retry attempt changed"), so the row needs a way to hold attempt 2 live
 (noted for Kimi's branch on the board).
+
+Observation O-1 (transport pin, not a Java defect; recorded at `62412c14`): the
+pinned quiche retransmits a lost RESET_STREAM only while the local stream still
+exists (`quiche/src/lib.rs`, lost-frame handling: `if self.streams.get(stream_id)
+.is_some() { insert_reset }`). A peer that resets an input after a partial
+payload and lets its stream go at once can therefore lose the reset for good
+under packet loss; the listener then refuses the stalled input at the
+negotiated idle bound (LIMIT_EXCEEDED `input receive deadline`, 1 s at the
+offered minimum, 5 s at the raw peer default) instead of at the reset, and the
+slot returns with that refusal. `LossyTransportCreditTest` sees this on about
+one reset in ten under 8% loss with reordering, and about once in a hundred
+for a FIN-terminated (truncated) input whose tail is lost, which the same
+guard does not explain and is left unattributed; it records the count per
+shape and the latency per run in `target/lossy-credit-observations.tsv`. The Java client resets through the
+same transport, so its resets have the same exposure; the credit reservation
+(S12-046) is unaffected. A fix belongs in the transport pin (keep a reset
+stream until its RESET_STREAM is acknowledged, or retransmit regardless), not
+in the endpoints. Separately, one run in roughly ten of the first test shape
+timed out waiting for a control response before the observations were logged
+incrementally; the test now records the transfer and credit at that moment so
+the next occurrence can be attributed.
 
 Kimi's milestone 17b question (2), the per-stream abort of stalled inputs
 landing between idle+10 s and lifetime+10 s instead of at the 30 s idle bound,
