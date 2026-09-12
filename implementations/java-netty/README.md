@@ -1127,6 +1127,10 @@ journaled operation is re-invoked on a fresh connection after an authority
 `CONTROL_RESET`, transport loss or the local request deadline, with doubling
 backoff and jitter; `CONFLICT`, `UNAUTHORIZED`, framing and integrity codes,
 terminal outcomes and every local or journal failure stop immediately.
+`--control-timeout-ms N` shortens the client's control response deadline (the
+default is 30 s); since the connection's idle timeout is the stream lifetime, a
+killed authority is noticed only when a pending request reaches that deadline,
+so a harness that bounds one operation at 30 s should pass a smaller value.
 Exhausting the budget prints `UNRESOLVED` and exits 1 with the intent still
 journaled; no outcome is ever manufactured. Authority refusals are named on
 stdout as `REFUSED code=… detail=…`, and `client capabilities` prints the

@@ -782,6 +782,16 @@ These are code observations, not test failures. Each names a file and line.
   `BoundedSqlite.Limits.sharedMemoryFor` sizes the sidecar for the funded log
   and `V2Main.configuration` applies it; `FundingScaleTest` pins the
   arithmetic and the wire-level effect. S12-368 row references the test.
+- **D16.** The listener fired committed fixture boundaries (session, declaration,
+  fence, retry) on replays, which commit nothing; a neutral-driver drop-reply
+  armed at SESSION_COMMITTED therefore fired again on the creation replay after
+  a restart. Fixed in `3e1547dd`: the store reports fresh versus replayed
+  commits and the listener fires only for fresh ones
+  (`HookPlacementTest.committedBoundariesFireOnceAcrossReplays`, red before).
+- **D18.** (question for the spec owner, not a code defect) a journal bound to
+  another authority that attaches is CONFLICT `authority differs` in Java and
+  UNAUTHORIZED in Rust; Section 12.3 supports either reading. Raised by Kimi
+  milestone 19 (`g5-cross-authority-reference`).
 
 ## Gap-closing proposals, grouped by fixture
 

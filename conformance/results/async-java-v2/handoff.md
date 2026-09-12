@@ -60,6 +60,7 @@ shared feature branch and main were not merged.
 | `54267a72` | second store-level round from the agent worktree, reviewed and cherry-picked (P2-STORE-1 to 3, 5 to 11, 13 to 15, P2-WIRE-5; each confirmed red): S12-114, 139, 140, 141, 199, 204, 227, 237, 240, 263, 276, 278, 300, 316, 348, 353; S12-164 not producible (child scope row is inserted in the parent's admission transaction); D4 and D6 closed; traceability 354/10/2/7 |
 | `77ee4830` | `PeerRuleWireTest`: a 1 MiB object over a 64 KiB stream window both ways with bounded credit (S12-041); control answered within a second with every data slot held open, then every slot returned (S12-043, S12-044, S12-045); traceability 358/6/2/7 |
 | `1cbb389f` | LAUNCHER FIX defect 15: `--wal-mib` above about 257 MiB was capped by the fixed 512 KiB shared-memory sidecar that indexes the log, so Meta's xlarge64 cell refused at 332 admissions on every jar; the sidecar now scales with the funded log (`BoundedSqlite.Limits.sharedMemoryFor`, 16 MiB ceiling); `FundingScaleTest` (arithmetic plus 2 000 declarations over the wire) |
+| `3e1547dd` | LISTENER FIX defect 16: committed boundaries (session, declaration, fence, retry) fired on replays too, so Kimi's drop-reply at SESSION_COMMITTED fired again on the creation replay after the restart (`g2-crash-after-create-commit` rust-client/java-server, M17b and M19c archives); `SessionStore` now reports fresh versus replayed commits and `DurableServer` fires only for fresh ones (`HookPlacementTest`, red before at 2/2/6); client launcher gains `--control-timeout-ms` so a driver's 30 s operation bound can see a dead authority (`ClientControlTimeoutOptionTest`); Kimi M19 reviewed (section 5, observations O-2 to O-4) |
 
 ## 1. Contract to source to tests to evidence
 
@@ -499,6 +500,58 @@ no longer rewrites the WAL index on every store call. Full offline run at
    `--wal-mib 512` at least on the next jar, and the retained file policy
    means a fresh root per funding. Jar pin at `c9d432d0` (section 2); full
    offline suite 794/794 at that head (`raw/full-offline-2026-09-12d.summary.log`).
+
+16. **Java listener: committed fixture boundaries fired on replays.**
+   `DurableServer` fired SESSION_COMMITTED after every creation, and the
+   declaration, fence and retry boundaries after every such request, whether
+   the store had committed a new record or replayed a retained receipt. A
+   replay commits nothing, and the neutral driver relies on that: its
+   `g2-crash-after-create-commit` row arms one drop-reply at SESSION_COMMITTED,
+   restarts the server, and expects the client's creation replay to be
+   answered; on the Java subject the replay reached the boundary again, the
+   schedule row fired again and the reply was withheld a second time
+   (`CANCELLED: client transport closed`, Kimi's M7 finding, unchanged through
+   M19c: archives `durable-18d3ed6c2f040515` and `durable-18d4ac9f7d4e9880`).
+   Fixed in `3e1547dd`: `SessionStore.createCommit`, `declareCommit`,
+   `retryCommit`, `cancelCommit`, `skipCommit` and `cancelScopeCommit` return
+   the response together with whether this call committed a new record, and
+   the listener fires a committed boundary only then.
+   `HookPlacementTest.committedBoundariesFireOnceAcrossReplays` replays each
+   mutation (the creation from a second connection) and counts one, one and
+   three; it was red at two, two and six. Admission and publication boundaries
+   were already fired only on fresh commits. New jar pin below once the rebuild
+   lands.
+
+Kimi milestone 19 (five commits `2a9aad5d` to `ab40d2e0` on
+`agent/rfc-kimi-neutral-v2`, work in Kimi's role, REVIEW_READY for Kimi) was
+reviewed here on 2026-09-12: footprint `conformance/results/async-neutral-v2/`
+plus four files in the conformance crate, nothing else; the two driver fixes
+with red/green tests, all 67 rows registered, the 67-row rerun archived and
+compared with M17b line by line. Its Java items, answered:
+
+- Observation O-2 (Java client): "graceful shutdown hangs after a server
+  kill" (`g2-crash-before-create-commit` java-client/rust-server, `g8-timeout`
+  kill variant) is the client's default 30 s control response deadline meeting
+  the driver's 30 s per-operation bound. A killed server sends nothing; the
+  connection's idle timeout is the stream lifetime (300 s), so a pending
+  request fails only at the control deadline, after which the launcher closes
+  and exits within about two seconds. Not a hang and not a defect, but the
+  driver could not observe the bound. The launcher now takes
+  `--control-timeout-ms N` (`3e1547dd`); the driver should pass a value below
+  its operation bound on kill rows, or raise that bound above 30 s.
+- Observation O-3 (Java subject): a 16 MiB object leaves the object directory
+  while a pinned read is open and the read still completes byte-exact
+  (`g7-read-pin-past-expiry` rust-client/java-server). Expected: the pinned
+  read holds an open descriptor, so reclaiming the name at expiry cannot recall
+  bytes already promised (S12-285 in the client direction, and the pin rule),
+  and the row's byte-exact completion is the clause satisfied.
+- Question D18 for the spec owner: a journal bound to another authority that
+  attaches is refused CONFLICT `authority differs` by Java and UNAUTHORIZED by
+  Rust (`g5-cross-authority-reference`); neither discloses the session. Section
+  12.3 names UNAUTHORIZED for an owner that cannot be authorized and CONFLICT
+  for a contradiction with retained identity; the attach names the wrong
+  authority, which reads as a contradiction, so Java keeps CONFLICT until the
+  owner decides.
 
 The 53-row driver run on `28c3369b` (2026-09-12, stores on the root drive)
 otherwise matched the milestone 17b baseline: 52 rows PASS on every
