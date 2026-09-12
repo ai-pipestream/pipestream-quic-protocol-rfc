@@ -62,7 +62,8 @@ gates and acceptance integration have passed, with evidence below.
 | 9deed6a0 | M18b: `r-staging-and-journal-bounds` implemented against both subjects (PARTIAL: journal/retained-byte ceilings recorded, not driven); the raw peer's tokio runtime is now driven continuously, which withdraws the M17b stalled-abort bracket as a client artefact |
 | 0d5dded6 | M18c: `r-stalled-principal-progress` re-run with non-writing probes on the driven client — both subjects enforce at their own negotiated idle bound inside a two-second bracket; every R row plus `g1-leaf-copy` re-run as the group regression |
 | 1d3569ee | M18d: `r-network-bytes` implemented against both subjects (PARTIAL: no network namespace and no packet capture on this host, both recorded by the checks that failed); new network scope with its own schema and validating reader |
-| this commit | M18e: `r-native-credit` implemented against both subjects (PARTIAL: no packet capture, and one endpoint's view only); group R is now four DONE and three PARTIAL, with every row implemented |
+| 54d93487 | M18e: `r-native-credit` implemented against both subjects (PARTIAL: no packet capture, and one endpoint's view only); group R is now four DONE and three PARTIAL, with every row implemented |
+| 2a9aad5d (+ this commit) | M19a (work in Kimi's role): attempt-2 hold at EXECUTION_CLAIMED for g4-stale-attempt-retry on the Java server, release file under both subject spellings, work-view parser reads the Java record form; affected rows rerun, all directions green (durable-18d4aacfca57bb0b) |
 
 ## 3. Verification evidence (M8 snapshot; superseded by §3c for the
 current milestone's gates, counts and subject pins)
@@ -1085,3 +1086,89 @@ milestone of M18, including across the tokio `rt-multi-thread` feature
 change. `run.tsv` in every archive records the subject hashes the run
 actually used, and the nc-stale-binary control re-hashes them after every
 scenario.
+
+## 3j. Milestone 19 (work in Kimi's role, 2026-09-12)
+
+Everything in this section was done by a follow-on agent in Kimi's role with
+the project owner's written authorization, on `agent/rfc-kimi-neutral-v2` in
+Kimi's worktree, while Kimi is away until about 2026-09-17. It is REVIEW_READY
+for Kimi's review and accepted by nobody. Nothing was merged, fast-forwarded,
+pushed or rebased. The Java subject for this milestone is Claude's all-jar
+`32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c`, copied
+from his read-only tree to `~/.rfc-tmp/jars/pipestream-quic-netty-32360ec3-all.jar`
+and hash-verified before every run (never rebuilt here); its sources are NOT
+merged into this branch (the last merged Java pin is `7585a9dc` at `c5b4f30`),
+so unlike M17b the jar is a pinned external artifact and `run.tsv` names the
+copy's path. The Rust subject is the release build of this tree,
+`097829fa45d8…`, rebuilt before every run and byte-identical throughout (the
+server crate is untouched). Java storage funding flags (`--db-mib`,
+`--wal-mib`) are NOT passed: both subjects run their defaults, as every
+earlier milestone did, so the M17b comparison stays like for like. Stores,
+artifacts and `TMPDIR` for every run are under `~/.rfc-tmp/kimi-m19/` on the
+root drive (never `/work`, never `/tmp`), and every run and release build was
+taken under the coordination `BENCHMARK.lock`.
+
+### 19a. Two driver fixes (commit 2a9aad5d), rerun archived as durable-18d4aacfca57bb0b
+
+Gates on the fix commit: `cargo fmt --all -- --check` exit 0; `cargo clippy
+--all-targets -p pipestream-conformance -- -D warnings` exit 0; `cargo test -p
+pipestream-conformance` 93 passed / 0 failed (92 at M18e; the new test pins
+the attempt-2 hold schedule). Both fixes carry a unit test that was RED on the
+old code and is green now, checked by running the new tests against the old
+function bodies before committing: `watch_field_parser_reads_deadline_values`
+(the Java record string) and `release_file_targets_the_events_directory` (the
+Java FixtureMain release name). Driver binary for the rerun
+`bac2dbceee8094cf7ed444afb87ea950cd153834ae7b5d4a725dfa77cac3f9da`; rust
+subject `097829fa45d8…` reproduced byte-identical by the release build.
+
+(a) g4-stale-attempt-retry. The rust-client/java-server direction answered
+ALREADY_TERMINAL instead of CONFLICT because the copy under attempt 2 finished
+before the driver's stale-retry process arrived; both authorities check
+terminal state before the attempt mismatch. The Java direction now holds
+attempt 2 at its claim: a schedule of `pause`, `release`, `pause` at
+EXECUTION_CLAIMED (Claude's FixtureMain consumes one pause row per reached
+boundary, so attempt 1's claim takes the first row and is released the moment
+the subject records it, attempt 2's takes the second), the stale retry is
+sent into the hold, CONFLICT "retry attempt changed" is observed, and only
+then is the release written. The subject's own record is the evidence:
+EXECUTION_CLAIMED appears twice in the Java events before the stale retry
+(`attempt_2_live_evidence`). The Rust subject rejects a pause outside its
+three reply pairs (`src/v2/fixture.rs` REPLY_PAIRS, checked at schedule
+parse), so that direction keeps attempt 2 live with a 16 MiB copy (the
+negotiated object limit) and names the gap in `expected.tsv`/`observed.tsv`
+(`attempt_2_hold`); a deterministic hold there needs a server-crate hook,
+which this milestone does not touch and which is a request to Meta. The
+driver now writes the release file under both spellings the subjects poll
+(`release-<BOUNDARY>` for the Rust hooks, `release-server-<BOUNDARY>` for the
+Java FixtureMain; the interface-v1 reconciliation is still a proposal) and
+can clear it so a later pause on the same boundary holds again.
+
+(b) `parse_field_u64` matched only the Rust CLI's Debug form. The Java client
+prints `VIEW` plus a Java record (`Records.WorkView`), so `deadline=N` and
+`deadline=null`; the parser now accepts the Rust view form
+`deadline: Some(Number(N))`, the Rust receipt form `deadline: Number(N)`, and
+the Java record form with the camelCase spelling derived from the snake_case
+field name (`admitted_at` reads `admittedAt=`), `null` read as absent.
+
+Rerun (dev, INCOMPLETE-labelled, 384/384 manifest entries verified after
+archiving, exit 0): `durable-18d4aacfca57bb0b` over g4-stale-attempt-retry,
+g2-kill-after-admission-before-publication, g2-kill-at-publication-commit
+and g3-restart-same-roots. Every direction of every row ran green:
+g4-stale-attempt-retry rust-client/java-server records
+`stale_retry_refusal authority refusal CONFLICT: retry attempt changed`
+(M17b: ALREADY_TERMINAL, direction INCOMPLETE); the java-client/rust-server
+directions of the two kill rows, INCOMPLETE at M17b with "post-restart watch
+did not report a deadline" (that message was the parser, but the M17b marker
+text was "process timed out", see the note below), now record terminal
+state 5 under attempt 1 with `automatic-redispatch-under-attempt-1`;
+g3-restart-same-roots java-client/rust-server records identical attempts and
+deadlines across the restart with the Java client's `deadline=` values now
+read. No run directory was deleted.
+
+Note on the M17b markers: the M17b archive's java-client/rust-server
+INCOMPLETE markers for the two kill rows read "process timed out" (the Java
+client's graceful shutdown after a server kill, a Java finding already
+reported), not the parser message; the parser failure was what the
+coordinating owner's 2026-09-12 rerun on the 28c3369b jar exposed once the
+timeout no longer occurred. At the 32360ec3 jar neither failure occurs in
+these rows.
