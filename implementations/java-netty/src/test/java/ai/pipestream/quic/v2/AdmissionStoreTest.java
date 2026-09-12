@@ -274,6 +274,56 @@ final class AdmissionStoreTest {
     }
   }
 
+  @Test
+  void controlCharacterContentTypeAndOverlongApplicationLabelAreFrameErrorsWithoutJobs()
+      throws Exception {
+    Fixture fixture = fixture("labels", 0, 0, 0, execution(4, 4));
+    try (InputStore inputs = fixture.inputs()) {
+      assertNotNull(inputs.identity());
+      install(fixture);
+      InputStore.Usage usage = fixture.inputs().usage();
+      Records.AdmitParameters parameters = fixture.header().parameters();
+      for (String contentType :
+          List.of(
+              "application/octet" + (char) 1 + "stream",
+              "text/plain" + (char) 127,
+              (char) 31 + "text/plain")) {
+        ProtocolError refused =
+            assertThrows(
+                ProtocolError.class,
+                () ->
+                    new Records.Input(
+                        parameters.input().length(), parameters.input().sha256(), contentType));
+        assertEquals(ProtocolError.Code.FRAME_ERROR, refused.code(), refused::getMessage);
+        assertTrue(refused.getMessage().endsWith("nonprintable application label"));
+      }
+      for (String application : List.of("a".repeat(129), "", "co" + (char) 0 + "py")) {
+        ProtocolError refused =
+            assertThrows(
+                ProtocolError.class,
+                () ->
+                    new Records.AdmitParameters(
+                        parameters.work(),
+                        parameters.input(),
+                        application,
+                        parameters.mode(),
+                        parameters.executionMs(),
+                        parameters.outputs()));
+        assertEquals(ProtocolError.Code.FRAME_ERROR, refused.code(), refused::getMessage);
+      }
+      Records.InputHeader longest =
+          changed(fixture.header(), new Records.WorkKey(0, 0, 1), "a".repeat(128), 0);
+      assertCode(
+          ProtocolError.Code.APPLICATION_UNSUPPORTED, () -> check(fixture, longest, CLOCK, ALLOW));
+      assertEquals(0, scalar(fixture.database(), "SELECT count(*) FROM ps_v2_jobs"));
+      assertEquals(1, scalar(fixture.database(), "SELECT operation_count FROM ps_v2_sessions"));
+      assertEquals(usage, fixture.inputs().usage());
+      assertView(fixture.sessions(), Records.State.DECLARED, null);
+      admit(fixture, 2);
+      assertEquals(1, scalar(fixture.database(), "SELECT count(*) FROM ps_v2_jobs"));
+    }
+  }
+
   private Fixture fixture(
       String name,
       int mode,

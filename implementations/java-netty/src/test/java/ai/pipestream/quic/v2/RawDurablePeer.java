@@ -42,6 +42,7 @@ final class RawDurablePeer implements AutoCloseable {
     final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     final CompletableFuture<byte[]> complete = new CompletableFuture<>();
     volatile long streamId;
+    volatile QuicStreamChannel stream;
   }
 
   final MultiThreadIoEventLoopGroup group =
@@ -129,6 +130,7 @@ final class RawDurablePeer implements AutoCloseable {
                   protected void initChannel(QuicStreamChannel stream) {
                     Incoming record = new Incoming();
                     record.streamId = stream.streamId();
+                    record.stream = stream;
                     stream.config().setOption(QuicChannelOption.READ_FRAMES, true);
                     if (holdIncoming) {
                       stream.config().setAutoRead(false);

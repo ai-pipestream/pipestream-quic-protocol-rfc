@@ -35,6 +35,24 @@ public final class BoundedSqlite {
     public static Limits defaults() {
       return new Limits(256L << 20, 64L << 20, 64L << 20, 512L << 10);
     }
+
+    /**
+     * The shared-memory bound that lets a log of the given size be used in full. SQLite indexes
+     * the log in 32 KiB shared-memory regions holding 4096 frames each (4062 in the first), so a
+     * funded log the regions cannot index is capped by the sidecar rather than by the log file.
+     * Never below the reference 512 KiB, a 64 KiB multiple, and never above the 16 MiB sidecar
+     * ceiling, which indexes about 8 GiB of log at the 4096-byte page.
+     *
+     * @param walBytes funded log bytes
+     * @param page SQLite page size
+     * @return shared-memory bytes that index the whole log, or the ceiling
+     */
+    public static long sharedMemoryFor(long walBytes, long page) {
+      long frames = Math.ceilDiv(Math.max(0L, walBytes - 32), page + 24);
+      long regions = frames <= 4062 ? 1 : 1 + Math.ceilDiv(frames - 4062, 4096);
+      long bytes = Math.ceilDiv(regions * 32768, 65536) * 65536;
+      return Math.min(16L << 20, Math.max(512L << 10, bytes));
+    }
   }
 
   private final SealedSqliteFiles files;

@@ -568,7 +568,15 @@ database, 64 MiB each for WAL and rollback journal, and 512 KiB for shared memor
 retained policy on reopen or defaults for a new store. Caps are positive multiples
 of 64 KiB, at most 16 GiB for main/WAL/journal and 16 MiB for shared memory.
 `fileUsage()` validates the policy and samples actual lengths; it is not an
-atomic snapshot or a count of allocated filesystem blocks.
+atomic snapshot or a count of allocated filesystem blocks. SQLite reaches the
+WAL through the shared-memory index, in 32 KiB regions of 4096 frames, so the
+usable log is the smaller of the WAL cap and what the sidecar indexes: the
+reference 512 KiB indexes about 257 MiB at the 4096-byte page. The `V2Main`
+launcher therefore sizes the sidecar for `--wal-mib`
+(`BoundedSqlite.Limits.sharedMemoryFor`, up to the 16 MiB ceiling, which
+indexes about 8 GiB). The transaction layer reserves roughly 0.8 MiB of usable
+log per admitted unit for its retained promises, so fund about 1 MiB of
+`--wal-mib` per unit a session holds at once.
 
 The guard checks writes, truncates and shared-memory mappings before growth.
 Database mmap and size-hint/chunk preallocation are disabled. Every store
@@ -1119,6 +1127,10 @@ journaled operation is re-invoked on a fresh connection after an authority
 `CONTROL_RESET`, transport loss or the local request deadline, with doubling
 backoff and jitter; `CONFLICT`, `UNAUTHORIZED`, framing and integrity codes,
 terminal outcomes and every local or journal failure stop immediately.
+`--control-timeout-ms N` shortens the client's control response deadline (the
+default is 30 s); since the connection's idle timeout is the stream lifetime, a
+killed authority is noticed only when a pending request reaches that deadline,
+so a harness that bounds one operation at 30 s should pass a smaller value.
 Exhausting the budget prints `UNRESOLVED` and exits 1 with the intent still
 journaled; no outcome is ever manufactured. Authority refusals are named on
 stdout as `REFUSED code=… detail=…`, and `client capabilities` prints the

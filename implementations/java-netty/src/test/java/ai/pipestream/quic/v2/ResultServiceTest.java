@@ -107,9 +107,14 @@ final class ResultServiceTest {
         Published alice = fixture.published("alice");
         ResultService.Read idle = fixture.begin(service, alice, 20, READ);
         idle.start();
+        // Section 12.7: the disk read happens one tick after creation, so a renewal here would
+        // move the idle deadline from tick(10) to tick(11) and the check at tick(10) would pass;
+        // reading from disk is not transport progress and must not renew.
+        nanos.set(tick(1));
         assertEquals(2, idle.read(new byte[2], 0, 2));
         nanos.set(tick(9));
         idle.sent(0);
+        idle.check();
         nanos.set(tick(10));
         assertCode(ProtocolError.Code.LIMIT_EXCEEDED, idle::check);
         assertEquals(new ResultService.Usage(0, 0), service.usage());

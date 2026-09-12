@@ -9,6 +9,7 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -109,6 +110,92 @@ final class OutputRetentionDependencyTest {
       assertEquals(1100L, job(fixture, child).record().outputReleaseAt());
       assertEquals(childView, fixture.view(child));
       assertEquals(0, fixture.inputs.usage().handles());
+    }
+  }
+
+  @Test
+  void branchAdmissionRefusesWhenItsChildDependencyPinCannotBeFunded() throws Exception {
+    AdmissionStore.Application application =
+        new AdmissionStore.Application(
+            "copy", Set.of(0, 1), AdmissionStore.RestartSafety.IDEMPOTENT);
+    Path database = directory.resolve("unfunded-pin.sqlite");
+    Path inputPath = directory.resolve("unfunded-pin-inputs");
+    SessionStore sessions = SessionStore.initialize(database, configuration(application));
+    Messages.Binding binding =
+        sessions.create(
+            access(), SELECTED, new Messages.Create(1, 1, new Records.Policy(10_000, 100, 30_000)));
+    long generation = binding.generation();
+    Records.WorkKey branch = new Records.WorkKey(0, 0, 1);
+    Records.WorkKey leaf = new Records.WorkKey(0, 0, 2);
+    AdmissionStore.Authorization allow = (retained, parameters) -> {};
+    try (InputStore inputs =
+        InputStore.initializeForAuthority(
+            inputPath, new InputStore.Limits(16L << 20, 128, 1 << 20, 2), sessions.identity())) {
+      sessions.bindInputs(inputs);
+      sessions.declare(
+          access(),
+          SELECTED,
+          generation,
+          new Messages.Declare(2, operation(2), 0, List.of(1L, 2L), false));
+      Records.InputHeader branchHeader = header(generation, branch, operation(3), 1);
+      receive(inputs, generation, branchHeader);
+      InputStore.Usage before = inputs.usage();
+
+      ProtocolError refused =
+          assertThrows(
+              ProtocolError.class,
+              () ->
+                  sessions.admit(
+                      access(), SELECTED, generation, inputs, branchHeader, 4, clock(1000), allow));
+      assertEquals(ProtocolError.Code.LIMIT_EXCEEDED, refused.code(), refused::getMessage);
+      assertTrue(refused.getMessage().contains("dependency"), refused.getMessage());
+      assertEquals(before, inputs.usage());
+      Records.WorkView declared =
+          sessions
+              .snapshot(access(), SELECTED, generation, new Messages.Watch(5, branch, 0, 0))
+              .work();
+      assertEquals(Records.State.DECLARED, declared.state());
+      assertNull(declared.child());
+      try (var connection =
+          BoundedSqlite.open(database, configuration(application).files()).connect()) {
+        assertNull(AdmissionStore.job(connection, binding, branch));
+      }
+
+      Records.InputHeader leafHeader = header(generation, leaf, operation(6), 0);
+      receive(inputs, generation, leafHeader);
+      Records.Admitted admitted =
+          assertInstanceOf(
+              Records.Admitted.class,
+              sessions
+                  .admit(access(), SELECTED, generation, inputs, leafHeader, 7, clock(1000), allow)
+                  .receipt()
+                  .outcome());
+      assertEquals(leaf, admitted.work());
+      assertNull(admitted.child());
+    }
+  }
+
+  private static Records.InputHeader header(
+      long generation, Records.WorkKey work, Records.OperationId operation, int mode)
+      throws Exception {
+    return new Records.InputHeader(
+        generation,
+        operation,
+        new Records.AdmitParameters(
+            work,
+            new Records.Input(0, ResultFixture.digest(new byte[0]), "application/octet-stream"),
+            "copy",
+            mode,
+            5000,
+            new Records.OutputBudget(1, 5)));
+  }
+
+  private static void receive(InputStore inputs, long generation, Records.InputHeader header)
+      throws Exception {
+    Commitments.Context context = new Commitments.Context("issuer-a", "alice", generation);
+    try (InputStore.Receiver receiver = inputs.begin(context, header, SELECTED, 1000)) {
+      receiver.write(ByteBuffer.allocate(0), 1000);
+      receiver.finish(1000);
     }
   }
 

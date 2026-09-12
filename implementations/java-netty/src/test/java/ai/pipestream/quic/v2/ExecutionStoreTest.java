@@ -10,6 +10,7 @@ import java.security.MessageDigest;
 import java.sql.Connection;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
@@ -55,6 +56,10 @@ final class ExecutionStoreTest {
       assertEquals(1, view.attempt());
       assertEquals(1000, view.admittedAt());
       assertEquals(2000, view.deadline());
+      assertEquals(Records.State.ACTIVE, view.state());
+      assertNull(view.terminalAt());
+      assertNull(view.receiptUntil());
+      assertNull(view.outputUntil());
     }
   }
 
@@ -99,6 +104,9 @@ final class ExecutionStoreTest {
                   ALLOW);
       assertEquals(Records.State.AWAITING_RETRY, failed.state());
       assertEquals(new Records.Diagnostic(7, "retry"), failed.diagnostic());
+      assertNull(failed.terminalAt());
+      assertNull(failed.receiptUntil());
+      assertNull(failed.outputUntil());
       JobRecord retry = job(retryable).record();
       assertEquals(JobRecord.Stage.AWAITING_RETRY, retry.stage());
       assertTrue(retry.inputLive());
@@ -123,6 +131,9 @@ final class ExecutionStoreTest {
                   ALLOW);
       assertEquals(Records.State.FAILED, failed.state());
       assertNull(failed.manifest());
+      assertEquals(1200, failed.terminalAt());
+      assertEquals(31_200, failed.receiptUntil());
+      assertNull(failed.outputUntil());
       JobRecord record = job(terminal).record();
       assertEquals(JobRecord.Stage.SETTLED, record.stage());
       assertTrue(record.inputLive());
@@ -234,6 +245,70 @@ final class ExecutionStoreTest {
       ExecutionStore.Lease lease = claim(fixture, 1100, 100);
       assertEquals(1, lease.attempt());
       assertEquals(1200, lease.until());
+    }
+  }
+
+  /**
+   * Section 12.6: every callback publication checks a current durable worker lease, and the lease
+   * is bound to the exact authority installation that issued it. A handle that differs only in its
+   * installation identity (same owner, generation, work, attempt, number and expiry) is refused on
+   * every publication, renewal, check and expansion path before any transaction opens, the job and
+   * its funded credits are untouched, and the genuine lease still publishes afterwards.
+   */
+  @Test
+  void leaseFromAnotherInstallationIsRefusedOnEveryPublicationPathWithTheJobUnchanged()
+      throws Exception {
+    Fixture fixture = fixture("foreign-installation", 0);
+    try (InputStore inputs = fixture.inputs()) {
+      assertNotNull(inputs.identity());
+      ExecutionStore.Lease lease = claim(fixture, 1100, 500);
+      UUID installation = lease.installation();
+      assertEquals(fixture.sessions().identity(), installation);
+      ExecutionStore.Lease foreign =
+          new ExecutionStore.Lease(
+              new UUID(
+                  installation.getMostSignificantBits() ^ 1L,
+                  installation.getLeastSignificantBits()),
+              lease.owner(),
+              lease.generation(),
+              lease.work(),
+              lease.attempt(),
+              lease.number(),
+              lease.until());
+      JobRecord before = job(fixture).record();
+      long[] credits = credits(fixture);
+      Records.WorkView view = view(fixture);
+      PublicationStore.Endpoint endpoint = new PublicationStore.Endpoint("localhost:443");
+      SessionStore sessions = fixture.sessions();
+      Records.Diagnostic diagnostic = new Records.Diagnostic(9, "foreign");
+      List<Throwing> publications =
+          List.of(
+              () ->
+                  sessions.succeedExecution(
+                      execAccess(), foreign, inputs, 0, endpoint, clock(1200), ALLOW),
+              () ->
+                  sessions.failExecution(
+                      execAccess(), foreign, diagnostic, false, clock(1200), ALLOW),
+              () ->
+                  sessions.failExecution(
+                      execAccess(), foreign, diagnostic, true, clock(1200), ALLOW),
+              () -> sessions.renewExecution(execAccess(), foreign, 500, clock(1200), ALLOW),
+              () -> sessions.checkExecution(execAccess(), foreign, clock(1200), ALLOW),
+              () -> sessions.finishExpansion(execAccess(), foreign, true, clock(1200), ALLOW));
+      for (Throwing publication : publications) {
+        ProtocolError refused = assertThrows(ProtocolError.class, publication::run);
+        assertEquals(ProtocolError.Code.UNAUTHORIZED, refused.code(), refused.toString());
+        assertTrue(refused.getMessage().contains("installation"), refused.toString());
+        assertEquals(before, job(fixture).record());
+        assertArrayEquals(credits, credits(fixture));
+        assertEquals(view, view(fixture));
+      }
+      Records.WorkView succeeded =
+          fixture
+              .sessions()
+              .succeedExecution(execAccess(), lease, inputs, 0, endpoint, clock(1200), ALLOW);
+      assertEquals(Records.State.SUCCEEDED, succeeded.state());
+      assertEquals(1, succeeded.attempt());
     }
   }
 

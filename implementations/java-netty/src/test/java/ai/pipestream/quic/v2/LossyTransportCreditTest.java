@@ -8,20 +8,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.netty.handler.codec.quic.QuicStreamChannel;
 import java.net.InetSocketAddress;
-import java.net.SocketAddress;
 import java.nio.ByteBuffer;
-import java.nio.channels.DatagramChannel;
-import java.nio.channels.SelectionKey;
-import java.nio.channels.Selector;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -54,116 +47,6 @@ class LossyTransportCreditTest {
   static void certificates() throws Exception {
     pki = DurableTestPki.generate(directory, List.of("alice"));
     principals = pki.principals(List.of("alice"));
-  }
-
-  /**
-   * A seeded UDP relay: one socket faces the client, one faces the server. Each direction drops
-   * a fraction of datagrams and holds one datagram back behind its successor now and then, which
-   * is exactly the loss and reordering QUIC's credit updates and retransmissions must survive.
-   */
-  static final class Relay implements AutoCloseable {
-    final DatagramChannel front = DatagramChannel.open();
-    final DatagramChannel back = DatagramChannel.open();
-    final InetSocketAddress server;
-    final AtomicReference<SocketAddress> client = new AtomicReference<>();
-    final AtomicLong forwarded = new AtomicLong();
-    final AtomicLong dropped = new AtomicLong();
-    final AtomicLong reordered = new AtomicLong();
-    final int dropPercent;
-    final int holdEvery;
-    final Thread toServer;
-    final Thread toClient;
-    volatile boolean closed;
-
-    Relay(InetSocketAddress server, long seed, int dropPercent, int holdEvery) throws Exception {
-      this.server = server;
-      this.dropPercent = dropPercent;
-      this.holdEvery = holdEvery;
-      front.bind(new InetSocketAddress("127.0.0.1", 0));
-      back.bind(new InetSocketAddress("127.0.0.1", 0));
-      front.configureBlocking(false);
-      back.configureBlocking(false);
-      toServer = new Thread(() -> pump(front, back, new Random(seed), true), "relay-to-server");
-      toClient = new Thread(() -> pump(back, front, new Random(seed ^ 0x5eed), false), "relay-to-client");
-      toServer.setDaemon(true);
-      toClient.setDaemon(true);
-      toServer.start();
-      toClient.start();
-    }
-
-    InetSocketAddress address() throws Exception {
-      return (InetSocketAddress) front.getLocalAddress();
-    }
-
-    private void pump(DatagramChannel in, DatagramChannel out, Random random, boolean inbound) {
-      ByteBuffer buffer = ByteBuffer.allocate(65_536);
-      byte[] held = null;
-      long count = 0;
-      try (Selector selector = Selector.open()) {
-        in.register(selector, SelectionKey.OP_READ);
-        while (!closed) {
-          buffer.clear();
-          SocketAddress source = in.receive(buffer);
-          if (source == null) {
-            // Nothing behind a held datagram within the hold window: send it on its own, so a
-            // final packet (a credit update after a refusal) is delayed, never withheld.
-            if (held != null) {
-              SocketAddress target = inbound ? server : client.get();
-              if (target != null) {
-                out.send(ByteBuffer.wrap(held), target);
-                forwarded.incrementAndGet();
-              }
-              held = null;
-            }
-            selector.select(20);
-            selector.selectedKeys().clear();
-            continue;
-          }
-          if (inbound) client.set(source);
-          SocketAddress target = inbound ? server : client.get();
-          if (target == null) continue;
-          buffer.flip();
-          byte[] datagram = new byte[buffer.remaining()];
-          buffer.get(datagram);
-          count++;
-          // Never touch the first packets of the handshake: the clause is about credit updates
-          // on an established connection, and a lost Initial only delays the test.
-          if (count > 8 && random.nextInt(100) < dropPercent) {
-            dropped.incrementAndGet();
-            continue;
-          }
-          if (held != null) {
-            out.send(ByteBuffer.wrap(datagram), target);
-            out.send(ByteBuffer.wrap(held), target);
-            forwarded.addAndGet(2);
-            reordered.incrementAndGet();
-            held = null;
-            continue;
-          }
-          if (count > 8 && holdEvery > 0 && count % holdEvery == 0) {
-            held = datagram;
-            continue;
-          }
-          out.send(ByteBuffer.wrap(datagram), target);
-          forwarded.incrementAndGet();
-        }
-      } catch (Exception failure) {
-        if (!closed) throw new IllegalStateException("relay " + (inbound ? "in" : "out"), failure);
-      }
-    }
-
-    @Override
-    public void close() throws java.io.IOException {
-      closed = true;
-      front.close();
-      back.close();
-      try {
-        toServer.join(5000);
-        toClient.join(5000);
-      } catch (InterruptedException interrupted) {
-        Thread.currentThread().interrupt();
-      }
-    }
   }
 
   /** Poll the peer-observable credit for up to the given time; return the last reading. */
@@ -199,8 +82,8 @@ class LossyTransportCreditTest {
                 pki.server(principals),
                 host,
                 DurableOptions.defaults());
-        Relay relay =
-            new Relay(
+        DatagramRelay relay =
+            new DatagramRelay(
                 server.address(),
                 20260912L,
                 Integer.getInteger("lossy.drop", 8),

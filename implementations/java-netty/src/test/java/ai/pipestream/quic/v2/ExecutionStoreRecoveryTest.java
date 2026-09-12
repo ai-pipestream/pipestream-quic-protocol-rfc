@@ -8,6 +8,7 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -112,6 +113,56 @@ final class ExecutionStoreRecoveryTest {
     assertEquals(before[1] - 2, after[1]);
     SessionStore.open(database, configuration(AdmissionStore.RestartSafety.IDEMPOTENT));
     assertEquals(Records.State.FAILED, view(sessions).state());
+  }
+
+  @Test
+  void changedRestartContractIsRefusedAtReopenAndByExecutionLoad() throws Exception {
+    Path database = directory.resolve("changed-contract.sqlite");
+    Path inputsPath = directory.resolve("changed-contract-inputs");
+    prepare(database, inputsPath, AdmissionStore.RestartSafety.IDEMPOTENT);
+    JobRecord retained = job(database, AdmissionStore.RestartSafety.IDEMPOTENT);
+    assertEquals(AdmissionStore.RestartSafety.IDEMPOTENT, retained.safety());
+
+    SessionStore.Configuration changed = configuration(AdmissionStore.RestartSafety.TRANSACTIONAL);
+    SQLException refusedReopen =
+        assertThrows(SQLException.class, () -> SessionStore.open(database, changed));
+    assertTrue(
+        refusedReopen.getMessage().contains("configuration or version differs"),
+        refusedReopen.getMessage());
+    Messages.Binding binding =
+        new Messages.Binding(
+            1,
+            "issuer-a",
+            "alice",
+            1,
+            1,
+            new Records.Policy(10_000, 20_000, 30_000),
+            new Records.Limits(8, 16, 16, 1 << 20, 1 << 20, 4));
+    try (var connection = BoundedSqlite.open(database, changed.files()).connect()) {
+      ProtocolError refusedLoad =
+          assertThrows(
+              ProtocolError.class,
+              () -> ExecutionStore.load(connection, changed, binding, WORK, ALLOW));
+      assertEquals(
+          ProtocolError.Code.APPLICATION_UNSUPPORTED, refusedLoad.code(), refusedLoad::getMessage);
+      assertEquals(
+          retained,
+          ExecutionStore.load(
+                  connection,
+                  configuration(AdmissionStore.RestartSafety.IDEMPOTENT),
+                  binding,
+                  WORK,
+                  ALLOW)
+              .stored()
+              .record());
+    }
+    assertEquals(retained, job(database, AdmissionStore.RestartSafety.IDEMPOTENT));
+    SessionStore sessions =
+        SessionStore.open(database, configuration(AdmissionStore.RestartSafety.IDEMPOTENT));
+    try (InputStore inputs = InputStore.open(inputsPath, INPUT_LIMITS)) {
+      sessions.verifyInputs(inputs);
+      assertEquals(1, claim(sessions, inputs, 1100, 100).attempt());
+    }
   }
 
   public static void main(String[] args) throws Exception {
