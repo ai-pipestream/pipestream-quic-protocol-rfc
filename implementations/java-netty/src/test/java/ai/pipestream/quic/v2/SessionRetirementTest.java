@@ -255,6 +255,142 @@ final class SessionRetirementTest {
     }
   }
 
+  @Test
+  void retiredCreationSequenceStaysExpiredAfterAllSessionMetadataIsRemoved() throws Exception {
+    Path database = directory.resolve("retired.sqlite");
+    Path inputPath = directory.resolve("retired-inputs");
+    Records.Policy policy = new Records.Policy(10_000, 20_000, 30_000);
+    SessionStore sessions = SessionStore.initialize(database, ResultFixture.configuration());
+    Messages.Binding binding =
+        sessions.create(
+            ResultFixture.sessionAccess("alice"),
+            ResultFixture.SELECTED,
+            new Messages.Create(1, 1, policy));
+    try (InputStore inputs =
+        InputStore.initializeForAuthority(
+            inputPath, ResultFixture.INPUT_LIMITS, sessions.identity())) {
+      sessions.bindInputs(inputs);
+      sessions.declare(
+          ResultFixture.sessionAccess("alice"),
+          ResultFixture.SELECTED,
+          binding.generation(),
+          new Messages.Declare(2, ResultFixture.operation(1), 0, List.of(), true));
+      closeRoot(sessions, binding, List.of(), 1000);
+      assertEquals(
+          RetirementStore.State.STARTED,
+          sessions
+              .retireSession(binding.generation(), inputs, 1, ResultFixture.clock(31_000))
+              .state());
+      assertEquals(
+          RetirementStore.State.COMPLETE,
+          finish(sessions, inputs, binding.generation(), 31_000).state());
+      assertEquals(
+          RetirementStore.State.ABSENT,
+          sessions
+              .retireSession(binding.generation(), inputs, 1, ResultFixture.clock(31_000))
+              .state());
+      assertEquals(0, sessionCount(database));
+      assertCode(
+          ProtocolError.Code.NOT_FOUND,
+          () ->
+              sessions.attach(
+                  ResultFixture.sessionAccess("alice"),
+                  ResultFixture.SELECTED,
+                  new Messages.Attach(
+                      3, binding.authority(), binding.owner(), binding.generation())));
+
+      assertCode(
+          ProtocolError.Code.EXPIRED,
+          () ->
+              sessions.create(
+                  ResultFixture.sessionAccess("alice"),
+                  ResultFixture.SELECTED,
+                  new Messages.Create(4, binding.creationSequence(), policy)));
+      assertEquals(0, sessionCount(database));
+      assertEquals(
+          2,
+          sessions
+              .nextSequence(
+                  ResultFixture.sessionAccess("alice"),
+                  ResultFixture.SELECTED,
+                  new Messages.NextSequence(5))
+              .nextCreationSequence());
+
+      SessionStore reopened = SessionStore.open(database, ResultFixture.configuration());
+      reopened.verifyInputs(inputs);
+      assertCode(
+          ProtocolError.Code.EXPIRED,
+          () ->
+              reopened.create(
+                  ResultFixture.sessionAccess("alice"),
+                  ResultFixture.SELECTED,
+                  new Messages.Create(6, binding.creationSequence(), policy)));
+      assertEquals(0, sessionCount(database));
+      Messages.Binding replacement =
+          reopened.create(
+              ResultFixture.sessionAccess("alice"),
+              ResultFixture.SELECTED,
+              new Messages.Create(7, 2, policy));
+      assertTrue(replacement.generation() > binding.generation());
+      assertEquals(2, replacement.creationSequence());
+    }
+  }
+
+  @Test
+  void retirementCutoffExtendsToAnOutputPromiseLongerThanTheReceiptRetention()
+      throws Exception {
+    Records.Policy receiptFirst = new Records.Policy(10_000, 60_000, 5_000);
+    try (ResultFixture fixture =
+        new ResultFixture(directory, "output-cutoff", new byte[] {1}, receiptFirst)) {
+      assertEquals(6_200, fixture.published.receiptUntil());
+      assertEquals(61_200, fixture.published.outputUntil());
+      fixture.sessions.declare(
+          ResultFixture.sessionAccess("alice"),
+          ResultFixture.SELECTED,
+          fixture.binding.generation(),
+          new Messages.Declare(80, ResultFixture.operation(80), 0, List.of(), true));
+      closeRoot(fixture.sessions, fixture.binding, List.of(1L), 1200);
+      assertEquals(
+          RetentionStore.Result.RELEASED,
+          fixture.sessions.reclaimInput(
+              fixture.binding.generation(),
+              ResultFixture.WORK,
+              fixture.inputs,
+              ResultFixture.clock(6_200)));
+      assertEquals(
+          RetentionStore.Result.NOT_READY,
+          fixture.sessions.reclaimOutput(
+              fixture.binding.generation(),
+              ResultFixture.WORK,
+              fixture.inputs,
+              ResultFixture.clock(61_199)));
+      assertEquals(
+          RetirementStore.State.NOT_READY,
+          fixture
+              .sessions
+              .retireSession(
+                  fixture.binding.generation(), fixture.inputs, 1, ResultFixture.clock(61_199))
+              .state());
+      assertEquals(
+          RetentionStore.Result.RELEASED,
+          fixture.sessions.reclaimOutput(
+              fixture.binding.generation(),
+              ResultFixture.WORK,
+              fixture.inputs,
+              ResultFixture.clock(61_200)));
+      assertEquals(
+          RetirementStore.State.STARTED,
+          fixture
+              .sessions
+              .retireSession(
+                  fixture.binding.generation(), fixture.inputs, 1, ResultFixture.clock(61_200))
+              .state());
+      assertEquals(
+          RetirementStore.State.COMPLETE,
+          finish(fixture.sessions, fixture.inputs, fixture.binding.generation(), 61_200).state());
+    }
+  }
+
   private static void closeRoot(
       SessionStore sessions, Messages.Binding binding, List<Long> members, long utc)
       throws Exception {

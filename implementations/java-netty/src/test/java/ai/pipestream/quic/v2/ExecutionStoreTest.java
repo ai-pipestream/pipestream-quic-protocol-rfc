@@ -55,6 +55,10 @@ final class ExecutionStoreTest {
       assertEquals(1, view.attempt());
       assertEquals(1000, view.admittedAt());
       assertEquals(2000, view.deadline());
+      assertEquals(Records.State.ACTIVE, view.state());
+      assertNull(view.terminalAt());
+      assertNull(view.receiptUntil());
+      assertNull(view.outputUntil());
     }
   }
 
@@ -99,6 +103,9 @@ final class ExecutionStoreTest {
                   ALLOW);
       assertEquals(Records.State.AWAITING_RETRY, failed.state());
       assertEquals(new Records.Diagnostic(7, "retry"), failed.diagnostic());
+      assertNull(failed.terminalAt());
+      assertNull(failed.receiptUntil());
+      assertNull(failed.outputUntil());
       JobRecord retry = job(retryable).record();
       assertEquals(JobRecord.Stage.AWAITING_RETRY, retry.stage());
       assertTrue(retry.inputLive());
@@ -123,6 +130,9 @@ final class ExecutionStoreTest {
                   ALLOW);
       assertEquals(Records.State.FAILED, failed.state());
       assertNull(failed.manifest());
+      assertEquals(1200, failed.terminalAt());
+      assertEquals(31_200, failed.receiptUntil());
+      assertNull(failed.outputUntil());
       JobRecord record = job(terminal).record();
       assertEquals(JobRecord.Stage.SETTLED, record.stage());
       assertTrue(record.inputLive());

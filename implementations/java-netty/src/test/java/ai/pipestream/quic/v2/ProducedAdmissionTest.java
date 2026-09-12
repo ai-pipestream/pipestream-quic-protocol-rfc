@@ -269,6 +269,44 @@ final class ProducedAdmissionTest {
     }
   }
 
+  @Test
+  void cancellationFenceAcceptedAfterPreflightRefusesProducedAdmissionWithoutMutation()
+      throws Exception {
+    try (Fixture fixture = new Fixture("fenced", 8)) {
+      ExecutionStore.Lease parent = fixture.prepareParent();
+      fixture.declareProduced(parent, operation(80), List.of(10L), true);
+      Records.InputHeader header = fixture.header(10, operation(81), new byte[] {1});
+      fixture.receive(header, new byte[] {1});
+      assertTrue(fixture.check(parent, header).isEmpty());
+      InputStore.Usage before = fixture.inputs.usage();
+      long jobs = scalar(fixture.database, "SELECT count(*) FROM ps_v2_jobs");
+      long operations = scalar(fixture.database, "SELECT count(*) FROM ps_v2_operations");
+
+      Messages.CancelResponse cancelled =
+          fixture.sessions.cancel(
+              sessionAccess(),
+              SELECTED,
+              1,
+              new Messages.Cancel(82, operation(82), PARENT),
+              clock(1100),
+              (binding, request) -> {});
+      Records.Cancelled outcome =
+          assertInstanceOf(Records.Cancelled.class, cancelled.receipt().outcome());
+      assertEquals(0, outcome.disposition());
+      assertEquals(Records.State.CANCELLING, outcome.state());
+
+      assertCode(ProtocolError.Code.CANCELLED, () -> fixture.admit(parent, header));
+      assertEquals(Records.State.DECLARED, fixture.view(header.parameters().work()).state());
+      assertEquals(before, fixture.inputs.usage());
+      assertTrue(fixture.inputs.findReservation(fixture.context(), header).isEmpty());
+      assertEquals(jobs, scalar(fixture.database, "SELECT count(*) FROM ps_v2_jobs"));
+      assertEquals(
+          operations + 1, scalar(fixture.database, "SELECT count(*) FROM ps_v2_operations"));
+      assertCode(ProtocolError.Code.CANCELLED, () -> fixture.check(parent, header));
+      assertEquals(Records.State.CANCELLING, fixture.view(PARENT).state());
+    }
+  }
+
   private final class Fixture implements AutoCloseable {
     final Path database;
     final Path inputPath;

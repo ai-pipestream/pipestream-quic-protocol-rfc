@@ -251,6 +251,83 @@ final class ProducedDeclarationTest {
     }
   }
 
+  @Test
+  void producerOneDeclarationReplaysItsReceiptUnderAReplacementAttempt() throws Exception {
+    try (Fixture fixture = new Fixture("replacement-attempt")) {
+      Parent parent = fixture.parent(1, 1000);
+      Messages.Declare produced =
+          new Messages.Declare(60, operation(60), parent.child().scope(), List.of(10L, 20L), true);
+      Messages.DeclarationResponse first = fixture.declare(parent.lease(), produced, 1100, ALLOW);
+      assertInstanceOf(Records.Declared.class, first.receipt().outcome());
+
+      Records.WorkView retrying =
+          fixture.sessions.failExecution(
+              execAccess(),
+              parent.lease(),
+              new Records.Diagnostic(5, "retry"),
+              true,
+              clock(1150),
+              ALLOW);
+      assertEquals(Records.State.AWAITING_RETRY, retrying.state());
+      assertEquals(1, retrying.attempt());
+      fixture.sessions.retry(
+          access(),
+          SELECTED,
+          fixture.generation,
+          new Messages.Retry(61, operation(61), parent.work(), 1),
+          clock(1150),
+          ALLOW);
+      assertEquals(2, fixture.view(parent.work()).attempt());
+      assertEquals(parent.child(), fixture.view(parent.work()).child());
+      ExecutionStore.Lease replacement =
+          fixture.sessions.claimExecution(
+              execAccess(),
+              fixture.generation,
+              parent.work(),
+              fixture.inputs,
+              100,
+              clock(1160),
+              ALLOW);
+      assertEquals(2, replacement.attempt());
+
+      Messages.DeclarationResponse replay =
+          fixture.declare(
+              replacement,
+              new Messages.Declare(
+                  62, operation(60), parent.child().scope(), List.of(10L, 20L), true),
+              1160,
+              ALLOW);
+      assertEquals(first.receipt(), replay.receipt());
+      assertEquals(62, replay.request());
+      assertCode(
+          ProtocolError.Code.CONFLICT,
+          () ->
+              fixture.declare(
+                  parent.lease(),
+                  new Messages.Declare(
+                      63, operation(60), parent.child().scope(), List.of(10L, 20L), true),
+                  1160,
+                  ALLOW));
+      assertCode(
+          ProtocolError.Code.CONFLICT,
+          () ->
+              fixture.declare(
+                  replacement,
+                  new Messages.Declare(
+                      64, operation(60), parent.child().scope(), List.of(10L), true),
+                  1160,
+                  ALLOW));
+      Messages.PageResponse page =
+          fixture.sessions.page(
+              access(),
+              SELECTED,
+              fixture.generation,
+              new Messages.Page(65, parent.child().scope(), 0, 8));
+      assertTrue(page.sealed());
+      assertEquals(List.of(10L, 20L), page.entries().stream().map(Messages.Entry::entity).toList());
+    }
+  }
+
   private final class Fixture implements AutoCloseable {
     final Path database;
     final Path inputsPath;

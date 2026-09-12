@@ -430,6 +430,150 @@ final class FenceStoreTest {
     }
   }
 
+  @Test
+  void emptyScopeCancellationSealsZeroMembersAndClosesWithZeroCounts() throws Exception {
+    try (Fixture fixture = new Fixture("empty-scope", true, 1)) {
+      Records.ChildScope child = fixture.view().child();
+      assertNotNull(child);
+      Messages.PageResponse open =
+          fixture.sessions.page(
+              sessionAccess(),
+              SELECTED,
+              fixture.binding.generation(),
+              new Messages.Page(80, child.scope(), 0, 10));
+      assertEquals(0, open.declared());
+      assertFalse(open.sealed());
+      Messages.CancelScopeResponse response =
+          fixture.sessions.cancelScope(
+              sessionAccess(),
+              SELECTED,
+              fixture.binding.generation(),
+              new Messages.CancelScope(81, operation(81), child.scope()),
+              clock(1200),
+              ALLOW);
+      Records.ScopeCancelled outcome =
+          assertInstanceOf(Records.ScopeCancelled.class, response.receipt().outcome());
+      assertEquals(child.scope(), outcome.scope());
+      assertEquals(1200, outcome.acceptedAt());
+      assertCode(
+          ProtocolError.Code.CANCELLED,
+          () ->
+              fixture.sessions.declare(
+                  sessionAccess(),
+                  SELECTED,
+                  fixture.binding.generation(),
+                  new Messages.Declare(82, operation(82), child.scope(), List.of(1L), false)));
+
+      FenceStore.Cursor cancellation = new FenceStore.Cursor();
+      int sealed = 0;
+      int settled = 0;
+      for (int step = 0; step < 16 && sealed == 0; step++) {
+        FenceStore.Progress progress =
+            fixture.sessions.reconcileCancellation(cancellation, 1, clock(1200));
+        sealed += progress.sealedScopes();
+        settled += progress.settledWork();
+      }
+      assertEquals(1, sealed);
+      assertEquals(0, settled);
+      Messages.PageResponse frozen =
+          fixture.sessions.page(
+              sessionAccess(),
+              SELECTED,
+              fixture.binding.generation(),
+              new Messages.Page(83, child.scope(), 0, 10));
+      assertTrue(frozen.sealed());
+      assertEquals(0, frozen.declared());
+      assertTrue(frozen.entries().isEmpty());
+      ClosureStore.Cursor closures = new ClosureStore.Cursor();
+      for (int step = 0; step < 8; step++)
+        fixture.sessions.reconcileClosures(closures, 1, clock(1200));
+      Commitments.Seal seal =
+          new Commitments.Seal(
+              new Commitments.Context(
+                  fixture.binding.authority(),
+                  fixture.binding.owner(),
+                  fixture.binding.generation()),
+              child.scope(),
+              child.producer(),
+              WORK,
+              0);
+      Records.Digest childSeal = seal.finish();
+      Records.ScopeSummary summary =
+          fixture.sessions.scopeSummary(
+              sessionAccess(), SELECTED, fixture.binding.generation(), child.scope(), childSeal);
+      assertEquals(new Records.Counts(0, 0, 0, 0), summary.counts());
+      assertEquals(0, summary.declared());
+      assertEquals(childSeal, summary.seal());
+      assertEquals(
+          response.receipt(),
+          fixture
+              .sessions
+              .cancelScope(
+                  sessionAccess(),
+                  SELECTED,
+                  fixture.binding.generation(),
+                  new Messages.CancelScope(84, operation(81), child.scope()),
+                  clock(0),
+                  ALLOW)
+              .receipt());
+      fixture.reopen();
+      assertEquals(
+          summary,
+          fixture.sessions.scopeSummary(
+              sessionAccess(), SELECTED, fixture.binding.generation(), child.scope(), childSeal));
+    }
+  }
+
+  @Test
+  void firstAcceptedSkipFixesOutcomeAgainstALaterCancel() throws Exception {
+    try (Fixture fixture = new Fixture("skip-then-cancel", true, 2)) {
+      assertNotNull(fixture.view().child());
+      Messages.SkipResponse skip =
+          fixture.skip(new Messages.Skip(90, operation(90), WORK), 1200, ALLOW);
+      Records.Skipped accepted = assertInstanceOf(Records.Skipped.class, skip.receipt().outcome());
+      assertEquals(0, accepted.disposition());
+      assertEquals(Records.State.CANCELLING, accepted.state());
+      assertEquals(Records.State.CANCELLING, fixture.view().state());
+      Records.WorkView pending = fixture.view();
+      long[] credits = fixture.credits();
+
+      assertCode(
+          ProtocolError.Code.CANCELLED,
+          () -> fixture.cancel(new Messages.Cancel(91, operation(91), WORK), 1250, ALLOW));
+      assertEquals(pending, fixture.view());
+      assertArrayEquals(credits, fixture.credits());
+      assertCode(
+          ProtocolError.Code.NOT_FOUND,
+          () ->
+              fixture.sessions.lookupOperation(
+                  sessionAccess(),
+                  SELECTED,
+                  fixture.binding.generation(),
+                  new Messages.LookupOperation(92, operation(91))));
+      assertEquals(
+          skip.receipt(),
+          fixture.skip(new Messages.Skip(93, operation(90), WORK), 0, ALLOW).receipt());
+
+      FenceStore.Cursor cursor = new FenceStore.Cursor();
+      ClosureStore.Cursor closures = new ClosureStore.Cursor();
+      for (int step = 0; step < 16 && !fixture.view().state().terminal(); step++) {
+        fixture.sessions.reconcileCancellation(cursor, 1, clock(1300));
+        fixture.sessions.reconcileClosures(closures, 1, clock(1300));
+      }
+      assertEquals(Records.State.SKIPPED, fixture.view().state());
+      Messages.CancelResponse late =
+          fixture.cancel(new Messages.Cancel(94, operation(94), WORK), 1400, ALLOW);
+      Records.Cancelled observed = (Records.Cancelled) late.receipt().outcome();
+      assertEquals(1, observed.disposition());
+      assertEquals(Records.State.SKIPPED, observed.state());
+      fixture.reopen();
+      assertEquals(Records.State.SKIPPED, fixture.view().state());
+      assertEquals(
+          skip.receipt(),
+          fixture.skip(new Messages.Skip(95, operation(90), WORK), 0, ALLOW).receipt());
+    }
+  }
+
   private final class Fixture implements AutoCloseable {
     final Path database;
     final Path inputPath;

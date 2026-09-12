@@ -122,6 +122,47 @@ final class SessionStoreTest {
   }
 
   @Test
+  void ownerLabelsOutsideTheIdentityGrammarAreFrameErrorsBeforeAuthorization() throws Exception {
+    SessionStore store = SessionStore.initialize(database("owner-grammar"), configuration(8, 8, 4));
+    store.create(access("alice"), durable(8192, 1 << 20), new Messages.Create(1, 1, POLICY));
+    AtomicInteger checks = new AtomicInteger();
+    SessionStore.Access counting = new SessionStore.Access("alice", checks::incrementAndGet);
+    for (String owner :
+        List.of("", "a".repeat(129), "alice/1", "al ice", "alice@issuer", "al" + (char) 233)) {
+      ProtocolError attach =
+          assertCode(
+              ProtocolError.Code.FRAME_ERROR,
+              () ->
+                  store.attach(
+                      counting,
+                      durable(8192, 1 << 20),
+                      new Messages.Attach(2, "issuer-a", owner, 1)));
+      assertTrue(attach.getMessage().contains("invalid identity"), attach.getMessage());
+      ProtocolError principal =
+          assertCode(
+              ProtocolError.Code.FRAME_ERROR, () -> new SessionStore.Access(owner, () -> {}));
+      assertTrue(principal.getMessage().contains("invalid identity"), principal.getMessage());
+    }
+    assertEquals(0, checks.get());
+
+    String longest = "a".repeat(128);
+    assertEquals(longest, new Messages.Attach(3, "issuer-a", longest, 1).owner());
+    assertEquals("Az09-._~", new Messages.Attach(4, "issuer-a", "Az09-._~", 1).owner());
+    assertCode(
+        ProtocolError.Code.UNAUTHORIZED,
+        () ->
+            store.attach(
+                access(longest),
+                durable(8192, 1 << 20),
+                new Messages.Attach(5, "issuer-a", longest, 1)));
+    Messages.Binding attached =
+        store.attach(
+            counting, durable(8192, 1 << 20), new Messages.Attach(6, "issuer-a", "alice", 1));
+    assertEquals("alice", attached.owner());
+    assertTrue(checks.get() > 0);
+  }
+
+  @Test
   void policyAndCapacityRefusalsDoNotAdvanceEitherAllocator() throws Exception {
     Path path = database("capacity");
     SessionStore store = SessionStore.initialize(path, configuration(1, 1, 1));

@@ -28,6 +28,7 @@ final class ResultFixture implements AutoCloseable {
   static final PublicationStore.Endpoint ENDPOINT =
       new PublicationStore.Endpoint("results.example:7443");
   static final AdmissionStore.Authorization ALLOW_EXECUTION = (binding, parameters) -> {};
+  static final Records.Policy POLICY = new Records.Policy(10_000, 20_000, 30_000);
 
   final Path database;
   final Path inputsPath;
@@ -41,25 +42,30 @@ final class ResultFixture implements AutoCloseable {
   InputStore inputs;
 
   ResultFixture(Path directory, String name, byte[] payload) throws Exception {
-    this(directory, name, new byte[0], payload, true, 1);
+    this(directory, name, new byte[0], payload, true, 1, POLICY);
+  }
+
+  ResultFixture(Path directory, String name, byte[] payload, Records.Policy policy)
+      throws Exception {
+    this(directory, name, new byte[0], payload, true, 1, policy);
   }
 
   ResultFixture(Path directory, String name, byte[] payload, boolean publish) throws Exception {
-    this(directory, name, new byte[0], payload, publish, 1);
+    this(directory, name, new byte[0], payload, publish, 1, POLICY);
   }
 
   ResultFixture(Path directory, String name, byte[] inputPayload, byte[] payload) throws Exception {
-    this(directory, name, inputPayload, payload, true, 1);
+    this(directory, name, inputPayload, payload, true, 1, POLICY);
   }
 
   ResultFixture(Path directory, String name, byte[] inputPayload, byte[] payload, boolean publish)
       throws Exception {
-    this(directory, name, inputPayload, payload, publish, 1);
+    this(directory, name, inputPayload, payload, publish, 1, POLICY);
   }
 
   ResultFixture(Path directory, String name, byte[] inputPayload, byte[] payload, int outputCount)
       throws Exception {
-    this(directory, name, inputPayload, payload, true, outputCount);
+    this(directory, name, inputPayload, payload, true, outputCount, POLICY);
   }
 
   private ResultFixture(
@@ -68,7 +74,8 @@ final class ResultFixture implements AutoCloseable {
       byte[] inputPayload,
       byte[] payload,
       boolean publish,
-      int outputCount)
+      int outputCount,
+      Records.Policy policy)
       throws Exception {
     database = directory.resolve(name + ".sqlite");
     inputsPath = directory.resolve(name + "-inputs");
@@ -79,7 +86,7 @@ final class ResultFixture implements AutoCloseable {
         sessions.create(
             sessionAccess("alice"),
             SELECTED,
-            new Messages.Create(1, 1, new Records.Policy(10_000, 20_000, 30_000)));
+            new Messages.Create(1, 1, policy));
     sessions.declare(
         sessionAccess("alice"),
         SELECTED,

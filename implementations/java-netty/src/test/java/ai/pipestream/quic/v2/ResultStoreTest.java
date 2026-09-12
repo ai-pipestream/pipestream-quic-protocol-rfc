@@ -505,6 +505,92 @@ final class ResultStoreTest {
         5000);
   }
 
+  @Test
+  void outputStaysReadableAndManifestKeepsAvailabilityAfterTheWorkReceiptExpires()
+      throws Exception {
+    Records.Policy receiptFirst = new Records.Policy(10_000, 60_000, 5_000);
+    try (ResultFixture fixture =
+        new ResultFixture(directory, "receipt-first", PAYLOAD, receiptFirst)) {
+      assertEquals(1200, fixture.published.terminalAt());
+      assertEquals(6_200, fixture.published.receiptUntil());
+      assertEquals(61_200, fixture.published.outputUntil());
+      assertEquals(61_200, fixture.published.manifest().availableUntil());
+      assertEquals(
+          RetentionStore.Result.RELEASED,
+          fixture.sessions.reclaimInput(
+              fixture.binding.generation(),
+              ResultFixture.WORK,
+              fixture.inputs,
+              ResultFixture.clock(6_200)));
+      for (long now : new long[] {6_200, 30_000, 61_199}) {
+        Messages.Read request =
+            new Messages.Read(now, ResultFixture.WORK, 1, 0, fixture.payloadDigest);
+        try (ResultStore.Opened opened =
+            fixture.sessions.openResult(
+                ResultFixture.sessionAccess("alice"),
+                ResultFixture.SELECTED,
+                fixture.binding.generation(),
+                fixture.inputs,
+                request,
+                ResultFixture.clock(now),
+                ALLOW,
+                () -> {})) {
+          assertEquals(PAYLOAD.length, opened.header().length());
+          assertArrayEquals(PAYLOAD, opened.reader().readAllBytes());
+        }
+        assertEquals(0, fixture.inputs.usage().handles());
+        Records.Manifest manifest =
+            fixture
+                .sessions
+                .manifest(
+                    ResultFixture.sessionAccess("alice"),
+                    ResultFixture.SELECTED,
+                    fixture.binding.generation(),
+                    new Messages.GetManifest(now + 1, ResultFixture.WORK, 1),
+                    ALLOW)
+                .manifest();
+        assertEquals(fixture.published.manifest(), manifest);
+        assertEquals(61_200, manifest.availableUntil());
+      }
+      fixture.reopen();
+      try (ResultStore.Opened opened =
+          fixture.sessions.openResult(
+              ResultFixture.sessionAccess("alice"),
+              ResultFixture.SELECTED,
+              fixture.binding.generation(),
+              fixture.inputs,
+              new Messages.Read(71, ResultFixture.WORK, 1, 0, fixture.payloadDigest),
+              ResultFixture.clock(61_199),
+              ALLOW,
+              () -> {})) {
+        assertArrayEquals(PAYLOAD, opened.reader().readAllBytes());
+      }
+      assertEquals(
+          fixture.published,
+          fixture
+              .sessions
+              .snapshot(
+                  ResultFixture.sessionAccess("alice"),
+                  ResultFixture.SELECTED,
+                  fixture.binding.generation(),
+                  new Messages.Watch(72, ResultFixture.WORK, 0, 0))
+              .work());
+      assertCode(
+          ProtocolError.Code.EXPIRED,
+          () ->
+              fixture.sessions.openResult(
+                  ResultFixture.sessionAccess("alice"),
+                  ResultFixture.SELECTED,
+                  fixture.binding.generation(),
+                  fixture.inputs,
+                  new Messages.Read(73, ResultFixture.WORK, 1, 0, fixture.payloadDigest),
+                  ResultFixture.clock(61_200),
+                  ALLOW,
+                  () -> {}));
+      assertEquals(0, fixture.inputs.usage().handles());
+    }
+  }
+
   private static void assertCode(ProtocolError.Code expected, Throwing action) {
     ProtocolError error = assertThrows(ProtocolError.class, action::run);
     assertEquals(expected, error.code(), error::getMessage);

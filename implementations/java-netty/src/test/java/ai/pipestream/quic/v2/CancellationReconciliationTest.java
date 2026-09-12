@@ -263,6 +263,67 @@ final class CancellationReconciliationTest {
     }
   }
 
+  @Test
+  void skippedBranchSettlesSkippedWhileItsUnresolvedChildSettlesCancelled() throws Exception {
+    try (Fixture fixture = new Fixture("skip-branch")) {
+      fixture.declare(0, operation(50), List.of(1L), true);
+      fixture.admit(PARENT, operation(51), 1, 1000);
+      Records.ChildScope child = fixture.view(PARENT).child();
+      assertNotNull(child);
+      Records.WorkKey unresolved = new Records.WorkKey(child.scope(), child.producer(), 1);
+      fixture.declare(child.scope(), operation(52), List.of(1L), false);
+
+      Messages.SkipResponse response =
+          fixture.sessions.skip(
+              access(),
+              SELECTED,
+              fixture.generation,
+              new Messages.Skip(53, operation(53), PARENT),
+              clock(1100),
+              FENCE);
+      Records.Skipped skipped =
+          assertInstanceOf(Records.Skipped.class, response.receipt().outcome());
+      assertEquals(0, skipped.disposition());
+      assertEquals(Records.State.CANCELLING, skipped.state());
+      assertEquals(Records.State.CANCELLING, fixture.view(PARENT).state());
+      assertEquals(Records.State.DECLARED, fixture.view(unresolved).state());
+
+      FenceStore.Cursor fences = new FenceStore.Cursor();
+      ClosureStore.Cursor closures = new ClosureStore.Cursor();
+      for (int calls = 0; calls < 32 && !fixture.view(PARENT).state().terminal(); calls++) {
+        fixture.sessions.reconcileCancellation(fences, 1, clock(1200));
+        fixture.sessions.reconcileClosures(closures, 1, clock(1200));
+      }
+      assertEquals(Records.State.SKIPPED, fixture.view(PARENT).state());
+      assertEquals(Records.State.CANCELLED, fixture.view(unresolved).state());
+      assertNull(fixture.view(unresolved).input());
+      for (int calls = 0; calls < 8; calls++) {
+        fixture.sessions.reconcileClosures(closures, 1, clock(1200));
+      }
+
+      Records.Digest childSeal =
+          seal(fixture.binding, child.scope(), child.producer(), PARENT, List.of(1L));
+      Records.ScopeSummary childSummary =
+          fixture.sessions.scopeSummary(
+              access(), SELECTED, fixture.generation, child.scope(), childSeal);
+      assertEquals(new Records.Counts(0, 0, 1, 0), childSummary.counts());
+      Records.Digest rootSeal = seal(fixture.binding, 0, 0, null, List.of(1L));
+      Records.ScopeSummary root =
+          fixture.sessions.scopeSummary(access(), SELECTED, fixture.generation, 0, rootSeal);
+      assertEquals(new Records.Counts(0, 0, 0, 1), root.counts());
+
+      fixture.reopen();
+      assertEquals(Records.State.SKIPPED, fixture.view(PARENT).state());
+      assertEquals(Records.State.CANCELLED, fixture.view(unresolved).state());
+      assertEquals(
+          childSummary,
+          fixture.sessions.scopeSummary(
+              access(), SELECTED, fixture.generation, child.scope(), childSeal));
+      assertEquals(
+          root, fixture.sessions.scopeSummary(access(), SELECTED, fixture.generation, 0, rootSeal));
+    }
+  }
+
   private final class Fixture implements AutoCloseable {
     final Path database;
     final Path inputPath;
