@@ -53,6 +53,7 @@ shared feature branch and main were not merged.
 | `6174d92d` | `DurableClientContradictionTest`: a child scope naming an unadmitted parent stays pending evidence (no synthesized parent commitment) and is concluded only by the parent's own view, for and against (S12-294); traceability 301/60/5/7 |
 | `c115e292` | `DatagramRelay` test helper (loss, reordering, mid-session rebind) shared by `LossyTransportCreditTest` and the new `MigrationWireTest`: the same session continues under the same owner after the peer's packets arrive from a new address, nothing re-authenticated (S12-010); `V2TlsTest` asserts no follow-up attempt after an ALPN refusal (S12-005); S12-008 (0-RTT) refined as proposal P-TLS-1 |
 | `3f8846e2` | thirteen store-level traceability partials closed by unit tests written in a separate worktree and reviewed here (P-STORE-3, 5 to 16; each confirmed red by inverting its load-bearing assertion): S12-100, 112, 169, 170, 171, 177, 206, 218, 219, 226, 247, 249, 251, 345, 346, 347, 355, 361; `ResultFixture` takes a policy; S12-248 not producible (D13, spec-owner question); traceability 321/43/2/7 |
+| `7583b00f` | `SchemaBoundsAndRegistryTest`: work-view nullable sweep with null and boolean refusals (S12-017), the 256-id declaration bound (S12-145), the nine-state integer registry (S12-193), the WORK operation numbers 8 to 11 read off encoded frames (S12-215); traceability 327/37/2/7 |
 
 ## 1. Contract to source to tests to evidence
 

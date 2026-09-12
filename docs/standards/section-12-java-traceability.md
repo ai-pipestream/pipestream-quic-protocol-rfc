@@ -18,7 +18,8 @@ decision, see its row). Updated at `dce9d384` (S12-078 and S12-079 covered by
 by the existing transport-close assertion). Updated at `6174d92d` (S12-294 covered by
 `DurableClientContradictionTest.childMetadataNeverProvesTheParentUntilTheParentItselfIsObserved`). Updated at `c115e292` (S12-005 and S12-010 covered; S12-008 refined as a proposal, see P-TLS-1).
 Updated at `3f8846e2` (thirteen store-level partials closed by unit tests, P-STORE-3 and
-P-STORE-5 to P-STORE-16; S12-248 recorded as not producible, D13).
+P-STORE-5 to P-STORE-16; S12-248 recorded as not producible, D13). Updated at `7583b00f`
+(S12-017, S12-145, S12-193 and S12-215 covered by `SchemaBoundsAndRegistryTest`).
 
 This document maps every normative statement of Section 12
 (`sections-src/section-12.md`, 871 lines) to the tests under
@@ -93,7 +94,7 @@ including most of the refusal-code taxonomy.
 | S12-014 | "Known bodies are exactly one deterministically encoded CBOR item under {{RFC8949}}, Section 4.2." | `Cbor.Reader`/`Cbor.Writer`; `Wire.decode` | `V2WireTest.allFrozenExpectationsAndExactRoundTrips` | COVERED | 46 accepted frozen rows re-encode byte-identically. |
 | S12-015 | "Arrays have the exact cardinality in Appendix F." | `MessageCodec.fields`; `Cbor.Reader.array` | `V2WireTest.allFrozenExpectationsAndExactRoundTrips` (`caps-extra-position`, `caps-missing-lifetime`, `extra-work-key-position`); `.schemaDirectedCborRejectsNonminimalOverlongTruncatedAndInvalidUnicode` | COVERED | |
 | S12-016 | "Integers and lengths use the shortest representation; indefinite lengths, trailing items, tags, floats, undefined, and extra positions are invalid." | `Cbor.Reader.argument`, `Cbor.Reader.end` | `V2WireTest.schemaDirectedCborRejectsNonminimalOverlongTruncatedAndInvalidUnicode`; frozen rows `noncanonical-session-request`, `trailing-cbor-item` | COVERED | 11 malformed CBOR bodies plus 5 malformed text bodies, and round-trips at 10 integer-width boundaries. |
-| S12-017 | "Booleans and null occur only where the schema permits them." | typed readers in `MessageCodec`/`RecordCodec` | `V2WireTest.schemaDirectedCborRejects...` (boolean in a numeric position); `FixedRecordsTest.validChecksumNullOrStringClockBodyIsRejectedOnRecovery` | PARTIAL | A boolean and a null are refused where the schema forbids them; no systematic sweep of the nullable positions that the schema does permit. |
+| S12-017 | "Booleans and null occur only where the schema permits them." | typed readers in `MessageCodec`/`RecordCodec` | `V2WireTest.schemaDirectedCborRejects...` (boolean in a numeric position); `FixedRecordsTest.validChecksumNullOrStringClockBodyIsRejectedOnRecovery`; `SchemaBoundsAndRegistryTest.workViewNullablePositionsAreExactlyTheSchemaNullables` | COVERED | Every nullable position of the view round-trips null and populated; a null or a boolean in the work-key, state or attempt position is FRAME_ERROR, and a bare null is FRAME_ERROR for every record kind. |
 | S12-018 | "Validate lengths before allocating buffers." | `Wire.Decoder.feed` checks the declared length before `new byte[]`; `ObjectStream.HeaderReader.feed` likewise | `V2WireTest.framingRejectsBeforeAllocationAndNeverResynchronizesAfterError`; `V2ObjectStreamTest.headerBoundsAndDeadlinePrecedeAllocationAndCannotBeRenewedByProgress` | COVERED | Both assert `bufferedCapacity() == 0` after the refusal. |
 | S12-019 | "The initial CAPABILITIES body is limited to 4096 octets." | `Wire.Decoder` `INITIAL_CONTROL_LIMIT`; `CoreServer`/`CoreClient` construct `new Wire.Decoder(4096)` | `V2CoreServerTest.malformedNegotiationDirectionIdsAndControlFinUseNamedConnectionErrors`; `V2WireTest.framingRejectsBeforeAllocation...` | COVERED | A 4097-octet declared body closes the connection with LIMIT_EXCEEDED. |
 | S12-020 | "Control type values in this mapping are CAPABILITIES (0x01) ... and REFUSAL (0x07). All are CBOR, not the version-1 fixed/serialized type classes." | `Wire`/`MessageCodec` type table | `V2WireTest.allFrozenExpectationsAndExactRoundTrips` (rows `control:01` .. `control:07`) | COVERED | All seven types appear in the frozen corpus. |
@@ -241,7 +242,7 @@ including most of the refusal-code taxonomy.
 | id | statement | enforcing code | tests | status | note |
 |---|---|---|---|---|---|
 | S12-144 | "Root scope 0 belongs to producer 0." | `SessionStore.create`; `Commitments.Seal` ctor | `V2CommitmentsTest.sealRejectsMissingExtraRepeatedReorderedAndInvalidMembersWithoutRecovery` (`Seal(ctx,0,1,null,0)` refused) | COVERED | |
-| S12-145 | "SCOPE operation 0 declares up to 256 IDs in an existing scope and optionally seals it." | `Messages.Declare` (`list(entityIds, 256)`); `DeclarationStore.declare` | `V2WireTest.allFrozenExpectations...`; `DeclarationStoreTest.declareReplayLookupPageAndImmediateSnapshotAreExact` | PARTIAL | The 256 bound is a schema constant exercised only by valid vectors; no test submits 257 IDs. |
+| S12-145 | "SCOPE operation 0 declares up to 256 IDs in an existing scope and optionally seals it." | `Messages.Declare` (`list(entityIds, 256)`); `DeclarationStore.declare` | `V2WireTest.allFrozenExpectations...`; `DeclarationStoreTest.declareReplayLookupPageAndImmediateSnapshotAreExact`; `SchemaBoundsAndRegistryTest.declarationsCarryAtMostTwoHundredFiftySixIds` | COVERED | 256 ids encode and decode to an equal message; 257 are refused FRAME_ERROR by the record bound before any frame exists. |
 | S12-146 | "IDs are strictly increasing within and across batches." | `Messages.Declare` (within); `DeclarationStore.declare` high-water (across) | `V2WireTest.allFrozenExpectations...` (`unsorted-declaration`); `DeclarationStoreTest.conflictsSealingAndNotFoundDoNotMutateMembership`; `.thousandMembersAcrossBatchesHaveStableStreamedSealAfterReopen` | COVERED | |
 | S12-147 | "Empty batches are permitted only with seal true; an empty scope may be sealed." | `Messages.Declare` (`require(seal \|\| !entityIds.isEmpty())`) | `V2WireTest.allFrozenExpectations...` (`empty-unsealed-batch`); `DeclarationStoreTest.emptyRootSealPersistsAsMembershipMetadataWithoutInventingClosure`; `ProducedDeclarationTest.emptyProducerSealDoesNotCompleteExpansionOrPermitSuccess` | COVERED | |
 | S12-148 | "Only the scope's producer can declare or seal normal work." | `DeclarationStore.declare`; `AdmissionStore.checkDeclaration` | `DurableBranchTest.authorityExpandedChunksProduceChildrenAndParentReassembly` (caller into a producer-1 scope -> UNAUTHORIZED) | COVERED | |
@@ -294,7 +295,7 @@ including most of the refusal-code taxonomy.
 
 | id | statement | enforcing code | tests | status | note |
 |---|---|---|---|---|---|
-| S12-193 | "WORK states are DECLARED (0), ACTIVE (1), AWAITING_RETRY (2), WAITING_CHILDREN (3), CANCELLING (4), SUCCEEDED (5), FAILED (6), CANCELLED (7) and SKIPPED (8). The last four alone are terminal." | `Records.State` and `State.terminal()` | `V2WireTest.allFrozenExpectations...` (`unknown-work-state`); `RustClientJavaServerTest`/`V2MainProcessTest` parse `state=` and require 5 | PARTIAL | An out-of-range state is refused and `terminal()` is relied on throughout, but no test enumerates the nine integer values against the registry. |
+| S12-193 | "WORK states are DECLARED (0), ACTIVE (1), AWAITING_RETRY (2), WAITING_CHILDREN (3), CANCELLING (4), SUCCEEDED (5), FAILED (6), CANCELLED (7) and SKIPPED (8). The last four alone are terminal." | `Records.State` and `State.terminal()` | `V2WireTest.allFrozenExpectations...` (`unknown-work-state`); `RustClientJavaServerTest`/`V2MainProcessTest` parse `state=` and require 5; `SchemaBoundsAndRegistryTest.workStatesMatchTheIntegerRegistry` | COVERED | The nine names, integers 0 to 8, `value()` and `terminal()` are enumerated against the registry; 9, 10, -1, 255 and Long.MAX_VALUE are FRAME_ERROR. |
 | S12-194 | "A terminal outcome never changes." | `ExecutionStore.eligible` (terminal -> ALREADY_TERMINAL); `FenceStore.accept` disposition 1; `ExecutionScheduler.page` stage filter | `ExecutionStoreTest.retryableAndTerminalFailureHaveDistinctDurableResourceState`; `.deadlineExpirySettlesLocallyAndTerminalReobservationNeedsNoFreshClock`; `FenceStoreTest.terminalObservationReturnsDispositionOneWithoutChangingOriginalState`; `ExecutionSchedulerTest.grantDenialIsObservableNeverInvokesCallbackAndTerminalOutcomeIsNotRerun`; `ResultStoreTest.finalCheckFailureRollsBackWatermarkAndSuccessfulReadAdvancesIt` | COVERED | Four independent angles, including a repeat result read leaving the `WorkView` byte-identical. |
 | S12-195 | "A declared entity has attempt 0, no input/admission/deadline, and no result manifest. Admission assigns attempt 1." | `Records.WorkView` invariants; `AdmissionStore.admit` | `FenceStoreTest.declaredWorkCanBeCancelledOrSkippedWithoutInventingAdmission`; `AdmissionStoreTest.exactLeafAdmissionCommitsTypedViewJobFundingAndReplayAcrossReopen`; `DurableMutationTest.cancellationSkipAndScopeCancellationSettleDeclaredWork` | COVERED | |
 | S12-196 | "Leaf execution becomes ACTIVE; a branch retains its child scope and waits for closure before its rehydration can succeed." | `ExecutionStore.requireChildren`; `BranchStore.scope` | `ExecutionStoreTest.branchReadinessAndFinalAuthorizationTimeAreCheckedAtCommit`; `BranchExecutionTest.reconstructsTwoPagedChildOutputsAndRetainsExactParentAndRootEvidence`; `DurableBranchTest.callerExpandedChildrenAreReassembledAndCoveredBottomUp` | COVERED | Premature reassembly is NOT_READY with zero callbacks. |
@@ -316,7 +317,7 @@ including most of the refusal-code taxonomy.
 | S12-212 | "Explicit retry MUST likewise recheck the original execution deadline before commitment." | `SessionStore.retry` final gates | `RetryStoreFailureTest.finalTimeAndAuthorizationRefusalsRollBackEveryAuthoritativeWrite`; `RetryStoreTest.changedOperationExpectedAttemptAndFinalAuthorizationRefuseAtomically` | COVERED | Five parameterized causes, each comparing a full durable snapshot including the clock watermark. |
 | S12-213 | "A final time observation earlier than the transaction's initial observation is CLOCK_UNSAFE." | `AdmissionStore.checkedClock` | `RetryStoreFailureTest.finalTimeAndAuthorizationRefusals...` (1099 < 1100); `FenceStoreTest.skipPolicyAndFinalTimeOrAuthorizationRefusalsRollback` (1299 < 1300); `ExecutionStorePolicyTest`; `RetentionStoreTest.intraOperationRegressionAndUnsafeClockAfterIntentNeverDeleteOrRefund` | COVERED | |
 | S12-214 | "No transition may commit a newly issued output or receipt interval that has already elapsed at that final observation; the authority refuses CLOCK_UNSAFE instead of returning an already-expired promise." | `SessionStore.checkTerminalInterval` | `ExecutionStorePolicyTest.expiryForwardJumpPastPromisedReceiptIntervalRollsBackBeforeStableSettlement`; `FenceStoreTest.finalClockCannotCommitExpiredReceiptPromiseAndReplayNeverSamplesClock`; `PublicationStoreTest.publicationForwardJumpPastOutputPromiseRollsBackBeforeReceiptOrExecutionDeadline` | COVERED | Both the receipt interval and the output interval branches are driven. |
-| S12-215 | "WORK operation 8 requests cancellation and operation 10 requests an explicit skip. Their receipts are returned as operation 9 and 11." | `FenceStore.accept`; `MessageCodec` work-message discriminants | `V2WireTest.allFrozenExpectations...` (`control:04` rows); `FenceStoreTest`; `DurableMutationTest.cancellationSkipAndScopeCancellationSettleDeclaredWork` | PARTIAL | The typed records and the frozen corpus carry the discriminants; no test asserts the integer opcodes 8/9/10/11 directly. |
+| S12-215 | "WORK operation 8 requests cancellation and operation 10 requests an explicit skip. Their receipts are returned as operation 9 and 11." | `FenceStore.accept`; `MessageCodec` work-message discriminants | `V2WireTest.allFrozenExpectations...` (`control:04` rows); `FenceStoreTest`; `DurableMutationTest.cancellationSkipAndScopeCancellationSettleDeclaredWork`; `SchemaBoundsAndRegistryTest.cancelAndSkipUseTheirRegisteredOperationNumbers` | COVERED | Operation numbers 8, 9, 10 and 11 are read off the encoded WORK frames of cancel, cancel response, skip and skip response, which then decode back to equal messages. |
 | S12-216 | "Disposition 0 means an authoritative cancellation/skip fence was accepted, not that every worker or descendant has already stopped. Disposition 1 returns the pre-existing terminal state without changing it." | `FenceStore.accept` (`disposition = view.state().terminal() ? 1 : 0`) | `FenceStoreTest.declaredWorkCanBeCancelledOrSkippedWithoutInventingAdmission`; `.terminalObservationReturnsDispositionOneWithoutChangingOriginalState`; `.acceptedFenceImmediatelyExcludesOldLeasePublicationAndConflictingFence`; `DurableMutationTest` (both fence methods) | COVERED | Disposition 1 asserts the view is `equals` to the pre-fence terminal view. |
 | S12-217 | "Skip is permitted only when the application's authorization policy explicitly permits it. It never counts as success under STRICT closure." | `FenceStore.Authorization`; `ClosureStore` counts | `FenceStoreTest.skipPolicyAndFinalTimeOrAuthorizationRefusalsRollback`; `DurableMutationTest.skipWithoutPermissionIsUnauthorizedAndDeadlineExpiryFailsAuthoritatively`; `CancellationReconciliationTest` (`Counts(0,0,2,1)` and `Counts(0,0,0,2)`) | COVERED | Both halves; the skipped bucket is always disjoint from success. |
 | S12-218 | "A skip uses the same exclusion fence and bounded descendant settlement as cancellation. Its target eventually settles as SKIPPED; unresolved descendants settle as CANCELLED, not SKIPPED." | `FenceStore.accept`; `FenceReconciliation.step` (`desired = entity.fence() == null ? CANCELLED : entity.fence().outcome()`) | `FenceStoreTest.declaredWorkCanBeCancelledOrSkipped...`; `CancellationReconciliationTest.limitOneCascadePreservesEarlierSkipAndClosesTheRealBranchAcrossReopen`; `CancellationReconciliationTest.skippedBranchSettlesSkippedWhileItsUnresolvedChildSettlesCancelled` | COVERED | A skipped branch settles SKIPPED and its unresolved child CANCELLED; the store reports counts per scope, child `(0,0,1,0)` and root `(0,0,0,1)`. |
@@ -496,18 +497,18 @@ including most of the refusal-code taxonomy.
 | subsection | COVERED | PARTIAL | GAP | N/A-JAVA | total |
 |---|---|---|---|---|---|
 | Scope and profiles (preamble, lines 1-28) | 5 | 0 | 0 | 1 | 6 |
-| 12.1 Core Mapping and Negotiation | 40 | 10 | 1 | 0 | 51 |
+| 12.1 Core Mapping and Negotiation | 41 | 9 | 1 | 0 | 51 |
 | 12.2 Correlation and Error Scope | 25 | 4 | 0 | 0 | 29 |
 | 12.3 Authenticated Sessions and Non-Reusable Identity | 36 | 1 | 0 | 0 | 37 |
 | 12.4 Immutable Operations and Replay | 17 | 3 | 0 | 0 | 20 |
-| 12.5 Declaration, Admission and Descendant Scopes | 45 | 4 | 0 | 0 | 49 |
-| 12.6 Attempts, Cancellation and Authoritative Outcomes | 51 | 8 | 1 | 1 | 61 |
+| 12.5 Declaration, Admission and Descendant Scopes | 46 | 3 | 0 | 0 | 49 |
+| 12.6 Attempts, Cancellation and Authoritative Outcomes | 53 | 6 | 1 | 1 | 61 |
 | 12.7 Result Publication, Streams and References | 26 | 5 | 0 | 3 | 34 |
 | 12.8 Sealed Closure, Counts and Shutdown | 41 | 3 | 0 | 2 | 46 |
 | 12.9 Lifetimes, Clocks and Crash-Safe Accounting | 37 | 3 | 0 | 0 | 40 |
-| **all subsections** | **323** | **41** | **2** | **7** | **373** |
+| **all subsections** | **327** | **37** | **2** | **7** | **373** |
 
-Read the `PARTIAL` column as the real work queue: 41 clauses have a test whose
+Read the `PARTIAL` column as the real work queue: 37 clauses have a test whose
 name suggests coverage but whose assertions stop short. The 2 `GAP` rows are
 in most cases cheaper to close than the partials.
 
@@ -521,16 +522,16 @@ proposed as tests.
 
 ### Wire and schema unit tests (`V2WireTest`, `RefusalCodeRegistryTest`)
 
-- **P2-WIRE-1** (S12-017). Sweep every nullable position the schema permits:
+- **P2-WIRE-1** (S12-017). DONE at `7583b00f`. Sweep every nullable position the schema permits:
   encode a record with the field null and with a value, decode both, assert
   round-trip equality; then flip one non-nullable position to null and assert
   FRAME_ERROR. Table-driven over the record kinds in `Wire.RecordKind`.
-- **P2-WIRE-2** (S12-145). Encode a `Declare` with 257 entity ids and assert
+- **P2-WIRE-2** (S12-145). DONE at `7583b00f`. Encode a `Declare` with 257 entity ids and assert
   the constructor and the decoder both refuse FRAME_ERROR; 256 round-trips.
-- **P2-WIRE-3** (S12-193). Enumerate the nine `State` values against their
+- **P2-WIRE-3** (S12-193). DONE at `7583b00f`. Enumerate the nine `State` values against their
   integer registry values 0 to 8 and assert `value()` and the decoder agree,
   plus 9 refused.
-- **P2-WIRE-4** (S12-215). Assert the integer opcodes of cancel (8), its
+- **P2-WIRE-4** (S12-215). DONE at `7583b00f`. Assert the integer opcodes of cancel (8), its
   response (9), skip (10) and its response (11) from the frozen corpus bytes,
   not only the typed records.
 - **P2-WIRE-5** (S12-278). In `PublicationStoreTest`, parse the locator with
