@@ -38,7 +38,9 @@ import org.junit.jupiter.api.io.TempDir;
  * never one by one), which the observations file records; the clause requires the reservation to
  * hold, not a per-stream update. Diagnostic knobs: {@code -Dlossy.drop} (percent), {@code
  * -Dlossy.hold} (hold every nth datagram behind its successor) and {@code -Dlossy.direct=true}
- * (bypass the relay; the injection assertions then fail by design).
+ * (bypass the relay; the injection assertions then fail by design). A refusal at the negotiated
+ * idle bound instead of by the reset or the length check is tolerated and counted per shape: it
+ * is what the listener does when the loss delays the reset or the FIN past that bound.
  */
 @Timeout(180)
 class LossyTransportCreditTest {
@@ -236,6 +238,7 @@ class LossyTransportCreditTest {
               new Declare(peer.request(), DurableServerTest.operation(1), 0, members, true)));
       long minimumBeforeOpen = Long.MAX_VALUE;
       int deadlineRefusals = 0;
+      int deadlineFinRefusals = 0;
       // Twice the allowance of transfers: refused (truncated FIN), reset after a partial payload,
       // and admitted, in rotation. Every one must hand its slot back as credit through the relay.
       for (int ordinal = 0; ordinal < rounds; ordinal++) {
@@ -281,14 +284,15 @@ class LossyTransportCreditTest {
         } else {
           Refusal refused = assertInstanceOf(Refusal.class, response);
           assertEquals(new Records.RequestTag(true, stream.streamId()), refused.request());
-          // A reset that the loss delays past the negotiated idle bound is refused at that bound
-          // (LIMIT_EXCEEDED "input receive deadline") instead of by the reset itself; either way
-          // the refusal is correlated and the slot must return. The count is recorded.
+          // A reset or FIN that the loss delays past the negotiated idle bound is refused at that
+          // bound (LIMIT_EXCEEDED "input receive deadline") instead of by the reset or the length
+          // check; either way the refusal is correlated and the slot must return. The counts per
+          // shape are recorded (observation O-1 in the handoff).
           boolean deadline =
-              ordinal % 3 == 1
-                  && refused.code() == ProtocolError.Code.LIMIT_EXCEEDED
+              refused.code() == ProtocolError.Code.LIMIT_EXCEEDED
                   && refused.detail().equals("input receive deadline");
-          if (deadline) deadlineRefusals++;
+          if (deadline && ordinal % 3 == 1) deadlineRefusals++;
+          else if (deadline) deadlineFinRefusals++;
           else assertEquals(ProtocolError.Code.INTEGRITY_ERROR, refused.code(), refused.toString());
         }
         long atResponse = peer.streamCredit();
@@ -336,8 +340,10 @@ class LossyTransportCreditTest {
           minimumBeforeOpen >= allowance / 2,
           "credit before open fell to " + minimumBeforeOpen + " of " + allowance);
       observations.add(
-          "relay\tdeadline-refusals="
+          "relay\tdeadline-refusals-reset="
               + deadlineRefusals
+              + "\tdeadline-refusals-fin="
+              + deadlineFinRefusals
               + "\tforwarded="
               + relay.forwarded.get()
               + "\tdropped="

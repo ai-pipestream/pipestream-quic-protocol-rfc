@@ -453,8 +453,10 @@ under packet loss; the listener then refuses the stalled input at the
 negotiated idle bound (LIMIT_EXCEEDED `input receive deadline`, 1 s at the
 offered minimum, 5 s at the raw peer default) instead of at the reset, and the
 slot returns with that refusal. `LossyTransportCreditTest` sees this on about
-one reset in ten under 8% loss and records the count and latency per run in
-`target/lossy-credit-observations.tsv`. The Java client resets through the
+one reset in ten under 8% loss with reordering, and about once in a hundred
+for a FIN-terminated (truncated) input whose tail is lost, which the same
+guard does not explain and is left unattributed; it records the count per
+shape and the latency per run in `target/lossy-credit-observations.tsv`. The Java client resets through the
 same transport, so its resets have the same exposure; the credit reservation
 (S12-046) is unaffected. A fix belongs in the transport pin (keep a reset
 stream until its RESET_STREAM is acknowledged, or retransmit regardless), not
