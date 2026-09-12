@@ -1,0 +1,8 @@
+server_subject	java
+client_subject	rust
+reconnect_leg	BINDING ok, view identical
+manifest_reread_leg	MANIFEST ok, view identical
+admission_replay_leg	identical RECEIPT, view identical
+retry_leg	skipped with note: work is terminal-success, not retryable
+deadline_fields_after_all_legs	deadline/terminal_at/receipt_until/output_until unchanged
+java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c

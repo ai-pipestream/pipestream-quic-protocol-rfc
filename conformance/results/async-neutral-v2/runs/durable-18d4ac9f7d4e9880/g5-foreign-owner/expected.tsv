@@ -1,0 +1,5 @@
+expected_attach	refused with a named code; existence not confirmed
+expected_view	refused with a named code; existence not confirmed
+expected_lookup	refused with a named code; existence not confirmed
+expected_read	refused with a named code; existence not confirmed
+expected_a_unchanged	A reads the result back byte-exact after B's attempts

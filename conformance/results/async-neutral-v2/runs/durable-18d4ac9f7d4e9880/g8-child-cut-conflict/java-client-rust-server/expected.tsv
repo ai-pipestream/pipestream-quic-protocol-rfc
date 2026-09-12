@@ -1,0 +1,8 @@
+parent_work	0:0:1 reassemble/v2 mode 1
+child_scope	1:0 over [1,2]
+expected_child_seal_sha256	22dc4585accb68c0694f23ff813e863cd217aef3b1b915dc0a0bb7707918b14b
+expected_root_seal_sha256	444702408fc06ce1a8909f0db362f468199b490cac8495e64c079eeec55da6ab
+submitted_summary_surface	named gap: neither published CLI accepts a submitted ScopeSummary; the rust client replays the journaled root coverage (operations.rs cut()) and the java client its saved coverage; the authority Conflict arms (drain does not name attached root / root summary changed, scopes.rs complete_session) are not reachable through the CLIs — documented from code inspection
+wrong_seal_checkpoint	named refusal of the wrong-seal checkpoint: INTEGRITY_ERROR (8) at the authority (rust client submits the cut), or NOT_READY at the java client journal (pre-submit seal-vs-membership check) — the request must never validate
+child_only_complete	client-journal refusal: root coverage is the only submittable cut
+correct_complete	COMPLETED once; a second complete replays the identical durable completion or refuses named — both prove no second completion claim

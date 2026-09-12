@@ -1,0 +1,4 @@
+1	durable-18d4ac9f7d4e9880	g8-half-close-preserves-responses	rust	client	130819-18d4adcfe578e881	1	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d4ac9f7d4e9880	g8-half-close-preserves-responses	rust	client	130819-18d4adcfe578e881	2	CONTROL_FIN_SENT							
+1	durable-18d4ac9f7d4e9880	g8-half-close-preserves-responses	rust	client	130819-18d4adcfe578e881	3	BINDING_RECEIVED							
+1	durable-18d4ac9f7d4e9880	g8-half-close-preserves-responses	java	server	130819-18d4adcfe578e881	4	DETACH_ACKNOWLEDGED							

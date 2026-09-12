@@ -1,0 +1,12 @@
+server_subject	rust
+client_subject	java
+pending_window	header + 131072 of 262144 bytes written, no FIN, 500 ms settle before the lookup
+lookup_while_pending	refused NOT_FOUND (5) detail "operation not retained" on control request 2
+admission_receipt	attempt=1 admitted_at=1789245203414 deadline=1789245263414
+raw_receipts_identical	true (Work::Admitted and Work::OperationResponse receipt bytes equal)
+cli_replay	RECEIPT with deadline 1789245263414; identical to both CLI lookups
+terminal_attempt	1
+page_members	1
+execution_claimed_records	not observable: the Rust subject emits only armed boundaries and its hooks cannot arm EXECUTION_CLAIMED without a kill
+result_read	attempt 1 byte-exact against the independent oracle
+java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c

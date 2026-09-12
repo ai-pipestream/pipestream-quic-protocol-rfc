@@ -1,0 +1,1 @@
+/home/krickert/.rfc-tmp/kimi-m19/m19c/runs/durable-18d4ac9f7d4e9880/g7-unsafe-clock-refusal/schedule.tsv:1: action "clock-set" is driver-side; the Rust subject cannot perform it

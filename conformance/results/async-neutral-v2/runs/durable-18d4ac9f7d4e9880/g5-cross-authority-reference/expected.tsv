@@ -1,0 +1,6 @@
+authority_x	issuer-a
+authority_y	issuer-b
+input_sha256	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+arm_a	X's journal (bound to X, selection saved) pointed at Y: attach, read, lookup and watch each refused with a named code; no result bytes written
+arm_b	a journal bound on Y selects X's work/attempt/index: refused with a named code (Y holds no such work; nothing about X is disclosed)
+positive_arm	the same selection reads byte-exact on X

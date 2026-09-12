@@ -1,0 +1,7 @@
+application	chunk-copy/v2
+mode	2
+input_len	8388608
+settle_deadline_ms	60000
+recovery	SIGKILL mid-expansion, restart on the same roots, then the ancestor cancel-scope fence
+settlement_rule	parent ends CANCELLED(7) — never FAILED(6); every descendant reaches exactly one terminal state (CANCELLED, or SUCCEEDED when committed before the fence) within the deadline
+no_cleanup_before_root_closure	watch keeps answering and the object dir stays populated until the root closes; no retirement/EXPIRED refusals during settlement
