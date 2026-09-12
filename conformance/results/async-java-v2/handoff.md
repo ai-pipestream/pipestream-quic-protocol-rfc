@@ -56,6 +56,8 @@ shared feature branch and main were not merged.
 | `7583b00f` | `SchemaBoundsAndRegistryTest`: work-view nullable sweep with null and boolean refusals (S12-017), the 256-id declaration bound (S12-145), the nine-state integer registry (S12-193), the WORK operation numbers 8 to 11 read off encoded frames (S12-215); traceability 327/37/2/7 |
 | `aa05d201` | `PeerRuleWireTest` (raw peer and raw authority): ignorable frame activates no profile (S12-024), a hundred never-reused stream ids (S12-068), no second refusal for a replayed admitted input (S12-077), unrecognised close code releases slots without implying success (S12-082), client drain close is application error 0 observed at the authority (S12-321); traceability 332/32/2/7 |
 | `d26c5a92` | receiver-side abort of a stalled result read releases the listener's read with no control response (S12-076); 30 000 ms wait bound at the schema (S12-239); client makes no discovery call from a bare locator (S12-284) and keeps delivered bytes across a later revocation (S12-285); traceability 336/28/2/7 |
+| `ea55c57d` | CLIENT FIX defect 14: the client sent an input on the caller's word that a declaration covered it (the journal checked only the session generation); a first send is now refused NOT_READY unless the named declaration's receipt is held for the input's scope and producer, resends unaffected (S12-150, red before at a raw authority); the raw test authority answers declarations with genuine receipts; reconnect offers require every journaled profile (S12-038) |
+| `54267a72` | second store-level round from the agent worktree, reviewed and cherry-picked (P2-STORE-1 to 3, 5 to 11, 13 to 15, P2-WIRE-5; each confirmed red): S12-114, 139, 140, 141, 199, 204, 227, 237, 240, 263, 276, 278, 300, 316, 348, 353; S12-164 not producible (child scope row is inserted in the parent's admission transaction); D4 and D6 closed; traceability 354/10/2/7 |
 
 ## 1. Contract to source to tests to evidence
 
@@ -437,6 +439,27 @@ no longer rewrites the WAL index on every store call. Full offline run at
    (`raw/g3-restart-rerun-32360ec3-2026-09-12.log`); the merged landing tree
    `b5af2b1d` (main + this branch + Meta C16) passed the 116-test targeted
    confirmation run.
+
+14. **Java client: an input could be sent before its covering declaration
+   receipt was held.** `ClientJournal.journalInput` checked only that the
+   header named the journaled session; the declaration operation the caller
+   named was journaled as a reference without checking that its receipt had
+   arrived. An admission whose declaration had never been receipted therefore
+   went to the authority and was refused there (CONFLICT, undeclared), which
+   is the authority's rule but not the client's: Section 12.5 (S12-150) says
+   the producer MUST receive its covering receipt before sending an input.
+   Found by `AuthorityRuleClientTest.anInputIsNeverSentBeforeItsCoveringDeclarationReceiptIsHeld`
+   against a raw authority that records input streams (red: the input
+   arrived and the admission hung). Fixed in `ea55c57d`: a first send is
+   refused NOT_READY `covering declaration receipt not held` unless the named
+   declaration's receipt is held for the input's scope and producer; a resend
+   of an already journaled operation is unaffected. Three tests that relied
+   on sending undeclared inputs to reach authority-side behaviour now declare
+   first or expect the local refusal; the raw test authority answers
+   declarations with genuine receipts (the client's own digest, the seal when
+   sealed). Wire behaviour of the authority is unchanged; the jar pin stays
+   `32360ec3` for the server subject, and the client CLI in the same jar gains
+   the check at the next rebuild.
 
 The 53-row driver run on `28c3369b` (2026-09-12, stores on the root drive)
 otherwise matched the milestone 17b baseline: 52 rows PASS on every
