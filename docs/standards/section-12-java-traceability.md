@@ -16,7 +16,7 @@ boundary hooks; the summary table is recomputed from the rows). Updated at
 decision, see its row). Updated at `dce9d384` (S12-078 and S12-079 covered by
 `DurableClientResultNegativeTest` and `ResultAbortWireTest`; S12-056 recognised as covered
 by the existing transport-close assertion). Updated at `6174d92d` (S12-294 covered by
-`DurableClientContradictionTest.childMetadataNeverProvesTheParentUntilTheParentItselfIsObserved`).
+`DurableClientContradictionTest.childMetadataNeverProvesTheParentUntilTheParentItselfIsObserved`). Updated at `c115e292` (S12-005 and S12-010 covered; S12-008 refined as a proposal, see P-TLS-1).
 
 This document maps every normative statement of Section 12
 (`sections-src/section-12.md`, 871 lines) to the tests under
@@ -74,7 +74,7 @@ including most of the refusal-code taxonomy.
 | S12-002 | "An endpoint MUST NOT advertise either new profile until it implements all its mandatory behavior, including authorization, restart, retention and refusals." | deployment decision in `DurableOptions.offer` | - | N/A-JAVA | A release-gating obligation on the operator, not observable wire behaviour. |
 | S12-003 | "Result delivery requires durable work." | `Messages.Capabilities.dependencies`, run from the compact ctor so offers and responses share one check | `V2WireTest.allFrozenExpectationsAndExactRoundTrips` (`result-profile-without-durable`) | COVERED | The only frozen row whose named refusal is EXTENSION_UNSUPPORTED rather than FRAME_ERROR. |
 | S12-004 | "The durable profile has one processing authority per session." | `SessionStore.create` binds `config.authority()`; `SessionStore.attach` compares it | `SessionStoreTest.authorizationPrecedesExistenceAndConfigurationDisclosure` | COVERED | A foreign authority label on attach is CONFLICT; the authority is never client-selected. |
-| S12-005 | "A peer requiring version 2 MUST NOT retry its work as version 1 after ALPN or capability refusal." | `TlsAuthentication.ALPN` is the only ALPN the v2 client offers | `V2TlsTest.alpnMismatchNeverBecomesAnApplicationConnection` proves the refusal only | GAP | Nothing asserts the absence of a follow-up version-1 attempt. Structurally impossible today (one ALPN constant, no shared client code with v1), but untested. |
+| S12-005 | "A peer requiring version 2 MUST NOT retry its work as version 1 after ALPN or capability refusal." | `TlsAuthentication.ALPN` is the only ALPN the v2 client offers | `V2TlsTest.alpnMismatchNeverBecomesAnApplicationConnection` proves the refusal only | COVERED | The same test now asserts that no further connection attempt of any kind reaches the server within a second of the refusal; structurally there is one ALPN constant and no shared client code with version 1. |
 | S12-006 | "Stored version-1 sessions MUST NOT be converted implicitly or opened through the version-2 lifecycle." | `SessionStore.openConfigured` -> `readMetadata` configuration-image equality | `SessionStoreTest.reopenRequiresExactConfigurationAndRefusesForeignOrV1Schema` | COVERED | A V1 `SealedSessionStore` database throws on `SessionStore.open` and still opens as V1 afterwards. |
 
 ## 12.1 Core Mapping and Negotiation
@@ -82,9 +82,9 @@ including most of the refusal-code taxonomy.
 | id | statement | enforcing code | tests | status | note |
 |---|---|---|---|---|---|
 | S12-007 | "Use QUIC version 1 ... and its TLS mapping, with TLS 1.3, ALPN `pipestream/2`" | `TlsAuthentication` (ALPN constant, QUIC v1 codec) | `V2TlsTest.actualMutualTlsBindsRotatedCertificatesToTheSameOwner` | COVERED | Asserts `sslEngine().getApplicationProtocol() == ALPN` and `getSession().getProtocol() == "TLSv1.3"` on a live handshake. |
-| S12-008 | "no application 0-RTT" | `TlsAuthentication` client `sessionCacheSize(0)`; no early-data path | - | GAP | No test offers or rejects 0-RTT application data. |
+| S12-008 | "no application 0-RTT" | `TlsAuthentication` client `sessionCacheSize(0)`; no early-data path | - | GAP | No test offers 0-RTT application data. Both TLS contexts are built with `earlyData(false)`, so a test needs a client context that offers early data on a resumed session (`V2TlsTest.external` builds raw contexts and can) and asserts the listener never accepts it; see P-TLS-1. |
 | S12-009 | "server identity verification under {{RFC9525}}" | `TlsAuthentication.verify` -> `TlsPeerIdentity.verify` | `V2TlsTest.serverTrustUsageAndSanAreHandshakeChecksNotCommonNameFallback` | COVERED | SAN-only (CN fallback refused), wrong EKU refused, foreign roots refused, DNS compared case-insensitively, IP SAN accepted. |
-| S12-010 | "Connection migration does not change authenticated identity." | `TlsAuthentication.Guard` holds the verified chain per connection | - | GAP | No test migrates a connection. |
+| S12-010 | "Connection migration does not change authenticated identity." | `TlsAuthentication.Guard` holds the verified chain per connection | `MigrationWireTest.aRebindingPeerKeepsItsSessionAndOwnerWithoutReauthentication` (relay rebinds its server-facing socket mid-session) | COVERED | After the path change the same connection serves a sequence request, a watch, a second admission and its result under the same owner, replies to the old address being lost; nothing is re-authenticated or re-attached. |
 | S12-011 | "The client opens bidirectional Stream 0 for control. Other bidirectional streams are forbidden." | `DurableServer.Connection.stream` (`streamId != 0 \|\| control != null` -> FRAME_ERROR); `StreamTransport.Limits.configure` sets `initialMaxStreamsBidirectional` | `DurableWireNegativeTest.correlationAndFramingViolationsAreFatalWhileRefusedRequestsConsumeIds` | PARTIAL | The client transport refuses with STREAM_LIMIT before the server's application-level FRAME_ERROR is reachable; that branch is never exercised. Left PARTIAL by decision at `62412c14`: reaching the branch means offering more than one bidirectional stream in the production transport parameters, which is the very thing the clause forbids; the transport-level enforcement is the proven behaviour. |
 | S12-012 | "Unidirectional streams carry profile-defined input or result objects; Core alone defines no application object format." | `DurableServer.Connection.stream` -> EXTENSION_UNSUPPORTED without the durable profile | `DurableServerTest.anonymousCallerGetsCoreOnlyAndCannotOpenInputStreams` | COVERED | Opening a uni stream on a Core-only connection closes it with EXTENSION_UNSUPPORTED. |
 | S12-013 | "Every control frame is one type octet, a four-octet unsigned big-endian body length, then exactly that many body octets." | `Wire.Decoder.feed` | `V2WireTest.everyControlCutAndBytewiseDeliveryUsesTheSameTypedDecoder` | COVERED | Every accepted control vector is re-fed split at every byte offset and one byte at a time. |
@@ -493,8 +493,8 @@ including most of the refusal-code taxonomy.
 
 | subsection | COVERED | PARTIAL | GAP | N/A-JAVA | total |
 |---|---|---|---|---|---|
-| Scope and profiles (preamble, lines 1-28) | 4 | 0 | 1 | 1 | 6 |
-| 12.1 Core Mapping and Negotiation | 39 | 10 | 2 | 0 | 51 |
+| Scope and profiles (preamble, lines 1-28) | 5 | 0 | 0 | 1 | 6 |
+| 12.1 Core Mapping and Negotiation | 40 | 10 | 1 | 0 | 51 |
 | 12.2 Correlation and Error Scope | 25 | 4 | 0 | 0 | 29 |
 | 12.3 Authenticated Sessions and Non-Reusable Identity | 34 | 3 | 0 | 0 | 37 |
 | 12.4 Immutable Operations and Replay | 17 | 3 | 0 | 0 | 20 |
@@ -503,10 +503,10 @@ including most of the refusal-code taxonomy.
 | 12.7 Result Publication, Streams and References | 26 | 5 | 0 | 3 | 34 |
 | 12.8 Sealed Closure, Counts and Shutdown | 40 | 4 | 0 | 2 | 46 |
 | 12.9 Lifetimes, Clocks and Crash-Safe Accounting | 31 | 9 | 0 | 0 | 40 |
-| **all subsections** | **301** | **60** | **5** | **7** | **373** |
+| **all subsections** | **303** | **60** | **3** | **7** | **373** |
 
 Read the `PARTIAL` column as the real work queue: 60 clauses have a test whose
-name suggests coverage but whose assertions stop short. The 5 `GAP` rows are
+name suggests coverage but whose assertions stop short. The 3 `GAP` rows are
 in most cases cheaper to close than the partials.
 
 ## Clauses where the Java code looks wrong, not merely untested
@@ -801,8 +801,13 @@ requests; the two proposals that need a hook say so.
 ### V2TlsTest and TlsAuthentication
 
 - **P-TLS-1** (S12-008). Offer application 0-RTT early data with a cached ticket
-  and assert it is refused or never delivered to the application.
-- **P-TLS-2** (S12-010). Migrate a connection to a new client address and assert
+  and assert it is refused or never delivered to the application. Refined at
+  `c115e292`: build the client context through `V2TlsTest.external` with
+  `sessionCacheSize(1)` and `earlyData(true)`, connect twice, and on the resumed
+  connection assert that `SslEarlyDataReadyEvent` never fires against this
+  listener (its context disables early data) and that the first application
+  frame the listener processes follows the completed handshake.
+- **P-TLS-2** (S12-010). DONE at `c115e292` (`MigrationWireTest`, passive migration through the relay). Migrate a connection to a new client address and assert
   `guard.requireOwner()` still returns the same principal.
 - **P-TLS-3** (S12-098, the second half). After the credential-expiry close,
   connect with a fresh certificate mapped to the same principal and assert it
