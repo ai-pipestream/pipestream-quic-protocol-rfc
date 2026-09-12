@@ -1,0 +1,6 @@
+PKI ready in /work/worktrees/pipestream-muse/benchmarks/durable-transform/results/f3-pilot/work/pki (valid ~2 days, loopback only)
+INITIALIZED
+INITIALIZED
+INITIALIZED
+Error: CANCELLED: client transport closed
+/work/worktrees/pipestream-muse/benchmarks/durable-transform/libexec-run-ps.sh: line 1: 169408 Aborted                    (core dumped) "$PS_AUTH" serve --state-db "$W/ps-$w.sqlite" --object-dir "$W/ps-$w.obj" --authority "workload-$w" --principal-map "$W/pki/ps-principals.tsv" --trust-system-clock --db-mib "$PHYS_DB_MIB" --wal-mib "$PHYS_WAL_MIB" "${AUTH_FAULT[@]}" "${KILL_C[@]}" --bind "127.0.0.1:$port" --cert "$W/pki/ps-server-$w.pem" --key "$W/pki/ps-server-$w.key" --client-ca "$W/pki/ps-ca.pem" --result-authority "localhost:$port" --ready-file "$W/ps-$w.ready" > "$W/ps-$w.log" 2>&1

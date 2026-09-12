@@ -171,3 +171,5 @@ c855efff9c9012acba71ad62a45f2805e2b8e734d1b2e5fef34106cbe2a29006  ./f4-ps-rep5.s
 196301fb76bb4a7e0c44640eb169ddc9344de8aa47739d54455b1790f8f3c69b  ./f4-ps-rep5/work/pki/grpc-principals.tsv
 8a91ca65adb342820341c6c930867b0571fd3c5de4c64452250eb46491b90ba9  ./f4-ps-rep5/work/pki/ps-principals.tsv
 b1e6437bfba8ff8731514ebc19ce3546695e0eb466b2231b3247896b0bccb460  ./fault-schedule-c16.tsv
+04aaef3021339dff9dd1a86936652a62804fa34bd6298f578405875bee58fb48  ./f3-pilot.stdout.log
+43b8af1e6bfefcc658f2c1698ba7a3cac733bfacb6294673cacb95aec1375839  ./f3-pilot-NOTE.txt

@@ -1,0 +1,1 @@
+C16c pilot stdout (803 bytes): trial F3 arming run that ended CANCELLED on client transport close; kept as pilot evidence, not a measured cell.
