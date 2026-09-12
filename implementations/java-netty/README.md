@@ -578,7 +578,11 @@ from store transactions becomes `PIPESTREAM_LIMIT_EXCEEDED`, including through
 the public QUIC listener. It does not erase declarations, admit missing input,
 or report completion. A reader retaining an old WAL snapshot can exhaust the
 WAL cap before the logical record cap. Releasing that reader and successfully
-checkpointing can permit new writes; a busy checkpoint is not success.
+checkpointing can permit new writes; a busy checkpoint is not success. SQLite
+restarts the WAL on its own only when a writer finds no reader on it, which an
+authority polled without pause never sees, so the V2 retention service restarts
+the log with a truncating checkpoint whenever it exceeds one sixty-fourth of its
+bound (at least 1 MiB); the host status counts those restarts.
 
 A synced `.psjlimits` sidecar retains the 72-byte `PSJDB002` version, four
 big-endian limits, and a SHA-256 checksum. The empty `.psjlock` file coordinates

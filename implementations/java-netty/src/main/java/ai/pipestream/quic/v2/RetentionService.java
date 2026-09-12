@@ -46,6 +46,7 @@ final class RetentionService implements AutoCloseable {
    * @param refused operations refused or failed
    * @param sessionsExamined session rows examined over all finite retirement sweeps
    * @param sessionsRetired sessions whose final metadata deletion committed
+   * @param logRestarts write-ahead log restarts completed by this service
    * @param lastFailure most recent fixed-size diagnostic
    * @param stopping no new maintenance page may begin
    * @param stopped active work and physical scan have stopped and storage ownership is released
@@ -57,6 +58,7 @@ final class RetentionService implements AutoCloseable {
       long refused,
       long sessionsExamined,
       long sessionsRetired,
+      long logRestarts,
       Failure lastFailure,
       boolean stopping,
       boolean stopped) {}
@@ -77,6 +79,7 @@ final class RetentionService implements AutoCloseable {
   private long orphansExamined;
   private long released;
   private long refused;
+  private long logRestarts;
   private long sessionsExamined;
   private long sessionsRetired;
   private Failure lastFailure;
@@ -126,6 +129,7 @@ final class RetentionService implements AutoCloseable {
     if (operation.isHeldByCurrentThread() || !operation.tryLock()) return status();
     try {
       if (stopping) return status();
+      restartLog();
       try {
         ExecutionStore.Page page = sessions.scanExecutions(jobs, limits.pageSize());
         for (ExecutionStore.Candidate candidate : page.entries()) {
@@ -230,6 +234,24 @@ final class RetentionService implements AutoCloseable {
     }
   }
 
+  /** Keep the session log inside its bound; a failure is recorded, never thrown into the sweep. */
+  private void restartLog() {
+    try {
+      if (sessions.restartLog()) {
+        synchronized (this) {
+          logRestarts++;
+        }
+      }
+    } catch (IOException | SQLException failure) {
+      synchronized (this) {
+        refused++;
+        lastFailure =
+            new Failure(
+                ProtocolError.Code.INTERNAL_ERROR, "log restart: " + failure.getMessage());
+      }
+    }
+  }
+
   /**
    * Observe counters without waiting for filesystem or database work.
    *
@@ -243,6 +265,7 @@ final class RetentionService implements AutoCloseable {
         refused,
         sessionsExamined,
         sessionsRetired,
+        logRestarts,
         lastFailure,
         stopping,
         stopped);

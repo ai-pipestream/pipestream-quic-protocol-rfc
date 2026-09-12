@@ -878,6 +878,7 @@ public final class DurableHost implements AutoCloseable {
    * @param retentionReleased retention releases since start
    * @param retentionRefused retention refusals since start
    * @param sessionsRetired sessions whose metadata deletion committed
+   * @param logRestarts write-ahead log restarts by the retention service since start
    * @param pendingReads pinned result reads
    * @param pendingWaits charged control observations
    * @param queuedStorageTasks storage tasks queued or running
@@ -890,6 +891,7 @@ public final class DurableHost implements AutoCloseable {
       long retentionReleased,
       long retentionRefused,
       long sessionsRetired,
+      long logRestarts,
       int pendingReads,
       int pendingWaits,
       int queuedStorageTasks) {}
@@ -1254,6 +1256,7 @@ public final class DurableHost implements AutoCloseable {
         cleanup.released(),
         cleanup.refused(),
         cleanup.sessionsRetired(),
+        cleanup.logRestarts(),
         results.usage().reads(),
         waits.usage().pending(),
         workers.queued());

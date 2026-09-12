@@ -66,6 +66,16 @@ public final class BoundedSqlite {
   }
 
   /**
+   * Sample the guarded file lengths after validating the retained policy.
+   *
+   * @return current lengths of the database, WAL, journal and shared-memory files
+   * @throws IOException if the retained policy is missing, changed or unreadable
+   */
+  public SealedSessionStore.FileUsage usage() throws IOException {
+    return files.usage();
+  }
+
+  /**
    * Open an owned connection with full synchronization, foreign keys and bounded busy waiting.
    * Journal-mode selection belongs to schema bootstrap, after refusing foreign formats.
    *
