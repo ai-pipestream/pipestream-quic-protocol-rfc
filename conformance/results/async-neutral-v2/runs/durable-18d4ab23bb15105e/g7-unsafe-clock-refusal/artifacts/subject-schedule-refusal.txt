@@ -1,0 +1,3 @@
+v2 serve exited before readiness (exit status: 1)
+log:
+/home/krickert/.rfc-tmp/kimi-m19/m19b/runs/durable-18d4ab23bb15105e/g7-unsafe-clock-refusal/schedule.tsv:1: action "clock-set" is driver-side; the Rust subject cannot perform it

@@ -1,0 +1,5 @@
+1	durable-18d4ab23bb15105e	g5-expired-identity	rust	client	65230-18d4ab2e37f860e4	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4ab23bb15105e	g5-expired-identity	rust	client	65230-18d4ab2e37f860e4	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4ab23bb15105e	g5-expired-identity	rust	client	65230-18d4ab2e37f860e4	3	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d4ab23bb15105e	g5-expired-identity	rust	client	65230-18d4ab2e37f860e4	4								
+1	durable-18d4ab23bb15105e	g5-expired-identity	rust	client	65230-18d4ab2e37f860e4	5	REFUSAL_RECEIVED					artifacts/expired-leaf-fresh-connection.txt	263	932dd09980a867c6c94cf9383691a736738932eed0d907d42a2a87177ff360e1

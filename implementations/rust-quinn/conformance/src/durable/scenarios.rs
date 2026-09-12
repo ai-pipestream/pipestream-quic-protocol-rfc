@@ -202,6 +202,8 @@ pub fn rows() -> Vec<Row> {
         "g2-duplicate-op-changed-params",
         "g2-simultaneous-duplicate",
         "g2-kill-server-after-admission-recovery",
+        "g2-not-found-in-flight",
+        "g2-drop-reply-publication",
         "g3-input-before-metadata",
         "g3-orphan-cleanup",
         "g3-restart-same-roots",
@@ -212,6 +214,10 @@ pub fn rows() -> Vec<Row> {
         "g7-receipt-before-output-expiry",
         "g7-output-before-receipt-expiry",
         "g7-no-deadline-extension",
+        "g7-read-pin-past-expiry",
+        "g7-deadline-queue-time",
+        "g7-unsafe-clock-refusal",
+        "g7-cleanup-interrupted-refund",
         "g4-publication-vs-cancel",
         "g4-publication-vs-skip",
         "g4-stale-attempt-retry",
@@ -224,6 +230,10 @@ pub fn rows() -> Vec<Row> {
         "g5-unmapped-principal",
         "g5-foreign-owner",
         "g5-no-existence-disclosure",
+        "g5-cert-rotation-same-owner",
+        "g5-remapped-owner",
+        "g5-cross-authority-reference",
+        "g5-expired-identity",
         "g8-exact-root-complete",
         "g8-child-cut-conflict",
         "g8-complete-with-pending",
@@ -272,6 +282,17 @@ fn direction_coverage(row: &Row, context: &ScenarioContext) -> String {
         && context.java_jar.is_some()
     {
         "rust-client/rust-server, rust-client/java-server, java-client/rust-server".to_owned()
+    } else if row.id == "g2-not-found-in-flight" && context.java_jar.is_some() {
+        "rust-raw-peer+rust-client/rust-server, rust-raw-peer+rust-client/java-server, \
+         rust-raw-peer+java-client/rust-server"
+            .to_owned()
+    } else if row.id == "g7-read-pin-past-expiry" && context.java_jar.is_some() {
+        "rust-client+rust-raw-reader/rust-server, rust-client+rust-raw-reader/java-server"
+            .to_owned()
+    } else if row.id == "g7-deadline-queue-time" && context.java_jar.is_some() {
+        "rust-client/rust-server (hook-free load queue, named gap), rust-client/java-server \
+         (EXECUTION_CLAIMED pauses)"
+            .to_owned()
     } else if row.id == "g3-store-ownership" && context.java_jar.is_some() {
         "rust-client/rust-server, rust-client/java-server".to_owned()
     } else if G3_BATCH_A_ROWS.contains(&row.id) && context.java_jar.is_some() {
@@ -335,6 +356,16 @@ pub fn run_direction(row: &Row, context: &ScenarioContext, dev: bool) -> Directi
     match run_rust_direction(row, context) {
         Ok(()) => DirectionOutcome::Pass(direction_coverage(row, context)),
         Err(error) => {
+            if let Some(missing) = error.downcast_ref::<MissingCapability>() {
+                // The row ran and wrote its evidence; what it lacks is a
+                // subject capability, named here rather than "not implemented".
+                let message = format!("{} INCOMPLETE: {missing}", row.id);
+                return if dev {
+                    DirectionOutcome::Incomplete(message)
+                } else {
+                    DirectionOutcome::Fail(message)
+                };
+            }
             let message = format!("{error:#}");
             if dev {
                 DirectionOutcome::Incomplete(format!("{} dev run failed: {message}", row.id))
@@ -380,6 +411,16 @@ fn run_rust_direction(row: &Row, context: &ScenarioContext) -> Result<()> {
         "g2-kill-server-after-admission-recovery" => {
             g2_kill_server_after_admission_recovery(context)
         }
+        "g2-not-found-in-flight" => g2_not_found_in_flight(context),
+        "g2-drop-reply-publication" => g2_drop_reply_publication(context),
+        "g5-cert-rotation-same-owner" => g5_cert_rotation_same_owner(context),
+        "g5-remapped-owner" => g5_remapped_owner(context),
+        "g5-cross-authority-reference" => g5_cross_authority_reference(context),
+        "g5-expired-identity" => g5_expired_identity(context),
+        "g7-read-pin-past-expiry" => g7_read_pin_past_expiry(context),
+        "g7-deadline-queue-time" => g7_deadline_queue_time(context),
+        "g7-unsafe-clock-refusal" => g7_unsafe_clock_refusal(context),
+        "g7-cleanup-interrupted-refund" => g7_cleanup_interrupted_refund(context),
         "g3-input-before-metadata" => g3_input_before_metadata(context),
         "g3-orphan-cleanup" => g3_orphan_cleanup(context),
         "g3-restart-same-roots" => g3_restart_same_roots(context),
@@ -4200,6 +4241,37 @@ fn setup_hooked(
     schedule_name: &str,
     probe: bool,
 ) -> Result<Hooked> {
+    let arming = write_arming(context, scenario_dir, id, schedule_rows, schedule_name)?;
+    setup_armed(context, scenario_dir, server, client, arming, probe)
+}
+
+/// `setup_hooked` with fixture events but NO schedule: nothing pauses or
+/// dies, and a subject that records every reached boundary (the Java
+/// FixtureMain) leaves its boundary records in the shared events file.
+fn setup_recording(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    id: &str,
+    server: Subject,
+    client: Subject,
+) -> Result<Hooked> {
+    let arming = crate::durable::process::FixtureArming {
+        events: scenario_dir.join("events.tsv"),
+        run_id: context.run_id.clone(),
+        scenario_id: id.to_owned(),
+        schedule: None,
+    };
+    setup_armed(context, scenario_dir, server, client, Some(arming), true)
+}
+
+fn setup_armed(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+    arming: Option<crate::durable::process::FixtureArming>,
+    probe: bool,
+) -> Result<Hooked> {
     let certs = mtls::generate(&scenario_dir.join("certs"), &[("alice", "alice")])?;
     let fixture = AuthorityFixture::new(
         &context.rust_bin,
@@ -4211,7 +4283,6 @@ fn setup_hooked(
     )?;
     fixture.run_init_authority()?;
     let events = scenario_dir.join("events.tsv");
-    let arming = write_arming(context, scenario_dir, id, schedule_rows, schedule_name)?;
     let server = fixture.start_server_armed(arming.as_ref(), probe)?;
     // The driver's own next-sequence op is an authenticated connection; with
     // probe=false it would consume an armed CONNECTION_AUTHENTICATED kill row
@@ -21963,6 +22034,2827 @@ fn r_native_credit_direction(
     thread::sleep(STALL_CLOSE_SETTLE);
     stop_and_seal(context, scenario_dir, scenario_id, owned, events)
 }
+// ---------------------------------------------------------------------------
+// Milestone 19 rows (work in Kimi's role): the ten rows the matrix still
+// listed as unimplemented. Seven run against both subjects; three run what
+// they can and report the subject capability they are missing.
+// ---------------------------------------------------------------------------
+
+/// A row that cannot produce its evidence because a subject lacks a
+/// capability the matrix needs (a hook boundary, a fixture clock). The row
+/// has still run what it can, written expected.tsv/observed.tsv with
+/// `row_status INCOMPLETE` and the reason, and sealed its events; the run
+/// reports the named reason instead of "not implemented yet". In acceptance
+/// mode this is a FAIL, because a certification cannot be claimed around a
+/// capability nobody has.
+#[derive(Debug)]
+pub struct MissingCapability(pub String);
+
+impl std::fmt::Display for MissingCapability {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "missing subject capability: {}", self.0)
+    }
+}
+
+impl std::error::Error for MissingCapability {}
+
+/// Subject-side (server) records for one boundary naming one work key.
+/// Claude's Java FixtureMain records every reached boundary with its work
+/// key; the Rust subject emits only armed boundaries and never a work key,
+/// so on a Rust server this is zero and the row says "not observable".
+fn subject_records_for_work(events: &Path, boundary: &str, work: &str) -> Result<u64> {
+    let text = match fs::read_to_string(events) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(text
+        .lines()
+        .filter(|line| {
+            let columns: Vec<&str> = line.split('\t').collect();
+            columns.len() > 9
+                && columns[4] == "server"
+                && columns[7] == boundary
+                && columns[9] == work
+        })
+        .count() as u64)
+}
+
+/// Negotiate a raw connection as `principal` and attach it to the session
+/// the CLI client bound (authority, owner, generation). Returns the
+/// connection and the attach binding; request ids 1 (negotiation carries
+/// none) and the attach are consumed, so callers start their own at 2.
+#[allow(clippy::too_many_arguments)]
+fn raw_attach(
+    peer: &Peer,
+    fixture: &AuthorityFixture,
+    server: &OwnedServer,
+    events: &mut EventWriter,
+    artifacts: &Path,
+    principal: &str,
+    owner: &str,
+    generation: u64,
+) -> Result<(RawConn, rawclient::Binding)> {
+    let mut conn = raw_negotiate_as(peer, fixture, server, events, artifacts, principal)?;
+    conn.send_control(
+        FRAME_SESSION,
+        &rawclient::session_attach(1, fixture.authority(), owner, generation),
+    )?;
+    let binding = rawclient::parse_binding(&conn.expect_control(FRAME_SESSION)?)?;
+    ensure!(
+        binding.generation == generation && binding.owner == owner,
+        "raw attach bound generation {} owner {}, expected {generation} {owner}",
+        binding.generation,
+        binding.owner
+    );
+    Ok((conn, binding))
+}
+
+/// Declared length of the in-flight admission of g2-not-found-in-flight and
+/// the prefix that is written before the lookup; the rest plus FIN follows
+/// only after the NOT_FOUND has been observed.
+const PENDING_INPUT_LEN: usize = 256 * 1024;
+const PENDING_PREFIX_LEN: usize = 128 * 1024;
+/// Fixture wait between writing the header+prefix and the lookup, so the
+/// subject has certainly read the header off the stream. Fixture timing,
+/// never evidence: the evidence is the refusal and the later receipt on the
+/// same stream.
+const PENDING_SETTLE: Duration = Duration::from_millis(500);
+
+/// g2-not-found-in-flight: an operation lookup answers NOT_FOUND (5) while an
+/// admission under that id is genuinely pending before its commit, and the
+/// admission then commits exactly once with receipts identical on every path.
+///
+/// The pending admission is held by a raw peer that has written the input
+/// header and half the payload on an open object stream without FIN; a
+/// second raw connection of the same principal, attached to the same
+/// session, sends the wire lookup (Work::Operation) into that window. The
+/// Rust subject never reaches INPUT_INSTALLED and its hooks pause only at the
+/// reply pairs, so a stream held open mid-transfer is the one construction
+/// that is deterministic on BOTH subjects; the Java INPUT_INSTALLED pause
+/// would hold only the Java server. After the FIN the raw holder's
+/// Work::Admitted receipt and the prober's Work::OperationResponse receipt
+/// must be byte-identical; the CLI client then replays the same admission
+/// (same id, same bytes, same parameters) and gets the durable receipt back,
+/// looks the operation up twice with identical output, and reads the result
+/// byte-exact; the scope page shows one member.
+fn g2_not_found_in_flight(context: &ScenarioContext) -> Result<()> {
+    let id = "g2-not-found-in-flight";
+    g2_not_found_in_flight_direction(
+        context,
+        &context.scenario_dir(id),
+        Subject::Rust,
+        Subject::Rust,
+    )?;
+    run_hooked_direction(
+        context,
+        id,
+        "rust-client-java-server",
+        |context, direction_dir| {
+            g2_not_found_in_flight_direction(context, direction_dir, Subject::Java, Subject::Rust)
+        },
+    )?;
+    run_hooked_direction(
+        context,
+        id,
+        "java-client-rust-server",
+        |context, direction_dir| {
+            g2_not_found_in_flight_direction(context, direction_dir, Subject::Rust, Subject::Java)
+        },
+    )?;
+    Ok(())
+}
+
+fn g2_not_found_in_flight_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g2-not-found-in-flight";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    // Armed with no schedule: nothing pauses or dies; the Java subject
+    // records every boundary it reaches (one EXECUTION_CLAIMED per work is
+    // the "exactly one effect" evidence there), the Rust subject records
+    // nothing unarmed.
+    let hooked = setup_recording(context, scenario_dir, id, server, client)?;
+    let (session, events_path) = split_hooked(hooked);
+    let binding_out = session.op(&["binding"])?;
+    require(&binding_out, "BINDING", "client binding")?;
+    let declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
+    let admit_hex = oracle::operation_hex(oracle::operation_id(context.seed, "admit", 1));
+    let admit_id = oracle::operation_id(context.seed, "admit", 1);
+    let input = oracle::dataset(context.seed, PENDING_INPUT_LEN);
+    let input_sha256 = oracle::sha256_hex(&input);
+    let sha: [u8; 32] = Sha256::digest(&input).into();
+    let input_path = artifacts.join("input.bin");
+    fs::write(&input_path, &input)?;
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("input_len", input.len().to_string()),
+            ("input_sha256", input_sha256.clone()),
+            ("prefix_len_before_lookup", PENDING_PREFIX_LEN.to_string()),
+            (
+                "pending_construction",
+                "raw peer writes the input header and the prefix on an open object stream \
+                 without FIN; a second raw connection of the same principal attached to the \
+                 same session sends Work::Operation for the id"
+                    .into(),
+            ),
+            (
+                "lookup_while_pending",
+                "named NOT_FOUND (5) on the lookup's control request tag; never a receipt, \
+                 never a fabricated outcome"
+                    .into(),
+            ),
+            (
+                "after_fin",
+                "Work::Admitted receipt to the holder and Work::OperationResponse receipt to \
+                 the prober byte-identical; attempt 1"
+                    .into(),
+            ),
+            (
+                "cli_replay",
+                "the CLI client replays the same admission (same id, bytes, parameters) and \
+                 receives the durable receipt (attempt 1), no second effect"
+                    .into(),
+            ),
+            (
+                "exactly_one_effect",
+                "scope page members=1; terminal SUCCEEDED under attempt 1; result byte-exact; \
+                 EXECUTION_CLAIMED recorded once for the work where the subject records it"
+                    .into(),
+            ),
+        ],
+    )?;
+    events.append(
+        "",
+        None,
+        Some("0:0:1"),
+        Some(1),
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/input.bin".into(),
+            len: input.len() as u64,
+            sha256: input_sha256.clone(),
+        }),
+    )?;
+
+    let peer = Peer::new()?;
+    let (mut holder, binding) = raw_attach(
+        &peer,
+        &session.fixture,
+        &session.server,
+        &mut events,
+        &artifacts,
+        "alice",
+        "alice",
+        1,
+    )?;
+    let (mut prober, _) = raw_attach(
+        &peer,
+        &session.fixture,
+        &session.server,
+        &mut events,
+        &artifacts,
+        "alice",
+        "alice",
+        1,
+    )?;
+
+    // Pending: header plus prefix, no FIN. The admission cannot commit
+    // before the FIN because the subject must verify the whole payload
+    // against the header's length and digest first.
+    let header = rawclient::input_header_framed(
+        binding.generation,
+        &admit_id,
+        (0, 0, 1),
+        input.len() as u64,
+        &sha,
+        "application/octet-stream",
+        "copy/v2",
+        0,
+        60_000,
+        1,
+        input.len() as u64,
+    );
+    let mut stream = holder.open_uni()?;
+    holder.write_stream(&mut stream, &header)?;
+    holder.write_stream(&mut stream, &input[..PENDING_PREFIX_LEN])?;
+    events.append(
+        "REQUEST_SENT",
+        Some(admit_id),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    thread::sleep(PENDING_SETTLE);
+
+    // Lookup while pending: NOT_FOUND on the lookup's own request tag.
+    prober.send_control(FRAME_WORK, &rawclient::operation_lookup(2, &admit_id))?;
+    let pending_lookup = match prober.read_control()? {
+        Frame::Control(FRAME_REFUSAL, body) => rawclient::parse_refusal(&body)?,
+        Frame::Control(FRAME_WORK, body) => {
+            let (kind, receipt) = rawclient::work_receipt_bytes(&body)?;
+            bail!(
+                "{id}: lookup answered a receipt (kind {kind}, {}) while the input stream \
+                 was still open without FIN: the admission committed before its payload was \
+                 complete, which is a candidate subject defect on the {} server",
+                hex(&receipt),
+                server.name()
+            );
+        }
+        Frame::Control(other, body) => bail!(
+            "{id}: lookup while pending answered frame type {other} (body {})",
+            hex(&body)
+        ),
+        Frame::Fin => bail!("{id}: control stream finished during the pending lookup"),
+    };
+    fs::write(
+        artifacts.join("lookup-while-pending.txt"),
+        format!(
+            "tag_kind={} tag_id={} code={} ({}) detail={}\n",
+            pending_lookup.tag_kind,
+            pending_lookup.tag_id,
+            pending_lookup.code,
+            refusal_code_name(pending_lookup.code),
+            pending_lookup.detail
+        ),
+    )?;
+    ensure!(
+        pending_lookup.code == 5 && pending_lookup.tag_kind == 0 && pending_lookup.tag_id == 2,
+        "{id}: lookup while pending must refuse NOT_FOUND (5) on control request 2, got \
+         code {} ({}) tag {}:{} detail {:?}",
+        pending_lookup.code,
+        refusal_code_name(pending_lookup.code),
+        pending_lookup.tag_kind,
+        pending_lookup.tag_id,
+        pending_lookup.detail
+    );
+    events.append(
+        "REFUSAL_RECEIVED",
+        Some(admit_id),
+        Some("0:0:1"),
+        Some(1),
+        Some(5),
+        None,
+    )?;
+
+    // Complete the transfer: the holder gets the admission receipt on the
+    // stream's input tag.
+    holder.write_stream(&mut stream, &input[PENDING_PREFIX_LEN..])?;
+    holder.finish_stream(&mut stream)?;
+    let admitted_body = holder.expect_control(FRAME_WORK)?;
+    let (admitted_kind, holder_receipt) = rawclient::work_receipt_bytes(&admitted_body)?;
+    ensure!(
+        admitted_kind == 1,
+        "{id}: the holder expected Work::Admitted (kind 1), got kind {admitted_kind}"
+    );
+    let (attempt, admitted_at, deadline) = rawclient::parse_receipt_admitted(&holder_receipt)?;
+    ensure!(
+        attempt == 1,
+        "{id}: the admission receipt must allocate attempt 1, got {attempt}"
+    );
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(admit_id),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+
+    // Lookup after the commit: the identical receipt bytes.
+    prober.send_control(FRAME_WORK, &rawclient::operation_lookup(3, &admit_id))?;
+    let response = prober.expect_control(FRAME_WORK)?;
+    let (response_kind, prober_receipt) = rawclient::work_receipt_bytes(&response)?;
+    ensure!(
+        response_kind == 3,
+        "{id}: the prober expected Work::OperationResponse (kind 3), got kind {response_kind}"
+    );
+    fs::write(
+        artifacts.join("receipts.txt"),
+        format!(
+            "holder_admitted_receipt={}\nprober_lookup_receipt={}\n",
+            hex(&holder_receipt),
+            hex(&prober_receipt)
+        ),
+    )?;
+    ensure!(
+        holder_receipt == prober_receipt,
+        "{id}: the lookup receipt differs from the admission receipt (see artifacts/receipts.txt)"
+    );
+    raw_detach(&mut holder, 4)?;
+    raw_detach(&mut prober, 4)?;
+    drop(holder);
+    drop(prober);
+
+    // The CLI client replays the same admission and gets the durable receipt.
+    events.append(
+        "REQUEST_SENT",
+        Some(admit_id),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let replay = session.op(&[
+        "admit",
+        "--operation",
+        &admit_hex,
+        "--declaration",
+        &declare,
+        "--work",
+        "0:0:1",
+        "--input",
+        &crate::path(&input_path),
+        "--application",
+        "copy/v2",
+    ])?;
+    let replay_receipt = require(&replay, "RECEIPT", "CLI replay of the raw admission")?;
+    fs::write(artifacts.join("cli-replay-receipt.txt"), &replay_receipt)?;
+    let replay_deadline = parse_field_u64(&replay_receipt, "deadline")?
+        .context("CLI replay receipt did not render a deadline")?;
+    ensure!(
+        replay_deadline == deadline,
+        "{id}: the CLI replay receipt deadline {replay_deadline} differs from the raw \
+         admission receipt deadline {deadline}"
+    );
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(admit_id),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let lookup_one = session.op(&["lookup", "--operation", &admit_hex])?;
+    let lookup_one = require(&lookup_one, "RECEIPT", "CLI lookup after commit")?;
+    let lookup_two = session.op(&["lookup", "--operation", &admit_hex])?;
+    let lookup_two = require(&lookup_two, "RECEIPT", "second CLI lookup after commit")?;
+    fs::write(artifacts.join("cli-lookup-receipt.txt"), &lookup_one)?;
+    ensure!(
+        lookup_one.trim() == lookup_two.trim(),
+        "{id}: two CLI lookups of the committed operation differ:\n{lookup_one}\n{lookup_two}"
+    );
+    ensure!(
+        lookup_one.trim() == replay_receipt.trim(),
+        "{id}: the CLI lookup receipt differs from the CLI replay receipt:\n{lookup_one}\n\
+         {replay_receipt}"
+    );
+
+    let terminal = watch_terminal(&session, &mut events, "0:0:1", &admit_hex, WATCH_TIMEOUT)?;
+    ensure!(
+        parse_attempt(&terminal)? == 1,
+        "{id}: terminal success must stay under attempt 1:\n{terminal}"
+    );
+    let page = session.op(&["page", "--scope", "0"])?;
+    let page_stdout = require(&page, "SCOPE", "scope page")?;
+    let (declared, members) = parse_scope_page(&page_stdout)?;
+    ensure!(
+        declared == 1 && members == 1,
+        "{id}: expected exactly one admitted entity (declared=1, members=1), got \
+         declared={declared} members={members}:\n{page_stdout}"
+    );
+    read_output_verified(
+        &session,
+        &mut events,
+        "0:0:1",
+        1,
+        &input,
+        &input_sha256,
+        &artifacts,
+        "output.bin",
+    )?;
+    detach(&session)?;
+    let claims = match server {
+        Subject::Java => {
+            let claims = subject_records_for_work(&events_path, "EXECUTION_CLAIMED", "0:0:1")?;
+            ensure!(
+                claims == 1,
+                "{id}: the Java subject recorded EXECUTION_CLAIMED {claims} times for 0:0:1, \
+                 expected exactly 1"
+            );
+            format!("{claims} (subject record)")
+        }
+        Subject::Rust => {
+            "not observable: the Rust subject emits only armed boundaries and its hooks \
+             cannot arm EXECUTION_CLAIMED without a kill"
+                .to_owned()
+        }
+    };
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        (
+            "pending_window",
+            format!(
+                "header + {PENDING_PREFIX_LEN} of {} bytes written, no FIN, {} ms settle \
+                 before the lookup",
+                input.len(),
+                PENDING_SETTLE.as_millis()
+            ),
+        ),
+        (
+            "lookup_while_pending",
+            format!(
+                "refused {} ({}) detail {:?} on control request {}",
+                refusal_code_name(pending_lookup.code),
+                pending_lookup.code,
+                pending_lookup.detail,
+                pending_lookup.tag_id
+            ),
+        ),
+        (
+            "admission_receipt",
+            format!("attempt={attempt} admitted_at={admitted_at} deadline={deadline}"),
+        ),
+        (
+            "raw_receipts_identical",
+            "true (Work::Admitted and Work::OperationResponse receipt bytes equal)".into(),
+        ),
+        (
+            "cli_replay",
+            format!("RECEIPT with deadline {replay_deadline}; identical to both CLI lookups"),
+        ),
+        ("terminal_attempt", "1".into()),
+        ("page_members", members.to_string()),
+        ("execution_claimed_records", claims),
+        (
+            "result_read",
+            "attempt 1 byte-exact against the independent oracle".into(),
+        ),
+    ];
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    stop_and_seal(context, scenario_dir, id, session.server, events)
+}
+
+// ---------------------------------------------------------------------------
+// G5 rows added at milestone 19: rotation, remap, cross-authority, expiry
+// ---------------------------------------------------------------------------
+
+/// Fingerprints of a mapped identity as the principal map keys it, for
+/// evidence files.
+fn fingerprint(identity: &mtls::Identity) -> Result<String> {
+    mtls::Material::leaf_sha256(identity)
+}
+
+/// Bind `owner`'s journal under one identity and return a Session whose
+/// connection presents that identity.
+fn session_with_identity(
+    fixture: AuthorityFixture,
+    server: OwnedServer,
+    journal: PathBuf,
+    identity: &mtls::Identity,
+) -> Result<Session> {
+    let connection = fixture.connection_args_for(&server, identity)?;
+    Ok(Session {
+        fixture,
+        server,
+        sequence: 1,
+        journal,
+        connection,
+        policy_args: Vec::new(),
+    })
+}
+
+/// Poll one work until it reaches `wanted` or a terminal state that is not
+/// `wanted`; returns the final watch stdout.
+fn watch_until_state(
+    session: &Session,
+    work: &str,
+    wanted: u64,
+    timeout: Duration,
+) -> Result<String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let stdout = session.watch(work)?;
+        let state = parse_state(&stdout)?;
+        if state == wanted {
+            return Ok(stdout);
+        }
+        ensure!(
+            !(5..=8).contains(&state),
+            "work {work} settled in state {state} ({}) while waiting for {wanted} ({})\n{stdout}",
+            state_code_name(&state.to_string()),
+            state_code_name(&wanted.to_string())
+        );
+        ensure!(
+            Instant::now() < deadline,
+            "work {work} did not reach state {wanted} within {timeout:?}\nlast view:\n{stdout}"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// g5-cert-rotation-same-owner: the principal map carries TWO leaf hashes for
+/// owner alice (the original and the rotated certificate). The session is
+/// created and two retry-copy works are admitted under certificate 1; the
+/// server is stopped and restarted on the same roots; the client attaches
+/// with certificate 2 and must receive the identical binding, see the
+/// certificate-1 operations still committed (lookup), and have its retry and
+/// cancel accepted as the same owner; the retried work's result reads back
+/// byte-exact under certificate 2.
+fn g5_cert_rotation_same_owner(context: &ScenarioContext) -> Result<()> {
+    g5_row(
+        context,
+        "g5-cert-rotation-same-owner",
+        g5_cert_rotation_same_owner_direction,
+    )
+}
+
+fn g5_cert_rotation_same_owner_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server_subject: Subject,
+) -> Result<()> {
+    let id = "g5-cert-rotation-same-owner";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, id)?;
+    let (fixture, server) = g5_fixture(
+        context,
+        scenario_dir,
+        server_subject,
+        &[("alice", "alice"), ("alice-rotated", "alice")],
+        &[],
+        &[],
+    )?;
+    let cert_one = fixture.certs.principal("alice")?.clone();
+    let cert_two = fixture.certs.principal("alice-rotated")?.clone();
+    let fingerprint_one = fingerprint(&cert_one)?;
+    let fingerprint_two = fingerprint(&cert_two)?;
+    let input = oracle::dataset(context.seed, INPUT_LEN);
+    let input_sha256 = oracle::sha256_hex(&input);
+    let input_path = artifacts.join("input.bin");
+    fs::write(&input_path, &input)?;
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            (
+                "principal_map",
+                "two leaf hashes, both mapped to owner alice".into(),
+            ),
+            ("cert_1_sha256", fingerprint_one.clone()),
+            ("cert_2_sha256", fingerprint_two.clone()),
+            ("input_len", input.len().to_string()),
+            ("input_sha256", input_sha256.clone()),
+            (
+                "sequence",
+                "create + declare [1,2] + admit retry-copy/v2 twice under cert 1 (both park in \
+                 AWAITING_RETRY); stop; restart on the same roots; attach under cert 2"
+                    .into(),
+            ),
+            ("attach_under_cert_2", "identical BINDING text".into()),
+            (
+                "committed_under_cert_1",
+                "lookup of the cert-1 admission returns its receipt".into(),
+            ),
+            (
+                "mutations_under_cert_2",
+                "retry 0:0:1 (expected 1) accepted with replacement attempt 2 and settles \
+                 SUCCEEDED; cancel 0:0:2 accepted and settles CANCELLED"
+                    .into(),
+            ),
+            (
+                "read_under_cert_2",
+                "0:0:1 attempt 2 byte-exact against the oracle".into(),
+            ),
+        ],
+    )?;
+    events.append(
+        "",
+        None,
+        Some("0:0:1"),
+        Some(1),
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/input.bin".into(),
+            len: input.len() as u64,
+            sha256: input_sha256.clone(),
+        }),
+    )?;
+
+    // Certificate 1: create, declare, two retry-copy admissions parked.
+    let (journal, _connection) = bind_owner(&fixture, scenario_dir, &server, "alice", "alice", 1)?;
+    let alice = session_with_identity(fixture, server, journal, &cert_one)?;
+    let binding_one = require(&alice.op(&["binding"])?, "BINDING", "binding under cert 1")?;
+    fs::write(artifacts.join("binding-cert-1.txt"), &binding_one)?;
+    let declare = declare_sealed(&alice, &mut events, context.seed, "declare", &[1, 2])?;
+    let admit_one = oracle::operation_hex(oracle::operation_id(context.seed, "admit", 1));
+    admit_application(
+        &alice,
+        &mut events,
+        context.seed,
+        "admit",
+        &declare,
+        "0:0:1",
+        &input_path,
+        "retry-copy/v2",
+        1,
+    )?;
+    admit_application(
+        &alice,
+        &mut events,
+        context.seed,
+        "admit-2",
+        &declare,
+        "0:0:2",
+        &input_path,
+        "retry-copy/v2",
+        1,
+    )?;
+    watch_until_state(&alice, "0:0:1", 2, RECOVERY_TIMEOUT)?;
+    watch_until_state(&alice, "0:0:2", 2, RECOVERY_TIMEOUT)?;
+
+    // Stop, restart on the same roots (same map with both hashes).
+    let Session {
+        fixture,
+        server,
+        journal,
+        ..
+    } = alice;
+    server.stop()?;
+    let restarted = fixture.start_server()?;
+    events.append("", None, None, None, None, None)?;
+
+    // Certificate 2 attaches to the same binding.
+    let alice = session_with_identity(fixture, restarted, journal, &cert_two)?;
+    let binding_two = require(&alice.op(&["binding"])?, "BINDING", "binding under cert 2")?;
+    fs::write(artifacts.join("binding-cert-2.txt"), &binding_two)?;
+    ensure!(
+        binding_one.trim() == binding_two.trim(),
+        "{id}: the binding under certificate 2 differs from certificate 1:\n{binding_one}\n\
+         {binding_two}"
+    );
+    let lookup = alice.op(&["lookup", "--operation", &admit_one])?;
+    let lookup = require(
+        &lookup,
+        "RECEIPT",
+        "lookup of the cert-1 admission under cert 2",
+    )?;
+    fs::write(artifacts.join("lookup-cert-1-admission.txt"), &lookup)?;
+
+    // Retry and cancel under certificate 2 are accepted as the same owner.
+    let retry = oracle::operation_hex(oracle::operation_id(context.seed, "retry", 1));
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&retry)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let retry_out = alice.op(&[
+        "retry",
+        "--operation",
+        &retry,
+        "--work",
+        "0:0:1",
+        "--expected-attempt",
+        "1",
+    ])?;
+    let retry_receipt = require(&retry_out, "RECEIPT", "retry under cert 2")?;
+    ensure!(
+        parse_replacement_attempt(&retry_receipt)? == 2,
+        "{id}: retry under cert 2 must name replacement attempt 2:\n{retry_receipt}"
+    );
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(hex_to_id(&retry)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let cancel = oracle::operation_hex(oracle::operation_id(context.seed, "cancel", 1));
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&cancel)?),
+        Some("0:0:2"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let cancel_out = alice.op(&["cancel", "--operation", &cancel, "--work", "0:0:2"])?;
+    let cancel_receipt = require(&cancel_out, "RECEIPT", "cancel under cert 2")?;
+    let cancel_disposition = receipt_disposition(&cancel_receipt)?;
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(hex_to_id(&cancel)?),
+        Some("0:0:2"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let retried = watch_until_state(&alice, "0:0:1", 5, RECOVERY_TIMEOUT)?;
+    ensure!(
+        parse_attempt(&retried)? == 2,
+        "{id}: the retried work must succeed under attempt 2:\n{retried}"
+    );
+    let cancelled = watch_until_state(&alice, "0:0:2", 7, RECOVERY_TIMEOUT)?;
+    read_output_verified(
+        &alice,
+        &mut events,
+        "0:0:1",
+        2,
+        &input,
+        &input_sha256,
+        &artifacts,
+        "output-attempt-2.bin",
+    )?;
+    detach(&alice)?;
+    let mut observed: Vec<(&str, String)> = Vec::new();
+    g5_observed_preamble(&mut observed, server_subject, context);
+    observed.extend([
+        ("cert_1_sha256", fingerprint_one),
+        ("cert_2_sha256", fingerprint_two),
+        ("binding_identical_across_rotation", "true".into()),
+        ("cert_1_admission_lookup_under_cert_2", "RECEIPT".into()),
+        (
+            "retry_under_cert_2",
+            "accepted: replacement attempt 2; SUCCEEDED(5) under attempt 2".into(),
+        ),
+        (
+            "cancel_under_cert_2",
+            format!(
+                "accepted: disposition {cancel_disposition}; settled {} ({})",
+                parse_state(&cancelled)?,
+                state_code_name(&parse_state(&cancelled)?.to_string())
+            ),
+        ),
+        (
+            "read_under_cert_2",
+            "attempt 2 byte-exact against the independent oracle".into(),
+        ),
+        (
+            "restart",
+            "graceful stop (SIGTERM, DRAINED) and restart on the same roots and map".into(),
+        ),
+    ]);
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    stop_and_seal(context, scenario_dir, id, alice.server, events)
+}
+
+/// Refusal codes that would disclose retained state to a credential that
+/// is no longer the owner: an authorization denial must come first.
+const STATE_DISCLOSING_CODES: &[u32] = &[6, 7, 9, 12, 18];
+
+/// g5-remapped-owner (matrix: g5-remapped-owner-denies): owner alice admits
+/// and reads work; the operator stops the server, REMAPS alice's leaf hash
+/// to owner mallory in the principal map, and restarts. Every committing
+/// mutation and every read by that credential is then refused with a named
+/// code that does not disclose the session's state; the output already
+/// delivered before the remap stays valid on disk (re-hashed against the
+/// oracle); nothing succeeds silently. Live-connection re-checking is not
+/// observable through a stop/restart (every connection died with the stop)
+/// and is recorded as such.
+fn g5_remapped_owner(context: &ScenarioContext) -> Result<()> {
+    g5_row(context, "g5-remapped-owner", g5_remapped_owner_direction)
+}
+
+fn g5_remapped_owner_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server_subject: Subject,
+) -> Result<()> {
+    let id = "g5-remapped-owner";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, id)?;
+    let (fixture, server) = g5_fixture(
+        context,
+        scenario_dir,
+        server_subject,
+        &[("alice", "alice"), ("bob", "bob")],
+        &[],
+        &[],
+    )?;
+    let alice_identity = fixture.certs.principal("alice")?.clone();
+    let alice_fingerprint = fingerprint(&alice_identity)?;
+    let input = oracle::dataset(context.seed, INPUT_LEN);
+    let input_sha256 = oracle::sha256_hex(&input);
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("alice_leaf_sha256", alice_fingerprint.clone()),
+            ("input_sha256", input_sha256.clone()),
+            (
+                "operator_action",
+                "graceful stop; principal map edited so alice's leaf hash maps to owner \
+                 mallory; restart on the same roots"
+                    .into(),
+            ),
+            (
+                "after_remap",
+                "attach, retry, cancel, lookup and result read by that credential are each \
+                 refused with a named code; none names a state-disclosing code \
+                 (EXPIRED, CONFLICT, NOT_READY, CANCELLED, ALREADY_TERMINAL); no silent success"
+                    .into(),
+            ),
+            (
+                "delivered_bytes",
+                "the output read before the remap is still byte-exact on disk".into(),
+            ),
+        ],
+    )?;
+    let (journal, _connection) = bind_owner(&fixture, scenario_dir, &server, "alice", "alice", 1)?;
+    let alice = session_with_identity(fixture, server, journal, &alice_identity)?;
+    let admit = alice_publish(&alice, &mut events, context.seed, &artifacts, &input)?;
+    let delivered_sha = read_output_verified(
+        &alice,
+        &mut events,
+        "0:0:1",
+        1,
+        &input,
+        &input_sha256,
+        &artifacts,
+        "output-before-remap.bin",
+    )?;
+
+    // Operator remap between a graceful stop and the restart.
+    let Session {
+        fixture,
+        server,
+        journal,
+        ..
+    } = alice;
+    server.stop()?;
+    let map_path = fixture.certs.principal_map.clone();
+    let map = fs::read_to_string(&map_path)?;
+    let mut remapped = String::new();
+    let mut edited = 0;
+    for line in map.lines() {
+        match line.split_once('\t') {
+            Some((hash, _owner)) if hash == alice_fingerprint => {
+                remapped.push_str(&format!("{hash}\tmallory\n"));
+                edited += 1;
+            }
+            _ => {
+                remapped.push_str(line);
+                remapped.push('\n');
+            }
+        }
+    }
+    ensure!(
+        edited == 1,
+        "{id}: alice's leaf hash must appear exactly once in the map"
+    );
+    fs::write(&map_path, &remapped)?;
+    fs::write(artifacts.join("principals-remapped.tsv"), &remapped)?;
+    // The readiness probe presents alice's certificate, which is now mallory
+    // with no session: readiness is established with bob instead.
+    let restarted = fixture.start_server_armed(None, false)?;
+    fixture.next_sequence(&restarted, "bob")?;
+    events.append("", None, None, None, None, None)?;
+    let alice = session_with_identity(fixture, restarted, journal, &alice_identity)?;
+
+    let retry = oracle::operation_hex(oracle::operation_id(context.seed, "retry", 1));
+    let cancel = oracle::operation_hex(oracle::operation_id(context.seed, "cancel", 1));
+    let read_target = crate::path(&artifacts.join("read-after-remap.bin"));
+    let probes: Vec<(&str, Vec<&str>)> = vec![
+        ("attach", vec!["binding"]),
+        (
+            "retry",
+            vec![
+                "retry",
+                "--operation",
+                &retry,
+                "--work",
+                "0:0:1",
+                "--expected-attempt",
+                "1",
+            ],
+        ),
+        (
+            "cancel",
+            vec!["cancel", "--operation", &cancel, "--work", "0:0:1"],
+        ),
+        ("lookup", vec!["lookup", "--operation", &admit]),
+        (
+            "read",
+            vec![
+                "read",
+                "--work",
+                "0:0:1",
+                "--attempt",
+                "1",
+                "--index",
+                "0",
+                "--output",
+                &read_target,
+            ],
+        ),
+    ];
+    let mut observed: Vec<(&str, String)> = Vec::new();
+    g5_observed_preamble(&mut observed, server_subject, context);
+    observed.push(("alice_leaf_sha256", alice_fingerprint.clone()));
+    observed.push((
+        "remap",
+        "alice's leaf hash -> owner mallory (map edited between stop and restart)".into(),
+    ));
+    let mut codes: BTreeSet<u32> = BTreeSet::new();
+    for (name, operation) in &probes {
+        let output = alice.op(operation)?;
+        let outcome = probe_outcome(&output);
+        let artifact = format!("after-remap-{name}.txt");
+        let (len, sha256) = write_probe_artifact(&artifacts, &artifact, &outcome)?;
+        let (code, line) =
+            expect_named_refusal(&outcome, &format!("{id}: {name} after the remap"))?;
+        ensure!(
+            !STATE_DISCLOSING_CODES.contains(&code),
+            "{id}: {name} after the remap named {} ({code}), which discloses the session's \
+             state to a credential that is no longer its owner\n{}",
+            refusal_code_name(u64::from(code)),
+            outcome.transcript()
+        );
+        codes.insert(code);
+        events.append(
+            "REFUSAL_RECEIVED",
+            None,
+            Some("0:0:1"),
+            Some(1),
+            Some(code),
+            Some(ArtifactRef {
+                path: format!("artifacts/{artifact}"),
+                len,
+                sha256,
+            }),
+        )?;
+        observed.push((
+            Box::leak(format!("after_remap_{name}").into_boxed_str()),
+            format!(
+                "refused {} ({code}): {line}",
+                refusal_code_name(u64::from(code))
+            ),
+        ));
+    }
+    ensure!(
+        !artifacts.join("read-after-remap.bin").exists()
+            || fs::metadata(artifacts.join("read-after-remap.bin"))?.len() == 0,
+        "{id}: the refused read still wrote output bytes"
+    );
+    let on_disk = fs::read(artifacts.join("output-before-remap.bin"))?;
+    let on_disk_sha = oracle::sha256_hex(&on_disk);
+    ensure!(
+        on_disk_sha == delivered_sha && on_disk_sha == input_sha256,
+        "{id}: the pre-remap output artifact no longer matches the oracle"
+    );
+    observed.extend([
+        (
+            "refusal_codes_after_remap",
+            codes
+                .iter()
+                .map(|code| format!("{} ({code})", refusal_code_name(u64::from(*code))))
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
+        (
+            "pre_remap_output_still_valid",
+            format!("true (sha256={on_disk_sha})"),
+        ),
+        (
+            "live_connection_recheck",
+            "not observable through stop/restart: every connection died with the graceful \
+             stop, so only fresh connections are re-evaluated here"
+                .into(),
+        ),
+    ]);
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    stop_and_seal(context, scenario_dir, id, alice.server, events)
+}
+
+/// Authority label of the second authority in g5-cross-authority-reference.
+const AUTHORITY_Y: &str = "issuer-b";
+
+/// g5-cross-authority-reference: authority X publishes a result and the
+/// driver records its REFERENCE (the selected output as the client renders
+/// it). Authority Y has separate roots, its own principal map (alice mapped)
+/// and the label `issuer-b`, and no session of X's. Arm A resolves X's saved
+/// selection against Y from X's journal: refused without disclosure, no
+/// bytes delivered. Arm B binds a journal on Y and selects X's identifiers
+/// there: refused without disclosure. The positive arm reads the exact bytes
+/// on X. Neither published client dereferences a locator's authority (the
+/// Rust `read` uses the journal selection on the configured connection;
+/// Java: DurableClientLocatorTest, S12-280/283), which is recorded, not
+/// asserted here.
+fn g5_cross_authority_reference(context: &ScenarioContext) -> Result<()> {
+    g5_row(
+        context,
+        "g5-cross-authority-reference",
+        g5_cross_authority_reference_direction,
+    )
+}
+
+fn g5_cross_authority_reference_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server_subject: Subject,
+) -> Result<()> {
+    let id = "g5-cross-authority-reference";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, id)?;
+    let (fixture_x, server_x) = g5_fixture(
+        context,
+        scenario_dir,
+        server_subject,
+        &[("alice", "alice")],
+        &[],
+        &[],
+    )?;
+    let alice_identity = fixture_x.certs.principal("alice")?.clone();
+    let alice_fingerprint = fingerprint(&alice_identity)?;
+    // Authority Y: same CA and client identities, its own map and roots.
+    let y_dir = scenario_dir.join("authority-y");
+    fs::create_dir_all(&y_dir)?;
+    let y_map = y_dir.join("principals.tsv");
+    fs::write(
+        &y_map,
+        format!("sha256\tprincipal\n{alice_fingerprint}\talice\n"),
+    )?;
+    let fixture_y = AuthorityFixture::new(
+        &context.rust_bin,
+        context.java_jar.as_deref(),
+        &y_dir.join("subject"),
+        fixture_x.certs.with_principal_map(&y_map),
+        server_subject,
+        Subject::Rust,
+    )?
+    .with_authority(AUTHORITY_Y);
+    fixture_y.run_init_authority()?;
+    let server_y = fixture_y.start_server()?;
+    let input = oracle::dataset(context.seed, INPUT_LEN);
+    let input_sha256 = oracle::sha256_hex(&input);
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("authority_x", fixture_x.authority().to_owned()),
+            ("authority_y", AUTHORITY_Y.into()),
+            ("input_sha256", input_sha256.clone()),
+            (
+                "arm_a",
+                "X's journal (bound to X, selection saved) pointed at Y: attach, read, lookup \
+                 and watch each refused with a named code; no result bytes written"
+                    .into(),
+            ),
+            (
+                "arm_b",
+                "a journal bound on Y selects X's work/attempt/index: refused with a named \
+                 code (Y holds no such work; nothing about X is disclosed)"
+                    .into(),
+            ),
+            (
+                "positive_arm",
+                "the same selection reads byte-exact on X".into(),
+            ),
+        ],
+    )?;
+    let (journal_x, _) = bind_owner(&fixture_x, scenario_dir, &server_x, "alice", "alice", 1)?;
+    let alice_x = session_with_identity(fixture_x, server_x, journal_x, &alice_identity)?;
+    let admit = alice_publish(&alice_x, &mut events, context.seed, &artifacts, &input)?;
+    let select = alice_x.op(&[
+        "select",
+        "--work",
+        "0:0:1",
+        "--attempt",
+        "1",
+        "--index",
+        "0",
+    ])?;
+    let reference = require(&select, "REFERENCE", "select on X")?;
+    fs::write(artifacts.join("reference-x.txt"), &reference)?;
+    read_output_verified(
+        &alice_x,
+        &mut events,
+        "0:0:1",
+        1,
+        &input,
+        &input_sha256,
+        &artifacts,
+        "output-x.bin",
+    )?;
+
+    // Arm A: X's journal against Y.
+    let connection_y = fixture_y.connection_args(&server_y, "alice")?;
+    let cross_read = crate::path(&artifacts.join("cross-read.bin"));
+    let probes: Vec<(&str, Vec<&str>)> = vec![
+        ("attach", vec!["binding"]),
+        (
+            "read",
+            vec![
+                "read",
+                "--work",
+                "0:0:1",
+                "--attempt",
+                "1",
+                "--index",
+                "0",
+                "--output",
+                &cross_read,
+            ],
+        ),
+        ("lookup", vec!["lookup", "--operation", &admit]),
+        ("watch", vec!["watch", "--work", "0:0:1"]),
+    ];
+    let mut observed: Vec<(&str, String)> = Vec::new();
+    g5_observed_preamble(&mut observed, server_subject, context);
+    observed.push(("authority_y", AUTHORITY_Y.into()));
+    observed.push(("reference_x", reference.trim().to_owned()));
+    for (name, operation) in &probes {
+        let output = alice_x.fixture.run_client_op(
+            &alice_x.journal,
+            "alice",
+            1,
+            &connection_y,
+            operation,
+        )?;
+        let outcome = probe_outcome(&output);
+        let artifact = format!("arm-a-{name}-against-y.txt");
+        let (len, sha256) = write_probe_artifact(&artifacts, &artifact, &outcome)?;
+        let (code, line) =
+            expect_named_refusal(&outcome, &format!("{id}: arm A {name} against Y"))?;
+        events.append(
+            "REFUSAL_RECEIVED",
+            None,
+            Some("0:0:1"),
+            Some(1),
+            Some(code),
+            Some(ArtifactRef {
+                path: format!("artifacts/{artifact}"),
+                len,
+                sha256,
+            }),
+        )?;
+        observed.push((
+            Box::leak(format!("arm_a_{name}_against_y").into_boxed_str()),
+            format!(
+                "refused {} ({code}): {line}",
+                refusal_code_name(u64::from(code))
+            ),
+        ));
+    }
+    ensure!(
+        !artifacts.join("cross-read.bin").exists()
+            || fs::metadata(artifacts.join("cross-read.bin"))?.len() == 0,
+        "{id}: the cross-authority read wrote result bytes"
+    );
+
+    // Arm B: a journal bound on Y selects X's identifiers.
+    let (journal_y, _) = bind_owner(&fixture_y, &y_dir, &server_y, "alice-y", "alice", 1)?;
+    let select_y = fixture_y.run_client_op(
+        &journal_y,
+        "alice",
+        1,
+        &connection_y,
+        &[
+            "select",
+            "--work",
+            "0:0:1",
+            "--attempt",
+            "1",
+            "--index",
+            "0",
+        ],
+    )?;
+    let outcome = probe_outcome(&select_y);
+    let (len, sha256) = write_probe_artifact(&artifacts, "arm-b-select-on-y.txt", &outcome)?;
+    let (code, line) = expect_named_refusal(&outcome, &format!("{id}: arm B select on Y"))?;
+    events.append(
+        "REFUSAL_RECEIVED",
+        None,
+        Some("0:0:1"),
+        Some(1),
+        Some(code),
+        Some(ArtifactRef {
+            path: "artifacts/arm-b-select-on-y.txt".into(),
+            len,
+            sha256,
+        }),
+    )?;
+    ensure!(
+        !outcome.stdout.contains(input_sha256.as_str())
+            && !outcome.stderr.contains(input_sha256.as_str()),
+        "{id}: Y's refusal disclosed X's output digest"
+    );
+    observed.push((
+        "arm_b_select_on_y",
+        format!(
+            "refused {} ({code}): {line}",
+            refusal_code_name(u64::from(code))
+        ),
+    ));
+    observed.push((
+        "positive_arm_read_on_x",
+        "byte-exact against the independent oracle".into(),
+    ));
+    observed.push((
+        "locator_dereference",
+        "neither client dereferences a locator's authority: the Rust read uses the journal \
+         selection on the configured connection (server/src/v2/client.rs Operation::Read), \
+         the Java client stays on the configured connection (DurableClientLocatorTest, \
+         S12-280/283); recorded, not asserted by this row"
+            .into(),
+    ));
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    detach(&alice_x)?;
+    server_y.stop()?;
+    stop_and_seal(context, scenario_dir, id, alice_x.server, events)
+}
+
+/// Validity window of the short-lived leaf in g5-expired-identity: long
+/// enough to bind and attach a raw connection, short enough to wait out.
+const EXPIRY_VALIDITY: Duration = Duration::from_secs(25);
+/// Margin past not_after before the post-expiry probes (both subjects check
+/// validity against host UTC with second resolution).
+const EXPIRY_MARGIN: Duration = Duration::from_secs(4);
+
+/// g5-expired-identity: alice's leaf is valid for 25 s from minting. While
+/// valid: the CLI creates the session and declares, and a raw connection
+/// attaches and stays open. After expiry: the existing connection's
+/// behaviour is recorded per subject (the Java server closes it at expiry,
+/// S12-098; the Rust server was unmeasured); a fresh connection with the
+/// expired leaf must fail at the handshake with no application refusal; a
+/// renewed leaf mapped to the same owner attaches to the same session and
+/// sees the declaration. Host UTC is never changed.
+fn g5_expired_identity(context: &ScenarioContext) -> Result<()> {
+    g5_row(
+        context,
+        "g5-expired-identity",
+        g5_expired_identity_direction,
+    )
+}
+
+fn g5_expired_identity_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server_subject: Subject,
+) -> Result<()> {
+    let id = "g5-expired-identity";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, Subject::Rust)?;
+    enforce_no_fault_schedule(context, id)?;
+    let minted_at = Instant::now();
+    let certs = mtls::generate_spec(
+        &scenario_dir.join("certs"),
+        &[("alice-renewed", "alice"), ("bob", "bob")],
+        &[],
+        &[],
+        &[("alice", "alice", EXPIRY_VALIDITY)],
+    )?;
+    let fixture = AuthorityFixture::new(
+        &context.rust_bin,
+        context.java_jar.as_deref(),
+        &scenario_dir.join("subject"),
+        certs,
+        server_subject,
+        Subject::Rust,
+    )?;
+    fixture.run_init_authority()?;
+    let server = fixture.start_server()?;
+    let short_identity = fixture.certs.principal("alice")?.clone();
+    let renewed_identity = fixture.certs.principal("alice-renewed")?.clone();
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("validity_seconds", EXPIRY_VALIDITY.as_secs().to_string()),
+            ("short_leaf_sha256", fingerprint(&short_identity)?),
+            ("renewed_leaf_sha256", fingerprint(&renewed_identity)?),
+            (
+                "clock_mode",
+                "real elapsed time; host UTC never changed".into(),
+            ),
+            (
+                "while_valid",
+                "session created and [1] declared under the short leaf; a raw connection \
+                 attached and kept open"
+                    .into(),
+            ),
+            (
+                "existing_connection_after_expiry",
+                "recorded per subject (java: closed UNAUTHORIZED at expiry per S12-098; \
+                 rust: unmeasured before this row)"
+                    .into(),
+            ),
+            (
+                "fresh_connection_after_expiry",
+                "handshake failure (TLS certificate expired), no application refusal".into(),
+            ),
+            (
+                "renewed_leaf",
+                "attaches to the same generation with the identical binding and sees the \
+                 declaration"
+                    .into(),
+            ),
+        ],
+    )?;
+    let (journal, _) = bind_owner(&fixture, scenario_dir, &server, "alice", "alice", 1)?;
+    let alice = session_with_identity(fixture, server, journal, &short_identity)?;
+    let binding_valid = require(&alice.op(&["binding"])?, "BINDING", "binding while valid")?;
+    fs::write(artifacts.join("binding-while-valid.txt"), &binding_valid)?;
+    declare_sealed(&alice, &mut events, context.seed, "declare", &[1])?;
+    let peer = Peer::with_keep_alive(Duration::from_secs(5))?;
+    let (mut live, _binding) = raw_attach(
+        &peer,
+        &alice.fixture,
+        &alice.server,
+        &mut events,
+        &artifacts,
+        "alice",
+        "alice",
+        1,
+    )?;
+    let (declared_before, _) = raw_page(&mut live, 2, 0)?;
+    ensure!(
+        declared_before == 1,
+        "{id}: the live connection must see the declaration while valid"
+    );
+
+    // Wait out the validity window.
+    let expiry = minted_at + EXPIRY_VALIDITY + EXPIRY_MARGIN;
+    let now = Instant::now();
+    if now < expiry {
+        thread::sleep(expiry - now);
+    }
+    events.append("", None, None, None, None, None)?;
+
+    // Existing connection: served, or closed by the subject (recorded).
+    let existing = match live
+        .send_control(FRAME_SCOPE, &rawclient::scope_page(3, 0))
+        .and_then(|()| live.read_control())
+    {
+        Ok(Frame::Control(FRAME_SCOPE, body)) => {
+            let (declared, _) = rawclient::parse_page(&body)?;
+            format!("served after expiry (page declared={declared})")
+        }
+        Ok(Frame::Control(FRAME_REFUSAL, body)) => {
+            let refusal = rawclient::parse_refusal(&body)?;
+            format!(
+                "request refused on the live connection: {} ({}) detail {:?}",
+                refusal_code_name(refusal.code),
+                refusal.code,
+                refusal.detail
+            )
+        }
+        Ok(Frame::Control(other, body)) => {
+            format!(
+                "unexpected control frame {other} after expiry (body {})",
+                hex(&body)
+            )
+        }
+        Ok(Frame::Fin) => "control stream finished by the subject after expiry".to_owned(),
+        Err(error) => match live.try_wait_closed(Duration::from_secs(3))? {
+            Some(close) => format!("closed by the subject: {}", close_text(&close)),
+            None => format!("request failed without a close within 3 s: {error:#}"),
+        },
+    };
+    fs::write(
+        artifacts.join("existing-connection-after-expiry.txt"),
+        format!("{existing}\n"),
+    )?;
+    drop(live);
+
+    // Fresh connection with the expired leaf: handshake failure only.
+    let probe = alice
+        .fixture
+        .probe_next_sequence(&alice.server, &short_identity)?;
+    let outcome = probe_outcome(&probe);
+    let (len, sha256) =
+        write_probe_artifact(&artifacts, "expired-leaf-fresh-connection.txt", &outcome)?;
+    ensure!(
+        !outcome.success,
+        "{id}: a fresh connection with the expired leaf was accepted\n{}",
+        outcome.transcript()
+    );
+    ensure!(
+        outcome.refusal.is_none(),
+        "{id}: the expired leaf was rejected with an application refusal instead of at the \
+         handshake\n{}",
+        outcome.transcript()
+    );
+    events.append(
+        "REFUSAL_RECEIVED",
+        None,
+        None,
+        None,
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/expired-leaf-fresh-connection.txt".into(),
+            len,
+            sha256,
+        }),
+    )?;
+
+    // Renewed leaf, same owner, same session.
+    let Session {
+        fixture,
+        server,
+        journal,
+        ..
+    } = alice;
+    let alice = session_with_identity(fixture, server, journal, &renewed_identity)?;
+    let binding_renewed = require(
+        &alice.op(&["binding"])?,
+        "BINDING",
+        "binding under the renewed leaf",
+    )?;
+    ensure!(
+        binding_renewed.trim() == binding_valid.trim(),
+        "{id}: the renewed leaf attached to a different binding:\n{binding_valid}\n{binding_renewed}"
+    );
+    let page = alice.op(&["page", "--scope", "0"])?;
+    let page_stdout = require(&page, "SCOPE", "page under the renewed leaf")?;
+    let (declared, _members) = parse_scope_page(&page_stdout)?;
+    ensure!(
+        declared == 1,
+        "{id}: the renewed leaf does not see the declaration:\n{page_stdout}"
+    );
+    detach(&alice)?;
+    let mut observed: Vec<(&str, String)> = Vec::new();
+    g5_observed_preamble(&mut observed, server_subject, context);
+    observed.extend([
+        ("validity_seconds", EXPIRY_VALIDITY.as_secs().to_string()),
+        ("waited_ms", (minted_at.elapsed().as_millis()).to_string()),
+        ("existing_connection_after_expiry", existing),
+        (
+            "fresh_connection_after_expiry",
+            format!(
+                "refused at the handshake, no application refusal: {}",
+                outcome.stderr.lines().next().unwrap_or("")
+            ),
+        ),
+        ("renewed_leaf_binding_identical", "true".into()),
+        ("renewed_leaf_sees_declaration", "true (declared=1)".into()),
+    ]);
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    stop_and_seal(context, scenario_dir, id, alice.server, events)
+}
+
+// ---------------------------------------------------------------------------
+// G7 rows added at milestone 19: read pin past expiry, deadline queue time
+// ---------------------------------------------------------------------------
+
+/// Result object of g7-read-pin-past-expiry: the negotiated object limit,
+/// so the read cannot finish inside the client's receive window.
+const PIN_OBJECT_LEN: usize = 16 * 1024 * 1024;
+/// Chunk and cadence of the slow reader: 256 KiB every 150 ms drains 16 MiB
+/// in about ten seconds, spanning the 5 s output retention while never
+/// leaving the stream idle for the Rust subject's 5 s stream idle bound.
+const PIN_READ_CHUNK: usize = 256 * 1024;
+const PIN_READ_PACE: Duration = Duration::from_millis(150);
+const PIN_READ_TIMEOUT: Duration = Duration::from_secs(20);
+/// Bounded wait for the subject to reclaim the expired object once the
+/// pinned read has finished (supplementary evidence; recorded either way).
+const PIN_RECLAIM_WAIT: Duration = Duration::from_secs(30);
+
+/// g7-read-pin-past-expiry: output retention 5 s. A 16 MiB copy is
+/// published and selected; a raw reader opens the result stream before
+/// expiry and drains it slowly so the transfer is still open when the
+/// output's availability passes. A NEW read after expiry is refused with the
+/// named EXPIRED code while the pinned read is still open; the pinned read
+/// then completes byte-exact. The object directory is sampled after
+/// publication, at expiry during the read, and after the read (supplementary
+/// file evidence: what the subject reclaimed and when is recorded, never
+/// inferred).
+fn g7_read_pin_past_expiry(context: &ScenarioContext) -> Result<()> {
+    run_expiry_row(
+        context,
+        "g7-read-pin-past-expiry",
+        g7_read_pin_past_expiry_direction,
+    )
+}
+
+fn g7_read_pin_past_expiry_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g7-read-pin-past-expiry";
+    let policy = (60_000u64, 5_000u64, 20_000u64);
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    enforce_no_fault_schedule(context, id)?;
+    let session = setup_session_policy(
+        context,
+        scenario_dir,
+        server,
+        client,
+        policy.0,
+        policy.1,
+        policy.2,
+    )?;
+    let input = oracle::dataset(context.seed, PIN_OBJECT_LEN);
+    let input_sha256 = oracle::sha256_hex(&input);
+    let sha: [u8; 32] = Sha256::digest(&input).into();
+    let input_path = artifacts.join("input.bin");
+    fs::write(&input_path, &input)?;
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("policy_execution_limit_ms", policy.0.to_string()),
+            ("policy_output_retention_ms", policy.1.to_string()),
+            ("policy_receipt_retention_ms", policy.2.to_string()),
+            ("clock_mode", "real-short-policy".into()),
+            ("input_len", input.len().to_string()),
+            ("input_sha256", input_sha256.clone()),
+            (
+                "slow_reader",
+                format!(
+                    "raw result stream opened before output expiry and drained {PIN_READ_CHUNK} \
+                     bytes every {} ms, so the transfer is open when availability passes",
+                    PIN_READ_PACE.as_millis()
+                ),
+            ),
+            (
+                "new_read_after_expiry",
+                "CLI read refuses named EXPIRED (6), never OUTPUT_UNAVAILABLE (16), while the \
+                 pinned read is still open"
+                    .into(),
+            ),
+            (
+                "pinned_read",
+                "completes byte-exact against the oracle after the expiry".into(),
+            ),
+            (
+                "object_dir_evidence",
+                "sampled after publication, at expiry during the read, after the read; \
+                 reclamation recorded (supplementary), never inferred"
+                    .into(),
+            ),
+        ],
+    )?;
+    events.append(
+        "",
+        None,
+        Some("0:0:1"),
+        Some(1),
+        None,
+        Some(ArtifactRef {
+            path: "artifacts/input.bin".into(),
+            len: input.len() as u64,
+            sha256: input_sha256.clone(),
+        }),
+    )?;
+    let binding = session.op(&["binding"])?;
+    require(&binding, "BINDING", "client binding")?;
+    let declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
+    let admit = oracle::operation_hex(oracle::operation_id(context.seed, "admit", 1));
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&admit)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    // Through the session so the short policy triple is redeclared (the
+    // Rust client refuses an op whose policy flags differ from its journal).
+    let admitted = session.op(&[
+        "admit",
+        "--operation",
+        &admit,
+        "--declaration",
+        &declare,
+        "--work",
+        "0:0:1",
+        "--input",
+        &crate::path(&input_path),
+        "--application",
+        "copy/v2",
+    ])?;
+    require(&admitted, "RECEIPT", "admit operation")?;
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(hex_to_id(&admit)?),
+        Some("0:0:1"),
+        Some(1),
+        None,
+        None,
+    )?;
+    let terminal = watch_terminal(&session, &mut events, "0:0:1", &admit, RECOVERY_TIMEOUT)?;
+    let output_until = parse_field_u64(&terminal, "output_until")?
+        .context("terminal view did not report output_until")?;
+    let select = session.op(&[
+        "select",
+        "--work",
+        "0:0:1",
+        "--attempt",
+        "1",
+        "--index",
+        "0",
+    ])?;
+    require(&select, "REFERENCE", "select before expiry")?;
+    let metrics_after_publish = storage_metrics(&session.fixture.object_dir)?;
+
+    // The raw slow reader.
+    let peer = Peer::with_keep_alive(Duration::from_secs(5))?;
+    let (mut reader, _) = raw_attach(
+        &peer,
+        &session.fixture,
+        &session.server,
+        &mut events,
+        &artifacts,
+        "alice",
+        "alice",
+        1,
+    )?;
+    let read_started_ms = utc_now_millis();
+    ensure!(
+        read_started_ms < output_until,
+        "{id}: the read started at {read_started_ms}, after output availability {output_until}; \
+         the row cannot show a pin"
+    );
+    reader.send_control(
+        FRAME_RESULT,
+        &rawclient::result_read(2, (0, 0, 1), 1, 0, &sha),
+    )?;
+    events.append("REQUEST_SENT", None, Some("0:0:1"), Some(1), None, None)?;
+    let mut stream = reader.accept_uni(PIN_READ_TIMEOUT)?;
+    let mut prefix = [0u8; 4];
+    reader.read_stream_exact(&mut stream, &mut prefix, PIN_READ_TIMEOUT)?;
+    let header_len = u32::from_be_bytes(prefix) as usize;
+    ensure!(
+        header_len <= 4096,
+        "{id}: result header length {header_len} unbounded"
+    );
+    let mut header = vec![0u8; header_len];
+    reader.read_stream_exact(&mut stream, &mut header, PIN_READ_TIMEOUT)?;
+    let (declared_len, declared_sha) = rawclient::parse_result_header(&header)?;
+    ensure!(
+        declared_len == input.len() as u64 && declared_sha == sha,
+        "{id}: result header declares len {declared_len} sha {}, expected {} {}",
+        hex(&declared_sha),
+        input.len(),
+        input_sha256
+    );
+    let mut received: Vec<u8> = Vec::with_capacity(input.len());
+    let mut chunk = vec![0u8; PIN_READ_CHUNK];
+    let mut bytes_before_expiry = 0usize;
+    let mut expiry_probe: Option<(String, (u64, u64, u64))> = None;
+    let mut fin = false;
+    while !fin {
+        let mut filled = 0usize;
+        while filled < chunk.len() {
+            match reader.read_stream(&mut stream, &mut chunk[filled..], PIN_READ_TIMEOUT)? {
+                Some(n) => filled += n,
+                None => {
+                    fin = true;
+                    break;
+                }
+            }
+        }
+        received.extend_from_slice(&chunk[..filled]);
+        let now = utc_now_millis();
+        if now < output_until {
+            bytes_before_expiry = received.len();
+        } else if expiry_probe.is_none() && now >= output_until + 1_000 {
+            // Availability has passed while the transfer is open: a NEW read
+            // must refuse EXPIRED now, and the object directory is sampled.
+            let metrics = storage_metrics(&session.fixture.object_dir)?;
+            let refusal = expect_expired_read(
+                &session,
+                &artifacts,
+                "read-after-output-expiry.txt",
+                "expired-read.bin",
+            )?;
+            expiry_probe = Some((refusal, metrics));
+        }
+        thread::sleep(PIN_READ_PACE);
+    }
+    let (refusal_text, metrics_at_expiry) = match expiry_probe {
+        Some(probe) => probe,
+        None => {
+            // The transfer finished before availability passed plus a second:
+            // the pin was never exercised. Say so rather than probing late.
+            bail!(
+                "{id}: the raw read finished {} bytes before output_until {output_until} + 1 s \
+                 (now {}); the slow reader did not span the expiry",
+                received.len(),
+                utc_now_millis()
+            );
+        }
+    };
+    let read_finished_ms = utc_now_millis();
+    let received_sha256 = oracle::sha256_hex(&received);
+    ensure!(
+        received.len() == input.len() && received == input,
+        "{id}: the pinned read returned {} bytes sha256={received_sha256}, expected {} bytes \
+         sha256={input_sha256}",
+        received.len(),
+        input.len()
+    );
+    events.append("RESULT_VERIFIED", None, Some("0:0:1"), Some(1), None, None)?;
+    raw_detach(&mut reader, 3)?;
+    drop(reader);
+
+    // After the read: what the subject reclaims, bounded (supplementary).
+    let reclaim_deadline = Instant::now() + PIN_RECLAIM_WAIT;
+    let metrics_after_read = loop {
+        let metrics = storage_metrics(&session.fixture.object_dir)?;
+        if metrics.1 < metrics_after_publish.1 || Instant::now() >= reclaim_deadline {
+            break metrics;
+        }
+        thread::sleep(Duration::from_millis(500));
+    };
+    let reclaimed = metrics_after_read.1 < metrics_after_publish.1;
+    // Receipt retention still holds: the view is readable and frozen.
+    let after_view = session.watch("0:0:1")?;
+    ensure!(
+        parse_state(&after_view)? == 5 && parse_attempt(&after_view)? == 1,
+        "{id}: the terminal outcome changed after the pinned read:\n{after_view}"
+    );
+    detach(&session)?;
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("clock_mode", "real-short-policy".into()),
+        ("output_until", output_until.to_string()),
+        ("raw_read_started_ms", read_started_ms.to_string()),
+        ("raw_read_finished_ms", read_finished_ms.to_string()),
+        (
+            "bytes_received_before_expiry",
+            bytes_before_expiry.to_string(),
+        ),
+        ("bytes_received_total", received.len().to_string()),
+        (
+            "pinned_read",
+            format!("completed byte-exact after expiry (sha256={received_sha256})"),
+        ),
+        (
+            "new_read_after_expiry",
+            format!(
+                "named EXPIRED (6) while the pinned read was open ({})",
+                refusal_text
+                    .lines()
+                    .find(|line| transcript_named_code(line).is_some())
+                    .unwrap_or("see artifacts/read-after-output-expiry.txt")
+            ),
+        ),
+        (
+            "object_dir_after_publish",
+            metrics_text(metrics_after_publish),
+        ),
+        (
+            "object_dir_at_expiry_during_read",
+            metrics_text(metrics_at_expiry),
+        ),
+        ("object_dir_after_read", metrics_text(metrics_after_read)),
+        (
+            "reclaimed_after_read",
+            if reclaimed {
+                format!(
+                    "true (within {} s of the read finishing)",
+                    PIN_RECLAIM_WAIT.as_secs()
+                )
+            } else {
+                format!(
+                    "not observed within {} s (recorded, supplementary evidence only)",
+                    PIN_RECLAIM_WAIT.as_secs()
+                )
+            },
+        ),
+        (
+            "reclaimed_during_read",
+            if metrics_at_expiry.1 < metrics_after_publish.1 {
+                "one object left the directory while the read was still open and the \
+                 pinned read still completed byte-exact; whether that was the expired output \
+                 (unlinked under an open descriptor) or the retained input is not \
+                 distinguished by directory totals; recorded as an observation, not asserted"
+                    .into()
+            } else {
+                "false (object directory unchanged while the read was open)".into()
+            },
+        ),
+        (
+            "work_view_after_read",
+            "state=5 attempt=1 (receipt retention holds)".into(),
+        ),
+    ];
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    stop_and_seal(context, scenario_dir, id, session.server, events)
+}
+
+/// Execution deadline of the queued probe work in g7-deadline-queue-time.
+const QUEUE_PROBE_EXECUTION_MS: u64 = 1_000;
+/// Margin past the probe's deadline before the queue is released or the
+/// outcome is read.
+const QUEUE_PROBE_MARGIN: Duration = Duration::from_millis(1_500);
+/// Hold bound of the saturating pauses on the Java server.
+const QUEUE_HOLD_DEADLINE_MS: u64 = 120_000;
+/// Rust load: two chunk-copy parents of this size occupy alice's two
+/// execution slots (quinn v2_authority/runtime.rs PoolConfig
+/// workers_per_owner 2) for longer than the probe's deadline.
+const QUEUE_LOAD_INPUT_LEN: usize = 4 * 1024 * 1024;
+const QUEUE_LOAD_ATTEMPTS: u32 = 3;
+
+/// What the queued probe did once the pool was released.
+struct QueueSettlement {
+    admitted_at: u64,
+    deadline: u64,
+    state_while_queued: String,
+    state_past_deadline_queued: String,
+    final_state: u64,
+    diagnostic: String,
+    terminal_at: Option<u64>,
+    view: String,
+}
+
+/// Admit the probe work with the short execution deadline and return its
+/// receipt fields.
+fn queue_probe_admit(
+    session: &Session,
+    events: &mut EventWriter,
+    seed: u64,
+    declare: &str,
+    work: &str,
+    input_path: &Path,
+) -> Result<(String, u64, u64)> {
+    let admit = oracle::operation_hex(oracle::operation_id(seed, "admit-probe", 1));
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&admit)?),
+        Some(work),
+        Some(1),
+        None,
+        None,
+    )?;
+    let child = session.fixture.spawn_client_op(
+        &session.journal,
+        "alice",
+        session.sequence,
+        &session.connection,
+        &[
+            "admit",
+            "--operation",
+            &admit,
+            "--declaration",
+            declare,
+            "--work",
+            work,
+            "--input",
+            &crate::path(input_path),
+            "--application",
+            "copy/v2",
+            "--execution-ms",
+            &QUEUE_PROBE_EXECUTION_MS.to_string(),
+        ],
+    )?;
+    let admitted = AuthorityFixture::wait_client_op(child, OP_WAIT)?;
+    let receipt = require(&admitted, "RECEIPT", "probe admission")?;
+    let admitted_at = parse_field_u64(&receipt, "admitted_at")?
+        .context("probe receipt did not render admitted_at")?;
+    let deadline = parse_field_u64(&receipt, "deadline")?
+        .context("probe receipt did not render a deadline")?;
+    ensure!(
+        deadline == admitted_at + QUEUE_PROBE_EXECUTION_MS,
+        "probe deadline {deadline} != admitted_at {admitted_at} + {QUEUE_PROBE_EXECUTION_MS} \
+         (the client's --execution-ms was not honoured)"
+    );
+    events.append(
+        "RECEIPT_VALIDATED",
+        Some(hex_to_id(&admit)?),
+        Some(work),
+        Some(1),
+        None,
+        None,
+    )?;
+    Ok((admit, admitted_at, deadline))
+}
+
+/// Wait for the probe to settle and describe it.
+fn queue_probe_settle(
+    session: &Session,
+    work: &str,
+    admitted_at: u64,
+    deadline: u64,
+    state_while_queued: String,
+    state_past_deadline_queued: String,
+) -> Result<QueueSettlement> {
+    let until = Instant::now() + RECOVERY_TIMEOUT;
+    let view = loop {
+        let stdout = session.watch(work)?;
+        let state = parse_state(&stdout)?;
+        if (5..=8).contains(&state) {
+            break stdout;
+        }
+        ensure!(
+            Instant::now() < until,
+            "probe {work} did not settle within {RECOVERY_TIMEOUT:?}\nlast view:\n{stdout}"
+        );
+        thread::sleep(Duration::from_millis(50));
+    };
+    let final_state = parse_state(&view)?;
+    let diagnostic = view_diagnostic_code(&view)
+        .map(|code| format!("{} ({code})", refusal_code_name(code)))
+        .unwrap_or_else(|| "none".to_owned());
+    let terminal_at = parse_field_u64(&view, "terminal_at")?;
+    Ok(QueueSettlement {
+        admitted_at,
+        deadline,
+        state_while_queued,
+        state_past_deadline_queued,
+        final_state,
+        diagnostic,
+        terminal_at,
+        view,
+    })
+}
+
+fn state_text(view: &str) -> Result<String> {
+    let state = parse_state(view)?;
+    Ok(format!("{state} ({})", state_code_name(&state.to_string())))
+}
+
+/// g7-deadline-queue-time: the execution pool is saturated, more work is
+/// admitted with a 1 s execution deadline, and the deadline passes while that
+/// work is still queued. Expected: the deadline is accounted from admission
+/// (the receipt says so: deadline = admitted_at + execution-ms), the queued
+/// work settles FAILED with the DEADLINE_EXCEEDED diagnostic and is never
+/// executed to success after its deadline, an explicit retry refuses a named
+/// code (DEADLINE_EXCEEDED per the matrix; both subjects name
+/// ALREADY_TERMINAL, recorded as in g4-deadline-settlement), and the result
+/// read refuses a named code.
+///
+/// Java server: two `pause` rows at EXECUTION_CLAIMED hold alice's two
+/// per-owner workers (DurableHost ExecutionLimits(4, 2, ...)) deterministically;
+/// the probe queues behind them; the pool is released after the deadline.
+/// Rust server: the fixture hooks cannot pause at EXECUTION_CLAIMED, so
+/// alice's two slots (PoolConfig workers_per_owner 2) are loaded with two
+/// 4 MiB chunk-copy parents and the probe is admitted behind them; if the
+/// load does not outlast the deadline in three fresh authorities the
+/// direction reports the missing hold instead of claiming the property.
+fn g7_deadline_queue_time(context: &ScenarioContext) -> Result<()> {
+    let id = "g7-deadline-queue-time";
+    let scenario_dir = context.scenario_dir(id);
+    match g7_deadline_queue_time_direction(context, &scenario_dir, Subject::Rust, Subject::Rust) {
+        Ok(()) => {}
+        Err(error) if error.downcast_ref::<MissingCapability>().is_some() => {
+            fs::write(
+                scenario_dir.join("INCOMPLETE"),
+                format!("rust-client/rust-server direction is INCOMPLETE: {error:#}\n"),
+            )?;
+            println!("INCOMPLETE {id} rust-client/rust-server: {error:#}");
+        }
+        Err(error) => return Err(error),
+    }
+    run_hooked_direction(context, id, "rust-client-java-server", |context, dir| {
+        g7_deadline_queue_time_direction(context, dir, Subject::Java, Subject::Rust)
+    })?;
+    Ok(())
+}
+
+fn g7_deadline_queue_time_direction(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    server: Subject,
+    client: Subject,
+) -> Result<()> {
+    let id = "g7-deadline-queue-time";
+    let artifacts = scenario_dir.join("artifacts");
+    fs::create_dir_all(&artifacts)?;
+    let mut events = open_events(context, scenario_dir, id, client)?;
+    let probe_input = oracle::dataset(context.seed ^ 0x7ead, INPUT_LEN);
+    let probe_path = artifacts.join("probe-input.bin");
+    fs::write(&probe_path, &probe_input)?;
+    let saturation = match server {
+        Subject::Java => "two schedule pauses at EXECUTION_CLAIMED hold alice's two \
+                          per-owner workers (ExecutionLimits(4, 2, ...)); released after \
+                          the probe's deadline passed"
+            .to_owned(),
+        Subject::Rust => format!(
+            "no hold at EXECUTION_CLAIMED on the Rust subject (fixture pauses only at reply \
+             pairs): alice's two slots (PoolConfig workers_per_owner 2) are loaded with two \
+             {QUEUE_LOAD_INPUT_LEN}-byte chunk-copy/v2 parents admitted back to back, up to \
+             {QUEUE_LOAD_ATTEMPTS} fresh authorities"
+        ),
+    };
+    write_kv(
+        scenario_dir,
+        "expected.tsv",
+        &[
+            ("probe_execution_ms", QUEUE_PROBE_EXECUTION_MS.to_string()),
+            ("probe_input_len", INPUT_LEN.to_string()),
+            ("saturation", saturation.clone()),
+            (
+                "deadline_accounting",
+                "receipt deadline = admitted_at + execution-ms (queue time counts from \
+                 admission)"
+                    .into(),
+            ),
+            (
+                "settlement",
+                "the probe settles FAILED(6) with the DEADLINE_EXCEEDED (11) diagnostic, \
+                 terminal_at >= deadline, never SUCCEEDED after its deadline passed in the \
+                 queue, never silently evicted (the view keeps the work)"
+                    .into(),
+            ),
+            (
+                "retry_after",
+                "explicit retry refuses DEADLINE_EXCEEDED (11) per the matrix; both subjects \
+                 check terminality first and answer ALREADY_TERMINAL (18); either named code \
+                 is accepted and recorded"
+                    .into(),
+            ),
+            ("read_after", "refused with a named code".into()),
+        ],
+    )?;
+
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("saturation", saturation),
+    ];
+    let (session, settlement, admit, work, extra): (
+        Session,
+        QueueSettlement,
+        String,
+        String,
+        Vec<(&str, String)>,
+    ) = match server {
+        Subject::Java => {
+            let rows: Vec<schedule::ScheduleRow> = [
+                schedule::Action::Pause,
+                schedule::Action::Release,
+                schedule::Action::Pause,
+            ]
+            .into_iter()
+            .map(|action| schedule::ScheduleRow {
+                run_id: context.run_id.clone(),
+                scenario_id: id.to_owned(),
+                target: "server".into(),
+                boundary: "EXECUTION_CLAIMED".into(),
+                action,
+                seed: context.seed,
+                deadline_ms: QUEUE_HOLD_DEADLINE_MS,
+            })
+            .collect();
+            let hooked = setup_hooked(
+                context,
+                scenario_dir,
+                id,
+                server,
+                client,
+                &rows,
+                "schedule.tsv",
+                true,
+            )?;
+            let (session, events_path) = split_hooked(hooked);
+            require(&session.op(&["binding"])?, "BINDING", "client binding")?;
+            let declare =
+                declare_sealed(&session, &mut events, context.seed, "declare", &[1, 2, 3])?;
+            let filler = oracle::dataset(context.seed ^ 0xf111, INPUT_LEN);
+            let filler_path = artifacts.join("filler-input.bin");
+            fs::write(&filler_path, &filler)?;
+            for (domain, work) in [("admit-fill-1", "0:0:1"), ("admit-fill-2", "0:0:2")] {
+                admit_input(
+                    &session,
+                    &mut events,
+                    context.seed,
+                    domain,
+                    &declare,
+                    work,
+                    &filler_path,
+                )?;
+            }
+            let held_by = Instant::now() + KILL_TIMEOUT;
+            loop {
+                if subject_record_count(&events_path, "EXECUTION_CLAIMED")? >= 2 {
+                    break;
+                }
+                ensure!(
+                    Instant::now() < held_by,
+                    "{id}: the two filler claims were not recorded within {KILL_TIMEOUT:?}"
+                );
+                thread::sleep(Duration::from_millis(25));
+            }
+            let work = "0:0:3".to_owned();
+            let (admit, admitted_at, deadline) = queue_probe_admit(
+                &session,
+                &mut events,
+                context.seed,
+                &declare,
+                &work,
+                &probe_path,
+            )?;
+            let queued_view = session.watch(&work)?;
+            let state_while_queued = state_text(&queued_view)?;
+            ensure!(
+                parse_field_u64(&queued_view, "deadline")? == Some(deadline),
+                "{id}: the queued view's deadline differs from the receipt:\n{queued_view}"
+            );
+            sleep_until_utc(deadline, QUEUE_PROBE_MARGIN);
+            let past_view = session.watch(&work)?;
+            let state_past = state_text(&past_view)?;
+            let claims_before_release =
+                subject_records_for_work(&events_path, "EXECUTION_CLAIMED", &work)?;
+            write_release(&events_path, "EXECUTION_CLAIMED")?;
+            for filler_work in ["0:0:1", "0:0:2"] {
+                watch_until_state(&session, filler_work, 5, RECOVERY_TIMEOUT)?;
+            }
+            let settlement = queue_probe_settle(
+                &session,
+                &work,
+                admitted_at,
+                deadline,
+                state_while_queued,
+                state_past,
+            )?;
+            let claims_total = subject_records_for_work(&events_path, "EXECUTION_CLAIMED", &work)?;
+            let extra = vec![
+                (
+                    "probe_claims_before_release",
+                    claims_before_release.to_string(),
+                ),
+                ("probe_claims_total", claims_total.to_string()),
+            ];
+            (session, settlement, admit, work, extra)
+        }
+        Subject::Rust => {
+            let mut result = None;
+            let mut attempts_log = Vec::new();
+            for attempt in 1..=QUEUE_LOAD_ATTEMPTS {
+                let iteration_dir = scenario_dir.join(format!("iteration-{attempt}"));
+                let session = setup_session(context, &iteration_dir, server, client)?;
+                let declare = declare_sealed(
+                    &session,
+                    &mut events,
+                    context.seed ^ u64::from(attempt),
+                    "declare",
+                    &[1, 2, 3],
+                )?;
+                let load = oracle::dataset(
+                    context.seed ^ 0x10ad ^ u64::from(attempt),
+                    QUEUE_LOAD_INPUT_LEN,
+                );
+                let load_path = artifacts.join(format!("load-input-{attempt}.bin"));
+                fs::write(&load_path, &load)?;
+                // Admitted one after the other (the Rust client journal is
+                // locked per file); execution is asynchronous, so both
+                // parents occupy alice's two slots while the probe queues.
+                for (index, work) in ["0:0:1", "0:0:2"].iter().enumerate() {
+                    let op = oracle::operation_hex(oracle::operation_id(
+                        context.seed ^ u64::from(attempt),
+                        "admit-load",
+                        index as u32 + 1,
+                    ));
+                    let out = session.op(&[
+                        "admit",
+                        "--operation",
+                        &op,
+                        "--declaration",
+                        &declare,
+                        "--work",
+                        work,
+                        "--input",
+                        &crate::path(&load_path),
+                        "--application",
+                        "chunk-copy/v2",
+                        "--mode",
+                        "2",
+                        "--output-count",
+                        "1",
+                    ])?;
+                    require(&out, "RECEIPT", "load admission")?;
+                }
+                let work = "0:0:3".to_owned();
+                let (admit, admitted_at, deadline) = queue_probe_admit(
+                    &session,
+                    &mut events,
+                    context.seed ^ u64::from(attempt),
+                    &declare,
+                    &work,
+                    &probe_path,
+                )?;
+                let queued_view = session.watch(&work)?;
+                let state_while_queued = state_text(&queued_view)?;
+                sleep_until_utc(deadline, QUEUE_PROBE_MARGIN);
+                let past_view = session.watch(&work)?;
+                let state_past = state_text(&past_view)?;
+                let settlement = queue_probe_settle(
+                    &session,
+                    &work,
+                    admitted_at,
+                    deadline,
+                    state_while_queued,
+                    state_past,
+                )?;
+                attempts_log.push(format!(
+                    "attempt {attempt}: queued={} past-deadline={} final={} ({}) diagnostic={}",
+                    settlement.state_while_queued,
+                    settlement.state_past_deadline_queued,
+                    settlement.final_state,
+                    state_code_name(&settlement.final_state.to_string()),
+                    settlement.diagnostic
+                ));
+                if settlement.final_state == 6 && view_diagnostic_code(&settlement.view) == Some(11)
+                {
+                    result = Some((session, settlement, admit, work));
+                    break;
+                }
+                // Inconclusive: the load did not outlast the deadline; let the
+                // load settle and try a fresh authority.
+                for load_work in ["0:0:1", "0:0:2"] {
+                    let _ = watch_until_state(&session, load_work, 5, RECOVERY_TIMEOUT);
+                }
+                session.server.stop()?;
+            }
+            let attempts_text = attempts_log.join("; ");
+            let Some((session, settlement, admit, work)) = result else {
+                observed.push(("load_attempts", attempts_text.clone()));
+                observed.push((
+                    "row_status",
+                    "INCOMPLETE: no hold at EXECUTION_CLAIMED on the Rust subject and the \
+                     load queue did not outlast the probe's deadline"
+                        .into(),
+                ));
+                write_kv(scenario_dir, "observed.tsv", &observed)?;
+                seal(context, scenario_dir, id, events)?;
+                return Err(MissingCapability(format!(
+                    "the Rust subject's fixture hooks cannot pause at EXECUTION_CLAIMED \
+                     (src/v2/fixture.rs REPLY_PAIRS) and the hook-free load queue did not \
+                     outlast the {QUEUE_PROBE_EXECUTION_MS} ms deadline in \
+                     {QUEUE_LOAD_ATTEMPTS} fresh authorities ({attempts_text})"
+                ))
+                .into());
+            };
+            let extra = vec![
+                ("load_attempts", attempts_text),
+                (
+                    "probe_claims_total",
+                    "not observable (the Rust subject emits only armed boundaries)".into(),
+                ),
+            ];
+            (session, settlement, admit, work, extra)
+        }
+    };
+
+    // The property: settled by the deadline, never executed to success.
+    fs::write(artifacts.join("probe-terminal-view.txt"), &settlement.view)?;
+    if settlement.final_state == 5 {
+        observed.push((
+            "probe_outcome",
+            format!(
+                "SUCCEEDED(5) after its deadline passed in the queue (admitted_at {} deadline \
+                 {} queued state {} past-deadline state {})",
+                settlement.admitted_at,
+                settlement.deadline,
+                settlement.state_while_queued,
+                settlement.state_past_deadline_queued
+            ),
+        ));
+        observed.extend(extra);
+        write_kv(scenario_dir, "observed.tsv", &observed)?;
+        seal(context, scenario_dir, id, events)?;
+        bail!(
+            "{id}: the {} subject executed the queued probe to SUCCEEDED after its deadline \
+             ({}) had passed while queued; candidate subject defect (queue time not counted \
+             against the execution deadline); see observed.tsv",
+            server.name(),
+            settlement.deadline
+        );
+    }
+    ensure!(
+        settlement.final_state == 6 && view_diagnostic_code(&settlement.view) == Some(11),
+        "{id}: the queued probe must settle FAILED(6) with DEADLINE_EXCEEDED (11), got state \
+         {} diagnostic {}\n{}",
+        settlement.final_state,
+        settlement.diagnostic,
+        settlement.view
+    );
+    if let Some(terminal_at) = settlement.terminal_at {
+        ensure!(
+            terminal_at >= settlement.deadline,
+            "{id}: the probe settled at {terminal_at}, before its deadline {}",
+            settlement.deadline
+        );
+    }
+    let retry = oracle::operation_hex(oracle::operation_id(context.seed, "retry-probe", 1));
+    events.append(
+        "REQUEST_SENT",
+        Some(hex_to_id(&retry)?),
+        Some(&work),
+        Some(1),
+        None,
+        None,
+    )?;
+    let retry_text = expect_failure(
+        &session,
+        &artifacts,
+        "probe-retry-refusal.txt",
+        &[
+            "retry",
+            "--operation",
+            &retry,
+            "--work",
+            &work,
+            "--expected-attempt",
+            "1",
+        ],
+    )?;
+    let retry_line = refusal_named_line(&retry_text, &["DEADLINE_EXCEEDED", "ALREADY_TERMINAL"])
+        .with_context(|| {
+            format!(
+                "{id}: retry after the queued deadline settlement must name DEADLINE_EXCEEDED \
+                 (11) or ALREADY_TERMINAL (18)\n{retry_text}"
+            )
+        })?;
+    let retry_code =
+        transcript_named_code(&retry_text).context("retry refusal carries no named code")?;
+    events.append(
+        "",
+        Some(hex_to_id(&retry)?),
+        Some(&work),
+        Some(1),
+        Some(retry_code),
+        None,
+    )?;
+    let persisted = session.watch(&work)?;
+    ensure!(
+        view_line(&persisted)? == view_line(&settlement.view)?,
+        "{id}: the retry refusal changed the settled view:\n{persisted}\noriginal:\n{}",
+        settlement.view
+    );
+    let read_outcome =
+        expect_named_read_refusal(&session, &artifacts, &work, "probe-read-refusal.txt")?;
+    let _ = admit;
+    detach(&session)?;
+    observed.extend([
+        ("probe_admitted_at", settlement.admitted_at.to_string()),
+        ("probe_deadline", settlement.deadline.to_string()),
+        (
+            "deadline_accounting",
+            format!(
+                "receipt deadline = admitted_at + {QUEUE_PROBE_EXECUTION_MS} ms (queue time \
+                 counted from admission)"
+            ),
+        ),
+        (
+            "probe_state_while_queued",
+            settlement.state_while_queued.clone(),
+        ),
+        (
+            "probe_state_past_deadline_still_queued",
+            settlement.state_past_deadline_queued.clone(),
+        ),
+        (
+            "probe_outcome",
+            format!(
+                "{} ({}) diagnostic {}",
+                settlement.final_state,
+                state_code_name(&settlement.final_state.to_string()),
+                settlement.diagnostic
+            ),
+        ),
+        (
+            "probe_terminal_at",
+            settlement
+                .terminal_at
+                .map(|at| at.to_string())
+                .unwrap_or_else(|| "not rendered".into()),
+        ),
+        ("retry_after_settlement", retry_line),
+        ("read_after_settlement", read_outcome),
+    ]);
+    observed.extend(extra);
+    if server == Subject::Java || client == Subject::Java {
+        let jar = context
+            .java_jar
+            .as_ref()
+            .expect("a Java direction requires --java-jar");
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    stop_and_seal(context, scenario_dir, id, session.server, events)
+}
+
+// ---------------------------------------------------------------------------
+// Rows that run what they can and report the subject capability they lack
+// ---------------------------------------------------------------------------
+
+/// Try to start a server armed with `rows`; a subject that cannot honour the
+/// schedule refuses it at parse time and exits before readiness. Returns the
+/// start error text (the subject's own refusal) or `None` if the server came
+/// up, in which case it is stopped again.
+fn subject_schedule_refusal(
+    context: &ScenarioContext,
+    direction_dir: &Path,
+    id: &str,
+    server: Subject,
+    rows: &[schedule::ScheduleRow],
+) -> Result<Option<String>> {
+    fs::create_dir_all(direction_dir)?;
+    let certs = mtls::generate(&direction_dir.join("certs"), &[("alice", "alice")])?;
+    let fixture = AuthorityFixture::new(
+        &context.rust_bin,
+        context.java_jar.as_deref(),
+        &direction_dir.join("subject"),
+        certs,
+        server,
+        Subject::Rust,
+    )?;
+    fixture.run_init_authority()?;
+    let schedule_path = direction_dir.join("schedule.tsv");
+    fs::write(&schedule_path, schedule::render(rows)?)?;
+    let arming = crate::durable::process::FixtureArming {
+        events: direction_dir.join("subject-events.tsv"),
+        run_id: context.run_id.clone(),
+        scenario_id: id.to_owned(),
+        schedule: Some(schedule_path),
+    };
+    match fixture.start_server_armed(Some(&arming), true) {
+        Ok(server) => {
+            server.stop()?;
+            Ok(None)
+        }
+        Err(error) => Ok(Some(format!("{error:#}"))),
+    }
+}
+
+/// Run one capability probe per server subject: the rust subject in the row
+/// directory, the java subject in `java-server` when a jar is present (an
+/// INCOMPLETE marker otherwise). Returns the per-subject findings.
+fn per_server_findings(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    probe: impl Fn(&Path, Subject) -> Result<String>,
+) -> Result<Vec<(Subject, String)>> {
+    let mut findings = vec![(Subject::Rust, probe(scenario_dir, Subject::Rust)?)];
+    let java_dir = scenario_dir.join("java-server");
+    fs::create_dir_all(&java_dir)?;
+    if context.java_jar.is_none() {
+        fs::write(
+            java_dir.join("INCOMPLETE"),
+            b"no --java-jar provided; this direction was not run\n",
+        )?;
+    } else {
+        findings.push((Subject::Java, probe(&java_dir, Subject::Java)?));
+    }
+    Ok(findings)
+}
+
+/// Write the row's expected/observed files for a missing-capability row and
+/// seal its events; the caller returns the MissingCapability.
+fn finish_missing_capability(
+    context: &ScenarioContext,
+    scenario_dir: &Path,
+    id: &str,
+    events: EventWriter,
+    expected: &[(&str, String)],
+    findings: &[(Subject, String)],
+    reason: &str,
+) -> Result<()> {
+    write_kv(scenario_dir, "expected.tsv", expected)?;
+    let mut observed: Vec<(&str, String)> = vec![("row_status", format!("INCOMPLETE: {reason}"))];
+    for (subject, finding) in findings {
+        observed.push((
+            Box::leak(format!("{}_server", subject.name()).into_boxed_str()),
+            finding.clone(),
+        ));
+    }
+    if let Some(jar) = &context.java_jar {
+        observed.push(("java_jar_sha256", oracle::sha256_hex(&fs::read(jar)?)));
+    }
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
+    seal(context, scenario_dir, id, events)
+}
+
+/// First line of a subject's schedule refusal that names the reason.
+fn refusal_reason_line(text: &str) -> String {
+    text.lines()
+        .find(|line| {
+            line.contains("drop-reply")
+                || line.contains("clock-set")
+                || line.contains("pause")
+                || line.contains("schedule")
+        })
+        .unwrap_or_else(|| text.lines().next().unwrap_or(""))
+        .trim()
+        .to_owned()
+}
+
+/// g2-drop-reply-publication: `drop-reply` at PUBLICATION_COMMITTED. Neither
+/// subject exposes a PUBLICATION reply pair to withhold: publication is
+/// observed through a watch, not answered on a correlated reply. Both
+/// subjects refuse the schedule row at parse time (the Rust hooks accept
+/// drop-reply only at the three reply pairs; Claude's FixtureMain requires
+/// a reply boundary), which is what this row runs and records. The
+/// kill-at-boundary variant (g2-kill-at-publication-commit) is the delivered
+/// evidence for the boundary; a proposal to accept it as such is in
+/// scenario-matrix-g2.md.
+fn g2_drop_reply_publication(context: &ScenarioContext) -> Result<()> {
+    let id = "g2-drop-reply-publication";
+    let (scenario_dir, _artifacts) = open_scenario(context, id)?;
+    let events = open_events(context, &scenario_dir, id, Subject::Rust)?;
+    let findings = per_server_findings(context, &scenario_dir, |dir, server| {
+        let rows = [g2_schedule_row(
+            context,
+            id,
+            "PUBLICATION_COMMITTED",
+            schedule::Action::DropReply,
+        )];
+        let refusal = subject_schedule_refusal(context, dir, id, server, &rows)?;
+        let artifacts = dir.join("artifacts");
+        fs::create_dir_all(&artifacts)?;
+        match refusal {
+            Some(text) => {
+                fs::write(artifacts.join("subject-schedule-refusal.txt"), &text)?;
+                Ok(format!(
+                    "refused the schedule at parse: {}",
+                    refusal_reason_line(&text)
+                ))
+            }
+            None => Ok(
+                "ACCEPTED drop-reply at PUBLICATION_COMMITTED (the row must be implemented \
+                 against this subject)"
+                    .into(),
+            ),
+        }
+    })?;
+    let reason = "neither subject exposes a PUBLICATION reply pair to withhold (publication \
+                  is observed via watch, not a correlated reply); both refuse drop-reply at \
+                  PUBLICATION_COMMITTED at schedule parse; the kill variant \
+                  g2-kill-at-publication-commit is the delivered boundary evidence";
+    finish_missing_capability(
+        context,
+        &scenario_dir,
+        id,
+        events,
+        &[
+            (
+                "schedule",
+                "drop-reply at PUBLICATION_COMMITTED (withheld reply plus connection reset)".into(),
+            ),
+            (
+                "would_assert",
+                "the same durable expectations as g2-kill-at-publication-commit: exactly one \
+                 terminal commit, SUCCEEDED under the same attempt after the client reconnects, \
+                 byte-exact result, post-terminal retry ALREADY_TERMINAL (18) or CANCELLED (12)"
+                    .into(),
+            ),
+            (
+                "missing_capability",
+                "a PUBLICATION reply pair on the subject (interface-v1 drop-reply requires a \
+                 committed boundary with a pending reply)"
+                    .into(),
+            ),
+        ],
+        &findings,
+        reason,
+    )?;
+    Err(MissingCapability(reason.to_owned()).into())
+}
+
+/// g7-unsafe-clock-refusal: needs a subject fixture clock (`clock-set`) or an
+/// untrusted-clock mode. Neither subject has one: the only clock control on
+/// either `serve` is `--trust-system-clock`, the Rust hooks reject
+/// `clock-set` as a driver-side action, and Claude's FixtureMain does not
+/// parse it. The row records both usages and both schedule refusals; host
+/// UTC is never changed.
+fn g7_unsafe_clock_refusal(context: &ScenarioContext) -> Result<()> {
+    let id = "g7-unsafe-clock-refusal";
+    let (scenario_dir, _artifacts) = open_scenario(context, id)?;
+    let events = open_events(context, &scenario_dir, id, Subject::Rust)?;
+    let findings = per_server_findings(context, &scenario_dir, |dir, server| {
+        let artifacts = dir.join("artifacts");
+        fs::create_dir_all(&artifacts)?;
+        // The subject's own usage text: every clock-related flag it offers.
+        let usage_command: Vec<String> = match server {
+            Subject::Rust => vec![
+                crate::path(&context.rust_bin),
+                "v2".into(),
+                "serve".into(),
+                "--help".into(),
+            ],
+            Subject::Java => {
+                let jar = context
+                    .java_jar
+                    .as_ref()
+                    .context("java usage needs a jar")?;
+                vec![
+                    "java".into(),
+                    "-cp".into(),
+                    crate::path(jar),
+                    "ai.pipestream.quic.v2.V2Main".into(),
+                ]
+            }
+        };
+        let usage = crate::run_output_owned(dir, &usage_command, OP_WAIT)?;
+        let usage_text = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&usage.stdout),
+            String::from_utf8_lossy(&usage.stderr)
+        );
+        fs::write(artifacts.join("serve-usage.txt"), &usage_text)?;
+        let clock_flags: Vec<&str> = usage_text
+            .split(|ch: char| ch.is_whitespace() || ch == '[' || ch == ']')
+            .filter(|token| token.contains("clock"))
+            .collect();
+        let rows = [g2_schedule_row(
+            context,
+            id,
+            "ADMISSION_COMMITTED",
+            schedule::Action::ClockSet,
+        )];
+        let refusal = subject_schedule_refusal(context, dir, id, server, &rows)?;
+        let refusal_text = match refusal {
+            Some(text) => {
+                fs::write(artifacts.join("subject-schedule-refusal.txt"), &text)?;
+                format!(
+                    "clock-set refused at schedule parse: {}",
+                    refusal_reason_line(&text)
+                )
+            }
+            None => "ACCEPTED clock-set (the row must be implemented against this subject)".into(),
+        };
+        Ok(format!(
+            "clock flags in usage: {}; {refusal_text}",
+            if clock_flags.is_empty() {
+                "none".to_owned()
+            } else {
+                clock_flags.join(",")
+            }
+        ))
+    })?;
+    let reason = "no subject fixture clock: the only clock control on either serve is \
+                  --trust-system-clock, both subjects refuse clock-set at schedule parse, \
+                  and host UTC is never changed by this driver";
+    finish_missing_capability(
+        context,
+        &scenario_dir,
+        id,
+        events,
+        &[
+            (
+                "would_do",
+                "regress the subject's clock, then attempt admission, retry, publication and \
+                 destructive expiry"
+                    .into(),
+            ),
+            (
+                "would_assert",
+                "fresh promises refuse CLOCK_UNSAFE (17); read-only retrieval continues; no \
+                 destructive expiry under unsafe time; after recovery the persisted watermark \
+                 still refuses back-dated commits"
+                    .into(),
+            ),
+            (
+                "missing_capability",
+                "a subject fixture clock (interface-v1 clock-set) or an untrusted-clock mode on \
+                 both subjects"
+                    .into(),
+            ),
+        ],
+        &findings,
+        reason,
+    )?;
+    Err(MissingCapability(reason.to_owned()).into())
+}
+
+/// g7-cleanup-interrupted-refund: kill the server during terminal cleanup
+/// (after output expiry, before accounting reconciliation finishes). The
+/// interface-v1 boundary vocabulary has no cleanup boundary: CLOSURE_COMMITTED
+/// is scope closure, and the Rust subject's retention and retirement commit
+/// keys are supplementary probes that cannot be armed (src/v2/fixture.rs
+/// commit_label). The row records the vocabulary and the nearest boundaries
+/// on both subjects.
+fn g7_cleanup_interrupted_refund(context: &ScenarioContext) -> Result<()> {
+    let id = "g7-cleanup-interrupted-refund";
+    let (scenario_dir, artifacts) = open_scenario(context, id)?;
+    let events = open_events(context, &scenario_dir, id, Subject::Rust)?;
+    let boundaries = schedule::BOUNDARIES.join("\n");
+    fs::write(
+        artifacts.join("interface-v1-boundaries.txt"),
+        format!("{boundaries}\n"),
+    )?;
+    let cleanup_labels: Vec<&&str> = schedule::BOUNDARIES
+        .iter()
+        .filter(|label| {
+            label.contains("CLEANUP") || label.contains("RETIRE") || label.contains("REFUND")
+        })
+        .collect();
+    let findings = vec![
+        (
+            Subject::Rust,
+            "no armable cleanup boundary: retention-* and retirement-* commit keys are \
+             supplementary and unarmable (src/v2/fixture.rs commit_label); nearest armable \
+             boundary CLOSURE_COMMITTED is scope closure, not cleanup"
+                .to_owned(),
+        ),
+        (
+            Subject::Java,
+            "no cleanup boundary in Boundaries.Boundary (FixtureMain accepts only interface-v1 \
+             labels); nearest CLOSURE_COMMITTED is scope closure, not cleanup"
+                .to_owned(),
+        ),
+    ];
+    let reason = format!(
+        "interface-v1 section 2.1 has no cleanup boundary ({} matching labels among {}); a kill \
+         during terminal cleanup cannot be armed on either subject without a new boundary",
+        cleanup_labels.len(),
+        schedule::BOUNDARIES.len()
+    );
+    finish_missing_capability(
+        context,
+        &scenario_dir,
+        id,
+        events,
+        &[
+            (
+                "would_do",
+                "kill the server during terminal cleanup after output expiry, before accounting \
+                 reconciliation finishes; restart"
+                    .into(),
+            ),
+            (
+                "would_assert",
+                "cleanup is replayable; reserved capacity is never refunded while a dependent \
+                 read-pin or callback retains it; the restart completes the refund exactly once \
+                 (capacity accounting before/after recorded; double refund is a defect)"
+                    .into(),
+            ),
+            (
+                "missing_capability",
+                "an interface-v1 cleanup boundary (an interface revision proposal) implemented \
+                 by both subjects"
+                    .into(),
+            ),
+        ],
+        &findings,
+        &reason,
+    )?;
+    Err(MissingCapability(reason).into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -22028,7 +24920,7 @@ mod tests {
             let row = rows.iter().find(|row| row.id == id).unwrap();
             assert!(row.rust_implemented, "{id} must be implemented");
         }
-        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 57);
+        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 67);
     }
 
     #[test]

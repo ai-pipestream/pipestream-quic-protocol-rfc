@@ -123,6 +123,11 @@ impl<'a> Reader<'a> {
         Self { bytes, pos: 0 }
     }
 
+    /// Current read offset into the underlying bytes.
+    pub fn offset(&self) -> usize {
+        self.pos
+    }
+
     pub fn done(&self) -> Result<()> {
         ensure!(
             self.pos == self.bytes.len(),
@@ -194,6 +199,14 @@ impl<'a> Reader<'a> {
             }
             _ => Ok(false),
         }
+    }
+
+    pub fn bytes(&mut self) -> Result<Vec<u8>> {
+        let len = self.head(2)? as usize;
+        ensure!(self.pos + len <= self.bytes.len(), "truncated CBOR bytes");
+        let value = self.bytes[self.pos..self.pos + len].to_vec();
+        self.pos += len;
+        Ok(value)
     }
 
     pub fn text(&mut self) -> Result<String> {
@@ -617,6 +630,91 @@ pub fn result_read(
     body
 }
 
+/// Work::Operation (kind 2): the wire operation lookup both clients send for
+/// `lookup --operation`; the server answers Work::OperationResponse (kind 3)
+/// carrying the committed OperationReceipt, or a Refusal (NOT_FOUND while
+/// nothing is committed under that id).
+pub fn operation_lookup(request: u64, operation: &[u8; 16]) -> Vec<u8> {
+    let mut body = Vec::new();
+    cbor_array(&mut body, 3);
+    cbor_uint(&mut body, 2); // Work::Operation
+    cbor_uint(&mut body, request);
+    cbor_bytes(&mut body, operation);
+    body
+}
+
+/// The OperationReceipt bytes carried by a Work::Admitted (kind 1, after the
+/// request tag) or a Work::OperationResponse (kind 3, after the request id),
+/// exactly as encoded on the wire, so two replies can be compared for
+/// byte-identity. Returns (kind, receipt bytes).
+pub fn work_receipt_bytes(body: &[u8]) -> Result<(u64, Vec<u8>)> {
+    let mut r = Reader::new(body);
+    ensure!(r.array_len()? == 3, "work receipt frame is not a 3-array");
+    let kind = r.uint()?;
+    match kind {
+        1 => {
+            ensure!(r.array_len()? == 2, "admission tag is not a 2-array");
+            r.uint()?;
+            r.uint()?;
+        }
+        3 => {
+            r.uint()?; // request
+        }
+        other => bail!("frame kind {other} carries no operation receipt"),
+    }
+    let start = r.offset();
+    r.skip().context("operation receipt record")?;
+    let end = r.offset();
+    r.done()?;
+    Ok((kind, body[start..end].to_vec()))
+}
+
+/// Fields of an OperationReceipt whose outcome is Admitted: (attempt,
+/// admitted_at, deadline). Any other outcome kind is an error.
+pub fn parse_receipt_admitted(receipt: &[u8]) -> Result<(u64, u64, u64)> {
+    let mut r = Reader::new(receipt);
+    ensure!(r.array_len()? == 3, "operation receipt is not a 3-array");
+    r.skip().context("receipt operation id")?;
+    r.skip().context("receipt request digest")?;
+    ensure!(r.array_len()? == 6, "admitted outcome is not a 6-array");
+    ensure!(r.uint()? == 0, "receipt outcome is not Admitted");
+    ensure!(r.array_len()? == 3, "admitted work key is not a 3-array");
+    r.uint()?;
+    r.uint()?;
+    r.uint()?;
+    let attempt = r.uint()?;
+    let admitted_at = r.uint()?;
+    let deadline = r.uint()?;
+    Ok((attempt, admitted_at, deadline))
+}
+
+/// Length prefix plus the framed object header a result stream starts with
+/// (4-byte big-endian length, then the CBOR ResultHeader; same framing as the
+/// input header). Returns the header's declared payload length and sha256.
+pub fn parse_result_header(framed: &[u8]) -> Result<(u64, [u8; 32])> {
+    let mut r = Reader::new(framed);
+    ensure!(r.array_len()? == 8, "result header is not an 8-array");
+    ensure!(r.uint()? == 1, "result header kind is not 1");
+    r.uint()?; // request
+    r.uint()?; // generation
+    ensure!(
+        r.array_len()? == 3,
+        "result header work key is not a 3-array"
+    );
+    r.uint()?;
+    r.uint()?;
+    r.uint()?;
+    r.uint()?; // attempt
+    r.uint()?; // index
+    let length = r.uint()?;
+    let sha = r.bytes()?;
+    ensure!(sha.len() == 32, "result header sha256 is not 32 bytes");
+    let mut digest = [0u8; 32];
+    digest.copy_from_slice(&sha);
+    r.done()?;
+    Ok((length, digest))
+}
+
 /// Work::Admitted: returns the admitted input stream id from the request tag.
 pub fn parse_admitted_stream(body: &[u8]) -> Result<u64> {
     let mut r = Reader::new(body);
@@ -997,6 +1095,57 @@ impl RawConn {
         })
     }
 
+    /// Accept the next server-initiated unidirectional stream (a result
+    /// object stream after a Work::Read) within `timeout`.
+    pub fn accept_uni(&self, timeout: Duration) -> Result<quinn::RecvStream> {
+        self.runtime.block_on(async {
+            tokio::time::timeout(timeout, self.connection.accept_uni())
+                .await
+                .context("accept unidirectional stream timed out")?
+                .context("accept unidirectional stream")
+        })
+    }
+
+    /// One bounded read from a receive stream: `Ok(None)` at FIN, otherwise
+    /// the number of bytes placed in `buffer` (never zero). A timeout is an
+    /// error naming it, so a stalled sender is recorded rather than spun on.
+    pub fn read_stream(
+        &self,
+        stream: &mut quinn::RecvStream,
+        buffer: &mut [u8],
+        timeout: Duration,
+    ) -> Result<Option<usize>> {
+        self.runtime.block_on(async {
+            loop {
+                match tokio::time::timeout(timeout, stream.read(buffer))
+                    .await
+                    .context("read stream timed out")?
+                    .context("read stream")?
+                {
+                    Some(0) => continue,
+                    other => return Ok(other),
+                }
+            }
+        })
+    }
+
+    /// Read exactly `buffer.len()` bytes or fail (FIN early is an error).
+    pub fn read_stream_exact(
+        &self,
+        stream: &mut quinn::RecvStream,
+        buffer: &mut [u8],
+        timeout: Duration,
+    ) -> Result<()> {
+        let mut filled = 0;
+        while filled < buffer.len() {
+            match self.read_stream(stream, &mut buffer[filled..], timeout)? {
+                Some(n) => filled += n,
+                None => bail!("stream ended after {filled} of {} bytes", buffer.len()),
+            }
+        }
+        Ok(())
+    }
+
     pub fn open_uni(&self) -> Result<quinn::SendStream> {
         let runtime = self.runtime.clone();
         block_on(&runtime, async {
@@ -1216,6 +1365,87 @@ async fn client_endpoint(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn operation_lookup_and_receipt_bytes_round_trip() {
+        // Work::Operation is [2, request, bytes(operation)].
+        let operation = [0x11u8; 16];
+        let lookup = operation_lookup(7, &operation);
+        let mut r = Reader::new(&lookup);
+        assert_eq!(r.array_len().unwrap(), 3);
+        assert_eq!(r.uint().unwrap(), 2);
+        assert_eq!(r.uint().unwrap(), 7);
+        assert_eq!(r.bytes().unwrap(), operation.to_vec());
+        r.done().unwrap();
+
+        // One OperationReceipt [operation, digest, Admitted outcome] carried
+        // by a Work::Admitted (kind 1, input tag) and by a
+        // Work::OperationResponse (kind 3, request id) must come back as the
+        // same bytes from both frames.
+        let mut receipt = Vec::new();
+        cbor_array(&mut receipt, 3);
+        cbor_bytes(&mut receipt, &operation);
+        cbor_bytes(&mut receipt, &[0x22u8; 32]);
+        cbor_array(&mut receipt, 6);
+        cbor_uint(&mut receipt, 0); // Admitted
+        cbor_array(&mut receipt, 3);
+        cbor_uint(&mut receipt, 0);
+        cbor_uint(&mut receipt, 0);
+        cbor_uint(&mut receipt, 1);
+        cbor_uint(&mut receipt, 1); // attempt
+        cbor_uint(&mut receipt, 1_789_034_836_504); // admitted_at
+        cbor_uint(&mut receipt, 1_789_034_896_504); // deadline
+        receipt.push(0xf6); // child: null
+        let mut admitted = Vec::new();
+        cbor_array(&mut admitted, 3);
+        cbor_uint(&mut admitted, 1);
+        cbor_array(&mut admitted, 2);
+        cbor_uint(&mut admitted, TAG_INPUT_STREAM);
+        cbor_uint(&mut admitted, 6);
+        admitted.extend_from_slice(&receipt);
+        let mut response = Vec::new();
+        cbor_array(&mut response, 3);
+        cbor_uint(&mut response, 3);
+        cbor_uint(&mut response, 9);
+        response.extend_from_slice(&receipt);
+        let (kind_a, bytes_a) = work_receipt_bytes(&admitted).unwrap();
+        let (kind_b, bytes_b) = work_receipt_bytes(&response).unwrap();
+        assert_eq!((kind_a, kind_b), (1, 3));
+        assert_eq!(bytes_a, receipt);
+        assert_eq!(bytes_b, receipt);
+        assert_eq!(
+            parse_receipt_admitted(&receipt).unwrap(),
+            (1, 1_789_034_836_504, 1_789_034_896_504)
+        );
+        // A Work::View (kind 5) carries no receipt.
+        let mut view = Vec::new();
+        cbor_array(&mut view, 3);
+        cbor_uint(&mut view, 5);
+        cbor_uint(&mut view, 1);
+        cbor_uint(&mut view, 1);
+        assert!(work_receipt_bytes(&view).is_err());
+    }
+
+    #[test]
+    fn result_header_parser_reads_length_and_digest() {
+        let mut header = Vec::new();
+        cbor_array(&mut header, 8);
+        cbor_uint(&mut header, 1); // kind
+        cbor_uint(&mut header, 2); // request
+        cbor_uint(&mut header, 1); // generation
+        cbor_array(&mut header, 3);
+        cbor_uint(&mut header, 0);
+        cbor_uint(&mut header, 0);
+        cbor_uint(&mut header, 1);
+        cbor_uint(&mut header, 1); // attempt
+        cbor_uint(&mut header, 0); // index
+        cbor_uint(&mut header, 16 * 1024 * 1024);
+        cbor_bytes(&mut header, &[0x33u8; 32]);
+        let (length, sha) = parse_result_header(&header).unwrap();
+        assert_eq!(length, 16 * 1024 * 1024);
+        assert_eq!(sha, [0x33u8; 32]);
+        assert!(parse_result_header(&header[..header.len() - 1]).is_err());
+    }
 
     #[test]
     fn cbor_uint_is_minimal() {

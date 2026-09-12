@@ -1,0 +1,5 @@
+exit=exit status: 1
+stdout:
+
+stderr:
+connection lost: aborted by peer: the cryptographic handshake failed: error 45: invalid peer certificate: certificate expired: verification time 1789243198 (UNIX), but certificate is not valid after 1789243191 (7 seconds ago)
