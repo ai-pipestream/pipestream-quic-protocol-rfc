@@ -1,4 +1,4 @@
-# Section 12 clause-level traceability: Java V2
+; `DurableBranchTest.authorityExpandedChunksProduceChildrenAndParentReassembly` (expansion children carry the parent's execution duration, D12)# Section 12 clause-level traceability: Java V2
 
 Date: 2026-09-11. Java branch `agent/rfc-claude-java-v2` at commit `1e7d25a7`.
 Updated at `ab59dafb` (defect D1 fixed; S12-184 and S12-052 strengthened),
@@ -7,7 +7,9 @@ Updated at `ab59dafb` (defect D1 fixed; S12-184 and S12-052 strengthened),
 S12-290 covered over the wire; the summary table is recomputed from the rows) and
 `c9edaed8` (S12-028, S12-098, S12-265, S12-277, S12-280, S12-283 covered) and
 `4cb4b444` (listener defect D9 fixed; S12-040 strengthened) and `ce1bfd77`
-(listener defect D10 fixed; S12-343 strengthened).
+(listener defect D10 fixed; S12-343 strengthened) and `4fb8f747` (authority
+defect D11 fixed; S12-368 strengthened by `SessionLogGrowthTest`) and `ada67cec`
+(reference-application defect D12 fixed; S12-175 strengthened).
 
 This document maps every normative statement of Section 12
 (`sections-src/section-12.md`, 871 lines) to the tests under
@@ -473,7 +475,7 @@ including most of the refusal-code taxonomy.
 | S12-365 | "A crash before metadata commit leaves only bounded orphan storage; after commit it leaves replayable authoritative state even if the acknowledgment was lost." | `InputStore.recover`; `OrphanStore`; replay branches | `PublicationStoreRecoveryTest.processDeathBeforePublicationCommitOrAfterReturnHasExactDurabilityBoundary`; `AdmissionStoreRecoveryTest`; `OrphanStoreRecoveryTest`; `DurableLifecycleTest.lostAcknowledgmentsAfterRealCommitsRecoverByReplayWithoutNewWork` | COVERED | The lost-acknowledgment half is proven with a real commit and a withheld reply, then a reconnect replay. |
 | S12-366 | "Cleanup requires exclusive ownership or an equivalent transactional liveness proof, verifies references before deletion, preserves non-reuse commitments and read/dependency pins, and is itself replayable after interruption." | `InputStore.acquire` file lock; `OutputStore.reclaim`; `RetentionService` claim | `OutputStoreReclaimTest` (all three); `RetentionServiceTest.manualMaintenanceReleasesPublishedInputAndOutputAndDetachesCleanly`; `.closeDuringActiveMaintenanceWaitsForPhysicalCompletionBeforeDetaching`; `OrphanScanTest.candidatesRetainFullIdentityAndForeignCandidateDoesNotAliasInstallation`; `InputStoreTest.processLockExcludesDuplicateUntilOwnedProcessCloses` | COVERED | A foreign or older lease is refused before the first unlink, and a live reader blocks its own funding while an unrelated funding still reclaims. |
 | S12-367 | "A successful restart must reconcile accounting before admitting new capacity." | `SessionStore.verifyInputs` -> `AdmissionStore.verifyStorage`; `InputStore.recover` | every recovery test calls `sessions.verifyInputs(inputs)` and asserts exact `usage()`; `InputStoreRecoverySyncTest.failedFinalRecoverySyncReleasesOwnershipBeforeExactEmptyReopen` | COVERED | |
-| S12-368 | "Independent implementations must test these boundaries against their real storage, not infer them from the abstract models or a metadata-only unit test." | real SQLite plus a real filesystem in every store test | `FixedRecordsTest.eighteenNativeRewriteCasesFitCostWithoutPageGrowth`; the eight subprocess-crash recovery suites | COVERED | The fixed-records case measures actual native WAL growth against the predicted budget for 18 geometries. |
+| S12-368 | "Independent implementations must test these boundaries against their real storage, not infer them from the abstract models or a metadata-only unit test." | `SessionLogGrowthTest` (WAL restart under continuous readers, D11); real SQLite plus a real filesystem in every store test | `FixedRecordsTest.eighteenNativeRewriteCasesFitCostWithoutPageGrowth`; the eight subprocess-crash recovery suites | COVERED | The fixed-records case measures actual native WAL growth against the predicted budget for 18 geometries. |
 | S12-369 | "For a live session, reconciliation includes consistency between declaration receipts, retained membership and seals. Matching aggregate counts alone do not establish that consistency. An authority MUST NOT use a receipt with missing or contradictory required membership to report successful declaration replay, or replace the missing membership with a successful empty-scope observation." | `DeclarationStore.audit`; `ClosureStore.verify` | `DeclarationStoreTest.declarationReceiptCannotReplayAfterItsAcceptedMemberDisappears`; `.recoveryRejectsMissingDeclarationMemberEvenWhenCountersAreAdjusted`; `ExecutionClosureTest.checksummedSuccessSummaryCannotHideDeclaredChildFromClaimOrRecovery`; `.checksummedSuccessSummaryCannotHideActuallyFailedChild` | COVERED | The counters are deliberately patched to agree and recovery still refuses, which is exactly the named rule. |
 | S12-370 | "When payload deletion and authoritative accounting cannot share one atomic commit, cleanup MUST retain recoverable evidence of deletion eligibility before removing referenced bytes." | `RetentionStore` two-phase intent (`*_INTENT_COMMITTED` before any unlink) | `OutputRetentionStoreTest.synchronizedFundingRemovalFailureRetriesWithoutEarlyRefund`; `OutputRetentionStoreRecoveryTest.processDeathAcrossOutputNamesFundingAndQuotaReleaseResumesSafely`; `RetentionStoreRecoveryTest.processDeathAtEveryInputReleaseBoundaryResumesFromDurableEvidence`; `OutputRetentionGeometryTest.corruptionAfterCommittedIntentCannotRefundTheOutputReservation` | COVERED | `outputReleaseAt` is set in every crash phase, before the bytes disappear. |
 | S12-371 | "It MUST NOT refund their reserved capacity while a dependent callback, result-read pin or unsynchronized deletion still retains the resource." | `RetentionStore`; `OutputStore.pins`; `InputStore.Receiver.close` (`ended` only after `release`) | `OutputRetentionStoreTest.outputReaderAtEofBlocksBeforeIntentUntilDescriptorCloses`; `.reservedWriterAndReaderCreditsBlockWithoutCreatingReleaseIntent`; `RetentionStoreTest.sameProcessPhysicalSyncFailureRetainsChargesUntilRetryCompletes`; `OrphanStoreTest.synchronizedUnlinkFailureKeepsChargeUntilSameProcessRetry`; `InputStoreReceiverPinsTest.uncertainStagingRemovalKeepsExactIdentityAndHandleUntilRetryClose`; `DurableRequestsTest.retainedOwnersSurviveConnectionCloseAndReleasedTicketsCannotBeRetained` | COVERED | All three retainers: an EOF-but-open reader, a reserved writer credit, and an unsynchronized deletion. |
@@ -594,6 +596,28 @@ These are code observations, not test failures. Each names a file and line.
   by `InputInstallReclaimRaceTest`, fixed in `ce1bfd77` (installed object pinned
   through the admission transaction; handoff section 5 item 10); store-level
   regression `InputStorePinnedInstallTest`.
+- **D11.** `SessionStore` never restarted its write-ahead log; SQLite does so
+  only when a writer finds no reader on it, and a continuously polled
+  authority never reaches that moment, so the log grew until the file bound
+  refused writes (Meta C16a xlarge64 mixed: LIMIT_EXCEEDED `SQLite file
+  capacity exhausted` at 1024/256 MiB with the database nearly empty).
+  Reproduced by `SessionLogGrowthTest` (six unpaused readers, 100 units,
+  12.7 MiB of log), fixed in `4fb8f747` (truncating checkpoint from the
+  retention sweep above one sixty-fourth of the bound; `logRestarts` in the
+  host status). S12-368 row references the test.
+- **D12.** `ReferenceApplications.chunkCopy` admitted every expansion child
+  with a fixed 1,000 ms execution duration. A child admitted just before an
+  authority restart had its deadline elapse while the process came back, so
+  the recovered authority settled it FAILED `execution deadline reached` and
+  the STRICT parent failed with it (Kimi driver `g3-restart-same-roots`
+  rust-client/java-server on the `28c3369b` jar: child 2:1:3, deadline 13 ms
+  before the restarted process could claim it). The Rust reference gives
+  children the parent's execution duration. Fixed in `ada67cec`:
+  `DurableHost.Production.executionMs` exposes the parent's fixed duration
+  and chunk-copy admits children with it;
+  `DurableBranchTest.authorityExpandedChunksProduceChildrenAndParentReassembly`
+  asserts the inherited duration on every expanded child (red before at
+  1,000 ms). S12-175 row references the assertion.
 
 ## Gap-closing proposals, grouped by fixture
 

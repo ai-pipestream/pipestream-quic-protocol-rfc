@@ -288,6 +288,30 @@ final class SessionStore {
   }
 
   /**
+   * Restart the write-ahead log with a truncating checkpoint once it exceeds one sixty-fourth of its
+   * funded bound (at least 1 MiB). SQLite restarts the log on its own only when a writer finds no
+   * reader holding it; an authority polled without pause never sees that moment, so its log grows
+   * by every commit until the file bound refuses the next write with LIMIT_EXCEEDED while the
+   * database itself is nearly empty. The checkpoint waits, within the connection busy timeout, for
+   * readers already on the log to finish; readers that arrive meanwhile read the database file, so
+   * continuous short readers cannot starve it. A checkpoint SQLite reports as busy is not a restart.
+   *
+   * @return whether the log was restarted
+   * @throws IOException if the file policy cannot be read
+   * @throws SQLException if the checkpoint fails
+   */
+  boolean restartLog() throws IOException, SQLException {
+    long bound = config.files().walBytes();
+    if (database.usage().walBytes() < Math.max(1L << 20, bound / 64)) return false;
+    try (Connection connection = database.connect();
+        var statement = connection.createStatement();
+        var row = statement.executeQuery("PRAGMA wal_checkpoint(TRUNCATE)")) {
+      if (!row.next()) throw corrupt("checkpoint reported nothing");
+      return row.getInt(1) == 0;
+    }
+  }
+
+  /**
    * Release the anchor connection. Operations already in flight keep their own connections; the
    * database's last connection to close performs SQLite's usual WAL checkpoint and index teardown.
    *

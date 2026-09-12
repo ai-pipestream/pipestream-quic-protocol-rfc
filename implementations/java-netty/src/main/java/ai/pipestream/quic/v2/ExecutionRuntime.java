@@ -497,6 +497,15 @@ final class ExecutionRuntime {
     }
 
     /**
+     * Returns the parent's fixed execution duration.
+     *
+     * @return parent execution duration in milliseconds; never extended
+     */
+    long executionMs() {
+      return context.executionMs();
+    }
+
+    /**
      * Returns the permitted incremental payload size.
      *
      * @return maximum incremental payload chunk
@@ -774,6 +783,11 @@ final class ExecutionRuntime {
     Input input() {
       threadCheck();
       return details.job().input().parameters().input();
+    }
+
+    long executionMs() {
+      threadCheck();
+      return details.job().input().parameters().executionMs();
     }
 
     /**
