@@ -409,7 +409,7 @@ including most of the refusal-code taxonomy.
 | S12-295 | "A contradictory combination is INTEGRITY_ERROR; the client MUST NOT replace prior validated commitments with the contradictory observation or use it to acknowledge coverage." | `ClientValidation.relationship`/`membership`/`summary` | `DurableClientContradictionTest` (both tests) | COVERED | Since 0a088050 the contradicting page or view is refused INTEGRITY_ERROR and is NOT journaled (`journal.scope(5)` and `journal.observedWork(parent)` stay empty); before 0a088050 `DurableClient.page` journaled the page before cross-checking it, which the test caught red. |
 | S12-296 | "A scope closes only when sealed, every declared member is terminal, and every descendant scope has closed." | `ClosureStore.fold` | `CheckpointObservationTest.unsealedAndSealedMissingInputMembershipHaveDistinctImmediateObservations`; `ClosureReconciliationTest.sealedUnadmittedMembershipRemainsOpenAndNewCursorRecomputesIt`; `.chunkedFoldPublishesNothingUntilAllRealTerminalMembersWereVisited`; `.failedStrictChildClosesThenAtomicallyFailsParentAndAllowsRootClosure` | COVERED | All three conditions, including the bottom-up descendant walk. |
 | S12-297 | "A success rehydration under this profile's STRICT policy additionally requires all children to succeed. Partial completion policies are not inherited from version 1." | `BranchStore.scope` (`summary.counts().success() != summary.declared()` -> NOT_READY) | `BranchExecutionTest.reconstructsTwoPagedChildOutputs...`; `DurableBranchTest.callerExpandedChildrenAreReassembledAndCoveredBottomUp`; `ClosureReconciliationTest.realEmptyChildClosureMakesStrictParentEligibleForExecution` | COVERED | Also the zero-children case: an empty sealed child scope satisfies STRICT. |
-| S12-298 | "A child scope with failure, cancellation or skip prevents successful parent rehydration; the authority settles the parent FAILED unless it already has a terminal outcome or an accepted cancellation/skip fence." | `SessionStore.strictChildFailure` | `ClosureReconciliationTest.failedStrictChildClosesThenAtomicallyFailsParentAndAllowsRootClosure`; `.preexistingParentFailureIsPreservedWhileLaterChildClosureStillCommits`; `ClosureReconciliationRecoveryTest.strictChildSummaryAndParentFailureAreAtomicAcrossCommitCrashes` | PARTIAL | The failure case and the already-terminal exception are both proven. Cancelled or skipped children are never produced, and the **accepted-fence exception is never exercised**. |
+| S12-298 | "A child scope with failure, cancellation or skip prevents successful parent rehydration; the authority settles the parent FAILED unless it already has a terminal outcome or an accepted cancellation/skip fence." | `SessionStore.strictChildFailure` | `ClosureReconciliationTest.failedStrictChildClosesThenAtomicallyFailsParentAndAllowsRootClosure`; `.preexistingParentFailureIsPreservedWhileLaterChildClosureStillCommits`; `ClosureReconciliationRecoveryTest.strictChildSummaryAndParentFailureAreAtomicAcrossCommitCrashes`; `ClosureReconciliationTest.cancellationFenceOnStrictParentWinsOverALaterChildFailure` | COVERED | The failure case, the already-terminal exception and the accepted-fence exception: a cancellation fence accepted on the STRICT parent before its only child fails leaves the parent CANCELLED, not FAILED, while the child scope still closes. |
 | S12-299 | "An accepted fence keeps precedence: complete its specified settlement, rather than replacing it with a child-failure outcome." | `SessionStore.strictChildFailure` eligible branch | `ClosureReconciliationTest.cancellationFenceOnStrictParentWinsOverALaterChildFailure` | COVERED | Since a700f5f4: a fence accepted on a WAITING_CHILDREN STRICT parent leaves it CANCELLING with its admission intact; a later child admission is CANCELLED (`parent excludes new descendants`), and so is the running child's own failure commit, so descendants settle only through `reconcileCancellation` (both children CANCELLED, child counts (0,0,2,0)); the child scope's non-successful closure then leaves the parent CANCELLED, never FAILED, and the root closes with counts (0,0,1,0). |
 | S12-300 | "Retrying terminal failed logical work requires a new work identity and scope membership, not rewriting the failed outcome." | `ExecutionStore.eligible` -> ALREADY_TERMINAL | `RetryStoreTest.awaitingRetryCanBeReplacedWhileTerminalAndDeadlineOnlyPermitExactReplay`; `DurableMutationTest.explicitRetry...` | PARTIAL | Retry of terminal work is ALREADY_TERMINAL; nothing demonstrates the positive half, i.e. declaring a new identity to redo the work. |
 | S12-301 | "The four counters in `v2-counts` count final SUCCEEDED, FAILED, CANCELLED and SKIPPED members respectively. They are disjoint and their sum equals the scope's declared count." | `Records.Counts` (`total() == declared`); `Commitments.StatusTree.finish` | `V2WireTest.allFrozenExpectations...` (`summary-count-mismatch`); `V2CommitmentsTest.streamingStatusFoldMatchesIndependentLevelReductionAcrossOddTreeShapes`; `ClosureReconciliationTest`; `CancellationReconciliationTest`; `DurableBranchTest` | COVERED | The commitments test checks the four buckets for every member count 0..1025 against an independent reduction. |
@@ -464,7 +464,7 @@ including most of the refusal-code taxonomy.
 | S12-345 | "Admission must fund those dependency pins. External expiry is not permission to delete bytes required by accepted parent work." | `InputStore.funding`; `RetentionStore.outputEligible` | `OutputRetentionDependencyTest.childOutputExpiryWaitsForParentSettlementAndThenForItsPhysicalReader`; `OutputRetentionDependencyTest.branchAdmissionRefusesWhenItsChildDependencyPinCannotBeFunded` | COVERED | Both halves: under a handle policy of two, a mode-1 parent whose input, dependency and output handles cannot all be funded is LIMIT_EXCEEDED at admission with no job, no child scope and unchanged usage, while a leaf with the same budget is admitted (the funding gate is `InputStore.requireExecutionHandles`; output bytes are bounded only by the session limits, never by a dependency). |
 | S12-346 | "Output and receipt deadlines are independent. A caller with a retained output reference can still read an available object after the full work receipt has expired; the authority retains the binding/manifest needed for that read." | `RetentionStore.input`/`output` are separate axes; `ResultStore.retained` | `OutputRetentionStoreTest.inputAndOutputReleaseInEitherOrderPreservesEvidenceAndSpendsFourCredits`; `OutputRetentionStoreRecoveryTest`; `ResultStoreTest.outputStaysReadableAndManifestKeepsAvailabilityAfterTheWorkReceiptExpires` (policy 10 000 / 60 000 / 5 000) | COVERED | Release-order independence, and now a receipt retention shorter than the output retention: the exact bytes are read at and after `receiptUntil` up to the last millisecond of `outputUntil`, EXPIRED only from then, across a reopen. |
 | S12-347 | "A retained terminal receipt can describe EXPIRED output without claiming the bytes remain available." | `ResultStore.retained` vs `available` | `ResultStoreTest.expiryAndFinalClockChecksClosePinsAndLeavePublishedOutcomeUnchanged`; `ResultStoreTest.outputStaysReadableAndManifestKeepsAvailabilityAfterTheWorkReceiptExpires` | COVERED | The manifest keeps reporting the unexpired `availableUntil` after the work receipt itself has expired. |
-| S12-348 | "After a receipt's deadline, WORK view or operation lookup may refuse EXPIRED, but enough terminal/identity state remains to prevent reuse and support any longer output or dependency promise." | `SessionStore.visible`; `RetirementStore.eligible` cutoff | `SessionRetirementTest`; `SessionStore.checkInputGeneration` EXPIRED branch via `StoreBindingRecoveryTest` | PARTIAL | EXPIRED is proven for a retiring session, not for a live session past a receipt deadline. The `Math.max(cutoff, outputUntil)` extension in `RetirementStore` is dead in every fixture. |
+| S12-348 | "After a receipt's deadline, WORK view or operation lookup may refuse EXPIRED, but enough terminal/identity state remains to prevent reuse and support any longer output or dependency promise." | `SessionStore.visible`; `RetirementStore.eligible` cutoff | `SessionRetirementTest`; `SessionStore.checkInputGeneration` EXPIRED branch via `StoreBindingRecoveryTest` | PARTIAL | EXPIRED is proven for a retiring session, not for a live session past a receipt deadline. The `Math.max(cutoff, outputUntil)` extension in `RetirementStore` is now live (`SessionRetirementTest.retirementCutoffExtendsToAnOutputPromiseLongerThanTheReceiptRetention`); see P2-STORE-3. |
 | S12-349 | "An authority uses a trusted UTC clock for external timestamps and monotonic elapsed timers within a process. It persists the greatest observed UTC value in the same transactions that issue time-based promises." | `AdmissionStore.now`/`remember`/`watermark` | `ResultStoreTest.finalCheckFailureRollsBackWatermarkAndSuccessfulReadAdvancesIt`; `AdmissionStoreRecoveryTest.processDeathBeforeCommitOrAfterReturnRecoversAdmissionAtomically`; `RetryStoreFailureTest.finalTimeAndAuthorizationRefusalsRollBackEveryAuthoritativeWrite` | COVERED | The result test reads the watermark straight out of SQLite: 1200 before, 1200 after a refusal, 1600 after a successful read, then CLOCK_UNSAFE at 1499. |
 | S12-350 | "If the clock regresses, new admissions, retries, publication and destructive expiry pause or refuse CLOCK_UNSAFE until safe time is restored." | `AdmissionStore.checkedClock` | `AdmissionPolicyTest.finalAuthorizationDeadlineAndPersistedClockRefuseOnlyFreshAdmissions`; `RetryStoreFailureTest.finalTimeAndAuthorizationRefusals...`; `PublicationStoreTest.publicationForwardJumpPastOutputPromiseRollsBackBeforeReceiptOrExecutionDeadline`; `OutputRetentionStoreTest.unsafeOrRegressingClockCannotCreateIntentOrRemoveOutputs`; `RetentionStoreTest.intraOperationRegression...`; `OrphanStoreTest.liveReaderPinsOnlyItsObjectAndUnsafeClockCannotDeleteEitherCandidate` | COVERED | All four named operations. |
 | S12-351 | "Read-only retrieval of already retained evidence may continue under current authorization, without promising new availability or shortening retention." | `SessionStore.manifest`/`lookupOperation` take no clock | `AuthorizationClockRecoveryTest` phase (b2); `ResultStoreTest.manifestReturnsExactImmutablePublicationWithoutConsultingTime` | COVERED | `select`, `lookup`, `watch` and `manifest` all succeed under an untrusted clock while `admit` and `read` refuse. |
@@ -473,7 +473,7 @@ including most of the refusal-code taxonomy.
 | S12-354 | "Root closure and all dependent work/output/receipt/read-lease deadlines determine session retirement. Do not retire an unsealed or unresolved session." | `RetirementStore.eligible` | `RetirementChildScopeTest.nonRootScopeIsRemovedOnlyAfterItsWorkAndPostCommitInterruptionReopens`; `RetirementIntegrityTest.flagsAloneCannotMarkAnOpenSessionAsRetiring`; `SessionRetirementTest` | COVERED | NOT_READY before resolution, and a hand-set `retiring` flag on an open session fails recovery. |
 | S12-355 | "Preserve the full creation receipt until at least root closure time plus session receipt retention and every longer work/output/dependency promise." | `RetirementStore.eligible` cutoff (`Math.max` over receipt and output promises); `RetirementRecord.verifyWork` | `SessionRetirementTest` (NOT_READY at cutoff-1, STARTED at cutoff); `RetirementRecordTest.workVerificationAcceptsOnlyTerminalViewsWhosePromisesEndAtTheCutoff`; `SessionRetirementTest.retirementCutoffExtendsToAnOutputPromiseLongerThanTheReceiptRetention` | COVERED | The cutoff is exact by receipt retention and, with a longer output promise, extends to `outputUntil`: NOT_READY one millisecond before it, STARTED at it, COMPLETE after; the `Math.max` extension in `RetirementStore` is now live. |
 | S12-356 | "Then a session can be compacted to non-reusable history: the authority generation high-water mark and each owner's creation high-water mark remain. Absent generations at or below that mark cannot be created again." | `RetirementStore.removeOne`; `SessionStore.nextSequence` | `SessionRetirementTest.sealedEmptySessionStartsAtExactCutoffAndFinishesWithoutReusingHistory`; `SessionRetirementCrashTest`; `RetirementServiceTest.timerRetiresARealClosedEmptySessionAndPreservesOwnerSequence` | COVERED | After retirement `nextSequence()` is 2 and the replacement generation is strictly greater. |
-| S12-357 | "A known-owner retired creation is EXPIRED; an attachment whose owner cannot be authorized is UNAUTHORIZED, not a disclosure of another owner's historical state." | `SessionStore.visible` (owner and revoked before EXPIRED); `SessionStore.create` retired branch | `SessionRetirementTest.sealedEmptySessionStartsAtExactCutoff...`; `RetirementIntegrityTest.wrongOwnerAndRevocationDenyBeforeMalformedRetirementProofDecode` | PARTIAL | Both codes are asserted in the retiring window, with a deliberately zeroed retirement proof to prove denial precedes any decode. EXPIRED after complete removal is not asserted (see S12-112, S12-360). |
+| S12-357 | "A known-owner retired creation is EXPIRED; an attachment whose owner cannot be authorized is UNAUTHORIZED, not a disclosure of another owner's historical state." | `SessionStore.visible` (owner and revoked before EXPIRED); `SessionStore.create` retired branch | `SessionRetirementTest.sealedEmptySessionStartsAtExactCutoff...`; `RetirementIntegrityTest.wrongOwnerAndRevocationDenyBeforeMalformedRetirementProofDecode` | COVERED | Both codes in the retiring window with a zeroed retirement proof, and EXPIRED after complete removal by `SessionRetirementTest.retiredCreationSequenceStaysExpiredAfterAllSessionMetadataIsRemoved`. |
 | S12-358 | "Quotas never justify evicting a live promise." | `SessionStore` SQLITE_FULL -> LIMIT_EXCEEDED; `FixedRecords.protect` prepaid credits | `PublicationStoreCapacityTest.fundedSuccessCommitsLargeManifestAfterOrdinaryRenewalsSaturatePinnedWal`; `ExecutionStoreCapacityTest.fundedFailureCommitsAfterOrdinaryRenewalsSaturatePinnedWal`; `ClosureReconciliationCapacityTest`; `FixedRecordsTest.ordinaryProtectedWritesSaturatePinnedWalButPromisedRewriteStillCommits`; `RetirementIntegrityTest.activeReceiverPinsClosedSessionUntilItsSynchronizedAbort` | COVERED | Real SQLITE_FULL saturation with a pinned reader, after which a 16-output manifest still commits. |
 | S12-359 | "Retirement is an authoritative lifecycle transition, not an inference from missing records. Before incrementally removing session metadata, an implementation MUST durably record that all retirement conditions were met." | `RetirementStore` intent record; `RetirementRecord` | `RetirementIntegrityTest` (all four SQL-mutation cases); `SessionRetirementTest` (STARTED before any removal); `RetirementRecordTest.constructorRequiresRootIdentityAndOrderedInclusiveTimes` | COVERED | |
 | S12-360 | "While that cleanup is incomplete, a valid request from a currently authorized owner targeting the retiring session MUST receive EXPIRED rather than replay partial state as a live binding. Authentication and authorization denials still take precedence." | `SessionStore.visible` ordering | `SessionRetirementTest.sealedEmptySessionStartsAtExactCutoffAndFinishesWithoutReusingHistory`; `.publishedSessionReopensDuringBoundedDeletionAndRetainsAllocatorHighWater` | COVERED | Alice gets EXPIRED on snapshot, attach and create while bob gets UNAUTHORIZED; `inputs.begin` also gets EXPIRED. |
@@ -503,13 +503,138 @@ including most of the refusal-code taxonomy.
 | 12.5 Declaration, Admission and Descendant Scopes | 45 | 4 | 0 | 0 | 49 |
 | 12.6 Attempts, Cancellation and Authoritative Outcomes | 51 | 8 | 1 | 1 | 61 |
 | 12.7 Result Publication, Streams and References | 26 | 5 | 0 | 3 | 34 |
-| 12.8 Sealed Closure, Counts and Shutdown | 40 | 4 | 0 | 2 | 46 |
-| 12.9 Lifetimes, Clocks and Crash-Safe Accounting | 36 | 4 | 0 | 0 | 40 |
-| **all subsections** | **321** | **43** | **2** | **7** | **373** |
+| 12.8 Sealed Closure, Counts and Shutdown | 41 | 3 | 0 | 2 | 46 |
+| 12.9 Lifetimes, Clocks and Crash-Safe Accounting | 37 | 3 | 0 | 0 | 40 |
+| **all subsections** | **323** | **41** | **2** | **7** | **373** |
 
-Read the `PARTIAL` column as the real work queue: 43 clauses have a test whose
+Read the `PARTIAL` column as the real work queue: 41 clauses have a test whose
 name suggests coverage but whose assertions stop short. The 2 `GAP` rows are
 in most cases cheaper to close than the partials.
+
+## Second round of proposals for the remaining partials
+
+The first round's proposals are done or decided (marked above). The rows still
+PARTIAL after `3f8846e2` are grouped here by the fixture that closes them
+cheapest, each with the smallest stimulus and the assertion that moves the row.
+Rows that are spec-owner decisions (D2, D7, D13) are listed last and not
+proposed as tests.
+
+### Wire and schema unit tests (`V2WireTest`, `RefusalCodeRegistryTest`)
+
+- **P2-WIRE-1** (S12-017). Sweep every nullable position the schema permits:
+  encode a record with the field null and with a value, decode both, assert
+  round-trip equality; then flip one non-nullable position to null and assert
+  FRAME_ERROR. Table-driven over the record kinds in `Wire.RecordKind`.
+- **P2-WIRE-2** (S12-145). Encode a `Declare` with 257 entity ids and assert
+  the constructor and the decoder both refuse FRAME_ERROR; 256 round-trips.
+- **P2-WIRE-3** (S12-193). Enumerate the nine `State` values against their
+  integer registry values 0 to 8 and assert `value()` and the decoder agree,
+  plus 9 refused.
+- **P2-WIRE-4** (S12-215). Assert the integer opcodes of cancel (8), its
+  response (9), skip (10) and its response (11) from the frozen corpus bytes,
+  not only the typed records.
+- **P2-WIRE-5** (S12-278). In `PublicationStoreTest`, parse the locator with
+  `Locator` and assert host, port, generation, scope, producer, entity, attempt
+  and index individually against the publishing endpoint and the work key,
+  not `contains("results.example:7443")`.
+
+### Store unit tests
+
+- **P2-STORE-1** (S12-114). After the LIMIT_EXCEEDED attach, re-read the
+  session row, the binding and the operation count and assert byte-identical
+  values, so "without changing the session" is observed rather than inferred.
+- **P2-STORE-2** (S12-139). `cancelScope` a producer-1 child scope from
+  namespace 0 in `FenceStoreTest` and assert the receipt digest is computed in
+  the originator's namespace and the scope is fenced.
+- **P2-STORE-3** (S12-140, S12-141, S12-348). With `ResultFixture`'s policy
+  overload, set receipt retention shorter than the session lifetime, advance
+  past `receiptUntil` on a live session and assert operation lookup returns
+  EXPIRED with identity retained (no NOT_FOUND, no fresh mutation on replay),
+  and that the work view still reports the terminal state and identity.
+- **P2-STORE-4** (S12-164). In `ProducedAdmissionTest`, attempt `admitProduced`
+  for a child whose parent admission transaction has not committed (park the
+  parent between preflight and commit with the existing probe) and assert
+  NOT_READY or CONFLICT with the child DECLARED.
+- **P2-STORE-5** (S12-199). After an explicit retry, assert the membership page
+  and the retained policy are byte-identical to the pre-retry values, next to
+  the existing input, child, admission time and deadline assertions.
+- **P2-STORE-6** (S12-204). Claim a lease, then reopen the store under a
+  different installation identity and assert every publication path refuses
+  CONFLICT on the installation conjunct with the job unchanged.
+- **P2-STORE-7** (S12-227). After a root scope cancellation, page every scope
+  in the session and assert each is sealed and fenced, not only that a later
+  root declaration is refused.
+- **P2-STORE-8** (S12-237). Revoke a session holding one admitted and one
+  unadmitted member and assert both settle CANCELLED by the owner-independent
+  maintenance, in one test.
+- **P2-STORE-9** (S12-240). Drive four durable changes on one work (admit,
+  retry, fail, settle) and assert the revision strictly increases at each.
+- **P2-STORE-10** (S12-263). After EXPIRED reads, assert `availableUntil` in
+  the returned manifest is unchanged and that no retention row was extended.
+- **P2-STORE-11** (S12-276, D4). Take the disk read at `created + 1` so a
+  renewal would be observable, then assert the idle deadline is unchanged.
+- **P2-STORE-12** (S12-298). DONE by citation: `ClosureReconciliationTest.cancellationFenceOnStrictParentWinsOverALaterChildFailure` (P-STORE-4) already exercises the accepted-fence exception; the row now cites it.
+- **P2-STORE-13** (S12-300). After ALREADY_TERMINAL on a retry, declare a new
+  entity, admit it with the same input and assert it succeeds independently
+  with its own attempt 1.
+- **P2-STORE-14** (S12-353). Forward-jump the injected clock across admission,
+  retry and read acquisition (not only publication) and assert each refuses
+  CLOCK_UNSAFE or accepts per the documented policy.
+- **P2-STORE-15** (S12-316, D6). Extend `DurableBranchTest.coverage` to follow
+  `more()` over a scope with more than 256 members and assert the recomputed
+  root equals the checkpoint seal.
+
+### Raw peer against the Java listener
+
+- **P2-PEER-1** (S12-024). Send an ignorable frame, then a profile-dependent
+  request without the profile, and assert the request is still refused
+  EXTENSION_UNSUPPORTED.
+- **P2-PEER-2** (S12-038). Reconnect a `DurableClient` with retained work and
+  capture its CAPABILITIES offer at a raw authority; assert the retained
+  profiles are in `required`.
+- **P2-PEER-3** (S12-041). Push an object larger than the negotiated stream
+  window (window 64 KiB, object 1 MiB) through `RawDurablePeer` and assert
+  admission completes with the credit observations bounded by the window.
+- **P2-PEER-4** (S12-043, S12-044, S12-045, S12-047). One transport test:
+  open the data-stream allowance, send control requests while data streams
+  are saturated, and assert control responses keep arriving (the reservation
+  observed peer-side); record the connection window before and after a long
+  transfer to show autotuning stays inert.
+- **P2-PEER-5** (S12-068). Open and finish 2 000 input streams on one
+  connection and assert every stream id is unique and increasing.
+- **P2-PEER-6** (S12-076). Abort a result read from the peer side with
+  STOP_SENDING and assert the listener answers with RESET_STREAM (not a
+  RESET from the receiver), through `Incoming` failure causes.
+- **P2-PEER-7** (S12-077). Send an input whose admission response has already
+  been sent (replay the header on a new stream after the response) and assert
+  no second REFUSAL is produced for the replayed stream.
+- **P2-PEER-8** (S12-082). Close the connection from the peer with an
+  unrecognised application error code and assert the listener releases the
+  session and connection slots without recording success.
+- **P2-PEER-9** (S12-150). From a raw peer, send an input before its covering
+  declaration receipt has been read and assert the listener's CONFLICT plus
+  that `DurableClient` never sends such an input (journal intent order).
+- **P2-PEER-10** (S12-184). Not observable through the pinned Netty codec,
+  which does not expose the STOP_SENDING application error to the receiver;
+  keep the "write no longer completes" assertion and record the limit.
+- **P2-PEER-11** (S12-239). Drive a 30 000 ms watch answered at 29 s through
+  the control-deadline test's injected clock (the wire bound, not 10 s).
+- **P2-PEER-12** (S12-321). Assert the numeric application error 0 on the
+  client's close after a completed drain, from the listener's close event.
+- **P2-PEER-13** (S12-011). Left PARTIAL by decision (see the row).
+
+### Raw authority against the Java client
+
+- **P2-AUTH-1** (S12-284). Start a client with only a locator string and no
+  saved selection and assert it makes no discovery call and reports NOT_FOUND
+  locally.
+- **P2-AUTH-2** (S12-285). After a delivered result, revoke the session at the
+  raw authority and assert the installed local file is untouched.
+
+### Spec-owner decisions, not tests
+
+- S12-023 (D2), S12-338 (D7), S12-248 (D13).
+
 
 ## Clauses where the Java code looks wrong, not merely untested
 
