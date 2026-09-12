@@ -215,6 +215,8 @@ final class InputStore implements AutoCloseable {
   private int handles;
   private final Map<Path, Integer> inputReaders = new HashMap<>();
   private final Map<Path, Integer> inputReceivers = new HashMap<>();
+  /** Installed objects whose admission transaction has not released them yet (in-memory). */
+  private final Map<Path, Integer> installedPins = new HashMap<>();
   private final Map<Commitments.Context, Integer> receivingSessions = new HashMap<>();
   private final Map<Path, Long> inputRemovals = new HashMap<>();
   // Preserve prepaid output charges across a same-process interrupted funding removal.
@@ -1231,7 +1233,9 @@ final class InputStore implements AutoCloseable {
       throws IOException {
     ensureOpen();
     Path target = objectPath(envelope(context, header));
-    return inputReaders.containsKey(target) || inputReceivers.containsKey(target);
+    return inputReaders.containsKey(target)
+        || inputReceivers.containsKey(target)
+        || installedPins.containsKey(target);
   }
 
   /**
@@ -1434,6 +1438,21 @@ final class InputStore implements AutoCloseable {
      * @throws IOException for failed installation or a closed receiver
      */
     synchronized Stored finish(long nowNanos) throws IOException {
+      return finish(nowNanos, false);
+    }
+
+    /**
+     * Install the complete validated input and, when asked, keep it pinned against orphan
+     * reclamation until the returned handle is released. The authority admits an installed input
+     * in a later storage transaction; without the pin, a retention sweep between installation and
+     * that commit sees an unadmitted, unowned object and reclaims it (handoff defect 10).
+     *
+     * @param nowNanos local monotonic time
+     * @param pinUntilReleased whether {@link Stored#release()} ends the object's physical ownership
+     * @return installed object, pinned when requested
+     * @throws IOException for verification, installation or synchronization failure
+     */
+    synchronized Stored finish(long nowNanos, boolean pinUntilReleased) throws IOException {
       if (ended) throw new IOException("input receiver is closed");
       try {
         verifier.finish(nowNanos);
@@ -1457,7 +1476,8 @@ final class InputStore implements AutoCloseable {
           }
           sync(root.resolve("objects"));
           reached(Phase.OBJECT_SYNCED);
-          Stored stored = new Stored(envelope, target);
+          Stored stored = new Stored(envelope, target, pinUntilReleased);
+          if (pinUntilReleased) installedPins.merge(target, 1, Integer::sum);
           close();
           return stored;
         }
@@ -1502,10 +1522,34 @@ final class InputStore implements AutoCloseable {
   final class Stored {
     private final Envelope envelope;
     private final Path path;
+    private final boolean pinned;
+    private boolean released;
 
     private Stored(Envelope envelope, Path path) {
+      this(envelope, path, false);
+    }
+
+    private Stored(Envelope envelope, Path path, boolean pinned) {
       this.envelope = envelope;
       this.path = path;
+      this.pinned = pinned;
+    }
+
+    /**
+     * End the physical ownership a pinned installation holds against orphan reclamation. The
+     * admission outcome decides the object's durable fate afterwards; an unpinned handle is
+     * unaffected. Idempotent.
+     */
+    void release() {
+      synchronized (InputStore.this) {
+        if (!pinned || released) return;
+        released = true;
+        Integer pins = installedPins.get(path);
+        if (pins == null || pins == 0)
+          throw new IllegalStateException("installed input pin accounting underflow");
+        if (pins == 1) installedPins.remove(path);
+        else installedPins.put(path, pins - 1);
+      }
     }
 
     /**

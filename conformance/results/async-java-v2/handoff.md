@@ -40,6 +40,7 @@ Commits (all plain author identity, no generated attribution):
 | `0d8ec7bf` | wire-level scope paging (`ScopePagingWireTest`): a 300-member sealed scope walked with `after-entity` and `more` over real QUIC, a mid-range page, a page past the end, an unsealed scope that grows after an empty page and seals only on the sealing declaration (S12-288 to S12-290); the 18 refusal codes pinned to the Section 11.10 registry with reserved and out-of-range values mapped to FRAME_ERROR (`RefusalCodeRegistryTest`, S12-072). The paging fixture reproduces the C15 storage bound: the default file policy refuses the first 256-member declaration with LIMIT_EXCEEDED `SQLite file capacity exhausted`, so the test funds the authority through `V2Main.configuration` (`db-mib` 1024, `wal-mib` 256) |
 | `c9edaed8` | wire and client gap tests: OUTPUT_UNAVAILABLE over real QUIC after the installed object is deleted, with the SUCCEEDED outcome and manifest unchanged, and a revoked session refused UNAUTHORIZED on a fresh `Read` with no pending read (`ResultDeliveryWireGapTest`, S12-265, S12-277); capability profile lists bounded at 32, strictly increasing, in range, on both lists (`CapabilityListBoundsTest`, S12-028); a manifest locator naming another endpoint is never dereferenced or sent credentials, the read stays on the configured connection (`DurableClientLocatorTest`, S12-280, S12-283); credential expiry closes the bound connection UNAUTHORIZED, the expired certificate cannot return, and a longer-lived certificate for the same principal attaches to the same retained generation (`CredentialExpiryReconnectTest`, S12-098) |
 | `4cb4b444` | listener fix for defect 9: an input's stream and pending slots are released when its admission response or refusal is sent, not when the retained storage-cleanup owner closes (`DurableRequests.Ticket`), so a peer that read the refusal and was granted transport credit is not refused LIMIT_EXCEEDED on its retransmission; found when slow fsync made `DurableWireNegativeTest.stalledInputsExpireWithoutBlockingAHealthyConnection` fail deterministically; regression `DurableRequestsTest.anInputSlotIsReleasedWithItsResponseNotWithItsCleanupOwner`; the wire test now names the drained control messages on failure; new jar pin (section 2) |
+| `ce1bfd77` | listener fix for defect 10: an installed input is pinned against orphan reclamation until its admission transaction ends (`InputStore.Receiver.finish(now, true)`, `Stored.release`, `inputInUse`), so a retention sweep running during the admission reports PINNED instead of deleting the object and refusing NOT_READY `complete validated input is unavailable`; root cause of the `admit-notready` rows in Meta's C16 cells; reproduced with the INPUT_INSTALLED boundary park (`InputInstallReclaimRaceTest`, red before the fix) and pinned at the store (`InputStorePinnedInstallTest`); gate: the targeted 54-test run is green, the full 744-test run under host load average 32 had four timing failures in unrelated classes that fail identically on 4fe9fff2 under the same load (A/B in a scratch worktree); clean gate: full offline `mvn test` 744 tests, 0 failures at `2ce4d318` (same Java tree; `raw/full-offline-2026-09-12.summary.log`) with the JVM temp directory on the host's root drive, after two runs on `/work` (`raw/full-offline-2026-09-11f.summary.log`, 21 failures) failed only in the lease-interval and bounded-deadline classes because the RAID drives cost 31 ms per fsync after a small write (root cause, measurements and the mitigation in `raw/host-fsync-2026-09-12.md`); new jar pin (section 2) |
 
 Working tree at `a700f5f4`: clean. Nothing pushed (no push authorization was
 given); no CI exists for this branch; no draft/deploy action taken; the
@@ -115,6 +116,9 @@ native jar `e49d88b724cc79c936899542c1565a00454a93d512816de6e8cfefa637c51c50`.
   tracker: a refused or answered input releases its stream slot with its
   response, defect 9; wire behaviour otherwise unchanged): lib jar `5a658ac1ca61f13b43dce42b46f513fa4b508110c44e178dbb0d8336b8ea0f59`,
   shaded all-jar `02a410fc711a038e729305db5fdaae4cd80b809a220b8e2be6cdbb6e0c1bc014`.
+  Superseded at `ce1bfd77` (listener: an installed input stays pinned through its
+  admission transaction so a retention sweep cannot reclaim it, defect 10; wire
+  behaviour otherwise unchanged): lib jar `a2d98870649a479347d437511df55fa7a63fc656232e0e21732ba72af628a722`, shaded all-jar `28c3369bd95210ab50e3e3fc9026c5150a9fc91bac1810b796a23adfe19b002c`.
   Kimi's driver (run by follow-on agents while Kimi is away) merged `0176855`
   at milestone 17 (`add98fd6`, archive `durable-18d3ea398f09f12e`, JVM heap
   frozen at `-Xms256m -Xmx2g`) and `7585a9dc` at milestone 17b.
@@ -342,6 +346,30 @@ no longer rewrites the WAL index on every store call. Full offline run at
    `DurableRequestsTest.anInputSlotIsReleasedWithItsResponseNotWithItsCleanupOwner`
    (deterministic, no storage involved), plus the wire test under slow
    storage. Listener wire behaviour otherwise unchanged; new jar pin below.
+10. **Java listener: an installed input under admission could be reclaimed
+   as an orphan by the retention sweep.** `InputStore.Receiver.finish` links
+   the complete validated object into place and then closes the receiver,
+   which drops the object's physical ownership; the admission transaction
+   (`SessionStore.admit` -> `AdmissionStore.admit` -> `InputStore.find`) runs
+   afterwards on the storage worker and fsyncs several times. In that window
+   the object has no admission record and no reader or receiver, which is
+   exactly the retention sweep's orphan criterion (`OrphanStore.reference`
+   not LIVE, `InputStore.inputInUse` false), so `reclaimOrphan` deleted it and
+   the admission refused NOT_READY `complete validated input is unavailable`
+   for an input the peer had fully transmitted. Meta's C16 coordinator
+   observed it 24 times across its cells as `admit-notready` rows (all mixed
+   arms, all on the first admission of a chunk, each retried successfully)
+   and classified it as backpressure; it is a listener defect. Reproduced
+   deterministically with the Boundaries hook parking the transfer at
+   INPUT_INSTALLED while the host's retention timer sweeps every millisecond
+   (`InputInstallReclaimRaceTest`, red before the fix with the identical
+   refusal). Fixed in `ce1bfd77`: `finish(now, true)` pins the installed object
+   (`installedPins`, consulted by `inputInUse`) and the transfer releases the
+   pin in a `finally` after the admission transaction; the sweep now reports
+   PINNED for such an object. Pins are in-memory, so a crash between
+   installation and commit still leaves a reclaimable orphan (S12-365).
+   Store-level regression `InputStorePinnedInstallTest`. Listener wire
+   behaviour otherwise unchanged; new jar pin below.
 
 Kimi's milestone 17b question (2), the per-stream abort of stalled inputs
 landing between idle+10 s and lifetime+10 s instead of at the 30 s idle bound,
@@ -399,7 +427,7 @@ Three branches carry this window's work, all based on `8eb5a17` on
 | branch | tip | content |
 |---|---|---|
 | `docs/client-recovery-guidance-2026-09` | `ff901451` | spec text: client recovery guidance, MAX_STREAMS correction |
-| `agent/rfc-claude-java-v2` | `4cb4b444` (tests and this document on the same branch) | Java V2 durable authority, listener and client |
+| `agent/rfc-claude-java-v2` | `ce1bfd77` (tests and this document on the same branch) | Java V2 durable authority, listener and client |
 | `agent/rfc-kimi-neutral-v2` | `73766f6a` | neutral conformance driver; contains `7585a9dc` by merge |
 
 `git merge-tree --write-tree feat/durable-work-results-v2 <branch>` reports

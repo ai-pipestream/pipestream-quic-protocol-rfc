@@ -1,0 +1,195 @@
+lock acquired at 2026-09-11T18:05:56Z
+[INFO] Tests run: 23, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 413.1 s -- in ai.pipestream.quic.SealedJobsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in ai.pipestream.quic.SealedProducerInputsTest
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 38.53 s -- in ai.pipestream.quic.SealedProducerJournalTest
+[INFO] Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 48.44 s -- in ai.pipestream.quic.SealedReconciliationTest
+[INFO] Tests run: 25, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 73.24 s -- in ai.pipestream.quic.SealedServerTest
+[INFO] Tests run: 16, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 87.88 s -- in ai.pipestream.quic.SealedSessionStoreTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 71.70 s -- in ai.pipestream.quic.SealedSqliteFilesTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 8.167 s -- in ai.pipestream.quic.SealedSqliteImagesTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in ai.pipestream.quic.SealedTransportTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in ai.pipestream.quic.SealedWorkTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.029 s -- in ai.pipestream.quic.WireTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 39.00 s -- in ai.pipestream.quic.v2.AdmissionCapacityTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 30.67 s -- in ai.pipestream.quic.v2.AdmissionPolicyTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 15.06 s -- in ai.pipestream.quic.v2.AdmissionStoreRecoveryTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 42.12 s -- in ai.pipestream.quic.v2.AdmissionStoreTest
+[ERROR] Tests run: 6, Failures: 1, Errors: 5, Skipped: 0, Time elapsed: 35.83 s <<< FAILURE! -- in ai.pipestream.quic.v2.AuthorityExpansionRuntimeFailureTest
+[ERROR] ai.pipestream.quic.v2.AuthorityExpansionRuntimeFailureTest.wrongThreadConflictOverridesEarlierRecoverableCapacityYield -- Time elapsed: 6.177 s <<< ERROR!
+[ERROR] ai.pipestream.quic.v2.AuthorityExpansionRuntimeFailureTest.unfinishedReceiveAndSwallowedMisuseCannotCompleteExpansion -- Time elapsed: 5.762 s <<< ERROR!
+[ERROR] ai.pipestream.quic.v2.AuthorityExpansionRuntimeFailureTest.yieldedExpansionReplaysDeclarationAndAdmissionWithoutChangingChildIdentity -- Time elapsed: 6.224 s <<< ERROR!
+[ERROR] ai.pipestream.quic.v2.AuthorityExpansionRuntimeFailureTest.expansionContextIsThreadAndInvocationBound -- Time elapsed: 6.161 s <<< ERROR!
+[ERROR] ai.pipestream.quic.v2.AuthorityExpansionRuntimeFailureTest.revokedCurrentParentFenceStopsLocalInputAndReleasesReceiverCredit -- Time elapsed: 5.776 s <<< FAILURE!
+[ERROR] ai.pipestream.quic.v2.AuthorityExpansionRuntimeFailureTest.childJobCapacityLimitYieldsAndLaterReplaysAcceptedWorkWithoutNewAttempt -- Time elapsed: 5.728 s <<< ERROR!
+[ERROR] Tests run: 2, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 20.35 s <<< FAILURE! -- in ai.pipestream.quic.v2.AuthorityExpansionRuntimeTest
+[ERROR] ai.pipestream.quic.v2.AuthorityExpansionRuntimeTest.oneWorkerExpandsRealInputsExecutesChildrenAndReassemblesPublishedParent -- Time elapsed: 11.84 s <<< FAILURE!
+[ERROR] Tests run: 2, Failures: 2, Errors: 0, Skipped: 0, Time elapsed: 26.35 s <<< FAILURE! -- in ai.pipestream.quic.v2.AuthorityExpansionSchedulingTest
+[ERROR] ai.pipestream.quic.v2.AuthorityExpansionSchedulingTest.yieldedParentCannotStarveFirstChildNeededToFundSecondChildAdmission(int)[1] -- Time elapsed: 12.91 s <<< FAILURE!
+[ERROR] ai.pipestream.quic.v2.AuthorityExpansionSchedulingTest.yieldedParentCannotStarveFirstChildNeededToFundSecondChildAdmission(int)[2] -- Time elapsed: 13.44 s <<< FAILURE!
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 6.106 s <<< FAILURE! -- in ai.pipestream.quic.v2.AuthorizationClockRecoveryTest
+[ERROR] ai.pipestream.quic.v2.AuthorizationClockRecoveryTest.temporaryWithdrawalUnsafeClockAndDurableRevocationAreDistinctAndNeverRetried -- Time elapsed: 6.082 s <<< FAILURE!
+[ERROR] Tests run: 4, Failures: 0, Errors: 3, Skipped: 0, Time elapsed: 22.05 s <<< FAILURE! -- in ai.pipestream.quic.v2.BranchExecutionCapacityTest
+[ERROR] ai.pipestream.quic.v2.BranchExecutionCapacityTest.threeHandlesProtectSequentialChildReadsAndParentWriterFromOrdinaryReaders -- Time elapsed: 5.987 s <<< ERROR!
+[ERROR] ai.pipestream.quic.v2.BranchExecutionCapacityTest.readerCreditIsStoreBoundAndOneChargeCanBeBorrowedSequentially -- Time elapsed: 7.512 s <<< ERROR!
+[ERROR] ai.pipestream.quic.v2.BranchExecutionCapacityTest.unfinishedReadAndRevokedOrExpiredGrantReleaseEveryPhysicalHandle -- Time elapsed: 6.146 s <<< ERROR!
+[ERROR] Tests run: 2, Failures: 1, Errors: 1, Skipped: 0, Time elapsed: 12.41 s <<< FAILURE! -- in ai.pipestream.quic.v2.BranchExecutionRecoveryTest
+[ERROR] ai.pipestream.quic.v2.BranchExecutionRecoveryTest.swallowedMissingChildBytesRemainStorageFailureWithoutComputedOutcome -- Time elapsed: 6.000 s <<< ERROR!
+[ERROR] ai.pipestream.quic.v2.BranchExecutionRecoveryTest.interruptedOpenChildReaderIsRecoveredOnlyAfterLeaseExpiry -- Time elapsed: 6.411 s <<< FAILURE!
+[ERROR] Tests run: 5, Failures: 0, Errors: 5, Skipped: 0, Time elapsed: 26.40 s <<< FAILURE! -- in ai.pipestream.quic.v2.BranchExecutionTest
+[ERROR] ai.pipestream.quic.v2.BranchExecutionTest.lostSettledChildOutputAccountingPropagatesSqlCorruptionWithoutFailingParent -- Time elapsed: 5.947 s <<< ERROR!
+[ERROR] ai.pipestream.quic.v2.BranchExecutionTest.leafUnknownChildAndUnfinishedChildReadsAreStickyAndCannotPublishSuccess -- Time elapsed: 3.740 s <<< ERROR!
+[ERROR] ai.pipestream.quic.v2.BranchExecutionTest.reconstructsTwoPagedChildOutputsAndRetainsExactParentAndRootEvidence -- Time elapsed: 5.747 s <<< ERROR!
+[ERROR] ai.pipestream.quic.v2.BranchExecutionTest.abandonedConcurrentInvalidAndZeroLengthChildReadsCannotPublishSuccess -- Time elapsed: 5.469 s <<< ERROR!
+[ERROR] ai.pipestream.quic.v2.BranchExecutionTest.emptyChildOutputRequiresNonemptyReadToObserveEofAndThenAllowsParentSuccess -- Time elapsed: 5.496 s <<< ERROR!
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 13.53 s <<< FAILURE! -- in ai.pipestream.quic.v2.BranchSchedulerTest
+[ERROR] ai.pipestream.quic.v2.BranchSchedulerTest.oneWorkerAutomaticallyExecutesChildrenClosesScopesAndThenReassemblesParent -- Time elapsed: 13.53 s <<< FAILURE!
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 13.48 s -- in ai.pipestream.quic.v2.CancellationReconciliationTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in ai.pipestream.quic.v2.CapabilityListBoundsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.571 s -- in ai.pipestream.quic.v2.CheckpointObservationTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.140 s -- in ai.pipestream.quic.v2.ClientJournalFaultTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.777 s -- in ai.pipestream.quic.v2.ClientRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 14.17 s -- in ai.pipestream.quic.v2.ClosureReconciliationCapacityTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 11.11 s -- in ai.pipestream.quic.v2.ClosureReconciliationRecoveryTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 14.48 s -- in ai.pipestream.quic.v2.ClosureReconciliationTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.644 s -- in ai.pipestream.quic.v2.CompletedSessionObservationTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.799 s -- in ai.pipestream.quic.v2.ControlWaitServiceTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.335 s -- in ai.pipestream.quic.v2.CredentialExpiryReconnectTest
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 8.174 s -- in ai.pipestream.quic.v2.DeclarationStoreTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 12.39 s -- in ai.pipestream.quic.v2.DurableAuthorizationTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 5.663 s -- in ai.pipestream.quic.v2.DurableBranchTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.268 s -- in ai.pipestream.quic.v2.DurableClientContradictionTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 19.15 s -- in ai.pipestream.quic.v2.DurableClientControlDeadlineTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.263 s -- in ai.pipestream.quic.v2.DurableClientLocatorTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.444 s -- in ai.pipestream.quic.v2.DurableClientResultNegativeTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.518 s -- in ai.pipestream.quic.v2.DurableClientTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.062 s -- in ai.pipestream.quic.v2.DurableHostIdleWritesTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.858 s -- in ai.pipestream.quic.v2.DurableLifecycleTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.318 s -- in ai.pipestream.quic.v2.DurableMutationTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.375 s -- in ai.pipestream.quic.v2.DurableRequestsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.633 s -- in ai.pipestream.quic.v2.DurableServerTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 39.60 s -- in ai.pipestream.quic.v2.DurableWireNegativeTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.658 s -- in ai.pipestream.quic.v2.ExecutionClosureTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.233 s -- in ai.pipestream.quic.v2.ExecutionDiscoverySuffixTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.877 s -- in ai.pipestream.quic.v2.ExecutionDiscoveryTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.400 s -- in ai.pipestream.quic.v2.ExecutionRuntimeCreditTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 10.14 s -- in ai.pipestream.quic.v2.ExecutionRuntimeResourceTest
+[INFO] Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.751 s -- in ai.pipestream.quic.v2.ExecutionRuntimeTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.506 s -- in ai.pipestream.quic.v2.ExecutionSchedulerRecoveryTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.443 s -- in ai.pipestream.quic.v2.ExecutionSchedulerTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.264 s -- in ai.pipestream.quic.v2.ExecutionStoreCapacityTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.277 s -- in ai.pipestream.quic.v2.ExecutionStorePolicyTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.332 s -- in ai.pipestream.quic.v2.ExecutionStoreRecoveryTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.126 s -- in ai.pipestream.quic.v2.ExecutionStoreTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.315 s -- in ai.pipestream.quic.v2.ExpansionTransitionTest
+[INFO] Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.493 s -- in ai.pipestream.quic.v2.FenceStoreTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.257 s -- in ai.pipestream.quic.v2.FixedRecordsTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 52.19 s -- in ai.pipestream.quic.v2.FixtureMainTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.184 s -- in ai.pipestream.quic.v2.InputInstallReclaimRaceTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.139 s -- in ai.pipestream.quic.v2.InputReceiverCreditTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.066 s -- in ai.pipestream.quic.v2.InputRetirementGateTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.304 s -- in ai.pipestream.quic.v2.InputStoreFundingRecoveryTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.108 s -- in ai.pipestream.quic.v2.InputStoreFundingTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.200 s -- in ai.pipestream.quic.v2.InputStorePinnedInstallTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.156 s -- in ai.pipestream.quic.v2.InputStoreReaderPinsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.091 s -- in ai.pipestream.quic.v2.InputStoreReceiverPinsTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.204 s -- in ai.pipestream.quic.v2.InputStoreRecoverySyncTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.067 s -- in ai.pipestream.quic.v2.InputStoreRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.380 s -- in ai.pipestream.quic.v2.InputStoreResourceTest
+[INFO] Tests run: 13, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.727 s -- in ai.pipestream.quic.v2.InputStoreTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.678 s -- in ai.pipestream.quic.v2.OrphanRetainedReleaseTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.413 s -- in ai.pipestream.quic.v2.OrphanScanTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.806 s -- in ai.pipestream.quic.v2.OrphanStoreTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.644 s -- in ai.pipestream.quic.v2.OrphanStoreRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.325 s -- in ai.pipestream.quic.v2.OutputRetentionDependencyTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.591 s -- in ai.pipestream.quic.v2.OutputRetentionGeometryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.777 s -- in ai.pipestream.quic.v2.OutputRetentionStoreRecoveryTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.161 s -- in ai.pipestream.quic.v2.OutputRetentionStoreTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.806 s -- in ai.pipestream.quic.v2.OutputStoreReclaimRecoveryTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.191 s -- in ai.pipestream.quic.v2.OutputStoreReclaimTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.373 s -- in ai.pipestream.quic.v2.OutputStoreRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.420 s -- in ai.pipestream.quic.v2.OutputStoreResourceTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.127 s -- in ai.pipestream.quic.v2.OutputStoreTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.191 s -- in ai.pipestream.quic.v2.ProducedAdmissionTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.628 s -- in ai.pipestream.quic.v2.ProducedDeclarationTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.220 s -- in ai.pipestream.quic.v2.ProducedInputOrphanRaceTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.904 s -- in ai.pipestream.quic.v2.ProducedRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.378 s -- in ai.pipestream.quic.v2.PublicationStoreCapacityTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.848 s -- in ai.pipestream.quic.v2.PublicationStoreRecoveryTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.873 s -- in ai.pipestream.quic.v2.PublicationStoreTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in ai.pipestream.quic.v2.RefusalCodeRegistryTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.399 s -- in ai.pipestream.quic.v2.ResultDeliveryWireGapTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.353 s -- in ai.pipestream.quic.v2.ResultServiceTest
+[INFO] Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.810 s -- in ai.pipestream.quic.v2.ResultStoreTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.729 s -- in ai.pipestream.quic.v2.RetentionServiceTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.849 s -- in ai.pipestream.quic.v2.RetentionStoreRecoveryTest
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.962 s -- in ai.pipestream.quic.v2.RetentionStoreTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.552 s -- in ai.pipestream.quic.v2.RetirementChildScopeTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.686 s -- in ai.pipestream.quic.v2.RetirementIntegrityTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in ai.pipestream.quic.v2.RetirementRecordTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.462 s -- in ai.pipestream.quic.v2.RetirementServiceTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.516 s -- in ai.pipestream.quic.v2.RetryStoreFailureTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.710 s -- in ai.pipestream.quic.v2.RetryStoreTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.347 s -- in ai.pipestream.quic.v2.ScopePagingWireTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.048 s -- in ai.pipestream.quic.v2.SessionRetirementCrashTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.567 s -- in ai.pipestream.quic.v2.SessionRetirementTest
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.320 s -- in ai.pipestream.quic.v2.SessionStoreTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.664 s -- in ai.pipestream.quic.v2.StoreBindingRecoveryTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.465 s -- in ai.pipestream.quic.v2.StoreBindingTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.316 s -- in ai.pipestream.quic.v2.StreamTransportTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in ai.pipestream.quic.v2.TransportDependencyTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in ai.pipestream.quic.v2.V2ObjectStreamTest
+[INFO] Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in ai.pipestream.quic.v2.V2ClientCorrelationTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.648 s -- in ai.pipestream.quic.v2.V2CommitmentResourceTest
+[INFO] Tests run: 16, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.479 s -- in ai.pipestream.quic.v2.V2CommitmentsTest
+[INFO] Tests run: 13, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.196 s -- in ai.pipestream.quic.v2.V2CoreClientTest
+[INFO] Tests run: 13, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.274 s -- in ai.pipestream.quic.v2.V2CoreServerTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 23.52 s -- in ai.pipestream.quic.v2.V2MainProcessTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.063 s -- in ai.pipestream.quic.v2.V2MainStorageFundingTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.078 s -- in ai.pipestream.quic.v2.V2ObjectResourceTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.345 s -- in ai.pipestream.quic.v2.V2TlsTest
+[INFO] Tests run: 77, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.019 s -- in ai.pipestream.quic.v2.V2WireTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 13.76 s -- in ai.pipestream.quic.SealedCheckpointStoreTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 27.08 s -- in ai.pipestream.quic.SealedCompletionReservationsTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.447 s -- in ai.pipestream.quic.SealedExecutorTest
+[INFO] Tests run: 15, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.255 s -- in ai.pipestream.quic.SealedPayloadStoreTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in ai.pipestream.quic.SealedScopeTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.417 s -- in ai.pipestream.quic.SealedStateImagesTest
+[INFO] Tests run: 14, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.404 s -- in ai.pipestream.quic.SealedStoreBindingTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in ai.pipestream.quic.TlsPeerIdentityTest
+[ERROR] Failures: 
+[ERROR]   AuthorityExpansionRuntimeFailureTest.revokedCurrentParentFenceStopsLocalInputAndReleasesReceiverCredit:205->assertCode:478 CONFLICT: local monotonic lease interval ended ==> expected: <UNAUTHORIZED> but was: <CONFLICT>
+[ERROR]   AuthorityExpansionRuntimeTest.oneWorkerExpandsRealInputsExecutesChildrenAndReassemblesPublishedParent:92->await:344 condition not reached before bounded deadline
+[ERROR]   AuthorityExpansionSchedulingTest.yieldedParentCannotStarveFirstChildNeededToFundSecondChildAdmission:119->await:230 condition not reached before bounded deadline
+[ERROR]   AuthorityExpansionSchedulingTest.yieldedParentCannotStarveFirstChildNeededToFundSecondChildAdmission:119->await:230 condition not reached before bounded deadline
+[ERROR]   AuthorizationClockRecoveryTest.temporaryWithdrawalUnsafeClockAndDurableRevocationAreDistinctAndNeverRetried:122 WORK revision=2 state=1 attempt=1 child=none
+[ERROR]   BranchExecutionRecoveryTest.interruptedOpenChildReaderIsRecoveredOnlyAfterLeaseExpiry:67 WARNING: A restricted method in java.lang.System has been called
+[ERROR]   BranchSchedulerTest.oneWorkerAutomaticallyExecutesChildrenClosesScopesAndThenReassemblesParent:72->await:157 condition not reached before bounded deadline
+[ERROR] Errors: 
+[ERROR]   AuthorityExpansionRuntimeFailureTest.childJobCapacityLimitYieldsAndLaterReplaysAcceptedWorkWithoutNewAttempt:246 » Protocol CONFLICT: local monotonic lease interval ended
+[ERROR]   AuthorityExpansionRuntimeFailureTest.expansionContextIsThreadAndInvocationBound:175 » Protocol CONFLICT: local monotonic lease interval ended
+[ERROR]   AuthorityExpansionRuntimeFailureTest.unfinishedReceiveAndSwallowedMisuseCannotCompleteExpansion:115 » Protocol CONFLICT: local monotonic lease interval ended
+[ERROR]   AuthorityExpansionRuntimeFailureTest.wrongThreadConflictOverridesEarlierRecoverableCapacityYield:313 » Protocol CONFLICT: local monotonic lease interval ended
+[ERROR]   AuthorityExpansionRuntimeFailureTest.yieldedExpansionReplaysDeclarationAndAdmissionWithoutChangingChildIdentity:72 » Protocol CONFLICT: local monotonic lease interval ended
+[ERROR]   BranchExecutionCapacityTest.readerCreditIsStoreBoundAndOneChargeCanBeBorrowedSequentially:115 » Protocol CONFLICT: local monotonic lease interval ended
+[ERROR]   BranchExecutionCapacityTest.threeHandlesProtectSequentialChildReadsAndParentWriterFromOrdinaryReaders:48 » Protocol CONFLICT: local monotonic lease interval ended
+[ERROR]   BranchExecutionCapacityTest.unfinishedReadAndRevokedOrExpiredGrantReleaseEveryPhysicalHandle:155 » Protocol CONFLICT: local monotonic lease interval ended
+[ERROR]   BranchExecutionRecoveryTest.swallowedMissingChildBytesRemainStorageFailureWithoutComputedOutcome:178 » Protocol CONFLICT: local monotonic lease interval ended
+[ERROR]   BranchExecutionTest.abandonedConcurrentInvalidAndZeroLengthChildReadsCannotPublishSuccess:214->prepared:379 » Protocol CONFLICT: local monotonic lease interval ended
+[ERROR]   BranchExecutionTest.emptyChildOutputRequiresNonemptyReadToObserveEofAndThenAllowsParentSuccess:351->prepared:379 » Protocol CONFLICT: local monotonic lease interval ended
+[ERROR]   BranchExecutionTest.leafUnknownChildAndUnfinishedChildReadsAreStickyAndCannotPublishSuccess:143 » Protocol CONFLICT: local monotonic lease interval ended
+[ERROR]   BranchExecutionTest.lostSettledChildOutputAccountingPropagatesSqlCorruptionWithoutFailingParent:273->prepared:379 » Protocol CONFLICT: local monotonic lease interval ended
+[ERROR]   BranchExecutionTest.reconstructsTwoPagedChildOutputsAndRetainsExactParentAndRootEvidence:65 » Protocol CONFLICT: local monotonic lease interval ended
+[ERROR] Tests run: 744, Failures: 7, Errors: 14, Skipped: 0
+[INFO] BUILD FAILURE
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.6.0:test (default-test) on project pipestream-quic-netty: There are test failures.
+[ERROR] 
+[ERROR] See /work/worktrees/pipestream-rfc-claude/implementations/java-netty/target/surefire-reports for the individual test results.
+[ERROR] See dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
+RUN_EXIT=1 at 2026-09-11T18:29:26Z
