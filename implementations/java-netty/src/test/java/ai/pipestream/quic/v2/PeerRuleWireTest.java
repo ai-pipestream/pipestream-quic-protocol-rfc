@@ -318,6 +318,111 @@ class PeerRuleWireTest {
   }
 
   @Test
+  void objectsLargerThanTheStreamWindowFlowBothWaysWithBoundedCredit() throws Exception {
+    // S12-041: the peer's stream window is 64 KiB and the object is sixteen times that. Both the
+    // input admission and the result read complete exactly, consumed incrementally under credit
+    // replenishment, and the peer's stream credit is whole again afterwards.
+    byte[] input = DurableServerTest.payload(1 << 20, 11);
+    Records.WorkKey work = new Records.WorkKey(0, 0, 1);
+    try (DurableHost host = host("large-object");
+        DurableServer server = server(host);
+        RawDurablePeer peer = peer(server, List.of(DURABLE_WORK, RESULT_DELIVERY))) {
+      int allowance = peer.selected.streamLimit();
+      Binding binding =
+          assertInstanceOf(Binding.class, peer.call(new Create(peer.request(), 1, POLICY)));
+      assertInstanceOf(
+          DeclarationResponse.class,
+          peer.call(
+              new Declare(peer.request(), DurableServerTest.operation(1), 0, List.of(1L), true)));
+      peer.sendInput(
+          DurableServerTest.header(binding.generation(), 2, work, input, "copy/v2", 0),
+          input,
+          true);
+      assertInstanceOf(AdmissionResponse.class, peer.next());
+      Records.WorkView done = DurableServerTest.awaitTerminal(peer, work);
+      assertEquals(Records.State.SUCCEEDED, done.state());
+      Records.Output output = done.manifest().outputs().get(0);
+      assertEquals(input.length, output.length());
+      peer.send(new Read(peer.request(), work, 1, 0, output.sha256()));
+      byte[] object = peer.nextObject();
+      assertEquals(
+          input.length, object.length - DurableServerTest.headerLength(object), "object bytes");
+      assertTrue(
+          Arrays.equals(
+              input, 0, input.length, object, DurableServerTest.headerLength(object), object.length),
+          "object content");
+      // The single input slot comes back in the listener's next batched MAX_STREAMS update; the
+      // credit is never below the allowance minus that one stream.
+      assertTrue(peer.streamCredit() >= allowance - 1, "credit " + peer.streamCredit());
+      assertInstanceOf(Detached.class, peer.call(new Detach(peer.request())));
+    }
+  }
+
+  @Test
+  void controlKeepsFlowingWhileEveryDataStreamIsSaturated() throws Exception {
+    // S12-043, S12-044, S12-045: the control reservation is observed peer-side. Every input
+    // stream of the allowance is opened with a partial payload and no FIN, so the listener holds
+    // them all open and the data side is saturated; control requests on the same connection are
+    // still answered promptly, and finishing the streams later returns every slot.
+    byte[] input = DurableServerTest.payload(20_000, 12);
+    try (DurableHost host = host("saturated");
+        DurableServer server = server(host);
+        RawDurablePeer peer = peer(server, List.of(DURABLE_WORK, RESULT_DELIVERY))) {
+      int allowance = peer.selected.streamLimit();
+      Binding binding =
+          assertInstanceOf(Binding.class, peer.call(new Create(peer.request(), 1, POLICY)));
+      List<Long> members = new ArrayList<>();
+      for (long id = 1; id <= allowance; id++) members.add(id);
+      assertInstanceOf(
+          DeclarationResponse.class,
+          peer.call(
+              new Declare(peer.request(), DurableServerTest.operation(1), 0, members, true)));
+      List<QuicStreamChannel> open = new ArrayList<>();
+      for (int entity = 1; entity <= allowance; entity++) {
+        open.add(
+            peer.sendInput(
+                DurableServerTest.header(
+                    binding.generation(),
+                    10 + entity,
+                    new Records.WorkKey(0, 0, entity),
+                    input,
+                    "copy/v2",
+                    0),
+                Arrays.copyOf(input, input.length / 2),
+                false));
+      }
+      assertEquals(0, peer.streamCredit(), "every data stream slot is in use");
+      // Control on the saturated connection: ten requests, each answered within a second.
+      for (int round = 0; round < 10; round++) {
+        long started = System.nanoTime();
+        assertInstanceOf(Sequence.class, peer.call(new NextSequence(peer.request())));
+        WatchResponse watched =
+            assertInstanceOf(
+                WatchResponse.class,
+                peer.call(new Watch(peer.request(), new Records.WorkKey(0, 0, 1), 0, 0)));
+        assertEquals(Records.State.DECLARED, watched.work().state());
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+        assertTrue(
+            elapsedMs < 1000, "control stalled behind saturated data: " + elapsedMs + " ms");
+      }
+      // Finish every input: each admits, and the credit is whole again.
+      for (int entity = 1; entity <= allowance; entity++) {
+        QuicStreamChannel stream = open.get(entity - 1);
+        stream
+            .writeAndFlush(
+                io.netty.buffer.Unpooled.wrappedBuffer(
+                    input, input.length / 2, input.length - input.length / 2))
+            .sync();
+        stream.shutdownOutput().sync();
+      }
+      for (int entity = 1; entity <= allowance; entity++)
+        assertInstanceOf(AdmissionResponse.class, peer.next());
+      peer.awaitStreamCredit(allowance);
+      assertInstanceOf(Detached.class, peer.call(new Detach(peer.request())));
+    }
+  }
+
+  @Test
   void theClientClosesACompletedSessionWithApplicationErrorZero() throws Exception {
     try (RawDurableAuthority authority =
             new RawDurableAuthority(
