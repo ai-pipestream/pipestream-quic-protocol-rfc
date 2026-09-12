@@ -347,9 +347,9 @@ class PeerRuleWireTest {
       byte[] object = peer.nextObject();
       assertEquals(
           input.length, object.length - DurableServerTest.headerLength(object), "object bytes");
+      int headerLength = DurableServerTest.headerLength(object);
       assertTrue(
-          Arrays.equals(
-              input, 0, input.length, object, DurableServerTest.headerLength(object), object.length),
+          Arrays.equals(input, 0, input.length, object, headerLength, object.length),
           "object content");
       // The single input slot comes back in the listener's next batched MAX_STREAMS update; the
       // credit is never below the allowance minus that one stream.
