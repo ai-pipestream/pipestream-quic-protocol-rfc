@@ -423,6 +423,11 @@ no longer rewrites the WAL index on every store call. Full offline run at
    1,000 ms, green after). Full offline suite 745/745 at `ada67cec`; jar pin
    in section 2. Driver evidence: `raw/kimi-driver-acceptance-2026-09-12.log`
    and `.run.tsv` (the driver does not archive a run with a FAIL row).
+   Rerun of `g3-restart-same-roots` on the `32360ec3` jar over seeds 24301,
+   7, 99, 1234 and 4242: PASS on all three directions every time
+   (`raw/g3-restart-rerun-32360ec3-2026-09-12.log`); the merged landing tree
+   `b5af2b1d` (main + this branch + Meta C16) passed the 116-test targeted
+   confirmation run.
 
 The 53-row driver run on `28c3369b` (2026-09-12, stores on the root drive)
 otherwise matched the milestone 17b baseline: 52 rows PASS on every
