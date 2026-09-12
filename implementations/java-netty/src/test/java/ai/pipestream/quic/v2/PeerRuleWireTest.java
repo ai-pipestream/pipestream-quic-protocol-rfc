@@ -158,7 +158,8 @@ class PeerRuleWireTest {
         } else {
           assertEquals(
               new Records.RequestTag(true, stream.streamId()),
-              assertInstanceOf(AdmissionResponse.class, response, "entity " + entity + ": " + response)
+              assertInstanceOf(
+                      AdmissionResponse.class, response, "entity " + entity + ": " + response)
                   .request());
         }
       }
@@ -229,7 +230,8 @@ class PeerRuleWireTest {
       }
       long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
       while (snapshot(server).active() != 0) {
-        assertTrue(System.nanoTime() < deadline, "connection slot not released: " + snapshot(server));
+        assertTrue(
+            System.nanoTime() < deadline, "connection slot not released: " + snapshot(server));
         Thread.sleep(20);
       }
       assertEquals(0, snapshot(server).owners());
@@ -240,7 +242,8 @@ class PeerRuleWireTest {
             Binding.class, again.call(new Attach(again.request(), "issuer-a", "alice", 1)));
         assertEquals(
             Records.State.SUCCEEDED,
-            assertInstanceOf(WatchResponse.class, again.call(new Watch(again.request(), work, 0, 0)))
+            assertInstanceOf(
+                    WatchResponse.class, again.call(new Watch(again.request(), work, 0, 0)))
                 .work()
                 .state());
         assertEquals(
@@ -252,6 +255,65 @@ class PeerRuleWireTest {
                 .state());
         assertInstanceOf(Detached.class, again.call(new Detach(again.request())));
       }
+    }
+  }
+
+  @Test
+  void aReceiverAbortOfAResultReadIsAnsweredByASenderReset() throws Exception {
+    byte[] input = DurableServerTest.payload(200_000, 8);
+    Records.WorkKey work = new Records.WorkKey(0, 0, 1);
+    try (DurableHost host = host("receiver-abort");
+        DurableServer server = server(host);
+        RawDurablePeer peer = peer(server, List.of(DURABLE_WORK, RESULT_DELIVERY))) {
+      Binding binding =
+          assertInstanceOf(Binding.class, peer.call(new Create(peer.request(), 1, POLICY)));
+      assertInstanceOf(
+          DeclarationResponse.class,
+          peer.call(
+              new Declare(peer.request(), DurableServerTest.operation(1), 0, List.of(1L), true)));
+      peer.sendInput(
+          DurableServerTest.header(binding.generation(), 2, work, input, "copy/v2", 0),
+          input,
+          true);
+      assertInstanceOf(AdmissionResponse.class, peer.next());
+      Records.WorkView done = DurableServerTest.awaitTerminal(peer, work);
+      Records.Output output = done.manifest().outputs().get(0);
+      // Once the result stream has started, abort it from the receiving side with STOP_SENDING,
+      // as the client does for a rejected delivery. The sender's side then ends: the listener
+      // releases the read (its snapshot counts none) with most of the object unsent, and no
+      // control response follows for the request. The pinned codec does not expose the
+      // RESET_STREAM code to the receiver; that is the observable half.
+      // The peer holds its reads, so the sender fills the 64 KiB stream window and stalls on flow
+      // control with most of the object unsent; one read batch proves the stream started.
+      peer.holdIncoming = true;
+      peer.send(new Read(peer.request(), work, 1, 0, output.sha256()));
+      RawDurablePeer.Incoming incoming = peer.nextIncoming();
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+      while (peer.held.isEmpty()) {
+        assertTrue(System.nanoTime() < deadline, "result stream held");
+        Thread.sleep(10);
+      }
+      incoming.stream.read();
+      while (incoming.bytes.size() == 0) {
+        assertTrue(System.nanoTime() < deadline, "result stream started");
+        Thread.sleep(10);
+      }
+      incoming.stream.shutdownInput(0x204).sync();
+      deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+      while (snapshot(server).results() != 0) {
+        assertTrue(
+            System.nanoTime() < deadline, "result read not released: " + snapshot(server));
+        Thread.sleep(20);
+      }
+      // The peer's held channel does not report the sender's reset while its reads stay off;
+      // the release at the listener and the partial object are the evidence.
+      byte[] received = incoming.bytes.toByteArray();
+      assertTrue(
+          received.length < DurableServerTest.headerLength(received) + input.length,
+          "the object was not delivered in full");
+      assertNull(peer.messages.poll(1500, TimeUnit.MILLISECONDS), "a control response");
+      assertInstanceOf(Sequence.class, peer.call(new NextSequence(peer.request())));
+      assertInstanceOf(Detached.class, peer.call(new Detach(peer.request())));
     }
   }
 

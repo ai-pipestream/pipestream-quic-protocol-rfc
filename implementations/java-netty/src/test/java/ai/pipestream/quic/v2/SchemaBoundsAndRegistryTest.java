@@ -125,12 +125,35 @@ class SchemaBoundsAndRegistryTest {
     for (long id = 1; id <= 256; id++) full.add(id);
     Messages.Declare declare = new Messages.Declare(3, OP, 0, full, true);
     byte[] frame = Wire.encode(declare, Wire.MAX_CONTROL_LIMIT);
-    Wire.Known known = assertInstanceOf(Wire.Known.class, Wire.decode(frame, Wire.MAX_CONTROL_LIMIT));
+    Wire.Known known =
+        assertInstanceOf(Wire.Known.class, Wire.decode(frame, Wire.MAX_CONTROL_LIMIT));
     assertEquals(declare, known.message());
     List<Long> over = new ArrayList<>(full);
     over.add(257L);
     ProtocolError refused = refused(() -> new Messages.Declare(4, OP, 0, over, true));
     assertEquals(ProtocolError.Code.FRAME_ERROR, refused.code(), refused.toString());
+  }
+
+  /** S12-239, S12-309: the wait bound of watch and checkpoint is 30 000 ms at the schema. */
+  @Test
+  void watchAndCheckpointWaitsAreBoundedAtThirtySeconds() throws Exception {
+    Records.Digest seal = DurableServerTest.digest(new byte[] {4});
+    Messages.Watch watch = new Messages.Watch(1, WORK, 0, 30_000);
+    Messages.Checkpoint checkpoint = new Messages.Checkpoint(2, 0, seal, 30_000);
+    for (Messages.Message message : List.of(watch, checkpoint)) {
+      byte[] frame = Wire.encode(message, Wire.MAX_CONTROL_LIMIT);
+      Wire.Known known =
+          assertInstanceOf(Wire.Known.class, Wire.decode(frame, Wire.MAX_CONTROL_LIMIT));
+      assertEquals(message, known.message());
+    }
+    assertEquals(
+        ProtocolError.Code.FRAME_ERROR,
+        refused(() -> new Messages.Watch(1, WORK, 0, 30_001)).code());
+    assertEquals(
+        ProtocolError.Code.FRAME_ERROR,
+        refused(() -> new Messages.Checkpoint(2, 0, seal, 30_001)).code());
+    assertEquals(
+        ProtocolError.Code.FRAME_ERROR, refused(() -> new Messages.Watch(1, WORK, 0, -1)).code());
   }
 
   /** S12-193: the nine states carry the registry integers 0 to 8 and nothing else decodes. */
