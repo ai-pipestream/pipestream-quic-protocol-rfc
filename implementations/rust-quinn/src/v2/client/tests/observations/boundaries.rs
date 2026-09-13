@@ -219,6 +219,12 @@ fn zero_outputs_and_inputless_cancellation_remain_valid_but_never_invent_referen
     cancelled.terminal_at = Some(Number(200));
     cancelled.receipt_until = Some(Number(180200));
     journal.observe_work(Id(2), &cancelled).unwrap();
+    // Section 12.6 (owner decision 2026-09-13): cancelling an unadmitted entity settles directly
+    // to CANCELLED or SKIPPED, so an inputless CANCELLING view is invalid evidence.
+    let mut cancelling = declared_view();
+    cancelling.work.entity = Id(4);
+    cancelling.state = State::CANCELLING;
+    assert!(journal.observe_work(Id(4), &cancelling).is_err());
     drop(journal);
     let journal = reopen(&path);
     assert_eq!(

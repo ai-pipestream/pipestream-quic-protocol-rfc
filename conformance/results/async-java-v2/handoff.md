@@ -236,7 +236,7 @@ no longer rewrites the WAL index on every store call. Full offline run at
 6. **Cancelled-scope declaration and replay codes** aside, no other refusal
    code disagreement was found between the Java and Rust reference endpoints
    in the exercised matrix.
-7. **Oversized private-type frames (traceability D2, needs a spec call).**
+7. **Oversized private-type frames (traceability D2). DECIDED 2026-09-13 by the owner: LIMIT_EXCEEDED; Section 12.1 now states that length validation precedes type classification, Java is pinned and Rust changed from FRAME_ERROR to match.**
    Section 12.1 says both "Validate lengths before allocating buffers" and
    "Private types 0xC0..0xFF require an activated defining profile; otherwise
    refuse EXTENSION_UNSUPPORTED". The Java decoder (`Wire.Decoder`) judges the
@@ -249,8 +249,8 @@ no longer rewrites the WAL index on every store call. Full offline run at
    probing profile support with a large private frame should learn
    EXTENSION_UNSUPPORTED), the Java decoder changes one branch. No code change
    until decided; `V2WireTest` will pin whichever code is chosen.
-8. **Client-side seal mismatch on checkpoint (traceability D3, needs a spec
-   call).** Section 12.8 gives the authority's answer to a checkpoint over a
+8. **Client-side seal mismatch on checkpoint (traceability D3). DECIDED 2026-09-13 by the owner: the local refusal is allowed and is INTEGRITY_ERROR; Section 12.8 now permits it and `DurableClient.checkpoint` answers so, keeping NOT_READY only while membership is unverified.** Original question:
+   Section 12.8 gives the authority's answer to a checkpoint over a
    different seal (INTEGRITY_ERROR) and requires the client to verify identity,
    seal, count partition and commitments "before acknowledging coverage". The
    Java client also refuses *before sending* when its journal holds verified
@@ -552,7 +552,7 @@ compared with M17b line by line. Its Java items, answered:
   read holds an open descriptor, so reclaiming the name at expiry cannot recall
   bytes already promised (S12-285 in the client direction, and the pin rule),
   and the row's byte-exact completion is the clause satisfied.
-- Question D18 for the spec owner: a journal bound to another authority that
+- Question D18 (DECIDED 2026-09-13 by the owner: CONFLICT; Section 12.3 states it, Java is pinned by `SessionStoreTest`, Rust changed from UNAUTHORIZED): a journal bound to another authority that
   attaches is refused CONFLICT `authority differs` by Java and UNAUTHORIZED by
   Rust (`g5-cross-authority-reference`); neither discloses the session. Section
   12.3 names UNAUTHORIZED for an owner that cannot be authorized and CONFLICT

@@ -103,6 +103,35 @@ final class SessionStoreTest {
   }
 
   @Test
+  void attachNamingAnotherAuthorityIsConflictAfterOwnerAuthorization() throws Exception {
+    SessionStore store =
+        SessionStore.initialize(database("foreign-authority"), configuration(8, 8, 4));
+    SessionStore.Access alice = access("alice");
+    store.create(alice, durable(8192, 1 << 20), new Messages.Create(1, 1, POLICY));
+    // Section 12.3 (owner decision 2026-09-13): the owner is authorized first; then an expected
+    // authority other than the serving one is CONFLICT, for a retained and an absent generation
+    // alike, so the code discloses nothing about retained sessions.
+    assertCode(
+        ProtocolError.Code.CONFLICT,
+        () ->
+            store.attach(
+                alice, durable(8192, 1 << 20), new Messages.Attach(2, "issuer-b", "alice", 1)));
+    assertCode(
+        ProtocolError.Code.CONFLICT,
+        () ->
+            store.attach(
+                alice, durable(8192, 1 << 20), new Messages.Attach(3, "issuer-b", "alice", 999)));
+    // An owner that cannot be authorized for the named owner stays UNAUTHORIZED.
+    assertCode(
+        ProtocolError.Code.UNAUTHORIZED,
+        () ->
+            store.attach(
+                access("mallory"),
+                durable(8192, 1 << 20),
+                new Messages.Attach(4, "issuer-b", "alice", 1)));
+  }
+
+  @Test
   void authorizationPrecedesExistenceAndConfigurationDisclosure() throws Exception {
     SessionStore store = SessionStore.initialize(database("authorization"), configuration(8, 8, 4));
     SessionStore.Access alice = access("alice");

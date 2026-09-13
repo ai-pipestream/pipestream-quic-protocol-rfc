@@ -105,7 +105,7 @@ including most of the refusal-code taxonomy.
 | S12-020 | "Control type values in this mapping are CAPABILITIES (0x01) ... and REFUSAL (0x07). All are CBOR, not the version-1 fixed/serialized type classes." | `Wire`/`MessageCodec` type table | `V2WireTest.allFrozenExpectationsAndExactRoundTrips` (rows `control:01` .. `control:07`) | COVERED | All seven types appear in the frozen corpus. |
 | S12-021 | "An unknown type in 0x00..0x7F is a fatal FRAME_ERROR." | `Wire.Decoder.feed` | `V2WireTest.ignorableBodiesAreDiscardedIncrementallyAndDoNotConsumeFollowingFrames` (types 0, 8, 127); `V2CoreServerTest.malformedNegotiation...` | COVERED | |
 | S12-022 | "Types 0x80..0xBF are ignorable extension frames: discard their bounded body incrementally without applying state changes." | `Wire.Decoder.feed` allocates no body for 128..191 | `V2WireTest.ignorableBodiesAreDiscarded...`; `V2CoreServerTest.ignoredFramesCrossTinyReceiveWindowsWithoutConsumingRequestIdentity`; `V2CoreClientTest.largeIgnoredFrameCrossesTinyWindowWithoutBlockingDetach` | COVERED | A 1 MiB ignorable body is fed in 1024 chunks with `bufferedCapacity() == 0` throughout, and the following frame still decodes. |
-| S12-023 | "Private types 0xC0..0xFF require an activated defining profile; otherwise refuse EXTENSION_UNSUPPORTED." | `Wire.Decoder.feed` | `V2WireTest.ignorableBodiesAreDiscarded...` (192, 255); `V2CoreServerTest.malformedNegotiation...` | PARTIAL | Only the no-profile branch, and only with a zero-length body. An oversized private body is refused LIMIT_EXCEEDED first (defect D2). |
+| S12-023 | "Private types 0xC0..0xFF require an activated defining profile; otherwise refuse EXTENSION_UNSUPPORTED." With the precedence the owner added on 2026-09-13: "Length validation precedes type classification: a declared body longer than the applicable limit is LIMIT_EXCEEDED whatever its type." | `Wire.Decoder.feed` | `V2WireTest.ignorableBodiesAreDiscarded...` (192, 255, in-limit body); `V2WireTest.lengthIsJudgedBeforeTypeSoAnOversizedBodyIsLimitExceededWhateverItsType` (0xC0, 0xFF and five other types over the limit); `V2CoreServerTest.malformedNegotiation...` | COVERED | Both branches: an in-limit private body is EXTENSION_UNSUPPORTED and an over-limit body of any type is LIMIT_EXCEEDED before classification (D2 decided; Rust changed from FRAME_ERROR to match). |
 | S12-024 | "Unknown frames cannot activate a profile." | `Wire.Decoder` returns `Wire.Ignored`; `CoreServer.Control.receive` leaves `highest` untouched | `V2CoreServerTest.ignoredFramesCrossTinyReceiveWindowsWithoutConsumingRequestIdentity`; `V2ClientCorrelationTest.negotiationIsFirstAndUniqueAndProfileUseIsExplicit`; `PeerRuleWireTest.anIgnorableFrameActivatesNoProfile` | COVERED | Request identity, pre-negotiation poisoning, and now an ignorable frame with a body followed by a result request the selection lacks: still EXTENSION_UNSUPPORTED, with the connection usable afterwards. |
 | S12-025 | "Using a known profile-dependent message without that profile is EXTENSION_UNSUPPORTED." | `DurableRequests.accept` (`Read`/`GetManifest` without RESULT_DELIVERY); `CoreServer.Control.receive`; `ClientCorrelation.register` | `V2CoreServerTest.allProfileDependentCoreRequestsReceiveCorrelatedRefusalsWithoutClosing`; `V2ClientCorrelationTest.negotiationIsFirstAndUnique...`; `DurableClientTest.wrongOwnerCannotAttachAndChangedPolicyIsConflict` | COVERED | All 15 profile-dependent request types get a correlated EXTENSION_UNSUPPORTED on a Core-only connection, each without closing it. |
 | S12-026 | "Only CAPABILITIES is allowed before negotiation." | `CoreServer.Control.receive`; `ClientCorrelation.receive` | `V2CoreServerTest.malformedNegotiation...`; `V2ClientCorrelationTest.negotiationIsFirstAndUnique...` | COVERED | Covers a first frame that is a request, an ignorable frame, and a server-direction response. |
@@ -258,7 +258,7 @@ including most of the refusal-code taxonomy.
 | S12-153 | "The seal digest is SHA-256 over ASCII `pipestream-scope-seal-v2` followed by deterministic CBOR of `[authority, owner, generation, scope, producer, parent-or-null, entity-ids]`." | `Commitments.Seal` | `V2CommitmentsTest.frozenCommitmentsComeFromTypedInputs` (`one-member-seal`, `empty-scope-seal`); `.sealRejectsMissingExtraRepeatedReorderedAndInvalidMembersWithoutRecovery` | COVERED | Producer and parent are shown to be bound by `assertNotEquals` against variants. |
 | S12-154 | "The final array contains every declared ID in ascending order, independent of batching. Hash it incrementally; no whole-scope buffer is required." | `Commitments.Seal.add`/`finish` | `V2CommitmentsTest.sealRejectsMissing...` (7 exact counts vs a directly written CBOR array); `DeclarationStoreTest.thousandMembersAcrossBatchesHaveStableStreamedSealAfterReopen`; `V2CommitmentResourceTest.wholeScopeExceedsChildHeapButStreamingCommitmentsComplete` | COVERED | 4,000,003 members folded in a 24 MiB heap with a 672-byte peak frontier. |
 | S12-155 | "Changed membership under a replayed operation, a late new declaration, or an undeclared input is CONFLICT." | `DeclarationStore.declare`; `AdmissionStore.check` | `DeclarationStoreTest.conflictsSealing...`; `DurableBranchTest.undeclaredChildAndWrongScopeProducer...`; `AdmissionStoreTest.identityDeclarationApplicationAndModeRefusals...`; `JavaClientRustServerTest` (gated) | COVERED | All three variants; changed membership is also proven against the Rust authority. |
-| S12-156 | "Seal mismatch is INTEGRITY_ERROR." | `SessionStore.checkpoint`; `ClosureStore.verify` | `ClosureReconciliationTest.sealedEmptyRootClosesWithExactIndependentCommitmentsAndSurvivesRecovery`; `CheckpointObservationTest.wrongSealAndAuthorizationAreCheckedBeforeClosureOrExistenceInformation`; `DurableWireNegativeTest.resultReadRefusalsAndCompleteExclusionAreExact` | COVERED | Store level and over the wire. Note that `DurableClient.checkpoint` short-circuits a mismatch locally with NOT_READY (defect D3), so the e2e path reaches INTEGRITY_ERROR only via a raw peer. |
+| S12-156 | "Seal mismatch is INTEGRITY_ERROR." | `SessionStore.checkpoint`; `ClosureStore.verify` | `ClosureReconciliationTest.sealedEmptyRootClosesWithExactIndependentCommitmentsAndSurvivesRecovery`; `CheckpointObservationTest.wrongSealAndAuthorizationAreCheckedBeforeClosureOrExistenceInformation`; `DurableWireNegativeTest.resultReadRefusalsAndCompleteExclusionAreExact` | COVERED | Store level and over the wire. `DurableClient.checkpoint` refuses a seal that contradicts verified membership locally with the same INTEGRITY_ERROR, as Section 12.8 now permits (D3 decided 2026-09-13; `DurableBranchTest` caller-expanded case). |
 | S12-157 | "Each input is a client-initiated unidirectional stream containing a four-octet unsigned big-endian header length, the exact CBOR `v2-input-header`, then exactly the declared input bytes and FIN. Header length is 1..4096." | `ObjectStream.HeaderReader`; `DurableServer.InputTransfer` | `V2ObjectStreamTest.everyHeaderSplitLeavesCoalescedPayloadUnconsumed`; `.headerBoundsAndDeadlinePrecedeAllocationAndCannotBeRenewedByProgress`; `DurableWireNegativeTest.correlationAndFramingViolations...` (prefix 5000 -> correlated FRAME_ERROR) | COVERED | Lengths 0, 4097 and 2^32-1 are all refused before allocation, and an oversized prefix over the wire yields a stream-tagged refusal without closing the connection. |
 | S12-158 | "Validate session, producer, declared membership, application profile, mode, execution duration, resource budget, descriptor and cancellation fences before accepting its payload." | `DurableServer.InputTransfer.validateHeader`/`startAdmission` calls `checkInput` before `InputStore.begin` | `AdmissionStoreTest.identityDeclarationApplicationAndModeRefusalsDoNotCreateJobs`; `DurableServerTest.inputRefusalsAreCorrelatedByStreamAndLeaveDeclarationsIntact`; `HookPlacementTest.headerRefusalLeavesTheInputStoreUntouched` (usage sampled at REFUSAL_SENT) | COVERED | The input-store usage sampled by the hook at the moment the refusal is written equals the usage before the header was sent, so validation preceded payload acceptance. Cancellation fences at admission are still never driven. |
 | S12-159 | "The header's generation MUST equal the attached session and the work key MUST belong to producer 0." | `AdmissionStore.check`; `DurableServer.InputTransfer.validateHeader`; `InputStore.envelope` | `AdmissionStoreTest.identityDeclarationApplicationAndModeRefusals...`; `DurableServerTest.inputRefusals...` | COVERED | Generation mismatch is CONFLICT; producer 1 is UNAUTHORIZED. |
@@ -355,7 +355,7 @@ including most of the refusal-code taxonomy.
 | S12-245 | "Every admitted view retains its input descriptor, admitted-at, deadline and positive attempt, even when payload bytes later become reclaimable." | `Records.WorkView`; `RetentionStore` release keeps the view | `RetentionStoreTest.terminalInputReclaimsExactlyOnceWithoutChangingOutputFundingOrReceipt`; `OutputRetentionStoreTest.outputFundingReclaimsExactlyAtExpiryAndPreservesInputManifestAndReceipt` | COVERED | The published view is `equals` before and after the physical release. |
 | S12-246 | "A branch has its child-scope field; a leaf has null." | `AdmissionStore.admit` | `AdmissionStoreTest.callerAndAuthorityBranchesAllocateOneStableChildAndReplay`; `.exactLeafAdmissionCommitsTypedViewJobFundingAndReplayAcrossReopen` (`child() == null`) | COVERED | |
 | S12-247 | "Nonterminal views have null terminal-at, receipt-until, output-until and manifest." | `Records.WorkView` compact ctor | `ExecutionRuntimeTest` and `BranchExecutionTest` assert `manifest() == null` on many nonterminal views; `ExecutionStoreTest.claimRenewAndCheckPreserveWireAttemptDeadlineAndFundedCredits` and `.retryableAndTerminalFailureHaveDistinctDurableResourceState` (ACTIVE and AWAITING_RETRY views) | COVERED | `terminalAt`, `receiptUntil` and `outputUntil` are asserted null on an ACTIVE and on an AWAITING_RETRY view, next to the manifest assertions. |
-| S12-248 | "CANCELLING may be inputless when a declared entity was cancelled before admission." | `Records.WorkView` invariants | - | GAP | Not producible through the store: `FenceStore.accept` settles to the desired terminal state whenever the target has no child scope, and the `WorkView` invariant requires an inputless view to have no child, so an unadmitted entity always settles straight to CANCELLED or SKIPPED. Whether the clause intends a reachable state is a question for the spec owner (see defect D13). |
+| S12-248 | "CANCELLING always has admitted input: cancelling or skipping an unadmitted entity settles directly to CANCELLED or SKIPPED." This replaces the dropped clause "CANCELLING may be inputless when a declared entity was cancelled before admission" (owner decision 2026-09-13). | `Records.WorkView` invariants; `FenceStore.accept` | `V2CommitmentsTest.cancellingAlwaysHasAdmittedInput`; `FenceStoreTest.declaredWorkCanBeCancelledOrSkippedWithoutInventingAdmission` | COVERED | D13 decided: the validator refuses an inputless CANCELLING view and an unadmitted target settles straight to CANCELLED or SKIPPED. Rust refuses the view the same way. |
 | S12-249 | "Terminal views have terminal-at and receipt-until; FAILED requires a diagnostic, and AWAITING_RETRY requires the current attempt's diagnostic." | `Records.WorkView` compact ctor | `DurableMutationTest.cancellationSkipAndScopeCancellation...` (`terminalAt() != null`); `ExecutionStoreTest.retryableAndTerminalFailure...`; `ExecutionRuntimeTest.callbackException...`; `DurableBranchTest.strictFailureEmptyScopesAndZeroOutputs`; `ExecutionStoreTest.retryableAndTerminalFailureHaveDistinctDurableResourceState` (`receiptUntil == 31 200` on the FAILED view) | COVERED | `terminalAt`, the diagnostic and now `receiptUntil` are asserted on a terminal view. |
 | S12-250 | "Inputless CANCELLED and SKIPPED retain attempt 0 and null input/admission/deadline/child." | `Records.WorkView` invariants; `FenceStore.accept` | `FenceStoreTest.declaredWorkCanBeCancelledOrSkippedWithoutInventingAdmission`; `DurableMutationTest.cancellationSkipAndScopeCancellationSettleDeclaredWork` | COVERED | |
 | S12-251 | "SUCCEEDED requires admitted input and, when result delivery is selected, the immutable manifest and output-until. Other terminal outcomes have null manifest and output-until." | `Records.WorkView.validateProfiles`; `ExecutionStore.succeed` | `ExecutionRuntimeTest.zeroOutputSuccessUsesEmptyManifestOnlyWhenResultsWereSelected`; `PublicationStoreTest.zeroOutputSuccessDistinguishesResultsManifestFromDurableOnlyState`; `V2WireTest.allFrozenExpectations...` (`inconsistent-success-without-input`); `ExecutionStoreTest.retryableAndTerminalFailureHaveDistinctDurableResourceState` (`outputUntil == null` on the FAILED view) | COVERED | The manifest half in both directions, and `outputUntil` null on a FAILED view. |
@@ -502,19 +502,19 @@ including most of the refusal-code taxonomy.
 | subsection | COVERED | PARTIAL | GAP | N/A-JAVA | total |
 |---|---|---|---|---|---|
 | Scope and profiles (preamble, lines 1-28) | 5 | 0 | 0 | 1 | 6 |
-| 12.1 Core Mapping and Negotiation | 47 | 3 | 1 | 0 | 51 |
+| 12.1 Core Mapping and Negotiation | 48 | 2 | 1 | 0 | 51 |
 | 12.2 Correlation and Error Scope | 29 | 0 | 0 | 0 | 29 |
 | 12.3 Authenticated Sessions and Non-Reusable Identity | 37 | 0 | 0 | 0 | 37 |
 | 12.4 Immutable Operations and Replay | 20 | 0 | 0 | 0 | 20 |
 | 12.5 Declaration, Admission and Descendant Scopes | 47 | 2 | 0 | 0 | 49 |
-| 12.6 Attempts, Cancellation and Authoritative Outcomes | 59 | 0 | 1 | 1 | 61 |
+| 12.6 Attempts, Cancellation and Authoritative Outcomes | 60 | 0 | 0 | 1 | 61 |
 | 12.7 Result Publication, Streams and References | 31 | 0 | 0 | 3 | 34 |
 | 12.8 Sealed Closure, Counts and Shutdown | 44 | 0 | 0 | 2 | 46 |
 | 12.9 Lifetimes, Clocks and Crash-Safe Accounting | 39 | 1 | 0 | 0 | 40 |
-| **all subsections** | **358** | **6** | **2** | **7** | **373** |
+| **all subsections** | **360** | **5** | **1** | **7** | **373** |
 
-Read the `PARTIAL` column as the real work queue: 6 clauses have a test whose
-name suggests coverage but whose assertions stop short. The 2 `GAP` rows are
+Read the `PARTIAL` column as the real work queue: 5 clauses have a test whose
+name suggests coverage but whose assertions stop short. The 1 `GAP` row is
 in most cases cheaper to close than the partials.
 
 ## Second round of proposals for the remaining partials
@@ -522,7 +522,7 @@ in most cases cheaper to close than the partials.
 The first round's proposals are done or decided (marked above). The rows still
 PARTIAL after `3f8846e2` are grouped here by the fixture that closes them
 cheapest, each with the smallest stimulus and the assertion that moves the row.
-Rows that are spec-owner decisions (D2, D7, D13) are listed last and not
+Rows that are spec-owner decisions (D7; D2 and D13 were decided 2026-09-13) are listed last and not
 proposed as tests.
 
 ### Wire and schema unit tests (`V2WireTest`, `RefusalCodeRegistryTest`)
@@ -639,7 +639,7 @@ proposed as tests.
 
 ### Spec-owner decisions, not tests
 
-- S12-023 (D2), S12-338 (D7), S12-248 (D13).
+- S12-338 (D7). S12-023 (D2) and S12-248 (D13) were decided by the owner on 2026-09-13.
 
 
 ## Clauses where the Java code looks wrong, not merely untested
@@ -673,6 +673,11 @@ These are code observations, not test failures. Each names a file and line.
   large private frame gets a misleading code.
   `V2WireTest.ignorableBodiesAreDiscarded...` only uses a zero-length body. Raised as a
   spec question in handoff section 4, item 7; no code change until answered.
+  **Decided 2026-09-13 (owner): LIMIT_EXCEEDED.** Section 12.1 now states that length
+  validation precedes type classification. Java already behaved so and is pinned by
+  `V2WireTest.lengthIsJudgedBeforeTypeSoAnOversizedBodyIsLimitExceededWhateverItsType`; the
+  Rust `control_body_length` returned FRAME_ERROR for every over-limit body and now returns
+  LIMIT_EXCEEDED, pinned in `src/v2/tests.rs`.
 - **D3.** `DurableClient.java:1175-1179`. `DurableClient.checkpoint`
   short-circuits a seal mismatch locally with NOT_READY when the journal's
   verified membership does not match the supplied seal, so the authority's
@@ -684,7 +689,10 @@ These are code observations, not test failures. Each names a file and line.
   `DurableBranchTest.java:166-169` claims server semantics it does not
   exercise. The comment is corrected at the follow-on commit; the code
   question (local refusal allowed, and under which code) is handoff section 4,
-  item 8.
+  item 8. **Decided 2026-09-13 (owner): local refusal allowed, as INTEGRITY_ERROR.**
+  Section 12.8 now permits it. `DurableClient.checkpoint` keeps NOT_READY while membership
+  is not yet verified and answers INTEGRITY_ERROR "checkpoint seal contradicts verified
+  membership" when verified membership has another seal; `DurableBranchTest` pins both.
 - **D4.** `ResultServiceTest.java:110-114` (test defect, not production). The
   `read()` used as evidence that a disk read does not renew the idle deadline
   happens at `nanos == created`, so the assertion cannot distinguish "did not
@@ -765,7 +773,12 @@ These are code observations, not test failures. Each names a file and line.
   the clause describes an intermediate state some implementation may expose
   (then the Java behaviour is a valid special case) or it requires the state to
   be observable (then the store would need a settlement step). Recorded at
-  `3f8846e2`.
+  `3f8846e2`. **Decided 2026-09-13 (owner): dropped.** Section 12.6 now says CANCELLING
+  always has admitted input and an unadmitted entity settles directly to CANCELLED or
+  SKIPPED. Neither implementation ever produced the state (Rust settles a childless target
+  to terminal the same way); both `WorkView` validators now refuse an inputless CANCELLING
+  view (`V2CommitmentsTest.cancellingAlwaysHasAdmittedInput`, Rust
+  `zero_outputs_and_inputless_cancellation_remain_valid_but_never_invent_references`).
 - **D14.** The Java client sent an input on the caller's word that a declaration
   covered it: `ClientJournal.journalInput` checked only the session generation,
   so an admission whose named declaration had never been receipted went to
@@ -791,7 +804,14 @@ These are code observations, not test failures. Each names a file and line.
 - **D18.** (question for the spec owner, not a code defect) a journal bound to
   another authority that attaches is CONFLICT `authority differs` in Java and
   UNAUTHORIZED in Rust; Section 12.3 supports either reading. Raised by Kimi
-  milestone 19 (`g5-cross-authority-reference`).
+  milestone 19 (`g5-cross-authority-reference`). **Decided 2026-09-13 (owner):
+  CONFLICT.** Section 12.3 now says an expected authority other than the serving one is
+  CONFLICT after owner authorization. Java already answered so and is pinned by
+  `SessionStoreTest.attachNamingAnotherAuthorityIsConflictAfterOwnerAuthorization`; the Rust
+  `attach_session` answered UNAUTHORIZED and now answers CONFLICT `authority differs` after
+  its owner check, pinned in `src/v2/authority/tests.rs`. The decision covers attachment only:
+  other Rust operations that name a foreign authority keep their existing codes. The driver
+  row accepts any named code, so it needs no change.
 
 ## Gap-closing proposals, grouped by fixture
 
@@ -806,7 +826,7 @@ row to COVERED. They are ordered within each fixture by cost.
   the final authorization callback. Assert CONFLICT with the message
   `new worker lease expired before commit` and a byte-identical `JobRecord`.
   This is the only way to reach `SessionStore.java:2319`.
-- **P-STORE-2** (S12-248). BLOCKED: not producible, see the row and D13. `FenceStoreTest`: cancel a branch whose child scope
+- **P-STORE-2** (S12-248). OBSOLETE: the clause was dropped (D13 decided 2026-09-13). `FenceStoreTest`: cancel a branch whose child scope
   is still open so the target cannot settle in that transaction, then read the
   view. Assert `State.CANCELLING` with `input() == null`, `attempt() == 0` and
   null `admittedAt`/`deadline`/`child`.
@@ -891,7 +911,7 @@ connection-close code assertions. Every proposal below needs only those.
   `initialMaxStreamsBidirectional` so the transport permits a second
   bidirectional stream, then assert the server closes FRAME_ERROR from
   `DurableServer.java:462` rather than the peer's transport refusing first.
-- **P-PEER-4** (S12-023, D2). Send a private type 0xC0 with a declared body
+- **P-PEER-4** (S12-023, D2). DONE at unit level 2026-09-13 (`V2WireTest.lengthIsJudgedBeforeTypeSoAnOversizedBodyIsLimitExceededWhateverItsType`; D2 decided LIMIT_EXCEEDED). Send a private type 0xC0 with a declared body
   within the negotiated control limit and assert EXTENSION_UNSUPPORTED; then
   the same type with an oversized body and pin whichever code the spec intends.
 - **P-PEER-5** (S12-028). Send a CAPABILITIES offer with a 33-entry supported

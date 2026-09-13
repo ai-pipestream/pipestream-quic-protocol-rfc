@@ -187,11 +187,11 @@ final class DurableBranchTest {
       assertEquals(new Records.Counts(1, 0, 0, 0), root.counts());
       assertEquals(root, get(s.client.complete()));
       // A checkpoint over a foreign seal is refused before it is sent: the journal holds this
-      // child's verified membership under its own seal, so the client answers NOT_READY locally
-      // and the authority's INTEGRITY_ERROR (SessionStoreTest) is not reached from here (handoff
-      // section 4, item 8).
+      // child's verified membership under its own seal, so the client refuses locally with the
+      // same INTEGRITY_ERROR the authority would give (SessionStoreTest); Section 12.8 permits
+      // the local refusal (owner decision 2026-09-13).
       assertEquals(
-          ProtocolError.Code.NOT_READY,
+          ProtocolError.Code.INTEGRITY_ERROR,
           DurableClientTest.refusal(s.client.checkpoint(child, root.seal(), 0)).code());
       get(s.client.detach());
     }

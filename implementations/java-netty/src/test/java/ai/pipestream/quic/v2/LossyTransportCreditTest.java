@@ -160,7 +160,10 @@ class LossyTransportCreditTest {
         }
         long responseMs = (System.nanoTime() - opened) / 1_000_000;
         if (ordinal % 3 == 2) {
-          AdmissionResponse admitted = assertInstanceOf(AdmissionResponse.class, response);
+          String seen = String.valueOf(response);
+          AdmissionResponse admitted =
+              assertInstanceOf(
+                  AdmissionResponse.class, response, "admitted shape answered " + seen);
           assertEquals(new Records.RequestTag(true, stream.streamId()), admitted.request());
           assertEquals(
               Records.State.SUCCEEDED, DurableServerTest.awaitTerminal(peer, work).state());

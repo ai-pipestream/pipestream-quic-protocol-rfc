@@ -292,6 +292,26 @@ final class V2CommitmentsTest {
   }
 
   @Test
+  void cancellingAlwaysHasAdmittedInput() {
+    // Section 12.6 (owner decision 2026-09-13): cancelling or skipping an unadmitted entity settles
+    // directly to CANCELLED or SKIPPED, so an inputless CANCELLING view is invalid.
+    assertThrows(
+        ProtocolError.class,
+        () ->
+            new WorkView(
+                WORK, State.CANCELLING, 0, null, null, null, null, null, null, null, null, null));
+    assertEquals(
+        State.DECLARED,
+        new WorkView(WORK, State.DECLARED, 0, null, null, null, null, null, null, null, null, null)
+            .state());
+    assertEquals(
+        State.CANCELLING,
+        new WorkView(
+                WORK, State.CANCELLING, 1, DESCRIPTOR, 10L, 100L, null, null, null, null, null, null)
+            .state());
+  }
+
+  @Test
   void statusLeavesRequireTerminalViewsAndExactChildPresence() {
     WorkView succeeded = success();
     assertThrows(ProtocolError.class, () -> Commitments.statusLeaf(succeeded, INPUT));

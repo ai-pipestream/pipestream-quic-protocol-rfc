@@ -119,6 +119,27 @@ fn decoder_rejects_forbidden_types_and_untrusted_allocation_lengths() {
     assert!(control_body_length([1, 0, 0, 0x10, 1], Some(MAX_CONTROL_LIMIT)).is_err());
     assert!(control_body_length([2, 0, 0, 0, 2], None).is_err());
     assert!(control_body_length([2, 0xff, 0xff, 0xff, 0xff], Some(MAX_CONTROL_LIMIT)).is_err());
+    // Section 12.1 (owner decision 2026-09-13): length validation precedes type classification,
+    // so an over-limit body is LIMIT_EXCEEDED for known, unknown, ignorable and private types.
+    for frame_type in [2u8, 0, 0x7f, 0x80, 0xbf, 0xc0, 0xff] {
+        assert_eq!(
+            control_body_length([frame_type, 0, 0, 0x10, 1], Some(4096))
+                .unwrap_err()
+                .code,
+            ErrorCode::LimitExceeded,
+            "type {frame_type:#x}"
+        );
+    }
+    assert_eq!(
+        control_body_length([2, 0, 0, 0x10, 1], None)
+            .unwrap_err()
+            .code,
+        ErrorCode::LimitExceeded
+    );
+    assert_eq!(
+        control_body_length([2, 0, 0, 0, 2], None).unwrap_err().code,
+        ErrorCode::FrameError
+    );
 }
 
 #[test]

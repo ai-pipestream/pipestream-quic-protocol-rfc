@@ -727,7 +727,8 @@ async fn listener_malformed_controls_close_by_name_without_poisoning_other_conne
     let cases = [
         (vec![0, 0, 0, 0, 0], ErrorCode::FrameError),
         (vec![0xc0, 0, 0, 0, 0], ErrorCode::ExtensionUnsupported),
-        (vec![2, 0xff, 0xff, 0xff, 0xff], ErrorCode::FrameError),
+        (vec![2, 0xff, 0xff, 0xff, 0xff], ErrorCode::LimitExceeded),
+        (vec![0xc0, 0xff, 0xff, 0xff, 0xff], ErrorCode::LimitExceeded),
         (vec![6, 0, 0, 0, 4, 0x82, 2, 0x18, 1], ErrorCode::FrameError),
         (
             Control::Drain(Drain::Detached { request: Id(1) })

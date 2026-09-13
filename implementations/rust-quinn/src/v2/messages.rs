@@ -314,12 +314,6 @@ pub fn control_body_length(
     prefix: [u8; 5],
     negotiated_limit: Option<usize>,
 ) -> Result<usize, Error> {
-    if negotiated_limit.is_none() {
-        require(
-            prefix[0] == 1,
-            "only capabilities permitted before negotiation",
-        )?;
-    }
     let limit = negotiated_limit.unwrap_or(INITIAL_CONTROL_LIMIT);
     require(
         (INITIAL_CONTROL_LIMIT..=MAX_CONTROL_LIMIT).contains(&limit),
@@ -331,7 +325,20 @@ pub fn control_body_length(
         limit
     };
     let length = u32::from_be_bytes(prefix[1..].try_into().expect("four bytes")) as usize;
-    require(length <= limit, "control body exceeds bound")?;
+    // Section 12.1: length validation precedes type classification, so an over-limit body is
+    // LIMIT_EXCEEDED whatever its type, before negotiation as after it.
+    if length > limit {
+        return Err(Error::new(
+            ErrorCode::LimitExceeded,
+            "control body exceeds bound",
+        ));
+    }
+    if negotiated_limit.is_none() {
+        require(
+            prefix[0] == 1,
+            "only capabilities permitted before negotiation",
+        )?;
+    }
     Ok(length)
 }
 
