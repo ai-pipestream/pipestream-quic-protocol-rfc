@@ -1,0 +1,6 @@
+exit=exit status: 1
+stdout:
+REFUSED code=CONFLICT detail=creation policy changed
+
+stderr:
+CONFLICT: CONFLICT: authority refused: creation policy changed

@@ -1,0 +1,7 @@
+probe_execution_ms	1000
+probe_input_len	65536
+saturation	no hold at EXECUTION_CLAIMED on the Rust subject (fixture pauses only at reply pairs): alice's two slots (PoolConfig workers_per_owner 2) are loaded with two 4194304-byte chunk-copy/v2 parents admitted concurrently, up to 3 fresh authorities
+deadline_accounting	receipt deadline = admitted_at + execution-ms (queue time counts from admission)
+settlement	the probe settles FAILED(6) with the DEADLINE_EXCEEDED (11) diagnostic, terminal_at >= deadline, never SUCCEEDED after its deadline passed in the queue, never silently evicted (the view keeps the work)
+retry_after	explicit retry refuses DEADLINE_EXCEEDED (11) per the matrix; both subjects check terminality first and answer ALREADY_TERMINAL (18); either named code is accepted and recorded
+read_after	refused with a named code

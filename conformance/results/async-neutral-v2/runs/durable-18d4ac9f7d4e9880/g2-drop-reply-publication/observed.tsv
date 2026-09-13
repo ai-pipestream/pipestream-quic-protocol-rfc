@@ -1,0 +1,4 @@
+row_status	INCOMPLETE: neither subject exposes a PUBLICATION reply pair to withhold (publication is observed via watch, not a correlated reply); both refuse drop-reply at PUBLICATION_COMMITTED at schedule parse; the kill variant g2-kill-at-publication-commit is the delivered boundary evidence
+rust_server	refused the schedule at parse: /home/krickert/.rfc-tmp/kimi-m19/m19c/runs/durable-18d4ac9f7d4e9880/g2-drop-reply-publication/schedule.tsv:1: drop-reply requires a committed reply-pair boundary, not "PUBLICATION_COMMITTED"
+java_server	refused the schedule at parse: schedule row 1 withholds a reply at PUBLICATION_COMMITTED, which has no pending reply
+java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c

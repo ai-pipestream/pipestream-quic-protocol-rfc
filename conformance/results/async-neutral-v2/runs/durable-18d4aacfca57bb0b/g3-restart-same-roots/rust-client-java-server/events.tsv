@@ -1,0 +1,32 @@
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	4	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	5	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	6	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	7	RESULT_INSTALLED		0:0:1	1		artifacts/leaf-output.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	8	REQUEST_SENT	3af4077793f75e13df0fb78952453476	0:0:2	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	9	RECEIPT_VALIDATED	3af4077793f75e13df0fb78952453476	0:0:2	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	10	REQUEST_SENT	49e555316b8d6cf8b0aee3fab60dbfb8						
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	11	RECEIPT_VALIDATED	49e555316b8d6cf8b0aee3fab60dbfb8						
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	12	REQUEST_SENT	61391c258d95ee0020667eda3683b35b	1:0:1	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	13	RECEIPT_VALIDATED	61391c258d95ee0020667eda3683b35b	1:0:1	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	14	OBSERVATION_JOURNALED	61391c258d95ee0020667eda3683b35b	1:0:1	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	15	REQUEST_SENT	670566df8622f68c891c36f96c029276	1:0:2	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	16	RECEIPT_VALIDATED	670566df8622f68c891c36f96c029276	1:0:2	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	17	OBSERVATION_JOURNALED	670566df8622f68c891c36f96c029276	1:0:2	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	18	OBSERVATION_JOURNALED	3af4077793f75e13df0fb78952453476	0:0:2	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	19	REQUEST_SENT	efa7391f23bfe4eaee49127213d80ed7	0:0:3	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	20	RECEIPT_VALIDATED	efa7391f23bfe4eaee49127213d80ed7	0:0:3	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	21			0:0:3	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	22	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	23	RESULT_INSTALLED		0:0:1	1		artifacts/leaf-output-after-restart.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	24	RESULT_VERIFIED		0:0:2	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	25	RESULT_INSTALLED		0:0:2	1		artifacts/parent-output-after-restart.bin	65000	9e1572ca5d5b092815ebf83c1ef53831065d73e5a29268f6bb7711c2553c6ba0
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	26	RESULT_VERIFIED		0:0:3	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	27	RESULT_INSTALLED		0:0:3	1		artifacts/mode2-output-after-restart.bin	200000	1dedf2209c2609cd80437d911867f75214bbc91c384c7a53b10d6a16fc53fd34
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	28	REQUEST_SENT	4d64f8fefd3ef6e7231bf05454c4a723	0:0:4	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	29	RECEIPT_VALIDATED	4d64f8fefd3ef6e7231bf05454c4a723	0:0:4	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	30	OBSERVATION_JOURNALED	4d64f8fefd3ef6e7231bf05454c4a723	0:0:4	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	31	RESULT_VERIFIED		0:0:4	1				
+1	durable-18d4aacfca57bb0b	g3-restart-same-roots	rust	client	25465-18d4aaf88b4604ca	32	RESULT_INSTALLED		0:0:4	1		artifacts/late-output.bin	8192	20761e3bf7a94162787c6d32b26a7dcb5a179aef6011f57ca1f9583f4ac91724

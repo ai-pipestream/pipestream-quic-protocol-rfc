@@ -1,0 +1,9 @@
+1	durable-18d4abe3eae3a613	g7-read-pin-past-expiry	rust	client	98954-18d4abe3eb6a2eac	1			0:0:1	1		artifacts/input.bin	16777216	3b464e0b55d7c0c95dcb66ed412d4812840a32abeddd8ee5650012d1a11cef7a
+1	durable-18d4abe3eae3a613	g7-read-pin-past-expiry	rust	client	98954-18d4abe3eb6a2eac	2	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4abe3eae3a613	g7-read-pin-past-expiry	rust	client	98954-18d4abe3eb6a2eac	3	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4abe3eae3a613	g7-read-pin-past-expiry	rust	client	98954-18d4abe3eb6a2eac	4	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4abe3eae3a613	g7-read-pin-past-expiry	rust	client	98954-18d4abe3eb6a2eac	5	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4abe3eae3a613	g7-read-pin-past-expiry	rust	client	98954-18d4abe3eb6a2eac	6	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4abe3eae3a613	g7-read-pin-past-expiry	rust	client	98954-18d4abe3eb6a2eac	7	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d4abe3eae3a613	g7-read-pin-past-expiry	rust	client	98954-18d4abe3eb6a2eac	8	REQUEST_SENT		0:0:1	1				
+1	durable-18d4abe3eae3a613	g7-read-pin-past-expiry	rust	client	98954-18d4abe3eb6a2eac	9	RESULT_VERIFIED		0:0:1	1				

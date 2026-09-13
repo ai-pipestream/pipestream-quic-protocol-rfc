@@ -1,0 +1,7 @@
+input_len	65536
+input_sha256	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+kill_boundary	EXECUTION_CLAIMED: claim durable, then the subject exits 86
+expected_attempt	1
+expected_deadline	original deadline preserved
+expected_terminal_state	5
+expected_recovery	automatic redispatch or explicit retry (recorded)

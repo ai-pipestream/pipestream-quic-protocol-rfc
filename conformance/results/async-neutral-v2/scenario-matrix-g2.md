@@ -93,6 +93,48 @@ event stream.
 - Same observable expectations as `g2-kill-at-publication-commit`; the
   row is registered in the driver matrix but not implemented yet (the
   kill variant above is the milestone-6 evidence for this boundary).
+- Status (milestone 19b, work in Kimi's role): the row now RUNS and reports
+  the capability it lacks instead of "not implemented yet". Neither subject
+  exposes a PUBLICATION reply pair to withhold: publication is observed via
+  a watch, not answered on a correlated reply, so interface-v1's drop-reply
+  (a committed boundary with a pending reply) has nothing to withhold. Both
+  subjects refuse the schedule row at parse time (the Rust hooks accept
+  drop-reply only at the three reply pairs; the Java FixtureMain requires a
+  reply boundary) and the row archives each refusal verbatim
+  (`artifacts/subject-schedule-refusal.txt`, `observed.tsv` row_status
+  INCOMPLETE). PROPOSAL for Kimi's decision: accept the kill variant
+  `g2-kill-at-publication-commit` as the boundary's evidence and retire this
+  row, since a withheld reply that does not exist cannot be lost; the
+  alternative is an interface revision adding a correlated publication
+  reply to both subjects, which is a protocol change, not a fixture change.
+
+## g2-not-found-in-flight
+
+- Setup: session created and one entity declared by the CLI client; a raw
+  peer of the same principal, attached to the same session, writes the
+  admission header and half of the declared payload on an open object
+  stream and does not FIN; a second raw connection of the same principal
+  sends the wire operation lookup (`Work::Operation`) for that id.
+- Expected: NOT_FOUND (5) on the lookup's own control request tag while the
+  admission is genuinely pending before its commit (nothing can commit
+  before the FIN: the subject must verify the whole payload against the
+  header's length and digest first); after the FIN the holder's
+  `Work::Admitted` receipt and the prober's `Work::OperationResponse` receipt
+  are byte-identical (attempt 1); the CLI client then replays the SAME
+  admission (same id, same bytes, same parameters) and receives the durable
+  receipt rather than a second effect, two CLI lookups are identical to it,
+  the scope page shows one member, the work settles SUCCEEDED under attempt
+  1 and the result reads back byte-exact. Where the subject records every
+  reached boundary (the Java FixtureMain), EXECUTION_CLAIMED is recorded
+  exactly once for the work.
+- Mechanics (milestone 19b): the stream held open mid-transfer is the one
+  construction deterministic on BOTH subjects. The Rust subject never
+  reaches INPUT_INSTALLED and its hooks pause only at the reply pairs, so a
+  pause at INPUT_INSTALLED would hold only the Java server; the raw hold is
+  used for both and the direction label says so (rust-raw-peer + CLI
+  client). The 500 ms wait between writing the header and sending the
+  lookup is fixture timing, never evidence: the evidence is the refusal and
+  the receipt that later arrives on the same stream.
 
 ## g2-kill-client-after-request-sent
 

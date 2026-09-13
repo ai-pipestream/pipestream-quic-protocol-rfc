@@ -1,0 +1,11 @@
+server_subject	rust
+alice_leaf_sha256	7469cca6de425a32dd111941e6ac2740b6d715a060ebbd4148be355fea3cc241
+remap	alice's leaf hash -> owner mallory (map edited between stop and restart)
+after_remap_attach	refused UNAUTHORIZED (3): authority refusal UNAUTHORIZED: authority access denied
+after_remap_retry	refused UNAUTHORIZED (3): authority refusal UNAUTHORIZED: authority access denied
+after_remap_cancel	refused UNAUTHORIZED (3): authority refusal UNAUTHORIZED: authority access denied
+after_remap_lookup	refused UNAUTHORIZED (3): authority refusal UNAUTHORIZED: authority access denied
+after_remap_read	refused UNAUTHORIZED (3): authority refusal UNAUTHORIZED: authority access denied
+refusal_codes_after_remap	UNAUTHORIZED (3)
+pre_remap_output_still_valid	true (sha256=e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682)
+live_connection_recheck	not observable through stop/restart: every connection died with the graceful stop, so only fresh connections are re-evaluated here

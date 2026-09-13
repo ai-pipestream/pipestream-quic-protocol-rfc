@@ -1,0 +1,15 @@
+server_subject	java
+client_subject	rust
+saturation	two schedule pauses at EXECUTION_CLAIMED hold alice's two per-owner workers (ExecutionLimits(4, 2, ...)); released after the probe's deadline passed
+probe_admitted_at	1789243979381
+probe_deadline	1789243980381
+deadline_accounting	receipt deadline = admitted_at + 1000 ms (queue time counted from admission)
+probe_state_while_queued	1 (ACTIVE)
+probe_state_past_deadline_still_queued	6 (FAILED)
+probe_outcome	6 (FAILED) diagnostic DEADLINE_EXCEEDED (11)
+probe_terminal_at	1789243980418
+retry_after_settlement	authority refusal ALREADY_TERMINAL: logical work is already terminal
+read_after_settlement	refused NOT_FOUND (5): NOT_FOUND: no retained output selection
+probe_claims_before_release	0
+probe_claims_total	0
+java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c

@@ -107,6 +107,10 @@ pub struct AuthorityFixture {
     /// arguments. G4 skip rows pass `--allow-skip` (a rust Storage open flag
     /// and a java serve flag); empty for every other fixture.
     extra_serve_args: Vec<String>,
+    /// Authority label the storage roots are initialised with and every
+    /// journal binds to. [`AUTHORITY`] for every fixture but the second
+    /// authority of g5-cross-authority-reference.
+    authority: String,
 }
 
 impl AuthorityFixture {
@@ -129,6 +133,7 @@ impl AuthorityFixture {
             server,
             client,
             extra_serve_args: Vec::new(),
+            authority: AUTHORITY.to_owned(),
         })
     }
 
@@ -137,6 +142,18 @@ impl AuthorityFixture {
     pub fn with_extra_serve_args(mut self, args: &[&str]) -> Self {
         self.extra_serve_args = args.iter().map(|arg| (*arg).to_owned()).collect();
         self
+    }
+
+    /// Initialise and serve these roots under another authority label
+    /// (g5-cross-authority-reference: authority Y is `issuer-b`).
+    pub fn with_authority(mut self, authority: &str) -> Self {
+        self.authority = authority.to_owned();
+        self
+    }
+
+    /// The authority label these roots carry.
+    pub fn authority(&self) -> &str {
+        &self.authority
     }
 
     fn subject_base(&self, subject: Subject) -> Result<Vec<String>> {
@@ -187,7 +204,7 @@ impl AuthorityFixture {
         };
         args.extend([
             "--authority".into(),
-            AUTHORITY.to_owned(),
+            self.authority.clone(),
             "--principal-map".into(),
             path(&self.certs.principal_map),
             "--trust-system-clock".into(),
@@ -247,7 +264,7 @@ impl AuthorityFixture {
             "--journal".into(),
             path(journal),
             "--authority".into(),
-            AUTHORITY.to_owned(),
+            self.authority.clone(),
             "--owner".into(),
             owner.to_owned(),
             "--creation-sequence".into(),

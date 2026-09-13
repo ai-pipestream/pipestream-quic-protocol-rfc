@@ -1,0 +1,6 @@
+server_subject	rust
+client_subject	rust
+alpn	pipestream/2
+detach_barrier	detach_wall_ms=125 download_in_flight_at_detach=true download VERIFIED byte-exact
+same_journal_concurrent_op	CONFLICT: client journal already owned or locking unavailable (watch probe refused while the read ran); the read itself VERIFIED byte-exact
+durable_continuation	0:0:2 settled after detach; same journal reattached, watched state 5, read byte-exact; the authority offers sequence 2 (detach consumed nothing)

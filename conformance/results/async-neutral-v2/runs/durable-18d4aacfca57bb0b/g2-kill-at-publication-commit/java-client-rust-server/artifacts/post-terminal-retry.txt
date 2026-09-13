@@ -1,0 +1,6 @@
+exit=exit status: 1
+stdout:
+REFUSED code=ALREADY_TERMINAL detail=work already terminal
+
+stderr:
+ALREADY_TERMINAL: ALREADY_TERMINAL: authority refused: work already terminal

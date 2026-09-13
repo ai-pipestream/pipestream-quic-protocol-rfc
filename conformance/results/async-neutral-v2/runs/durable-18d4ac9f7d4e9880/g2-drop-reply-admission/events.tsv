@@ -1,0 +1,10 @@
+1	durable-18d4ac9f7d4e9880	g2-drop-reply-admission	rust	client	130819-18d4acdfb5cbdef5	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4ac9f7d4e9880	g2-drop-reply-admission	rust	client	130819-18d4acdfb5cbdef5	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4ac9f7d4e9880	g2-drop-reply-admission	rust	client	130819-18d4acdfb5cbdef5	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ac9f7d4e9880	g2-drop-reply-admission	rust	server	157640-18d4acdfbbdcff87	1	ADMISSION_COMMITTED							
+1	durable-18d4ac9f7d4e9880	g2-drop-reply-admission	rust	client	130819-18d4acdfb5cbdef5	4	REFUSAL_RECEIVED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1	12	artifacts/admit-withheld.txt	72	1a27f58dfffbc689f9083db2529d516f74272ecc83702c6bc5d0d09758e6c468
+1	durable-18d4ac9f7d4e9880	g2-drop-reply-admission	rust	client	130819-18d4acdfb5cbdef5	5	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ac9f7d4e9880	g2-drop-reply-admission	rust	client	130819-18d4acdfb5cbdef5	6	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ac9f7d4e9880	g2-drop-reply-admission	rust	client	130819-18d4acdfb5cbdef5	7	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ac9f7d4e9880	g2-drop-reply-admission	rust	client	130819-18d4acdfb5cbdef5	8	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ac9f7d4e9880	g2-drop-reply-admission	rust	client	130819-18d4acdfb5cbdef5	9	REFUSAL_RECEIVED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1	7	artifacts/changed-admit-refusal.txt	72	064f611be1d7ccb4d400de988f4e1b3b0abd54d5be1e89eafbda61ef13275d49

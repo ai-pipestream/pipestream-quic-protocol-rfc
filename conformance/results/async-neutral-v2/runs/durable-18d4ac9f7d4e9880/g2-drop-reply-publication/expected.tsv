@@ -1,0 +1,3 @@
+schedule	drop-reply at PUBLICATION_COMMITTED (withheld reply plus connection reset)
+would_assert	the same durable expectations as g2-kill-at-publication-commit: exactly one terminal commit, SUCCEEDED under the same attempt after the client reconnects, byte-exact result, post-terminal retry ALREADY_TERMINAL (18) or CANCELLED (12)
+missing_capability	a PUBLICATION reply pair on the subject (interface-v1 drop-reply requires a committed boundary with a pending reply)

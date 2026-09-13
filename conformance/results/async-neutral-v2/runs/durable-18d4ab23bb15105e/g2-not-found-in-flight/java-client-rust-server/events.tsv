@@ -1,0 +1,13 @@
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	client	65230-18d4ab2543f164f5	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	client	65230-18d4ab2543f164f5	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	client	65230-18d4ab2543f164f5	3			0:0:1	1		artifacts/input.bin	262144	4bef0e5afcb9f8147d10556077d60ca601abebdbb67f06d7909eb49037538ac5
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	client	65230-18d4ab2543f164f5	4	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	client	65230-18d4ab2543f164f5	5	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	client	65230-18d4ab2543f164f5	6	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	client	65230-18d4ab2543f164f5	7	REFUSAL_RECEIVED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1	5			
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	client	65230-18d4ab2543f164f5	8	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	client	65230-18d4ab2543f164f5	9	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	client	65230-18d4ab2543f164f5	10	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	client	65230-18d4ab2543f164f5	11	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	client	65230-18d4ab2543f164f5	12	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	client	65230-18d4ab2543f164f5	13	RESULT_INSTALLED		0:0:1	1		artifacts/output.bin	262144	4bef0e5afcb9f8147d10556077d60ca601abebdbb67f06d7909eb49037538ac5

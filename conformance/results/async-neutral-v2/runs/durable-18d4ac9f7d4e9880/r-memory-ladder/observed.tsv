@@ -1,0 +1,23 @@
+server_subject	rust
+client_subject	rust raw peer (one connection, sequential admissions)
+declared_limits	object_limit=16777216 stream_limit=4 pending_limit=16 control_limit=65536 idle_ms=5000 lifetime_ms=30000
+java_memory_freeze	not applicable: no JVM in this subject group (the frozen Java limits are -Xms256m -Xmx2g)
+payload_ladder_bytes	65536,1048576,16777216
+inventory_ladder_resident_works	1,16,64
+payload_plateau_allowance_kib	131072
+inventory_plateau_allowance_kib	66560
+declared_entities	77
+over_limit_rung	refused: tag_kind=1 tag_id=50 code=4 detail="input exceeds retained duration, bytes or response limits" (stream 50)
+resident_works_final	76
+quiesce_before_stop	76/76 admitted works terminal within 120s (fixture timing after every measurement window; never evidence)
+java_native_direct_scope	not applicable: no JVM in the subject process group
+collector	1032 ticks, 1032 sample lines, 0 error lines
+baseline_rss_kib	median=16648 p90=16648 max=16680 over 59 ticks
+payload_ladder_rss_kib	65536B tail_p90=19896 (60 ticks) -> 16777216B tail_p90=20712 (60 ticks), growth=816 against the frozen allowance 131072
+payload_ladder_scaling	payload grew by 16711680 B per admission (256x); group tail p90 RSS grew by 816 KiB. A subject that buffered each payload once would have grown by at least 16320 KiB
+inventory_ladder_rss_kib	1 resident tail_p90=21132 (60 ticks) -> 64 resident tail_p90=22856 (59 ticks), growth=1724 against the frozen allowance 66560
+hwm_kib	baseline=16680 payload_last=20744 inventory_last=22904
+threads	baseline median=49 -> last rung median=50 max=50
+fds	baseline median=12 -> last rung p90=12 max=17
+heap_scope	not applicable: no JVM in the subject process group. Rust heap is a NAMED GAP (no black-box allocator counter); RSS/HWM is a separate scope and is never substituted for it
+store_checkpoints	458 records across the rung checkpoints

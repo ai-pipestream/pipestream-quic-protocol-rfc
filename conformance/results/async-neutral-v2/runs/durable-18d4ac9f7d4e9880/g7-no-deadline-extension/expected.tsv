@@ -1,0 +1,6 @@
+execution_limit_ms	60000
+output_retention_ms	3600000
+receipt_retention_ms	86400000
+input_sha256	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+expected_deadline_relation	deadline = admitted_at + execution_limit; receipt_until/output_until = terminal_at + retention; identical after every leg
+retry_leg	skipped: settled copy/v2 work is terminal-success, not retryable

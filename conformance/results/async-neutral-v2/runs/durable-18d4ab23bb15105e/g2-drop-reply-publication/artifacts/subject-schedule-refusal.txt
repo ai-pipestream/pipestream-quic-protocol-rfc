@@ -1,0 +1,3 @@
+v2 serve exited before readiness (exit status: 1)
+log:
+/home/krickert/.rfc-tmp/kimi-m19/m19b/runs/durable-18d4ab23bb15105e/g2-drop-reply-publication/schedule.tsv:1: drop-reply requires a committed reply-pair boundary, not "PUBLICATION_COMMITTED"

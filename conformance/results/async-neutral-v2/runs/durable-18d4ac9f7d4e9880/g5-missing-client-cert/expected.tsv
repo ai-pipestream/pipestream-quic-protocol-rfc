@@ -1,0 +1,3 @@
+expected_required_mode	connection closed with UNAUTHORIZED (3) BEFORE the capabilities response (Section 12.3)
+expected_optional_mode	durable profiles excluded; Core-only connection; SESSION create refused without activating durable profiles
+reachability_finding	neither server CLI exposes require-durable; neither client CLI can start without --cert/--key; wire-level arms not reachable via published binaries (observed.tsv audit rows)

@@ -1,0 +1,58 @@
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	1	LISTENING							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	2	CONNECTION_AUTHENTICATED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	3	CONNECTION_AUTHENTICATED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	4	CONNECTION_AUTHENTICATED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	5	SESSION_COMMITTED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	6	SESSION_RESPONSE_SENT							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	rust	client	65230-18d4ab245a86fe5d	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	7	CONNECTION_AUTHENTICATED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	8	SESSION_RESPONSE_SENT							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	9	DECLARATION_COMMITTED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	10	DECLARATION_RESPONSE_SENT							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	rust	client	65230-18d4ab245a86fe5d	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	rust	client	65230-18d4ab245a86fe5d	3			0:0:1	1		artifacts/input.bin	262144	4bef0e5afcb9f8147d10556077d60ca601abebdbb67f06d7909eb49037538ac5
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	rust	client	65230-18d4ab245a86fe5d	4	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	11	CONNECTION_AUTHENTICATED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	12	SESSION_RESPONSE_SENT							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	rust	client	65230-18d4ab245a86fe5d	5	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	13	CONNECTION_AUTHENTICATED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	rust	client	65230-18d4ab245a86fe5d	6	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	14	SESSION_RESPONSE_SENT							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	rust	client	65230-18d4ab245a86fe5d	7	REFUSAL_RECEIVED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1	5			
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	15	REFUSAL_SENT				5			
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	16	INPUT_INSTALLED	d82b4f0e9f3814f1161c84240d038f52	0:0:1					
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	17	ADMISSION_COMMITTED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	rust	client	65230-18d4ab245a86fe5d	8	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	18	ADMISSION_RESPONSE_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	19	DETACH_ACKNOWLEDGED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	rust	client	65230-18d4ab245a86fe5d	9	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	20	DETACH_ACKNOWLEDGED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	21	CONNECTION_AUTHENTICATED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	22	SESSION_RESPONSE_SENT							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	23	EXECUTION_CLAIMED		0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	24	ADMISSION_RESPONSE_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1					
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	25	OUTPUT_INSTALLED		0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	26	PUBLICATION_COMMITTED		0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	rust	client	65230-18d4ab245a86fe5d	10	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	27	CONNECTION_AUTHENTICATED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	28	SESSION_RESPONSE_SENT							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	29	CONNECTION_AUTHENTICATED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	30	SESSION_RESPONSE_SENT							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	31	CLOSURE_COMMITTED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	32	CONNECTION_AUTHENTICATED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	33	SESSION_RESPONSE_SENT							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	rust	client	65230-18d4ab245a86fe5d	11	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	34	CONNECTION_AUTHENTICATED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	35	SESSION_RESPONSE_SENT							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	36	CONNECTION_AUTHENTICATED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	37	SESSION_RESPONSE_SENT							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	38	CONNECTION_AUTHENTICATED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	39	SESSION_RESPONSE_SENT							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	40	RESULT_HEADER_SENT		0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	41	RESULT_FIN_SENT		0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	rust	client	65230-18d4ab245a86fe5d	12	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	rust	client	65230-18d4ab245a86fe5d	13	RESULT_INSTALLED		0:0:1	1		artifacts/output.bin	262144	4bef0e5afcb9f8147d10556077d60ca601abebdbb67f06d7909eb49037538ac5
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	42	CONNECTION_AUTHENTICATED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	43	SESSION_RESPONSE_SENT							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	44	DETACH_ACKNOWLEDGED							
+1	durable-18d4ab23bb15105e	g2-not-found-in-flight	java	server	66145-18d4ab244e137580	45	SHUTDOWN_DRAINED							

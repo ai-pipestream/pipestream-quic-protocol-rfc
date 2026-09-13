@@ -1,0 +1,646 @@
+### g1-declaration-capacity [java-client-rust-server] observed.tsv: CHANGED
+14c14
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g1-declaration-capacity [rust-client-java-server] observed.tsv: CHANGED
+15c15
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g1-empty-input [java-client-rust-server] observed.tsv: CHANGED
+11c11
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g1-empty-input [rust-client-java-server] observed.tsv: CHANGED
+11c11
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g1-leaf-copy [java-client-rust-server] observed.tsv: CHANGED
+10c10
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g1-leaf-copy [rust-client-java-server] observed.tsv: CHANGED
+10c10
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g1-mode1-branch [java-client-rust-server] observed.tsv: CHANGED
+18c18
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g1-mode1-branch [rust-client-java-server] observed.tsv: CHANGED
+18c18
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g1-mode2-descendants [java-client-rust-server] observed.tsv: CHANGED
+15c15
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g1-mode2-descendants [rust-client-java-server] observed.tsv: CHANGED
+15c15
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g1-out-of-order-pages [java-client-rust-server] observed.tsv: CHANGED
+10c10
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g1-out-of-order-pages [rust-client-java-server] observed.tsv: CHANGED
+10c10
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g1-oversize-payload [java-client-rust-server] observed.tsv: CHANGED
+8c8
+< control_latency_ms	1353
+---
+> control_latency_ms	1478
+14c14
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g1-oversize-payload [rust-client-java-server] observed.tsv: CHANGED
+8c8
+< control_latency_ms	126
+---
+> control_latency_ms	100
+14c14
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g1-zero-output [java-client-rust-server] observed.tsv: CHANGED
+10c10
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g1-zero-output [rust-client-java-server] observed.tsv: CHANGED
+10c10
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g2-crash-after-create-commit [java-client-rust-server] INCOMPLETE: CHANGED
+9c9
+< java_jar_sha256=61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256=32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g2-crash-after-create-commit [rust-client-java-server] INCOMPLETE: CHANGED
+8c8
+< java_jar_sha256=61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256=32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g2-crash-before-create-commit [java-client-rust-server] INCOMPLETE: CHANGED
+7c7
+< java_jar_sha256=61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256=32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g2-drop-reply-publication [rust-rust] observed.tsv: NO BASELINE FILE
+### g2-kill-after-admission-before-publication [java-client-rust-server] observed.tsv: NO BASELINE FILE
+### g2-kill-after-admission-before-publication: baseline had java-client-rust-server/INCOMPLETE, new run does not
+### g2-kill-at-publication-commit [java-client-rust-server] observed.tsv: NO BASELINE FILE
+### g2-kill-at-publication-commit: baseline had java-client-rust-server/INCOMPLETE, new run does not
+### g2-not-found-in-flight [java-client-rust-server] observed.tsv: NO BASELINE FILE
+### g2-not-found-in-flight [rust-rust] observed.tsv: NO BASELINE FILE
+### g2-not-found-in-flight [rust-client-java-server] observed.tsv: NO BASELINE FILE
+### g2-simultaneous-duplicate [rust-rust] observed.tsv: CHANGED
+1c1
+< first_pid	1176888
+---
+> first_pid	174943
+### g3-input-before-metadata [rust-client-java-server] observed.tsv: CHANGED
+9c9
+< object_dir_after_readmission	files=4 bytes=12583517 allocated_blocks=24600
+---
+> object_dir_after_readmission	files=5 bytes=25166617 allocated_blocks=49184
+### g3-nonreusable-history [rust-client-java-server] observed.tsv: CHANGED
+5c5
+< object_metrics_before	files=5 bytes=131865 allocated_blocks=288
+---
+> object_metrics_before	files=4 bytes=66141 allocated_blocks=152
+15c15
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g3-orphan-cleanup [rust-rust] observed.tsv: CHANGED
+4,8c4,8
+< object_dir_after_final_restart	files=8 bytes=16844587 allocated_blocks=32952
+< object_dir_after_cleanup_window	files=8 bytes=16844587 allocated_blocks=32952
+< restart_cleanup	no restart-time cleanup observed (16844587 -> 16844587); rust operator command: none in the v2 CLI (collect_payload_orphans is library-only, not run by serve startup)
+< object_dir_final	files=10 bytes=16849263 allocated_blocks=32976
+< reclaim	orphan bytes retained across subsequent admissions (16844587 -> 16849263)
+---
+> object_dir_after_final_restart	files=4 bytes=66207 allocated_blocks=152
+> object_dir_after_cleanup_window	files=4 bytes=66207 allocated_blocks=152
+> restart_cleanup	no restart-time cleanup observed (66207 -> 66207); rust operator command: none in the v2 CLI (collect_payload_orphans is library-only, not run by serve startup)
+> object_dir_final	files=6 bytes=70883 allocated_blocks=176
+> reclaim	orphan bytes retained across subsequent admissions (66207 -> 70883)
+### g3-orphan-cleanup [rust-client-java-server] observed.tsv: CHANGED
+3,8c3,8
+< object_dir_baseline	files=4 bytes=66141 allocated_blocks=152
+< object_dir_after_final_restart	files=6 bytes=16843733 allocated_blocks=32936
+< object_dir_after_cleanup_window	files=6 bytes=16843733 allocated_blocks=32936
+< restart_cleanup	no restart-time cleanup observed (16843733 -> 16843733); rust operator command: none in the v2 CLI (collect_payload_orphans is library-only, not run by serve startup)
+< object_dir_final	files=6 bytes=70708 allocated_blocks=176
+< reclaim	orphan bytes reclaimed during subsequent store operations (16843733 -> 70708)
+---
+> object_dir_baseline	files=5 bytes=131865 allocated_blocks=288
+> object_dir_after_final_restart	files=7 bytes=16909457 allocated_blocks=33072
+> object_dir_after_cleanup_window	files=7 bytes=16909457 allocated_blocks=33072
+> restart_cleanup	no restart-time cleanup observed (16909457 -> 16909457); rust operator command: none in the v2 CLI (collect_payload_orphans is library-only, not run by serve startup)
+> object_dir_final	files=7 bytes=74988 allocated_blocks=192
+> reclaim	orphan bytes reclaimed during subsequent store operations (16909457 -> 74988)
+### g3-partial-retirement [rust-client-java-server] observed.tsv: CHANGED
+5c5
+< object_metrics_before	files=5 bytes=131865 allocated_blocks=288
+---
+> object_metrics_before	files=4 bytes=66141 allocated_blocks=152
+11c11
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g3-restart-same-roots [java-client-rust-server] observed.tsv: CHANGED
+1,3c1,3
+< view_0:0:1	state=5 attempt=1 deadline=None (pre-crash state=5)
+< view_0:0:2	state=5 attempt=1 deadline=None (pre-crash state=5)
+< view_0:0:3	state=5 attempt=1 deadline=None (pre-crash state=5)
+---
+> view_0:0:1	state=5 attempt=1 deadline=Some(<T>) (pre-crash state=5)
+> view_0:0:2	state=5 attempt=1 deadline=Some(<T>) (pre-crash state=5)
+> view_0:0:3	state=5 attempt=1 deadline=Some(<T>) (pre-crash state=5)
+8c8
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g3-restart-same-roots [rust-rust] observed.tsv: CHANGED
+3c3
+< view_0:0:3	state=5 attempt=1 deadline=Some(<T>) (pre-crash state=3)
+---
+> view_0:0:3	state=5 attempt=1 deadline=Some(<T>) (pre-crash state=1)
+### g3-restart-same-roots [rust-client-java-server] observed.tsv: CHANGED
+3c3
+< view_0:0:3	state=5 attempt=1 deadline=Some(<T>) (pre-crash state=3)
+---
+> view_0:0:3	state=5 attempt=1 deadline=Some(<T>) (pre-crash state=1)
+8c8
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g3-terminal-cleanup [rust-client-java-server] observed.tsv: CHANGED
+13c13
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g4-ancestor-fence-publication [rust-rust] observed.tsv: CHANGED
+4c4
+< iteration_1_winning_order	publication
+---
+> iteration_1_winning_order	fence
+8,9c8,9
+< iteration_1_children_succeeded	8
+< iteration_1_children_cancelled	120
+---
+> iteration_1_children_succeeded	0
+> iteration_1_children_cancelled	128
+12c12
+< iteration_2_winning_order	publication
+---
+> iteration_2_winning_order	fence
+16,17c16,17
+< iteration_2_children_succeeded	6
+< iteration_2_children_cancelled	122
+---
+> iteration_2_children_succeeded	0
+> iteration_2_children_cancelled	128
+24,25c24,25
+< iteration_3_children_succeeded	5
+< iteration_3_children_cancelled	123
+---
+> iteration_3_children_succeeded	12
+> iteration_3_children_cancelled	116
+27c27
+< orders_observed	publication:3,fence:0
+---
+> orders_observed	publication:1,fence:2
+### g4-ancestor-fence-publication [rust-client-java-server] observed.tsv: CHANGED
+29c29
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g4-deadline-settlement [rust-rust] observed.tsv: CHANGED
+14,17c14,17
+< iteration_3_winning_order	publication
+< iteration_3_final_state	5 (SUCCEEDED)
+< iteration_3_diagnostic	none
+< iteration_3_read	result read byte-exact (sha256=5a6cf9381ea769cda94180bb005d9edcd6bc756075c53645cc6b85c7cee927a3)
+---
+> iteration_3_winning_order	deadline
+> iteration_3_final_state	6 (FAILED)
+> iteration_3_diagnostic	DEADLINE_EXCEEDED (11)
+> iteration_3_read	refused NOT_FOUND (5): NOT_FOUND: no retained output selection
+23c23
+< orders_observed	publication:2,deadline:2
+---
+> orders_observed	publication:1,deadline:3
+### g4-deadline-settlement [rust-client-java-server] observed.tsv: CHANGED
+19,23c19,23
+< iteration_4_winning_order	publication
+< iteration_4_final_state	5 (SUCCEEDED)
+< iteration_4_diagnostic	none
+< iteration_4_read	result read byte-exact (sha256=ea0936f447744f3df49b9a36b31ec08d17403a7ad1bd6c59ab85a01e73c84127)
+< orders_observed	publication:1,deadline:3
+---
+> iteration_4_winning_order	deadline
+> iteration_4_final_state	6 (FAILED)
+> iteration_4_diagnostic	DEADLINE_EXCEEDED (11)
+> iteration_4_read	refused NOT_FOUND (5): NOT_FOUND: no retained output selection
+> orders_observed	publication:0,deadline:4
+25c25
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g4-eventual-settlement [rust-rust] observed.tsv: CHANGED
+3c3
+< settlement_wall_ms	250
+---
+> settlement_wall_ms	351
+7,8c7,8
+< children_succeeded	8
+< children_cancelled	120
+---
+> children_succeeded	1
+> children_cancelled	127
+10,11c10,11
+< objects_before_restart	22
+< objects_after_settlement	18
+---
+> objects_before_restart	7
+> objects_after_settlement	4
+### g4-eventual-settlement [rust-client-java-server] observed.tsv: CHANGED
+3c3
+< settlement_wall_ms	276
+---
+> settlement_wall_ms	175
+12c12
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g4-publication-vs-cancel [rust-client-java-server] observed.tsv: CHANGED
+40c40
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g4-publication-vs-skip [rust-client-java-server] observed.tsv: CHANGED
+8,10c8,10
+< iteration_2_winning_order	fence
+< iteration_2_final_state	8 (SKIPPED)
+< iteration_2_read	result read refused NOT_FOUND (5): NOT_FOUND: no retained output selection
+---
+> iteration_2_winning_order	publication
+> iteration_2_final_state	5 (SUCCEEDED)
+> iteration_2_read	result read byte-exact (sha256=8aa9411fd156a26e74dd0fbae0e52e07d12d466d6dfe0ab807edd61d14907d07)
+27c27
+< orders_observed	publication:4,fence:2
+---
+> orders_observed	publication:5,fence:1
+32c32
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g4-revocation-vs-publication [rust-client-java-server] INCOMPLETE: CHANGED
+3c3
+< java_jar_sha256=61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256=32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g4-stale-attempt-retry [rust-rust] observed.tsv: CHANGED
+4a5,6
+> attempt_2_hold	hook-free 16777216-byte copy window (named gap: the Rust subject's fixture hooks accept pause only at SESSION_COMMITTED, DECLARATION_COMMITTED and ADMISSION_COMMITTED (src/v2/fixture.rs REPLY_PAIRS; a pause at EXECUTION_CLAIMED is rejected at schedule parse), so attempt 2 is kept live by a 16 MiB copy (the negotiated object limit) rather than a hold; a deterministic hold needs a s
+> attempt_2_live_evidence	watch showed ACTIVE(1) under attempt 2; the stale retry raced the copy
+### g4-stale-attempt-retry [rust-client-java-server] observed.tsv: CHANGED
+4a5,6
+> attempt_2_hold	schedule pause at EXECUTION_CLAIMED for attempt 2 (second pause row), released after the stale retry's CONFLICT
+> attempt_2_live_evidence	EXECUTION_CLAIMED recorded twice by the subject; attempt 2 held at its claim
+10c12
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g5-cert-rotation-same-owner [java-server] observed.tsv: NO BASELINE FILE
+### g5-cert-rotation-same-owner [rust-rust] observed.tsv: NO BASELINE FILE
+### g5-cross-authority-reference [java-server] observed.tsv: NO BASELINE FILE
+### g5-cross-authority-reference [rust-rust] observed.tsv: NO BASELINE FILE
+### g5-expired-identity [java-server] observed.tsv: NO BASELINE FILE
+### g5-expired-identity [rust-rust] observed.tsv: NO BASELINE FILE
+### g5-foreign-owner [java-server] observed.tsv: CHANGED
+2c2
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g5-missing-client-cert [java-server] observed.tsv: CHANGED
+2c2
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g5-no-existence-disclosure [java-server] observed.tsv: CHANGED
+2c2
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g5-remapped-owner [java-server] observed.tsv: NO BASELINE FILE
+### g5-remapped-owner [rust-rust] observed.tsv: NO BASELINE FILE
+### g5-unmapped-principal [java-server] observed.tsv: CHANGED
+2c2
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g5-untrusted-identity [java-server] observed.tsv: CHANGED
+2,3c2,3
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+< foreign_ca_sha256	c0a4c8140155be1ad6df505533da0cc5fce16fe7140142ba6ce6f268ec242e60
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+> foreign_ca_sha256	5c3dcc6806ab3bb1c42af32f59dab23e503aaf4879e07a173d63e222deb5650e
+### g5-untrusted-identity [rust-rust] observed.tsv: CHANGED
+2c2
+< foreign_ca_sha256	a645b75d38543fbe64216ea9880c4d4e51895f31fd6e3c<T>ab2
+---
+> foreign_ca_sha256	145948cac8ca3a902d82131778944ddf0e8c26267afbe2896bbc6b7762f906a6
+### g7-cleanup-interrupted-refund [rust-rust] observed.tsv: NO BASELINE FILE
+### g7-deadline-queue-time [rust-rust] observed.tsv: NO BASELINE FILE
+### g7-deadline-queue-time [rust-client-java-server] observed.tsv: NO BASELINE FILE
+### g7-no-deadline-extension [rust-client-java-server] observed.tsv: CHANGED
+8c8
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g7-output-before-receipt-expiry [rust-client-java-server] observed.tsv: CHANGED
+14c14
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g7-read-pin-past-expiry [rust-rust] observed.tsv: NO BASELINE FILE
+### g7-read-pin-past-expiry [rust-client-java-server] observed.tsv: NO BASELINE FILE
+### g7-receipt-before-output-expiry [rust-client-java-server] observed.tsv: CHANGED
+9c9
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g7-unsafe-clock-refusal [rust-rust] observed.tsv: NO BASELINE FILE
+### g8-child-cut-conflict [java-client-rust-server] observed.tsv: CHANGED
+10c10
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g8-child-cut-conflict [rust-client-java-server] observed.tsv: CHANGED
+10c10
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g8-complete-with-pending [java-client-rust-server] observed.tsv: CHANGED
+11c11
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g8-complete-with-pending [rust-client-java-server] observed.tsv: CHANGED
+11c11
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g8-detach-drains [java-client-rust-server] observed.tsv: CHANGED
+4,5c4,5
+< detach_barrier	detach_wall_ms=1328 download_in_flight_at_detach=true download VERIFIED byte-exact
+< same_journal_concurrent_op	no client-side journal lease on this client: 12 same-journal watch probes ran concurrently with the read and all answered; the read itself VERIFIED byte-exact (the rust client refuses a concurrent same-journal op named CONFLICT — exclusive flock sidecar, ownership.rs)
+---
+> detach_barrier	detach_wall_ms=1378 download_in_flight_at_detach=true download VERIFIED byte-exact
+> same_journal_concurrent_op	no client-side journal lease on this client: 8 same-journal watch probes ran concurrently with the read and all answered; the read itself VERIFIED byte-exact (the rust client refuses a concurrent same-journal op named CONFLICT — exclusive flock sidecar, ownership.rs)
+7c7
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g8-detach-drains [rust-rust] observed.tsv: CHANGED
+4c4
+< detach_barrier	detach_wall_ms=100 download_in_flight_at_detach=true download VERIFIED byte-exact
+---
+> detach_barrier	detach_wall_ms=125 download_in_flight_at_detach=true download VERIFIED byte-exact
+### g8-detach-drains [rust-client-java-server] observed.tsv: CHANGED
+4c4
+< detach_barrier	detach_wall_ms=100 download_in_flight_at_detach=true download VERIFIED byte-exact
+---
+> detach_barrier	detach_wall_ms=150 download_in_flight_at_detach=true download VERIFIED byte-exact
+7c7
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g8-exact-root-complete [java-client-rust-server] observed.tsv: CHANGED
+13c13
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g8-exact-root-complete [rust-client-java-server] observed.tsv: CHANGED
+13c13
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g8-half-close-preserves-responses [java-client-rust-server] observed.tsv: CHANGED
+7c7
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g8-half-close-preserves-responses [rust-client-java-server] observed.tsv: CHANGED
+7c7
+< java_jar_sha256	61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### g8-timeout-no-completion-claim [kill-variant-rust-client-java-server] INCOMPLETE: CHANGED
+7c7
+< java_jar_sha256=61ab64a312908dad40f458bf32ce8d8dadcb8a13a0aea489e44dd87e918a458a
+---
+> java_jar_sha256=32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+### r-capability-manifest [rust-rust] observed.tsv: CHANGED
+4,6c4,6
+< mem_total_kb	127121896
+< fixture_fs_type	xfs
+< fixture_mount	/work
+---
+> mem_total_kb	127121904
+> fixture_fs_type	ext4
+> fixture_mount	/
+9c9
+< calibration_per_sample_ns	11772
+---
+> calibration_per_sample_ns	11898
+### r-memory-ladder [java-server] observed.tsv: CHANGED
+14,19c14,19
+< collector	989 ticks, 989 sample lines, 0 error lines
+< baseline_rss_kib	median=239306 p90=249200 max=251028 over 60 ticks
+< payload_ladder_rss_kib	65536B tail_p90=350936 (60 ticks) -> 16777216B tail_p90=359728 (60 ticks), growth=8792 against the frozen allowance 524288
+< payload_ladder_scaling	payload grew by 16711680 B per admission (256x); group tail p90 RSS grew by 8792 KiB. A subject that buffered each payload once would have grown by at least 16320 KiB
+< inventory_ladder_rss_kib	1 resident tail_p90=368436 (60 ticks) -> 64 resident tail_p90=372832 (60 ticks), growth=4396 against the frozen allowance 278528
+< hwm_kib	baseline=385008 payload_last=623496 inventory_last=623496
+---
+> collector	1063 ticks, 1063 sample lines, 0 error lines
+> baseline_rss_kib	median=229830 p90=277416 max=279132 over 60 ticks
+> payload_ladder_rss_kib	65536B tail_p90=344036 (60 ticks) -> 16777216B tail_p90=365388 (60 ticks), growth=21352 against the frozen allowance 524288
+> payload_ladder_scaling	payload grew by 16711680 B per admission (256x); group tail p90 RSS grew by 21352 KiB. A subject that buffered each payload once would have grown by at least 16320 KiB
+> inventory_ladder_rss_kib	1 resident tail_p90=375480 (60 ticks) -> 64 resident tail_p90=341360 (60 ticks), growth=0 against the frozen allowance 278528
+> hwm_kib	baseline=379156 payload_last=614944 inventory_last=614944
+21,22c21,22
+< fds	baseline median=19 -> last rung p90=22 max=23
+< heap_scope	java heap via jstat -gc (S0U+S1U+EU+OU) inside the measured rung windows: 42 heap ticks, 0 probe gaps, min 20079 KiB, max 160907 KiB, against the frozen -Xmx ceiling
+---
+> fds	baseline median=19 -> last rung p90=22 max=24
+> heap_scope	java heap via jstat -gc (S0U+S1U+EU+OU) inside the measured rung windows: 42 heap ticks, 0 probe gaps, min 12344 KiB, max 159788 KiB, against the frozen -Xmx ceiling
+### r-memory-ladder [rust-rust] observed.tsv: CHANGED
+14,19c14,19
+< collector	1009 ticks, 1009 sample lines, 0 error lines
+< baseline_rss_kib	median=15872 p90=15876 max=15908 over 60 ticks
+< payload_ladder_rss_kib	65536B tail_p90=19300 (60 ticks) -> 16777216B tail_p90=21044 (60 ticks), growth=1744 against the frozen allowance 131072
+< payload_ladder_scaling	payload grew by 16711680 B per admission (256x); group tail p90 RSS grew by 1744 KiB. A subject that buffered each payload once would have grown by at least 16320 KiB
+< inventory_ladder_rss_kib	1 resident tail_p90=21052 (60 ticks) -> 64 resident tail_p90=22160 (60 ticks), growth=1108 against the frozen allowance 66560
+< hwm_kib	baseline=15908 payload_last=21076 inventory_last=23372
+---
+> collector	1032 ticks, 1032 sample lines, 0 error lines
+> baseline_rss_kib	median=16648 p90=16648 max=16680 over 59 ticks
+> payload_ladder_rss_kib	65536B tail_p90=19896 (60 ticks) -> 16777216B tail_p90=20712 (60 ticks), growth=816 against the frozen allowance 131072
+> payload_ladder_scaling	payload grew by 16711680 B per admission (256x); group tail p90 RSS grew by 816 KiB. A subject that buffered each payload once would have grown by at least 16320 KiB
+> inventory_ladder_rss_kib	1 resident tail_p90=21132 (60 ticks) -> 64 resident tail_p90=22856 (59 ticks), growth=1724 against the frozen allowance 66560
+> hwm_kib	baseline=16680 payload_last=20744 inventory_last=22904
+21c21
+< fds	baseline median=12 -> last rung p90=15 max=19
+---
+> fds	baseline median=12 -> last rung p90=12 max=17
+### r-native-credit [java-server] observed.tsv: CHANGED
+6,7c6,7
+< transport_bytes_at_completion	udp_tx=17334102B/11959dg udp_rx=32454B/885dg sent_packets=11960 lost_packets=15 lost_bytes=20394 against 16777216B of application queue bytes
+< borrowed_credit_during_transfer	frames on the wire, counted by the source-pinned transport: rx[MAX_DATA=125 MAX_STREAM_DATA=125 MAX_STREAMS_UNI=0 MAX_STREAMS_BIDI=0 STOP_SENDING=0 RESET_STREAM=0 STREAM=3 ACK=756] tx[DATA_BLOCKED=0 STREAM_DATA_BLOCKED=0 STREAMS_BLOCKED_UNI=0 STREAM=11943 ACK=94]
+---
+> transport_bytes_at_completion	udp_tx=17329890B/11959dg udp_rx=32285B/883dg sent_packets=11960 lost_packets=12 lost_bytes=16038 against 16777216B of application queue bytes
+> borrowed_credit_during_transfer	frames on the wire, counted by the source-pinned transport: rx[MAX_DATA=124 MAX_STREAM_DATA=124 MAX_STREAMS_UNI=0 MAX_STREAMS_BIDI=0 STOP_SENDING=0 RESET_STREAM=0 STREAM=3 ACK=755] tx[DATA_BLOCKED=0 STREAM_DATA_BLOCKED=0 STREAMS_BLOCKED_UNI=0 STREAM=11941 ACK=97]
+9c9
+< frame_totals_at_end	rx[MAX_DATA=128 MAX_STREAM_DATA=125 MAX_STREAMS_UNI=3 MAX_STREAMS_BIDI=0 STOP_SENDING=16 RESET_STREAM=0 STREAM=21 ACK=761] tx[DATA_BLOCKED=0 STREAM_DATA_BLOCKED=0 STREAMS_BLOCKED_UNI=0 STREAM=11960 ACK=105]
+---
+> frame_totals_at_end	rx[MAX_DATA=127 MAX_STREAM_DATA=124 MAX_STREAMS_UNI=3 MAX_STREAMS_BIDI=0 STOP_SENDING=16 RESET_STREAM=0 STREAM=21 ACK=760] tx[DATA_BLOCKED=0 STREAM_DATA_BLOCKED=0 STREAMS_BLOCKED_UNI=0 STREAM=11958 ACK=108]
+### r-native-credit [rust-rust] observed.tsv: CHANGED
+6,7c6,7
+< transport_bytes_at_completion	udp_tx=17220072B/13331dg udp_rx=148106B/4098dg sent_packets=13332 lost_packets=0 lost_bytes=0 against 16777216B of application queue bytes
+< borrowed_credit_during_transfer	frames on the wire, counted by the source-pinned transport: rx[MAX_DATA=341 MAX_STREAM_DATA=2047 MAX_STREAMS_UNI=1 MAX_STREAMS_BIDI=0 STOP_SENDING=0 RESET_STREAM=0 STREAM=4 ACK=2042] tx[DATA_BLOCKED=0 STREAM_DATA_BLOCKED=0 STREAMS_BLOCKED_UNI=0 STREAM=12290 ACK=1033]
+---
+> transport_bytes_at_completion	udp_tx=17220018B/13329dg udp_rx=148022B/4097dg sent_packets=13330 lost_packets=0 lost_bytes=0 against 16777216B of application queue bytes
+> borrowed_credit_during_transfer	frames on the wire, counted by the source-pinned transport: rx[MAX_DATA=341 MAX_STREAM_DATA=2048 MAX_STREAMS_UNI=1 MAX_STREAMS_BIDI=0 STOP_SENDING=0 RESET_STREAM=0 STREAM=3 ACK=2045] tx[DATA_BLOCKED=0 STREAM_DATA_BLOCKED=0 STREAMS_BLOCKED_UNI=0 STREAM=12290 ACK=1033]
+9c9
+< frame_totals_at_end	rx[MAX_DATA=341 MAX_STREAM_DATA=2047 MAX_STREAMS_UNI=3 MAX_STREAMS_BIDI=0 STOP_SENDING=4 RESET_STREAM=0 STREAM=8 ACK=2044] tx[DATA_BLOCKED=0 STREAM_DATA_BLOCKED=0 STREAMS_BLOCKED_UNI=0 STREAM=12295 ACK=1039]
+---
+> frame_totals_at_end	rx[MAX_DATA=341 MAX_STREAM_DATA=2048 MAX_STREAMS_UNI=3 MAX_STREAMS_BIDI=0 STOP_SENDING=4 RESET_STREAM=0 STREAM=9 ACK=2046] tx[DATA_BLOCKED=0 STREAM_DATA_BLOCKED=0 STREAMS_BLOCKED_UNI=0 STREAM=12295 ACK=1040]
+### r-network-bytes [java-server] observed.tsv: CHANGED
+7,8c7,8
+< handshake_tls_bytes_interface	proc-net-dev, HOST-SCOPED: rx=14668B/27pkt tx=14668B/27pkt over the mTLS handshake, ALPN, capability negotiation and session creation, with no payload in existence. Loopback double-counting: wire bytes are half the sum, 14668B
+< handshake_tls_bytes_transport	quinn-conn-udp, FIXTURE-SCOPED, same phase: udp_tx=10945B/15dg udp_rx=2967B/12dg sent_packets=16 lost_packets=1 lost_bytes=66 congestion_events=1 current_mtu=1452
+---
+> handshake_tls_bytes_interface	proc-net-dev, HOST-SCOPED: rx=14456B/24pkt tx=14456B/24pkt over the mTLS handshake, ALPN, capability negotiation and session creation, with no payload in existence. Loopback double-counting: wire bytes are half the sum, 14456B
+> handshake_tls_bytes_transport	quinn-conn-udp, FIXTURE-SCOPED, same phase: udp_tx=10879B/14dg udp_rx=2905B/10dg sent_packets=15 lost_packets=1 lost_bytes=66 congestion_events=1 current_mtu=1452
+10,15c10,15
+< transfer_bytes_interface	proc-net-dev, HOST-SCOPED: rx=4361936B/598pkt tx=4361936B/598pkt; wire bytes after the loopback double-counting rule = 4361936B against 4194304B of logical payload
+< transfer_bytes_transport	quinn-conn-udp, FIXTURE-SCOPED: this connection sent 4337607B and received 7585B of UDP payload during the transfer, against 4194304B of logical payload — overhead 143303B (3%)
+< retransmission	transport path counters over the whole connection: sent_packets=3013 lost_packets=9 lost_bytes=11682 congestion_events=4 current_mtu=1452. Retransmitted bytes are inside the measured transport and interface totals and are reported here rather than subtracted from them
+< whole_row_interface	proc-net-dev, HOST-SCOPED, first to last sample: rx=4377506B tx=4377506B (wire 4377506B after halving) — includes the idle baseline and anything else on this host's loopback, which is exactly the limitation the method carries here
+< whole_row_transport	quinn-conn-udp, FIXTURE-SCOPED, whole connection: udp_tx=4348780B/3015dg udp_rx=10851B/239dg sent_packets=3016 lost_packets=9 lost_bytes=11682 congestion_events=4 current_mtu=1452
+< dead_collector_control	PROVED in-row: a copy of the artifact truncated mid-record is REJECTED by the validating reader (7 good samples read from the intact file), and a counter read against a non-existent interface fails with: /proc/3407707/net/dev has no interface definitely-not-an-interface
+---
+> transfer_bytes_interface	proc-net-dev, HOST-SCOPED: rx=4367688B/597pkt tx=4367688B/597pkt; wire bytes after the loopback double-counting rule = 4367688B against 4194304B of logical payload
+> transfer_bytes_transport	quinn-conn-udp, FIXTURE-SCOPED: this connection sent 4343346B and received 7626B of UDP payload during the transfer, against 4194304B of logical payload — overhead 149042B (3%)
+> retransmission	transport path counters over the whole connection: sent_packets=3014 lost_packets=13 lost_bytes=17490 congestion_events=4 current_mtu=1452. Retransmitted bytes are inside the measured transport and interface totals and are reported here rather than subtracted from them
+> whole_row_interface	proc-net-dev, HOST-SCOPED, first to last sample: rx=4383121B tx=4383121B (wire 4383121B after halving) — includes the idle baseline and anything else on this host's loopback, which is exactly the limitation the method carries here
+> whole_row_transport	quinn-conn-udp, FIXTURE-SCOPED, whole connection: udp_tx=4354499B/3017dg udp_rx=10829B/238dg sent_packets=3018 lost_packets=13 lost_bytes=17490 congestion_events=4 current_mtu=1452
+> dead_collector_control	PROVED in-row: a copy of the artifact truncated mid-record is REJECTED by the validating reader (7 good samples read from the intact file), and a counter read against a non-existent interface fails with: /proc/315277/net/dev has no interface definitely-not-an-interface
+### r-network-bytes [rust-rust] observed.tsv: CHANGED
+6c6
+< host_idle_baseline	over 10s with no fixture traffic the host's lo moved rx=0B/0pkt tx=0B/0pkt. That is the contamination floor of the host-scoped method and is why every figure below is reported alongside the fixture-scoped one
+---
+> host_idle_baseline	over 10s with no fixture traffic the host's lo moved rx=1495B/16pkt tx=1495B/16pkt. That is the contamination floor of the host-scoped method and is why every figure below is reported alongside the fixture-scoped one
+10,15c10,15
+< transfer_bytes_interface	proc-net-dev, HOST-SCOPED: rx=4387702B/1780pkt tx=4387702B/1780pkt; wire bytes after the loopback double-counting rule = 4387702B against 4194304B of logical payload
+< transfer_bytes_transport	quinn-conn-udp, FIXTURE-SCOPED: this connection sent 4302837B and received 35025B of UDP payload during the transfer, against 4194304B of logical payload — overhead 108533B (2%)
+< retransmission	transport path counters over the whole connection: sent_packets=3343 lost_packets=0 lost_bytes=0 congestion_events=0 current_mtu=1452. Retransmitted bytes are inside the measured transport and interface totals and are reported here rather than subtracted from them
+< whole_row_interface	proc-net-dev, HOST-SCOPED, first to last sample: rx=4405393B tx=4405393B (wire 4405393B after halving) — includes the idle baseline and anything else on this host's loopback, which is exactly the limitation the method carries here
+< whole_row_transport	quinn-conn-udp, FIXTURE-SCOPED, whole connection: udp_tx=4311574B/3347dg udp_rx=42704B/1034dg sent_packets=3348 lost_packets=0 lost_bytes=0 congestion_events=0 current_mtu=1452
+< dead_collector_control	PROVED in-row: a copy of the artifact truncated mid-record is REJECTED by the validating reader (7 good samples read from the intact file), and a counter read against a non-existent interface fails with: /proc/3405121/net/dev has no interface definitely-not-an-interface
+---
+> transfer_bytes_interface	proc-net-dev, HOST-SCOPED: rx=4387716B/1780pkt tx=4387716B/1780pkt; wire bytes after the loopback double-counting rule = 4387716B against 4194304B of logical payload
+> transfer_bytes_transport	quinn-conn-udp, FIXTURE-SCOPED: this connection sent 4302877B and received 34999B of UDP payload during the transfer, against 4194304B of logical payload — overhead 108573B (2%)
+> retransmission	transport path counters over the whole connection: sent_packets=3344 lost_packets=0 lost_bytes=0 congestion_events=0 current_mtu=1452. Retransmitted bytes are inside the measured transport and interface totals and are reported here rather than subtracted from them
+> whole_row_interface	proc-net-dev, HOST-SCOPED, first to last sample: rx=4406624B tx=4406624B (wire 4406624B after halving) — includes the idle baseline and anything else on this host's loopback, which is exactly the limitation the method carries here
+> whole_row_transport	quinn-conn-udp, FIXTURE-SCOPED, whole connection: udp_tx=4311534B/3346dg udp_rx=42592B/1031dg sent_packets=3347 lost_packets=0 lost_bytes=0 congestion_events=0 current_mtu=1452
+> dead_collector_control	PROVED in-row: a copy of the artifact truncated mid-record is REJECTED by the validating reader (7 good samples read from the intact file), and a counter read against a non-existent interface fails with: /proc/314234/net/dev has no interface definitely-not-an-interface
+### r-staging-and-journal-bounds [java-server] observed.tsv: CHANGED
+15,19c15,19
+< retained_bytes_across_restart	store file lengths total 246852 B before the restart and 873540 B after it (separate scope from allocated blocks; both are in store.tsv per file and per checkpoint)
+< collector	pre-restart 521 ticks / 521 lines / 0 errors; post-restart 23 ticks / 23 lines / 0 errors
+< fds	baseline median=18 -> staging held p90=150 (max 151) -> after release p90=22 (max 23)
+< rss_kib	baseline median=212120 -> staging held p90=418128 -> after release p90=367420
+< threads	baseline median=31 -> staging held max=50 -> after release max=47
+---
+> retained_bytes_across_restart	store file lengths total 717892 B before the restart and 873540 B after it (separate scope from allocated blocks; both are in store.tsv per file and per checkpoint)
+> collector	pre-restart 523 ticks / 523 lines / 0 errors; post-restart 23 ticks / 23 lines / 0 errors
+> fds	baseline median=19 -> staging held p90=150 (max 152) -> after release p90=22 (max 23)
+> rss_kib	baseline median=214956 -> staging held p90=435860 -> after release p90=368364
+> threads	baseline median=32 -> staging held max=52 -> after release max=47
+### r-staging-and-journal-bounds [rust-rust] observed.tsv: CHANGED
+7,8c7,8
+< pending_ceiling	declared pending_limit 16; 7 waits granted and left unanswered (0 answered immediately and held no slot), and attempt 8 (request 10) was refused LIMIT_EXCEEDED (4) detail="metadata concurrency exhausted". The ceiling that fires is not necessarily the declared pending_limit and the row does not claim it is
+< pending_existing_promises	7/7 waits granted before exhaustion were answered after the watched work was admitted on a second connection (0 other control frames drained and logged)
+---
+> pending_ceiling	declared pending_limit 16; 13 waits granted and left unanswered (0 answered immediately and held no slot), and attempt 14 (request 16) was refused LIMIT_EXCEEDED (4) detail="metadata concurrency exhausted". The ceiling that fires is not necessarily the declared pending_limit and the row does not claim it is
+> pending_existing_promises	13/13 waits granted before exhaustion were answered after the watched work was admitted on a second connection (0 other control frames drained and logged)
+16,18c16,18
+< collector	pre-restart 370 ticks / 370 lines / 0 errors; post-restart 23 ticks / 23 lines / 0 errors
+< fds	baseline median=12 -> staging held p90=16 (max 21) -> after release p90=15 (max 19)
+< rss_kib	baseline median=15956 -> staging held p90=18324 -> after release p90=18828
+---
+> collector	pre-restart 395 ticks / 395 lines / 0 errors; post-restart 23 ticks / 23 lines / 0 errors
+> fds	baseline median=12 -> staging held p90=18 (max 22) -> after release p90=15 (max 17)
+> rss_kib	baseline median=16468 -> staging held p90=18980 -> after release p90=19436
+### r-stalled-principal-progress [java-server] observed.tsv: CHANGED
+6,9c6,9
+< stall_enforcement	negotiated idle 30s / lifetime 120s; non-writing probes at idle-bound-2s (+28000ms: 0 stopped), idle-bound+0s (+30156ms: 3 stopped), idle-bound+2s (+32000ms: 3 stopped), idle-bound+5s (+35036ms: 3 stopped), idle-bound+10s (+40000ms: 3 stopped), lifetime-bound+10s (+130127ms: 3 stopped); 3/3 distinct streams observed stopped; LIMIT_EXCEEDED input refusals on control at window en
+< stall_enforcement_bracket	stream-6: last open idle-bound-2s (+28000ms), first stopped idle-bound+0s (+30156ms); stream-10: last open idle-bound-2s (+28000ms), first stopped idle-bound+0s (+30156ms); stream-14: last open idle-bound-2s (+28000ms), first stopped idle-bound+0s (+30156ms)
+< collector	1510 ticks, 1510 sample lines, 0 error lines
+< rss_plateau_kib	baseline_median=355376 tail_p90=372004 growth=16628
+---
+> stall_enforcement	negotiated idle 30s / lifetime 120s; non-writing probes at idle-bound-2s (+28000ms: 0 stopped), idle-bound+0s (+30031ms: 3 stopped), idle-bound+2s (+32000ms: 3 stopped), idle-bound+5s (+35013ms: 3 stopped), idle-bound+10s (+40000ms: 3 stopped), lifetime-bound+10s (+130078ms: 3 stopped); 3/3 distinct streams observed stopped; LIMIT_EXCEEDED input refusals on control at window en
+> stall_enforcement_bracket	stream-6: last open idle-bound-2s (+28000ms), first stopped idle-bound+0s (+30031ms); stream-10: last open idle-bound-2s (+28000ms), first stopped idle-bound+0s (+30031ms); stream-14: last open idle-bound-2s (+28000ms), first stopped idle-bound+0s (+30031ms)
+> collector	1511 ticks, 1511 sample lines, 0 error lines
+> rss_plateau_kib	baseline_median=349068 tail_p90=371872 growth=22804
+11,14c11,14
+< io_write_bytes_window	delta_bytes=8597504 span_ms=151045 bytes_per_s=56920
+< io_cancelled_write_bytes_window	delta_bytes=405504 span_ms=151045 bytes_per_s=2684
+< io_write_cancelled_share	4% of the window's accounted write_bytes was cancelled before writeback (405504/8597504)
+< heap_scope	java heap via jstat -gc (S0U+S1U+EU+OU) at the 1000ms heap cadence: 151 samples, min 9424 KiB, max 162117 KiB, 0 probe gaps
+---
+> io_write_bytes_window	delta_bytes=9035776 span_ms=151094 bytes_per_s=59802
+> io_cancelled_write_bytes_window	delta_bytes=405504 span_ms=151094 bytes_per_s=2683
+> io_write_cancelled_share	4% of the window's accounted write_bytes was cancelled before writeback (405504/9035776)
+> heap_scope	java heap via jstat -gc (S0U+S1U+EU+OU) at the 1000ms heap cadence: 151 samples, min 7984 KiB, max 163076 KiB, 0 probe gaps
+### r-stalled-principal-progress [rust-rust] observed.tsv: CHANGED
+6,13c6,13
+< stall_enforcement	negotiated idle 5s / lifetime 30s; non-writing probes at idle-bound-2s (+3102ms: 0 stopped), idle-bound+0s (+5101ms: 3 stopped), idle-bound+2s (+7011ms: 3 stopped), idle-bound+5s (+10102ms: 3 stopped), idle-bound+10s (+15102ms: 3 stopped), lifetime-bound+10s (+40000ms: 3 stopped); 3/3 distinct streams observed stopped; LIMIT_EXCEEDED input refusals on control at window end: 3/3
+< stall_enforcement_bracket	stream-6: last open idle-bound-2s (+3102ms), first stopped idle-bound+0s (+5101ms); stream-10: last open idle-bound-2s (+3102ms), first stopped idle-bound+0s (+5101ms); stream-14: last open idle-bound-2s (+3102ms), first stopped idle-bound+0s (+5101ms)
+< collector	909 ticks, 909 sample lines, 0 error lines
+< rss_plateau_kib	baseline_median=19908 tail_p90=20768 growth=860
+< fd_plateau	baseline_median=12 tail_p90=15
+< io_write_bytes_window	delta_bytes=1038503936 span_ms=90854 bytes_per_s=11430470
+< io_cancelled_write_bytes_window	delta_bytes=1028214784 span_ms=90854 bytes_per_s=11317220
+< io_write_cancelled_share	99% of the window's accounted write_bytes was cancelled before writeback (1028214784/1038503936)
+---
+> stall_enforcement	negotiated idle 5s / lifetime 30s; non-writing probes at idle-bound-2s (+3128ms: 0 stopped), idle-bound+0s (+5102ms: 3 stopped), idle-bound+2s (+7013ms: 3 stopped), idle-bound+5s (+10102ms: 3 stopped), idle-bound+10s (+15103ms: 3 stopped), lifetime-bound+10s (+40000ms: 3 stopped); 3/3 distinct streams observed stopped; LIMIT_EXCEEDED input refusals on control at window end: 3/3
+> stall_enforcement_bracket	stream-6: last open idle-bound-2s (+3128ms), first stopped idle-bound+0s (+5102ms); stream-10: last open idle-bound-2s (+3128ms), first stopped idle-bound+0s (+5102ms); stream-14: last open idle-bound-2s (+3128ms), first stopped idle-bound+0s (+5102ms)
+> collector	911 ticks, 911 sample lines, 0 error lines
+> rss_plateau_kib	baseline_median=20692 tail_p90=21752 growth=1060
+> fd_plateau	baseline_median=12 tail_p90=17
+> io_write_bytes_window	delta_bytes=1010343936 span_ms=91050 bytes_per_s=11096583
+> io_cancelled_write_bytes_window	delta_bytes=1002479616 span_ms=91050 bytes_per_s=11010209
+> io_write_cancelled_share	99% of the window's accounted write_bytes was cancelled before writeback (1002479616/1010343936)

@@ -1,0 +1,13 @@
+1	durable-18d4ab23bb15105e	g5-cross-authority-reference	rust	client	65230-18d4ab2c47bd444d	1			0:0:1	1		artifacts/input.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+1	durable-18d4ab23bb15105e	g5-cross-authority-reference	rust	client	65230-18d4ab2c47bd444d	2	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4ab23bb15105e	g5-cross-authority-reference	rust	client	65230-18d4ab2c47bd444d	3	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4ab23bb15105e	g5-cross-authority-reference	rust	client	65230-18d4ab2c47bd444d	4	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ab23bb15105e	g5-cross-authority-reference	rust	client	65230-18d4ab2c47bd444d	5	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ab23bb15105e	g5-cross-authority-reference	rust	client	65230-18d4ab2c47bd444d	6	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ab23bb15105e	g5-cross-authority-reference	rust	client	65230-18d4ab2c47bd444d	7	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d4ab23bb15105e	g5-cross-authority-reference	rust	client	65230-18d4ab2c47bd444d	8	RESULT_INSTALLED		0:0:1	1		artifacts/output-x.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+1	durable-18d4ab23bb15105e	g5-cross-authority-reference	rust	client	65230-18d4ab2c47bd444d	9	REFUSAL_RECEIVED		0:0:1	1	3	artifacts/arm-a-attach-against-y.txt	93	3b15c2b705028f03c98b3571decd322e378d56ae54dfec2cdb1b3ae5340007dc
+1	durable-18d4ab23bb15105e	g5-cross-authority-reference	rust	client	65230-18d4ab2c47bd444d	10	REFUSAL_RECEIVED		0:0:1	1	3	artifacts/arm-a-read-against-y.txt	93	3b15c2b705028f03c98b3571decd322e378d56ae54dfec2cdb1b3ae5340007dc
+1	durable-18d4ab23bb15105e	g5-cross-authority-reference	rust	client	65230-18d4ab2c47bd444d	11	REFUSAL_RECEIVED		0:0:1	1	3	artifacts/arm-a-lookup-against-y.txt	93	3b15c2b705028f03c98b3571decd322e378d56ae54dfec2cdb1b3ae5340007dc
+1	durable-18d4ab23bb15105e	g5-cross-authority-reference	rust	client	65230-18d4ab2c47bd444d	12	REFUSAL_RECEIVED		0:0:1	1	3	artifacts/arm-a-watch-against-y.txt	93	3b15c2b705028f03c98b3571decd322e378d56ae54dfec2cdb1b3ae5340007dc
+1	durable-18d4ab23bb15105e	g5-cross-authority-reference	rust	client	65230-18d4ab2c47bd444d	13	REFUSAL_RECEIVED		0:0:1	1	5	artifacts/arm-b-select-on-y.txt	84	83875cfa7bbf75aab36fe110600de439eef66804333535aff98b082020d6a0c3

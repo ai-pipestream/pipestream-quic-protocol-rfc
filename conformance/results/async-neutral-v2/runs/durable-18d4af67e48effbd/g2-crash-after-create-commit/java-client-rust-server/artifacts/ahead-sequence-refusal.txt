@@ -1,0 +1,6 @@
+exit=exit status: 1
+stdout:
+REFUSED code=CONFLICT detail=creation sequence is ahead of authority
+
+stderr:
+CONFLICT: CONFLICT: authority refused: creation sequence is ahead of authority

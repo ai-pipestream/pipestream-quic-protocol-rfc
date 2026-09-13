@@ -1,0 +1,11 @@
+server_subject	rust
+client_subject	rust
+attempt_1_state	AWAITING_RETRY (2)
+r1_replacement_attempt	2
+attempt_2_hold	hook-free 16777216-byte copy window (named gap: the Rust subject's fixture hooks accept pause only at SESSION_COMMITTED, DECLARATION_COMMITTED and ADMISSION_COMMITTED (src/v2/fixture.rs REPLY_PAIRS; a pause at EXECUTION_CLAIMED is rejected at schedule parse), so attempt 2 is kept live by a 16 MiB copy (the negotiated object limit) rather than a hold; a deterministic hold needs a server-crate hook extension)
+attempt_2_live_evidence	watch showed ACTIVE(1) under attempt 2; the stale retry raced the copy
+stale_retry_refusal	authority refusal CONFLICT: retry attempt changed
+terminal_attempt	2
+terminal_state	SUCCEEDED (5)
+r1_replay	identical receipt; settled view byte-identical; fence not advanced
+result_read	attempt 2 byte-exact against the independent oracle

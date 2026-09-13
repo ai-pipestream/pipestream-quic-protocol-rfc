@@ -1,0 +1,15 @@
+server_subject	java
+client_subject	rust
+clock_mode	real-short-policy
+retirement_mechanism	operator retirement command: named gap on both CLIs; both servers retire automatically (rust: v2_authority runtime maintenance, 20ms interval; java: RetentionService, 1s poll)
+object_metrics_before	files=4 bytes=66141 allocated_blocks=152
+object_metrics_after	files=2 bytes=122 allocated_blocks=8
+retirement_window	refused: authority refusal EXPIRED: session retirement committed
+retired_operation_lookup	refused EXPIRED (6)
+retired_creation_replay	refused EXPIRED (6)
+owner_high_water	next-sequence=2 (never reissued)
+retired_operation_replay	refused, never reapplied
+attach_retired_generation	refused EXPIRED (6)
+attach_never_created_generation	refused CONFLICT (7)
+high_water_create_after_retirement	sequence 2 bound; next-sequence=3
+java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c

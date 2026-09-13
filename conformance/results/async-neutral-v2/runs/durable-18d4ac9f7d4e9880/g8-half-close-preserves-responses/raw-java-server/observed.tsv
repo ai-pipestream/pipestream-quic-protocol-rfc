@@ -1,0 +1,6 @@
+server_subject	java
+client_subject	rust (raw probe)
+alpn	pipestream/2
+pre_fin_responses_in_full	session receipt (generation 1) and DETACHED response received in                      full BEFORE the control receive direction ended; the post-detach                      ack survived the client's immediate FIN
+post_fin_direction_end	ordered FIN after the DETACHED response
+close	server left connection close to the client (MAY, Section 12.8); probe closed the connection with application code 0

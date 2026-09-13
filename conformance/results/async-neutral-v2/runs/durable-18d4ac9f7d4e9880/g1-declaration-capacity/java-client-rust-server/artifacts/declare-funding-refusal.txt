@@ -1,0 +1,6 @@
+exit=exit status: 1
+stdout:
+REFUSED code=LIMIT_EXCEEDED detail=authority record completion capacity exhausted
+
+stderr:
+LIMIT_EXCEEDED: LIMIT_EXCEEDED: authority refused: authority record completion capacity exhausted

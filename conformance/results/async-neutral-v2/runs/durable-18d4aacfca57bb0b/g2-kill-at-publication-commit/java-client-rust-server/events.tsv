@@ -1,0 +1,10 @@
+1	durable-18d4aacfca57bb0b	g2-kill-at-publication-commit	java	client	25465-18d4aaeb30135b33	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4aacfca57bb0b	g2-kill-at-publication-commit	java	client	25465-18d4aaeb30135b33	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4aacfca57bb0b	g2-kill-at-publication-commit	java	client	25465-18d4aaeb30135b33	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4aacfca57bb0b	g2-kill-at-publication-commit	rust	server	43761-18d4aaeb3921d58c	1	PUBLICATION_COMMITTED							
+1	durable-18d4aacfca57bb0b	g2-kill-at-publication-commit	java	client	25465-18d4aaeb30135b33	4	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4aacfca57bb0b	g2-kill-at-publication-commit	java	client	25465-18d4aaeb30135b33	5	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4aacfca57bb0b	g2-kill-at-publication-commit	java	client	25465-18d4aaeb30135b33	6	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d4aacfca57bb0b	g2-kill-at-publication-commit	java	client	25465-18d4aaeb30135b33	7	RESULT_INSTALLED		0:0:1	1		artifacts/output.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+1	durable-18d4aacfca57bb0b	g2-kill-at-publication-commit	java	client	25465-18d4aaeb30135b33	8	REQUEST_SENT	6ba0a160173156dc1d6aad583477d576	0:0:1	1				
+1	durable-18d4aacfca57bb0b	g2-kill-at-publication-commit	java	client	25465-18d4aaeb30135b33	9	REFUSAL_RECEIVED	6ba0a160173156dc1d6aad583477d576	0:0:1	1	18	artifacts/post-terminal-retry.txt	173	7efeeda22f568bdf3433b9bb47802ef9e035d41446790dcfbbb42d9f957953de

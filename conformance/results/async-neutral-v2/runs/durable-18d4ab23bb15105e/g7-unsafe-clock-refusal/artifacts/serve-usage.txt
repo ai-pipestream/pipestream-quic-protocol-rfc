@@ -1,0 +1,48 @@
+Open existing history. Missing or incompatible state is an error
+
+Usage: pipestream-quinn v2 serve [OPTIONS] --state-db <STATE_DB> --object-dir <OBJECT_DIR> --authority <AUTHORITY> --principal-map <PRINCIPAL_MAP> --cert <CERT> --key <KEY> --client-ca <CLIENT_CA> --result-authority <RESULT_AUTHORITY>
+
+Options:
+      --state-db <STATE_DB>
+          
+      --object-dir <OBJECT_DIR>
+          
+      --authority <AUTHORITY>
+          
+      --principal-map <PRINCIPAL_MAP>
+          
+      --trust-system-clock
+          Explicitly trust system UTC across restart; forward jumps count as elapsed time
+      --allow-skip
+          
+      --sessions <SESSIONS>
+          [default: 1024]
+      --payload-objects <PAYLOAD_OBJECTS>
+          [default: 10000]
+      --payload-bytes <PAYLOAD_BYTES>
+          [default: 8589934592]
+      --bind <BIND>
+          [default: 127.0.0.1:0]
+      --cert <CERT>
+          
+      --key <KEY>
+          
+      --client-ca <CLIENT_CA>
+          
+      --result-authority <RESULT_AUTHORITY>
+          Trusted DNS/IP authority and port used in result locators
+      --ready-file <READY_FILE>
+          
+      --object-limit <OBJECT_LIMIT>
+          [default: 16777216]
+      --fixture-events <FIXTURE_EVENTS>
+          Test-only neutral-driver fixture hooks; never a production admin API. When any is set, --fixture-events, --fixture-run and --fixture-scenario are all required; --fixture-schedule is optional
+      --fixture-run <FIXTURE_RUN>
+          
+      --fixture-scenario <FIXTURE_SCENARIO>
+          
+      --fixture-schedule <FIXTURE_SCHEDULE>
+          
+  -h, --help
+          Print help
+

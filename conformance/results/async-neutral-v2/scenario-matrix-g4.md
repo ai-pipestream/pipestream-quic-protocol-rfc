@@ -44,6 +44,20 @@ outcome is one of the two legal orders, not that BOTH orders occur.
 - Expected: CONFLICT (7) for the stale expected-attempt; replaying the
   FIRST retry operation (same immutable ID) returns its original receipt
   without advancing the fence again; attempt is exactly 2, never 3.
+- Status (milestone 19a, work in Kimi's role): attempt 2 must be LIVE when
+  the stale retry arrives, because both authorities check terminal state
+  before the attempt mismatch and answer ALREADY_TERMINAL (18) for a work
+  that already finished. The Java server direction holds attempt 2
+  deterministically with a schedule pause at EXECUTION_CLAIMED (pause,
+  release, pause: the FixtureMain consumes one pause row per reached
+  boundary, so the first row is attempt 1's claim and is released as soon as
+  the subject records it, the second holds attempt 2's claim until the
+  CONFLICT "retry attempt changed" has been observed). The Rust subject's
+  hooks accept pause only at the three reply pairs (src/v2/fixture.rs
+  REPLY_PAIRS), so that direction keeps attempt 2 live with a 16 MiB copy
+  (the negotiated object limit) and records the mechanism as a named gap in
+  expected.tsv/observed.tsv (`attempt_2_hold`, `attempt_2_live_evidence`); a
+  deterministic hold there is a server-crate hook request.
 
 ## g4-ancestor-fence-publication
 
