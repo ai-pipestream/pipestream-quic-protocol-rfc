@@ -556,7 +556,6 @@ public final class Records {
             "inputless work has admission fields");
         require(
             state == State.DECLARED
-                || state == State.CANCELLING
                 || state == State.CANCELLED
                 || state == State.SKIPPED,
             "state requires admitted input");

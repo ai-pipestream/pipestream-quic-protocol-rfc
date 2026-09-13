@@ -289,7 +289,7 @@ record!(WorkView { work: WorkKey, state: State, attempt: Number, input: Option<I
         require(deadline.0 > admitted.0 && deadline.0 - admitted.0 <= MAX_DURATION, "invalid execution interval")?;
     } else {
         require(s.input.is_none() && s.deadline.is_none() && s.child.is_none() && s.attempt.0 == 0
-            && matches!(s.state, State::DECLARED | State::CANCELLING | State::CANCELLED | State::SKIPPED), "invalid inputless work")?;
+            && matches!(s.state, State::DECLARED | State::CANCELLED | State::SKIPPED), "invalid inputless work")?;
     }
     if let Some(child) = &s.child {
         require(child.scope.0 > s.work.scope.0, "child scope is not newer than parent")?;

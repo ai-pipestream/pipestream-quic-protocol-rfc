@@ -126,6 +126,22 @@ final class V2WireTest {
   }
 
   @Test
+  void lengthIsJudgedBeforeTypeSoAnOversizedBodyIsLimitExceededWhateverItsType() {
+    // Section 12.1 (owner decision 2026-09-13): length validation precedes type classification,
+    // so known, unknown-required, ignorable and private types over the limit are LIMIT_EXCEEDED
+    // and nothing is allocated.
+    for (int type : new int[] {2, 0, 0x7F, 0x80, 0xBF, 0xC0, 0xFF}) {
+      Wire.Decoder decoder = new Wire.Decoder(4096);
+      ByteBuffer prefix = ByteBuffer.allocate(5).put((byte) type).putInt(4097).flip();
+      assertEquals(
+          ProtocolError.Code.LIMIT_EXCEEDED,
+          assertThrows(ProtocolError.class, () -> decoder.feed(prefix)).code(),
+          "type " + type);
+      assertEquals(0, decoder.bufferedCapacity());
+    }
+  }
+
+  @Test
   void ignorableBodiesAreDiscardedIncrementallyAndDoNotConsumeFollowingFrames() {
     Wire.Decoder decoder = new Wire.Decoder(Wire.MAX_CONTROL_LIMIT);
     assertNull(

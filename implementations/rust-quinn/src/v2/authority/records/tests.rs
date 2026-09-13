@@ -46,7 +46,11 @@ fn declared_records_preallocate_capacity_and_preserve_it_across_rewrite() {
     let pages: u64 = tx
         .query_row("PRAGMA page_count", [], |r| number(r, 0))
         .unwrap();
-    view.state = State::CANCELLING;
+    // A declared view rewritten to a terminal inputless outcome (an inputless CANCELLING view is
+    // invalid since the 2026-09-13 owner decision on Section 12.6).
+    view.state = State::CANCELLED;
+    view.terminal_at = Some(Number(200));
+    view.receipt_until = Some(Number(180200));
     assert_eq!(replace(&tx, target, Id(1), &view, true).unwrap(), Id(2));
     let (after, actual): (_, WorkView) = read(&tx, target).unwrap();
     assert_eq!(actual, view);

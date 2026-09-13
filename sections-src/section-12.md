@@ -43,6 +43,9 @@ have the exact cardinality in Appendix F. Integers and lengths use the
 shortest representation; indefinite lengths, trailing items, tags, floats,
 undefined, and extra positions are invalid. Booleans and null occur only
 where the schema permits them. Validate lengths before allocating buffers.
+Length validation precedes type classification: a declared body longer than
+the applicable limit is LIMIT_EXCEEDED whatever its type, including ignorable
+and private types.
 The initial CAPABILITIES body is limited to 4096 octets.
 
 Control type values in this mapping are CAPABILITIES (0x01), SESSION (0x02),
@@ -262,6 +265,8 @@ creators sharing a principal serialize through these rules, not a random
 identifier uniqueness assumption.
 
 SESSION operation 2 attaches using expected authority, owner and generation;
+after owner authorization, an expected authority other than the serving
+authority is CONFLICT and discloses nothing about retained sessions;
 operation 1 returns the same immutable session binding and policy. Limits
 are the session's retained admission ceilings. Reconnection limits must
 accommodate its retained message representations; otherwise refuse
@@ -356,7 +361,10 @@ over ASCII `pipestream-scope-seal-v2` followed by deterministic CBOR of
 The final array contains every declared ID in ascending order, independent
 of batching. Hash it incrementally; no whole-scope buffer is required.
 Changed membership under a replayed operation, a late new declaration,
-or an undeclared input is CONFLICT. Seal mismatch is INTEGRITY_ERROR.
+or an undeclared input is CONFLICT. Seal mismatch is INTEGRITY_ERROR. A client
+that already holds verified membership for the scope under a different seal
+MAY refuse the checkpoint locally, without sending it, and reports that
+refusal as INTEGRITY_ERROR.
 
 Each input is a client-initiated unidirectional stream containing a four-octet
 unsigned big-endian header length, the exact CBOR `v2-input-header`, then
@@ -573,8 +581,9 @@ commitments; transport observations cannot fill missing authoritative fields.
 Every admitted view retains its input descriptor, admitted-at, deadline and
 positive attempt, even when payload bytes later become reclaimable. A branch
 has its child-scope field; a leaf has null. Nonterminal views have null
-terminal-at, receipt-until, output-until and manifest. CANCELLING may be
-inputless when a declared entity was cancelled before admission. Terminal
+terminal-at, receipt-until, output-until and manifest. CANCELLING always has
+admitted input: cancelling or skipping an unadmitted entity settles directly
+to CANCELLED or SKIPPED. Terminal
 views have terminal-at and receipt-until; FAILED requires a diagnostic, and
 AWAITING_RETRY requires the current attempt's diagnostic. Inputless CANCELLED
 and SKIPPED retain attempt 0 and null input/admission/deadline/child. SUCCEEDED

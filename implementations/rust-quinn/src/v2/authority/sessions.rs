@@ -222,6 +222,11 @@ impl AuthorityStore {
         if authenticated_owner != &expected.owner {
             return Err(protocol(ErrorCode::Unauthorized, "authority access denied"));
         }
+        // Section 12.3: after owner authorization, an expected authority other than the serving
+        // authority is CONFLICT and discloses nothing about retained sessions.
+        if expected.authority != self.authority {
+            return Err(protocol(ErrorCode::Conflict, "authority differs"));
+        }
         let binding = self.authorize_session(&tx, expected, Permission::Inspect)?;
         check_connection(&tx, &binding, caps)?;
         Ok(binding)
