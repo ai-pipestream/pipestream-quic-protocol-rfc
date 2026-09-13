@@ -139,3 +139,31 @@ elapsed time or actual storage use. Wire identity allocation, trusted-clock
 handling, admission byte reservations and complete result transfer still require
 the independent implementation and failure tests in task 2; the bounded models
 do not prove those implementation properties.
+
+## Owner decisions from building the reference implementations (2026-09-13)
+
+Building the Java and Rust implementations side by side raised four questions
+that the Section 12 text did not settle. The project owner decided them, the
+normative text in Section 12 now states each one, and both implementations are
+pinned by tests.
+
+- **Frame length before type (Section 12.1).** Length validation precedes type
+  classification, so a declared body longer than the applicable limit is
+  LIMIT_EXCEEDED whatever its type, including ignorable and private types. A
+  peer cannot make the receiver read an oversized body just to learn that a
+  profile is unsupported. Java already did this; Rust answered FRAME_ERROR and
+  changed.
+- **Local checkpoint refusal (Section 12.8).** A client that already holds
+  verified membership for a scope under a different seal may refuse the
+  checkpoint without sending it, and reports INTEGRITY_ERROR, the same code the
+  authority would give. A client whose membership is not yet verified still
+  answers NOT_READY. Java changed its local refusal from NOT_READY.
+- **No inputless CANCELLING (Section 12.6).** The clause allowing an inputless
+  CANCELLING view was dropped. Cancelling or skipping an unadmitted entity
+  settles directly to CANCELLED or SKIPPED. Neither implementation ever produced
+  the state; both view validators now refuse it.
+- **Attaching to the wrong authority (Section 12.3).** After owner
+  authorization, an expected authority other than the serving one is CONFLICT,
+  and the answer discloses nothing about retained sessions. An owner that
+  cannot be authorized is still UNAUTHORIZED. Java already did this; Rust
+  answered UNAUTHORIZED and changed.

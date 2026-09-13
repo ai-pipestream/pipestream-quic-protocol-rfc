@@ -1,0 +1,97 @@
+start 2026-09-13T19:24:09Z tree af4cef6d tests=FixtureMainTest,V2MainProcessTest,DurableClientControlDeadlineTest,LossyTransportCreditTest,DurableBranchTest,RetentionStoreTest,BranchExecutionTest,SessionRetirementCrashTest,OutputRetentionStoreTest,DurableHostIdleWritesTest,RetryStoreTest,HookPlacementTest,BranchExecutionCapacityTest,DurableMutationTest,V2CoreServerTest,ResultServiceTest,ProducedAdmissionTest,AuthorityExpansionRuntimeFailureTest,FixedRecordsTest,ExecutionStoreTest,RetentionStoreRecoveryTest,ResultAbortWireTest,V2TlsTest,AdmissionCapacityTest,V2CoreClientTest,DurableClientLocatorTest,AdmissionStoreTest,DurableServerTest,AuthorityExpansionSchedulingTest,RetirementChildScopeTest,OrphanStoreTest,V2CommitmentResourceTest,ProducedDeclarationTest,AdmissionPolicyTest,OrphanRetainedReleaseTest,ProducedRecoveryTest,RetirementServiceTest,PublicationStoreRecoveryTest,StoreBindingTest,BranchSchedulerTest,DurableClientTest,CompletedSessionObservationTest,ExecutionRuntimeCreditTest,PublicationStoreCapacityTest,ResultDeliveryWireGapTest,DurableRequestsTest,DurableClientResultNegativeTest,MigrationWireTest,OutputStoreRecoveryTest,ScopePagingWireTest,ExecutionDiscoverySuffixTest,InputStorePinnedInstallTest,InputStoreFundingRecoveryTest,OutputStoreReclaimTest,StreamTransportTest,CredentialExpiryReconnectTest,OutputStoreTest,InputStoreReceiverPinsTest,InputRetirementGateTest,V2ObjectResourceTest,V2ClientCorrelationTest,V2ObjectStreamTest,TransportDependencyTest,CapabilityListBoundsTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.653 s -- in ai.pipestream.quic.v2.AdmissionCapacityTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.644 s -- in ai.pipestream.quic.v2.AdmissionPolicyTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.412 s -- in ai.pipestream.quic.v2.AdmissionStoreTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.821 s -- in ai.pipestream.quic.v2.AuthorityExpansionRuntimeFailureTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.907 s -- in ai.pipestream.quic.v2.AuthorityExpansionSchedulingTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.374 s -- in ai.pipestream.quic.v2.BranchExecutionCapacityTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.077 s -- in ai.pipestream.quic.v2.BranchExecutionTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.943 s -- in ai.pipestream.quic.v2.BranchSchedulerTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in ai.pipestream.quic.v2.CapabilityListBoundsTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.920 s -- in ai.pipestream.quic.v2.CompletedSessionObservationTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.461 s -- in ai.pipestream.quic.v2.CredentialExpiryReconnectTest
+[ERROR] Tests run: 5, Failures: 0, Errors: 1, Skipped: 0, Time elapsed: 10.63 s <<< FAILURE! -- in ai.pipestream.quic.v2.DurableBranchTest
+[ERROR] ai.pipestream.quic.v2.DurableBranchTest.callerExpandedChildrenAreReassembledAndCoveredBottomUp -- Time elapsed: 1.349 s <<< ERROR!
+java.util.concurrent.ExecutionException: ai.pipestream.quic.v2.ProtocolError: NOT_READY: authority refused: request refused
+	at java.base/java.util.concurrent.CompletableFuture.wrapInExecutionException(CompletableFuture.java:345)
+	at ai.pipestream.quic.v2.DurableClientTest.get(DurableClientTest.java:36)
+	at ai.pipestream.quic.v2.DurableBranchTest.get(DurableBranchTest.java:36)
+	at ai.pipestream.quic.v2.DurableBranchTest.callerExpandedChildrenAreReassembledAndCoveredBottomUp(DurableBranchTest.java:188)
+	at ai.pipestream.quic.v2.ProtocolError.refused(ProtocolError.java:116)
+	at ai.pipestream.quic.v2.DurableClient.refused(DurableClient.java:514)
+	at ai.pipestream.quic.v2.DurableClient.lambda$complete$4(DurableClient.java:1672)
+	at ai.pipestream.quic.v2.DurableClient$Control.channelRead0(DurableClient.java:1842)
+	at ai.pipestream.quic.v2.DurableClient$Control.channelRead0(DurableClient.java:1794)
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 18.71 s -- in ai.pipestream.quic.v2.DurableClientControlDeadlineTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.164 s -- in ai.pipestream.quic.v2.DurableClientLocatorTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.863 s -- in ai.pipestream.quic.v2.DurableClientResultNegativeTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.268 s -- in ai.pipestream.quic.v2.DurableClientTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.156 s -- in ai.pipestream.quic.v2.DurableHostIdleWritesTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.166 s -- in ai.pipestream.quic.v2.DurableMutationTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.942 s -- in ai.pipestream.quic.v2.DurableRequestsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.381 s -- in ai.pipestream.quic.v2.DurableServerTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.494 s -- in ai.pipestream.quic.v2.ExecutionDiscoverySuffixTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.838 s -- in ai.pipestream.quic.v2.ExecutionRuntimeCreditTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.682 s -- in ai.pipestream.quic.v2.ExecutionStoreTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.422 s -- in ai.pipestream.quic.v2.FixedRecordsTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 50.69 s -- in ai.pipestream.quic.v2.FixtureMainTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.618 s -- in ai.pipestream.quic.v2.HookPlacementTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.139 s -- in ai.pipestream.quic.v2.InputRetirementGateTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.401 s -- in ai.pipestream.quic.v2.InputStoreFundingRecoveryTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.453 s -- in ai.pipestream.quic.v2.InputStorePinnedInstallTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.172 s -- in ai.pipestream.quic.v2.InputStoreReceiverPinsTest
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 3.776 s <<< FAILURE! -- in ai.pipestream.quic.v2.LossyTransportCreditTest
+[ERROR] ai.pipestream.quic.v2.LossyTransportCreditTest.creditReservationHoldsUnderDatagramLossAndReordering -- Time elapsed: 3.754 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: Unexpected type, expected: <ai.pipestream.quic.v2.Messages.AdmissionResponse> but was: <ai.pipestream.quic.v2.Messages.Refusal>
+	at ai.pipestream.quic.v2.LossyTransportCreditTest.creditReservationHoldsUnderDatagramLossAndReordering(LossyTransportCreditTest.java:163)
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.518 s -- in ai.pipestream.quic.v2.MigrationWireTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.363 s -- in ai.pipestream.quic.v2.OrphanRetainedReleaseTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.727 s -- in ai.pipestream.quic.v2.OrphanStoreTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.510 s -- in ai.pipestream.quic.v2.OutputRetentionStoreTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.367 s -- in ai.pipestream.quic.v2.OutputStoreReclaimTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.504 s -- in ai.pipestream.quic.v2.OutputStoreRecoveryTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.245 s -- in ai.pipestream.quic.v2.OutputStoreTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.900 s -- in ai.pipestream.quic.v2.ProducedAdmissionTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.657 s -- in ai.pipestream.quic.v2.ProducedDeclarationTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.298 s -- in ai.pipestream.quic.v2.ProducedRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.744 s -- in ai.pipestream.quic.v2.PublicationStoreCapacityTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.075 s -- in ai.pipestream.quic.v2.PublicationStoreRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.376 s -- in ai.pipestream.quic.v2.ResultAbortWireTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.743 s -- in ai.pipestream.quic.v2.ResultDeliveryWireGapTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.039 s -- in ai.pipestream.quic.v2.ResultServiceTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.657 s -- in ai.pipestream.quic.v2.RetentionStoreRecoveryTest
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.236 s -- in ai.pipestream.quic.v2.RetentionStoreTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.213 s -- in ai.pipestream.quic.v2.RetirementChildScopeTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.871 s -- in ai.pipestream.quic.v2.RetirementServiceTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.955 s -- in ai.pipestream.quic.v2.RetryStoreTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.470 s -- in ai.pipestream.quic.v2.ScopePagingWireTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.922 s -- in ai.pipestream.quic.v2.SessionRetirementCrashTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.984 s -- in ai.pipestream.quic.v2.StoreBindingTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.319 s -- in ai.pipestream.quic.v2.StreamTransportTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in ai.pipestream.quic.v2.TransportDependencyTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in ai.pipestream.quic.v2.V2ObjectStreamTest
+[INFO] Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in ai.pipestream.quic.v2.V2ClientCorrelationTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.627 s -- in ai.pipestream.quic.v2.V2CommitmentResourceTest
+[INFO] Tests run: 13, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.215 s -- in ai.pipestream.quic.v2.V2CoreClientTest
+[INFO] Tests run: 13, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.288 s -- in ai.pipestream.quic.v2.V2CoreServerTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 23.51 s -- in ai.pipestream.quic.v2.V2MainProcessTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.082 s -- in ai.pipestream.quic.v2.V2ObjectResourceTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.355 s -- in ai.pipestream.quic.v2.V2TlsTest
+[ERROR] Failures: 
+[ERROR]   LossyTransportCreditTest.creditReservationHoldsUnderDatagramLossAndReordering:163 Unexpected type, expected: <ai.pipestream.quic.v2.Messages.AdmissionResponse> but was: <ai.pipestream.quic.v2.Messages.Refusal>
+[ERROR] Errors: 
+[ERROR]   DurableBranchTest.callerExpandedChildrenAreReassembledAndCoveredBottomUp:188->get:36 » Execution ai.pipestream.quic.v2.ProtocolError: NOT_READY: authority refused: request refused
+[ERROR] Tests run: 264, Failures: 1, Errors: 1, Skipped: 0
+[INFO] BUILD FAILURE
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.6.0:test (default-test) on project pipestream-quic-netty: There are test failures.
+[ERROR] 
+[ERROR] See /work/worktrees/pipestream-rfc-claude/implementations/java-netty/target/surefire-reports for the individual test results.
+[ERROR] See dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
+RUN_EXIT=1 at 2026-09-13T19:27:43Z
