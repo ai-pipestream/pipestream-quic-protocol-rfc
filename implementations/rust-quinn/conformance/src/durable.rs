@@ -48,6 +48,271 @@ pub struct DurableArgs {
     /// represented by a hash-and-length note, never copied byte-for-byte.
     #[arg(long)]
     archive: Option<PathBuf>,
+    /// Waive a matrix row (`--waive g7-unsafe-clock-refusal`) or one direction
+    /// (`--waive g3-store-ownership:java-client/rust-server`), repeatable, in
+    /// the form `ROW[:DIRECTION][=REASON]`. Waived rows/directions are
+    /// recorded in run.tsv and named in the run output; in acceptance mode a
+    /// waived row does not FAIL the run, and a waived direction must carry its
+    /// named-gap INCOMPLETE evidence in the row directory.
+    #[arg(long = "waive", value_name = "ROW[:DIRECTION][=REASON]")]
+    waive: Vec<String>,
+}
+
+/// One `--waive` target: a whole row or one `<row>:<direction>` pair, with
+/// the reason the waiver exists (the reason string always lands in run.tsv).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WaiveTarget {
+    pub row: String,
+    pub direction: Option<String>,
+    pub reason: Option<String>,
+}
+
+/// The direction spellings the driver uses internally (see JAVA_DIRECTIONS
+/// and every direction_coverage string).
+const DIRECTIONS: &[&str] = &[
+    "rust-client/rust-server",
+    "java-client/rust-server",
+    "rust-client/java-server",
+];
+
+fn parse_waive_target(spec: &str) -> Result<WaiveTarget> {
+    let (target, reason) = match spec.split_once('=') {
+        Some((target, reason)) => (target, Some(reason.trim().to_owned())),
+        None => (spec, None),
+    };
+    let (row, direction) = match target.split_once(':') {
+        Some((row, direction)) => (row, Some(direction.to_owned())),
+        None => (target, None),
+    };
+    ensure!(
+        !row.is_empty(),
+        "invalid --waive {spec:?}: the row id is empty"
+    );
+    if let Some(direction) = &direction {
+        ensure!(
+            DIRECTIONS.contains(&direction.as_str()),
+            "invalid --waive {spec:?}: unknown direction {direction:?} (known directions: {})",
+            DIRECTIONS.join(", ")
+        );
+    }
+    Ok(WaiveTarget {
+        row: row.to_owned(),
+        direction,
+        reason,
+    })
+}
+
+/// Parse and validate the waiver specs against the matrix. Duplicate targets
+/// are rejected: a waiver accepted twice with different reasons would be
+/// ambiguous in run.tsv.
+fn parse_waivers(specs: &[String], matrix: &[scenarios::Row]) -> Result<Vec<WaiveTarget>> {
+    let mut targets: Vec<WaiveTarget> = Vec::new();
+    for spec in specs {
+        let target = parse_waive_target(spec)?;
+        let known = matrix.iter().any(|row| row.id == target.row);
+        ensure!(
+            known,
+            "unknown --waive row {:?} (nc-missing-scenario); the matrix rows are listed in \
+             scenario-matrix-*.md",
+            target.row
+        );
+        ensure!(
+            !targets.iter().any(|existing| {
+                existing.row == target.row && existing.direction == target.direction
+            }),
+            "duplicate --waive target {spec:?}"
+        );
+        targets.push(target);
+    }
+    Ok(targets)
+}
+
+/// The run.tsv fragment naming every waiver; the reason string always lands
+/// here verbatim (tabs and newlines are flattened so the file stays TSV).
+fn render_waivers_tsv(waivers: &[WaiveTarget]) -> String {
+    let mut text = format!("waivers\t{}\n", waivers.len());
+    for waiver in waivers {
+        let direction = waiver.direction.clone().unwrap_or_else(|| "-".to_owned());
+        let reason = waiver
+            .reason
+            .clone()
+            .unwrap_or_else(|| "(no reason recorded)".to_owned())
+            .replace(['\t', '\n'], " ");
+        text.push_str(&format!("waive\t{}\t{direction}\t{reason}\n", waiver.row));
+    }
+    text
+}
+
+/// A waived direction is an explicit acceptance of a NAMED gap, so the
+/// direction directory must carry its `INCOMPLETE` named-gap marker; a
+/// waiver naming a direction with no such evidence is itself a failure.
+/// Direction directory names hyphenate the internal slash spelling.
+fn check_direction_waiver(scenario_dir: &std::path::Path, target: &WaiveTarget) -> Result<String> {
+    let direction = target
+        .direction
+        .as_deref()
+        .context("check_direction_waiver needs a direction waiver")?;
+    let marker = scenario_dir
+        .join(direction.replace('/', "-"))
+        .join("INCOMPLETE");
+    ensure!(
+        marker.is_file(),
+        "waiver names {direction}, but {} holds no named-gap INCOMPLETE evidence; a waiver \
+         accepts a named gap, it never replaces one",
+        marker.display()
+    );
+    Ok(format!(
+        "waived {direction}: {} (named-gap evidence {})",
+        target.reason.as_deref().unwrap_or("(no reason recorded)"),
+        marker.display()
+    ))
+}
+
+/// Every `row_status` value in observed.tsv files under the row directory
+/// (the R rows and the missing-capability rows record theirs there).
+fn row_status_values(scenario_dir: &std::path::Path) -> Result<Vec<(PathBuf, String)>> {
+    let mut values = Vec::new();
+    for path in walk_sorted(scenario_dir)? {
+        if path.file_name() == Some(std::ffi::OsStr::new("observed.tsv")) {
+            for line in fs::read_to_string(&path)
+                .with_context(|| format!("read {}", path.display()))?
+                .lines()
+            {
+                if let Some(value) = line.strip_prefix("row_status\t") {
+                    values.push((path.clone(), value.to_owned()));
+                }
+            }
+        }
+    }
+    Ok(values)
+}
+
+/// PARTIAL is acceptable in acceptance mode only with its named unmeasured
+/// scopes intact: the value must be `PARTIAL: <scopes>` with a non-empty
+/// reason. A bare or empty PARTIAL is a stripped marker and never passes.
+/// Returns the relative evidence paths carrying a PARTIAL marker.
+fn check_partial_markers(values: &[(PathBuf, String)]) -> Result<Vec<PathBuf>> {
+    let mut partial = Vec::new();
+    for (path, value) in values {
+        if value.starts_with("PARTIAL") {
+            let reason = value.strip_prefix("PARTIAL:").map(str::trim);
+            ensure!(
+                matches!(reason, Some(reason) if !reason.is_empty()),
+                "row_status PARTIAL without named scopes in {}: {value:?}; the marker is \
+                 accepted only with the unmeasured scopes named",
+                path.display()
+            );
+            partial.push(path.clone());
+        }
+    }
+    Ok(partial)
+}
+
+/// How one row's outcome is reported: the line, its PASS-line annotations
+/// (PARTIAL markers, waivers), and whether it fails the run.
+#[derive(Debug)]
+struct RowReport {
+    line: String,
+    annotations: Vec<String>,
+    failed: bool,
+}
+
+/// Report one row's outcome, applying waivers (acceptance mode only; dev
+/// keeps its INCOMPLETE labelling untouched) and the PARTIAL named-scope
+/// check. Kept free of process state so the rules are unit-testable.
+fn report_row_outcome(
+    row: &scenarios::Row,
+    outcome: &scenarios::DirectionOutcome,
+    scenario_dir: &std::path::Path,
+    waivers: &[WaiveTarget],
+    dev: bool,
+) -> RowReport {
+    let whole_row_waiver = waivers
+        .iter()
+        .find(|target| target.row == row.id && target.direction.is_none());
+    let direction_waivers: Vec<&WaiveTarget> = waivers
+        .iter()
+        .filter(|target| target.row == row.id && target.direction.is_some())
+        .collect();
+    match outcome {
+        scenarios::DirectionOutcome::Pass(directions) => {
+            let partials = match row_status_values(scenario_dir)
+                .and_then(|values| check_partial_markers(&values))
+            {
+                Ok(partials) => partials,
+                Err(error) => {
+                    return RowReport {
+                        line: format!("FAIL {}: {error:#}", row.id),
+                        annotations: Vec::new(),
+                        failed: true,
+                    };
+                }
+            };
+            let mut annotations: Vec<String> = partials
+                .iter()
+                .map(|path| {
+                    format!(
+                        "row_status PARTIAL in {}: unmeasured scopes named",
+                        path.display()
+                    )
+                })
+                .collect();
+            if let Some(waiver) = whole_row_waiver {
+                annotations.push(format!(
+                    "row waived: {}",
+                    waiver.reason.as_deref().unwrap_or("(no reason recorded)")
+                ));
+            }
+            if !dev {
+                for target in &direction_waivers {
+                    match check_direction_waiver(scenario_dir, target) {
+                        Ok(line) => annotations.push(line),
+                        Err(error) => {
+                            return RowReport {
+                                line: format!("FAIL {}: {error:#}", row.id),
+                                annotations: Vec::new(),
+                                failed: true,
+                            };
+                        }
+                    }
+                }
+            }
+            let suffix = if annotations.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", annotations.join("; "))
+            };
+            RowReport {
+                line: format!("PASS {} {directions}{suffix}", row.id),
+                annotations,
+                failed: false,
+            }
+        }
+        scenarios::DirectionOutcome::Incomplete(reason) => RowReport {
+            line: format!("INCOMPLETE {}: {reason}", row.id),
+            annotations: Vec::new(),
+            failed: false,
+        },
+        scenarios::DirectionOutcome::Fail(reason) => {
+            if !dev && let Some(waiver) = whole_row_waiver {
+                RowReport {
+                    line: format!(
+                        "WAIVED {}: {reason} (waiver: {})",
+                        row.id,
+                        waiver.reason.as_deref().unwrap_or("(no reason recorded)")
+                    ),
+                    annotations: Vec::new(),
+                    failed: false,
+                }
+            } else {
+                RowReport {
+                    line: format!("FAIL {}: {reason}", row.id),
+                    annotations: Vec::new(),
+                    failed: true,
+                }
+            }
+        }
+    }
 }
 
 const JAVA_DIRECTIONS: &[&str] = &["java-client/rust-server", "rust-client/java-server"];
@@ -106,14 +371,25 @@ pub fn run(args: DurableArgs) -> Result<()> {
         .unwrap_or_else(|| root.join("implementations/rust-quinn/target/durable-runs"));
     let run_root = base.join("runs").join(&run_id);
     fs::create_dir_all(&run_root)?;
-    write_run_manifest(&run_root, &args, &rust_bin, &rust_hash, java_hash.as_ref())?;
+
+    // Waivers are validated before anything runs so a typo'd --waive fails
+    // fast instead of surfacing as a FAIL at the end of an hour-long run.
+    let matrix = scenarios::rows();
+    let waivers = parse_waivers(&args.waive, &matrix)?;
+    write_run_manifest(
+        &run_root,
+        &args,
+        &rust_bin,
+        &rust_hash,
+        java_hash.as_ref(),
+        &waivers,
+    )?;
 
     // Self-check stage: the negative controls must behave as designed. The
     // torn-event-line control must be REJECTED by the reader, and the recorded
     // subject hash must still match the binary on disk.
     self_check(&rust_bin, &rust_hash)?;
 
-    let matrix = scenarios::rows();
     let selected = select_rows(&matrix, &args.scenario)?;
     let context = scenarios::ScenarioContext {
         run_id: run_id.clone(),
@@ -135,20 +411,46 @@ pub fn run(args: DurableArgs) -> Result<()> {
 
     let mut failed = false;
     for (row, outcome) in &outcomes {
+        let report = report_row_outcome(
+            row,
+            outcome,
+            &context.scenario_dir(row.id),
+            &waivers,
+            args.dev,
+        );
+        failed |= report.failed;
         match outcome {
-            scenarios::DirectionOutcome::Pass(directions) if args.dev => println!(
-                "SCENARIO OK {} {directions} (dev mode: labelled INCOMPLETE)",
-                row.id
-            ),
-            scenarios::DirectionOutcome::Pass(directions) => {
-                println!("PASS {} {directions}", row.id)
+            scenarios::DirectionOutcome::Pass(directions) if args.dev => {
+                let suffix = if report.annotations.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", report.annotations.join("; "))
+                };
+                println!(
+                    "SCENARIO OK {} {directions}{suffix} (dev mode: labelled INCOMPLETE)",
+                    row.id
+                );
             }
-            scenarios::DirectionOutcome::Incomplete(reason) => {
-                println!("INCOMPLETE {}: {reason}", row.id)
-            }
-            scenarios::DirectionOutcome::Fail(reason) => {
-                failed = true;
-                println!("FAIL {}: {reason}", row.id)
+            _ => println!("{}", report.line),
+        }
+    }
+    if !waivers.is_empty() {
+        println!(
+            "waivers recorded: {} (run.tsv; dev mode does not neutralise rows)",
+            waivers.len()
+        );
+        for waiver in &waivers {
+            match &waiver.direction {
+                Some(direction) => println!(
+                    "  WAIVED {}:{direction}: {}",
+                    waiver.row,
+                    waiver.reason.as_deref().unwrap_or("(no reason recorded)")
+                ),
+                None => println!(
+                    "  WAIVED {}: {}",
+                    waiver.row,
+                    waiver.reason.as_deref().unwrap_or("(no reason recorded)")
+                ),
             }
         }
     }
@@ -308,6 +610,7 @@ fn write_run_manifest(
     rust_bin: &std::path::Path,
     rust_hash: &str,
     java_hash: Option<&(PathBuf, String)>,
+    waivers: &[WaiveTarget],
 ) -> Result<()> {
     let started = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -320,12 +623,13 @@ fn write_run_manifest(
         run_root.join("run.tsv"),
         format!(
             "started_ms\t{started}\nmode\t{}\nseed\t{}\nrust_bin\t{}\trust_sha256\t{}\n\
-             java_jar\t{java_path}\tjava_sha256\t{java_sha}\njava_memory_flags\t{}\n",
+             java_jar\t{java_path}\tjava_sha256\t{java_sha}\njava_memory_flags\t{}\n{waivers}",
             if args.dev { "dev" } else { "acceptance" },
             args.seed,
             path(rust_bin),
             rust_hash,
             process::java_memory_flags_text(),
+            waivers = render_waivers_tsv(waivers),
         ),
     )?;
     Ok(())
@@ -399,6 +703,251 @@ mod tests {
         assert_eq!(
             selected.iter().map(|row| row.id).collect::<Vec<_>>(),
             vec!["g1-leaf-copy", "g1-empty-input"]
+        );
+    }
+
+    #[test]
+    fn waive_specs_parse_row_direction_and_reason() {
+        assert_eq!(
+            parse_waive_target("g7-unsafe-clock-refusal").unwrap(),
+            WaiveTarget {
+                row: "g7-unsafe-clock-refusal".into(),
+                direction: None,
+                reason: None,
+            }
+        );
+        assert_eq!(
+            parse_waive_target("g3-store-ownership:java-client/rust-server").unwrap(),
+            WaiveTarget {
+                row: "g3-store-ownership".into(),
+                direction: Some("java-client/rust-server".into()),
+                reason: None,
+            }
+        );
+        // The reason keeps everything after the first '=' and may itself
+        // contain '=' and ':' (only the target side is split on ':').
+        let target = parse_waive_target(
+            "g4-revocation-vs-publication:rust-client/java-server=no Java \
+                                operator revoke command: DurableHost.revoke is host-internal",
+        )
+        .unwrap();
+        assert_eq!(target.row, "g4-revocation-vs-publication");
+        assert_eq!(target.direction.as_deref(), Some("rust-client/java-server"));
+        assert!(
+            target
+                .reason
+                .as_deref()
+                .unwrap()
+                .contains("DurableHost.revoke is host-internal")
+        );
+        let error = parse_waive_target("g3-store-ownership:sideways/client").unwrap_err();
+        assert!(
+            format!("{error:#}").contains("unknown direction"),
+            "{error:#}"
+        );
+        let error = parse_waive_target(":java-client/rust-server").unwrap_err();
+        assert!(
+            format!("{error:#}").contains("row id is empty"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn waive_specs_validate_against_the_matrix() {
+        let matrix = scenarios::rows();
+        let waivers = parse_waivers(
+            &[
+                "g7-unsafe-clock-refusal=no fixture clock on either subject".to_owned(),
+                "g3-store-ownership:java-client/rust-server=the client subject never owns the \
+                 store"
+                    .to_owned(),
+            ],
+            &matrix,
+        )
+        .unwrap();
+        assert_eq!(waivers.len(), 2);
+        let error =
+            parse_waivers(&["g2-drop-reply-publication=x".to_owned()], &matrix).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("unknown --waive row"),
+            "{error:#}"
+        );
+        let error = parse_waivers(
+            &[
+                "g7-unsafe-clock-refusal=a".to_owned(),
+                "g7-unsafe-clock-refusal=b".to_owned(),
+            ],
+            &matrix,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("duplicate --waive"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn waivers_render_into_run_tsv_with_their_reasons() {
+        let text = render_waivers_tsv(&[
+            WaiveTarget {
+                row: "g7-unsafe-clock-refusal".into(),
+                direction: None,
+                reason: Some("no fixture clock on either subject".into()),
+            },
+            WaiveTarget {
+                row: "g3-store-ownership".into(),
+                direction: Some("java-client/rust-server".into()),
+                reason: Some("the client subject never owns the store".into()),
+            },
+        ]);
+        assert!(text.starts_with("waivers\t2\n"), "{text}");
+        assert!(
+            text.contains(
+                "waive\tg7-unsafe-clock-refusal\t-\tno fixture clock on either subject\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "waive\tg3-store-ownership\tjava-client/rust-server\tthe client subject never \
+                 owns the store\n"
+            ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_direction_waiver_requires_the_named_gap_marker() {
+        let directory = tempfile::tempdir().unwrap();
+        let row_dir = directory.path().join("g3-store-ownership");
+        let target = WaiveTarget {
+            row: "g3-store-ownership".into(),
+            direction: Some("java-client/rust-server".into()),
+            reason: Some("the client subject never owns the store".into()),
+        };
+        // No evidence yet: the waiver itself fails.
+        let error = check_direction_waiver(&row_dir, &target).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("no named-gap INCOMPLETE evidence"),
+            "{error:#}"
+        );
+        // The named-gap marker makes the waiver an explicit acceptance.
+        let direction_dir = row_dir.join("java-client-rust-server");
+        fs::create_dir_all(&direction_dir).unwrap();
+        fs::write(direction_dir.join("INCOMPLETE"), b"named gap\n").unwrap();
+        let line = check_direction_waiver(&row_dir, &target).unwrap();
+        assert!(line.contains("waived java-client/rust-server"), "{line}");
+        assert!(line.contains("never owns the store"), "{line}");
+    }
+
+    #[test]
+    fn partial_row_status_is_acceptable_only_with_named_scopes() {
+        let directory = tempfile::tempdir().unwrap();
+        let row_dir = directory.path().join("r-network-bytes");
+        fs::create_dir_all(&row_dir).unwrap();
+        fs::write(
+            row_dir.join("observed.tsv"),
+            "server_subject\trust\nrow_status\tPARTIAL: this host grants NEITHER a network \
+             namespace NOR packet capture; named reason, never a skip\n",
+        )
+        .unwrap();
+        let values = row_status_values(&row_dir).unwrap();
+        let partials = check_partial_markers(&values).unwrap();
+        assert_eq!(partials.len(), 1);
+        // A full status line is not a PARTIAL marker.
+        fs::write(
+            row_dir.join("observed.tsv"),
+            "row_status\tfull on this host\n",
+        )
+        .unwrap();
+        let values = row_status_values(&row_dir).unwrap();
+        assert!(check_partial_markers(&values).unwrap().is_empty());
+        // A stripped bare marker is never acceptable.
+        fs::write(row_dir.join("observed.tsv"), "row_status\tPARTIAL\n").unwrap();
+        let values = row_status_values(&row_dir).unwrap();
+        let error = check_partial_markers(&values).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("PARTIAL without named scopes"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn waived_rows_do_not_fail_acceptance_but_dev_reporting_is_untouched() {
+        let row = scenarios::Row {
+            id: "g7-unsafe-clock-refusal",
+            group: "G7",
+            rust_implemented: true,
+        };
+        let waivers = vec![WaiveTarget {
+            row: "g7-unsafe-clock-refusal".into(),
+            direction: None,
+            reason: Some("no fixture clock on either subject".into()),
+        }];
+        let fail = scenarios::DirectionOutcome::Fail("missing capability".into());
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir_all(directory.path().join("g7-unsafe-clock-refusal")).unwrap();
+        let report = report_row_outcome(&row, &fail, directory.path(), &waivers, false);
+        assert!(!report.failed, "{report:?}");
+        assert!(
+            report.line.starts_with("WAIVED g7-unsafe-clock-refusal"),
+            "{report:?}"
+        );
+        // Without a waiver the same outcome fails the run.
+        let report = report_row_outcome(&row, &fail, directory.path(), &[], false);
+        assert!(report.failed);
+        assert!(
+            report.line.starts_with("FAIL g7-unsafe-clock-refusal"),
+            "{report:?}"
+        );
+        // Dev mode never neutralises a row: the INCOMPLETE labelling stands
+        // and even a waived Fail still reports as a failure to fix.
+        let report = report_row_outcome(&row, &fail, directory.path(), &waivers, true);
+        assert!(report.failed);
+        assert!(
+            report.line.starts_with("FAIL g7-unsafe-clock-refusal"),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn pass_with_a_direction_waiver_names_the_waiver_and_its_evidence() {
+        let row = scenarios::Row {
+            id: "g3-store-ownership",
+            group: "G3",
+            rust_implemented: true,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let direction_dir = directory
+            .path()
+            .join("g3-store-ownership")
+            .join("java-client-rust-server");
+        fs::create_dir_all(&direction_dir).unwrap();
+        fs::write(direction_dir.join("INCOMPLETE"), b"named gap\n").unwrap();
+        let waivers = vec![WaiveTarget {
+            row: "g3-store-ownership".into(),
+            direction: Some("java-client/rust-server".into()),
+            reason: Some("the client subject never owns the store".into()),
+        }];
+        let pass = scenarios::DirectionOutcome::Pass("rust-client/rust-server".into());
+        let row_dir = directory.path().join("g3-store-ownership");
+        let report = report_row_outcome(&row, &pass, &row_dir, &waivers, false);
+        assert!(!report.failed, "{report:?}");
+        assert!(
+            report.line.starts_with(
+                "PASS g3-store-ownership rust-client/rust-server (waived \
+                              java-client/rust-server: the client subject never owns the store"
+            ),
+            "{report:?}"
+        );
+        assert!(report.line.contains("named-gap evidence"), "{report:?}");
+        // Without the marker the waiver itself fails the row.
+        fs::remove_file(direction_dir.join("INCOMPLETE")).unwrap();
+        let report = report_row_outcome(&row, &pass, &row_dir, &waivers, false);
+        assert!(report.failed, "{report:?}");
+        assert!(
+            report.line.contains("no named-gap INCOMPLETE evidence"),
+            "{report:?}"
         );
     }
 }
