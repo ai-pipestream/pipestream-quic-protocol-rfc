@@ -26,6 +26,28 @@ mvn install -q -Psealed-interop "-Dmaven.repo.local=$java_maven_repository" \
   -f implementations/java-netty/pom.xml
 mvn verify -q "-Dmaven.repo.local=$java_maven_repository" -f examples/java-to-rust/pom.xml
 
+# Neutral durable failure/resource matrix (assignment B). Opt-in: the full
+# both-direction matrix takes about an hour, so it runs only with
+# PIPESTREAM_DURABLE_ACCEPTANCE=1. Acceptance mode (no --dev) FAILs on any
+# row failure; the four --waive flags name the two missing subject
+# capabilities and the two per-direction gaps decided at milestone 20
+# (conformance/results/async-neutral-v2/handoff.md section 3k). On the
+# shared host point PIPESTREAM_DURABLE_STORE and TMPDIR at the root drive
+# (never /work, never /tmp) and run the script under BENCHMARK.lock.
+if [[ "${PIPESTREAM_DURABLE_ACCEPTANCE:-0}" == "1" ]]; then
+  durable_jar=$(ls implementations/java-netty/target/pipestream-quic-netty-*-all.jar)
+  durable_store=${PIPESTREAM_DURABLE_STORE:-"$repository_root/implementations/rust-quinn/target/durable-runs"}
+  implementations/rust-quinn/target/release/pipestream-conformance durable \
+    --rust-bin implementations/rust-quinn/target/release/pipestream-quinn \
+    --java-jar "$durable_jar" \
+    --artifacts "$durable_store" \
+    --archive conformance/results/async-neutral-v2/runs \
+    --waive "g7-unsafe-clock-refusal=no fixture clock on either subject; interface-v1 has no clock-set boundary" \
+    --waive "g7-cleanup-interrupted-refund=no cleanup boundary in interface-v1; adding one is an interface revision" \
+    --waive "g3-store-ownership:java-client/rust-server=the client subject never owns the store" \
+    --waive "g4-revocation-vs-publication:rust-client/java-server=no Java operator revoke command"
+fi
+
 cmake -S implementations/cpp-msquic -B implementations/cpp-msquic/build \
   -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build implementations/cpp-msquic/build -j 4
