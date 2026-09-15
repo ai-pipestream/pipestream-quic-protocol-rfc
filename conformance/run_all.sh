@@ -35,13 +35,13 @@ mvn verify -q "-Dmaven.repo.local=$java_maven_repository" -f examples/java-to-ru
 # shared host point PIPESTREAM_DURABLE_STORE and TMPDIR at the root drive
 # (never /work, never /tmp) and run the script under BENCHMARK.lock.
 if [[ "${PIPESTREAM_DURABLE_ACCEPTANCE:-0}" == "1" ]]; then
-  durable_jar=$(ls implementations/java-netty/target/pipestream-quic-netty-*-all.jar)
+  durable_jar=$(ls "$repository_root"/implementations/java-netty/target/pipestream-quic-netty-*-all.jar)
   durable_store=${PIPESTREAM_DURABLE_STORE:-"$repository_root/implementations/rust-quinn/target/durable-runs"}
-  implementations/rust-quinn/target/release/pipestream-conformance durable \
-    --rust-bin implementations/rust-quinn/target/release/pipestream-quinn \
+  "$repository_root/implementations/rust-quinn/target/release/pipestream-conformance" durable \
+    --rust-bin "$repository_root/implementations/rust-quinn/target/release/pipestream-quinn" \
     --java-jar "$durable_jar" \
     --artifacts "$durable_store" \
-    --archive conformance/results/async-neutral-v2/runs \
+    --archive "$repository_root/conformance/results/async-neutral-v2/runs" \
     --waive "g7-unsafe-clock-refusal=no fixture clock on either subject; interface-v1 has no clock-set boundary" \
     --waive "g7-cleanup-interrupted-refund=no cleanup boundary in interface-v1; adding one is an interface revision" \
     --waive "g3-store-ownership:java-client/rust-server=the client subject never owns the store" \

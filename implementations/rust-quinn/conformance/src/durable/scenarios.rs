@@ -22146,6 +22146,12 @@ fn r_native_credit_direction(
 #[derive(Debug)]
 pub struct MissingCapability(pub String);
 
+/// Machine-detectable prefix of [`MissingCapability`]'s display text. A
+/// whole-row `--waive` may absorb ONLY a failure of this class: the waiver
+/// records the acceptance of a named missing capability, and anything else
+/// failing under a waiver is a real defect the waiver must not hide.
+pub const MISSING_CAPABILITY_MARKER: &str = "missing subject capability:";
+
 impl std::fmt::Display for MissingCapability {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "missing subject capability: {}", self.0)

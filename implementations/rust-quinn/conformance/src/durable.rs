@@ -259,7 +259,7 @@ fn report_row_outcome(
                 .collect();
             if let Some(waiver) = whole_row_waiver {
                 annotations.push(format!(
-                    "row waived: {}",
+                    "unused whole-row waiver (the row passed): {}",
                     waiver.reason.as_deref().unwrap_or("(no reason recorded)")
                 ));
             }
@@ -295,14 +295,31 @@ fn report_row_outcome(
         },
         scenarios::DirectionOutcome::Fail(reason) => {
             if !dev && let Some(waiver) = whole_row_waiver {
-                RowReport {
-                    line: format!(
-                        "WAIVED {}: {reason} (waiver: {})",
-                        row.id,
-                        waiver.reason.as_deref().unwrap_or("(no reason recorded)")
-                    ),
-                    annotations: Vec::new(),
-                    failed: false,
+                // A whole-row waiver accepts ONE failure class: the row's
+                // named missing capability (the acceptance smoke test caught
+                // a spawn ENOENT being WAIVED here, which would hide a real
+                // defect behind a waiver). Anything else stays FAILED and
+                // says the waiver did not match.
+                if reason.contains(scenarios::MISSING_CAPABILITY_MARKER) {
+                    RowReport {
+                        line: format!(
+                            "WAIVED {}: {reason} (waiver: {})",
+                            row.id,
+                            waiver.reason.as_deref().unwrap_or("(no reason recorded)")
+                        ),
+                        annotations: Vec::new(),
+                        failed: false,
+                    }
+                } else {
+                    RowReport {
+                        line: format!(
+                            "FAIL {}: {reason} (waiver did not match: the waiver for this row \
+                             accepts its named missing capability, and this failure is not one)",
+                            row.id
+                        ),
+                        annotations: Vec::new(),
+                        failed: true,
+                    }
                 }
             } else {
                 RowReport {
@@ -317,34 +334,53 @@ fn report_row_outcome(
 
 const JAVA_DIRECTIONS: &[&str] = &["java-client/rust-server", "rust-client/java-server"];
 
+/// Validate a subject artifact, then canonicalize it. Subjects are spawned
+/// with a scenario-owned working directory, so a relative --rust-bin or
+/// --java-jar is resolved by the child against ITS cwd, not the launch cwd
+/// (the acceptance smoke test of the run_all.sh block shape caught exactly
+/// this: the binary existed but `start ./target/release/pipestream-quinn`
+/// failed with ENOENT from the scenario cwd). Canonicalizing after the
+/// is_file check makes every recorded and spawned path cwd-independent.
+fn canonical_subject_path(path: &std::path::Path, flag: &str) -> Result<PathBuf> {
+    ensure!(
+        path.is_file(),
+        "missing {flag} subject artifact at {} (build it with: cargo build --release --locked)",
+        path.display()
+    );
+    fs::canonicalize(path).with_context(|| format!("canonicalize {flag} path {}", path.display()))
+}
+
+/// Store roots may not exist yet, so they cannot be canonicalized; join a
+/// relative path onto the launch cwd instead, keeping symlink structure
+/// intact. Every path the driver hands a spawned subject ends up absolute.
+fn absolutize(path: PathBuf) -> Result<PathBuf> {
+    if path.is_relative() {
+        Ok(std::env::current_dir()
+            .context("resolve the launch cwd for a relative store path")?
+            .join(path))
+    } else {
+        Ok(path)
+    }
+}
+
 pub fn run(args: DurableArgs) -> Result<()> {
     let root = repository_root()?;
     let rust_bin = args
         .rust_bin
         .clone()
         .unwrap_or_else(|| root.join("implementations/rust-quinn/target/release/pipestream-quinn"));
-    ensure!(
-        rust_bin.is_file(),
-        "missing --rust-bin subject executable at {} (build it with: cargo build --release \
-         --locked -p pipestream-server)",
-        rust_bin.display()
-    );
+    let rust_bin = canonical_subject_path(&rust_bin, "--rust-bin")?;
+    let java_jar = match &args.java_jar {
+        Some(jar) => Some(canonical_subject_path(jar, "--java-jar")?),
+        None => None,
+    };
     if !args.dev {
         let mut unmet: Vec<String> = Vec::new();
-        if args.java_jar.is_none() {
+        if java_jar.is_none() {
             unmet.push(format!(
                 "missing --java-jar: acceptance mode runs the whole matrix, so the \
                  Java-direction rows ({}) are an explicit gate; rerun with --dev to \
                  execute the available rust direction only",
-                JAVA_DIRECTIONS.join(", ")
-            ));
-        }
-        if let Some(jar) = &args.java_jar
-            && !jar.is_file()
-        {
-            unmet.push(format!(
-                "missing --java-jar subject artifact at {} (Java-direction rows: {})",
-                jar.display(),
                 JAVA_DIRECTIONS.join(", ")
             ));
         }
@@ -359,18 +395,22 @@ pub fn run(args: DurableArgs) -> Result<()> {
     // Record subject binary hashes at start; nc-stale-binary fails the run if
     // any of them change mid-run.
     let rust_hash = hash_file(&rust_bin)?;
-    let java_hash = match &args.java_jar {
+    let java_hash = match &java_jar {
         Some(jar) => Some((jar.clone(), hash_file(jar)?)),
         None => None,
     };
 
     let run_id = format!("durable-{:016x}", unique_suffix());
-    let base = args
-        .artifacts
-        .clone()
-        .unwrap_or_else(|| root.join("implementations/rust-quinn/target/durable-runs"));
+    let base = match &args.artifacts {
+        Some(artifacts) => absolutize(artifacts.clone())?,
+        None => root.join("implementations/rust-quinn/target/durable-runs"),
+    };
     let run_root = base.join("runs").join(&run_id);
     fs::create_dir_all(&run_root)?;
+    let archive = match &args.archive {
+        Some(archive) => Some(absolutize(archive.clone())?),
+        None => None,
+    };
 
     // Waivers are validated before anything runs so a typo'd --waive fails
     // fast instead of surfacing as a FAIL at the end of an hour-long run.
@@ -396,7 +436,7 @@ pub fn run(args: DurableArgs) -> Result<()> {
         run_root: run_root.clone(),
         seed: args.seed,
         rust_bin: rust_bin.clone(),
-        java_jar: args.java_jar.clone(),
+        java_jar: java_jar.clone(),
     };
     let mut outcomes: Vec<(&scenarios::Row, scenarios::DirectionOutcome)> = Vec::new();
     for row in &selected {
@@ -469,7 +509,7 @@ pub fn run(args: DurableArgs) -> Result<()> {
     if failed {
         bail!("durable run recorded FAIL rows; see {run_root:?}");
     }
-    if let Some(archive) = &args.archive {
+    if let Some(archive) = &archive {
         archive_run(&run_root, archive, &run_id)?;
         println!("archived run {run_id}: {}", archive.join(&run_id).display());
     }
@@ -884,30 +924,109 @@ mod tests {
             direction: None,
             reason: Some("no fixture clock on either subject".into()),
         }];
-        let fail = scenarios::DirectionOutcome::Fail("missing capability".into());
         let directory = tempfile::tempdir().unwrap();
         fs::create_dir_all(directory.path().join("g7-unsafe-clock-refusal")).unwrap();
-        let report = report_row_outcome(&row, &fail, directory.path(), &waivers, false);
+        // The failure the waiver exists for: the row's named missing
+        // capability (run_direction prefixes it "INCOMPLETE: " and
+        // MissingCapability displays "missing subject capability: ...").
+        let missing = scenarios::DirectionOutcome::Fail(format!(
+            "g7-unsafe-clock-refusal INCOMPLETE: {}no subject fixture clock: ...",
+            scenarios::MISSING_CAPABILITY_MARKER
+        ));
+        let report = report_row_outcome(&row, &missing, directory.path(), &waivers, false);
         assert!(!report.failed, "{report:?}");
         assert!(
             report.line.starts_with("WAIVED g7-unsafe-clock-refusal"),
             "{report:?}"
         );
-        // Without a waiver the same outcome fails the run.
-        let report = report_row_outcome(&row, &fail, directory.path(), &[], false);
+        // A waiver over ANY OTHER failure must not absorb it: the row stays
+        // FAILED and the line says the waiver did not match (a waiver
+        // accepts a named gap, it never hides a defect).
+        let spawn_error = scenarios::DirectionOutcome::Fail(
+            "start ./target/release/pipestream-quinn v2 init-authority: No such file or \
+             directory (os error 2)"
+                .into(),
+        );
+        let report = report_row_outcome(&row, &spawn_error, directory.path(), &waivers, false);
+        assert!(report.failed, "{report:?}");
+        assert!(
+            report.line.starts_with("FAIL g7-unsafe-clock-refusal"),
+            "{report:?}"
+        );
+        assert!(report.line.contains("waiver did not match"), "{report:?}");
+        // Without a waiver the same failure fails the run.
+        let report = report_row_outcome(&row, &missing, directory.path(), &[], false);
         assert!(report.failed);
         assert!(
             report.line.starts_with("FAIL g7-unsafe-clock-refusal"),
             "{report:?}"
         );
         // Dev mode never neutralises a row: the INCOMPLETE labelling stands
-        // and even a waived Fail still reports as a failure to fix.
-        let report = report_row_outcome(&row, &fail, directory.path(), &waivers, true);
+        // and even the matched failure still reports as a failure to fix.
+        let report = report_row_outcome(&row, &missing, directory.path(), &waivers, true);
         assert!(report.failed);
         assert!(
             report.line.starts_with("FAIL g7-unsafe-clock-refusal"),
             "{report:?}"
         );
+    }
+
+    #[test]
+    fn a_waiver_over_a_passing_row_is_named_unused() {
+        let row = scenarios::Row {
+            id: "g1-leaf-copy",
+            group: "G1",
+            rust_implemented: true,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir_all(directory.path().join("g1-leaf-copy")).unwrap();
+        fs::write(
+            directory.path().join("g1-leaf-copy").join("observed.tsv"),
+            "row_status\tfull on this host\n",
+        )
+        .unwrap();
+        let waivers = vec![WaiveTarget {
+            row: "g1-leaf-copy".into(),
+            direction: None,
+            reason: Some("should-not-apply".into()),
+        }];
+        let pass = scenarios::DirectionOutcome::Pass("rust-client/rust-server".into());
+        let report = report_row_outcome(&row, &pass, directory.path(), &waivers, false);
+        assert!(!report.failed, "{report:?}");
+        assert!(
+            report
+                .line
+                .contains("unused whole-row waiver (the row passed)"),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn relative_subject_and_store_paths_are_made_cwd_independent() {
+        let directory = tempfile::tempdir().unwrap();
+        let binary = directory.path().join("subject-bin");
+        fs::write(&binary, b"subject").unwrap();
+        // An existing subject path is validated and canonicalized (absolute)
+        // so a child spawned from a scenario-owned cwd resolves it no
+        // matter what cwd the driver was launched from.
+        let canonical = canonical_subject_path(&binary, "--rust-bin").unwrap();
+        assert!(canonical.is_absolute(), "{canonical:?}");
+        let error =
+            canonical_subject_path(&directory.path().join("absent"), "--rust-bin").unwrap_err();
+        assert!(
+            format!("{error:#}").contains("missing --rust-bin"),
+            "{error:#}"
+        );
+        // Store roots may not exist yet: absolutize joins a relative path
+        // onto the launch cwd without requiring existence.
+        let absolute = absolutize(PathBuf::from("scratch/store")).unwrap();
+        assert!(absolute.is_absolute(), "{absolute:?}");
+        assert!(
+            absolute.starts_with(std::env::current_dir().unwrap()),
+            "{absolute:?}"
+        );
+        let already = absolutize(directory.path().to_path_buf()).unwrap();
+        assert_eq!(already, directory.path());
     }
 
     #[test]
