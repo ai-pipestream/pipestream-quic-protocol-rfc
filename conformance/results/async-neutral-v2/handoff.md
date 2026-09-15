@@ -1558,6 +1558,16 @@ whether the retained-promise reservation vs funded-log arithmetic is
 time-sensitive. The all-jar bytes are identical with or without surefire;
 the conformance matrix remains the subject certification gate.
 
+Follow-up probe of the same day (Kimi, on a quiet host, BENCHMARK.lock
+held, no other jobs): the single test alone still fails, now in 0.97 s at
+entity 34 with the same `LIMIT_EXCEEDED "retained input, output or
+executor capacity"` refusal where an AdmissionResponse is expected
+(PeerRuleWireTest.java:161; log ~/.rfc-tmp/kimi-m20/mvn-probe/probe.log).
+Failing in under a second with the lock held rules out load and herd
+timing; against the 17.9 s passing runs of 2026-09-13 the margin is
+environment-speed arithmetic, deterministic at this pin on this host.
+Second data point for Claude, same question as above.
+
 ### Dev-run evidence (dev evidence, never an acceptance claim)
 
 Full matrix, `--dev`, INCOMPLETE-labelled, exit 0, 39.8 min of wall time
