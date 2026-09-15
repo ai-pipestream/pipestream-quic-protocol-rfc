@@ -5,7 +5,8 @@ driver's scenario rows. Ledger bullets are unnumbered in the source; the
 index below is this document's (family, bullet-order) convention. Status:
 DONE = implemented and green in dev (INCOMPLETE-labelled until acceptance
 mode + final review); SPEC = matrix detailed; HOOK = needs subject hooks
-(rust hooks landed 152c280; java FixtureMain pending); OPEN.
+(rust hooks landed 152c280; Java FixtureMain landed and its two remaining
+defects are named in gap 2); OPEN. Current at M20b (2026-09-15).
 
 Scenario matrix details: scenario-matrix-g1.md, -g2.md, -g3.md, -g4.md,
 -g5.md, -g6-resource.md (G6+R), -g7-g8.md. Interface: interface-v1.md.
