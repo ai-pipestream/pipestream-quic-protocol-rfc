@@ -1685,6 +1685,65 @@ Gates on commit 8f5c4a7e: fmt exit 0, clippy -D warnings exit 0, 108
 passed / 0 failed (the two new tests pin the default/widened/clone-travel
 op-wait semantics and the citation list in the observed line).
 
+### M20c: two holes found by an acceptance-mode smoke test of the run_all.sh block (commit 81ff4fe6)
+
+An acceptance-mode smoke test of the run_all.sh block shape (2 rows,
+scratch store) found two real holes before the opt-in block could ever
+run clean:
+
+- **Relative subject paths broke spawning.** The driver validated
+  `--rust-bin` with `is_file()` from the launch cwd, but subjects spawn
+  with a scenario-owned working directory, so an explicit RELATIVE
+  --rust-bin was resolved by the child against ITS cwd: the smoke test
+  failed with `start ./target/release/pipestream-quinn v2 init-authority:
+  No such file or directory (os error 2)` on a binary that exists. The
+  default (absolute) path is why no M20 dev run ever saw this; the
+  run_all.sh block committed at 9842e655 passed relative paths and would
+  have failed the same way. Fix: `--rust-bin`/`--java-jar` are
+  canonicalized after the is_file gate, and `--artifacts`/`--archive`
+  are joined onto the launch cwd when relative (store roots may not
+  exist yet, so they are absolutized, not canonicalized). Every recorded
+  and spawned path is now cwd-independent.
+- **Whole-row waivers converted ANY Fail into WAIVED.** The smoke run
+  WAIVED g7-unsafe-clock-refusal over a spawn ENOENT — a real defect
+  hidden behind a waiver, against the never-weaken-expectations rule.
+  Fix: a whole-row waiver now converts a Fail ONLY when the failure
+  names the row's missing capability (the `MissingCapability` display
+  prefix, a public constant in scenarios.rs); any other failure stays
+  FAILED with "waiver did not match". A waiver over a passing row is
+  named "unused whole-row waiver (the row passed)" on the PASS line
+  (named as unused — validation cannot see outcomes; rejection there
+  was the alternative). Direction-waiver behavior is unchanged.
+  `conformance/run_all.sh` now spells every block path absolute via
+  $repository_root; the block is otherwise as committed.
+
+Gates on 81ff4fe6: fmt exit 0, clippy -D warnings exit 0, 110 passed /
+0 failed (three new tests: matched/unmatched waiver outcomes with the
+unused-waiver naming, and the canonicalize/absolutize path handling).
+`cargo build --release --locked` reproduces the rust subject
+byte-identical (`4156c642b7be…`); only the conformance crate changed.
+
+Evidence (acceptance-mode smokes, both with the deliberately RELATIVE
+subject paths, under BENCHMARK.lock, stores under
+~/.rfc-tmp/kimi-m20/smoke2/; dev-labelled scratch evidence, never a
+full-matrix claim):
+
+- `durable-18d58a7d01f54e67`: exit 0. `PASS g1-leaf-copy
+  rust-client/rust-server, rust-client/java-server,
+  java-client/rust-server`; `WAIVED g7-unsafe-clock-refusal:
+  g7-unsafe-clock-refusal INCOMPLETE: missing subject capability: no
+  subject fixture clock: … (waiver: no fixture clock on either subject;
+  interface-v1 has no clock-set boundary …)` — the waiver matched the
+  missing-capability failure, not the spawn error that provoked this
+  fix. run.tsv records the canonical absolute rust_bin and the jar's
+  hash 91c1842f… next to the four waiver reasons.
+- Wrong-waiver negative check (`--waive g1-leaf-copy=should-not-apply`
+  on the green row): exit 0, `PASS g1-leaf-copy … (unused whole-row
+  waiver (the row passed): should-not-apply)`.
+
+The full acceptance matrix was NOT run (mandate); the coordination
+board is untouched.
+
 ### Gates on this tree
 
 `cargo fmt --all -- --check` exit 0; `cargo clippy --all-targets
