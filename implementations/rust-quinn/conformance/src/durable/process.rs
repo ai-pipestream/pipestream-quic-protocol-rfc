@@ -32,6 +32,18 @@ const READY_TIMEOUT: Duration = Duration::from_secs(30);
 /// r-capability-manifest row and every R row's observed.tsv.
 pub const JAVA_MEMORY_FLAGS: &[&str] = &["-Xms256m", "-Xmx2g"];
 
+/// Client control deadline (milliseconds) the fixture passes to the Java
+/// client on kill rows as `--control-timeout-ms`. A scheduled server kill
+/// leaves the client's pending request drain-waiting: the connection's idle
+/// timeout is the stream lifetime, so without a shortened control deadline
+/// the client returns exactly at its default 30 s — the driver's own op
+/// bound (observation O-2, Java handoff; ClientCommands.java at 3e1547dd).
+/// 10 s is comfortably inside the 30 s bound and above every legitimate
+/// loopback op latency. The Rust client CLI exposes no such option (its
+/// transport `response_timeout` has no CLI surface), so the flag is emitted
+/// for Java clients only; `client_command` enforces that.
+pub const JAVA_CLIENT_KILL_CONTROL_TIMEOUT_MS: u64 = 10_000;
+
 /// Human-readable form of [`JAVA_MEMORY_FLAGS`] for evidence files.
 pub fn java_memory_flags_text() -> String {
     JAVA_MEMORY_FLAGS.join(" ")
@@ -107,6 +119,10 @@ pub struct AuthorityFixture {
     /// arguments. G4 skip rows pass `--allow-skip` (a rust Storage open flag
     /// and a java serve flag); empty for every other fixture.
     extra_serve_args: Vec<String>,
+    /// Kill-row client control deadline (see
+    /// [`JAVA_CLIENT_KILL_CONTROL_TIMEOUT_MS`]); `None` for every fixture
+    /// but the hooked kill rows.
+    client_control_timeout_ms: Option<u64>,
     /// Authority label the storage roots are initialised with and every
     /// journal binds to. [`AUTHORITY`] for every fixture but the second
     /// authority of g5-cross-authority-reference.
@@ -133,8 +149,17 @@ impl AuthorityFixture {
             server,
             client,
             extra_serve_args: Vec::new(),
+            client_control_timeout_ms: None,
             authority: AUTHORITY.to_owned(),
         })
+    }
+
+    /// Shorten the client control deadline on a kill row so the client
+    /// notices a killed authority well inside the driver's 30 s op bound.
+    /// Emitted as `--control-timeout-ms` for the Java client only.
+    pub fn with_client_control_timeout_ms(mut self, timeout_ms: Option<u64>) -> Self {
+        self.client_control_timeout_ms = timeout_ms;
+        self
     }
 
     /// Append flags to every `serve` invocation this fixture starts (used by
@@ -290,6 +315,34 @@ impl AuthorityFixture {
         )
     }
 
+    /// Build one `client` invocation: entry point, journal args, the
+    /// kill-row control deadline (Java client only), per-invocation extras
+    /// (the short-session-policy triple), connection args and the operation.
+    /// Both `run_client_op_with` and `spawn_client_op` build through here so
+    /// the flag placement can never drift between them.
+    fn client_command(
+        &self,
+        journal: &Path,
+        owner: &str,
+        creation_sequence: u64,
+        extra: &[String],
+        connection: &[String],
+        operation: &[&str],
+    ) -> Result<Vec<String>> {
+        let mut command = with_owned(&self.client_base()?, &["client".into()]);
+        command.extend(self.journal_args(journal, owner, creation_sequence));
+        if let Some(timeout_ms) = self.client_control_timeout_ms
+            && self.client == Subject::Java
+        {
+            command.push("--control-timeout-ms".into());
+            command.push(timeout_ms.to_string());
+        }
+        command.extend(extra.iter().cloned());
+        command.extend(connection.iter().cloned());
+        command.extend(operation.iter().map(|value| (*value).to_owned()));
+        Ok(command)
+    }
+
     /// One client op carrying additional per-invocation arguments between the
     /// journal args and the connection. Short-session-policy rows use this to
     /// redeclare the policy triple on every op: the Java client rebuilds its
@@ -305,11 +358,14 @@ impl AuthorityFixture {
         connection: &[String],
         operation: &[&str],
     ) -> Result<Output> {
-        let mut command = with_owned(&self.client_base()?, &["client".into()]);
-        command.extend(self.journal_args(journal, owner, creation_sequence));
-        command.extend(extra.iter().cloned());
-        command.extend(connection.iter().cloned());
-        command.extend(operation.iter().map(|value| (*value).to_owned()));
+        let command = self.client_command(
+            journal,
+            owner,
+            creation_sequence,
+            extra,
+            connection,
+            operation,
+        )?;
         run_output_owned(&self.root, &command, OP_TIMEOUT)
     }
 
@@ -323,10 +379,14 @@ impl AuthorityFixture {
         connection: &[String],
         operation: &[&str],
     ) -> Result<Child> {
-        let mut command = with_owned(&self.client_base()?, &["client".into()]);
-        command.extend(self.journal_args(journal, owner, creation_sequence));
-        command.extend(connection.iter().cloned());
-        command.extend(operation.iter().map(|value| (*value).to_owned()));
+        let command = self.client_command(
+            journal,
+            owner,
+            creation_sequence,
+            &[],
+            connection,
+            operation,
+        )?;
         ensure!(!command.is_empty(), "empty client command");
         Command::new(&command[0])
             .args(&command[1..])
@@ -646,5 +706,96 @@ mod tests {
         assert_eq!(parse_ready(""), None);
         assert_eq!(parse_ready("not-an-address"), None);
         assert_eq!(parse_ready("127.0.0.1:99999"), None);
+    }
+
+    /// Kill rows arm a server self-kill; the Java launcher must notice the
+    /// dead authority well inside the driver's 30 s op bound (observation
+    /// O-2), so the fixture passes `--control-timeout-ms` on those rows. The
+    /// Rust client CLI exposes no such option (quinn/src/v2_client
+    /// `response_timeout` has no CLI surface), so the flag must reach the
+    /// Java client only — clap would reject an unknown flag outright.
+    #[test]
+    fn kill_row_control_timeout_flag_reaches_the_java_client_only() {
+        let directory = tempfile::tempdir().unwrap();
+        let jar = directory.path().join("subject-all.jar");
+        fs::write(&jar, b"not really a jar").unwrap();
+        let certs =
+            crate::durable::mtls::generate(&directory.path().join("certs"), &[("alice", "alice")])
+                .unwrap();
+        let journal = directory.path().join("session.sqlite");
+        let connection = vec!["--connect".to_owned(), "127.0.0.1:7443".to_owned()];
+        let java = AuthorityFixture::new(
+            Path::new("/nonexistent/pipestream-quinn"),
+            Some(&jar),
+            directory.path(),
+            certs.clone(),
+            Subject::Java,
+            Subject::Java,
+        )
+        .unwrap()
+        .with_client_control_timeout_ms(Some(JAVA_CLIENT_KILL_CONTROL_TIMEOUT_MS));
+        let command = java
+            .client_command(
+                &journal,
+                "alice",
+                1,
+                &[],
+                &connection,
+                &["watch", "--work", "0:0:1"],
+            )
+            .unwrap();
+        let position = command
+            .windows(2)
+            .position(|pair| pair == ["--control-timeout-ms", "10000"])
+            .expect("the Java kill-row client must carry --control-timeout-ms 10000");
+        // The flag sits with the other named options, before the connection
+        // block and the operation subcommand.
+        let connect = command.iter().position(|arg| arg == "--connect").unwrap();
+        assert!(
+            position + 1 < connect,
+            "flag must precede the connection block: {command:?}"
+        );
+        assert_eq!(
+            java.client_control_timeout_ms,
+            Some(JAVA_CLIENT_KILL_CONTROL_TIMEOUT_MS)
+        );
+
+        // Without the kill-row setting no flag is emitted at all.
+        let plain_java = AuthorityFixture::new(
+            Path::new("/nonexistent/pipestream-quinn"),
+            Some(&jar),
+            directory.path(),
+            certs.clone(),
+            Subject::Java,
+            Subject::Java,
+        )
+        .unwrap();
+        let plain = plain_java
+            .client_command(&journal, "alice", 1, &[], &connection, &["binding"])
+            .unwrap();
+        assert!(
+            !plain.iter().any(|arg| arg == "--control-timeout-ms"),
+            "a fixture without the kill-row setting must not pass the flag: {plain:?}"
+        );
+
+        // The Rust client CLI has no such option: even with the setting the
+        // fixture must not emit it (clap would reject the unknown flag).
+        let rust = AuthorityFixture::new(
+            Path::new("/nonexistent/pipestream-quinn"),
+            Some(&jar),
+            directory.path(),
+            certs,
+            Subject::Rust,
+            Subject::Rust,
+        )
+        .unwrap()
+        .with_client_control_timeout_ms(Some(JAVA_CLIENT_KILL_CONTROL_TIMEOUT_MS));
+        let rust_command = rust
+            .client_command(&journal, "alice", 1, &[], &connection, &["binding"])
+            .unwrap();
+        assert!(
+            !rust_command.iter().any(|arg| arg == "--control-timeout-ms"),
+            "the Rust client CLI exposes no control-timeout option: {rust_command:?}"
+        );
     }
 }

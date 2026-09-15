@@ -4,7 +4,9 @@
 use crate::durable::events::{ArtifactRef, EventWriter};
 use crate::durable::mtls;
 use crate::durable::oracle;
-use crate::durable::process::{AuthorityFixture, OwnedServer, Subject};
+use crate::durable::process::{
+    AuthorityFixture, JAVA_CLIENT_KILL_CONTROL_TIMEOUT_MS, OwnedServer, Subject,
+};
 use crate::durable::rawclient::{
     self, CODE_INTEGRITY_ERROR, Close, FRAME_CAPABILITIES, FRAME_DRAIN, FRAME_REFUSAL,
     FRAME_RESULT, FRAME_SCOPE, FRAME_SESSION, FRAME_WORK, Frame, Peer, QUIC_CONTROL_RESET,
@@ -4544,6 +4546,42 @@ fn g2_schedule_row(
 /// worker must reach the armed commit) or for a released pause to proceed.
 const KILL_TIMEOUT: Duration = Duration::from_secs(45);
 
+/// A hooked kill row whose client is Java shortens the client control
+/// deadline: a scheduled server kill leaves the pending request
+/// drain-waiting, and the Java launcher's default 30 s control deadline
+/// meets the driver's own 30 s op bound exactly (observation O-2). The Rust
+/// client CLI exposes no such option, so the setting is applied (and
+/// emitted) for the Java client only; the row evidence names both facts.
+fn apply_kill_row_control_timeout(session: &mut Session, client: Subject) {
+    if client == Subject::Java {
+        session.fixture = session
+            .fixture
+            .clone()
+            .with_client_control_timeout_ms(Some(JAVA_CLIENT_KILL_CONTROL_TIMEOUT_MS));
+    }
+}
+
+/// The observed.tsv line recording what the row did about the client control
+/// deadline, per client subject.
+fn kill_row_control_timeout_observed(client: Subject) -> (&'static str, String) {
+    (
+        "client_control_deadline",
+        if client == Subject::Java {
+            format!(
+                "--control-timeout-ms {JAVA_CLIENT_KILL_CONTROL_TIMEOUT_MS} on every op of this \
+                 direction: the killed authority is noticed well inside the driver's 30 s op \
+                 bound (observation O-2)"
+            )
+        } else {
+            "not shortened: the Rust client CLI exposes no control-timeout option (the quinn \
+             v2_client response deadline has no CLI surface); a stranded op is bounded by the \
+             row's own bounded op or the subject's transport deadlines — a named deviation, \
+             not a weakened expectation"
+                .into()
+        },
+    )
+}
+
 /// Consume a hooked session into its parts so the server handle can be
 /// stopped (drop-reply rows) or awaited (kill rows) before a restart.
 fn split_hooked(hooked: Hooked) -> (Session, PathBuf) {
@@ -4847,7 +4885,7 @@ fn g2_crash_after_create_commit_direction(
         "SESSION_COMMITTED",
         schedule::Action::DropReply,
     )];
-    let hooked = setup_hooked(
+    let mut hooked = setup_hooked(
         context,
         scenario_dir,
         id,
@@ -4857,6 +4895,7 @@ fn g2_crash_after_create_commit_direction(
         "schedule.tsv",
         true,
     )?;
+    apply_kill_row_control_timeout(&mut hooked.session, client);
     write_kv(
         scenario_dir,
         "expected.tsv",
@@ -4999,6 +5038,7 @@ fn g2_crash_after_create_commit_direction(
                 changed_line.expect("checked above"),
             ),
             ("ahead_sequence_refusal", ahead_line.expect("checked above")),
+            kill_row_control_timeout_observed(client),
         ],
     )?;
     stop_and_seal(context, scenario_dir, id, restarted.server, events)
@@ -5048,7 +5088,7 @@ fn g2_crash_before_create_commit_direction(
         "CONNECTION_AUTHENTICATED",
         schedule::Action::Kill,
     )];
-    let hooked = setup_hooked(
+    let mut hooked = setup_hooked(
         context,
         scenario_dir,
         id,
@@ -5058,6 +5098,7 @@ fn g2_crash_before_create_commit_direction(
         "schedule.tsv",
         false,
     )?;
+    apply_kill_row_control_timeout(&mut hooked.session, client);
     write_kv(
         scenario_dir,
         "expected.tsv",
@@ -5150,6 +5191,7 @@ fn g2_crash_before_create_commit_direction(
             ("next_sequence_after_restart", "1".into()),
             ("replay_binding", "generation 1".into()),
             ("next_sequence_after_replay", next.to_string()),
+            kill_row_control_timeout_observed(client),
         ],
     )?;
     stop_and_seal(context, scenario_dir, id, recovered.server, events)
@@ -5650,7 +5692,8 @@ fn g2_kill_after_admission_before_publication_direction(
         "schedule.tsv",
         true,
     )?;
-    let (session, events_path) = split_hooked(hooked);
+    let (mut session, events_path) = split_hooked(hooked);
+    apply_kill_row_control_timeout(&mut session, client);
     let binding = session.op(&["binding"])?;
     require(&binding, "BINDING", "client binding")?;
     let declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
@@ -5749,6 +5792,7 @@ fn g2_kill_after_admission_before_publication_direction(
             ("terminal_state", terminal_state.to_string()),
             ("terminal_attempt", terminal_attempt.to_string()),
             ("recovery_path", recovery_path),
+            kill_row_control_timeout_observed(client),
         ],
     )?;
     stop_and_seal(context, scenario_dir, id, recovered.server, events)
@@ -5822,7 +5866,8 @@ fn g2_kill_at_publication_commit_direction(
         "schedule.tsv",
         true,
     )?;
-    let (session, events_path) = split_hooked(hooked);
+    let (mut session, events_path) = split_hooked(hooked);
+    apply_kill_row_control_timeout(&mut session, client);
     let binding = session.op(&["binding"])?;
     require(&binding, "BINDING", "client binding")?;
     let declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
@@ -5977,6 +6022,7 @@ fn g2_kill_at_publication_commit_direction(
             ("terminal_view", terminal_view.trim().to_owned()),
             ("post_terminal_retry_refusal", retry_line),
             ("post_terminal_retry_code", retry_code.to_string()),
+            kill_row_control_timeout_observed(client),
         ],
     )?;
     stop_and_seal(context, scenario_dir, id, recovered.server, events)
