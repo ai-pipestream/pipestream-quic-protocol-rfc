@@ -102,11 +102,18 @@ event stream.
   drop-reply only at the three reply pairs; the Java FixtureMain requires a
   reply boundary) and the row archives each refusal verbatim
   (`artifacts/subject-schedule-refusal.txt`, `observed.tsv` row_status
-  INCOMPLETE). PROPOSAL for Kimi's decision: accept the kill variant
-  `g2-kill-at-publication-commit` as the boundary's evidence and retire this
-  row, since a withheld reply that does not exist cannot be lost; the
-  alternative is an interface revision adding a correlated publication
-  reply to both subjects, which is a protocol change, not a fixture change.
+  INCOMPLETE).
+- Status (milestone 20, DECIDED by the coordinating owner 2026-09-13,
+  implemented in Kimi's role): RETIRED. The row is removed from the driver
+  matrix (66 of 67 rows remain); it no longer runs or FAILs in either dev
+  or acceptance mode. Rationale: both subjects expose publication via a
+  watch rather than a correlated reply pair, so a withheld reply that does
+  not exist cannot be lost; the kill variant `g2-kill-at-publication-commit`
+  is the delivered boundary evidence. The alternative (adding a correlated
+  publication reply) is a protocol change and out of scope. The retirement
+  is pinned by the `drop_reply_publication_is_retired_from_the_matrix`
+  driver test; the milestone-19b MissingCapability evidence for this row
+  remains in the M19 archives.
 
 ## g2-not-found-in-flight
 

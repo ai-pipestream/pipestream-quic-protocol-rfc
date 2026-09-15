@@ -67,6 +67,11 @@ pub fn rows() -> Vec<Row> {
     push(
         &mut rows,
         "G2",
+        // `g2-drop-reply-publication` is retired (owner decision 2026-09-13,
+        // milestone 20): publication is watch-observed on both subjects, not
+        // a correlated reply, so there is no reply to withhold; the kill
+        // variant g2-kill-at-publication-commit is the boundary's evidence.
+        // The retirement is recorded in scenario-matrix-g2.md and handoff §3k.
         &[
             "g2-crash-before-create-commit",
             "g2-crash-after-create-commit",
@@ -74,7 +79,6 @@ pub fn rows() -> Vec<Row> {
             "g2-drop-reply-admission",
             "g2-kill-after-admission-before-publication",
             "g2-kill-at-publication-commit",
-            "g2-drop-reply-publication",
             "g2-kill-client-after-request-sent",
             "g2-duplicate-op-changed-params",
             "g2-simultaneous-duplicate",
@@ -203,7 +207,6 @@ pub fn rows() -> Vec<Row> {
         "g2-simultaneous-duplicate",
         "g2-kill-server-after-admission-recovery",
         "g2-not-found-in-flight",
-        "g2-drop-reply-publication",
         "g3-input-before-metadata",
         "g3-orphan-cleanup",
         "g3-restart-same-roots",
@@ -412,7 +415,6 @@ fn run_rust_direction(row: &Row, context: &ScenarioContext) -> Result<()> {
             g2_kill_server_after_admission_recovery(context)
         }
         "g2-not-found-in-flight" => g2_not_found_in_flight(context),
-        "g2-drop-reply-publication" => g2_drop_reply_publication(context),
         "g5-cert-rotation-same-owner" => g5_cert_rotation_same_owner(context),
         "g5-remapped-owner" => g5_remapped_owner(context),
         "g5-cross-authority-reference" => g5_cross_authority_reference(context),
@@ -24611,78 +24613,6 @@ fn refusal_reason_line(text: &str) -> String {
         .to_owned()
 }
 
-/// g2-drop-reply-publication: `drop-reply` at PUBLICATION_COMMITTED. Neither
-/// subject exposes a PUBLICATION reply pair to withhold: publication is
-/// observed through a watch, not answered on a correlated reply. Both
-/// subjects refuse the schedule row at parse time (the Rust hooks accept
-/// drop-reply only at the three reply pairs; Claude's FixtureMain requires
-/// a reply boundary), which is what this row runs and records. The
-/// kill-at-boundary variant (g2-kill-at-publication-commit) is the delivered
-/// evidence for the boundary; a proposal to accept it as such is in
-/// scenario-matrix-g2.md.
-fn g2_drop_reply_publication(context: &ScenarioContext) -> Result<()> {
-    let id = "g2-drop-reply-publication";
-    let (scenario_dir, _artifacts) = open_scenario(context, id)?;
-    let events = open_events(context, &scenario_dir, id, Subject::Rust)?;
-    let findings = per_server_findings(context, &scenario_dir, |dir, server| {
-        let rows = [g2_schedule_row(
-            context,
-            id,
-            "PUBLICATION_COMMITTED",
-            schedule::Action::DropReply,
-        )];
-        let refusal = subject_schedule_refusal(context, dir, id, server, &rows)?;
-        let artifacts = dir.join("artifacts");
-        fs::create_dir_all(&artifacts)?;
-        match refusal {
-            Some(text) => {
-                fs::write(artifacts.join("subject-schedule-refusal.txt"), &text)?;
-                Ok(format!(
-                    "refused the schedule at parse: {}",
-                    refusal_reason_line(&text)
-                ))
-            }
-            None => Ok(
-                "ACCEPTED drop-reply at PUBLICATION_COMMITTED (the row must be implemented \
-                 against this subject)"
-                    .into(),
-            ),
-        }
-    })?;
-    let reason = "neither subject exposes a PUBLICATION reply pair to withhold (publication \
-                  is observed via watch, not a correlated reply); both refuse drop-reply at \
-                  PUBLICATION_COMMITTED at schedule parse; the kill variant \
-                  g2-kill-at-publication-commit is the delivered boundary evidence";
-    finish_missing_capability(
-        context,
-        &scenario_dir,
-        id,
-        events,
-        &[
-            (
-                "schedule",
-                "drop-reply at PUBLICATION_COMMITTED (withheld reply plus connection reset)".into(),
-            ),
-            (
-                "would_assert",
-                "the same durable expectations as g2-kill-at-publication-commit: exactly one \
-                 terminal commit, SUCCEEDED under the same attempt after the client reconnects, \
-                 byte-exact result, post-terminal retry ALREADY_TERMINAL (18) or CANCELLED (12)"
-                    .into(),
-            ),
-            (
-                "missing_capability",
-                "a PUBLICATION reply pair on the subject (interface-v1 drop-reply requires a \
-                 committed boundary with a pending reply)"
-                    .into(),
-            ),
-        ],
-        &findings,
-        reason,
-    )?;
-    Err(MissingCapability(reason.to_owned()).into())
-}
-
 /// g7-unsafe-clock-refusal: needs a subject fixture clock (`clock-set`) or an
 /// untrusted-clock mode. Neither subject has one: the only clock control on
 /// either `serve` is `--trust-system-clock`, the Rust hooks reject
@@ -24929,7 +24859,27 @@ mod tests {
             let row = rows.iter().find(|row| row.id == id).unwrap();
             assert!(row.rust_implemented, "{id} must be implemented");
         }
-        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 67);
+        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 66);
+    }
+
+    /// The owner's 2026-09-13 decision (coordinator board): publication is
+    /// observed through a watch on both subjects, not a correlated reply
+    /// pair, so a withheld reply that does not exist cannot be lost; the
+    /// kill variant g2-kill-at-publication-commit is the boundary's
+    /// evidence. The row is retired from the matrix (66 of 67 rows remain);
+    /// the decision is recorded in scenario-matrix-g2.md and handoff.md §3k.
+    #[test]
+    fn drop_reply_publication_is_retired_from_the_matrix() {
+        let rows = rows();
+        assert!(
+            rows.iter().all(|row| row.id != "g2-drop-reply-publication"),
+            "g2-drop-reply-publication must not be registered: the row is retired"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.id == "g2-kill-at-publication-commit"),
+            "the kill variant remains the boundary evidence"
+        );
     }
 
     #[test]
