@@ -1577,9 +1577,9 @@ Per-marker resolution, M19c set against M20:
 
 | Marker | M19c | M20 | Resolution |
 |---|---|---|---|
-| g2-crash-before-create-commit java-client/rust-server | INCOMPLETE "process timed out" | INCOMPLETE, same text | NOT resolved; mechanism now precise (below) |
+| g2-crash-before-create-commit java-client/rust-server | INCOMPLETE "process timed out" | INCOMPLETE, same text | resolved at M20b as a DRIVER budget matter: named refusal observed inside the 90 s kill-row budget (see M20b below) |
 | g2-crash-after-create-commit rust-client/java-server | INCOMPLETE "client transport closed" | INCOMPLETE, same text | NOT resolved; defect 16 held for the committed boundary but the withhold hook still fires on the replay (below) |
-| g8-timeout-no-completion-claim kill-variant rust-client/java-server | INCOMPLETE "process timed out" | INCOMPLETE, same text | NOT resolved; no Rust-client option exists (mandate correction above); post-restart probe hang, unchanged mechanism |
+| g8-timeout-no-completion-claim kill-variant rust-client/java-server | INCOMPLETE "process timed out" | INCOMPLETE, same text | NOT a budget matter at M20b: third Java fixture defect — kill rows never fire at SENT boundaries (see M20b below) |
 | g3-store-ownership java-client/rust-server | named gap | named gap | unchanged; waived direction with its INCOMPLETE marker |
 | g4-revocation-vs-publication rust-client/java-server | named gap | named gap | unchanged; waived direction with its INCOMPLETE marker |
 | g2-drop-reply-publication (whole row) | INCOMPLETE missing capability | RETIRED | row removed from the matrix (decision 1) |
@@ -1625,6 +1625,65 @@ named-scope rule is enforced in acceptance mode).
   rust-client direction still hangs a post-restart probe against the
   restarted plain Java server (unchanged from M19c; restarted server writes
   READY, the Rust client's next-sequence then hangs >30 s with no output).
+
+### M20b: root-cause correction and the kill-row op budget (same day, commit 8f5c4a7e)
+
+Coordinator root-cause review re-classified two of the three blocking
+markers as DRIVER budget problems, not subject defects: a killed authority
+is noticed at the NEGOTIATED TRANSPORT BOUND, not the application control
+deadline. The Rust authority sets max_idle_timeout(60 s)
+(quinn/src/v2_authority/server.rs:225); the Java client's idle is
+max(handshake 10 s, control deadline, stream lifetime 300 s)
+(DurableClient.java:203-207), so QUIC negotiates 60 s and the Java client
+surfaces CONTROL_RESET "connection ended before drain" at ~61 s
+(DurableClient.java:271-278) — `--control-timeout-ms` bounds only
+live-connection control work. The Rust client's per-request response_timeout
+is 60 s (quinn/src/v2_client/transport.rs:127, swept at :538), refusing
+LIMIT_EXCEEDED "client response deadline" at ~60 s. Both exceed the driver's
+default 30 s op wait.
+
+The fixture now carries a per-op client wait (default 30 s, unchanged for
+every row) that the two affected kill rows widen to 90 s
+(`KILL_ROW_OP_TIMEOUT`, process.rs); the restarted session inherits it
+through the fixture clone. Only the WAIT BUDGET changed — every row
+assertion is byte-for-byte the same — and the rows' observed.tsv gained a
+`driver_op_budget` line naming the derivation and citations.
+
+Targeted dev rerun (both subjects, `--dev`, under the lock, archive
+`durable-18d589547e933f9b`, 132/132 manifest entries verified, exit 0):
+
+- **g2-crash-before-create-commit java-client/rust-server: GREEN.** The
+  binding op now observes the named refusal inside the 90 s budget —
+  transcript verbatim `CONTROL_RESET: CONTROL_RESET: connection ended
+  before drain` (exit 1; the hand repro of the identical op measured ~61 s
+  to that refusal). The row then completes: subject exit 86,
+  NEXT_SEQUENCE 1 after the restart, generation-1 replay, NEXT_SEQUENCE 2.
+  The marker is closed as a driver budget matter.
+- **g8-timeout-no-completion-claim kill-variant rust-client/java-server:
+  STILL INCOMPLETE, and the budget was NOT raised further (stop-and-report
+  rule).** The rerun disproved the budget hypothesis: the direction's
+  subject/ directory holds exactly ONE server log and ONE ready file — the
+  restart is never reached — and the timed-out wait is the driver's
+  `wait_exit` on the Java server, not any client op. Root cause, verified
+  in FixtureMain.java: `Hooks.committed()` (line 198) alone consumes
+  kill/exit rows, while `Hooks.sent()` (line 223) only records — so the
+  armed `kill@COMPLETE_RESPONSE_SENT` is accepted by the schedule parser
+  (line 114 accepts kill at any boundary; only drop-reply/disconnect are
+  reply-gated) and then SILENTLY NEVER FIRES. The Java server records
+  COMPLETE_RESPONSE_SENT and keeps serving; the Rust subject's fixture does
+  fire the kill at that boundary, which is why the rust/rust kill variant
+  is green. This is a THIRD Java fixture defect (kill at SENT boundaries;
+  plus the parser should refuse unactionable kill rows), in Claude's scope
+  like the withhold finding — reported, not patched: re-arming the Java
+  side at CLOSURE_COMMITTED would change what the row models (the reply
+  could no longer race through) and would arm the two subjects at different
+  boundaries, a coordinator decision. The 90 s budget stays: it is the
+  correct bound for the rust-client response_timeout class and harmless
+  elsewhere in these two rows.
+
+Gates on commit 8f5c4a7e: fmt exit 0, clippy -D warnings exit 0, 108
+passed / 0 failed (the two new tests pin the default/widened/clone-travel
+op-wait semantics and the citation list in the observed line).
 
 ### Gates on this tree
 
