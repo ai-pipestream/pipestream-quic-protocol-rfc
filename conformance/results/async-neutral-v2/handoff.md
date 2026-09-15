@@ -986,8 +986,11 @@ is inferred or substituted.
 
 ## 5. Known limitations / open gates
 
-1. Acceptance mode has never passed: the full matrix, both directions,
-   resource gates and run_all.sh integration are unfinished.
+1. Acceptance mode has never passed: the run_all.sh integration landed at
+   9842e655 (opt-in `PIPESTREAM_DURABLE_ACCEPTANCE=1` block), but the
+   acceptance run itself is pending three subject-side markers (section
+   3k): the two Java findings reported to Claude and the rust client
+   CLI's missing control-timeout option (lane question posted).
 2. Java-server hook directions are live for 5 G2 rows (M7), but
    `g2-crash-after-create-commit` rust-client/java-server stays
    INCOMPLETE: Java FixtureMain re-fires drop-reply on the REPLAYED
@@ -1464,11 +1467,12 @@ into this branch; the jar is a pinned external artifact whose path and hash
 
 ## 3k. Milestone 20 (work in Kimi's role, 2026-09-15)
 
-Everything in this section was done by a follow-on agent in Kimi's role with
-the coordinating owner's written authorization (milestone M20 mandate of
-2026-09-15), on `agent/rfc-kimi-neutral-v2` in Kimi's worktree, while Kimi is
-away until about 2026-09-17. It is REVIEW_READY for Kimi's review and accepted
-by nobody. Nothing was pushed, merged or rebased. The branch fast-forwarded
+Everything in this section was started by a follow-on agent in Kimi's role
+with the coordinating owner's written authorization (milestone M20 mandate of
+2026-09-15), on `agent/rfc-kimi-neutral-v2` in Kimi's worktree, and reviewed
+and confirmed by Kimi on return the same day (board update and the run_all.sh
+integration at 9842e655 are Kimi's own). Nothing was pushed, merged or
+rebased. The branch fast-forwarded
 from ab40d2e0 to afbb948a (the Java peer's in-tree subject code: defect 16 at
 3e1547dd, the owner's 2026-09-13 Section 12 decisions at a3b14725/802f1edc).
 All evidence here is DEV evidence, INCOMPLETE-labelled; nothing in this
@@ -1635,5 +1639,17 @@ retirement, and the flag's Java-only placement). `cargo build --release
 conformance crate gained no dependency.
 
 Acceptance mode was NOT run (mandate: next milestone after the owner's
-review of this dev run). `conformance/run_all.sh` is unchanged; the
-coordination board is untouched.
+review of this dev run).
+
+Follow-up of the same day (the real Kimi, resumed): the M18/M19 review and
+both reserved decisions were confirmed as implemented above; the dev-run
+evidence was spot-verified (archive `durable-18d5856a211db6af`,
+MANIFEST.sha256 5732 entries, four waiver lines in run.tsv). Commit 9842e655
+then integrated the acceptance matrix into `conformance/run_all.sh` as an
+opt-in block (`PIPESTREAM_DURABLE_ACCEPTANCE=1`, after the Java build, with
+the four milestone-20 waivers spelled out), so the proposal in
+acceptance-mode-proposal.md is now applied rather than proposed. The
+coordination board's Kimi section was updated the same day with the M20
+state and the three blocking subject-side markers (two Java findings for
+Claude and the rust-CLI control-timeout lane question). The acceptance run
+itself remains pending those resolutions.
