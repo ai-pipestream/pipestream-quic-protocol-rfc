@@ -5,7 +5,8 @@ use crate::durable::events::{ArtifactRef, EventWriter};
 use crate::durable::mtls;
 use crate::durable::oracle;
 use crate::durable::process::{
-    AuthorityFixture, JAVA_CLIENT_KILL_CONTROL_TIMEOUT_MS, OwnedServer, Subject,
+    AuthorityFixture, JAVA_CLIENT_KILL_CONTROL_TIMEOUT_MS, KILL_ROW_OP_TIMEOUT, OwnedServer,
+    Subject,
 };
 use crate::durable::rawclient::{
     self, CODE_INTEGRITY_ERROR, Close, FRAME_CAPABILITIES, FRAME_DRAIN, FRAME_REFUSAL,
@@ -4561,6 +4562,39 @@ fn apply_kill_row_control_timeout(session: &mut Session, client: Subject) {
     }
 }
 
+/// A hooked kill row also widens the driver's per-op wait to
+/// [`KILL_ROW_OP_TIMEOUT`]: the killed authority is noticed at the
+/// negotiated transport bound (~60 s), and the row's named-refusal
+/// assertions must observe that refusal, not race it. The row assertions
+/// themselves are unchanged; only the budget is. Applied to both client
+/// subjects — the bound being waited out is a property of the kill, not of
+/// which client runs it.
+fn apply_kill_row_op_budget(session: &mut Session) {
+    session.fixture = session
+        .fixture
+        .clone()
+        .with_client_op_timeout(KILL_ROW_OP_TIMEOUT);
+}
+
+/// The observed.tsv line recording the widened op budget and its derivation.
+fn kill_row_op_budget_observed() -> (&'static str, String) {
+    (
+        "driver_op_budget",
+        format!(
+            "{} s per client op (kill row): a killed authority is noticed at the negotiated \
+             transport bound - the Rust server's max_idle_timeout of 60 s \
+             (quinn/src/v2_authority/server.rs:225) against the Java client's idle \
+             max(handshake 10 s, control deadline, stream lifetime 300 s) \
+             (DurableClient.java:203-207), surfacing CONTROL_RESET 'connection ended before \
+             drain' at ~61 s (DurableClient.java:271-278), and the Rust client's \
+             response_timeout of 60 s (quinn/src/v2_client/transport.rs:127, swept at :538), \
+             refusing LIMIT_EXCEEDED 'client response deadline' at ~60 s - so the default 30 s \
+             op wait cannot observe the named refusal",
+            KILL_ROW_OP_TIMEOUT.as_secs()
+        ),
+    )
+}
+
 /// The observed.tsv line recording what the row did about the client control
 /// deadline, per client subject.
 fn kill_row_control_timeout_observed(client: Subject) -> (&'static str, String) {
@@ -5099,6 +5133,7 @@ fn g2_crash_before_create_commit_direction(
         false,
     )?;
     apply_kill_row_control_timeout(&mut hooked.session, client);
+    apply_kill_row_op_budget(&mut hooked.session);
     write_kv(
         scenario_dir,
         "expected.tsv",
@@ -5192,6 +5227,7 @@ fn g2_crash_before_create_commit_direction(
             ("replay_binding", "generation 1".into()),
             ("next_sequence_after_replay", next.to_string()),
             kill_row_control_timeout_observed(client),
+            kill_row_op_budget_observed(),
         ],
     )?;
     stop_and_seal(context, scenario_dir, id, recovered.server, events)
@@ -15768,7 +15804,7 @@ fn g8_timeout_kill_direction(
         "COMPLETE_RESPONSE_SENT",
         schedule::Action::Kill,
     )];
-    let hooked = setup_hooked(
+    let mut hooked = setup_hooked(
         context,
         scenario_dir,
         id,
@@ -15778,6 +15814,7 @@ fn g8_timeout_kill_direction(
         "schedule.tsv",
         true,
     )?;
+    apply_kill_row_op_budget(&mut hooked.session);
     let (session, events_path) = split_hooked(hooked);
     let (_root_seal, coverage_stdout) =
         g8_timeout_settle(context, &session, &mut events, &artifacts)?;
@@ -15887,6 +15924,8 @@ fn g8_timeout_kill_direction(
             ),
             ("next_sequence_after_restart", next.to_string()),
             ("redrive_complete", redrive_outcome),
+            kill_row_control_timeout_observed(client),
+            kill_row_op_budget_observed(),
         ],
     )?;
     stop_and_seal(context, scenario_dir, id, restarted.server, events)
@@ -24943,6 +24982,27 @@ mod tests {
                 .any(|row| row.id == "g2-kill-at-publication-commit"),
             "the kill variant remains the boundary evidence"
         );
+    }
+
+    /// The kill-row op budget is 90 s and its observed.tsv line names the
+    /// transport bounds it derives from, so the evidence can never silently
+    /// drift from the code it cites.
+    #[test]
+    fn kill_row_op_budget_names_the_transport_bounds_it_derives_from() {
+        let (key, text) = kill_row_op_budget_observed();
+        assert_eq!(key, "driver_op_budget");
+        assert_eq!(KILL_ROW_OP_TIMEOUT, Duration::from_secs(90));
+        for citation in [
+            "90 s",
+            "server.rs:225",
+            "transport.rs:127",
+            "DurableClient.java:203-207",
+            "DurableClient.java:271-278",
+            "connection ended before drain",
+            "client response deadline",
+        ] {
+            assert!(text.contains(citation), "missing {citation:?} in {text}");
+        }
     }
 
     #[test]

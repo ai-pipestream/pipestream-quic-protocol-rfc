@@ -51,6 +51,20 @@ pub fn java_memory_flags_text() -> String {
 const OP_TIMEOUT: Duration = Duration::from_secs(30);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Kill-row client op budget. A scheduled server kill is noticed at the
+/// NEGOTIATED TRANSPORT BOUND, not the application control deadline: the
+/// Java client's idle timeout is max(handshake 10 s, control deadline,
+/// stream lifetime 300 s) (DurableClient.java:203-207) and the Rust
+/// authority sets max_idle_timeout(60 s) (quinn/src/v2_authority/server.rs:
+/// 225), so QUIC negotiates 60 s and the Java client surfaces CONTROL_RESET
+/// "connection ended before drain" at ~61 s (DurableClient.java:271-278) —
+/// while the Rust client's per-request response_timeout is 60 s
+/// (quinn/src/v2_client/transport.rs:127, swept at :538), refusing LIMIT_
+/// EXCEEDED "client response deadline" at ~60 s. Both exceed the driver's
+/// default 30 s op wait; 90 s observes the named refusal without a guessed
+/// sleep and leaves the row assertions untouched.
+pub const KILL_ROW_OP_TIMEOUT: Duration = Duration::from_secs(90);
+
 /// Test-only fixture-hook arming for one server process (milestone-5 subject
 /// flags). The driver writes the schedule TSV before starting the server;
 /// arming is per-process, so a restart re-arms with the rows it has not yet
@@ -123,6 +137,11 @@ pub struct AuthorityFixture {
     /// [`JAVA_CLIENT_KILL_CONTROL_TIMEOUT_MS`]); `None` for every fixture
     /// but the hooked kill rows.
     client_control_timeout_ms: Option<u64>,
+    /// Per-op wait for client commands this fixture spawns. The driver's
+    /// default 30 s for every row but the kill rows, which widen it to
+    /// [`KILL_ROW_OP_TIMEOUT`] so a killed authority's named refusal at the
+    /// ~60 s transport bound is observed instead of raced.
+    client_op_timeout: Duration,
     /// Authority label the storage roots are initialised with and every
     /// journal binds to. [`AUTHORITY`] for every fixture but the second
     /// authority of g5-cross-authority-reference.
@@ -150,6 +169,7 @@ impl AuthorityFixture {
             client,
             extra_serve_args: Vec::new(),
             client_control_timeout_ms: None,
+            client_op_timeout: OP_TIMEOUT,
             authority: AUTHORITY.to_owned(),
         })
     }
@@ -159,6 +179,13 @@ impl AuthorityFixture {
     /// Emitted as `--control-timeout-ms` for the Java client only.
     pub fn with_client_control_timeout_ms(mut self, timeout_ms: Option<u64>) -> Self {
         self.client_control_timeout_ms = timeout_ms;
+        self
+    }
+
+    /// Widen the per-op wait for this fixture's client commands; the kill
+    /// rows pass [`KILL_ROW_OP_TIMEOUT`] (see its documentation).
+    pub fn with_client_op_timeout(mut self, timeout: Duration) -> Self {
+        self.client_op_timeout = timeout;
         self
     }
 
@@ -366,7 +393,7 @@ impl AuthorityFixture {
             connection,
             operation,
         )?;
-        run_output_owned(&self.root, &command, OP_TIMEOUT)
+        run_output_owned(&self.root, &command, self.client_op_timeout)
     }
 
     /// Spawn a one-shot client op without waiting for it. The returned child
@@ -408,7 +435,7 @@ impl AuthorityFixture {
         let mut command = self.client_base()?;
         command.push("next-sequence".into());
         command.extend(connection);
-        let output = run_output_owned(&self.root, &command, OP_TIMEOUT)?;
+        let output = run_output_owned(&self.root, &command, self.client_op_timeout)?;
         ensure_success(&output, "v2 next-sequence readiness probe")?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let sequence = stdout
@@ -428,7 +455,7 @@ impl AuthorityFixture {
         let mut command = self.client_base()?;
         command.push("next-sequence".into());
         command.extend(connection);
-        run_output_owned(&self.root, &command, OP_TIMEOUT)
+        run_output_owned(&self.root, &command, self.client_op_timeout)
     }
 
     /// Raw `next-sequence` attempt WITHOUT a client certificate. Both subject
@@ -446,7 +473,7 @@ impl AuthorityFixture {
             "--ca".into(),
             path(&self.certs.ca_cert),
         ]);
-        run_output_owned(&self.root, &command, OP_TIMEOUT)
+        run_output_owned(&self.root, &command, self.client_op_timeout)
     }
 
     /// Spawn `v2 serve`, wait for the ready file, then require one successful
@@ -797,5 +824,37 @@ mod tests {
             !rust_command.iter().any(|arg| arg == "--control-timeout-ms"),
             "the Rust client CLI exposes no control-timeout option: {rust_command:?}"
         );
+    }
+
+    /// A killed authority is noticed only at the negotiated transport bound
+    /// (~60 s: the rust server's max_idle_timeout, quinn/src/v2_authority/
+    /// server.rs:225, or the rust client's response_timeout, quinn/
+    /// src/v2_client/transport.rs:127), so kill rows must be able to widen
+    /// the per-op wait past the default 30 s. The default stays 30 s for
+    /// every other row, and the widened budget travels with the fixture
+    /// clone that a hooked row's restart builds its recovered session from.
+    #[test]
+    fn kill_rows_widen_the_client_op_wait_and_nothing_else_does() {
+        let directory = tempfile::tempdir().unwrap();
+        let jar = directory.path().join("subject-all.jar");
+        fs::write(&jar, b"not really a jar").unwrap();
+        let certs =
+            crate::durable::mtls::generate(&directory.path().join("certs"), &[("alice", "alice")])
+                .unwrap();
+        let fixture = AuthorityFixture::new(
+            Path::new("/nonexistent/pipestream-quinn"),
+            Some(&jar),
+            directory.path(),
+            certs,
+            Subject::Java,
+            Subject::Java,
+        )
+        .unwrap();
+        assert_eq!(fixture.client_op_timeout, OP_TIMEOUT);
+        let kill_row = fixture.clone().with_client_op_timeout(KILL_ROW_OP_TIMEOUT);
+        assert_eq!(kill_row.client_op_timeout, Duration::from_secs(90));
+        let restarted = kill_row.clone();
+        assert_eq!(restarted.client_op_timeout, Duration::from_secs(90));
+        assert_eq!(fixture.client_op_timeout, Duration::from_secs(30));
     }
 }
