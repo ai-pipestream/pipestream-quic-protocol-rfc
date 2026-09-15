@@ -15,7 +15,7 @@ Scenario matrix details: scenario-matrix-g1.md, -g2.md, -g3.md, -g4.md,
 | V2-WIRE 1–5 | framing/canonical/direction/correlation violations; unknown type classes; profile-dependent without profile | g6-canonical-violations, g6-direction-and-correlation, g6-stream-identity-and-fin | SPEC (raw probes; frozen wire.tsv 24 refuse-rows as case list) |
 | V2-NEG 1–4 | capability intersection/dependency (result-delivery without durable-work); unsolicited selection; increased limits; request-ID accounting; duplicate/unsolicited response; named REFUSAL↔QUIC error mapping; stream-0 reset | g6-direction-and-correlation, g6-stopped-control-and-transfers, g5-unmapped-principal (0x200+3 close observed), g8-half-close-preserves-responses | PARTIAL DONE (error mapping observed in G5); rest SPEC |
 | V2-AUTH 1–4 | untrusted/missing/unmapped/expired identity; rotation; remap; foreign owner; recheck at commits and reads; no existence disclosure | g5-* (9 rows) | 9 DONE (g5-cert-rotation-same-owner, g5-remapped-owner, g5-expired-identity, g5-cross-authority-reference added at M19b in Kimi's role; both subjects enforce expiry on a LIVE connection in different kinds, recorded) |
-| V2-SESSION 1–3 | create/attach/anti-reuse; lost-ACK creation replay; changed-policy CONFLICT; sequence overflow CONFLICT; retirement EXPIRED | g2-crash-after-create-commit DONE, g2-crash-before-create-commit DONE, g3-partial-retirement SPEC, g3-nonreusable-history SPEC | 2 DONE |
+| V2-SESSION 1–3 | create/attach/anti-reuse; lost-ACK creation replay; changed-policy CONFLICT; sequence overflow CONFLICT; retirement EXPIRED | g2-crash-after-create-commit DONE (rust-client/java-server direction still INCOMPLETE at M20b: Java fixture withhold lacks the fresh/replay gate, finding to Claude), g2-crash-before-create-commit DONE (all directions green at M20b after the 90 s kill-row op budget), g3-partial-retirement SPEC, g3-nonreusable-history SPEC | 2 DONE |
 | V2-OP 1–4 | immutable ops; replay; changed-digest CONFLICT; NOT_FOUND uncertainty; no reapplication after retirement | g2-duplicate-op-changed-params DONE, g2-simultaneous-duplicate DONE, g2-kill-client-after-request-sent DONE, g2-not-found-in-flight DONE (M19b: NOT_FOUND on the wire lookup while an admission is held mid-transfer on both subjects, then byte-identical receipts on every path), g3-nonreusable-history SPEC | 4 DONE |
 | V2-SET 1–4 | declare/seal rules; increasing IDs; empty-batch rules; pages/more/seal; producer-1 restrictions; child scope allocation | g1-declaration-capacity DONE, g1-out-of-order-pages DONE, g1-mode1-branch DONE, g1-mode2-descendants DONE (seal oracle byte-identical both implementations; empty-batch + 257-batch wire-unreachable named gaps) | 4 DONE |
 | V2-ADMIT 1–4 | header/stream identity; incremental bytes/hash/FIN; install-before-commit; replay without re-execution; funded reservations | g1-oversize-payload DONE, g2-drop-reply-admission DONE, g6-stream-identity-and-fin SPEC, g3-input-before-metadata impl | 2 DONE |
@@ -33,9 +33,11 @@ Scenario matrix details: scenario-matrix-g1.md, -g2.md, -g3.md, -g4.md,
 1. Java-server hook directions for G2/G4 rows: INCOMPLETE until Claude's
    FixtureMain checkpoint (his SENT-side fixes + missing boundaries land
    there per his board acknowledgement).
-2. Java hooked rows: g2-crash-after-create-commit java-server direction INCOMPLETE (FixtureMain re-fires drop-reply on replayed commit — reported with transcript); g2-drop-reply-publication unimplemented (no PUBLICATION reply pair on either subject). g7-unsafe-clock-refusal needs a subject fixture clock or untrusted-clock
-   mode; if neither subject exposes one, the row stays INCOMPLETE with the
-   named missing capability (never simulated by host clock changes).
+2. Java hooked rows at M20b: g2-crash-after-create-commit rust-client/java-server direction INCOMPLETE — defect 16's fresh gate covers committed() only; the withhold path (DurableServer.java:872) re-fires the re-armed drop-reply on the REPLAYED create (finding 2 to Claude, blocks acceptance). g8-timeout-no-completion-claim kill-variant rust-client/java-server INCOMPLETE — FixtureMain accepts kill@COMPLETE_RESPONSE_SENT but Hooks.sent() never consumes kill rows, so the kill never fires (finding 3 to Claude, blocks acceptance). g2-drop-reply-publication RETIRED at M20 (a1616584): publication is watch-observed on both subjects, no correlated reply exists to withhold, g2-kill-at-publication-commit is the boundary's evidence. g7-unsafe-clock-refusal needs a subject fixture clock or untrusted-clock
+   mode; neither subject exposes one, so the row reports the named missing
+   capability and is WAIVED for acceptance with that reason in run.tsv
+   (never simulated by host clock changes); g7-cleanup-interrupted-refund
+   likewise (no cleanup boundary in interface-v1).
 3. V2-WIRE accept-side codec coverage lives in the implementations' own
    test suites (Rust codec executes all 70 frozen vectors; Java codec
    tests were outstanding at the base checkpoint) — the neutral driver
@@ -120,17 +122,22 @@ Scenario matrix details: scenario-matrix-g1.md, -g2.md, -g3.md, -g4.md,
    client hooks exist (Java client hooks promised in Claude's next
    checkpoint; rust client hooks not proposed — client-death rows use
    uncontrolled kills, labelled).
- 3e. Added at M19b (work in Kimi's role). Every matrix row is now
-   registered as implemented (67 of 67): the three rows that cannot produce
+ 3e. Added at M19b (work in Kimi's role), updated at M20/M20b. Every matrix row is
+   registered as implemented (66 of 66 after the M20 retirement of
+   g2-drop-reply-publication, a1616584). The two rows that cannot produce
    their evidence RUN and report the named missing capability instead of
-   "not implemented yet" (g2-drop-reply-publication: no PUBLICATION reply
-   pair on either subject, both refuse the schedule at parse, proposal in
-   scenario-matrix-g2.md to accept the kill variant; g7-unsafe-clock-refusal:
-   no fixture clock on either subject; g7-cleanup-interrupted-refund: no
-   cleanup boundary in interface-v1). Two hook gaps of the Rust subject are
-   named by rows rather than worked around: its fixture pauses only at the
-   three reply pairs, so g4-stale-attempt-retry keeps attempt 2 live with a
-   16 MiB copy and g7-deadline-queue-time saturates the pool with load
-   instead of a hold (both record the mechanism; the Java directions use
-   EXECUTION_CLAIMED pauses); and unarmed boundaries are never emitted, so
-   per-work EXECUTION_CLAIMED counts exist only on the Java side.
+   "not implemented yet" (g7-unsafe-clock-refusal: no fixture clock on
+   either subject; g7-cleanup-interrupted-refund: no cleanup boundary in
+   interface-v1); both are WAIVED for acceptance with reasons recorded in
+   run.tsv (5d65b661), and the run_all.sh acceptance block (9842e655,
+   paths absolutized 81ff4fe6) spells the four waivers. Two hook gaps of
+   the Rust subject are named by rows rather than worked around: its
+   fixture pauses only at the three reply pairs, so g4-stale-attempt-retry
+   keeps attempt 2 live with a 16 MiB copy and g7-deadline-queue-time
+   saturates the pool with load instead of a hold (both record the
+   mechanism; the Java directions use EXECUTION_CLAIMED pauses); and
+   unarmed boundaries are never emitted, so per-work EXECUTION_CLAIMED
+   counts exist only on the Java side. M20b: kill rows carry a 90 s op
+   budget where clients learn of a dead server via the negotiated
+   transport bound (8f5c4a7e; g2-crash-before-create-commit
+   java-client/rust-server green at ~61 s CONTROL_RESET).
