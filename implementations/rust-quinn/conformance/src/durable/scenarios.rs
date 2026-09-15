@@ -23144,11 +23144,15 @@ const AUTHORITY_Y: &str = "issuer-b";
 /// driver records its REFERENCE (the selected output as the client renders
 /// it). Authority Y has separate roots, its own principal map (alice mapped)
 /// and the label `issuer-b`, and no session of X's. Arm A resolves X's saved
-/// selection against Y from X's journal: refused without disclosure, no
-/// bytes delivered. Arm B binds a journal on Y and selects X's identifiers
-/// there: refused without disclosure. The positive arm reads the exact bytes
-/// on X. Neither published client dereferences a locator's authority (the
-/// Rust `read` uses the journal selection on the configured connection;
+/// selection against Y from X's journal: every probe opens a fresh client
+/// process, whose attach names X's authority to Y's server; per the owner's
+/// 2026-09-13 decision (Section 12.3, a3b14725) that is CONFLICT (7) on both
+/// subjects — a contradiction with retained identity, not an authorization
+/// failure — refused without disclosure, no bytes delivered. Arm B binds a
+/// journal on Y and selects X's identifiers there: refused without
+/// disclosure. The positive arm reads the exact bytes on X. Neither
+/// published client dereferences a locator's authority (the Rust `read`
+/// uses the journal selection on the configured connection;
 /// Java: DurableClientLocatorTest, S12-280/283), which is recorded, not
 /// asserted here.
 fn g5_cross_authority_reference(context: &ScenarioContext) -> Result<()> {
@@ -23210,7 +23214,10 @@ fn g5_cross_authority_reference_direction(
             (
                 "arm_a",
                 "X's journal (bound to X, selection saved) pointed at Y: attach, read, lookup \
-                 and watch each refused with a named code; no result bytes written"
+                 and watch each refused CONFLICT (7); no result bytes written. Owner decision \
+                 2026-09-13 (Section 12.3): after owner authorization, an expected authority \
+                 other than the serving one is CONFLICT — a contradiction with retained \
+                 identity, not an authorization failure — on both subjects (a3b14725)"
                     .into(),
             ),
             (
@@ -23289,6 +23296,16 @@ fn g5_cross_authority_reference_direction(
         let (len, sha256) = write_probe_artifact(&artifacts, &artifact, &outcome)?;
         let (code, line) =
             expect_named_refusal(&outcome, &format!("{id}: arm A {name} against Y"))?;
+        // Owner decision 2026-09-13 (Section 12.3): a foreign expected
+        // authority is CONFLICT on both subjects (Rust answered UNAUTHORIZED
+        // before a3b14725; the milestone-19 "which class" question is decided).
+        ensure!(
+            code == 7,
+            "{id}: arm A {name} against Y must refuse CONFLICT (7) per the owner's 2026-09-13 \
+             decision (Section 12.3: after owner authorization, an expected authority other \
+             than the serving one is a contradiction with retained identity), got {code} ({})",
+            refusal_code_name(u64::from(code))
+        );
         events.append(
             "REFUSAL_RECEIVED",
             None,
