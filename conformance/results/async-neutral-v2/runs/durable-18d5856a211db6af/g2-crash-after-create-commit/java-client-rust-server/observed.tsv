@@ -1,0 +1,6 @@
+subject_boundary_record	SESSION_COMMITTED recorded before the reply was withheld
+next_sequence_after_restart	2
+replay_binding	generation Id(1), creation_sequence Id(1), original policy echoed
+changed_policy_refusal	CONFLICT: CONFLICT: authority refused: creation policy changed
+ahead_sequence_refusal	CONFLICT: CONFLICT: authority refused: creation sequence is ahead of authority
+client_control_deadline	--control-timeout-ms 10000 on every op of this direction: the killed authority is noticed well inside the driver's 30 s op bound (observation O-2)

@@ -1,0 +1,20 @@
+frozen_before_decisive_run	this file is written after negotiation and BEFORE the first rung's traffic; the ladder, the declared limits it is sized against and the allowances below are fixed here and are never re-chosen from what the run produced
+payload_ladder_bytes	65536,1048576,16777216
+payload_repeats_per_rung	4
+inventory_ladder_resident_works	1,16,64
+inventory_payload_bytes	65536
+admission_pacing	admissions are issued in batches of 2 and every batch is settled to a terminal state before the next; these ladders vary payload and RETAINED inventory, never executor concurrency, and both subjects declare a concurrent-job ceiling below the top inventory rung (that ceiling is r-staging-and-journal-bounds, not this row)
+declared_object_limit	16777216 (subject's capability selection, read on the wire)
+declared_stream_limit	16
+declared_pending_limit	32
+declared_control_limit	524288
+over_limit_rung	one input header declaring 67108864 bytes, 4x the declared object_limit 16777216: expected LIMIT_EXCEEDED (code 4) naming the input stream, recorded verbatim. The payload is never sent, so this rung measures a refusal, not memory
+java_memory_freeze	-Xms256m -Xmx2g on every Java subject process, frozen before any measurement row (milestone 17) and unchanged here
+payload_plateau_allowance_kib	524288 = stream_limit 16 x object_limit 16777216 (268435456 B of in-flight object bytes the subject is configured to hold) + 262144 KiB slack (256 MiB: JVM warm-up, code cache, GC sawtooth and metaspace growth under a 2 GiB max heap; the heap ceiling itself is the frozen -Xmx and is not re-chosen here)
+inventory_plateau_allowance_kib	278528 = pending_limit 32 x control_limit 524288 (16777216 B of in-flight control state the subject is configured to hold) + 262144 KiB slack (256 MiB: JVM warm-up, code cache, GC sawtooth and metaspace growth under a 2 GiB max heap; the heap ceiling itself is the frozen -Xmx and is not re-chosen here)
+plateau_assertion	for each ladder, the group's tail p90 RSS at the LARGEST rung minus the tail p90 at the SMALLEST rung must not exceed that ladder's frozen allowance; a subject whose memory scaled with payload or inventory beyond its configured bounds exceeds it
+fd_assertion	group FD tail p90 at the last rung <= baseline median + 16
+thread_assertion	group thread tail p90 at the last rung <= baseline median + 64 (a fixture-chosen bound above both subjects' declared worker pools, stated rather than derived)
+measurement_scope	whole sampled process group (anchor pid plus every transitive descendant), per-tick group SUM then statistic; RSS/HWM, threads, FDs, disk I/O and Java heap are separate scopes and none is substituted for another
+native_direct_scope	Java native/direct allocation is probed once per direction with jcmd VM.native_memory summary and its exact result is recorded; it is never inferred from RSS minus heap
+rust_heap_scope	NAMED GAP: no black-box Rust heap collector exists for the subject binary; RSS/HWM is a separate scope and is never reported as Rust heap

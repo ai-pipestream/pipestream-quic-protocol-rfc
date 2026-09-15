@@ -1,0 +1,4 @@
+exit=signal: 9 (SIGKILL)
+stdout:
+
+stderr:

@@ -1,0 +1,9 @@
+1	durable-18d5856a211db6af	g1-leaf-copy	java	client	618-18d5856b164c3a48	1			0:0:1	1		artifacts/input.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+1	durable-18d5856a211db6af	g1-leaf-copy	java	client	618-18d5856b164c3a48	2	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5856a211db6af	g1-leaf-copy	java	client	618-18d5856b164c3a48	3	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5856a211db6af	g1-leaf-copy	java	client	618-18d5856b164c3a48	4	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5856a211db6af	g1-leaf-copy	java	client	618-18d5856b164c3a48	5	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5856a211db6af	g1-leaf-copy	java	client	618-18d5856b164c3a48	6	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5856a211db6af	g1-leaf-copy	java	client	618-18d5856b164c3a48	7			0:0:1	1		artifacts/manifest.txt	527	aa15d3e32cb4c3ceab0f69adfeaa4c16dde86340af12d09631ad45d6241f0e17
+1	durable-18d5856a211db6af	g1-leaf-copy	java	client	618-18d5856b164c3a48	8	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d5856a211db6af	g1-leaf-copy	java	client	618-18d5856b164c3a48	9	RESULT_INSTALLED		0:0:1	1		artifacts/output.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682

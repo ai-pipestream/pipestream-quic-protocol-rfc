@@ -1,0 +1,11 @@
+server_subject	java
+java_jar_sha256	91c1842f0a4fe55e7667174f680ebd427d4f70600322f63a09d01039584ccb08
+client_without_cert_exit	exit status: 2
+client_without_cert_stderr_first_line	error: the following required arguments were not provided:
+rust_server_audit	no require-durable flag on `v2 serve` (server/src/v2.rs Command::Serve); TLS client certs requested-not-required via WebPkiClientVerifier::allow_unauthenticated (quinn/src/v2_tls.rs:64-66); Capabilities::select refuses required durable profiles for unauthenticated peers with UNAUTHORIZED 'required durable profile lacks authenticated owner' (src/v2/negotiation.rs:52-60) - before the capabilities response
+java_server_audit	no require-durable flag on serve (V2Main.java exposes only --object-limit); ClientAuth.OPTIONAL (TlsAuthentication.java:86); negotiate() excludes durable profiles for unmapped/no-cert callers and throws UNAUTHORIZED 'caller credential unavailable' when durable is required, closing before the capabilities response (TlsAuthentication.java negotiate/denied); DurableOptions.requireDurable default false (api-plan.md section 1.3)
+client_audit	both client CLIs require --cert/--key at startup: rust clap exit 2 'the following required arguments were not provided'; java requiredPath throws 'missing --cert' exit 1. No published client can negotiate a Core-only connection.
+require_durable_configurable_via_cli	false (both subjects)
+negotiated_profile_evidence	not observable: no published client can connect without a certificate
+alice_next_sequence_after	1
+artifact_no_cert_probe	artifacts/no-cert-probe.txt sha256=8585514f46a4d5c0b4dee03af02f0644f1aaa7243e70c401346939427c6db70f len=289

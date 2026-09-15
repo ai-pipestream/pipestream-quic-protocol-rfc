@@ -1,0 +1,6 @@
+exit=exit status: 1
+stdout:
+REFUSED code=UNAUTHORIZED detail=declaration origin does not own scope membership
+
+stderr:
+UNAUTHORIZED: UNAUTHORIZED: authority refused: declaration origin does not own scope membership

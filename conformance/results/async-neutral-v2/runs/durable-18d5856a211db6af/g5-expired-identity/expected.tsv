@@ -1,0 +1,8 @@
+validity_seconds	25
+short_leaf_sha256	64a75521cc790f89aac00eba073fc3ae5078129838cae3dc6e3efd12fd611e39
+renewed_leaf_sha256	4928de5aa1941907bd7d137e36550bc0c9510a73af6154a0c7b44b7bad4fd070
+clock_mode	real elapsed time; host UTC never changed
+while_valid	session created and [1] declared under the short leaf; a raw connection attached and kept open
+existing_connection_after_expiry	recorded per subject (java: closed UNAUTHORIZED at expiry per S12-098; rust: unmeasured before this row)
+fresh_connection_after_expiry	handshake failure (TLS certificate expired), no application refusal
+renewed_leaf	attaches to the same generation with the identical binding and sees the declaration

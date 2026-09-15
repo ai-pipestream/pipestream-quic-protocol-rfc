@@ -1,0 +1,23 @@
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	java	server	40013-18d585bf97b35400	1	LISTENING							
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	java	server	40013-18d585bf97b35400	2	CONNECTION_AUTHENTICATED							
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	java	server	40013-18d585bf97b35400	3	CONNECTION_AUTHENTICATED							
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	java	server	40013-18d585bf97b35400	4	CONNECTION_AUTHENTICATED							
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	java	server	40013-18d585bf97b35400	5	SESSION_COMMITTED							
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	java	server	40013-18d585bf97b35400	6	SESSION_RESPONSE_SENT							
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	rust	client	618-18d585bfaa107654	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	java	server	40013-18d585bf97b35400	7	CONNECTION_AUTHENTICATED							
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	java	server	40013-18d585bf97b35400	8	SESSION_RESPONSE_SENT							
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	java	server	40013-18d585bf97b35400	9	DECLARATION_COMMITTED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	java	server	40013-18d585bf97b35400	10	DECLARATION_RESPONSE_SENT							
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	rust	client	618-18d585bfaa107654	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	rust	client	618-18d585bfaa107654	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	java	server	40013-18d585bf97b35400	11	CONNECTION_AUTHENTICATED							
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	java	server	40013-18d585bf97b35400	12	SESSION_RESPONSE_SENT							
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	java	server	40013-18d585bf97b35400	13	INPUT_INSTALLED	d82b4f0e9f3814f1161c84240d038f52	0:0:1					
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	java	server	40013-18d585bf97b35400	14	ADMISSION_COMMITTED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	java	server	40013-18d585bf97b35400	15	ADMISSION_RESPONSE_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	java	server	40013-18d585bf97b35400	16	EXECUTION_CLAIMED		0:0:1	1				
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	rust	client	618-18d585bfaa107654	4	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	rust	client	618-18d585bfaa107654	5	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	rust	client	618-18d585bfaa107654	6	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d5856a211db6af	g2-kill-after-admission-before-publication	rust	client	618-18d585bfaa107654	7	RESULT_INSTALLED		0:0:1	1		artifacts/output.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682

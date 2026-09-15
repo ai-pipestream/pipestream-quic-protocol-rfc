@@ -1,0 +1,48 @@
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	3			0:0:1	1		artifacts/input-1.bin	12582912	9e68d9191b5a611fa155e58055c39cff417d46050bc0e30b79eab2fca534b256
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	4	REQUEST_SENT	613341ca9423416c00c9c41faec60bea	0:0:1	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	5	RECEIPT_VALIDATED	613341ca9423416c00c9c41faec60bea	0:0:1	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	6	REQUEST_SENT	b90eec946d5bf4e1007e8d6ddca659fa	0:0:1	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	7	RECEIPT_VALIDATED	b90eec946d5bf4e1007e8d6ddca659fa	0:0:1	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	8	OBSERVATION_JOURNALED		0:0:1	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	9			0:0:1	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	10			0:0:2	1		artifacts/input-2.bin	8388608	b24711164288e7c49fc3d28968a7e98daea4d28e30bf8bddce45b53649b181e2
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	11	REQUEST_SENT	c7643b58740e4f6a6ca79e3a994ff0b9	0:0:2	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	12	RECEIPT_VALIDATED	c7643b58740e4f6a6ca79e3a994ff0b9	0:0:2	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	13	REQUEST_SENT	8edb9f1084dd46bcc1556b1017325a3a	0:0:2	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	14	RECEIPT_VALIDATED	8edb9f1084dd46bcc1556b1017325a3a	0:0:2	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	15	OBSERVATION_JOURNALED		0:0:2	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	16			0:0:2	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	17			0:0:3	1		artifacts/input-3.bin	1048576	5a6cf9381ea769cda94180bb005d9edcd6bc756075c53645cc6b85c7cee927a3
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	18	REQUEST_SENT	6ee6c6858fd450d974d478dbb5047785	0:0:3	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	19	RECEIPT_VALIDATED	6ee6c6858fd450d974d478dbb5047785	0:0:3	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	20	REQUEST_SENT	2ea5a5b316c58157f9c093d208f6fd93	0:0:3	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	21	RECEIPT_VALIDATED	2ea5a5b316c58157f9c093d208f6fd93	0:0:3	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	22	OBSERVATION_JOURNALED		0:0:3	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	23	RESULT_VERIFIED		0:0:3	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	24	RESULT_INSTALLED		0:0:3	1		artifacts/iteration-3-output.bin	1048576	5a6cf9381ea769cda94180bb005d9edcd6bc756075c53645cc6b85c7cee927a3
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	25			0:0:4	1		artifacts/input-4.bin	262144	ea0936f447744f3df49b9a36b31ec08d17403a7ad1bd6c59ab85a01e73c84127
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	26	REQUEST_SENT	feee002bbccddc51301e7ec49832f3c7	0:0:4	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	27	RECEIPT_VALIDATED	feee002bbccddc51301e7ec49832f3c7	0:0:4	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	28	REQUEST_SENT	690c4330f8041b6560993eb5225b2022	0:0:4	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	29	RECEIPT_VALIDATED	690c4330f8041b6560993eb5225b2022	0:0:4	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	30	OBSERVATION_JOURNALED		0:0:4	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	31	RESULT_VERIFIED		0:0:4	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	32	RESULT_INSTALLED		0:0:4	1		artifacts/iteration-4-output.bin	262144	ea0936f447744f3df49b9a36b31ec08d17403a7ad1bd6c59ab85a01e73c84127
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	33			0:0:5	1		artifacts/input-5.bin	65536	8e511e6bb397e1af9d661ec08f7dd2072b8b562c3789d398c6cc45683181ded9
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	34	REQUEST_SENT	8136c5fee99dedec0dc714216f03d2f4	0:0:5	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	35	RECEIPT_VALIDATED	8136c5fee99dedec0dc714216f03d2f4	0:0:5	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	36	REQUEST_SENT	543c52a70edb7da9610ff46755397daf	0:0:5	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	37	RECEIPT_VALIDATED	543c52a70edb7da9610ff46755397daf	0:0:5	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	38	OBSERVATION_JOURNALED		0:0:5	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	39	RESULT_VERIFIED		0:0:5	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	40	RESULT_INSTALLED		0:0:5	1		artifacts/iteration-5-output.bin	65536	8e511e6bb397e1af9d661ec08f7dd2072b8b562c3789d398c6cc45683181ded9
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	41			0:0:6	1		artifacts/input-6.bin	65536	f308f0c930e7dbee2d9bad02ef635bcb22ad17002dec38c16df326da906d69c9
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	42	REQUEST_SENT	0c799f66cb321c519f9a6e68304812c1	0:0:6	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	43	RECEIPT_VALIDATED	0c799f66cb321c519f9a6e68304812c1	0:0:6	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	44	REQUEST_SENT	fe6e6c4a02d0ceb2e857a8dda3b3d555	0:0:6	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	45	RECEIPT_VALIDATED	fe6e6c4a02d0ceb2e857a8dda3b3d555	0:0:6	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	46	OBSERVATION_JOURNALED		0:0:6	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	47	RESULT_VERIFIED		0:0:6	1				
+1	durable-18d5856a211db6af	g4-publication-vs-cancel	rust	client	618-18d58612c0853086	48	RESULT_INSTALLED		0:0:6	1		artifacts/iteration-6-output.bin	65536	f308f0c930e7dbee2d9bad02ef635bcb22ad17002dec38c16df326da906d69c9

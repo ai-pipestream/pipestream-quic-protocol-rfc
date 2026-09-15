@@ -1,0 +1,2 @@
+WORK revision=2 state=3 attempt=1 child=1:0
+VIEW WorkView[work=WorkKey[scope=0, producer=0, entity=1], state=WAITING_CHILDREN, attempt=1, input=Input[length=65000, sha256=9e1572ca5d5b092815ebf83c1ef53831065d73e5a29268f6bb7711c2553c6ba0, contentType=application/octet-stream], admittedAt=1789483185323, deadline=1789483245323, terminalAt=null, receiptUntil=null, outputUntil=null, child=ChildScope[scope=1, producer=0], manifest=null, diagnostic=null]

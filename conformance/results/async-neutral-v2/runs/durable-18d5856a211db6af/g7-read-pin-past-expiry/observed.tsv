@@ -1,0 +1,16 @@
+server_subject	rust
+client_subject	rust
+clock_mode	real-short-policy
+output_until	1789484203379
+raw_read_started_ms	1789484198723
+raw_read_finished_ms	1789484208674
+bytes_received_before_expiry	8126464
+bytes_received_total	16777216
+pinned_read	completed byte-exact after expiry (sha256=3b464e0b55d7c0c95dcb66ed412d4812840a32abeddd8ee5650012d1a11cef7a)
+new_read_after_expiry	named EXPIRED (6) while the pinned read was open (authority refusal EXPIRED: result availability expired)
+object_dir_after_publish	files=4 bytes=16777887 allocated_blocks=32792
+object_dir_at_expiry_during_read	files=4 bytes=16777887 allocated_blocks=32792
+object_dir_after_read	files=2 bytes=89 allocated_blocks=8
+reclaimed_after_read	true (within 30 s of the read finishing)
+reclaimed_during_read	false (object directory unchanged while the read was open)
+work_view_after_read	state=5 attempt=1 (receipt retention holds)

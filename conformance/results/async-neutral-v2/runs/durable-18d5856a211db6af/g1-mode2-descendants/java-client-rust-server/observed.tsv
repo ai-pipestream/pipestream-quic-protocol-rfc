@@ -1,0 +1,15 @@
+server_subject	rust
+client_subject	java
+alpn	pipestream/2
+child_scope	1:1
+external_child_declare	UNAUTHORIZED: UNAUTHORIZED: authority refused: declaration origin does not own scope membership
+external_child_admit	NOT_READY: NOT_READY: covering declaration receipt not held
+expansion_declared	declared=4 seal_matches_oracle=true
+settle_order	parent terminal after all children terminal; mid_flight_sample=false; rounds=1
+child_page	producer=1 declared=4 members SUCCEEDED×4
+output_sha256	1dedf2209c2609cd80437d911867f75214bbc91c384c7a53b10d6a16fc53fd34
+output_matches_input	true
+child_output_select	exit 0: external child select succeeded (REFERENCE retained)
+settlement	child COVERAGE, root COVERAGE, COMPLETED
+post_settlement_output	VERIFIED byte-exact
+java_jar_sha256	91c1842f0a4fe55e7667174f680ebd427d4f70600322f63a09d01039584ccb08

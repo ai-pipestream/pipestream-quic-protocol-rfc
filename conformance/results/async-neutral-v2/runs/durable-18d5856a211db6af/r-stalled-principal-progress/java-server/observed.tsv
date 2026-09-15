@@ -1,0 +1,15 @@
+server_subject	java
+client_subject	alice = rust raw peer (stalls); bob = rust CLI (healthy principal)
+java_memory_freeze	-Xms256m -Xmx2g (frozen before the run; applies to this server process)
+stalls	3 partial inputs (no FIN), pending watch on 0:0:6, result stream for 0:0:1 unread
+bob_ops	38 rounds x 5 ops, worst latency 325.901572ms
+stall_enforcement	negotiated idle 30s / lifetime 120s; non-writing probes at idle-bound-2s (+28000ms: 0 stopped), idle-bound+0s (+30131ms: 3 stopped), idle-bound+2s (+32000ms: 3 stopped), idle-bound+5s (+35009ms: 3 stopped), idle-bound+10s (+40000ms: 3 stopped), lifetime-bound+10s (+130128ms: 3 stopped); 3/3 distinct streams observed stopped; LIMIT_EXCEEDED input refusals on control at window end: 3/3
+stall_enforcement_bracket	stream-6: last open idle-bound-2s (+28000ms), first stopped idle-bound+0s (+30131ms); stream-10: last open idle-bound-2s (+28000ms), first stopped idle-bound+0s (+30131ms); stream-14: last open idle-bound-2s (+28000ms), first stopped idle-bound+0s (+30131ms)
+collector	1510 ticks, 1510 sample lines, 0 error lines
+rss_plateau_kib	baseline_median=348228 tail_p90=369156 growth=20928
+fd_plateau	baseline_median=20 tail_p90=21
+io_write_bytes_window	delta_bytes=9039872 span_ms=151050 bytes_per_s=59846
+io_cancelled_write_bytes_window	delta_bytes=405504 span_ms=151050 bytes_per_s=2684
+io_write_cancelled_share	4% of the window's accounted write_bytes was cancelled before writeback (405504/9039872)
+heap_scope	java heap via jstat -gc (S0U+S1U+EU+OU) at the 1000ms heap cadence: 151 samples, min 9203 KiB, max 162217 KiB, 0 probe gaps
+store_checkpoints	133 records across start/stalls-established/mid-window/end

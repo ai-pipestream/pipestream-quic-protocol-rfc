@@ -1,0 +1,9 @@
+fault_window	uncontrolled SIGKILL mid-input-stream (rust staging boundary not armable)
+subject_exit_code	86
+lookup_after_restart	NOT_FOUND: no persisted client intent
+same_op_readmission	identical-op-resent
+terminal_attempt	1
+output_matches_input	true
+storage_probe_scope	private-storage-supplementary
+object_dir_after_restart	files=2 bytes=89 allocated_blocks=8
+object_dir_after_readmission	files=4 bytes=12583583 allocated_blocks=24600

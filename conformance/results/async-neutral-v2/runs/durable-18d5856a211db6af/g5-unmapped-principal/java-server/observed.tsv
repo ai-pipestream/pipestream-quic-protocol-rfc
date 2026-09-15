@@ -1,0 +1,6 @@
+server_subject	java
+java_jar_sha256	91c1842f0a4fe55e7667174f680ebd427d4f70600322f63a09d01039584ccb08
+probe_exit	exit status: 1
+probe_refusal	no named code in transcript (the wire close code is recorded verbatim: code 515                  = 0x200 + 3, UNAUTHORIZED per src/v2/mod.rs quic_error)
+refusal_source	connection close BEFORE the capabilities response: rust server refuses required              durable profiles for unauthenticated-mapped peers in Capabilities::select              (src/v2/negotiation.rs:52-60); java server throws UNAUTHORIZED 'caller credential              unavailable' from TlsAuthentication.negotiate (TlsAuthentication.java)
+alice_next_sequence_after	1

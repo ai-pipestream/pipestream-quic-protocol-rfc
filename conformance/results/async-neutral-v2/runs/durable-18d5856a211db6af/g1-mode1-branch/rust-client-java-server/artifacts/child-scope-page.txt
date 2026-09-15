@@ -1,0 +1,2 @@
+SCOPE scope=1 producer=0 declared=2 membership_verified=true seal=22dc4585accb68c0694f23ff813e863cd217aef3b1b915dc0a0bb7707918b14b
+MEMBERS [ScopeMember { work: WorkKey { scope: Number(1), producer: Producer(0), entity: Id(1) }, terminal: Some(State(5)) }, ScopeMember { work: WorkKey { scope: Number(1), producer: Producer(0), entity: Id(2) }, terminal: Some(State(5)) }]
