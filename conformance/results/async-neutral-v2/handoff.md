@@ -1781,3 +1781,35 @@ coordination board's Kimi section was updated the same day with the M20
 state and the three blocking subject-side markers (two Java findings for
 Claude and the rust-CLI control-timeout lane question). The acceptance run
 itself remains pending those resolutions.
+
+### Milestone 21 procedure (written in advance, pending Claude's fixture fixes)
+
+When the two Java fixture defects (finding 2: withhold fresh-gate,
+DurableServer.java:872; finding 3: kill at SENT boundaries never fires)
+and the `PeerRuleWireTest` build gate are resolved on main, the acceptance
+milestone is mechanical:
+
+1. `git merge --ff-only main` in this worktree; confirm the fixes by the
+   commit ids Claude posts and by reading the withhold/ Hooks.sent() code
+   paths.
+2. Rebuild both subjects from the merged tree (`cargo build --release
+   --locked`; `mvn install -q -Psealed-interop` — full test gate, no
+   `-DskipTests`; if `PeerRuleWireTest` is still red, stop and board it).
+3. Targeted dev rerun of `g2-crash-after-create-commit` and
+   `g8-timeout-no-completion-claim` first: both java-server directions
+   must go green for the RIGHT reasons (BINDING with generation 1 on the
+   replayed create; the kill actually firing at COMPLETE_RESPONSE_SENT),
+   not because an assertion moved. Assertions do not move.
+4. Full acceptance run via the run_all.sh block
+   (`PIPESTREAM_DURABLE_ACCEPTANCE=1`, `PIPESTREAM_DURABLE_STORE` and
+   `TMPDIR` on the root drive under `~/.rfc-tmp/kimi-m21/`, the whole
+   script under BENCHMARK.lock): expected ~60-90 min for the durable
+   block. Exit 0 required; every waived row/direction must appear as
+   WAIVED with its reason in run.tsv; the archive's MANIFEST.sha256 is
+   verified after archiving.
+5. Any FAIL row is a stop-and-board event, never an expectation edit.
+6. On green: flip this handoff's header to REVIEW_READY with the
+   acceptance archive id, update traceability.md's DONE definition to
+   "green in acceptance", update the board (final labels for Meta's
+   comparative run can then be produced), and request the final
+   coordinator review per KIMI.md.
