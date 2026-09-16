@@ -196,6 +196,11 @@ grep -q $'scope-counts\tscope 0: declared=2 success=1 failure=1 cancelled=0 skip
 note "PASS cancel (4xCANCELLED, exclusion VERIFIED, sums match)"
 
 # --- kill/resume demos, each on a fresh rust pair ---
+# A 40s settle between kill and resume: the killed coordinator's
+# connections need server-side reaping (past the 30s idle backstop),
+# otherwise the resume plus the merge reader trips the 4-connections-
+# per-principal ceiling and the reader connect is refused. Production
+# crash supervision restarts slower than that anyway; see README (F3).
 for stage in stage2 stage3; do
   fresh_rust_pair "$WORK/rust"
   rm -f "$WORK/rust/k.sqlite"* "$WORK/rust/kb.sqlite"*; rm -rf "$WORK/rust/stage-k$stage" "$WORK/rust/events-k$stage.tsv"
@@ -208,6 +213,7 @@ for stage in stage2 stage3; do
     --seed 6 --files 2 --words-per-file 128 --kill-at "$stage" >"$WORK/kill-$stage.out" 2>&1 \
     || { note "FAIL kill $stage (exit $?)"; exit 1; }
   grep -q "KILLED $stage" "$WORK/kill-$stage.out" || { note "FAIL kill $stage marker"; exit 1; }
+  sleep 40
   timeout -s KILL 300000 "$IC" --owner workload --authority-a index-a --authority-b index-b \
     --connect-a 127.0.0.1:17601 --connect-b 127.0.0.1:17602 \
     --journal-a "$WORK/rust/k.sqlite" --journal-b "$WORK/rust/kb.sqlite" \
