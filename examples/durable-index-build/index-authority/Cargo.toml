@@ -1,0 +1,17 @@
+[package]
+name = "index-authority"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "index-authority"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "=1.0.104"
+clap = { version = "=4.6.6", features = ["derive"] }
+index-core = { path = "../index-core" }
+pipestream-quinn = { path = "../../../implementations/rust-quinn/quinn" }
+rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
+sha2 = "=0.11.0"
+tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "time", "signal"] }
