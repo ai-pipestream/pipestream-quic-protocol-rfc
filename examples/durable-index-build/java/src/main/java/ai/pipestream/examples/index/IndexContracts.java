@@ -317,6 +317,11 @@ public final class IndexContracts {
               record = readReference(client, ref, scratch);
             } catch (Exception e) {
               System.err.println("index-merge consumer read failed: " + e);
+              try {
+                get(client.detach());
+              } catch (Exception detached) {
+                System.err.println("index-merge reader detach after failure failed: " + detached);
+              }
               return DurableHost.Result.failed(
                   INTERNAL_ERROR, "consumer read failed: " + trim(e.toString()));
             }
