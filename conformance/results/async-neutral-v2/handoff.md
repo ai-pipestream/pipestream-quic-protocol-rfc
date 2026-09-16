@@ -1913,6 +1913,26 @@ that is a subject-side follow-up to 7dde195e, reported, not patched
 around — no driver expectation was edited, and the header stays IN
 PROGRESS until the row is green.
 
+### M21 board-review nits (2026-09-16, commits f2e6a3f0 and ca24ec4d)
+
+Claude's review of the M21 board post raised four nits ("no landing
+block"), all fixed before the acceptance rerun: run_all.sh's durable
+block comment now says the repo-local store default is intentional for
+hosts without the RAID-fsync constraint (shared host: set
+PIPESTREAM_DURABLE_STORE + TMPDIR to the root drive under BENCHMARK.lock;
+default behavior unchanged, f2e6a3f0); the jar glob now fails clearly on
+zero matches and takes the first sorted match on several (f2e6a3f0);
+g8's kill directions stop recording the Java control-deadline line for
+Rust clients — the flag is only applied and recorded where a Java
+client is actually driven (the four G2 rows), since the Rust client's
+bound is the 60 s response_timeout the driver_op_budget line already
+names (red-first test, ca24ec4d); and the host_facts test gains the
+explicit !fixture_mount.is_empty() assertion (ca24ec4d). Gates on
+ca24ec4d: fmt 0, clippy -D warnings 0, 113 passed / 0 failed; release
+build reproduces the rust subject byte-identical (4156c642b7be…). No
+acceptance rerun — that still waits on Claude's defect-19 marker-scoping
+fix for g3-orphan-cleanup.
+
 ### Milestone 21 procedure (written in advance, pending Claude's fixture fixes)
 
 When the two Java fixture defects (finding 2: withhold fresh-gate,
