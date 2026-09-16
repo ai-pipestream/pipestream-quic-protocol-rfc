@@ -290,14 +290,15 @@ fn reader_tls(reader: &Reader) -> Result<session::Endpoint> {
 /// attach (same creation identity as the producing session), watch to
 /// terminal, select output 0, transfer, verify the digest. Read-only: the
 /// fresh journal never declares or admits.
-async fn read_reference(
+/// One reader session for a whole merge: connect once, read every TF
+/// reference over the same client, detach once. A connect per reference
+/// churns server connections (default ceiling is 16) for no benefit.
+async fn connect_reader(
     reader: &Reader,
     authority: &str,
     creation_sequence: u64,
-    work: WorkKey,
-    expect_digest: [u8; 32],
     scratch: &Path,
-) -> Result<Vec<u8>> {
+) -> Result<Client> {
     if scratch.exists() {
         std::fs::remove_dir_all(scratch)?;
     }
@@ -322,13 +323,25 @@ async fn read_reference(
         journal::Options::default(),
     )
     .await?;
+    Client::connect(reader_tls(reader)?, journal, session::Options::default())
+        .await
+        .context("reader connect")
+}
+
+async fn read_reference(
+    client: &Client,
+    work: WorkKey,
+    expect_digest: [u8; 32],
+    scratch: &Path,
+) -> Result<Vec<u8>> {
+    if scratch.exists() {
+        std::fs::remove_dir_all(scratch)?;
+    }
+    std::fs::create_dir_all(scratch)?;
     let tag = format!(
         "{}:{}:{} attempt?",
         work.scope.0, work.producer.0, work.entity.0
     );
-    let client = Client::connect(reader_tls(reader)?, journal, session::Options::default())
-        .await
-        .with_context(|| format!("reader connect for {tag}"))?;
     let mut after = Number(0);
     let attempt = loop {
         let observed = client
@@ -369,10 +382,6 @@ async fn read_reference(
     if digest != expect_digest {
         bail!("TF record digest differs from the parent-published reference");
     }
-    // Release the reader session before dropping the client, mirroring the
-    // Java reader: one attached session per reference must not linger on
-    // the peer after the bytes are verified.
-    client.detach().await?;
     Ok(bytes)
 }
 
@@ -445,6 +454,9 @@ impl Application for MergeContract {
         };
         let scratch = reader.journal_dir.join("reader-scratch");
         let merged = match runtime.block_on(async {
+            let client =
+                connect_reader(reader, &authority, creation_sequence, &scratch.join("session"))
+                    .await?;
             let mut docs: BTreeMap<u64, Vec<Vec<u8>>> = BTreeMap::new();
             for (doc, scope, producer, entity, digest) in refs.iter() {
                 let work = WorkKey {
@@ -453,9 +465,7 @@ impl Application for MergeContract {
                     entity: Id(*entity),
                 };
                 let bytes = read_reference(
-                    reader,
-                    &authority,
-                    creation_sequence,
+                    &client,
                     work,
                     *digest,
                     &scratch.join(format!("ref-{scope}-{producer}-{entity}")),
@@ -466,6 +476,9 @@ impl Application for MergeContract {
                     .renew()
                     .map_err(|e| anyhow::anyhow!("lease renew failed: {e:?}"))?;
             }
+            // Release the single reader session now that every reference
+            // is verified, mirroring the Java reader.
+            client.detach().await?;
             Ok::<_, anyhow::Error>(merge_index(&docs.into_iter().collect::<Vec<_>>()))
         }) {
             Ok(merged) => merged,

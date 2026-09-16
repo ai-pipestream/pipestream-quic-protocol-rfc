@@ -232,51 +232,34 @@ public final class IndexContracts {
    * terminal, manifest plus select plus read output 0, verify the digest.
    * Read-only: the fresh journal never declares or admits.
    */
-  static byte[] readReference(
-      ReaderConfig reader, String authority, long creation, IndexFormat.TfRef ref, Path scratch)
+  static byte[] readReference(DurableClient client, IndexFormat.TfRef ref, Path scratch)
       throws Exception {
     Path dir = scratch.resolve("ref-" + ref.scope() + "-" + ref.producer() + "-" + ref.entity());
     deleteTree(dir);
     Files.createDirectories(dir);
-    ClientJournal.Intent intent =
-        new ClientJournal.Intent(
-            authority, reader.owner(), creation, new Records.Policy(60_000, 3_600_000, 86_400_000), true);
-    Path journalFile = dir.resolve("reader.sqlite");
-    try (ClientJournal journal =
-            ClientJournal.initialize(journalFile, intent, ClientJournal.Limits.defaults());
-        DurableClient client =
-            DurableClient.connect(
-                reader.endpoint(),
-                TlsAuthentication.client(reader.ca(), reader.serverName(), reader.cert(), reader.key()),
-                journal,
-                ClientOptions.defaults())) {
-      get(client.ready());
-      get(client.binding());
-      Records.WorkKey key = new Records.WorkKey(ref.scope(), ref.producer(), ref.entity());
-      long after = 0;
-      long attempt = -1;
-      for (; ; ) {
-        ClientJournal.Observed observed = get(client.watch(key, after, 10_000));
-        after = observed.revision();
-        long state = observed.view().state().value();
-        if (state >= 5 && state <= 8) {
-          if (state != 5) throw new IllegalStateException("TF child terminal state " + state);
-          attempt = observed.view().attempt();
-          break;
-        }
+    Records.WorkKey key = new Records.WorkKey(ref.scope(), ref.producer(), ref.entity());
+    long after = 0;
+    long attempt = -1;
+    for (; ; ) {
+      ClientJournal.Observed observed = get(client.watch(key, after, 10_000));
+      after = observed.revision();
+      long state = observed.view().state().value();
+      if (state >= 5 && state <= 8) {
+        if (state != 5) throw new IllegalStateException("TF child terminal state " + state);
+        attempt = observed.view().attempt();
+        break;
       }
-      get(client.manifest(key, attempt));
-      get(client.select(key, attempt, 0));
-      Path out = dir.resolve("tf.bin");
-      ResultFiles.Delivered delivered =
-          get(client.read(key, attempt, 0, new ResultFiles.Destination(out)));
-      byte[] bytes = Files.readAllBytes(out);
-      if (bytes.length != delivered.length()
-          || !MessageDigest.isEqual(sha256(bytes), ref.digest()))
-        throw new IllegalStateException("TF record digest differs from the parent-published reference");
-      get(client.detach());
-      return bytes;
     }
+    get(client.manifest(key, attempt));
+    get(client.select(key, attempt, 0));
+    Path out = dir.resolve("tf.bin");
+    ResultFiles.Delivered delivered =
+        get(client.read(key, attempt, 0, new ResultFiles.Destination(out)));
+    byte[] bytes = Files.readAllBytes(out);
+    if (bytes.length != delivered.length()
+        || !MessageDigest.isEqual(sha256(bytes), ref.digest()))
+      throw new IllegalStateException("TF record digest differs from the parent-published reference");
+    return bytes;
   }
 
   /** index-merge/v1 execute factory: needs the separately configured reader. */
@@ -301,19 +284,46 @@ public final class IndexContracts {
       } catch (Exception e) {
         return DurableHost.Result.failed(INTERNAL_ERROR, "reader scratch failed: " + e);
       }
+      // One reader session for the whole merge: connect once, read every
+      // TF reference over the same client, detach once. A connect per
+      // reference churns server connections (default ceiling is 16).
       try {
         Map<Long, List<byte[]>> docs = new TreeMap<>();
-        for (IndexFormat.TfRef ref : refs) {
-          byte[] record;
-          try {
-            record = readReference(reader, authority, creation, ref, scratch);
-          } catch (Exception e) {
-            System.err.println("index-merge consumer read failed: " + e);
-            return DurableHost.Result.failed(
-                INTERNAL_ERROR, "consumer read failed: " + trim(e.toString()));
+        Path sessionDir = scratch.resolve("session");
+        deleteTree(sessionDir);
+        Files.createDirectories(sessionDir);
+        ClientJournal.Intent intent =
+            new ClientJournal.Intent(
+                authority,
+                reader.owner(),
+                creation,
+                new Records.Policy(60_000, 3_600_000, 86_400_000),
+                true);
+        try (ClientJournal journal =
+                ClientJournal.initialize(
+                    sessionDir.resolve("reader.sqlite"), intent, ClientJournal.Limits.defaults());
+            DurableClient client =
+                DurableClient.connect(
+                    reader.endpoint(),
+                    TlsAuthentication.client(
+                        reader.ca(), reader.serverName(), reader.cert(), reader.key()),
+                    journal,
+                    ClientOptions.defaults())) {
+          get(client.ready());
+          get(client.binding());
+          for (IndexFormat.TfRef ref : refs) {
+            byte[] record;
+            try {
+              record = readReference(client, ref, scratch);
+            } catch (Exception e) {
+              System.err.println("index-merge consumer read failed: " + e);
+              return DurableHost.Result.failed(
+                  INTERNAL_ERROR, "consumer read failed: " + trim(e.toString()));
+            }
+            docs.computeIfAbsent(ref.doc(), k -> new ArrayList<>()).add(record);
+            work.renew();
           }
-          docs.computeIfAbsent(ref.doc(), k -> new ArrayList<>()).add(record);
-          work.renew();
+          get(client.detach());
         }
         List<IndexFormat.DocRecord> ordered = new ArrayList<>();
         for (Map.Entry<Long, List<byte[]>> e : docs.entrySet())

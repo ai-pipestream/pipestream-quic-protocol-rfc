@@ -56,29 +56,58 @@ Proposed text change: none (implementation guidance only). A porting
 note in the client guide would do: "call binding() explicitly after
 ready() even where one implementation binds implicitly."
 
-## F3. Dropped reader connections under accumulated/abrupt-exit state
+## F3. BUG: the Rust client reports a connection-ceiling refusal as a bare `connection lost`
 
-Clause (connection lifecycle after client disappearance): the profile
-does not say how fast an authority reaps sessions and connections left
-behind by a client that vanishes without detach, nor what a new
-connection observes while that residue is outstanding.
+Symptom: the merge reader's connect intermittently failed with a bare
+`connection lost` (Rust client) or `LIMIT_EXCEEDED: authority refused:
+peer closed connection` (Java client). Reproduced deterministically:
+three rapid stage-3 kill/resume cycles on one authority pair; the
+second or third resume's first reader connect fails; a restart (state
+kept, connections dropped) or an idle wait heals it.
 
-Friction: the merge reader opens one short session per TF reference.
-On fresh authority state every direction passes repeatably, but once
-sessions accumulate across runs plus an abrupt coordinator exit (the
-kill demos exit without detach, like a real crash), later reader
-connects intermittently fail with a bare `connection lost` at connect
-— no refusal, no diagnostic, retries on a fresh creation hit the same
-wall until the servers restart (state kept, connections dropped).
-Fresh-state-per-group in `run-index.sh` keeps the gate deterministic;
-the residue/reap interaction underneath is unresolved.
+Root cause, verified in the code of both implementations:
 
-Done in code: both readers detach per reference after the digest check
-(the Rust reader did not at first); per-step reader context
-(`reader connect|watch|select|read for scope:producer:entity`) so the
-next occurrence names the failing op.
+- Both authorities bound connections in two tiers. The Rust durable
+  authority (`v2_authority/server.rs` `Options` defaults) allows 16
+  connections in total and 4 per principal; the Java authority
+  (`DurableOptions.defaults`) allows 32 in total and 8 per owner. Over
+  the global ceiling both refuse at the transport level (Rust
+  `incoming.refuse()`, QUIC CONNECTION_REFUSED), which is what Section
+  12 asks for and carries no application code by design. Over the
+  per-principal ceiling, which can only be checked after the TLS
+  handshake, both close the connection with the application code
+  LIMIT_EXCEEDED (`server.rs:148` "principal connection ceiling",
+  `CoreServer.java:320` "owner connection ceiling").
+- Every actor in this example is the one principal `workload`. Each
+  coordinator run held two connections and never detached on exit; the
+  merge reader opened one connection per TF reference. A killed
+  coordinator's connections stay counted until the authority's idle
+  timeout (60 s, keep-alive 5 s), so a resume seconds after a kill
+  plus its merge reader met the per-principal ceiling of 4.
+- The Java client reads the close code and names the refusal, so its
+  message above is correct, not mislabeled. The Rust client does not:
+  its handshake propagates the failed capabilities write as the
+  transport library's `connection lost` and never inspects the close
+  reason, so the same refusal is indistinguishable from a broken
+  network. That is the bug, and it is a parity bug between the two
+  reference clients.
 
-Proposed text change: none yet — needs a platform verdict first. At
-minimum the failure deserves a refusal code (e.g. a busy/backpressure
-signal) instead of a transport-level drop, so a consumer can tell
-"peer is shedding" from "network is broken."
+Fixed example-side: one reader connection per merge (Rust
+`connect_reader`, Java session block in `runMerge`), the coordinator
+detaches both sessions at clean exit, the kill path stays abrupt
+(crash simulation), the gate uses a fresh pair per group and settles
+40 s between kill and resume as margin (the corpses are reaped at
+60 s; the fix, not the settle, keeps the resume under the ceiling).
+Per-step reader context (`reader connect|watch|... for
+scope:producer:entity`) stays so any recurrence names the failing op.
+
+Owed by the platform: (1) the Rust client must surface the peer's
+application close code during negotiation, as the Java client does;
+(2) Section 12 should state the post-authentication per-principal
+refusal (LIMIT_EXCEEDED application close before capabilities), which
+both authorities already implement; (3) for the global tier both
+clients should report "refused by peer" rather than "connection lost",
+since the transport distinguishes the two. An earlier draft of this
+note claimed the refuse path races slot accounting; that was not
+established and is withdrawn unless a refusal is observed with fewer
+than four live-plus-lingering connections for the principal.

@@ -42,12 +42,16 @@ timeouts; servers are torn down at exit.
   sizing is an operator concern; the gate stays inside the default
   envelope on purpose.
 - Each demo group gets a fresh authority pair (wipe + re-init +
-  relaunch). Accumulated sessions plus abrupt client exits (the kill
-  demos exit without detach, like a real crash) leave residue under
-  which new merge-reader connections are intermittently dropped with a
-  bare `connection lost` at connect. Fresh state keeps every group in
-  the proven-stable envelope; the underlying lifecycle question is
-  recorded as SPEC-FRICTION F3.
+  relaunch), and the kill demos settle 40s before resume. The Rust
+  authority allows 4 connections per principal (16 in total) and closes
+  a connection over that ceiling with LIMIT_EXCEEDED; every actor here is
+  one principal, each coordinator run held 2 connections without
+  detaching, the merge reader opened one per TF reference, and a killed
+  coordinator's connections stay counted until the 60s idle timeout.
+  The Java client names that refusal; the Rust client reports it as a
+  bare `connection lost` (a client bug, SPEC-FRICTION F3). Readers now
+  share one connection per merge and the coordinator detaches at clean
+  exit; the kill path stays abrupt (crash simulation).
 - Cancel at tiny sizes is timing-sensitive: sent immediately, the cancel
   can seal the scope before expansion admits anything (empty scope,
   vacuous close). The coordinator therefore waits for the first
