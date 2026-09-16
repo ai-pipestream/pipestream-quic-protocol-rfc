@@ -1,0 +1,6 @@
+lost_ack_boundary	SESSION_COMMITTED: binding create durable, reply withheld, connection reset
+expected_generation	1
+expected_creation_sequence	1
+expected_next_sequence_after_restart	2 (one durable creation, no double alloc)
+changed_policy_replay	named CONFLICT (7)
+ahead_sequence_replay	named CONFLICT (7)
