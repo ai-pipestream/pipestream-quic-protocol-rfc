@@ -461,6 +461,101 @@ final class FixtureMainTest {
     }
   }
 
+  /**
+   * A kill armed at a reply boundary fires after the reply has left (fixture defect 20): the client
+   * holds its receipt, the server dies with 137 and the trace ends at the armed boundary.
+   */
+  @Test
+  void killAtASentBoundaryFiresAfterTheReplyLeaves() throws Exception {
+    Path root = authority("kill-sent");
+    Path serverEvents = directory.resolve("kill-sent-fixture/server-events.tsv");
+    Path clientEvents = directory.resolve("kill-sent-fixture/client-events.tsv");
+    Path schedule = directory.resolve("kill-sent-schedule.tsv");
+    Files.writeString(
+        schedule, "1\trun-kill-sent\tsent\tserver\tDECLARATION_RESPONSE_SENT\tkill\t0\t0\n");
+    FixtureServer server =
+        new FixtureServer(
+            root, "kill-sent", fixture(serverEvents, schedule, "run-kill-sent", "sent"));
+    try {
+      Path journal = journal("kill-sent", server.address);
+      Run declared =
+          fixtureClient(
+              journal,
+              server.address,
+              clientEvents,
+              "run-kill-sent",
+              "sent",
+              "declare",
+              "--operation",
+              hexOperation(1),
+              "--entities",
+              "1",
+              "--seal");
+      // The receipt reached the client before the process died; the command's closing detach then
+      // meets a dead server, so its exit status is not asserted.
+      assertTrue(
+          declared.output().contains("RECEIPT"),
+          "the reply left before the kill:\n" + declared.output());
+      assertEquals(137, server.awaitExit(30));
+      List<String> serverBoundaries = boundaries(serverEvents);
+      assertEquals(
+          "DECLARATION_RESPONSE_SENT",
+          serverBoundaries.get(serverBoundaries.size() - 1),
+          serverBoundaries.toString());
+      assertFalse(serverBoundaries.contains("SHUTDOWN_DRAINED"), serverBoundaries.toString());
+    } finally {
+      if (server.process.isAlive()) server.process.destroyForcibly();
+    }
+  }
+
+  /**
+   * A schedule row fires once per run even when the same schedule file is handed to a restarted
+   * subject (fixture defect 19): the drop-reply at SESSION_COMMITTED withholds the fresh creation's
+   * reply, and after the restart the client's creation replay is answered.
+   */
+  @Test
+  void aFiredScheduleRowNeverReArmsAcrossARestart() throws Exception {
+    Path root = authority("rearm");
+    Path serverEvents = directory.resolve("rearm-fixture/server-events.tsv");
+    Path clientEvents = directory.resolve("rearm-fixture/client-events.tsv");
+    Path schedule = directory.resolve("rearm-schedule.tsv");
+    Files.writeString(
+        schedule, "1\trun-rearm\tlost-ack\tserver\tSESSION_COMMITTED\tdrop-reply\t0\t5000\n");
+    String[] declare = {"declare", "--operation", hexOperation(1), "--entities", "1", "--seal"};
+    Path journal;
+    try (FixtureServer first =
+        new FixtureServer(
+            root, "rearm-1", fixture(serverEvents, schedule, "run-rearm", "lost-ack"))) {
+      journal = journal("rearm", first.address);
+      Run lost =
+          fixtureClient(journal, first.address, clientEvents, "run-rearm", "lost-ack", declare);
+      assertNotEquals(0, lost.exit(), "the withheld creation reply must fail:\n" + lost.output());
+      List<String> afterLoss = boundaries(serverEvents);
+      assertTrue(afterLoss.contains("SESSION_COMMITTED"), afterLoss.toString());
+      assertFalse(afterLoss.contains("SESSION_RESPONSE_SENT"), afterLoss.toString());
+    }
+    try (FixtureServer second =
+        new FixtureServer(
+            root, "rearm-2", fixture(serverEvents, schedule, "run-rearm", "lost-ack"))) {
+      Run replayed =
+          fixtureClient(journal, second.address, clientEvents, "run-rearm", "lost-ack", declare);
+      assertEquals(0, replayed.exit(), replayed.output());
+      assertTrue(replayed.output().contains("RECEIPT"), replayed.output());
+      List<String> all = boundaries(serverEvents);
+      assertEquals(1, all.stream().filter("SESSION_RESPONSE_SENT"::equals).count(), all.toString());
+      long observations =
+          records(serverEvents).stream()
+              .filter(
+                  row ->
+                      row[BOUNDARY].isEmpty()
+                          && row[REFUSAL].equals(
+                              Integer.toString(ProtocolError.Code.CONTROL_RESET.value())))
+              .count();
+      assertEquals(1, observations, "the drop-reply row fired exactly once across the restart");
+      shipped(client(journal, second.address, "detach").toArray(String[]::new));
+    }
+  }
+
   @Test
   void pauseHoldsTheCommittedDeclarationUntilTheReleaseMarkerAppears() throws Exception {
     Path root = authority("pause");

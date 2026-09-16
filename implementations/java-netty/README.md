@@ -1104,7 +1104,10 @@ client for Section 12 / Appendix F, composed from the stores and services above:
   worker in the durable-transform workload; larger scopes need larger funding.
   `FixtureMain` is the test-only fixture adapter for the neutral failure driver
   (interface-v1 events, `pause`/`drop-reply`/`kill` schedule actions, both
-  roles); it is not reachable from `V2Main`.
+  roles); it is not reachable from `V2Main`. A schedule row fires once per run,
+  also across a restart of the subject with the same schedule file (a marker in
+  the events directory records it), and `kill`/`exit` rows fire at committed and
+  at reply-sent boundaries alike.
 
 Conformance evidence, the public API contract and the fixture contract are in
 `conformance/results/async-java-v2/` (`api-plan.md`, `handoff.md`). Tests:

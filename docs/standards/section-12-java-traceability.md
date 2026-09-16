@@ -812,6 +812,16 @@ These are code observations, not test failures. Each names a file and line.
   its owner check, pinned in `src/v2/authority/tests.rs`. The decision covers attachment only:
   other Rust operations that name a foreign authority keep their existing codes. The driver
   row accepts any named code, so it needs no change.
+- **D19.** `FixtureMain.Hooks` (fixture adapter, not the listener). A schedule row consumed
+  in memory re-armed when a driver restarted the subject with the same schedule file, so a
+  drop-reply fired again on the creation replay. Fixed 2026-09-16: rows fire once per run
+  through a marker in the events directory (`FixtureMainTest.aFiredScheduleRowNeverReArmsAcrossARestart`).
+  Found by Kimi milestone 20 (`g2-crash-after-create-commit`).
+- **D20.** `FixtureMain.Hooks.sent`. Kill and exit rows were consumed only by the committed
+  hook, so a kill armed at a `*_RESPONSE_SENT` boundary never fired. Fixed 2026-09-16: the
+  sent hook takes the row, records the boundary and halts 137
+  (`FixtureMainTest.killAtASentBoundaryFiresAfterTheReplyLeaves`). Found by Kimi milestone 20
+  (`g8-timeout-no-completion-claim` kill variant).
 
 ## Gap-closing proposals, grouped by fixture
 

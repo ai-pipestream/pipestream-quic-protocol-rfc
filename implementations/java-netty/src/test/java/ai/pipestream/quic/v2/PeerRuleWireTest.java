@@ -150,6 +150,29 @@ class PeerRuleWireTest {
         assertTrue(seen.add(stream.streamId()), "stream id reused at entity " + entity);
         previous = stream.streamId();
         Message response = peer.next();
+        // The session may hold at most its active-job allowance in flight (default 16). When
+        // admissions outrun the copy executions, the authority answers LIMIT_EXCEEDED capacity
+        // backpressure, which is not a stream-id fact: drain to terminal and resend the same input
+        // on a fresh stream, which must still take a fresh, larger id.
+        for (int drained = 0;
+            response instanceof Refusal backpressure
+                && backpressure.code() == ProtocolError.Code.LIMIT_EXCEEDED
+                && drained < 8;
+            drained++) {
+          for (int earlier = Math.max(1, entity - 16); earlier < entity; earlier++)
+            if (earlier % 5 != 0)
+              DurableServerTest.awaitTerminal(peer, new Records.WorkKey(0, 0, earlier));
+          stream =
+              open(
+                  peer,
+                  DurableServerTest.header(
+                      binding.generation(), 10 + entity, work, input, "copy/v2", 0),
+                  bytes);
+          assertTrue(stream.streamId() > previous, "stream id regressed at entity " + entity);
+          assertTrue(seen.add(stream.streamId()), "stream id reused at entity " + entity);
+          previous = stream.streamId();
+          response = peer.next();
+        }
         if (refuse) {
           assertEquals(
               ProtocolError.Code.INTEGRITY_ERROR,
@@ -163,7 +186,7 @@ class PeerRuleWireTest {
                   .request());
         }
       }
-      assertEquals(transfers, seen.size());
+      assertTrue(seen.size() >= transfers, "every transfer took a fresh id: " + seen.size());
       assertInstanceOf(Detached.class, peer.call(new Detach(peer.request())));
     }
   }

@@ -38,9 +38,15 @@ public final class FixtureMain {
    * @param action action name
    * @param seed row seed
    * @param deadlineMs pause deadline in milliseconds
+   * @param line the row's line in the schedule file, its identity across restarts
    */
   record Row(
-      String target, Boundaries.Boundary boundary, String action, long seed, long deadlineMs) {}
+      String target,
+      Boundaries.Boundary boundary,
+      String action,
+      long seed,
+      long deadlineMs,
+      int line) {}
 
   /**
    * Run {@code serve} or {@code client} with fixture hooks.
@@ -128,7 +134,12 @@ public final class FixtureMain {
                 + ", which has no pending reply");
       rows.add(
           new Row(
-              target, boundary, action, Long.parseLong(columns[6]), Long.parseLong(columns[7])));
+              target,
+              boundary,
+              action,
+              Long.parseLong(columns[6]),
+              Long.parseLong(columns[7]),
+              i + 1));
     }
     return rows;
   }
@@ -164,15 +175,40 @@ public final class FixtureMain {
      */
     Hooks(FixtureEvents recorder, List<Row> rows, String target) {
       this.recorder = Objects.requireNonNull(recorder);
-      this.pending = new ArrayList<>(rows);
       this.target = target;
+      // A row fires once per run, across restarts: a driver hands the same schedule file to a
+      // restarted subject, and a row that already fired (its marker is in the events directory)
+      // must not re-arm, or a drop-reply would fire again on the replay the restart exists to
+      // exercise and a kill would fire again on every restart (fixture defect 19).
+      this.pending = new ArrayList<>();
+      for (Row row : rows) if (!Files.exists(marker(row))) pending.add(row);
+    }
+
+    private Path marker(Row row) {
+      // Identity is the row's line plus its content: a driver may hand a subject several schedule
+      // files for one run, and two rows at the same line of different files are the same row only
+      // if they arm the same boundary and action.
+      return recorder
+          .directory()
+          .resolve(
+              "fired-" + target + "-" + row.line() + "-" + row.boundary() + "-" + row.action());
     }
 
     private synchronized Row take(Boundary boundary, String... actions) {
       for (int i = 0; i < pending.size(); i++) {
         Row row = pending.get(i);
         if (row.boundary() != boundary) continue;
-        for (String action : actions) if (row.action().equals(action)) return pending.remove(i);
+        for (String action : actions) {
+          if (!row.action().equals(action)) continue;
+          pending.remove(i);
+          try {
+            Files.createFile(marker(row));
+          } catch (IOException failure) {
+            System.err.println("fixture marker write failed: " + failure.getMessage());
+            Runtime.getRuntime().halt(3);
+          }
+          return row;
+        }
       }
       return null;
     }
@@ -221,6 +257,13 @@ public final class FixtureMain {
 
     @Override
     public void sent(Boundary boundary, Details details) {
+      Row kill = take(boundary, "kill", "exit");
+      if (kill != null) {
+        // The reply has left the socket. The boundary is recorded before the process dies so the
+        // trace shows where the kill was armed (fixture defect 20). Process death, not power loss.
+        write(boundary.name(), details);
+        Runtime.getRuntime().halt(137);
+      }
       try {
         writer.execute(() -> write(boundary.name(), details));
       } catch (RuntimeException stopped) {
@@ -245,6 +288,11 @@ public final class FixtureMain {
 
     @Override
     public void close() throws IOException {
+      synchronized (this) {
+        // A row that never fired is a schedule that named a boundary this run never reached; say
+        // so instead of ending silently with the row still armed.
+        if (!pending.isEmpty()) System.err.println("fixture schedule rows never fired: " + pending);
+      }
       writer.shutdown();
       try {
         writer.awaitTermination(5, TimeUnit.SECONDS);
