@@ -188,7 +188,9 @@ do not change that rule.
 
 Client control requests use strictly increasing positive `request` integers,
 starting at 1 per connection, shared across message types. A repeated or
-decreasing identifier is FRAME_ERROR; reconnect before exhaustion. Responses
+decreasing identifier is FRAME_ERROR. Identifiers are never reused within a
+connection; a client whose next identifier would exceed 2^63-1 MUST open a
+new connection rather than reuse one. Responses
 may arrive out of order but MUST identify an outstanding request of the
 correct kind. A mismatched, duplicate or unsolicited control response is FRAME_ERROR.
 A result header naming an unknown request, a non-result request, or an already
@@ -362,7 +364,8 @@ are the session's retained admission ceilings. Reconnection limits must
 accommodate its retained message representations; otherwise refuse
 LIMIT_EXCEEDED, without changing the session. A connection binds to at most
 one session and cannot create or attach a second one. Core-only connections
-cannot use SESSION. Mutation requires the durable profile; output access also
+cannot use SESSION; they may still send DETACH (Section 12.8), which drains
+and closes the connection and releases nothing, since no session is bound. Mutation requires the durable profile; output access also
 requires the result profile retained by that session.
 
 The session response's `v2-limits` already advertises retained input/output byte

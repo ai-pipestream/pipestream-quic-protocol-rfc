@@ -340,6 +340,20 @@ bundle install
 uv tool install xml2rfc==3.34.0
 ```
 
+If `bundle` is not on `PATH`, or the system gem directory is not writable,
+install Bundler for your user and keep the gems inside the checkout:
+
+```bash
+gem install --user-install bundler
+export PATH="1000 4 24 27 30 46 100 111 114 973 1000ruby -e 'print Gem.user_dir')/bin:"
+bundle config set --local path vendor/bundle
+bundle install
+```
+
+`build.sh` and `conformance/run_all.sh` then find the pinned gems through
+`bundle`. A fresh machine with Ruby but no writable gem directory hits this
+before rendering page one.
+
 There are no checked-in Python sources, and the reference implementations,
 vector checks, interoperability matrix, and examples do not invoke Python.
 `xml2rfc` is an external IETF authoring tool used only by `build.sh` to render
