@@ -31,11 +31,20 @@ mvn verify -q "-Dmaven.repo.local=$java_maven_repository" -f examples/java-to-ru
 # PIPESTREAM_DURABLE_ACCEPTANCE=1. Acceptance mode (no --dev) FAILs on any
 # row failure; the four --waive flags name the two missing subject
 # capabilities and the two per-direction gaps decided at milestone 20
-# (conformance/results/async-neutral-v2/handoff.md section 3k). On the
-# shared host point PIPESTREAM_DURABLE_STORE and TMPDIR at the root drive
-# (never /work, never /tmp) and run the script under BENCHMARK.lock.
+# (conformance/results/async-neutral-v2/handoff.md section 3k). The
+# repo-local store default is intentional for hosts without the RAID-fsync
+# constraint (acceptance-mode-proposal.md); on the shared host set
+# PIPESTREAM_DURABLE_STORE and TMPDIR to the root drive (never /work, never
+# /tmp) and run the script under BENCHMARK.lock.
 if [[ "${PIPESTREAM_DURABLE_ACCEPTANCE:-0}" == "1" ]]; then
-  durable_jar=$(ls "$repository_root"/implementations/java-netty/target/pipestream-quic-netty-*-all.jar)
+  # The glob is made deterministic: no match is a clear failure, several
+  # matches take the first sorted name (ls sorts lexically).
+  durable_jar_matches=$(ls "$repository_root"/implementations/java-netty/target/pipestream-quic-netty-*-all.jar 2>/dev/null || true)
+  if [[ -z "$durable_jar_matches" ]]; then
+    printf '%s\n' 'no implementations/java-netty/target/pipestream-quic-netty-*-all.jar; build the Java subject first' >&2
+    exit 1
+  fi
+  durable_jar=$(printf '%s\n' "$durable_jar_matches" | head -n 1)
   durable_store=${PIPESTREAM_DURABLE_STORE:-"$repository_root/implementations/rust-quinn/target/durable-runs"}
   "$repository_root/implementations/rust-quinn/target/release/pipestream-conformance" durable \
     --rust-bin "$repository_root/implementations/rust-quinn/target/release/pipestream-quinn" \
