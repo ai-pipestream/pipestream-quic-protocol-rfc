@@ -1,0 +1,3 @@
+[workspace]
+members = ["index-core", "index-authority", "index-coordinator"]
+resolver = "2"
