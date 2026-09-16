@@ -16,7 +16,7 @@ boundary hooks; the summary table is recomputed from the rows). Updated at
 decision, see its row). Updated at `dce9d384` (S12-078 and S12-079 covered by
 `DurableClientResultNegativeTest` and `ResultAbortWireTest`; S12-056 recognised as covered
 by the existing transport-close assertion). Updated at `6174d92d` (S12-294 covered by
-`DurableClientContradictionTest.childMetadataNeverProvesTheParentUntilTheParentItselfIsObserved`). Updated at `c115e292` (S12-005 and S12-010 covered; S12-008 refined as a proposal, see P-TLS-1).
+`DurableClientContradictionTest.childMetadataNeverProvesTheParentUntilTheParentItselfIsObserved`). Updated at `c115e292` (S12-005 and S12-010 covered; S12-008 refined as a proposal, see P-TLS-1). Updated 2026-09-16 (S12-056a added with the Section 12.1 per-principal ceiling sentence, covered by `DurableClientCeilingTest`; the summary table is recomputed).
 Updated at `3f8846e2` (thirteen store-level partials closed by unit tests, P-STORE-3 and
 P-STORE-5 to P-STORE-16; S12-248 recorded as not producible, D13). Updated at `7583b00f`
 (S12-017, S12-145, S12-193 and S12-215 covered by `SchemaBoundsAndRegistryTest`). Updated at `aa05d201`
@@ -139,6 +139,7 @@ including most of the refusal-code taxonomy.
 | S12-054 | "Global and per-principal exhaustion refuses new work, not existing promises." | `DurableHost.Workers.submit`; `ExecutionRuntime.acquire`; `ControlWaitService.begin`; `AdmissionStore.check` | `DurableLifecycleTest.storageWorkerExhaustionRefusesRequestsInsteadOfBlockingTheLoop`; `ControlWaitServiceTest.capacityIsGlobalAndPerOwnerAndCloseOfRunningReadRemainsCharged`; `ExecutionRuntimeTest.perOwnerCeilingDoesNotConsumeTheIndependentGlobalWorkerSlot`; `AdmissionCapacityTest` (all 6) | COVERED | The lifecycle test asserts the three already-queued declarations all still complete after the fourth is refused. |
 | S12-055 | "Negotiated limits are ceilings, not an unconditional reservation against aggregate deployment quotas." | `CoreClient` ctor aggregate buffer budget | `V2CoreClientTest.configuredBufferAdmissionCanBindBeforeTheCountCeiling` | COVERED | A large per-connection control limit makes the byte budget bind at 7 connections instead of the 64-connection count ceiling. |
 | S12-056 | "Connection admission can be refused before caller authentication. A server rejecting a new QUIC connection SHOULD use transport error CONNECTION_REFUSED ..., not a fabricated authenticated application REFUSAL. This transport rejection does not report a durable work outcome." | `DurableServer.accept`; `CoreServer` connection admission | `V2CoreServerTest.stalledHandshakeReleasesItsGlobalSlotWithoutApplicationActivation`; `.globalAndOwnerConnectionCeilingsPreserveExistingConnectionsAndReleaseExactlyOnce` | COVERED | The ceiling test requires the actual close event and asserts it is not an application close and carries transport error 0x02 (CONNECTION_REFUSED), with no application message on the refused connection. |
+| S12-056a | "A per-principal connection ceiling can only be judged after the caller has authenticated, so it cannot use that transport error. A server enforcing one MUST close the surplus connection with an application close carrying LIMIT_EXCEEDED before it selects capabilities, and a client MUST report that code to its caller rather than a bare transport failure ..." | `CoreServer` owner ceiling: application close LIMIT_EXCEEDED "owner connection ceiling"; `DurableClient` maps application close codes 0x201..0x212 to a named refusal "peer closed connection" | `DurableClientCeilingTest.aSurplusConnectionForTheOwnerIsRefusedLimitExceededAndTheSlotFreesWhenTheHolderLeaves` | COVERED | Sentence added 2026-09-16 from the durable-index-build example (F3): both authorities already closed with LIMIT_EXCEEDED and the Java client already named it; the Rust client dropped the code and now maps it too (`negotiation_failure`, `public_client_names_a_connection_ceiling_refusal_and_reconnects_once_the_holder_leaves`). Global ceiling stays S12-056 (Java closes CONNECTION_REFUSED 0x02 in `CoreServer.finishAdmission`). |
 | S12-057 | "Implementations MUST account for incomplete handshakes and temporary refusal state in their documented connection resource bounds." | `CoreServer` handshake timer plus admission slot | `V2CoreServerTest.stalledHandshakeReleasesItsGlobalSlotWithoutApplicationActivation` | COVERED | A stalled handshake releases its global slot with no application activation. |
 
 ## 12.2 Correlation and Error Scope
@@ -502,7 +503,7 @@ including most of the refusal-code taxonomy.
 | subsection | COVERED | PARTIAL | GAP | N/A-JAVA | total |
 |---|---|---|---|---|---|
 | Scope and profiles (preamble, lines 1-28) | 5 | 0 | 0 | 1 | 6 |
-| 12.1 Core Mapping and Negotiation | 48 | 2 | 1 | 0 | 51 |
+| 12.1 Core Mapping and Negotiation | 49 | 2 | 1 | 0 | 52 |
 | 12.2 Correlation and Error Scope | 29 | 0 | 0 | 0 | 29 |
 | 12.3 Authenticated Sessions and Non-Reusable Identity | 37 | 0 | 0 | 0 | 37 |
 | 12.4 Immutable Operations and Replay | 20 | 0 | 0 | 0 | 20 |
@@ -511,7 +512,7 @@ including most of the refusal-code taxonomy.
 | 12.7 Result Publication, Streams and References | 31 | 0 | 0 | 3 | 34 |
 | 12.8 Sealed Closure, Counts and Shutdown | 44 | 0 | 0 | 2 | 46 |
 | 12.9 Lifetimes, Clocks and Crash-Safe Accounting | 39 | 1 | 0 | 0 | 40 |
-| **all subsections** | **360** | **5** | **1** | **7** | **373** |
+| **all subsections** | **361** | **5** | **1** | **7** | **374** |
 
 Read the `PARTIAL` column as the real work queue: 5 clauses have a test whose
 name suggests coverage but whose assertions stop short. The 1 `GAP` row is

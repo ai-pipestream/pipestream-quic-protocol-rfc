@@ -147,7 +147,14 @@ Connection admission can be refused before caller authentication. A server
 rejecting a new QUIC connection SHOULD use transport error CONNECTION_REFUSED
 as specified in {{RFC9000}}, Section 5.2.2, not a fabricated authenticated
 application REFUSAL. This transport rejection does not report a durable work
-outcome. Implementations MUST account for incomplete handshakes and temporary
+outcome. A per-principal connection ceiling can only be judged after the
+caller has authenticated, so it cannot use that transport error. A server
+enforcing one MUST close the surplus connection with an application close
+carrying LIMIT_EXCEEDED before it selects capabilities, and a client MUST
+report that code to its caller rather than a bare transport failure, so that a
+caller can tell an authority shedding connections from a broken network.
+Neither refusal retires session state or reports a durable work outcome.
+Implementations MUST account for incomplete handshakes and temporary
 refusal state in their documented connection resource bounds.
 
 Refused, redundant and abandoned object streams remain subject to the same

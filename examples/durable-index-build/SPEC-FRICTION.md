@@ -101,13 +101,17 @@ detaches both sessions at clean exit, the kill path stays abrupt
 Per-step reader context (`reader connect|watch|... for
 scope:producer:entity`) stays so any recurrence names the failing op.
 
-Owed by the platform: (1) the Rust client must surface the peer's
-application close code during negotiation, as the Java client does;
-(2) Section 12 should state the post-authentication per-principal
-refusal (LIMIT_EXCEEDED application close before capabilities), which
-both authorities already implement; (3) for the global tier both
-clients should report "refused by peer" rather than "connection lost",
-since the transport distinguishes the two. An earlier draft of this
+Resolved on the platform side 2026-09-16: (1) the Rust client now maps
+an application close during negotiation to the peer's code, so the
+per-principal refusal reads `LIMIT_EXCEEDED: peer closed connection` on
+both clients (`v2_client/transport.rs negotiation_failure`, pinned by
+`public_client_names_a_connection_ceiling_refusal_and_reconnects_once_the_holder_leaves`
+and, on the Java side, `DurableClientCeilingTest`); (2) Section 12.1 now
+states the post-authentication per-principal refusal as an application
+close carrying LIMIT_EXCEEDED before capabilities, reported by code;
+(3) for the global tier the Rust client now keeps the peer's reason
+("the server refused to accept a new connection") in its message, and
+the Java client reports the transport close code. An earlier draft of this
 note claimed the refuse path races slot accounting; that was not
 established and is withdrawn unless a refusal is observed with fewer
 than four live-plus-lingering connections for the principal.

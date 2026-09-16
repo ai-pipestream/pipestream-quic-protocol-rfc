@@ -382,12 +382,35 @@ async fn prepare(
         })
     }
     .await;
+    let prepared = prepared.map_err(|e| negotiation_failure(&guard.0, e));
     if let Err(e) = &prepared {
         let failure = e.downcast_ref::<Error>().cloned().unwrap_or_else(stopped);
         guard.0.close(code(&failure), failure.detail.as_bytes());
     }
     guard.1 = false;
     prepared
+}
+/// A peer that closes during negotiation says why in its close frame. An
+/// application close naming a protocol code (a per-principal connection
+/// ceiling is LIMIT_EXCEEDED, Section 12.1) becomes that named error, as the
+/// Java client already reports it; any other close keeps the peer's reason in
+/// the message instead of the transport library's bare "connection lost".
+fn negotiation_failure(connection: &quinn::Connection, e: anyhow::Error) -> anyhow::Error {
+    if e.downcast_ref::<Error>().is_some() {
+        return e;
+    }
+    match connection.close_reason() {
+        Some(quinn::ConnectionError::ApplicationClosed(close)) => {
+            match ErrorCode::from_quic_error(close.error_code.into_inner()) {
+                Some(code) => error(code, "peer closed connection").into(),
+                None => e.context(format!(
+                    "peer closed the connection during negotiation: {close}"
+                )),
+            }
+        }
+        Some(reason) => e.context(format!("connection ended during negotiation: {reason}")),
+        None => e,
+    }
 }
 impl Transport {
     /// Queued, unresolved and completed-but-unconsumed replies all retain slots.
