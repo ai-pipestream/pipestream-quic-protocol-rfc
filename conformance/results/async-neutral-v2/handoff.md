@@ -1754,6 +1754,74 @@ full-matrix claim):
 The full acceptance matrix was NOT run (mandate); the coordination
 board is untouched.
 
+### M20d: the pre-landing review hole - incomplete directions can no longer pass unwaived (commit a962024f)
+
+The owner's review of the branch for landing (16 commits through 03ef759f)
+found one acceptance hole to fix BEFORE landing: incomplete directions
+could pass without an explicit waiver, two arms. Both are closed in
+acceptance mode only; dev labelling is byte-for-byte unchanged.
+
+- Direction-level: INCOMPLETE marker files under
+  `<scenario_dir>/<direction-hyphenated>/` (scenarios.rs writes them for
+  hooked-direction failures and named gaps) were only validated when a
+  waiver was DECLARED; an unwaived marker inside a PASS row passed
+  silently. Acceptance now scans the row directory for every
+  direction-level marker; an unwaived marker FAILs the row, naming the
+  direction in the slash spelling (reverse-mapped through the known
+  direction set - components contain hyphens, so a blind replace is
+  ambiguous) and quoting the marker file's named reason.
+- Row-level: `DirectionOutcome::Incomplete` reported `failed: false`
+  unconditionally. In acceptance a row-level Incomplete FAILs unless a
+  whole-row waiver covers it, and covers it only when the reason names
+  the row's missing capability; the Fail and Incomplete arms now share
+  one `waive_row_failure` helper so they cannot drift. Any other
+  Incomplete FAILs, saying acceptance requires an explicit waiver.
+- A declared direction waiver over a direction that ran and passed
+  (directory present, no marker) is named "unused direction waiver",
+  mirroring the M20c whole-row rule; a waiver naming a direction that
+  never ran and left no evidence still fails (a waiver accepts a named
+  gap, it never replaces one).
+
+Gates on a962024f: fmt exit 0, clippy -D warnings exit 0, 112 passed /
+0 failed (six new tests, red first: marker scan covered/unwaived/mismatch,
+row-level Incomplete arms, unused naming, dev unchanged). `cargo build
+--release --locked` reproduces the rust subject byte-identical
+(`4156c642b7be…`); only the conformance crate changed.
+
+Live verification (acceptance mode, NO --dev, relative subject paths,
+TMPDIR/stores under ~/.rfc-tmp/kimi-m20/smoke3, real exit codes, under
+BENCHMARK.lock; scratch evidence, never a full-matrix claim):
+
+- 3a positive control (the smoke2 shape), run
+  `durable-18d5bafae66b0461`, **exit 0**:
+  `PASS g1-leaf-copy rust-client/rust-server, rust-client/java-server,
+  java-client/rust-server` and `WAIVED g7-unsafe-clock-refusal:
+  g7-unsafe-clock-refusal INCOMPLETE: missing subject capability: no
+  subject fixture clock: … (waiver: no fixture clock on either subject;
+  …)`.
+- 3b negative, g3-store-ownership WITHOUT its direction waiver (other 3
+  waivers present): **exit 1** —
+  `FAIL g3-store-ownership: direction java-client/rust-server recorded an
+  INCOMPLETE marker that no direction waiver covers: …/g3-store-ownership/java-client-rust-server/INCOMPLETE:`
+  quoting `named gap: g3-store-ownership is a per-server storage row; the
+  java-client/rust-server direction differs only in the client subject,
+  which never owns the store. …`
+- 3c positive control, g3 WITH all four waivers: **exit 0** —
+  `PASS g3-store-ownership rust-client/rust-server, rust-client/java-server
+  (waived java-client/rust-server: the client subject never owns the store
+  (named-gap evidence …/java-client-rust-server/INCOMPLETE))`.
+- 3d negative 2, g2-crash-after-create-commit with NO waivers: **exit 1** —
+  `FAIL g2-crash-after-create-commit: direction rust-client/java-server
+  recorded an INCOMPLETE marker that no direction waiver covers:
+  …/rust-client-java-server/INCOMPLETE:` quoting the withheld-replay
+  error. The owner's exact complaint (this marker passing silently inside
+  a green row) is dead: the row is red until Claude's withhold fix lands
+  or the coordinator decides otherwise.
+
+Run ids/logs: `~/.rfc-tmp/kimi-m20/smoke3/{a,b,c,d}.log` with run dirs
+`durable-18d5bafae66b0461` (a), `durable-18d5bb0351031cc8` (b),
+`durable-18d5bb0b4785b0f6` (c), `durable-18d5bb0fee7bf43b` (d).
+
 ### Gates on this tree
 
 `cargo fmt --all -- --check` exit 0; `cargo clippy --all-targets
