@@ -42,12 +42,15 @@ timeouts; servers are torn down at exit.
   sizing is an operator concern; the gate stays inside the default
   envelope on purpose.
 - Each demo group gets a fresh authority pair (wipe + re-init +
-  relaunch). Accumulated sessions plus abrupt client exits (the kill
-  demos exit without detach, like a real crash) leave residue under
-  which new merge-reader connections are intermittently dropped with a
-  bare `connection lost` at connect. Fresh state keeps every group in
-  the proven-stable envelope; the underlying lifecycle question is
-  recorded as SPEC-FRICTION F3.
+  relaunch), and the kill demos settle 40s before resume. The authority
+  refuses new handshakes past 16 connections (4 per principal) with no
+  client-visible code; every coordinator run holds 2 connections and
+  the merge reader used to open 8 per merge, so rapid runs plus abrupt
+  exits tripped the ceiling and reader connects died with a bare
+  `connection lost`. Readers now share one connection per merge and
+  the coordinator detaches at clean exit; the kill path stays abrupt
+  (crash simulation) so the resume still waits out the 30s idle
+  backstop. Full story in SPEC-FRICTION F3, filed as a bug.
 - Cancel at tiny sizes is timing-sensitive: sent immediately, the cancel
   can seal the scope before expansion admits anything (empty scope,
   vacuous close). The coordinator therefore waits for the first

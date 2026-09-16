@@ -708,6 +708,12 @@ async fn run_all(run: &Run) -> Result<()> {
     if index == expected {
         sa.log("verified", -1, &format!("index byte-exact, digest {}", digest_hex(&index)));
         println!("VERIFIED index byte-exact, digest {}", digest_hex(&index));
+        // Detach both sessions on clean exit: every lingering attachment
+        // holds a server connection slot (default ceiling is 16) until it
+        // times out, and rapid successive runs trip the ceiling. The kill
+        // demos exit without detach on purpose (crash simulation).
+        sa.client.detach().await?;
+        sb.client.detach().await?;
         Ok(())
     } else {
         std::fs::write(run.staging.join("index-mismatch.bin"), &index)?;

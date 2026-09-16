@@ -56,29 +56,40 @@ Proposed text change: none (implementation guidance only). A porting
 note in the client guide would do: "call binding() explicitly after
 ready() even where one implementation binds implicitly."
 
-## F3. Dropped reader connections under accumulated/abrupt-exit state
+## F3. BUG: new connections refused opaquely past the connection ceiling
 
-Clause (connection lifecycle after client disappearance): the profile
-does not say how fast an authority reaps sessions and connections left
-behind by a client that vanishes without detach, nor what a new
-connection observes while that residue is outstanding.
+Symptom: the merge reader's connect intermittently fails with a bare
+`connection lost` (Rust) or a mislabeled `LIMIT_EXCEEDED: authority
+refused: peer closed connection` (Java). Reproduced deterministically:
+three rapid stage-3 kill/resume cycles on one authority pair — the
+second or third resume's first reader connect fails; restart (state
+kept, connections dropped) heals it; ~12 idle minutes also heal it.
 
-Friction: the merge reader opens one short session per TF reference.
-On fresh authority state every direction passes repeatably, but once
-sessions accumulate across runs plus an abrupt coordinator exit (the
-kill demos exit without detach, like a real crash), later reader
-connects intermittently fail with a bare `connection lost` at connect
-— no refusal, no diagnostic, retries on a fresh creation hit the same
-wall until the servers restart (state kept, connections dropped).
-Fresh-state-per-group in `run-index.sh` keeps the gate deterministic;
-the residue/reap interaction underneath is unresolved.
+Root cause (verified in code + behavior): the authority refuses new
+handshakes past `Options::connections` (16, default) or
+`connections_per_principal` (4, default) via a
+stateless refuse (`v2_authority/server.rs`: `incoming.refuse()` when
+`tasks.len()` or `open_connections()` is at ceiling). No refusal frame
+reaches the client, so neither client can report a code. Client-side
+residue that fills the ceiling: every coordinator run holds 2
+connections and never detached on exit, and (pre-fix) the merge reader
+opened one connection per TF reference (8 per merge). Abrupt exits
+(the kill demos exit without detach, like a real crash) leave corpses
+until the 30s idle backstop reaps them; a resume seconds later plus
+its merge reader then sits at 4-5 concurrent against the per-principal
+cap of 4 and the reader connect dies.
 
-Done in code: both readers detach per reference after the digest check
-(the Rust reader did not at first); per-step reader context
-(`reader connect|watch|select|read for scope:producer:entity`) so the
-next occurrence names the failing op.
+Fixed example-side: one reader connection per merge (Rust
+`connect_reader`, Java session block in `runMerge`), coordinator
+detaches both sessions at clean exit, kill path stays abrupt, gate
+settles 40s between kill and resume and uses a fresh pair per group.
+Per-step reader context (`reader connect|watch|... for
+scope:producer:entity`) stays so any recurrence names the failing op.
 
-Proposed text change: none yet — needs a platform verdict first. At
-minimum the failure deserves a refusal code (e.g. a busy/backpressure
-signal) instead of a transport-level drop, so a consumer can tell
-"peer is shedding" from "network is broken."
+Still owed by the platform (not hand-waved): (1) the refuse path
+should be atomic with slot accounting — a kill→resume burst trips it
+intermittently even well below any steady load, which smells like
+close-processing racing new accepts; (2) both clients must surface a
+real busy/backpressure code for a refused handshake instead of
+`connection lost` / a mislabeled `LIMIT_EXCEEDED`, so a consumer can
+tell "peer is shedding" from "network is broken."
