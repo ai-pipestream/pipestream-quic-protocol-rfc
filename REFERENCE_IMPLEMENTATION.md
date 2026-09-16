@@ -2,32 +2,71 @@
 
 This document provides implementation guidance and recommended data structures for PipeStream protocol implementations. The content in this document is INFORMATIVE and not part of the normative protocol specification.
 
-## Current Reference Suite
+## Current Reference Suite (2026-09-16)
 
-Executable Layer 0 implementations now live under [`implementations/`](implementations/): Java/Netty, Rust/Quinn, and C++/MsQuic. Each directory builds a reusable library plus a standalone client/server. Their codecs and protocol state machines are separate implementations.
+Three independent implementations live under [`implementations/`](implementations/):
+Java/Netty, Rust/Quinn and C++/MsQuic. Each builds a reusable library plus a
+standalone client and server. Their codecs and protocol state machines are
+separate implementations that share no protocol code.
 
-The checked-in [`test-vectors/`](test-vectors/) corpus supplies frozen valid and invalid bytes. A protocol-neutral Rust driver runs every client against every server as separate processes; it has no dependency on any PipeStream implementation. Its raw QUIC capability probes frame frozen CBOR bodies without using a protocol codec. The language-native applications in [`examples/`](examples/) exercise cross-language transfer, application-profile recovery, and three-node scatter/reassembly.
+Java and Rust are the two reference implementations of the durable-work
+profile (Section 12 and Appendix F). Each is a complete authority (listener,
+durable stores, execution, retention and result delivery), a durable client
+with an exclusive journal of intents, receipts and observations, and a
+command-line launcher; the two launchers take the same arguments so one
+driver runs either. Both authenticate callers with mutual TLS and map
+certificate fingerprints to owner principals; the caller-authentication gap
+noted at draft-04 is closed. C++/MsQuic remains a Layer 0 codec and endpoint
+and is not a durable-work implementation.
 
-All three implementations cover a documented Layer 0 subset, not all mandatory
-Layer 0 behavior. Rust additionally exercises recursive scopes and selected
-durable-yield and claim-redemption operations. Its separate sealed-work-set
-profile is explicitly negotiated as private-use extension 65281 and excludes
-Layer 2; the legacy resilience subset still lacks its own narrower capability.
-Java has independent sealed codecs, durable recursive state, bounded payload
-storage and fenced workers, and separate public Netty producer/server APIs.
-Real QUIC tests run sealed work in both Java/Rust directions. JDBC file-length
-bounds use a small native SQLite extension, not shared protocol code. The original
-Java listener/CLI and C++ endpoints remain Layer 0. Persistent Java producer
-observations and explicit Rust orphan reconciliation are now implemented;
-their acceptance evidence is recorded in
-[the implementation audit](docs/standards/recovery-execution-java-acceptance.md).
-The full profile conformance matrix remains incomplete. In particular, the
-Java sealed API does not yet authenticate a client principal: its lifecycle
-fixtures do not satisfy the durable-work authentication requirement in
-Section 10.6.1. Session and producer labels are not credentials.
-See [draft-04 readiness](docs/standards/draft04-readiness.md)
-for the evidence and open work. The algorithms below are informative and
-are not implied by a successful interoperability run.
+Evidence, all checked in:
+
+- **Neutral acceptance matrix.** The `durable` command of
+  [`pipestream-conformance`](implementations/rust-quinn/conformance/) is a
+  process driver with no PipeStream dependency. It runs every client against
+  every server as separate processes and injects faults (dropped replies,
+  kills at recorded boundaries, disconnects) through a fixture schedule both
+  subjects honour. The final run on the subjects `main` ships is archive
+  [`durable-18d5e94dc4306b7a`](conformance/results/async-neutral-v2/runs/durable-18d5e94dc4306b7a/):
+  66 rows in both client/server directions, 64 PASS and 2 WAIVED with named
+  reasons (no fixture clock on either subject; no cleanup boundary in the
+  fixture interface), no FAIL. The driver's handoff is
+  [`conformance/results/async-neutral-v2/handoff.md`](conformance/results/async-neutral-v2/handoff.md).
+- **Java.** Handoff
+  [`conformance/results/async-java-v2/handoff.md`](conformance/results/async-java-v2/handoff.md);
+  clause-level traceability of Section 12 in
+  [`docs/standards/section-12-java-traceability.md`](docs/standards/section-12-java-traceability.md)
+  (every clause mapped to code and a test, with the partial and
+  not-applicable rows named with reasons). The gate is the full test suite
+  plus the source-built transport extension's own tests; see the Java
+  [README](implementations/java-netty/README.md).
+- **Rust.** `cargo test --locked --workspace` over the core, transport,
+  server and driver crates; see the Rust
+  [README](implementations/rust-quinn/README.md).
+- **Applications on the profile.**
+  [`benchmarks/durable-transform`](benchmarks/durable-transform/) measures a
+  transform workload on PipeStream against a gRPC arm on loopback, with fault
+  and stopped-consumer suites, and
+  [`examples/durable-index-build`](examples/durable-index-build/) builds an
+  inverted index across two authorities using descendant scopes, parent reads
+  of child outputs, cross-authority result references, scope cancellation and
+  kill/resume; its gate runs from a fresh clone. The Layer 0 examples
+  (`java-to-rust`, `rust-to-cpp-recovery`, `three-node-scatter`) remain.
+- **Specification changes that came out of building.**
+  [`docs/standards/durable-work-v2-decisions.md`](docs/standards/durable-work-v2-decisions.md)
+  records each decision the implementations forced, most recently the wire
+  code for over-limit control bodies, a client's local checkpoint refusal, the
+  removal of the inputless CANCELLING state, the answer to a foreign authority
+  on attach, and the per-principal connection ceiling refusal.
+- **Frozen bytes.** [`test-vectors/`](test-vectors/) supplies valid and
+  invalid Layer 0 bytes; `pipestream-conformance verify` and `modelcheck` run
+  them from [`conformance/run_all.sh`](conformance/run_all.sh), which also
+  runs the acceptance matrix when `PIPESTREAM_DURABLE_ACCEPTANCE=1`.
+
+Known limits: the two waived matrix rows above; the C++ implementation stops
+at Layer 0; [draft-04 readiness](docs/standards/draft04-readiness.md) is the
+historical record of the earlier state. The algorithms below are informative
+and are not implied by a successful interoperability run.
 
 ## 1. Rehydration Readiness Tracking (Fibonacci Heap)
 

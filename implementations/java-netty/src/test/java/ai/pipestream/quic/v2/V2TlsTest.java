@@ -18,6 +18,8 @@ import io.netty.handler.codec.quic.InsecureQuicTokenHandler;
 import io.netty.handler.codec.quic.QuicChannel;
 import io.netty.handler.codec.quic.QuicClientCodecBuilder;
 import io.netty.handler.codec.quic.QuicConnectionCloseEvent;
+import io.netty.handler.codec.quic.SslEarlyDataReadyEvent;
+import io.netty.handler.ssl.ClientAuth;
 import io.netty.handler.codec.quic.QuicServerCodecBuilder;
 import io.netty.handler.codec.quic.QuicSslContext;
 import io.netty.handler.codec.quic.QuicSslContextBuilder;
@@ -47,6 +49,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.net.ssl.SSLEngine;
@@ -311,6 +314,71 @@ final class V2TlsTest {
     }
   }
 
+  /**
+   * S12-008 "no application 0-RTT" (P-TLS-1): an external client that caches tickets and offers
+   * early data resumes the TLS session, yet the listener's tickets carry no early-data allowance,
+   * so the client is never in early data (the transport's early-data-ready event never fires on
+   * either connection) and every application frame the listener answers follows a completed
+   * handshake and an authenticated guard.
+   */
+  @Test
+  void resumedClientOfferingEarlyDataIsNeverInEarlyDataAndFramesFollowTheHandshake()
+      throws Exception {
+    QuicSslContext eager = external("alice", "pipestream/2", 8, true);
+    TlsAuthentication verifier = client("localhost", null);
+    try (Network net = new Network(server("server", Clock.systemUTC(), mapping()))) {
+      Pair first = net.connect(verifier, eager);
+      assertFalse(resumed(first.server.channel));
+      net.exchange(first, required(false));
+      assertFalse(first.client.earlyDataReady.get(), "early data on a full handshake");
+      Pair second = net.connect(verifier, eager);
+      assertTrue(
+          resumed(second.server.channel),
+          "must exercise actual TLS resumption, the only path on which 0-RTT can be offered");
+      assertFalse(
+          second.client.earlyDataReady.get(),
+          "the listener's ticket let the client enter early data");
+      assertEquals("alice", second.server.guard.requireOwner());
+      net.exchange(second, required(false));
+      assertFalse(second.client.earlyDataReady.get(), "early data after the resumed handshake");
+      assertEquals(2, net.responses.get());
+    }
+  }
+
+  /**
+   * Control for the S12-008 observation, not a listener requirement: against a listener whose
+   * tickets do allow early data, the same eager client enters early data on resumption and the
+   * transport fires the early-data-ready event. So the assertion above can fail, and its passing
+   * against the real listener is evidence.
+   */
+  @Test
+  void theEarlyDataObservationIsLiveAgainstAListenerThatAllowsIt() throws Exception {
+    QuicSslContext eager = external("alice", "pipestream/2", 8, true);
+    QuicSslContext permissive =
+        QuicSslContextBuilder.forServer(path("server.key").toFile(), null, path("server.crt").toFile())
+            .clientAuth(ClientAuth.OPTIONAL)
+            .trustManager(path("ca.crt").toFile())
+            .applicationProtocols("pipestream/2")
+            .earlyData(true)
+            .build();
+    TlsAuthentication verifier = client("localhost", null);
+    try (Network net = new Network(server("server", Clock.systemUTC(), mapping()), permissive)) {
+      Attempt first = net.attempt(verifier, eager);
+      first.connection.get(5, TimeUnit.SECONDS);
+      assertNotNull(net.accepted.poll(5, TimeUnit.SECONDS));
+      assertFalse(first.probe.earlyDataReady.get(), "early data on a full handshake");
+      // Let the session ticket arrive before the resumption attempt.
+      Thread.sleep(500);
+      Attempt second = net.attempt(verifier, eager);
+      second.connection.get(5, TimeUnit.SECONDS);
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+      while (!second.probe.earlyDataReady.get() && System.nanoTime() < deadline) Thread.sleep(20);
+      assertTrue(
+          second.probe.earlyDataReady.get(),
+          "the control listener allows early data, so the eager client must enter it");
+    }
+  }
+
   @Test
   void builtInClientUsesFullHandshakesOnReconnect() throws Exception {
     TlsAuthentication caller = client("localhost", "alice");
@@ -448,6 +516,11 @@ final class V2TlsTest {
 
   private static QuicSslContext external(String credential, String alpn, int cache)
       throws Exception {
+    return external(credential, alpn, cache, false);
+  }
+
+  private static QuicSslContext external(
+      String credential, String alpn, int cache, boolean earlyData) throws Exception {
     X509Certificate leaf = cert(credential.equals("wrong-key") ? "alice" : credential);
     String pem =
         Files.readString(path((credential.equals("wrong-key") ? "rotated" : credential) + ".key"))
@@ -501,7 +574,7 @@ final class V2TlsTest {
         .trustManager(path("ca.crt").toFile())
         .applicationProtocols(alpn)
         .sessionCacheSize(cache)
-        .earlyData(false)
+        .earlyData(earlyData)
         .build();
   }
 
@@ -628,6 +701,7 @@ final class V2TlsTest {
     final TlsAuthentication.Guard guard;
     final AtomicInteger active = new AtomicInteger();
     final CompletableFuture<QuicConnectionCloseEvent> closed = new CompletableFuture<>();
+    final AtomicBoolean earlyDataReady = new AtomicBoolean();
     volatile QuicChannel channel;
 
     Probe(TlsAuthentication.Guard guard) {
@@ -644,6 +718,7 @@ final class V2TlsTest {
     @Override
     public void userEventTriggered(ChannelHandlerContext ctx, Object event) {
       if (event instanceof QuicConnectionCloseEvent close) closed.complete(close);
+      if (event instanceof SslEarlyDataReadyEvent) earlyDataReady.set(true);
       ctx.fireUserEventTriggered(event);
     }
 
@@ -663,6 +738,11 @@ final class V2TlsTest {
     final Channel listener;
 
     Network(TlsAuthentication authentication) throws Exception {
+      this(authentication, null);
+    }
+
+    /** An external listener context stands in for the built-in one only as a test control. */
+    Network(TlsAuthentication authentication, QuicSslContext externalServer) throws Exception {
       listener =
           new Bootstrap()
               .group(group)
@@ -671,7 +751,10 @@ final class V2TlsTest {
                   new QuicServerCodecBuilder()
                       .sslEngineProvider(
                           c -> {
-                            var engine = authentication.engine(c.alloc(), 0);
+                            var engine =
+                                externalServer == null
+                                    ? authentication.engine(c.alloc(), 0)
+                                    : externalServer.newEngine(c.alloc());
                             // Keep the actual engine observation available after native connection
                             // cleanup.
                             c.attr(ENGINE).set(engine);
