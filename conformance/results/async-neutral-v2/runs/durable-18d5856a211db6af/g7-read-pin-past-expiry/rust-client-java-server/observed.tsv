@@ -1,0 +1,17 @@
+server_subject	java
+client_subject	rust
+clock_mode	real-short-policy
+output_until	1789484216185
+raw_read_started_ms	1789484211615
+raw_read_finished_ms	1789484221508
+bytes_received_before_expiry	8126464
+bytes_received_total	16777216
+pinned_read	completed byte-exact after expiry (sha256=3b464e0b55d7c0c95dcb66ed412d4812840a32abeddd8ee5650012d1a11cef7a)
+new_read_after_expiry	named EXPIRED (6) while the pinned read was open (authority refusal EXPIRED: output availability expired)
+object_dir_after_publish	files=5 bytes=33555225 allocated_blocks=65568
+object_dir_at_expiry_during_read	files=4 bytes=16777821 allocated_blocks=32792
+object_dir_after_read	files=2 bytes=122 allocated_blocks=8
+reclaimed_after_read	true (within 30 s of the read finishing)
+reclaimed_during_read	one object left the directory while the read was still open and the pinned read still completed byte-exact; whether that was the expired output (unlinked under an open descriptor) or the retained input is not distinguished by directory totals; recorded as an observation, not asserted
+work_view_after_read	state=5 attempt=1 (receipt retention holds)
+java_jar_sha256	91c1842f0a4fe55e7667174f680ebd427d4f70600322f63a09d01039584ccb08

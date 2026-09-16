@@ -1,0 +1,6 @@
+1	durable-18d589547e933f9b	g8-timeout-no-completion-claim	rust	client	414711-18d5896d1be3ebea	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d589547e933f9b	g8-timeout-no-completion-claim	rust	client	414711-18d5896d1be3ebea	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d589547e933f9b	g8-timeout-no-completion-claim	rust	client	414711-18d5896d1be3ebea	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d589547e933f9b	g8-timeout-no-completion-claim	rust	client	414711-18d5896d1be3ebea	4	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d589547e933f9b	g8-timeout-no-completion-claim	rust	client	414711-18d5896d1be3ebea	5	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d589547e933f9b	g8-timeout-no-completion-claim	rust	server	424212-18d5896d21fc331f	1	COMPLETE_RESPONSE_SENT							

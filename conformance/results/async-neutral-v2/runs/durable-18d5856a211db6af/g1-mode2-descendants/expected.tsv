@@ -1,0 +1,13 @@
+application	chunk-copy/v2
+mode	2
+parent_work	0:0:1
+input_len	200000
+input_sha256	1dedf2209c2609cd80437d911867f75214bbc91c384c7a53b10d6a16fc53fd34
+child_scope	1:1
+child_chunk_lens	65536,65536,65536,3392
+expected_output_sha256	1dedf2209c2609cd80437d911867f75214bbc91c384c7a53b10d6a16fc53fd34
+expected_child_seal_sha256	2d09010427587c9be134656575231d2473d316a4d57c84616a613f4c26743780
+expected_root_seal_sha256	444702408fc06ce1a8909f0db362f468199b490cac8495e64c079eeec55da6ab
+external_fencing	external declare into the producer-1 scope refuses UNAUTHORIZED (3) at the wire; external admit is refused by a client-side named guard on both CLIs (rust: NOT_READY covering-declaration guard; java: FRAME_ERROR authority-producer validation) — wire UNAUTHORIZED unreachable (named gap, transcripts recorded)
+parent_settle_order	parent terminal only after every child is terminal (mid-flight samples recorded)
+child_output_pinning	external child select recorded; named gaps noted from the actual CLI surfaces

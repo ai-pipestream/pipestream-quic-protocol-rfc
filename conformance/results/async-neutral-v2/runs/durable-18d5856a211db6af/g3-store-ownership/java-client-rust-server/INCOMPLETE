@@ -1,0 +1,1 @@
+named gap: g3-store-ownership is a per-server storage row; the java-client/rust-server direction differs only in the client subject, which never owns the store. Primary directions: rust-client on both server subjects.

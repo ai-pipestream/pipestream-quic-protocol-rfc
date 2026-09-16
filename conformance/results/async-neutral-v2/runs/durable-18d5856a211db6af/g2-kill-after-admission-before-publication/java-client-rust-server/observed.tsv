@@ -1,0 +1,6 @@
+subject_exit_code	86
+subject_boundary_record	EXECUTION_CLAIMED recorded before the exit
+terminal_state	5
+terminal_attempt	1
+recovery_path	automatic-redispatch-under-attempt-1
+client_control_deadline	--control-timeout-ms 10000 on every op of this direction: the killed authority is noticed well inside the driver's 30 s op bound (observation O-2)

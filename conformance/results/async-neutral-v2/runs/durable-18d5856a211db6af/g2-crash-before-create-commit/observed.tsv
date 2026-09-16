@@ -1,0 +1,5 @@
+subject_exit_code	86
+next_sequence_after_restart	1
+replay_binding	generation 1
+next_sequence_after_replay	2
+client_control_deadline	not shortened: the Rust client CLI exposes no control-timeout option (the quinn v2_client response deadline has no CLI surface); a stranded op is bounded by the row's own bounded op or the subject's transport deadlines — a named deviation, not a weakened expectation

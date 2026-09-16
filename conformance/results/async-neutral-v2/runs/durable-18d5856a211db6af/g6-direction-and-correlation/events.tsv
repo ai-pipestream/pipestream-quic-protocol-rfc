@@ -1,0 +1,13 @@
+1	durable-18d5856a211db6af	g6-direction-and-correlation	rust	client	618-18d5864af90ddfbb	1	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d5856a211db6af	g6-direction-and-correlation	rust	server	618-18d5864af90ddfbb	2	CONNECTION_CLOSED				513			
+1	durable-18d5856a211db6af	g6-direction-and-correlation	rust	client	618-18d5864af90ddfbb	3	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d5856a211db6af	g6-direction-and-correlation	rust	server	618-18d5864af90ddfbb	4	CONNECTION_CLOSED				513			
+1	durable-18d5856a211db6af	g6-direction-and-correlation	rust	server	618-18d5864af90ddfbb	5	CONNECTION_CLOSED				513			
+1	durable-18d5856a211db6af	g6-direction-and-correlation	rust	client	618-18d5864af90ddfbb	6	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d5856a211db6af	g6-direction-and-correlation	rust	server	618-18d5864af90ddfbb	7	CONNECTION_CLOSED				513			
+1	durable-18d5856a211db6af	g6-direction-and-correlation	rust	client	618-18d5864af90ddfbb	8	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d5856a211db6af	g6-direction-and-correlation	rust	server	618-18d5864af90ddfbb	9	CONNECTION_CLOSED				513			
+1	durable-18d5856a211db6af	g6-direction-and-correlation	rust	client	618-18d5864af90ddfbb	10	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d5856a211db6af	g6-direction-and-correlation	rust	server	618-18d5864af90ddfbb	11	CONNECTION_CLOSED				513			
+1	durable-18d5856a211db6af	g6-direction-and-correlation	rust	client	618-18d5864af90ddfbb	12	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d5856a211db6af	g6-direction-and-correlation	rust	client	618-18d5864af90ddfbb	13	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb

@@ -1,0 +1,6 @@
+subject_exit_code	86
+subject_boundary_record	EXECUTION_CLAIMED recorded before the exit
+terminal_state	5
+terminal_attempt	1
+recovery_path	automatic-redispatch-under-attempt-1
+client_control_deadline	not shortened: the Rust client CLI exposes no control-timeout option (the quinn v2_client response deadline has no CLI surface); a stranded op is bounded by the row's own bounded op or the subject's transport deadlines — a named deviation, not a weakened expectation

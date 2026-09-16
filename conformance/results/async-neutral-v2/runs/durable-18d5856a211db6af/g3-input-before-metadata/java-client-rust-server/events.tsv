@@ -1,0 +1,10 @@
+1	durable-18d5856a211db6af	g3-input-before-metadata	java	client	618-18d585d8110164bc	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5856a211db6af	g3-input-before-metadata	java	client	618-18d585d8110164bc	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5856a211db6af	g3-input-before-metadata	java	client	618-18d585d8110164bc	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5856a211db6af	g3-input-before-metadata	java	client	618-18d585d8110164bc	4			0:0:1	1				
+1	durable-18d5856a211db6af	g3-input-before-metadata	java	client	618-18d585d8110164bc	5		d82b4f0e9f3814f1161c84240d038f52			5	artifacts/lookup-after-restart.txt	83	a7e8b5cfa3c6a734e13fe600962da0a74435fa7fddb2bf09bc11fa18ebf0f118
+1	durable-18d5856a211db6af	g3-input-before-metadata	java	client	618-18d585d8110164bc	6	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5856a211db6af	g3-input-before-metadata	java	client	618-18d585d8110164bc	7	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5856a211db6af	g3-input-before-metadata	java	client	618-18d585d8110164bc	8	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5856a211db6af	g3-input-before-metadata	java	client	618-18d585d8110164bc	9	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d5856a211db6af	g3-input-before-metadata	java	client	618-18d585d8110164bc	10	RESULT_INSTALLED		0:0:1	1		artifacts/output.bin	12582912	ab0e2b4417deba665487ff89294e266427c72bf5b0de42a136d46acf2da4a60a

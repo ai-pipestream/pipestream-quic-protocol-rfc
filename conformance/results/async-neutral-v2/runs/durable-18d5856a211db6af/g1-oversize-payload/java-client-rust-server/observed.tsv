@@ -1,0 +1,14 @@
+server_subject	rust
+client_subject	java
+alpn	pipestream/2
+application	copy/v2
+input_len	8388608
+flow_receive_stream_bytes	65536 (subject default; neither CLI exposes a window flag)
+control_op	next-sequence (second connection, journal-free)
+control_latency_ms	1453
+control_overlapped_inflight_admit	true
+control_sequence	2
+terminal_state	5
+manifest_objects	1
+output_len	8388608
+java_jar_sha256	91c1842f0a4fe55e7667174f680ebd427d4f70600322f63a09d01039584ccb08

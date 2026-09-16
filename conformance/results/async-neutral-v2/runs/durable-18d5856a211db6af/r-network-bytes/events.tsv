@@ -1,0 +1,4 @@
+1	durable-18d5856a211db6af	r-network-bytes	rust	client	618-18d58771338a0ae3	1	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d5856a211db6af	r-network-bytes	rust	client	618-18d58771338a0ae3	2	NETWORK_HANDSHAKE_MEASURED							
+1	durable-18d5856a211db6af	r-network-bytes	rust	client	618-18d58771338a0ae3	3	NETWORK_TRANSFER_MEASURED							
+1	durable-18d5856a211db6af	r-network-bytes	rust	client	618-18d58771338a0ae3	4	NETWORK_EVIDENCE					artifacts/network.tsv	558	6b7ff419667b80c952b775f24d9a82df1c4e3c652d92e2b9233d0b72adcaef05

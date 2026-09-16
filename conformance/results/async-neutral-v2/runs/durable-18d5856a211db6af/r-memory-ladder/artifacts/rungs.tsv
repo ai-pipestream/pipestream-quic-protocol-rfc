@@ -1,0 +1,8 @@
+rung	kind	payload_bytes	admissions	resident_works	start_ms	tail_from_ms	end_ms	ticks	pids_min	pids_max	rss_median_kib	rss_p90_kib	rss_max_kib	hwm_max_kib	threads_median	threads_max	fd_median	fd_p90	heap_ticks	heap_min_kib	heap_max_kib	heap_gap_ticks
+baseline-idle	baseline	0	0	0	7	9007	15007	60	1	1	16320	16320	16320	16320	49	50	12	12	0	-	-	0
+payload-65536	payload	65536	4	4	15090	21872	27872	60	1	1	19756	19848	19880	19880	50	50	12	14	0	-	-	0
+payload-1048576	payload	1048576	4	8	27872	34690	40690	60	1	1	20160	20252	20284	20284	50	50	12	12	0	-	-	0
+payload-16777216	payload	16777216	4	12	40701	49337	55337	60	1	1	20544	20596	20668	20668	50	50	12	15	0	-	-	0
+inventory-1	inventory	65536	1	13	55352	61648	67648	60	1	1	20992	21024	21092	21092	50	50	12	17	0	-	-	0
+inventory-16	inventory	65536	15	28	67648	76500	82500	60	1	1	21896	21964	22012	22260	50	50	12	15	0	-	-	0
+inventory-64	inventory	65536	48	76	82500	97376	103376	60	1	1	23004	23072	23220	24848	50	50	12	17	0	-	-	0

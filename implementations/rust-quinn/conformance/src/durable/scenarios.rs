@@ -4,7 +4,10 @@
 use crate::durable::events::{ArtifactRef, EventWriter};
 use crate::durable::mtls;
 use crate::durable::oracle;
-use crate::durable::process::{AuthorityFixture, OwnedServer, Subject};
+use crate::durable::process::{
+    AuthorityFixture, JAVA_CLIENT_KILL_CONTROL_TIMEOUT_MS, KILL_ROW_OP_TIMEOUT, OwnedServer,
+    Subject,
+};
 use crate::durable::rawclient::{
     self, CODE_INTEGRITY_ERROR, Close, FRAME_CAPABILITIES, FRAME_DRAIN, FRAME_REFUSAL,
     FRAME_RESULT, FRAME_SCOPE, FRAME_SESSION, FRAME_WORK, Frame, Peer, QUIC_CONTROL_RESET,
@@ -67,6 +70,11 @@ pub fn rows() -> Vec<Row> {
     push(
         &mut rows,
         "G2",
+        // `g2-drop-reply-publication` is retired (owner decision 2026-09-13,
+        // milestone 20): publication is watch-observed on both subjects, not
+        // a correlated reply, so there is no reply to withhold; the kill
+        // variant g2-kill-at-publication-commit is the boundary's evidence.
+        // The retirement is recorded in scenario-matrix-g2.md and handoff §3k.
         &[
             "g2-crash-before-create-commit",
             "g2-crash-after-create-commit",
@@ -74,7 +82,6 @@ pub fn rows() -> Vec<Row> {
             "g2-drop-reply-admission",
             "g2-kill-after-admission-before-publication",
             "g2-kill-at-publication-commit",
-            "g2-drop-reply-publication",
             "g2-kill-client-after-request-sent",
             "g2-duplicate-op-changed-params",
             "g2-simultaneous-duplicate",
@@ -203,7 +210,6 @@ pub fn rows() -> Vec<Row> {
         "g2-simultaneous-duplicate",
         "g2-kill-server-after-admission-recovery",
         "g2-not-found-in-flight",
-        "g2-drop-reply-publication",
         "g3-input-before-metadata",
         "g3-orphan-cleanup",
         "g3-restart-same-roots",
@@ -412,7 +418,6 @@ fn run_rust_direction(row: &Row, context: &ScenarioContext) -> Result<()> {
             g2_kill_server_after_admission_recovery(context)
         }
         "g2-not-found-in-flight" => g2_not_found_in_flight(context),
-        "g2-drop-reply-publication" => g2_drop_reply_publication(context),
         "g5-cert-rotation-same-owner" => g5_cert_rotation_same_owner(context),
         "g5-remapped-owner" => g5_remapped_owner(context),
         "g5-cross-authority-reference" => g5_cross_authority_reference(context),
@@ -4542,6 +4547,75 @@ fn g2_schedule_row(
 /// worker must reach the armed commit) or for a released pause to proceed.
 const KILL_TIMEOUT: Duration = Duration::from_secs(45);
 
+/// A hooked kill row whose client is Java shortens the client control
+/// deadline: a scheduled server kill leaves the pending request
+/// drain-waiting, and the Java launcher's default 30 s control deadline
+/// meets the driver's own 30 s op bound exactly (observation O-2). The Rust
+/// client CLI exposes no such option, so the setting is applied (and
+/// emitted) for the Java client only; the row evidence names both facts.
+fn apply_kill_row_control_timeout(session: &mut Session, client: Subject) {
+    if client == Subject::Java {
+        session.fixture = session
+            .fixture
+            .clone()
+            .with_client_control_timeout_ms(Some(JAVA_CLIENT_KILL_CONTROL_TIMEOUT_MS));
+    }
+}
+
+/// A hooked kill row also widens the driver's per-op wait to
+/// [`KILL_ROW_OP_TIMEOUT`]: the killed authority is noticed at the
+/// negotiated transport bound (~60 s), and the row's named-refusal
+/// assertions must observe that refusal, not race it. The row assertions
+/// themselves are unchanged; only the budget is. Applied to both client
+/// subjects — the bound being waited out is a property of the kill, not of
+/// which client runs it.
+fn apply_kill_row_op_budget(session: &mut Session) {
+    session.fixture = session
+        .fixture
+        .clone()
+        .with_client_op_timeout(KILL_ROW_OP_TIMEOUT);
+}
+
+/// The observed.tsv line recording the widened op budget and its derivation.
+fn kill_row_op_budget_observed() -> (&'static str, String) {
+    (
+        "driver_op_budget",
+        format!(
+            "{} s per client op (kill row): a killed authority is noticed at the negotiated \
+             transport bound - the Rust server's max_idle_timeout of 60 s \
+             (quinn/src/v2_authority/server.rs:225) against the Java client's idle \
+             max(handshake 10 s, control deadline, stream lifetime 300 s) \
+             (DurableClient.java:203-207), surfacing CONTROL_RESET 'connection ended before \
+             drain' at ~61 s (DurableClient.java:271-278), and the Rust client's \
+             response_timeout of 60 s (quinn/src/v2_client/transport.rs:127, swept at :538), \
+             refusing LIMIT_EXCEEDED 'client response deadline' at ~60 s - so the default 30 s \
+             op wait cannot observe the named refusal",
+            KILL_ROW_OP_TIMEOUT.as_secs()
+        ),
+    )
+}
+
+/// The observed.tsv line recording what the row did about the client control
+/// deadline, per client subject.
+fn kill_row_control_timeout_observed(client: Subject) -> (&'static str, String) {
+    (
+        "client_control_deadline",
+        if client == Subject::Java {
+            format!(
+                "--control-timeout-ms {JAVA_CLIENT_KILL_CONTROL_TIMEOUT_MS} on every op of this \
+                 direction: the killed authority is noticed well inside the driver's 30 s op \
+                 bound (observation O-2)"
+            )
+        } else {
+            "not shortened: the Rust client CLI exposes no control-timeout option (the quinn \
+             v2_client response deadline has no CLI surface); a stranded op is bounded by the \
+             row's own bounded op or the subject's transport deadlines — a named deviation, \
+             not a weakened expectation"
+                .into()
+        },
+    )
+}
+
 /// Consume a hooked session into its parts so the server handle can be
 /// stopped (drop-reply rows) or awaited (kill rows) before a restart.
 fn split_hooked(hooked: Hooked) -> (Session, PathBuf) {
@@ -4845,7 +4919,7 @@ fn g2_crash_after_create_commit_direction(
         "SESSION_COMMITTED",
         schedule::Action::DropReply,
     )];
-    let hooked = setup_hooked(
+    let mut hooked = setup_hooked(
         context,
         scenario_dir,
         id,
@@ -4855,6 +4929,7 @@ fn g2_crash_after_create_commit_direction(
         "schedule.tsv",
         true,
     )?;
+    apply_kill_row_control_timeout(&mut hooked.session, client);
     write_kv(
         scenario_dir,
         "expected.tsv",
@@ -4997,6 +5072,7 @@ fn g2_crash_after_create_commit_direction(
                 changed_line.expect("checked above"),
             ),
             ("ahead_sequence_refusal", ahead_line.expect("checked above")),
+            kill_row_control_timeout_observed(client),
         ],
     )?;
     stop_and_seal(context, scenario_dir, id, restarted.server, events)
@@ -5046,7 +5122,7 @@ fn g2_crash_before_create_commit_direction(
         "CONNECTION_AUTHENTICATED",
         schedule::Action::Kill,
     )];
-    let hooked = setup_hooked(
+    let mut hooked = setup_hooked(
         context,
         scenario_dir,
         id,
@@ -5056,6 +5132,8 @@ fn g2_crash_before_create_commit_direction(
         "schedule.tsv",
         false,
     )?;
+    apply_kill_row_control_timeout(&mut hooked.session, client);
+    apply_kill_row_op_budget(&mut hooked.session);
     write_kv(
         scenario_dir,
         "expected.tsv",
@@ -5148,6 +5226,8 @@ fn g2_crash_before_create_commit_direction(
             ("next_sequence_after_restart", "1".into()),
             ("replay_binding", "generation 1".into()),
             ("next_sequence_after_replay", next.to_string()),
+            kill_row_control_timeout_observed(client),
+            kill_row_op_budget_observed(),
         ],
     )?;
     stop_and_seal(context, scenario_dir, id, recovered.server, events)
@@ -5648,7 +5728,8 @@ fn g2_kill_after_admission_before_publication_direction(
         "schedule.tsv",
         true,
     )?;
-    let (session, events_path) = split_hooked(hooked);
+    let (mut session, events_path) = split_hooked(hooked);
+    apply_kill_row_control_timeout(&mut session, client);
     let binding = session.op(&["binding"])?;
     require(&binding, "BINDING", "client binding")?;
     let declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
@@ -5747,6 +5828,7 @@ fn g2_kill_after_admission_before_publication_direction(
             ("terminal_state", terminal_state.to_string()),
             ("terminal_attempt", terminal_attempt.to_string()),
             ("recovery_path", recovery_path),
+            kill_row_control_timeout_observed(client),
         ],
     )?;
     stop_and_seal(context, scenario_dir, id, recovered.server, events)
@@ -5820,7 +5902,8 @@ fn g2_kill_at_publication_commit_direction(
         "schedule.tsv",
         true,
     )?;
-    let (session, events_path) = split_hooked(hooked);
+    let (mut session, events_path) = split_hooked(hooked);
+    apply_kill_row_control_timeout(&mut session, client);
     let binding = session.op(&["binding"])?;
     require(&binding, "BINDING", "client binding")?;
     let declare = declare_sealed(&session, &mut events, context.seed, "declare", &[1])?;
@@ -5975,6 +6058,7 @@ fn g2_kill_at_publication_commit_direction(
             ("terminal_view", terminal_view.trim().to_owned()),
             ("post_terminal_retry_refusal", retry_line),
             ("post_terminal_retry_code", retry_code.to_string()),
+            kill_row_control_timeout_observed(client),
         ],
     )?;
     stop_and_seal(context, scenario_dir, id, recovered.server, events)
@@ -15720,7 +15804,7 @@ fn g8_timeout_kill_direction(
         "COMPLETE_RESPONSE_SENT",
         schedule::Action::Kill,
     )];
-    let hooked = setup_hooked(
+    let mut hooked = setup_hooked(
         context,
         scenario_dir,
         id,
@@ -15730,6 +15814,7 @@ fn g8_timeout_kill_direction(
         "schedule.tsv",
         true,
     )?;
+    apply_kill_row_op_budget(&mut hooked.session);
     let (session, events_path) = split_hooked(hooked);
     let (_root_seal, coverage_stdout) =
         g8_timeout_settle(context, &session, &mut events, &artifacts)?;
@@ -15839,6 +15924,8 @@ fn g8_timeout_kill_direction(
             ),
             ("next_sequence_after_restart", next.to_string()),
             ("redrive_complete", redrive_outcome),
+            kill_row_control_timeout_observed(client),
+            kill_row_op_budget_observed(),
         ],
     )?;
     stop_and_seal(context, scenario_dir, id, restarted.server, events)
@@ -22059,6 +22146,12 @@ fn r_native_credit_direction(
 #[derive(Debug)]
 pub struct MissingCapability(pub String);
 
+/// Machine-detectable prefix of [`MissingCapability`]'s display text. A
+/// whole-row `--waive` may absorb ONLY a failure of this class: the waiver
+/// records the acceptance of a named missing capability, and anything else
+/// failing under a waiver is a real defect the waiver must not hide.
+pub const MISSING_CAPABILITY_MARKER: &str = "missing subject capability:";
+
 impl std::fmt::Display for MissingCapability {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "missing subject capability: {}", self.0)
@@ -23096,11 +23189,15 @@ const AUTHORITY_Y: &str = "issuer-b";
 /// driver records its REFERENCE (the selected output as the client renders
 /// it). Authority Y has separate roots, its own principal map (alice mapped)
 /// and the label `issuer-b`, and no session of X's. Arm A resolves X's saved
-/// selection against Y from X's journal: refused without disclosure, no
-/// bytes delivered. Arm B binds a journal on Y and selects X's identifiers
-/// there: refused without disclosure. The positive arm reads the exact bytes
-/// on X. Neither published client dereferences a locator's authority (the
-/// Rust `read` uses the journal selection on the configured connection;
+/// selection against Y from X's journal: every probe opens a fresh client
+/// process, whose attach names X's authority to Y's server; per the owner's
+/// 2026-09-13 decision (Section 12.3, a3b14725) that is CONFLICT (7) on both
+/// subjects — a contradiction with retained identity, not an authorization
+/// failure — refused without disclosure, no bytes delivered. Arm B binds a
+/// journal on Y and selects X's identifiers there: refused without
+/// disclosure. The positive arm reads the exact bytes on X. Neither
+/// published client dereferences a locator's authority (the Rust `read`
+/// uses the journal selection on the configured connection;
 /// Java: DurableClientLocatorTest, S12-280/283), which is recorded, not
 /// asserted here.
 fn g5_cross_authority_reference(context: &ScenarioContext) -> Result<()> {
@@ -23162,7 +23259,10 @@ fn g5_cross_authority_reference_direction(
             (
                 "arm_a",
                 "X's journal (bound to X, selection saved) pointed at Y: attach, read, lookup \
-                 and watch each refused with a named code; no result bytes written"
+                 and watch each refused CONFLICT (7); no result bytes written. Owner decision \
+                 2026-09-13 (Section 12.3): after owner authorization, an expected authority \
+                 other than the serving one is CONFLICT — a contradiction with retained \
+                 identity, not an authorization failure — on both subjects (a3b14725)"
                     .into(),
             ),
             (
@@ -23241,6 +23341,16 @@ fn g5_cross_authority_reference_direction(
         let (len, sha256) = write_probe_artifact(&artifacts, &artifact, &outcome)?;
         let (code, line) =
             expect_named_refusal(&outcome, &format!("{id}: arm A {name} against Y"))?;
+        // Owner decision 2026-09-13 (Section 12.3): a foreign expected
+        // authority is CONFLICT on both subjects (Rust answered UNAUTHORIZED
+        // before a3b14725; the milestone-19 "which class" question is decided).
+        ensure!(
+            code == 7,
+            "{id}: arm A {name} against Y must refuse CONFLICT (7) per the owner's 2026-09-13 \
+             decision (Section 12.3: after owner authorization, an expected authority other \
+             than the serving one is a contradiction with retained identity), got {code} ({})",
+            refusal_code_name(u64::from(code))
+        );
         events.append(
             "REFUSAL_RECEIVED",
             None,
@@ -24611,78 +24721,6 @@ fn refusal_reason_line(text: &str) -> String {
         .to_owned()
 }
 
-/// g2-drop-reply-publication: `drop-reply` at PUBLICATION_COMMITTED. Neither
-/// subject exposes a PUBLICATION reply pair to withhold: publication is
-/// observed through a watch, not answered on a correlated reply. Both
-/// subjects refuse the schedule row at parse time (the Rust hooks accept
-/// drop-reply only at the three reply pairs; Claude's FixtureMain requires
-/// a reply boundary), which is what this row runs and records. The
-/// kill-at-boundary variant (g2-kill-at-publication-commit) is the delivered
-/// evidence for the boundary; a proposal to accept it as such is in
-/// scenario-matrix-g2.md.
-fn g2_drop_reply_publication(context: &ScenarioContext) -> Result<()> {
-    let id = "g2-drop-reply-publication";
-    let (scenario_dir, _artifacts) = open_scenario(context, id)?;
-    let events = open_events(context, &scenario_dir, id, Subject::Rust)?;
-    let findings = per_server_findings(context, &scenario_dir, |dir, server| {
-        let rows = [g2_schedule_row(
-            context,
-            id,
-            "PUBLICATION_COMMITTED",
-            schedule::Action::DropReply,
-        )];
-        let refusal = subject_schedule_refusal(context, dir, id, server, &rows)?;
-        let artifacts = dir.join("artifacts");
-        fs::create_dir_all(&artifacts)?;
-        match refusal {
-            Some(text) => {
-                fs::write(artifacts.join("subject-schedule-refusal.txt"), &text)?;
-                Ok(format!(
-                    "refused the schedule at parse: {}",
-                    refusal_reason_line(&text)
-                ))
-            }
-            None => Ok(
-                "ACCEPTED drop-reply at PUBLICATION_COMMITTED (the row must be implemented \
-                 against this subject)"
-                    .into(),
-            ),
-        }
-    })?;
-    let reason = "neither subject exposes a PUBLICATION reply pair to withhold (publication \
-                  is observed via watch, not a correlated reply); both refuse drop-reply at \
-                  PUBLICATION_COMMITTED at schedule parse; the kill variant \
-                  g2-kill-at-publication-commit is the delivered boundary evidence";
-    finish_missing_capability(
-        context,
-        &scenario_dir,
-        id,
-        events,
-        &[
-            (
-                "schedule",
-                "drop-reply at PUBLICATION_COMMITTED (withheld reply plus connection reset)".into(),
-            ),
-            (
-                "would_assert",
-                "the same durable expectations as g2-kill-at-publication-commit: exactly one \
-                 terminal commit, SUCCEEDED under the same attempt after the client reconnects, \
-                 byte-exact result, post-terminal retry ALREADY_TERMINAL (18) or CANCELLED (12)"
-                    .into(),
-            ),
-            (
-                "missing_capability",
-                "a PUBLICATION reply pair on the subject (interface-v1 drop-reply requires a \
-                 committed boundary with a pending reply)"
-                    .into(),
-            ),
-        ],
-        &findings,
-        reason,
-    )?;
-    Err(MissingCapability(reason.to_owned()).into())
-}
-
 /// g7-unsafe-clock-refusal: needs a subject fixture clock (`clock-set`) or an
 /// untrusted-clock mode. Neither subject has one: the only clock control on
 /// either `serve` is `--trust-system-clock`, the Rust hooks reject
@@ -24929,7 +24967,48 @@ mod tests {
             let row = rows.iter().find(|row| row.id == id).unwrap();
             assert!(row.rust_implemented, "{id} must be implemented");
         }
-        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 67);
+        assert_eq!(rows.iter().filter(|row| row.rust_implemented).count(), 66);
+    }
+
+    /// The owner's 2026-09-13 decision (coordinator board): publication is
+    /// observed through a watch on both subjects, not a correlated reply
+    /// pair, so a withheld reply that does not exist cannot be lost; the
+    /// kill variant g2-kill-at-publication-commit is the boundary's
+    /// evidence. The row is retired from the matrix (66 of 67 rows remain);
+    /// the decision is recorded in scenario-matrix-g2.md and handoff.md §3k.
+    #[test]
+    fn drop_reply_publication_is_retired_from_the_matrix() {
+        let rows = rows();
+        assert!(
+            rows.iter().all(|row| row.id != "g2-drop-reply-publication"),
+            "g2-drop-reply-publication must not be registered: the row is retired"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.id == "g2-kill-at-publication-commit"),
+            "the kill variant remains the boundary evidence"
+        );
+    }
+
+    /// The kill-row op budget is 90 s and its observed.tsv line names the
+    /// transport bounds it derives from, so the evidence can never silently
+    /// drift from the code it cites.
+    #[test]
+    fn kill_row_op_budget_names_the_transport_bounds_it_derives_from() {
+        let (key, text) = kill_row_op_budget_observed();
+        assert_eq!(key, "driver_op_budget");
+        assert_eq!(KILL_ROW_OP_TIMEOUT, Duration::from_secs(90));
+        for citation in [
+            "90 s",
+            "server.rs:225",
+            "transport.rs:127",
+            "DurableClient.java:203-207",
+            "DurableClient.java:271-278",
+            "connection ended before drain",
+            "client response deadline",
+        ] {
+            assert!(text.contains(citation), "missing {citation:?} in {text}");
+        }
     }
 
     #[test]

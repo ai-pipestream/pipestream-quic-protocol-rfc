@@ -986,8 +986,11 @@ is inferred or substituted.
 
 ## 5. Known limitations / open gates
 
-1. Acceptance mode has never passed: the full matrix, both directions,
-   resource gates and run_all.sh integration are unfinished.
+1. Acceptance mode has never passed: the run_all.sh integration landed at
+   9842e655 (opt-in `PIPESTREAM_DURABLE_ACCEPTANCE=1` block), but the
+   acceptance run itself is pending three subject-side markers (section
+   3k): the two Java findings reported to Claude and the rust client
+   CLI's missing control-timeout option (lane question posted).
 2. Java-server hook directions are live for 5 G2 rows (M7), but
    `g2-crash-after-create-commit` rust-client/java-server stays
    INCOMPLETE: Java FixtureMain re-fires drop-reply on the REPLAYED
@@ -1461,3 +1464,420 @@ the fix does not affect any other row (only binding_attempt calls it). No run
 directory was deleted. The Java subject's sources at 32360ec3 are not merged
 into this branch; the jar is a pinned external artifact whose path and hash
 `run.tsv` records.
+
+## 3k. Milestone 20 (work in Kimi's role, 2026-09-15)
+
+Everything in this section was started by a follow-on agent in Kimi's role
+with the coordinating owner's written authorization (milestone M20 mandate of
+2026-09-15), on `agent/rfc-kimi-neutral-v2` in Kimi's worktree, and reviewed
+and confirmed by Kimi on return the same day (board update and the run_all.sh
+integration at 9842e655 are Kimi's own). Nothing was pushed, merged or
+rebased. The branch fast-forwarded
+from ab40d2e0 to afbb948a (the Java peer's in-tree subject code: defect 16 at
+3e1547dd, the owner's 2026-09-13 Section 12 decisions at a3b14725/802f1edc).
+All evidence here is DEV evidence, INCOMPLETE-labelled; nothing in this
+section is an acceptance claim. Stores, artifacts and TMPDIR for every run
+are under `~/.rfc-tmp/kimi-m20/` on the root drive; every build and run was
+taken under the coordination `BENCHMARK.lock`.
+
+### The decisions implemented (coordinator board, 2026-09-13/15)
+
+1. **g2-drop-reply-publication RETIRED** (commit a1616584). The row is
+   removed from the driver matrix (67 to 66 rows), its match arm and
+   MissingCapability body are deleted, and it no longer runs or FAILs in
+   either mode. The retirement is pinned by the
+   `drop_reply_publication_is_retired_from_the_matrix` driver test and
+   recorded in scenario-matrix-g2.md: publication is watch-observed on both
+   subjects, not a correlated reply, so a withheld reply that does not exist
+   cannot be lost; `g2-kill-at-publication-commit` is the boundary's
+   evidence; adding a correlated publication reply is a protocol change, out
+   of scope. The M19b MissingCapability evidence for the row remains in the
+   M19 archives.
+2. **Acceptance-gate waiver mechanism instead of weakened rows** (commit
+   5d65b661). `--waive 'ROW[:DIRECTION][=REASON]'` (repeatable) is parsed
+   and validated against the matrix before anything runs, recorded with the
+   reason string in run.tsv (`waive\t<row>\t<direction|->\t<reason>`), and
+   named in the run output. In acceptance mode a whole-row waiver converts a
+   row FAIL into a named WAIVED outcome; a direction waiver accepts only a
+   NAMED gap and requires the direction directory's INCOMPLETE marker, else
+   the waiver itself fails the row. Dev reporting is untouched (dev keeps
+   its INCOMPLETE labelling and never neutralises a row). PARTIAL row_status
+   is acceptable in acceptance mode with its named unmeasured scopes intact:
+   every observed.tsv under the row directory is scanned, a `PARTIAL`
+   marker without a `PARTIAL: <scopes>` reason fails the row, and PASS lines
+   are annotated with the evidence path. The marker itself is never
+   stripped.
+3. **Kill rows pass the Java client control deadline** (commit b55d8bad).
+   The four hooked G2 kill rows carry `--control-timeout-ms 10000`
+   (`JAVA_CLIENT_KILL_CONTROL_TIMEOUT_MS`, ClientCommands.java at 3e1547dd)
+   on every op of their java-client directions, built through one
+   `client_command` helper so `run_client_op_with` and `spawn_client_op`
+   cannot drift. See "Mandate correction" below for why this could not be
+   done for the Rust client.
+4. **Owner wire-code decisions asserted** (commit 138c566f).
+   g5-cross-authority-reference arm A now asserts CONFLICT (7) for the
+   attach, read, lookup and watch probes on BOTH subjects (owner decision
+   2026-09-13, Section 12.3, a3b14725: a foreign expected authority is a
+   contradiction with retained identity); the M20 dev run records
+   `refused CONFLICT (7): authority refusal CONFLICT: authority differs` in
+   both directions, resolving the M19 question to Claude. The
+   over-limit-control-body half of the audit needed no driver change: no row
+   asserted the old FRAME_ERROR for it (the G6 wire vectors are S12-338
+   decoded aggregates, which stay FRAME_ERROR), and the remaining
+   UNAUTHORIZED expectations are the owner-authorization class, which keeps
+   its code.
+
+### Mandate correction (reported, not worked around)
+
+The mandate expected a control-timeout option on BOTH subject client CLIs.
+It exists only on the Java client launcher (`--control-timeout-ms`, added at
+3e1547dd). The Rust client CLI (`pipestream-quinn v2 client`) exposes no
+such option: its quinn v2_client `response_timeout` (default 60 s) has no
+CLI surface, and clap would reject an unknown flag, so the driver cannot
+pass one and none was fabricated. The Rust-client kill directions keep their
+honest bounded-op handling and name the deviation in observed.tsv
+(`client_control_deadline`). This is why g8-timeout-no-completion-claim's
+kill variant rust-client/java-server cannot be fixed by passing an option.
+
+### Java subject build gate at this pin (named finding)
+
+The Java all-jar was built from the in-tree sources with the mandate's
+explicit fallback `mvn install -q -DskipTests -Psealed-interop` after the
+test gate failed THREE times on ONE test:
+`PeerRuleWireTest.streamIdsAreNeverRecycledAcrossALongConnection`
+(813 tests, 1 failure each time; logs /tmp/kimi-m20-mvn.log and
+/tmp/kimi-m20-mvn2.log, report copied to ~/.rfc-tmp/kimi-m20/).
+The failure is `LIMIT_EXCEEDED "retained input, output or executor
+capacity"` at entity ~28 of 100; the test's own comment says the default
+funding "refuses admissions past about 28" and it funds db-mib 1024 to get
+past that. The same test passed 8/8 twice on 2026-09-13 at tree af4cef6d
+(17.9 s per run) and fails 3/3 today (3.9-4.6 s per run) on unchanged code:
+an environment-speed margin, deterministic under today's host conditions,
+not a code regression and not load-herd noise. For Claude: worth checking
+whether the retained-promise reservation vs funded-log arithmetic is
+time-sensitive. The all-jar bytes are identical with or without surefire;
+the conformance matrix remains the subject certification gate.
+
+Follow-up probe of the same day (Kimi, on a quiet host, BENCHMARK.lock
+held, no other jobs): the single test alone still fails, now in 0.97 s at
+entity 34 with the same `LIMIT_EXCEEDED "retained input, output or
+executor capacity"` refusal where an AdmissionResponse is expected
+(PeerRuleWireTest.java:161; log ~/.rfc-tmp/kimi-m20/mvn-probe/probe.log).
+Failing in under a second with the lock held rules out load and herd
+timing; against the 17.9 s passing runs of 2026-09-13 the margin is
+environment-speed arithmetic, deterministic at this pin on this host.
+Second data point for Claude, same question as above.
+
+### Dev-run evidence (dev evidence, never an acceptance claim)
+
+Full matrix, `--dev`, INCOMPLETE-labelled, exit 0, 39.8 min of wall time
+(lock held 2026-09-15 10:38-11:18 EDT), archived as
+`durable-18d5856a211db6af`, **5732/5732 manifest entries verified after
+archiving, 0 mismatches**. Subjects: rust
+`4156c642b7bea6e4d8df0d32475573df53f6276d0f977c0968ca51506cb26cb6`
+(release build of this tree, reproduced; driver binary
+`9863d8d99af8423c8aa759b9f476c26b421a02b8824cdd7c055554aa04c57421` at
+commit 138c566f) and the in-tree Java all-jar
+`91c1842f0a4fe55e7667174f680ebd427d4f70600322f63a09d01039584ccb08`.
+run.tsv records the four waivers with their reasons. 60 rows SCENARIO OK,
+6 named INCOMPLETE markers (the four direction markers below plus the two
+waived whole rows), no FAIL, no new failure.
+
+Per-marker resolution, M19c set against M20:
+
+| Marker | M19c | M20 | Resolution |
+|---|---|---|---|
+| g2-crash-before-create-commit java-client/rust-server | INCOMPLETE "process timed out" | INCOMPLETE, same text | resolved at M20b as a DRIVER budget matter: named refusal observed inside the 90 s kill-row budget (see M20b below) |
+| g2-crash-after-create-commit rust-client/java-server | INCOMPLETE "client transport closed" | INCOMPLETE, same text | NOT resolved; defect 16 held for the committed boundary but the withhold hook still fires on the replay (below) |
+| g8-timeout-no-completion-claim kill-variant rust-client/java-server | INCOMPLETE "process timed out" | INCOMPLETE, same text | NOT a budget matter at M20b: third Java fixture defect — kill rows never fire at SENT boundaries (see M20b below) |
+| g3-store-ownership java-client/rust-server | named gap | named gap | unchanged; waived direction with its INCOMPLETE marker |
+| g4-revocation-vs-publication rust-client/java-server | named gap | named gap | unchanged; waived direction with its INCOMPLETE marker |
+| g2-drop-reply-publication (whole row) | INCOMPLETE missing capability | RETIRED | row removed from the matrix (decision 1) |
+| g7-unsafe-clock-refusal (whole row) | INCOMPLETE missing capability | INCOMPLETE missing capability | waived whole row; reason in run.tsv |
+| g7-cleanup-interrupted-refund (whole row) | INCOMPLETE missing capability | INCOMPLETE missing capability | waived whole row; reason in run.tsv |
+
+The three PARTIAL R rows (`r-staging-and-journal-bounds`, `r-network-bytes`,
+`r-native-credit`) keep their `row_status PARTIAL` markers verbatim with the
+named unmeasured scopes, and the new acceptance check accepted them with
+the evidence paths annotated on the run lines (dev mode annotates; the
+named-scope rule is enforced in acceptance mode).
+
+### Two Java-subject findings with M20 evidence (for Claude; no driver patch)
+
+- **g2-crash-before-create-commit java-client/rust-server: the control
+  deadline does not bound a dead-transport request stall.** Reproduced by
+  hand against the row's own schedule: the Java client WITH
+  `--control-timeout-ms 10000` (flag confirmed parsed: `--control-timeout-ms
+  0` answers `FRAME_ERROR: integer outside schema range`) exits 1 after
+  **61 s** with `CONTROL_RESET: connection ended before drain`, while the
+  Rust server kills itself correctly (exit 86, one CONNECTION_AUTHENTICATED
+  record). The 10 s control-response deadline covers a LIVE authority
+  holding a request (ClientControlTimeoutOptionTest's case) but not a
+  silently dead connection whose create write never completes; the client's
+  own bound there is ~60 s, above the driver's 30 s op bound. Either the
+  control deadline should also bound the request write/dead-connection
+  discovery, or the launcher should expose the stage bound. (Observed O-2's
+  "pass a value below its operation bound" is therefore NOT sufficient for
+  kills at CONNECTION_AUTHENTICATED; it remains correct for kills after a
+  reply boundary, where the op already has its answer.)
+- **g2-crash-after-create-commit rust-client/java-server: defect 16's scope
+  ends at the committed boundary.** M20 events show exactly ONE
+  SESSION_COMMITTED across both server processes (the fix held) — yet the
+  restarted server's `withhold(SESSION_RESPONSE_SENT)` hook still consumed
+  the re-armed drop-reply row for the REPLAYED create (CONTROL_RESET record
+  on the restart; replay refused `CANCELLED: client transport closed`).
+  FixtureMain's withhold path has no fresh-commit gating; HookPlacementTest
+  replays within one process and does not cover a cross-restart re-armed
+  schedule. Either the withhold hook needs the same fresh/replay
+  discrimination, or the driver restarts this row with an empty schedule
+  (a coordinator decision; NOT taken — it would stop exercising the
+  property). The same restart-rearm shape is why g8's kill variant
+  rust-client direction still hangs a post-restart probe against the
+  restarted plain Java server (unchanged from M19c; restarted server writes
+  READY, the Rust client's next-sequence then hangs >30 s with no output).
+
+### M20b: root-cause correction and the kill-row op budget (same day, commit 8f5c4a7e)
+
+Coordinator root-cause review re-classified two of the three blocking
+markers as DRIVER budget problems, not subject defects: a killed authority
+is noticed at the NEGOTIATED TRANSPORT BOUND, not the application control
+deadline. The Rust authority sets max_idle_timeout(60 s)
+(quinn/src/v2_authority/server.rs:225); the Java client's idle is
+max(handshake 10 s, control deadline, stream lifetime 300 s)
+(DurableClient.java:203-207), so QUIC negotiates 60 s and the Java client
+surfaces CONTROL_RESET "connection ended before drain" at ~61 s
+(DurableClient.java:271-278) — `--control-timeout-ms` bounds only
+live-connection control work. The Rust client's per-request response_timeout
+is 60 s (quinn/src/v2_client/transport.rs:127, swept at :538), refusing
+LIMIT_EXCEEDED "client response deadline" at ~60 s. Both exceed the driver's
+default 30 s op wait.
+
+The fixture now carries a per-op client wait (default 30 s, unchanged for
+every row) that the two affected kill rows widen to 90 s
+(`KILL_ROW_OP_TIMEOUT`, process.rs); the restarted session inherits it
+through the fixture clone. Only the WAIT BUDGET changed — every row
+assertion is byte-for-byte the same — and the rows' observed.tsv gained a
+`driver_op_budget` line naming the derivation and citations.
+
+Targeted dev rerun (both subjects, `--dev`, under the lock, archive
+`durable-18d589547e933f9b`, 132/132 manifest entries verified, exit 0):
+
+- **g2-crash-before-create-commit java-client/rust-server: GREEN.** The
+  binding op now observes the named refusal inside the 90 s budget —
+  transcript verbatim `CONTROL_RESET: CONTROL_RESET: connection ended
+  before drain` (exit 1; the hand repro of the identical op measured ~61 s
+  to that refusal). The row then completes: subject exit 86,
+  NEXT_SEQUENCE 1 after the restart, generation-1 replay, NEXT_SEQUENCE 2.
+  The marker is closed as a driver budget matter.
+- **g8-timeout-no-completion-claim kill-variant rust-client/java-server:
+  STILL INCOMPLETE, and the budget was NOT raised further (stop-and-report
+  rule).** The rerun disproved the budget hypothesis: the direction's
+  subject/ directory holds exactly ONE server log and ONE ready file — the
+  restart is never reached — and the timed-out wait is the driver's
+  `wait_exit` on the Java server, not any client op. Root cause, verified
+  in FixtureMain.java: `Hooks.committed()` (line 198) alone consumes
+  kill/exit rows, while `Hooks.sent()` (line 223) only records — so the
+  armed `kill@COMPLETE_RESPONSE_SENT` is accepted by the schedule parser
+  (line 114 accepts kill at any boundary; only drop-reply/disconnect are
+  reply-gated) and then SILENTLY NEVER FIRES. The Java server records
+  COMPLETE_RESPONSE_SENT and keeps serving; the Rust subject's fixture does
+  fire the kill at that boundary, which is why the rust/rust kill variant
+  is green. This is a THIRD Java fixture defect (kill at SENT boundaries;
+  plus the parser should refuse unactionable kill rows), in Claude's scope
+  like the withhold finding — reported, not patched: re-arming the Java
+  side at CLOSURE_COMMITTED would change what the row models (the reply
+  could no longer race through) and would arm the two subjects at different
+  boundaries, a coordinator decision. The 90 s budget stays: it is the
+  correct bound for the rust-client response_timeout class and harmless
+  elsewhere in these two rows.
+
+Gates on commit 8f5c4a7e: fmt exit 0, clippy -D warnings exit 0, 108
+passed / 0 failed (the two new tests pin the default/widened/clone-travel
+op-wait semantics and the citation list in the observed line).
+
+### M20c: two holes found by an acceptance-mode smoke test of the run_all.sh block (commit 81ff4fe6)
+
+An acceptance-mode smoke test of the run_all.sh block shape (2 rows,
+scratch store) found two real holes before the opt-in block could ever
+run clean:
+
+- **Relative subject paths broke spawning.** The driver validated
+  `--rust-bin` with `is_file()` from the launch cwd, but subjects spawn
+  with a scenario-owned working directory, so an explicit RELATIVE
+  --rust-bin was resolved by the child against ITS cwd: the smoke test
+  failed with `start ./target/release/pipestream-quinn v2 init-authority:
+  No such file or directory (os error 2)` on a binary that exists. The
+  default (absolute) path is why no M20 dev run ever saw this; the
+  run_all.sh block committed at 9842e655 passed relative paths and would
+  have failed the same way. Fix: `--rust-bin`/`--java-jar` are
+  canonicalized after the is_file gate, and `--artifacts`/`--archive`
+  are joined onto the launch cwd when relative (store roots may not
+  exist yet, so they are absolutized, not canonicalized). Every recorded
+  and spawned path is now cwd-independent.
+- **Whole-row waivers converted ANY Fail into WAIVED.** The smoke run
+  WAIVED g7-unsafe-clock-refusal over a spawn ENOENT — a real defect
+  hidden behind a waiver, against the never-weaken-expectations rule.
+  Fix: a whole-row waiver now converts a Fail ONLY when the failure
+  names the row's missing capability (the `MissingCapability` display
+  prefix, a public constant in scenarios.rs); any other failure stays
+  FAILED with "waiver did not match". A waiver over a passing row is
+  named "unused whole-row waiver (the row passed)" on the PASS line
+  (named as unused — validation cannot see outcomes; rejection there
+  was the alternative). Direction-waiver behavior is unchanged.
+  `conformance/run_all.sh` now spells every block path absolute via
+  $repository_root; the block is otherwise as committed.
+
+Gates on 81ff4fe6: fmt exit 0, clippy -D warnings exit 0, 110 passed /
+0 failed (three new tests: matched/unmatched waiver outcomes with the
+unused-waiver naming, and the canonicalize/absolutize path handling).
+`cargo build --release --locked` reproduces the rust subject
+byte-identical (`4156c642b7be…`); only the conformance crate changed.
+
+Evidence (acceptance-mode smokes, both with the deliberately RELATIVE
+subject paths, under BENCHMARK.lock, stores under
+~/.rfc-tmp/kimi-m20/smoke2/; dev-labelled scratch evidence, never a
+full-matrix claim):
+
+- `durable-18d58a7d01f54e67`: exit 0. `PASS g1-leaf-copy
+  rust-client/rust-server, rust-client/java-server,
+  java-client/rust-server`; `WAIVED g7-unsafe-clock-refusal:
+  g7-unsafe-clock-refusal INCOMPLETE: missing subject capability: no
+  subject fixture clock: … (waiver: no fixture clock on either subject;
+  interface-v1 has no clock-set boundary …)` — the waiver matched the
+  missing-capability failure, not the spawn error that provoked this
+  fix. run.tsv records the canonical absolute rust_bin and the jar's
+  hash 91c1842f… next to the four waiver reasons.
+- Wrong-waiver negative check (`--waive g1-leaf-copy=should-not-apply`
+  on the green row): exit 0, `PASS g1-leaf-copy … (unused whole-row
+  waiver (the row passed): should-not-apply)`.
+
+The full acceptance matrix was NOT run (mandate); the coordination
+board is untouched.
+
+### M20d: the pre-landing review hole - incomplete directions can no longer pass unwaived (commit a962024f)
+
+The owner's review of the branch for landing (16 commits through 03ef759f)
+found one acceptance hole to fix BEFORE landing: incomplete directions
+could pass without an explicit waiver, two arms. Both are closed in
+acceptance mode only; dev labelling is byte-for-byte unchanged.
+
+- Direction-level: INCOMPLETE marker files under
+  `<scenario_dir>/<direction-hyphenated>/` (scenarios.rs writes them for
+  hooked-direction failures and named gaps) were only validated when a
+  waiver was DECLARED; an unwaived marker inside a PASS row passed
+  silently. Acceptance now scans the row directory for every
+  direction-level marker; an unwaived marker FAILs the row, naming the
+  direction in the slash spelling (reverse-mapped through the known
+  direction set - components contain hyphens, so a blind replace is
+  ambiguous) and quoting the marker file's named reason.
+- Row-level: `DirectionOutcome::Incomplete` reported `failed: false`
+  unconditionally. In acceptance a row-level Incomplete FAILs unless a
+  whole-row waiver covers it, and covers it only when the reason names
+  the row's missing capability; the Fail and Incomplete arms now share
+  one `waive_row_failure` helper so they cannot drift. Any other
+  Incomplete FAILs, saying acceptance requires an explicit waiver.
+- A declared direction waiver over a direction that ran and passed
+  (directory present, no marker) is named "unused direction waiver",
+  mirroring the M20c whole-row rule; a waiver naming a direction that
+  never ran and left no evidence still fails (a waiver accepts a named
+  gap, it never replaces one).
+
+Gates on a962024f: fmt exit 0, clippy -D warnings exit 0, 112 passed /
+0 failed (six new tests, red first: marker scan covered/unwaived/mismatch,
+row-level Incomplete arms, unused naming, dev unchanged). `cargo build
+--release --locked` reproduces the rust subject byte-identical
+(`4156c642b7be…`); only the conformance crate changed.
+
+Live verification (acceptance mode, NO --dev, relative subject paths,
+TMPDIR/stores under ~/.rfc-tmp/kimi-m20/smoke3, real exit codes, under
+BENCHMARK.lock; scratch evidence, never a full-matrix claim):
+
+- 3a positive control (the smoke2 shape), run
+  `durable-18d5bafae66b0461`, **exit 0**:
+  `PASS g1-leaf-copy rust-client/rust-server, rust-client/java-server,
+  java-client/rust-server` and `WAIVED g7-unsafe-clock-refusal:
+  g7-unsafe-clock-refusal INCOMPLETE: missing subject capability: no
+  subject fixture clock: … (waiver: no fixture clock on either subject;
+  …)`.
+- 3b negative, g3-store-ownership WITHOUT its direction waiver (other 3
+  waivers present): **exit 1** —
+  `FAIL g3-store-ownership: direction java-client/rust-server recorded an
+  INCOMPLETE marker that no direction waiver covers: …/g3-store-ownership/java-client-rust-server/INCOMPLETE:`
+  quoting `named gap: g3-store-ownership is a per-server storage row; the
+  java-client/rust-server direction differs only in the client subject,
+  which never owns the store. …`
+- 3c positive control, g3 WITH all four waivers: **exit 0** —
+  `PASS g3-store-ownership rust-client/rust-server, rust-client/java-server
+  (waived java-client/rust-server: the client subject never owns the store
+  (named-gap evidence …/java-client-rust-server/INCOMPLETE))`.
+- 3d negative 2, g2-crash-after-create-commit with NO waivers: **exit 1** —
+  `FAIL g2-crash-after-create-commit: direction rust-client/java-server
+  recorded an INCOMPLETE marker that no direction waiver covers:
+  …/rust-client-java-server/INCOMPLETE:` quoting the withheld-replay
+  error. The owner's exact complaint (this marker passing silently inside
+  a green row) is dead: the row is red until Claude's withhold fix lands
+  or the coordinator decides otherwise.
+
+Run ids/logs: `~/.rfc-tmp/kimi-m20/smoke3/{a,b,c,d}.log` with run dirs
+`durable-18d5bafae66b0461` (a), `durable-18d5bb0351031cc8` (b),
+`durable-18d5bb0b4785b0f6` (c), `durable-18d5bb0fee7bf43b` (d).
+
+### Gates on this tree
+
+`cargo fmt --all -- --check` exit 0; `cargo clippy --all-targets
+-p pipestream-conformance -- -D warnings` exit 0; `cargo test -p
+pipestream-conformance` 106 passed / 0 failed (98 at the retirement commit,
+99 after the kill-row flag, 106 after the waiver mechanism; the new tests
+pin the waiver parsing/validation/run.tsv rendering, the marker evidence,
+the PARTIAL named-scope rule, the acceptance/dev outcome split, the
+retirement, and the flag's Java-only placement). `cargo build --release
+--locked` exit 0 reproducing the rust subject byte-identical. The
+conformance crate gained no dependency.
+
+Acceptance mode was NOT run (mandate: next milestone after the owner's
+review of this dev run).
+
+Follow-up of the same day (the real Kimi, resumed): the M18/M19 review and
+both reserved decisions were confirmed as implemented above; the dev-run
+evidence was spot-verified (archive `durable-18d5856a211db6af`,
+MANIFEST.sha256 5732 entries, four waiver lines in run.tsv). Commit 9842e655
+then integrated the acceptance matrix into `conformance/run_all.sh` as an
+opt-in block (`PIPESTREAM_DURABLE_ACCEPTANCE=1`, after the Java build, with
+the four milestone-20 waivers spelled out), so the proposal in
+acceptance-mode-proposal.md is now applied rather than proposed. The
+coordination board's Kimi section was updated the same day with the M20
+state and the three blocking subject-side markers (two Java findings for
+Claude and the rust-CLI control-timeout lane question). The acceptance run
+itself remains pending those resolutions.
+
+### Milestone 21 procedure (written in advance, pending Claude's fixture fixes)
+
+When the two Java fixture defects (finding 2: withhold fresh-gate,
+DurableServer.java:872; finding 3: kill at SENT boundaries never fires)
+and the `PeerRuleWireTest` build gate are resolved on main, the acceptance
+milestone is mechanical:
+
+1. `git merge --ff-only main` in this worktree; confirm the fixes by the
+   commit ids Claude posts and by reading the withhold/ Hooks.sent() code
+   paths.
+2. Rebuild both subjects from the merged tree (`cargo build --release
+   --locked`; `mvn install -q -Psealed-interop` — full test gate, no
+   `-DskipTests`; if `PeerRuleWireTest` is still red, stop and board it).
+3. Targeted dev rerun of `g2-crash-after-create-commit` and
+   `g8-timeout-no-completion-claim` first: both java-server directions
+   must go green for the RIGHT reasons (BINDING with generation 1 on the
+   replayed create; the kill actually firing at COMPLETE_RESPONSE_SENT),
+   not because an assertion moved. Assertions do not move.
+4. Full acceptance run via the run_all.sh block
+   (`PIPESTREAM_DURABLE_ACCEPTANCE=1`, `PIPESTREAM_DURABLE_STORE` and
+   `TMPDIR` on the root drive under `~/.rfc-tmp/kimi-m21/`, the whole
+   script under BENCHMARK.lock): expected ~60-90 min for the durable
+   block. Exit 0 required; every waived row/direction must appear as
+   WAIVED with its reason in run.tsv; the archive's MANIFEST.sha256 is
+   verified after archiving.
+5. Any FAIL row is a stop-and-board event, never an expectation edit.
+6. On green: flip this handoff's header to REVIEW_READY with the
+   acceptance archive id, update traceability.md's DONE definition to
+   "green in acceptance", update the board (final labels for Meta's
+   comparative run can then be produced), and request the final
+   coordinator review per KIMI.md.

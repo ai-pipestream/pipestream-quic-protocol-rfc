@@ -1,0 +1,12 @@
+1	durable-18d5856a211db6af	g5-foreign-owner	rust	client	618-18d58634118215c5	1			0:0:1	1		artifacts/input.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+1	durable-18d5856a211db6af	g5-foreign-owner	rust	client	618-18d58634118215c5	2	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5856a211db6af	g5-foreign-owner	rust	client	618-18d58634118215c5	3	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5856a211db6af	g5-foreign-owner	rust	client	618-18d58634118215c5	4	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5856a211db6af	g5-foreign-owner	rust	client	618-18d58634118215c5	5	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5856a211db6af	g5-foreign-owner	rust	client	618-18d58634118215c5	6	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5856a211db6af	g5-foreign-owner	rust	client	618-18d58634118215c5	7	REFUSAL_RECEIVED				8	artifacts/bob-attach-claim.txt	104	03880d10c6f7622949471b43ba833f5ff8d531590be2c83e7936b4a4f1166f1d
+1	durable-18d5856a211db6af	g5-foreign-owner	rust	client	618-18d58634118215c5	8	REFUSAL_RECEIVED		0:0:1		5	artifacts/bob-view.txt	84	83875cfa7bbf75aab36fe110600de439eef66804333535aff98b082020d6a0c3
+1	durable-18d5856a211db6af	g5-foreign-owner	rust	client	618-18d58634118215c5	9	REFUSAL_RECEIVED	d82b4f0e9f3814f1161c84240d038f52			5	artifacts/bob-lookup.txt	75	77c02c3a2e6f3e04b40b3f4478bced01004ccf654403aa068abeab38a2397d5c
+1	durable-18d5856a211db6af	g5-foreign-owner	rust	client	618-18d58634118215c5	10	REFUSAL_RECEIVED		0:0:1	1	5	artifacts/bob-read.txt	77	b0c03d14226d8fafe8b08ce3597b79eb8c9e40c0f9eea55d338c82a5e2e17bf7
+1	durable-18d5856a211db6af	g5-foreign-owner	rust	client	618-18d58634118215c5	11	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d5856a211db6af	g5-foreign-owner	rust	client	618-18d58634118215c5	12	RESULT_INSTALLED		0:0:1	1		artifacts/alice-readback.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682

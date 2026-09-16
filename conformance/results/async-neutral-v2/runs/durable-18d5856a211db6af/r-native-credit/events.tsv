@@ -1,0 +1,4 @@
+1	durable-18d5856a211db6af	r-native-credit	rust	client	618-18d587847356e60c	1	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d5856a211db6af	r-native-credit	rust	client	618-18d587847356e60c	2	CREDIT_TRANSFER_MEASURED							
+1	durable-18d5856a211db6af	r-native-credit	rust	client	618-18d587847356e60c	3	CREDIT_RELEASE_OBSERVED							
+1	durable-18d5856a211db6af	r-native-credit	rust	client	618-18d587847356e60c	4	CREDIT_EVIDENCE					artifacts/credit.tsv	867	3580268ad3281e9bf6be293a044bb4862654ff8cc14e5566ae7930410525d18d

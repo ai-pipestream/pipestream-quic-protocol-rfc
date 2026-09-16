@@ -1,0 +1,27 @@
+phase	attempt	principal	connection	outcome	detail
+pending-fill	1	alice	0	pending	request 3 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	2	alice	0	pending	request 4 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	3	alice	0	pending	request 5 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	4	alice	0	pending	request 6 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	5	alice	0	pending	request 7 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	6	alice	0	pending	request 8 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	7	alice	0	pending	request 9 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	8	alice	0	pending	request 10 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	9	alice	0	pending	request 11 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	10	alice	0	pending	request 12 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	11	alice	0	pending	request 13 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	12	alice	0	pending	request 14 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	13	alice	0	refused	request 15 tag_kind=0 tag_id=15 code=4 detail="metadata concurrency exhausted"
+pending-drain	-	alice	0	summary	12/12 granted waits answered, 0 other frames
+staging	1	alice	0	staged	stream=2 work=0:0:100001 4096/65536 bytes, no FIN
+staging	2	alice	0	staged	stream=6 work=0:0:100002 4096/65536 bytes, no FIN
+staging	3	alice	0	staged	stream=10 work=0:0:100003 4096/65536 bytes, no FIN
+staging	4	alice	0	staged	stream=14 work=0:0:100004 4096/65536 bytes, no FIN
+staging	5	alice	1	refused	tag_kind=1 tag_id=2 code=4 detail="input transfer capacity exhausted"
+staging	6	alice	1	refused	tag_kind=1 tag_id=6 code=4 detail="input transfer capacity exhausted"
+staging	7	alice	1	refused	tag_kind=1 tag_id=10 code=4 detail="input transfer capacity exhausted"
+staging	8	alice	1	refused	tag_kind=1 tag_id=14 code=4 detail="input transfer capacity exhausted"
+charged	-	-	-	probe	still charged: a further staging attempt while every transfer is held is refused again, code=4 detail="input transfer capacity exhausted"
+existing	-	-	-	completion	kept: the staging transfer accepted before exhaustion (work 0:0:100004, stream 14) completed to an admission receipt naming stream 14 while NEW work stayed refused
+recovery-after-cleanup	1	alice	-	probe	accepted on attempt 1 (staging transfer 2 opened)
+recovery-after-restart	1	alice	-	probe	accepted on attempt 1 (staging transfer 2 opened)

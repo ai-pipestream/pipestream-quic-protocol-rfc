@@ -1,0 +1,15 @@
+server_subject	java
+client_subject	rust
+alpn	pipestream/2
+case_c_within_batch	client-side: invalid declaration commitment
+case_c_across_batch	authority refusal CONFLICT: entity identity is not above the scope high-water mark
+case_d_batch_accepted	accepted 100 entities; receipt declared=102; funding loop accepted up to 202 declared
+case_d_batch_refused	declare [203..=252] (50 entities) refuses LIMIT_EXCEEDED: cumulative completion funding cap; actual bound recorded (202 declared before refusal)
+case_d_clap_arity	rust client refused 257 entities client-side (clap 1..=256); wire unreachable (named gap)
+case_a_empty_no_seal	client-side: invalid declaration commitment
+case_b_empty_seal	accepted; scope sealed
+declared_not_admitted	state=0 attempt=0 on 0:0:1 and 0:0:10
+expected_seal_sha256	f9428164818e7c3b1477a39b28b7994914ff5d82a81d57700955715e8523ba4d
+seal_matches_oracle	true
+membership_verified	true
+java_jar_sha256	91c1842f0a4fe55e7667174f680ebd427d4f70600322f63a09d01039584ccb08

@@ -1,0 +1,15 @@
+1	durable-18d5856a211db6af	g8-child-cut-conflict	java	client	618-18d5868151cb0b4d	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5856a211db6af	g8-child-cut-conflict	java	client	618-18d5868151cb0b4d	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5856a211db6af	g8-child-cut-conflict	java	client	618-18d5868151cb0b4d	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5856a211db6af	g8-child-cut-conflict	java	client	618-18d5868151cb0b4d	4	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5856a211db6af	g8-child-cut-conflict	java	client	618-18d5868151cb0b4d	5	REQUEST_SENT	49e555316b8d6cf8b0aee3fab60dbfb8						
+1	durable-18d5856a211db6af	g8-child-cut-conflict	java	client	618-18d5868151cb0b4d	6	RECEIPT_VALIDATED	49e555316b8d6cf8b0aee3fab60dbfb8						
+1	durable-18d5856a211db6af	g8-child-cut-conflict	java	client	618-18d5868151cb0b4d	7	REQUEST_SENT	61391c258d95ee0020667eda3683b35b	1:0:1	1				
+1	durable-18d5856a211db6af	g8-child-cut-conflict	java	client	618-18d5868151cb0b4d	8	RECEIPT_VALIDATED	61391c258d95ee0020667eda3683b35b	1:0:1	1				
+1	durable-18d5856a211db6af	g8-child-cut-conflict	java	client	618-18d5868151cb0b4d	9	OBSERVATION_JOURNALED	61391c258d95ee0020667eda3683b35b	1:0:1	1				
+1	durable-18d5856a211db6af	g8-child-cut-conflict	java	client	618-18d5868151cb0b4d	10	REQUEST_SENT	670566df8622f68c891c36f96c029276	1:0:2	1				
+1	durable-18d5856a211db6af	g8-child-cut-conflict	java	client	618-18d5868151cb0b4d	11	RECEIPT_VALIDATED	670566df8622f68c891c36f96c029276	1:0:2	1				
+1	durable-18d5856a211db6af	g8-child-cut-conflict	java	client	618-18d5868151cb0b4d	12	OBSERVATION_JOURNALED	670566df8622f68c891c36f96c029276	1:0:2	1				
+1	durable-18d5856a211db6af	g8-child-cut-conflict	java	client	618-18d5868151cb0b4d	13	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5856a211db6af	g8-child-cut-conflict	java	client	618-18d5868151cb0b4d	14	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d5856a211db6af	g8-child-cut-conflict	java	client	618-18d5868151cb0b4d	15	RESULT_INSTALLED		0:0:1	1		artifacts/parent-output.bin	65000	9e1572ca5d5b092815ebf83c1ef53831065d73e5a29268f6bb7711c2553c6ba0

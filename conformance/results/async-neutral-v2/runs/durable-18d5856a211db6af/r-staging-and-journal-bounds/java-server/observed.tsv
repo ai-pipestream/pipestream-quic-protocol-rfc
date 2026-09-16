@@ -1,0 +1,23 @@
+server_subject	java
+client_subject	rust raw peer (several connections, incomplete staging transfers held open)
+declared_pending_limit	32 (capability selection, read on the wire)
+declared_stream_limit	16 (capability selection)
+declared_session_limits	scopes=4096 entities=1000000 operations=1000000 input_bytes=1073741824 output_bytes=1073741824 active_jobs=16 (session binding receipt)
+java_memory_freeze	-Xms256m -Xmx2g (frozen before the run)
+pending_ceiling	declared pending_limit 32; 32 waits granted and left unanswered (0 answered immediately and held no slot), and attempt 33 (request 35) was refused LIMIT_EXCEEDED (4) detail="request refused". The ceiling that fires is not necessarily the declared pending_limit and the row does not claim it is
+pending_existing_promises	32/32 waits granted before exhaustion were answered after the watched work was admitted on a second connection (0 other control frames drained and logged)
+staging_streams_opened	144 incomplete input transfers over 9 connections (144 still held at the end of the sweep, 0 stopped by the subject while being written); hard caps 200 streams / 8 connections per principal
+staging_ceiling	NEW work refused on staging attempt 129 (principal bob) with LIMIT_EXCEEDED (4), tag_kind=1 tag_id=2 detail="input handle capacity exhausted"
+capacity_charged_while_busy	still charged: a further staging attempt while every transfer is held is refused again, code=4 detail="input handle capacity exhausted"
+staging_existing_promises	kept: the staging transfer accepted before exhaustion (work 0:0:100152, stream 62) completed to an admission receipt naming stream 62 while NEW work stayed refused
+reconcile_after_cleanup	after-cleanup: accepted on attempt 1 (staging transfer 2 opened) (bounded wait 60s)
+reconcile_after_restart	after-restart: accepted on attempt 1 (staging transfer 2 opened) (bounded wait 60s)
+retained_bytes_across_restart	store file lengths total 717892 B before the restart and 873540 B after it (separate scope from allocated blocks; both are in store.tsv per file and per checkpoint)
+collector	pre-restart 522 ticks / 522 lines / 0 errors; post-restart 23 ticks / 23 lines / 0 errors
+fds	baseline median=19 -> staging held p90=151 (max 151) -> after release p90=23 (max 24)
+rss_kib	baseline median=210088 -> staging held p90=429524 -> after release p90=354264
+threads	baseline median=32 -> staging held max=50 -> after release max=47
+journal_ceiling_declared	session binding receipt: scopes=4096 entities=1000000 operations=1000000 input_bytes=1073741824 output_bytes=1073741824 active_jobs=16. Configured file ceilings that this row does NOT drive to exhaustion: the java subject's bounded-SQLite policy (256 MiB database, 64 MiB WAL, 64 MiB rollback journal, 512 KiB shared memory) and its object store policy (8 GiB bytes, 10,000 files, 128 handles); the rust authority's equivalent record-completion capacity. Driving any of them needs hundreds of megabytes of committed records, which is outside this row's bounded budget
+journal_observed_peak	largest authority.sqlite length observed across 6 checkpoints: 741376 B (file length and allocated blocks are separate scopes, both per file in store.tsv)
+store_checkpoints	163 records across after-cleanup, after-restart, before-restart, pending-ceiling, staging-full, start
+row_status	PARTIAL: the pending-response and staging-object ceilings are driven to exhaustion and their refusals, promise-keeping, handle bounds and reconciliation are asserted, but the journal/retained-BYTE ceilings are recorded rather than driven (see journal_ceiling_declared). Named reason, never a skip

@@ -1,0 +1,7 @@
+input_len	12582912
+input_sha256	ab0e2b4417deba665487ff89294e266427c72bf5b0de42a136d46acf2da4a60a
+fault_window	armed kill at INPUT_INSTALLED: payload staged, admission NOT committed
+lookup_after_restart	named NOT_FOUND (the admission never committed)
+same_op_readmission	journaled replay of the SAME operation id succeeds
+g2_reference	g2-drop-reply-admission covers the armed admit-input:after lost-reply arm
+storage_probe_scope	private-storage-supplementary (object-dir metrics; paired with the lookup/replay network observation)
