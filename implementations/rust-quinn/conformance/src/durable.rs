@@ -143,29 +143,76 @@ fn render_waivers_tsv(waivers: &[WaiveTarget]) -> String {
     text
 }
 
-/// A waived direction is an explicit acceptance of a NAMED gap, so the
-/// direction directory must carry its `INCOMPLETE` named-gap marker; a
-/// waiver naming a direction with no such evidence is itself a failure.
-/// Direction directory names hyphenate the internal slash spelling.
-fn check_direction_waiver(scenario_dir: &std::path::Path, target: &WaiveTarget) -> Result<String> {
+/// How a declared direction waiver stood against the row's evidence.
+#[derive(Debug)]
+enum DirectionWaiverReport {
+    /// The named-gap INCOMPLETE marker exists; the waiver accepts it and
+    /// the line names the evidence.
+    Covered(String),
+    /// The direction directory exists without a marker: the direction ran
+    /// and passed, so the declared waiver was not needed (mirrors the
+    /// whole-row unused rule).
+    Unused(String),
+}
+
+/// A waived direction is an explicit acceptance of a NAMED gap: the
+/// direction directory must carry its `INCOMPLETE` named-gap marker, unless
+/// the direction ran and passed (directory present, no marker), in which
+/// case the waiver is named unused. A waiver naming a direction that never
+/// ran and left no evidence is itself a failure. Direction directory names
+/// hyphenate the internal slash spelling.
+fn check_direction_waiver(
+    scenario_dir: &std::path::Path,
+    target: &WaiveTarget,
+) -> Result<DirectionWaiverReport> {
     let direction = target
         .direction
         .as_deref()
         .context("check_direction_waiver needs a direction waiver")?;
-    let marker = scenario_dir
-        .join(direction.replace('/', "-"))
-        .join("INCOMPLETE");
+    let directory = scenario_dir.join(direction.replace('/', "-"));
+    let marker = directory.join("INCOMPLETE");
+    let reason = target.reason.as_deref().unwrap_or("(no reason recorded)");
+    if marker.is_file() {
+        return Ok(DirectionWaiverReport::Covered(format!(
+            "waived {direction}: {reason} (named-gap evidence {})",
+            marker.display()
+        )));
+    }
     ensure!(
-        marker.is_file(),
+        directory.is_dir(),
         "waiver names {direction}, but {} holds no named-gap INCOMPLETE evidence; a waiver \
          accepts a named gap, it never replaces one",
         marker.display()
     );
-    Ok(format!(
-        "waived {direction}: {} (named-gap evidence {})",
-        target.reason.as_deref().unwrap_or("(no reason recorded)"),
-        marker.display()
-    ))
+    Ok(DirectionWaiverReport::Unused(format!(
+        "unused direction waiver (the direction passed without a named gap): {reason}"
+    )))
+}
+
+/// Every direction-level INCOMPLETE marker under the row directory, as
+/// (hyphenated direction directory name, marker path, content). Row-level
+/// outcomes are reported through `DirectionOutcome`; only direction
+/// subdirectories carry these markers (scenarios.rs writes them under
+/// `<scenario_dir>/<direction-hyphenated>/`).
+fn direction_incomplete_markers(
+    scenario_dir: &std::path::Path,
+) -> Result<Vec<(String, PathBuf, String)>> {
+    let mut markers = Vec::new();
+    for path in walk_sorted(scenario_dir)? {
+        if path.file_name() == Some(std::ffi::OsStr::new("INCOMPLETE"))
+            && path.parent() != Some(scenario_dir)
+        {
+            let direction = path
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+                .context("a marker file has no parent directory name")?;
+            let content = fs::read_to_string(&path)
+                .with_context(|| format!("read marker {}", path.display()))?;
+            markers.push((direction, path, content));
+        }
+    }
+    Ok(markers)
 }
 
 /// Every `row_status` value in observed.tsv files under the row directory
@@ -217,6 +264,48 @@ struct RowReport {
     failed: bool,
 }
 
+/// Convert a failing row outcome under a whole-row waiver (the Fail and
+/// Incomplete arms share this rule, so the two can never drift): the waiver
+/// absorbs ONLY a failure whose reason names the row's missing capability;
+/// anything else stays FAILED and says the waiver did not match.
+fn waive_row_failure(row_id: &str, reason: &str, waiver: Option<&WaiveTarget>) -> RowReport {
+    match waiver {
+        None => RowReport {
+            line: format!("FAIL {row_id}: {reason}"),
+            annotations: Vec::new(),
+            failed: true,
+        },
+        Some(waiver) if reason.contains(scenarios::MISSING_CAPABILITY_MARKER) => RowReport {
+            line: format!(
+                "WAIVED {row_id}: {reason} (waiver: {})",
+                waiver.reason.as_deref().unwrap_or("(no reason recorded)")
+            ),
+            annotations: Vec::new(),
+            failed: false,
+        },
+        Some(_) => RowReport {
+            line: format!(
+                "FAIL {row_id}: {reason} (waiver did not match: the waiver for this row \
+                 accepts its named missing capability, and this failure is not one)"
+            ),
+            annotations: Vec::new(),
+            failed: true,
+        },
+    }
+}
+
+/// The driver's canonical slash spelling for a hyphenated direction
+/// directory name. Direction components contain hyphens themselves
+/// ("java-client", "rust-server"), so only the known direction set can be
+/// reverse-mapped; anything else is echoed verbatim.
+fn slash_direction(hyphenated: &str) -> String {
+    DIRECTIONS
+        .iter()
+        .find(|direction| direction.replace('/', "-") == hyphenated)
+        .map(|direction| (*direction).to_owned())
+        .unwrap_or_else(|| hyphenated.to_owned())
+}
+
 /// Report one row's outcome, applying waivers (acceptance mode only; dev
 /// keeps its INCOMPLETE labelling untouched) and the PARTIAL named-scope
 /// check. Kept free of process state so the rules are unit-testable.
@@ -266,7 +355,8 @@ fn report_row_outcome(
             if !dev {
                 for target in &direction_waivers {
                     match check_direction_waiver(scenario_dir, target) {
-                        Ok(line) => annotations.push(line),
+                        Ok(DirectionWaiverReport::Covered(line))
+                        | Ok(DirectionWaiverReport::Unused(line)) => annotations.push(line),
                         Err(error) => {
                             return RowReport {
                                 line: format!("FAIL {}: {error:#}", row.id),
@@ -274,6 +364,44 @@ fn report_row_outcome(
                                 failed: true,
                             };
                         }
+                    }
+                }
+                // Every direction-level INCOMPLETE marker must be covered by
+                // a declared direction waiver; an unwaived marker FAILs the
+                // row, naming the direction and quoting the marker's reason
+                // (acceptance must never pass an incomplete direction
+                // silently - the pre-landing review's exact finding).
+                let declared: Vec<String> = direction_waivers
+                    .iter()
+                    .filter_map(|target| target.direction.clone())
+                    .collect();
+                let markers = match direction_incomplete_markers(scenario_dir) {
+                    Ok(markers) => markers,
+                    Err(error) => {
+                        return RowReport {
+                            line: format!("FAIL {}: {error:#}", row.id),
+                            annotations: Vec::new(),
+                            failed: true,
+                        };
+                    }
+                };
+                for (direction, marker, content) in markers {
+                    let covered = declared
+                        .iter()
+                        .any(|spelling| spelling.replace('/', "-") == direction);
+                    if !covered {
+                        return RowReport {
+                            line: format!(
+                                "FAIL {}: direction {} recorded an INCOMPLETE marker that no \
+                                 direction waiver covers: {}:\n{}",
+                                row.id,
+                                slash_direction(&direction),
+                                marker.display(),
+                                content.trim_end()
+                            ),
+                            annotations: Vec::new(),
+                            failed: true,
+                        };
                     }
                 }
             }
@@ -288,45 +416,37 @@ fn report_row_outcome(
                 failed: false,
             }
         }
-        scenarios::DirectionOutcome::Incomplete(reason) => RowReport {
-            line: format!("INCOMPLETE {}: {reason}", row.id),
-            annotations: Vec::new(),
-            failed: false,
-        },
-        scenarios::DirectionOutcome::Fail(reason) => {
-            if !dev && let Some(waiver) = whole_row_waiver {
-                // A whole-row waiver accepts ONE failure class: the row's
-                // named missing capability (the acceptance smoke test caught
-                // a spawn ENOENT being WAIVED here, which would hide a real
-                // defect behind a waiver). Anything else stays FAILED and
-                // says the waiver did not match.
-                if reason.contains(scenarios::MISSING_CAPABILITY_MARKER) {
-                    RowReport {
-                        line: format!(
-                            "WAIVED {}: {reason} (waiver: {})",
-                            row.id,
-                            waiver.reason.as_deref().unwrap_or("(no reason recorded)")
-                        ),
-                        annotations: Vec::new(),
-                        failed: false,
-                    }
-                } else {
-                    RowReport {
-                        line: format!(
-                            "FAIL {}: {reason} (waiver did not match: the waiver for this row \
-                             accepts its named missing capability, and this failure is not one)",
-                            row.id
-                        ),
-                        annotations: Vec::new(),
-                        failed: true,
-                    }
+        scenarios::DirectionOutcome::Incomplete(reason) => {
+            if dev {
+                // Dev labelling is correct and stays byte-for-byte
+                // unchanged: an Incomplete row reports INCOMPLETE and never
+                // fails the dev run.
+                RowReport {
+                    line: format!("INCOMPLETE {}: {reason}", row.id),
+                    annotations: Vec::new(),
+                    failed: false,
                 }
             } else {
+                let mut report = waive_row_failure(row.id, reason, whole_row_waiver);
+                if report.failed && whole_row_waiver.is_none() {
+                    report.line = format!(
+                        "{} (acceptance requires an explicit whole-row waiver naming this \
+                         row's missing capability, and none is declared)",
+                        report.line
+                    );
+                }
+                report
+            }
+        }
+        scenarios::DirectionOutcome::Fail(reason) => {
+            if dev {
                 RowReport {
                     line: format!("FAIL {}: {reason}", row.id),
                     annotations: Vec::new(),
                     failed: true,
                 }
+            } else {
+                waive_row_failure(row.id, reason, whole_row_waiver)
             }
         }
     }
@@ -865,7 +985,9 @@ mod tests {
             direction: Some("java-client/rust-server".into()),
             reason: Some("the client subject never owns the store".into()),
         };
-        // No evidence yet: the waiver itself fails.
+        // No direction directory at all: the direction never ran and left
+        // no evidence, so the waiver itself fails (a waiver accepts a named
+        // gap, it never replaces one).
         let error = check_direction_waiver(&row_dir, &target).unwrap_err();
         assert!(
             format!("{error:#}").contains("no named-gap INCOMPLETE evidence"),
@@ -875,9 +997,150 @@ mod tests {
         let direction_dir = row_dir.join("java-client-rust-server");
         fs::create_dir_all(&direction_dir).unwrap();
         fs::write(direction_dir.join("INCOMPLETE"), b"named gap\n").unwrap();
-        let line = check_direction_waiver(&row_dir, &target).unwrap();
+        let report = check_direction_waiver(&row_dir, &target).unwrap();
+        let line = match report {
+            DirectionWaiverReport::Covered(line) => line,
+            other => panic!("expected the marker to cover the waiver, got {other:?}"),
+        };
         assert!(line.contains("waived java-client/rust-server"), "{line}");
         assert!(line.contains("never owns the store"), "{line}");
+        // The direction ran and passed (directory, evidence, no marker):
+        // the waiver is named unused, mirroring the whole-row rule.
+        fs::remove_file(direction_dir.join("INCOMPLETE")).unwrap();
+        fs::write(direction_dir.join("observed.tsv"), "row_status\tfull\n").unwrap();
+        let report = check_direction_waiver(&row_dir, &target).unwrap();
+        let line = match report {
+            DirectionWaiverReport::Unused(line) => line,
+            other => {
+                panic!("expected the passed direction to make the waiver unused, got {other:?}")
+            }
+        };
+        assert!(line.contains("unused direction waiver"), "{line}");
+    }
+
+    /// Acceptance scans the row directory for direction-level INCOMPLETE
+    /// markers: every marker must be covered by a declared direction
+    /// waiver, and an unwaived marker FAILs the row naming the direction
+    /// and quoting the marker's named reason (the pre-landing review's
+    /// "incomplete directions can pass without an explicit waiver" hole).
+    #[test]
+    fn unwaived_direction_marker_fails_acceptance() {
+        let row = scenarios::Row {
+            id: "g3-store-ownership",
+            group: "G3",
+            rust_implemented: true,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let row_dir = directory.path().join("g3-store-ownership");
+        let direction_dir = row_dir.join("java-client-rust-server");
+        fs::create_dir_all(&direction_dir).unwrap();
+        fs::write(
+            direction_dir.join("INCOMPLETE"),
+            b"named gap: the client subject never owns the store\n",
+        )
+        .unwrap();
+        let pass = scenarios::DirectionOutcome::Pass("rust-client/rust-server".into());
+        // No waiver declared: the marker FAILs the row in acceptance...
+        let report = report_row_outcome(&row, &pass, &row_dir, &[], false);
+        assert!(report.failed, "{report:?}");
+        assert!(
+            report.line.starts_with("FAIL g3-store-ownership"),
+            "{report:?}"
+        );
+        assert!(
+            report.line.contains("java-client/rust-server"),
+            "{report:?}"
+        );
+        assert!(
+            report
+                .line
+                .contains("named gap: the client subject never owns the store"),
+            "{report:?}"
+        );
+        // ...and the declared waiver covering it converts to a PASS.
+        let waivers = vec![WaiveTarget {
+            row: "g3-store-ownership".into(),
+            direction: Some("java-client/rust-server".into()),
+            reason: Some("the client subject never owns the store".into()),
+        }];
+        let report = report_row_outcome(&row, &pass, &row_dir, &waivers, false);
+        assert!(!report.failed, "{report:?}");
+        assert!(
+            report.line.contains(
+                "waived java-client/rust-server: the client subject never owns the store"
+            ),
+            "{report:?}"
+        );
+        // A waiver for one direction does not cover another direction's
+        // marker: hyphenated spelling is compared exactly.
+        let other_dir = row_dir.join("rust-client-java-server");
+        fs::create_dir_all(&other_dir).unwrap();
+        fs::write(other_dir.join("INCOMPLETE"), b"another named gap\n").unwrap();
+        let report = report_row_outcome(&row, &pass, &row_dir, &waivers, false);
+        assert!(report.failed, "{report:?}");
+        assert!(
+            report.line.contains("rust-client/java-server"),
+            "{report:?}"
+        );
+    }
+
+    /// A row-level Incomplete in acceptance FAILs unless a whole-row waiver
+    /// covers it, and covers it only when the reason names the row's
+    /// missing capability - the same rule as the Fail arm.
+    #[test]
+    fn row_level_incomplete_needs_a_matching_waiver_in_acceptance() {
+        let row = scenarios::Row {
+            id: "g7-unsafe-clock-refusal",
+            group: "G7",
+            rust_implemented: true,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir_all(directory.path().join("g7-unsafe-clock-refusal")).unwrap();
+        let waivers = vec![WaiveTarget {
+            row: "g7-unsafe-clock-refusal".into(),
+            direction: None,
+            reason: Some("no fixture clock on either subject".into()),
+        }];
+        let missing = format!(
+            "g7-unsafe-clock-refusal INCOMPLETE: {}no subject fixture clock: ...",
+            scenarios::MISSING_CAPABILITY_MARKER
+        );
+        // Without a waiver: acceptance requires an explicit one, never
+        // silent passage.
+        let incomplete = scenarios::DirectionOutcome::Incomplete(missing.clone());
+        let report = report_row_outcome(&row, &incomplete, directory.path(), &[], false);
+        assert!(report.failed, "{report:?}");
+        assert!(
+            report.line.starts_with("FAIL g7-unsafe-clock-refusal"),
+            "{report:?}"
+        );
+        assert!(
+            report.line.contains("acceptance requires an explicit"),
+            "{report:?}"
+        );
+        // The matching whole-row waiver converts it, like the Fail arm.
+        let report = report_row_outcome(&row, &incomplete, directory.path(), &waivers, false);
+        assert!(!report.failed, "{report:?}");
+        assert!(
+            report.line.starts_with("WAIVED g7-unsafe-clock-refusal"),
+            "{report:?}"
+        );
+        // A non-matching Incomplete stays FAILED even under a waiver.
+        let other = scenarios::DirectionOutcome::Incomplete(
+            "g7-unsafe-clock-refusal: process timed out".into(),
+        );
+        let report = report_row_outcome(&row, &other, directory.path(), &waivers, false);
+        assert!(report.failed, "{report:?}");
+        assert!(report.line.contains("waiver did not match"), "{report:?}");
+        // Dev mode is untouched: Incomplete stays an INCOMPLETE report.
+        let report = report_row_outcome(&row, &incomplete, directory.path(), &[], true);
+        assert!(!report.failed, "{report:?}");
+        assert!(
+            report
+                .line
+                .starts_with("INCOMPLETE g7-unsafe-clock-refusal"),
+            "{report:?}"
+        );
     }
 
     #[test]
@@ -1060,8 +1323,18 @@ mod tests {
             "{report:?}"
         );
         assert!(report.line.contains("named-gap evidence"), "{report:?}");
-        // Without the marker the waiver itself fails the row.
+        // Without the marker but with the direction directory (the
+        // direction ran and passed), the waiver is named unused instead.
         fs::remove_file(direction_dir.join("INCOMPLETE")).unwrap();
+        let report = report_row_outcome(&row, &pass, &row_dir, &waivers, false);
+        assert!(!report.failed, "{report:?}");
+        assert!(
+            report.line.contains("unused direction waiver"),
+            "{report:?}"
+        );
+        // Without even the direction directory the waiver fails the row:
+        // it names a direction that never ran and left no evidence.
+        fs::remove_dir_all(&direction_dir).unwrap();
         let report = report_row_outcome(&row, &pass, &row_dir, &waivers, false);
         assert!(report.failed, "{report:?}");
         assert!(
