@@ -546,14 +546,18 @@ compared with M17b line by line. Its Java items, answered:
 
 - Observation O-2 (Java client): "graceful shutdown hangs after a server
   kill" (`g2-crash-before-create-commit` java-client/rust-server, `g8-timeout`
-  kill variant) is the client's default 30 s control response deadline meeting
-  the driver's 30 s per-operation bound. A killed server sends nothing; the
-  connection's idle timeout is the stream lifetime (300 s), so a pending
-  request fails only at the control deadline, after which the launcher closes
-  and exits within about two seconds. Not a hang and not a defect, but the
-  driver could not observe the bound. The launcher now takes
-  `--control-timeout-ms N` (`3e1547dd`); the driver should pass a value below
-  its operation bound on kill rows, or raise that bound above 30 s.
+  kill variant) is the driver's 30 s per-operation bound meeting the transport's
+  dead-peer bound. A killed server sends nothing, so the pending request fails
+  when the QUIC idle timeout expires, and that timeout is the minimum of the two
+  peers' values: the Java client offers 300 s (the stream lifetime) and the
+  Rust authority offers 60 s, so against a killed Rust authority the request
+  fails at about 61 s with CONTROL_RESET "connection ended before drain"
+  (Kimi measured it at M20b). The control response deadline, and the
+  `--control-timeout-ms N` launcher flag added at `3e1547dd`, bound only
+  control work on a live connection; they do not shorten a dead transport.
+  Not a hang and not a defect; the driver's kill rows now wait 90 s
+  (Kimi `8f5c4a7e`). An earlier version of this bullet claimed the flag
+  bounds a dead peer; Kimi's peer review corrected it.
 - Observation O-3 (Java subject): a 16 MiB object leaves the object directory
   while a pinned read is open and the read still completes byte-exact
   (`g7-read-pin-past-expiry` rust-client/java-server). Expected: the pinned
