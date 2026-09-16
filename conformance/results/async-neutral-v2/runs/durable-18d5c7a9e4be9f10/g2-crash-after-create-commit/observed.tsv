@@ -1,0 +1,6 @@
+subject_boundary_record	SESSION_COMMITTED recorded before the reply was withheld
+next_sequence_after_restart	2
+replay_binding	generation Id(1), creation_sequence Id(1), original policy echoed
+changed_policy_refusal	authority refusal CONFLICT: creation policy changed
+ahead_sequence_refusal	authority refusal CONFLICT: creation sequence is ahead of authority
+client_control_deadline	not shortened: the Rust client CLI exposes no control-timeout option (the quinn v2_client response deadline has no CLI surface); a stranded op is bounded by the row's own bounded op or the subject's transport deadlines — a named deviation, not a weakened expectation

@@ -4616,6 +4616,21 @@ fn kill_row_control_timeout_observed(client: Subject) -> (&'static str, String) 
     )
 }
 
+/// g8's kill directions drive only the Rust client today (rust/rust and
+/// rust-client/java-server), and the Rust client has no control-timeout
+/// option — its bound is the 60 s response_timeout the driver_op_budget
+/// line already names. Emitting the control-deadline line without applying
+/// the flag would overstate what the row does, so the line appears only
+/// for a direction that actually drives the Java client (the four G2 rows
+/// apply the flag and record this line unconditionally).
+fn g8_kill_control_timeout_observed(client: Subject) -> Vec<(&'static str, String)> {
+    if client == Subject::Java {
+        vec![kill_row_control_timeout_observed(client)]
+    } else {
+        Vec::new()
+    }
+}
+
 /// Consume a hooked session into its parts so the server handle can be
 /// stopped (drop-reply rows) or awaited (kill rows) before a restart.
 fn split_hooked(hooked: Hooked) -> (Session, PathBuf) {
@@ -15894,40 +15909,37 @@ fn g8_timeout_kill_direction(
         &artifacts,
         "complete-redrive.txt",
     )?;
-    write_kv(
-        scenario_dir,
-        "observed.tsv",
-        &[
-            ("server_subject", server.name().into()),
-            ("client_subject", client.name().into()),
-            ("alpn", "pipestream/2".into()),
-            ("subject_exit_code", kill_exit_code(server).to_string()),
-            (
-                "subject_boundary_record",
-                "COMPLETE_RESPONSE_SENT recorded before the exit".into(),
-            ),
-            (
-                "withheld_op",
-                if lost_hung {
-                    format!(
-                        "hung awaiting the lost reply (terminated by the driver after the {}s \
-                         bound); no completion claim printed; exit={}",
-                        KILL_TIMEOUT.as_secs(),
-                        lost_probe.exit
-                    )
-                } else {
-                    format!(
-                        "exit={} answered={} refusal={:?}",
-                        lost_probe.exit, lost_probe.success, lost_probe.refusal
-                    )
-                },
-            ),
-            ("next_sequence_after_restart", next.to_string()),
-            ("redrive_complete", redrive_outcome),
-            kill_row_control_timeout_observed(client),
-            kill_row_op_budget_observed(),
-        ],
-    )?;
+    let mut observed: Vec<(&str, String)> = vec![
+        ("server_subject", server.name().into()),
+        ("client_subject", client.name().into()),
+        ("alpn", "pipestream/2".into()),
+        ("subject_exit_code", kill_exit_code(server).to_string()),
+        (
+            "subject_boundary_record",
+            "COMPLETE_RESPONSE_SENT recorded before the exit".into(),
+        ),
+        (
+            "withheld_op",
+            if lost_hung {
+                format!(
+                    "hung awaiting the lost reply (terminated by the driver after the {}s \
+                     bound); no completion claim printed; exit={}",
+                    KILL_TIMEOUT.as_secs(),
+                    lost_probe.exit
+                )
+            } else {
+                format!(
+                    "exit={} answered={} refusal={:?}",
+                    lost_probe.exit, lost_probe.success, lost_probe.refusal
+                )
+            },
+        ),
+        ("next_sequence_after_restart", next.to_string()),
+        ("redrive_complete", redrive_outcome),
+    ];
+    observed.extend(g8_kill_control_timeout_observed(client));
+    observed.push(kill_row_op_budget_observed());
+    write_kv(scenario_dir, "observed.tsv", &observed)?;
     stop_and_seal(context, scenario_dir, id, restarted.server, events)
 }
 
@@ -24988,6 +25000,25 @@ mod tests {
                 .any(|row| row.id == "g2-kill-at-publication-commit"),
             "the kill variant remains the boundary evidence"
         );
+    }
+
+    /// g8's kill directions drive only the Rust client today (rust/rust and
+    /// rust-client/java-server), and the Rust client has no control-timeout
+    /// option - its bound is the 60 s response_timeout the op-budget line
+    /// already names. Emitting the control-deadline line without applying
+    /// the flag would overstate what the row does, so the line appears only
+    /// when a Java client is actually driven (the four G2 rows apply and
+    /// record it unconditionally).
+    #[test]
+    fn g8_kill_direction_records_the_control_deadline_only_for_a_java_client() {
+        assert!(
+            g8_kill_control_timeout_observed(Subject::Rust).is_empty(),
+            "g8's rust-client kill directions never apply the flag"
+        );
+        let java = g8_kill_control_timeout_observed(Subject::Java);
+        assert_eq!(java.len(), 1, "{java:?}");
+        assert_eq!(java[0].0, "client_control_deadline");
+        assert!(java[0].1.contains("--control-timeout-ms"), "{java:?}");
     }
 
     /// The kill-row op budget is 90 s and its observed.tsv line names the

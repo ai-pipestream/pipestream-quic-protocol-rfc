@@ -1355,6 +1355,7 @@ mod tests {
         assert!(facts.cpu_count >= 1);
         assert!(facts.mem_total_kb > 0);
         assert!(!facts.fixture_fs_type.is_empty());
+        assert!(!facts.fixture_mount.is_empty());
         assert!(facts.fixture_mount.len() > 1, "a mount point was matched");
     }
 

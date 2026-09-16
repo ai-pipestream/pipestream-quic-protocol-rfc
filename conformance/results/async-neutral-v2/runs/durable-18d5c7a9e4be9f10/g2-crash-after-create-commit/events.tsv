@@ -1,0 +1,6 @@
+1	durable-18d5c7a9e4be9f10	g2-crash-after-create-commit	rust	client	3450603-18d5c7a9e54d7421	1	REQUEST_SENT							
+1	durable-18d5c7a9e4be9f10	g2-crash-after-create-commit	rust	server	3450639-18d5c7a9ecdfac65	1	SESSION_COMMITTED							
+1	durable-18d5c7a9e4be9f10	g2-crash-after-create-commit	rust	client	3450603-18d5c7a9e54d7421	2	REFUSAL_RECEIVED				12	artifacts/binding-withheld.txt	72	1a27f58dfffbc689f9083db2529d516f74272ecc83702c6bc5d0d09758e6c468
+1	durable-18d5c7a9e4be9f10	g2-crash-after-create-commit	rust	client	3450603-18d5c7a9e54d7421	3	RECEIPT_VALIDATED							
+1	durable-18d5c7a9e4be9f10	g2-crash-after-create-commit	rust	client	3450603-18d5c7a9e54d7421	4	REFUSAL_RECEIVED				7	artifacts/changed-policy-refusal.txt	89	8c37be482a2ab0faebf9a2def6958316ae6ae104f150f33832630644e63e249f
+1	durable-18d5c7a9e4be9f10	g2-crash-after-create-commit	rust	client	3450603-18d5c7a9e54d7421	5	REFUSAL_RECEIVED				7	artifacts/ahead-sequence-refusal.txt	105	0f50e4c4cfa3bc39f64b225ea2e5df27e1ba294797f81d5019b2985f045f04f2

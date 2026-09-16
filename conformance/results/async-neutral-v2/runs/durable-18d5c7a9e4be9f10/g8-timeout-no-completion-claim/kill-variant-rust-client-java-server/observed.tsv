@@ -1,0 +1,10 @@
+server_subject	java
+client_subject	rust
+alpn	pipestream/2
+subject_exit_code	137
+subject_boundary_record	COMPLETE_RESPONSE_SENT recorded before the exit
+withheld_op	exit=exit status: 0 answered=true refusal=None
+next_sequence_after_restart	2
+redrive_complete	idempotent replay of the durable completion (equals saved coverage)
+client_control_deadline	not shortened: the Rust client CLI exposes no control-timeout option (the quinn v2_client response deadline has no CLI surface); a stranded op is bounded by the row's own bounded op or the subject's transport deadlines — a named deviation, not a weakened expectation
+driver_op_budget	90 s per client op (kill row): a killed authority is noticed at the negotiated transport bound - the Rust server's max_idle_timeout of 60 s (quinn/src/v2_authority/server.rs:225) against the Java client's idle max(handshake 10 s, control deadline, stream lifetime 300 s) (DurableClient.java:203-207), surfacing CONTROL_RESET 'connection ended before drain' at ~61 s (DurableClient.java:271-278), and the Rust client's response_timeout of 60 s (quinn/src/v2_client/transport.rs:127, swept at :538), refusing LIMIT_EXCEEDED 'client response deadline' at ~60 s - so the default 30 s op wait cannot observe the named refusal

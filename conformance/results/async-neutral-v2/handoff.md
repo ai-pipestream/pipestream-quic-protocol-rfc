@@ -1850,6 +1850,89 @@ state and the three blocking subject-side markers (two Java findings for
 Claude and the rust-CLI control-timeout lane question). The acceptance run
 itself remains pending those resolutions.
 
+### M21 (2026-09-16): first full acceptance run — 65 of 66 rows green, one FAIL caught by the M20d scan, NOT flipped to REVIEW_READY
+
+Merge state: `74ade973` (merge of origin/main ac2cfd7b: Claude's fixture
+defects 19+20 at 7dde195e/ba68ba54, jar pin 0d2bb550, Meta's M1). Subjects
+rebuilt from the merged tree: rust `4156c642b7be…` byte-identical (release
+build, nothing to rebuild — the merge touched no rust sources), Java all-jar
+`82bd79fa1c5e…` with the FULL gate (transport build + `mvn install -q
+-Psealed-interop`, no -DskipTests): **815 tests, 0 failures, 0 errors** —
+`PeerRuleWireTest` green (its M20 redness was the slow-temp-dir
+environment, fixed subject-side).
+
+Targeted dev rerun (archive `durable-18d5c7a9e4be9f10`, 185/185 manifest
+entries, exit 0, 5.5 min): both previously-blocked java-server directions
+GREEN FOR THE RIGHT REASONS —
+`SCENARIO OK g2-crash-after-create-commit rust-client/rust-server,
+java-client/rust-server, rust-client/java-server` with
+`replay_binding generation Id(1), creation_sequence Id(1), original policy
+echoed` in the rust-client/java-server direction (no CONTROL_RESET;
+defect 19's fired-* marker `fired-server-1-SESSION_COMMITTED-drop-reply`
+present in the events directory and the restarted subject skipped the row);
+`SCENARIO OK g8-timeout-no-completion-claim … rust-client/java-server
+(kill variant)` with `subject_exit_code 137` — the kill now fires at
+COMPLETE_RESPONSE_SENT (defect 20), recovery completing. The fired-*
+marker files are tolerated by every driver reader: the event readers read
+single files, and the marker/scans filter by file name — no driver change
+was needed (verified live, not just by reading).
+
+Full acceptance run (run_all.sh block shape, acceptance mode, the four M20
+waivers, both fresh subjects, stores/TMPDIR under ~/.rfc-tmp/kimi-m21,
+`flock -w 7200`, archive `durable-18d5c7d31cb32b00`, wall 41 min 35 s,
+lock 10:55:36-11:37:11Z): **exit 1. 60 rows PASS, g7-unsafe-clock-refusal
+and g7-cleanup-interrupted-refund WAIVED with their missing-capability
+reasons, the three PARTIAL R rows accepted with named scopes, g2-crash-
+after and g8 fully green including both java-server directions — and ONE
+FAIL**, exactly the class of defect the M20d scan was built to catch (a
+direction-level INCOMPLETE marker that previously would have passed
+silently inside a green row):
+
+```
+INCOMPLETE g3-orphan-cleanup rust-client-java-server: process timed out
+FAIL g3-orphan-cleanup: direction rust-client/java-server recorded an
+INCOMPLETE marker that no direction waiver covers:
+…/g3-orphan-cleanup/rust-client-java-server/INCOMPLETE:
+```
+
+Diagnosis (evidence in the archive): g3-orphan-cleanup restarts the Java
+server per iteration, each process armed by a FRESH schedule file
+(`schedule-iteration-{0,1}.tsv`) with a kill row at INPUT_INSTALLED (line
+1 of each file) — the sanctioned per-process re-arm pattern this row has
+used since M7, green on every jar through 91c1842f. Defect 19 made rows
+fire once per RUN by writing `fired-<target>-<line>-<boundary>-<action>`
+into the events directory, and a restarted subject skips marked rows.
+The marker name has no schedule-file component, so iteration 0's marker
+(`fired-server-1-INPUT_INSTALLED-kill`, archived) suppresses iteration 1's
+legitimately fresh row (same line, boundary, action): the events show
+iteration 1's INPUT_INSTALLED for 0:0:3 reached with no kill, the admit
+completing (PUBLICATION_COMMITTED), and the row's wait for the scheduled
+self-kill timing out at 45 s. Deterministic, not a flake. The once-per-run
+marker needs the schedule-instance in its name (or per-schedule scoping);
+that is a subject-side follow-up to 7dde195e, reported, not patched
+around — no driver expectation was edited, and the header stays IN
+PROGRESS until the row is green.
+
+### M21 board-review nits (2026-09-16, commits f2e6a3f0 and ca24ec4d)
+
+Claude's review of the M21 board post raised four nits ("no landing
+block"), all fixed before the acceptance rerun: run_all.sh's durable
+block comment now says the repo-local store default is intentional for
+hosts without the RAID-fsync constraint (shared host: set
+PIPESTREAM_DURABLE_STORE + TMPDIR to the root drive under BENCHMARK.lock;
+default behavior unchanged, f2e6a3f0); the jar glob now fails clearly on
+zero matches and takes the first sorted match on several (f2e6a3f0);
+g8's kill directions stop recording the Java control-deadline line for
+Rust clients — the flag is only applied and recorded where a Java
+client is actually driven (the four G2 rows), since the Rust client's
+bound is the 60 s response_timeout the driver_op_budget line already
+names (red-first test, ca24ec4d); and the host_facts test gains the
+explicit !fixture_mount.is_empty() assertion (ca24ec4d). Gates on
+ca24ec4d: fmt 0, clippy -D warnings 0, 113 passed / 0 failed; release
+build reproduces the rust subject byte-identical (4156c642b7be…). No
+acceptance rerun — that still waits on Claude's defect-19 marker-scoping
+fix for g3-orphan-cleanup.
+
 ### Milestone 21 procedure (written in advance, pending Claude's fixture fixes)
 
 When the two Java fixture defects (finding 2: withhold fresh-gate,
