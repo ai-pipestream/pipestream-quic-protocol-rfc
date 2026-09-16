@@ -1,0 +1,6 @@
+UNAVAILABLE: --test-kill-at RECEIPT_VALIDATED cannot fire. In this client's
+stack receipt validation is a pure in-memory shape check inside
+Context::receipt with no journal commit, so there is no inter-commit seam
+to kill at; the durable boundary is RECEIPT_JOURNALED (covered). Reaching
+it would require a hook inside the shared pipestream-quinn tree, which the
+C17 brief restricts to the three owned directories. No run faked.

@@ -1,0 +1,44 @@
+171	1789248245645	1	-1	session-open	workload-b
+175	1789248245649	0	-1	session-open	workload-a
+241	1789248245715	2	-1	session-open	workload-c
+256	1789248245730	1	-1	declared	batch 0: 1 entities
+256	1789248245730	0	-1	declared	batch 0: 2 entities
+323	1789248245797	2	-1	declared	batch 0: 1 entities
+373	1789248245848	1	1	admitted	admit=116ms
+389	1789248245863	0	3	admitted	admit=132ms
+420	1789248245894	0	0	admitted	admit=163ms
+581	1789248246056	2	2	admitted	admit=258ms
+586	1789248246060	1	1	succeeded	attempt 1 watch=212ms
+655	1789248246130	1	1	first-usable-output	
+655	1789248246130	1	1	chunk-verified	fetch=69ms
+661	1789248246135	0	0	boundary	OBSERVATION_JOURNALED reached, killing
+23	1789248248109	0	-1	session-open	workload-a
+23	1789248248109	1	-1	session-open	workload-b
+25	1789248248111	1	1	succeeded	attempt 1 watch=0ms
+25	1789248248111	0	3	admitted	admit=1ms
+56	1789248248141	0	3	succeeded	attempt 1 watch=30ms
+56	1789248248142	0	0	succeeded	attempt 1 watch=31ms
+61	1789248248147	1	-1	scope-pages	1 pages
+87	1789248248172	1	-1	checkpoint	declared 1
+88	1789248248174	1	-1	complete	declared 1
+88	1789248248174	1	-1	commits	1 chunks
+99	1789248248184	2	-1	session-open	workload-c
+120	1789248248206	2	2	admitted	admit=20ms
+139	1789248248225	0	3	first-usable-output	
+139	1789248248225	0	3	chunk-verified	fetch=83ms
+155	1789248248240	2	2	succeeded	attempt 1 watch=34ms
+159	1789248248245	0	0	chunk-verified	fetch=102ms
+173	1789248248259	1	-1	session-close	
+180	1789248248266	0	-1	scope-pages	1 pages
+198	1789248248283	0	-1	checkpoint	declared 2
+199	1789248248285	0	-1	complete	declared 2
+199	1789248248285	0	-1	commits	2 chunks
+244	1789248248330	2	2	first-usable-output	
+244	1789248248330	2	2	chunk-verified	fetch=89ms
+262	1789248248347	2	-1	scope-pages	1 pages
+278	1789248248364	0	-1	session-close	
+282	1789248248368	2	-1	checkpoint	declared 1
+286	1789248248372	2	-1	complete	declared 1
+286	1789248248372	2	-1	commits	1 chunks
+380	1789248248465	2	-1	session-close	
+0	1789248248476	-	-	final-verified	200000 bytes

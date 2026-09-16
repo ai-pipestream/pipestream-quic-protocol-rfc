@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.6", features = ["derive"] }
+pipestream-core = { path = "../../../implementations/rust-quinn" }
 pipestream-quinn = { path = "../../../implementations/rust-quinn/quinn" }
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 rustls = { version = "0.23.43", default-features = false, features = ["ring", "std"] }

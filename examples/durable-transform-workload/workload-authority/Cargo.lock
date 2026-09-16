@@ -1322,6 +1322,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "pipestream-core",
  "pipestream-quinn",
  "rusqlite",
  "rustix",

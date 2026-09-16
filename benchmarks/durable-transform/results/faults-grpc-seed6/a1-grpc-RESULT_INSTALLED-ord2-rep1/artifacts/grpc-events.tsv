@@ -1,0 +1,25 @@
+41	1789267250462	2	-1	session-open	workload-c
+41	1789267250462	0	-1	session-open	workload-a
+41	1789267250462	1	-1	session-open	workload-b
+81	1789267250502	0	3	admitted	admit=39ms
+91	1789267250512	2	2	admitted	admit=49ms
+105	1789267250526	1	1	admitted	admit=63ms
+115	1789267250536	0	0	admitted	admit=73ms
+135	1789267250556	2	2	boundary	RESULT_INSTALLED reached, killing
+1	1789267252774	2	-1	session-open	workload-c
+1	1789267252774	1	-1	session-open	workload-b
+1	1789267252774	0	-1	session-open	workload-a
+45	1789267252818	1	1	first-usable-output	
+45	1789267252818	1	1	chunk-verified	fetch=44ms
+45	1789267252818	2	2	first-usable-output	
+45	1789267252818	2	2	chunk-verified	fetch=44ms
+45	1789267252818	1	-1	commits	1 chunks
+45	1789267252818	1	-1	session-close	
+45	1789267252818	2	-1	commits	1 chunks
+45	1789267252818	2	-1	session-close	
+45	1789267252818	0	3	first-usable-output	
+45	1789267252818	0	3	chunk-verified	fetch=44ms
+55	1789267252828	0	0	chunk-verified	fetch=53ms
+55	1789267252828	0	-1	commits	2 chunks
+55	1789267252828	0	-1	session-close	
+0	1789267252838	-	-	final-verified	200000 bytes

@@ -1,0 +1,7 @@
+cell: A1 client-boundary kills, quick (SIZE=200000, 4 chunks, seed 6)
+binaries: workload-authority C16g pin, workload-coordinator WITH --test-kill-at (re-pinned, see commit); jar 28c3369b copied+verified
+funding: defaults (quick corpus); stores: /home/krickert/.rfc-tmp/a1-seed6 on ext4
+occurrence rule: N = chunk ordinal (deterministic across workers), not global firing order; ordinals 0 and 2
+RECEIPT_VALIDATED UNAVAILABLE (see UNAVAILABLE file); all other 7 client boundaries runnable
+frozen identities = no new declared rows after kill epoch + post-kill admits only for unadmitted ordinals + same journals + pin
+REFUSAL deviation: undeclared chunks are structurally uncompletable under frozen identities (any completion would invent a declaration), so those 20 rows assert death-at-refusal + no-false-completion on resume instead of byte-exact resume; transient admission refusals are not producible at 4-chunk scale with available knobs (measured: 2 s work-delay probe, 0 refusal rows)

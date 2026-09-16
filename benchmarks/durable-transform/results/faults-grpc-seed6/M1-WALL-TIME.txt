@@ -1,0 +1,6 @@
+M1 wall time (from per-cell DONE timestamps, seed 6)
+A1-GRPC SUITE PASS (40 kill+resume, 4 UNAVAILABLE)
+first DONE: 2026-09-13T01:34:02Z
+last DONE:  2026-09-13T02:41:05Z
+suite wall: 1h07m03s (40/40 cells DONE)
+source: /home/krickert/.rfc-tmp/a1-grpc-seed6/ (this archive is its pruned copy)

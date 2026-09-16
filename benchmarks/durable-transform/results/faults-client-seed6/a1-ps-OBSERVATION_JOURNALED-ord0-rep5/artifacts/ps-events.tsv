@@ -1,0 +1,46 @@
+162	1789248152814	2	-1	session-open	workload-c
+162	1789248152814	1	-1	session-open	workload-b
+168	1789248152819	0	-1	session-open	workload-a
+248	1789248152900	2	-1	declared	batch 0: 1 entities
+248	1789248152900	1	-1	declared	batch 0: 1 entities
+253	1789248152904	0	-1	declared	batch 0: 2 entities
+386	1789248153038	1	1	admitted	admit=137ms
+386	1789248153038	2	2	admitted	admit=137ms
+391	1789248153042	0	3	admitted	admit=137ms
+427	1789248153079	0	0	admitted	admit=173ms
+568	1789248153219	2	2	succeeded	attempt 1 watch=181ms
+572	1789248153224	1	1	succeeded	attempt 1 watch=186ms
+642	1789248153294	2	2	first-usable-output	
+642	1789248153294	2	2	chunk-verified	fetch=74ms
+647	1789248153299	1	1	first-usable-output	
+647	1789248153299	1	1	chunk-verified	fetch=75ms
+662	1789248153314	0	3	succeeded	attempt 1 watch=235ms
+678	1789248153330	2	-1	scope-pages	1 pages
+678	1789248153330	1	-1	scope-pages	1 pages
+692	1789248153344	0	0	boundary	OBSERVATION_JOURNALED reached, killing
+15	1789248154837	0	-1	session-open	workload-a
+16	1789248154838	0	3	succeeded	attempt 1 watch=0ms
+16	1789248154838	0	0	succeeded	attempt 1 watch=0ms
+30	1789248154852	2	-1	session-open	workload-c
+31	1789248154853	2	2	succeeded	attempt 1 watch=0ms
+32	1789248154854	2	-1	scope-pages	1 pages
+33	1789248154854	2	-1	checkpoint	declared 1
+33	1789248154855	2	-1	complete	declared 1
+33	1789248154855	2	-1	commits	1 chunks
+35	1789248154857	1	-1	session-open	workload-b
+36	1789248154858	1	1	succeeded	attempt 1 watch=0ms
+37	1789248154859	1	-1	scope-pages	1 pages
+38	1789248154860	1	-1	checkpoint	declared 1
+39	1789248154861	1	-1	complete	declared 1
+39	1789248154861	1	-1	commits	1 chunks
+82	1789248154904	0	3	first-usable-output	
+82	1789248154904	0	3	chunk-verified	fetch=66ms
+109	1789248154930	0	0	chunk-verified	fetch=92ms
+114	1789248154936	2	-1	session-close	
+119	1789248154941	1	-1	session-close	
+130	1789248154952	0	-1	scope-pages	1 pages
+147	1789248154969	0	-1	checkpoint	declared 2
+149	1789248154970	0	-1	complete	declared 2
+149	1789248154970	0	-1	commits	2 chunks
+228	1789248155050	0	-1	session-close	
+0	1789248155061	-	-	final-verified	200000 bytes

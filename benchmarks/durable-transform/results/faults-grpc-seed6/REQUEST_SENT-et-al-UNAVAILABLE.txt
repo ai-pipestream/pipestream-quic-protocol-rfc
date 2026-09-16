@@ -1,0 +1,12 @@
+UNAVAILABLE on the gRPC arm, with the exact check that fails for each:
+- REQUEST_SENT: tonic submit is one atomic request/response call from the
+  caller, so there is no inter-commit seam between request-sent and
+  response-received (the durable boundary is RECEIPT_JOURNALED).
+- RECEIPT_VALIDATED: receipt validation is a pure in-memory check with no
+  journal commit (the commit is RECEIPT_JOURNALED).
+- OBSERVATION_JOURNALED: manifest polling never journals (wait_manifest
+  only reads the worker), so there is no observation commit to kill at.
+- REFUSAL_RECEIVED: this arm has no backpressure-refusal vocabulary
+  (submit errors fail fast with no retry rows), so no refusal row exists.
+The binary rejects arming any of these at startup with the same reasons.
+No run faked.

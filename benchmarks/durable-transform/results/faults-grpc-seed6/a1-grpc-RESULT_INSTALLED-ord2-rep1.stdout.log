@@ -1,0 +1,4 @@
+PKI ready in /home/krickert/.rfc-tmp/a1-grpc-seed6/a1-grpc-RESULT_INSTALLED-ord2-rep1/work/pki (valid ~2 days, loopback only)
+TEST-ONLY test-kill-at: RESULT_INSTALLED firing for ordinal 2, aborting
+/work/worktrees/pipestream-muse/benchmarks/durable-transform/libexec-run-grpc.sh: line 83: 1044998 Aborted                    (core dumped) "$GRPC_COORD" run --ca "$W/pki/grpc-ca.pem" --cert "$W/pki/grpc-client.pem" --key "$W/pki/grpc-client.key" --owner workload --db "$W/grpc-coord.sqlite" --endpoint-a https://127.0.0.1:18443 --endpoint-b https://127.0.0.1:18444 --endpoint-c https://127.0.0.1:18445 --seed "$SEED" --size "$SIZE" --staging "$W/grpc-staging" --output "$ART/grpc-final.bin" --events "$ART/grpc-events.tsv" "${COORD_SWAP[@]}" "${COORD_DROP[@]}" "${COORD_NOFETCH[@]}" "${COORD_STOP[@]}"
+gRPC coordinator exit 134

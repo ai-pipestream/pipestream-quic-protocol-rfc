@@ -1,0 +1,7 @@
+PKI ready in /home/krickert/.rfc-tmp/a1-seed6/a1-ps-RESULT_INSTALLED-ord2-rep2/work/pki (valid ~2 days, loopback only)
+INITIALIZED
+INITIALIZED
+INITIALIZED
+TEST-ONLY test-kill-at: RESULT_INSTALLED firing for ordinal 2, aborting
+/work/worktrees/pipestream-muse/benchmarks/durable-transform/libexec-run-ps.sh: line 105: 517130 Aborted                    (core dumped) "$PS_COORD" run --ca "$W/pki/ps-ca.pem" --cert "$W/pki/ps-client.pem" --key "$W/pki/ps-client.key" --owner workload --journal-a "$W/ps-j0.sqlite" --journal-b "$W/ps-j1.sqlite" --journal-c "$W/ps-j2.sqlite" --connect-a 127.0.0.1:17443 --connect-b 127.0.0.1:17444 --connect-c 127.0.0.1:17445 --seed "$SEED" --size "$SIZE" --staging "$W/ps-staging" --output "$ART/ps-final.bin" --events "$ART/ps-events.tsv" "${COORD_SWAP[@]}" "${COORD_EXEC[@]}" "${COORD_DROP[@]}" "${COORD_NOFETCH[@]}" "${COORD_KILL[@]}" "${COORD_STOP[@]}"
+PS coordinator exit 134

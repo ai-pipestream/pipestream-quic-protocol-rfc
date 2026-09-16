@@ -13,7 +13,7 @@ use grpc_baseline::{
 use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest as _, Sha256};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -58,6 +58,43 @@ struct Args {
     /// Must stay far below execution deadlines.
     #[arg(long, default_value_t = 0)]
     test_work_delay_ms: u64,
+    /// TEST-ONLY: exit(86) at the Nth process-wide occurrence of a journal
+    /// point, as BOUNDARY:N. Boundaries: INPUT_STAGED (staging complete and
+    /// hash-verified), OUTPUT_INSTALLED (output file written and synced),
+    /// COMMIT_DONE (durable tx committed), COMMIT_RESPONSE_SENT (reply built,
+    /// process dies before the ACK reaches the wire), RESULT_STREAM_OPENED
+    /// (read stream about to open). One-shot: restarts run without the flag.
+    /// Never set in measured cells; every use is recorded by
+    /// run-faults-grpc-worker.sh.
+    #[arg(long)]
+    test_kill_at: Option<String>,
+}
+
+/// TEST-ONLY journal-point names armable through --test-kill-at.
+const KILL_BOUNDARIES: &[&str] = &[
+    "INPUT_STAGED",
+    "OUTPUT_INSTALLED",
+    "COMMIT_DONE",
+    "COMMIT_RESPONSE_SENT",
+    "RESULT_STREAM_OPENED",
+];
+
+/// Parses --test-kill-at BOUNDARY:N (1-based process-wide occurrence).
+/// Bad values fail startup instead of a run. Unit-tested below.
+fn parse_kill_at(raw: &str) -> Result<(String, u64)> {
+    let (boundary, n) = raw
+        .split_once(':')
+        .ok_or_else(|| anyhow::anyhow!("--test-kill-at must be BOUNDARY:N, got {raw:?}"))?;
+    if !KILL_BOUNDARIES.contains(&boundary) {
+        anyhow::bail!("--test-kill-at unknown boundary {boundary:?}");
+    }
+    let n: u64 = n
+        .parse()
+        .map_err(|_| anyhow::anyhow!("--test-kill-at bad occurrence {n:?}"))?;
+    if n == 0 {
+        anyhow::bail!("--test-kill-at occurrence must be >= 1");
+    }
+    Ok((boundary.to_string(), n))
 }
 
 struct Worker {
@@ -70,6 +107,29 @@ struct Worker {
     output_retention_ms: u64,
     test_wrong_transform: bool,
     test_work_delay_ms: u64,
+    test_kill: Option<(String, u64)>,
+    kill_counts: Mutex<HashMap<String, u64>>,
+}
+
+impl Worker {
+    /// TEST-ONLY journal-point kill: exit(86) at the armed occurrence,
+    /// abandoning SQLite state exactly like process death. Runs at points
+    /// where no db guard is held (exit skips destructors regardless).
+    fn kill_hook(&self, boundary: &'static str) {
+        let Some((armed, n)) = &self.test_kill else {
+            return;
+        };
+        if armed != boundary {
+            return;
+        }
+        let mut counts = self.kill_counts.lock().unwrap_or_else(|e| e.into_inner());
+        let count = counts.entry(boundary.to_string()).or_insert(0);
+        *count += 1;
+        if *count == *n {
+            eprintln!("TEST-ONLY test-kill-at: {boundary} firing (occurrence {n})");
+            std::process::exit(86);
+        }
+    }
 }
 
 fn owner_of_request<T>(request: &Request<T>, map: &Path) -> Result<String, Status> {
@@ -225,6 +285,7 @@ impl proto::transform_worker_server::TransformWorker for Svc {
             let _ = std::fs::remove_file(&staging_path);
             return Err(Status::data_loss("input hash mismatch"));
         }
+        self.kill_hook("INPUT_STAGED");
         // Execute the shared deterministic transform (same code as measured).
         // TEST-ONLY test_wrong_transform passes bytes through so the
         // coordinator oracle rejects them (negative-control runs).
@@ -243,6 +304,7 @@ impl proto::transform_worker_server::TransformWorker for Svc {
         let out_path = self.object_dir.join(format!("out-{:06}-{}", id.ordinal, hex_id(&op)));
         std::fs::write(&out_path, &output).map_err(|e| Status::internal(e.to_string()))?;
         sync_file(&out_path).map_err(|e| Status::internal(e.to_string()))?;
+        self.kill_hook("OUTPUT_INSTALLED");
         // Original-deadline enforcement: the attempt must complete within
         // admitted_at + ceiling or it expires instead of committing.
         if wall_ms() > admitted_at + header.execution_ceiling_ms {
@@ -283,6 +345,8 @@ impl proto::transform_worker_server::TransformWorker for Svc {
             .map_err(|e| Status::internal(e.to_string()))?;
             tx.commit().map_err(|e| Status::internal(e.to_string()))?;
         }
+        self.kill_hook("COMMIT_DONE");
+        self.kill_hook("COMMIT_RESPONSE_SENT");
         Ok(Response::new(reply(&id.operation_id, &digest, COMMITTED, 1, now, "")))
     }
 
@@ -493,6 +557,7 @@ impl proto::transform_worker_server::TransformWorker for Svc {
                 let _ = db.execute("DELETE FROM pins WHERE nonce = ?1", [nonce.as_slice()]);
             }
         });
+        self.kill_hook("RESULT_STREAM_OPENED");
         Ok(Response::new(ReceiverStream::new(rx)))
     }
 }
@@ -524,6 +589,12 @@ async fn main() -> Result<()> {
     if owners.is_empty() {
         bail!("at least one mapped principal is required");
     }
+    let test_kill = args
+        .test_kill_at
+        .as_deref()
+        .map(parse_kill_at)
+        .transpose()
+        .context("parse --test-kill-at")?;
     let worker = Arc::new(Worker {
         authority: args.authority.clone(),
         owners,
@@ -534,12 +605,17 @@ async fn main() -> Result<()> {
         output_retention_ms: args.output_retention_ms,
         test_wrong_transform: args.test_wrong_transform,
         test_work_delay_ms: args.test_work_delay_ms,
+        test_kill: test_kill.clone(),
+        kill_counts: Mutex::new(HashMap::new()),
     });
     if args.test_wrong_transform {
         eprintln!("TEST-ONLY test-wrong-transform enabled: outputs will fail verification");
     }
     if args.test_work_delay_ms > 0 {
         eprintln!("TEST-ONLY test-work-delay-ms enabled: {} ms per chunk", args.test_work_delay_ms);
+    }
+    if let Some((boundary, n)) = &test_kill {
+        eprintln!("TEST-ONLY test-kill-at armed: {boundary} occurrence {n}");
     }
     let tls = ServerTlsConfig::new()
         .identity(Identity::from_pem(
@@ -560,4 +636,57 @@ async fn main() -> Result<()> {
     }
     server.await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod kill_hook_tests {
+    use super::*;
+
+    #[test]
+    fn valid_boundaries_parse() {
+        for boundary in KILL_BOUNDARIES {
+            let (b, n) = parse_kill_at(&format!("{boundary}:3")).unwrap();
+            assert_eq!(b, *boundary);
+            assert_eq!(n, 3);
+        }
+    }
+
+    #[test]
+    fn malformed_values_rejected() {
+        for raw in [
+            "COMMIT_DONE",
+            "COMMIT_DONE:0",
+            "COMMIT_DONE:x",
+            "BOGUS:1",
+            "commit_done:1",
+            ":1",
+            "COMMIT_DONE:",
+        ] {
+            assert!(parse_kill_at(raw).is_err(), "must reject {raw:?}");
+        }
+    }
+
+    #[test]
+    fn hook_counts_per_boundary() {
+        let worker = Worker {
+            authority: "t".to_string(),
+            owners: HashSet::new(),
+            principal_map: PathBuf::from("p"),
+            db: Mutex::new(Connection::open_in_memory().unwrap()),
+            object_dir: PathBuf::from("o"),
+            execution_ceiling_ms: 0,
+            output_retention_ms: 0,
+            test_wrong_transform: false,
+            test_work_delay_ms: 0,
+            test_kill: Some(("COMMIT_DONE".to_string(), 2)),
+            kill_counts: Mutex::new(HashMap::new()),
+        };
+        // Other boundaries never count; armed boundary counts up.
+        worker.kill_hook("INPUT_STAGED");
+        worker.kill_hook("COMMIT_DONE");
+        assert_eq!(worker.kill_counts.lock().unwrap().get("COMMIT_DONE"), Some(&1));
+        assert!(worker.kill_counts.lock().unwrap().get("INPUT_STAGED").is_none());
+        // NOTE: the second COMMIT_DONE call would exit(86); it is not
+        // exercised here because killing the test process is the point.
+    }
 }
