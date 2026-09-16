@@ -1,0 +1,9 @@
+cell: A1-grpc coordinator-boundary kills, quick (SIZE=200000, 4 chunks, seed 6)
+binaries: grpc-worker C16g pin, grpc-coordinator WITH --test-kill-at + always-on submit-intent journal row (re-pinned, see commit)
+funding: defaults (quick corpus); stores: /home/krickert/.rfc-tmp/a1-grpc-seed6 on ext4
+occurrence rule: N = chunk ordinal (deterministic across workers); ordinals 0 and 2
+REQUEST_SENT/RECEIPT_VALIDATED/OBSERVATION_JOURNALED/REFUSAL_RECEIVED UNAVAILABLE (see UNAVAILABLE file)
+frozen identities = same db file + pin (post-kill resubmits are legal same-identity resends; PK blocks duplicate commits)
+
+--- A4 (appended): grpc-worker journal-point kills (see CELL-A4.txt, GRPC-WORKER-LOG.txt, A4-RECOVERY.txt). Suites in this archive: A1-grpc coordinator kills (40 runs) + A4 worker kills (25 runs).
+binaries now: 6d6df15982da19491035a3147716357225c9bedbbfc2e36baa721db3946b690a  /work/worktrees/pipestream-muse/examples/durable-transform-grpc/target/release/grpc-worker bb92a766f8def596a333a995a2eb674487921c679957b3a81a300baef497ede2  /work/worktrees/pipestream-muse/examples/durable-transform-grpc/target/release/grpc-coordinator 

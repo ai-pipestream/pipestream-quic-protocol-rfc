@@ -1,0 +1,54 @@
+145	1789265214451	0	-1	session-open	workload-a
+149	1789265214456	1	-1	session-open	workload-b
+228	1789265214534	0	-1	declared	batch 0: 1 entities
+228	1789265214535	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+228	1789265214535	0	0	boundary	REFUSAL_RECEIVED reached, killing
+18	1789265217591	0	-1	session-open	workload-a
+18	1789265217591	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+32	1789265217605	1	-1	session-open	workload-b
+138	1789265217711	2	-1	session-open	workload-c
+139	1789265217712	2	2	admit-fatal-send	Journal(Protocol(Error { code: NotFound, detail: "no persisted client intent" }))
+155	1789265217728	0	3	admitted	admit=136ms
+155	1789265217728	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+169	1789265217742	1	1	admitted	admit=136ms
+303	1789265217876	1	1	succeeded	attempt 1 watch=133ms
+357	1789265217930	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+369	1789265217942	1	1	first-usable-output	
+369	1789265217942	1	1	chunk-verified	fetch=65ms
+389	1789265217962	1	-1	scope-pages	1 pages
+406	1789265217979	1	-1	checkpoint	declared 1
+407	1789265217980	1	-1	complete	declared 1
+407	1789265217980	1	-1	commits	1 chunks
+487	1789265218060	1	-1	session-close	
+758	1789265218331	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+1560	1789265219133	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+3163	1789265220735	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+6364	1789265223937	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+11370	1789265228942	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+16371	1789265233944	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+21372	1789265238945	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+26373	1789265243946	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+31376	1789265248948	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+36380	1789265253953	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+41382	1789265258955	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+46384	1789265263957	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+51386	1789265268959	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+56388	1789265273961	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+61400	1789265278973	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+66413	1789265283986	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+71426	1789265288999	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+76428	1789265294001	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+81429	1789265299002	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+86430	1789265304003	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+91432	1789265309005	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+96437	1789265314010	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+101450	1789265319023	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+106453	1789265324025	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+111454	1789265329027	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+116459	1789265334032	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+121465	1789265339037	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+126477	1789265344050	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+131482	1789265349055	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+136484	1789265354057	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+141487	1789265359059	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt
+146488	1789265364061	0	0	admit-notready	NOT_READY: input needs a covering durable declaration receipt

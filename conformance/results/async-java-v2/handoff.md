@@ -154,6 +154,14 @@ native jar `e49d88b724cc79c936899542c1565a00454a93d512816de6e8cfefa637c51c50`.
   `09c80f748fce4236c6db0e0e6ae3abca474ca5a1e3035cc84abc6d7ab97c9940`, shaded
   all-jar `01b54c5512775ee2f3e7f68b88dc8dafb80da0209628ad1d447b1dfb058280de`,
   staged at `/home/krickert/.rfc-tmp/jars/pipestream-quic-netty-01b54c55-all.jar`.
+  Superseded on 2026-09-16 (fixture adapter only, defects 19 and 20: a schedule
+  row fires once per run across restarts, and kill/exit rows fire at reply-sent
+  boundaries; listener, authority and client wire behaviour unchanged; the tree
+  passed 801/801 in three slices before the build): lib jar
+  `06e5962c475f079e`, shaded all-jar `0d2bb55030e4e5d5`, staged at
+  `/home/krickert/.rfc-tmp/jars/pipestream-quic-netty-0d2bb550-all.jar`. Kimi's
+  acceptance run builds the subject from source, so it needs the tree, not the
+  staged jar.
   Meta's xlarge64 mixed cell needs this pin (or `282d3589`) with `--wal-mib 512`
   or more on both commands and a fresh root; Kimi's driver needs this pin for
   the creation-replay row.
@@ -624,6 +632,39 @@ against both subjects) shows:
   and make the probes non-writing (`SendStream::stopped()` with a bounded
   wait) at idle+2 s, +5 s and +10 s. Sent to the milestone 18 driver run in
   Kimi's worktree; the conformance crate is the only thing that changes.
+
+### Fixture adapter defects 19 and 20 (2026-09-16, from Kimi's milestone 20)
+
+- **Defect 19: a fired schedule row re-armed across a restart.** `FixtureMain`
+  rebuilt its hooks from the schedule file on every start and consumed rows in
+  memory only, so a driver that hands the same schedule to a restarted subject
+  saw a drop-reply armed at SESSION_COMMITTED fire again on the creation replay
+  (`g2-crash-after-create-commit`, rust-client/java-server, CONTROL_RESET on the
+  replay). Rows now fire once per run: `take` writes a marker named by the row's
+  target, line, boundary and action into the events directory before acting, and
+  a restarted subject skips rows whose marker exists. The server's withhold path
+  is unchanged: a test hook may still withhold a replay's reply on purpose
+  (`ClientRecoveryTest` exhausts a retry budget that way), which is why the
+  once-per-run rule lives in the adapter, not in `DurableServer`. Regression:
+  `FixtureMainTest.aFiredScheduleRowNeverReArmsAcrossARestart`.
+- **Defect 20: kill and exit rows never fired at reply-sent boundaries.** The
+  schedule parser accepted `kill` at `COMPLETE_RESPONSE_SENT`, but only the
+  committed hook consumed kill rows; the sent hook recorded and returned, so the
+  row stayed armed and the subject never died (`g8-timeout-no-completion-claim`
+  kill variant timed out waiting for the restart). The sent hook now takes the
+  row, records the boundary synchronously and halts with 137. The kill fires
+  after the frame was handed to the transport, so the reply usually reaches the
+  peer first, but delivery is not guaranteed; a row that models "reply lost" is
+  still `drop-reply`. Rows still armed when the subject closes are named on
+  stderr. Regression: `FixtureMainTest.killAtASentBoundaryFiresAfterTheReplyLeaves`.
+- **Not a defect: `PeerRuleWireTest.streamIdsAreNeverRecycledAcrossALongConnection`
+  red in Kimi's tree.** Kimi's surefire ran with `java.io.tmpdir=/tmp` (the slow
+  RAID, see the host note), so the copy executions fell behind the admissions
+  and the session's active-job allowance (16) refused the next input
+  LIMIT_EXCEEDED "retained input, output or executor capacity". That is
+  backpressure, not a stream-id fact; the test now drains to terminal and
+  resends on a fresh stream when it meets that refusal, and it passes on either
+  disk. The rule for every Java run stands: `JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=/home/krickert/.rfc-tmp`.
 
 ## 6. Build and verification commands
 

@@ -1,0 +1,7 @@
+cell: A4 gRPC-worker journal-point kills, quick (SIZE=200000, 4 chunks, seed 6)
+binaries: grpc-worker WITH --test-kill-at (pin 6d6df15982da19491035a3147716357225c9bedbbfc2e36baa721db3946b690a); grpc-coordinator pin bb92a766f8def596a333a995a2eb674487921c679957b3a81a300baef497ede2
+funding: defaults (quick corpus); stores: /home/krickert/.rfc-tmp/a4-seed6 on ext4
+kill target: grpc-worker-b only, first occurrence (BOUNDARY:1), exit 86; restart clean on the same SQLite files + coordinator --resume on the same coordinator db
+kill_epoch = wall ms when worker-b death is observed (0.1 s poll); the hook fires inline at the seam, so this is the seam time to poll granularity
+assertions: death proof (rc 86 + firing line) + byte-exact resume on the same db (PK blocks duplicate commits) + no FAILED. Commit-before-ACK is exercised: COMMIT_DONE/COMMIT_RESPONSE_SENT kills land after tx.commit with the reply unsent; the resume completes from the same db file
+harness lock rule: flock outside timeout everywhere; armed-phase coordinator backgrounded bare so its exact PID dies. Leftovers SIGKILLed after every rep.

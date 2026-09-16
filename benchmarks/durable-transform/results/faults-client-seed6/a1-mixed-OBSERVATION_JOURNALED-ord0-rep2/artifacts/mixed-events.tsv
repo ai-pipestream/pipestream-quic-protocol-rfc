@@ -1,0 +1,46 @@
+177	1789248161019	1	-1	session-open	workload-b
+182	1789248161024	0	-1	session-open	workload-a
+242	1789248161084	2	-1	session-open	workload-c
+257	1789248161098	0	-1	declared	batch 0: 2 entities
+262	1789248161104	1	-1	declared	batch 0: 1 entities
+341	1789248161183	2	-1	declared	batch 0: 1 entities
+402	1789248161244	0	3	admitted	admit=145ms
+408	1789248161250	1	1	admitted	admit=145ms
+439	1789248161281	0	0	admitted	admit=181ms
+543	1789248161385	0	3	succeeded	attempt 1 watch=104ms
+579	1789248161421	2	2	admitted	admit=237ms
+627	1789248161468	1	1	succeeded	attempt 1 watch=218ms
+687	1789248161529	1	1	first-usable-output	
+687	1789248161529	1	1	chunk-verified	fetch=60ms
+692	1789248161533	0	3	first-usable-output	
+692	1789248161533	0	3	chunk-verified	fetch=148ms
+717	1789248161559	1	-1	scope-pages	1 pages
+738	1789248161579	0	0	boundary	OBSERVATION_JOURNALED reached, killing
+20	1789248163387	0	-1	session-open	workload-a
+21	1789248163389	0	0	succeeded	attempt 1 watch=0ms
+21	1789248163389	0	3	succeeded	attempt 1 watch=1ms
+30	1789248163397	1	-1	session-open	workload-b
+31	1789248163398	1	1	succeeded	attempt 1 watch=0ms
+32	1789248163400	1	-1	scope-pages	1 pages
+33	1789248163401	1	-1	checkpoint	declared 1
+34	1789248163402	1	-1	complete	declared 1
+34	1789248163402	1	-1	commits	1 chunks
+75	1789248163442	0	0	first-usable-output	
+75	1789248163442	0	0	chunk-verified	fetch=53ms
+83	1789248163450	2	-1	session-open	workload-c
+100	1789248163468	0	-1	scope-pages	1 pages
+102	1789248163469	2	2	admitted	admit=18ms
+115	1789248163483	1	-1	session-close	
+122	1789248163489	0	-1	checkpoint	declared 2
+123	1789248163491	0	-1	complete	declared 2
+123	1789248163491	0	-1	commits	2 chunks
+127	1789248163495	2	2	succeeded	attempt 1 watch=25ms
+191	1789248163559	2	2	first-usable-output	
+191	1789248163559	2	2	chunk-verified	fetch=63ms
+202	1789248163570	0	-1	session-close	
+209	1789248163576	2	-1	scope-pages	1 pages
+227	1789248163595	2	-1	checkpoint	declared 1
+230	1789248163597	2	-1	complete	declared 1
+230	1789248163597	2	-1	commits	1 chunks
+320	1789248163687	2	-1	session-close	
+0	1789248163697	-	-	final-verified	200000 bytes

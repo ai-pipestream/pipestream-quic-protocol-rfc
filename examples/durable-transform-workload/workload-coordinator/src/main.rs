@@ -11,7 +11,7 @@ use pipestream_quic::{
     v2::*,
     v2_client::{
         journal::{self, Journal},
-        session::{self, Client, files::FileInput},
+        session::{self, Client},
         transport,
     },
 };
@@ -23,6 +23,10 @@ use std::{
     net::SocketAddr,
     os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use workload_core::{
@@ -193,6 +197,91 @@ mod declare_tests {
     }
 
     #[test]
+    fn kill_at_parses_all_client_boundaries() {
+        for (name, boundary) in [
+            ("INTENT_JOURNALED", ClientBoundary::IntentJournaled),
+            ("REQUEST_SENT", ClientBoundary::RequestSent),
+            ("RECEIPT_VALIDATED", ClientBoundary::ReceiptValidated),
+            ("RECEIPT_JOURNALED", ClientBoundary::ReceiptJournaled),
+            ("OBSERVATION_JOURNALED", ClientBoundary::ObservationJournaled),
+            ("RESULT_VERIFIED", ClientBoundary::ResultVerified),
+            ("RESULT_INSTALLED", ClientBoundary::ResultInstalled),
+            ("REFUSAL_RECEIVED", ClientBoundary::RefusalReceived),
+        ] {
+            assert_eq!(parse_kill_at(&format!("{name}:2")).unwrap(), (boundary, Some(2)));
+            assert_eq!(parse_kill_at(&format!("{name}:first")).unwrap(), (boundary, None));
+            assert_eq!(boundary.name(), name);
+        }
+        assert!(parse_kill_at("COMMITTED:0").is_err());
+        assert!(parse_kill_at("RESULT_VERIFIED").is_err());
+        assert!(parse_kill_at("RESULT_VERIFIED:x").is_err());
+    }
+
+    #[test]
+    fn declare_skip_none_keeps_plan_identical() {
+        let ordinals: Vec<u64> = (0..300).collect();
+        let plan = declare_plan(6, 2, &ordinals);
+        let kept = apply_declare_skip(6, 2, plan.clone(), None);
+        assert!(kept == plan);
+    }
+
+    #[test]
+    fn declare_skip_removes_one_entity_and_keeps_seal() {
+        let ordinals: Vec<u64> = (0..300).collect();
+        let kept = apply_declare_skip(6, 2, declare_plan(6, 2, &ordinals), Some(150));
+        assert_eq!(kept.len(), 3);
+        // Ordinal 150 (entity 151) lived in batch 1; only that batch shrinks.
+        assert_eq!(kept[0].1.len(), DECLARE_BATCH);
+        assert_eq!(kept[1].1.len(), DECLARE_BATCH - 1);
+        assert!(kept[1].1.iter().all(|id| id.0 != 151));
+        assert_eq!(kept[2].1.len(), 100);
+        // Batch identities preserved; exactly the last batch seals.
+        assert_eq!(kept[0].0, operation_id(6, 2, "declare", 0));
+        assert!(!kept[0].2 && !kept[1].2 && kept[2].2);
+    }
+
+    #[test]
+    fn declare_skip_sole_ordinal_sends_empty_sealed_declare() {
+        // Worker 2 of a 4-chunk run owns only ordinal 2.
+        let kept = apply_declare_skip(6, 2, declare_plan(6, 2, &[2]), Some(2));
+        assert_eq!(kept.len(), 1);
+        assert!(kept[0].1.is_empty());
+        assert!(kept[0].2);
+        assert_eq!(kept[0].0, operation_id(6, 2, "declare", 0));
+    }
+
+    #[test]
+    fn declare_skip_moves_seal_when_last_batch_drops() {
+        // 101 ordinals: batches [100 sealed=false, 1 sealed=true]; skipping
+        // the lone last entity drops the last batch and seals the first.
+        let ordinals: Vec<u64> = (0..101).collect();
+        let kept = apply_declare_skip(6, 0, declare_plan(6, 0, &ordinals), Some(100));
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].1.len(), 100);
+        assert!(kept[0].2);
+        assert_eq!(kept[0].0, operation_id(6, 0, "declare", 0));
+    }
+
+    #[test]
+    fn kill_arm_fires_only_on_match_without_sentinel() {
+        let dir = std::env::temp_dir().join("kill-arm-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let arm = KillArm {
+            boundary: ClientBoundary::RequestSent,
+            ordinal: Some(2),
+            sentinel: dir.join("kill-armed"),
+            fired: AtomicBool::new(false),
+        };
+        assert!(!arm.should_fire(ClientBoundary::IntentJournaled, 2));
+        assert!(!arm.should_fire(ClientBoundary::RequestSent, 1));
+        assert!(arm.should_fire(ClientBoundary::RequestSent, 2));
+        std::fs::write(dir.join("kill-armed"), b"x").unwrap();
+        assert!(!arm.should_fire(ClientBoundary::RequestSent, 2));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn oversize_shard_splits_with_last_only_seal() {
         let ordinals: Vec<u64> = (0..300).collect();
         let plan = declare_plan(6, 2, &ordinals);
@@ -282,9 +371,27 @@ struct Run {
     test_drop_input: Option<u64>,
     /// TEST-ONLY: abort the process right after the first verified result
     /// (RESULT_VERIFIED boundary, fault F4). One-shot via a sentinel file
-    /// in staging, so the --resume restart proceeds past it.
+    /// in staging, so the --resume restart proceeds past it. Kept as an
+    /// alias of --test-kill-at RESULT_VERIFIED:first.
     #[arg(long, default_value_t = false)]
     test_kill_after_first_verified: bool,
+    /// TEST-ONLY: abort at the firing of a client boundary
+    /// (interface-v1 section 2.1 names verbatim) for one chunk ordinal:
+    /// "BOUNDARY:N". N indexes chunk ordinals (deterministic across
+    /// workers), not global firing order. The boundary row is the last
+    /// event row; the --resume restart on the same journals must complete
+    /// byte-exact with frozen operation identities. RECEIPT_VALIDATED is
+    /// accepted by the parser but rejected at startup: this client's
+    /// receipt validation is a pure in-memory shape check with no journal
+    /// commit, so there is no inter-commit seam to kill at (the commit is
+    /// RECEIPT_JOURNALED). Never set in a measured cell.
+    #[arg(long)]
+    test_kill_at: Option<String>,
+    /// TEST-ONLY: leave chunk N out of every declare batch so its admission
+    /// meets a NOT_READY refusal (REFUSAL_RECEIVED runs). The positive twin
+    /// runs without it. Never set in a measured cell.
+    #[arg(long)]
+    test_skip_declare: Option<u64>,
     /// TEST-ONLY: admit all chunks then stop without fetching (stopped
     /// consumer arm). Arrival rows exist, completion rows must not.
     #[arg(long, default_value_t = false)]
@@ -454,6 +561,7 @@ async fn replay_unresolved(
     staging: &Path,
     ordinals: &[u64],
     declare_ops: &[OperationId],
+    arm: Option<&KillArm>,
 ) -> Result<std::collections::HashSet<[u8; 16]>> {
     let mut replayed = std::collections::HashSet::new();
     let pending = session.client.unresolved(Number(0), PageLimit(256)).await?;
@@ -471,14 +579,8 @@ async fn replay_unresolved(
                     .iter()
                     .position(|&o| o == ordinal)
                     .context("replayed ordinal not in shard")?;
-                send_admission(
-                    session,
-                    &path,
-                    &replay_intent,
-                    declare_ops[pos / DECLARE_BATCH],
-                    ordinal,
-                )
-                .await?;
+                send_admission(session, &path, &replay_intent, declare_ops[pos], ordinal, arm)
+                    .await?;
                 session.log("replayed-admit", ordinal as i64, "");
             }
             _ => {
@@ -506,7 +608,11 @@ fn work_key(ordinal: u64) -> WorkKey {
     }
 }
 
-async fn watch_terminal(session: &Session, ordinal: u64) -> Result<(Id, u64)> {
+async fn watch_terminal(
+    session: &Session,
+    ordinal: u64,
+    arm: Option<&KillArm>,
+) -> Result<(Id, u64)> {
     let key = work_key(ordinal);
     let mut after = Number(0);
     loop {
@@ -519,6 +625,11 @@ async fn watch_terminal(session: &Session, ordinal: u64) -> Result<(Id, u64)> {
                     "chunk {ordinal} terminal state {state} (attempt {})",
                     observed.view.attempt.0
                 );
+            }
+            // The terminal observation is journaled inside watch(); killing
+            // here dies with the observation durable and no receipt yet.
+            if let Some(arm) = arm {
+                arm.fire(session, ClientBoundary::ObservationJournaled, ordinal);
             }
             return Ok((Id(observed.view.attempt.0), observed.revision.0));
         }
@@ -536,6 +647,7 @@ async fn fetch_transfer(
     attempt: Id,
     staging: &Path,
     stall_read_ms: u64,
+    arm: Option<&KillArm>,
 ) -> Result<bool> {
     let key = work_key(ordinal);
     let expected = expected_chunk(seed, total, ordinal);
@@ -567,6 +679,12 @@ async fn fetch_transfer(
         .await?;
     let _ = saved;
     let _ = saved;
+    // The staged output file is installed; killing here dies after install
+    // with verification still ahead (the resume shortcut reuses the staged
+    // bytes without new completion rows, as before).
+    if let Some(arm) = arm {
+        arm.fire(session, ClientBoundary::ResultInstalled, ordinal);
+    }
     Ok(false)
 }
 
@@ -574,7 +692,12 @@ async fn fetch_transfer(
 /// authority backpressure (same classifier as admission) retry under a
 /// 240-attempt budget; anything else, including a dead worker's cancelled
 /// watch (the F3 signal), fails fast.
-async fn fetch_retry<F, Fut, T>(session: &Session, ordinal: u64, mut step: F) -> Result<T>
+async fn fetch_retry<F, Fut, T>(
+    session: &Session,
+    ordinal: u64,
+    arm: Option<&KillArm>,
+    mut step: F,
+) -> Result<T>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T>>,
@@ -595,12 +718,189 @@ where
                     return Err(e);
                 }
                 session.log(label, ordinal as i64, &e.to_string());
+                if let Some(arm) = arm {
+                    arm.fire(session, ClientBoundary::RefusalReceived, ordinal);
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
                 wait_ms = (wait_ms * 2).min(5_000);
             }
         }
     }
     unreachable!("fetch retry loop always returns");
+}
+
+/// TEST-ONLY client crash boundary (interface-v1 section 2.1 client
+/// vocabulary, names verbatim). RECEIPT_VALIDATED parses but is never
+/// armed (see --test-kill-at docs).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ClientBoundary {
+    IntentJournaled,
+    RequestSent,
+    ReceiptValidated,
+    ReceiptJournaled,
+    ObservationJournaled,
+    ResultVerified,
+    ResultInstalled,
+    RefusalReceived,
+}
+
+impl ClientBoundary {
+    fn name(&self) -> &'static str {
+        match self {
+            ClientBoundary::IntentJournaled => "INTENT_JOURNALED",
+            ClientBoundary::RequestSent => "REQUEST_SENT",
+            ClientBoundary::ReceiptValidated => "RECEIPT_VALIDATED",
+            ClientBoundary::ReceiptJournaled => "RECEIPT_JOURNALED",
+            ClientBoundary::ObservationJournaled => "OBSERVATION_JOURNALED",
+            ClientBoundary::ResultVerified => "RESULT_VERIFIED",
+            ClientBoundary::ResultInstalled => "RESULT_INSTALLED",
+            ClientBoundary::RefusalReceived => "REFUSAL_RECEIVED",
+        }
+    }
+
+    fn parse(name: &str) -> Result<ClientBoundary> {
+        match name {
+            "INTENT_JOURNALED" => Ok(ClientBoundary::IntentJournaled),
+            "REQUEST_SENT" => Ok(ClientBoundary::RequestSent),
+            "RECEIPT_VALIDATED" => Ok(ClientBoundary::ReceiptValidated),
+            "RECEIPT_JOURNALED" => Ok(ClientBoundary::ReceiptJournaled),
+            "OBSERVATION_JOURNALED" => Ok(ClientBoundary::ObservationJournaled),
+            "RESULT_VERIFIED" => Ok(ClientBoundary::ResultVerified),
+            "RESULT_INSTALLED" => Ok(ClientBoundary::ResultInstalled),
+            "REFUSAL_RECEIVED" => Ok(ClientBoundary::RefusalReceived),
+            other => bail!("test-kill-at: unknown client boundary {other:?}"),
+        }
+    }
+}
+
+/// Parse "BOUNDARY:N" (N = chunk ordinal) or "BOUNDARY:first".
+fn parse_kill_at(spec: &str) -> Result<(ClientBoundary, Option<u64>)> {
+    let (name, n) = spec
+        .split_once(':')
+        .context("test-kill-at needs BOUNDARY:N")?;
+    let boundary = ClientBoundary::parse(name)?;
+    if n == "first" {
+        return Ok((boundary, None));
+    }
+    let ordinal: u64 = n.parse().context("test-kill-at N must be a chunk ordinal")?;
+    Ok((boundary, Some(ordinal)))
+}
+
+/// TEST-ONLY armed crash: at most one firing per process (abort is
+/// immediate) and one per staging dir (sentinel file, so --resume proceeds
+/// past it). fire() logs the boundary row itself so the last event row
+/// always names the reached interface-v1 boundary.
+struct KillArm {
+    boundary: ClientBoundary,
+    /// None = first firing on any ordinal (legacy F4 alias).
+    ordinal: Option<u64>,
+    sentinel: PathBuf,
+    fired: AtomicBool,
+}
+
+impl KillArm {
+    fn should_fire(&self, boundary: ClientBoundary, ordinal: u64) -> bool {
+        if self.boundary != boundary {
+            return false;
+        }
+        if let Some(n) = self.ordinal {
+            if n != ordinal {
+                return false;
+            }
+        }
+        !self.sentinel.exists()
+    }
+
+    fn fire(&self, session: &Session, boundary: ClientBoundary, ordinal: u64) {
+        if !self.should_fire(boundary, ordinal) {
+            return;
+        }
+        if self.ordinal.is_none() && self.fired.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        session.log(
+            "boundary",
+            ordinal as i64,
+            &format!("{} reached, killing", boundary.name()),
+        );
+        if std::fs::write(&self.sentinel, format!("{}:{ordinal}", boundary.name())).is_err() {
+            session.log("boundary-sentinel-failed", ordinal as i64, boundary.name());
+        }
+        eprintln!(
+            "TEST-ONLY test-kill-at: {} firing for ordinal {ordinal}, aborting",
+            boundary.name()
+        );
+        std::process::abort();
+    }
+}
+
+/// Build the TEST-ONLY crash arm for one worker session from the run flags.
+fn build_kill_arm(run: &Run, staging: &Path) -> Result<Option<Arc<KillArm>>> {
+    if run.test_kill_after_first_verified && run.test_kill_at.is_some() {
+        bail!("set only one of --test-kill-after-first-verified and --test-kill-at");
+    }
+    if run.test_skip_declare.is_some() && run.resume {
+        bail!("--test-skip-declare needs a fresh run (resume replays journaled identities)");
+    }
+    if run.test_kill_after_first_verified {
+        return Ok(Some(Arc::new(KillArm {
+            boundary: ClientBoundary::ResultVerified,
+            ordinal: None,
+            sentinel: staging.join("kill-f4-fired"),
+            fired: AtomicBool::new(false),
+        })));
+    }
+    if let Some(spec) = &run.test_kill_at {
+        let (boundary, ordinal) = parse_kill_at(spec)?;
+        if boundary == ClientBoundary::ReceiptValidated {
+            bail!(
+                "TEST-ONLY test-kill-at RECEIPT_VALIDATED unavailable: receipt validation \
+                 in this client is a pure in-memory shape check with no journal commit, \
+                 so there is no inter-commit seam to kill at (the commit is RECEIPT_JOURNALED)"
+            );
+        }
+        return Ok(Some(Arc::new(KillArm {
+            boundary,
+            ordinal,
+            sentinel: staging.join("kill-armed"),
+            fired: AtomicBool::new(false),
+        })));
+    }
+    Ok(None)
+}
+
+/// TEST-ONLY: remove one chunk ordinal from every declare batch (its
+/// admission then meets NOT_READY at the covering check). Empty batches
+/// drop; if nothing remains, the historical single empty sealed declare is
+/// sent so the refusal is still NOT_READY rather than an unknown-operation
+/// error. Exactly one batch stays sealed. Without a skip the plan is
+/// returned unchanged (historical identities and seal flags intact).
+fn apply_declare_skip(
+    seed: u64,
+    worker: u64,
+    plan: Vec<(OperationId, Vec<Id>, bool)>,
+    skip: Option<u64>,
+) -> Vec<(OperationId, Vec<Id>, bool)> {
+    let Some(n) = skip else {
+        return plan;
+    };
+    let mut kept: Vec<(OperationId, Vec<Id>, bool)> = plan
+        .into_iter()
+        .map(|(op, ids, _)| {
+            (
+                op,
+                ids.into_iter().filter(|id| id.0 != n + 1).collect::<Vec<_>>(),
+                false,
+            )
+        })
+        .filter(|(_, ids, _)| !ids.is_empty())
+        .collect();
+    if kept.is_empty() {
+        kept.push((operation_id(seed, worker, "declare", 0), Vec::new(), true));
+    } else if let Some(last) = kept.last_mut() {
+        last.2 = true;
+    }
+    kept
 }
 
 /// Admit one chunk, treating capacity refusals as backpressure.
@@ -614,20 +914,139 @@ where
 /// event is recorded in the event stream with its named code; any other
 /// error fails fast. Bounded: 240 attempts, 100 ms doubling to 5 s (about
 /// 10 minutes worst case).
+/// TEST-ONLY transmit slice: matches the library's 8 KiB upload slices so
+/// the wire pattern is identical with or without an armed boundary.
+const TEST_TRANSMIT_CHUNK: usize = 8192;
+
+fn client_file_fault(code: ErrorCode, detail: &'static str) -> session::Failure {
+    session::Failure::Protocol(Error { code, detail })
+}
+
+fn client_io_fault(e: std::io::Error) -> session::Failure {
+    client_file_fault(
+        match e.kind() {
+            std::io::ErrorKind::AlreadyExists => ErrorCode::Conflict,
+            std::io::ErrorKind::NotFound => ErrorCode::NotFound,
+            _ => ErrorCode::InternalError,
+        },
+        "client file operation failed",
+    )
+}
+
+/// Transmit one admission over the public client API with TEST-ONLY hook
+/// points at the durable client boundaries. With no arm, this is the
+/// FileInput::send sequence (validate, prepare, stream, FIN, receipt, and
+/// the abort-path receipt recovery with its exact error precedence), so
+/// measured cells are unaffected.
+async fn transmit_admission(
+    session: &Session,
+    chunk: &Path,
+    intent: &journal::Intent,
+    declaration: OperationId,
+    ordinal: u64,
+    arm: Option<&KillArm>,
+) -> std::result::Result<OperationReceipt, session::Failure> {
+    let Mutation::Admit(parameters) = &intent.mutation else {
+        return Err(client_file_fault(
+            ErrorCode::FrameError,
+            "file input needs admission intent",
+        ));
+    };
+    // Pass 1 (mirrors FileInput::open plus send's intent check): hash the
+    // staged file and compare against the intent before transmitting.
+    let bytes = std::fs::read(chunk).map_err(client_io_fault)?;
+    if bytes.len() as u64 > OBJECT_LIMIT {
+        return Err(client_file_fault(
+            ErrorCode::LimitExceeded,
+            "client file byte limit",
+        ));
+    }
+    let digest: [u8; 32] = Sha256::digest(&bytes).into();
+    if parameters.input.length != Number(bytes.len() as u64)
+        || parameters.input.sha256 != Digest(digest)
+    {
+        return Err(client_file_fault(
+            ErrorCode::IntegrityError,
+            "file does not match admission intent",
+        ));
+    }
+    // Pass 2 (mirrors transmit): prepare (INTENT_JOURNALED), stream the
+    // body, FIN (REQUEST_SENT), then collect the receipt.
+    let mut input = session.client.input(intent.clone(), declaration).await?;
+    if let Some(arm) = arm {
+        arm.fire(session, ClientBoundary::IntentJournaled, ordinal);
+    }
+    let total = bytes.len() as u64;
+    let transferred: std::result::Result<(), session::Failure> = async {
+        let mut count = 0u64;
+        while count < total {
+            let amount = (total + 1 - count).min(TEST_TRANSMIT_CHUNK as u64);
+            let end = (count + amount).min(total) as usize;
+            let slice = &bytes[count as usize..end];
+            if slice.is_empty() {
+                break;
+            }
+            input.write(slice).await?;
+            count = end as u64;
+            if count > total {
+                return Err(client_file_fault(
+                    ErrorCode::IntegrityError,
+                    "input grew during transmission",
+                ));
+            }
+        }
+        input.finish().await
+    }
+    .await;
+    match transferred {
+        Ok(()) => {
+            if let Some(arm) = arm {
+                arm.fire(session, ClientBoundary::RequestSent, ordinal);
+            }
+            let receipt = input.receipt().await?;
+            if let Some(arm) = arm {
+                arm.fire(session, ClientBoundary::ReceiptJournaled, ordinal);
+            }
+            Ok(receipt)
+        }
+        Err(local) => match input.abort().await {
+            // A previously committed identical operation is authoritative,
+            // even when the server stops the redundant body transmission.
+            Ok(receipt) => {
+                if let Some(arm) = arm {
+                    arm.fire(session, ClientBoundary::ReceiptJournaled, ordinal);
+                }
+                Ok(receipt)
+            }
+            Err(outcome)
+                if matches!(
+                    &local,
+                    session::Failure::Protocol(e) if e.code == ErrorCode::Cancelled
+                ) =>
+            {
+                // An early authority refusal stops the writer. Preserve its
+                // correlated name (or receipt-persistence failure), not the
+                // secondary local "writer stopped" symptom.
+                Err(outcome)
+            }
+            Err(_) => Err(local),
+        },
+    }
+}
+
 async fn send_admission(
     session: &Session,
     chunk: &Path,
     intent: &journal::Intent,
     declaration: OperationId,
     ordinal: u64,
+    arm: Option<&KillArm>,
 ) -> Result<()> {
     const MAX_ATTEMPTS: u32 = 240;
     let mut wait_ms = 100u64;
     for attempt in 0..MAX_ATTEMPTS {
-        let outcome = FileInput::open(chunk.to_path_buf(), OBJECT_LIMIT)
-            .await?
-            .send(session.client.clone(), intent.clone(), declaration)
-            .await;
+        let outcome =
+            transmit_admission(session, chunk, intent, declaration, ordinal, arm).await;
         match outcome {
             Ok(_) => {
                 if attempt > 0 {
@@ -645,6 +1064,9 @@ async fn send_admission(
                     return Err(e.into());
                 };
                 session.log(label, ordinal as i64, &e.to_string());
+                if let Some(arm) = arm {
+                    arm.fire(session, ClientBoundary::RefusalReceived, ordinal);
+                }
                 if attempt + 1 >= MAX_ATTEMPTS {
                     session.log("admit-budget-out-send", ordinal as i64, &e.to_string());
                     return Err(e.into());
@@ -668,6 +1090,11 @@ fn backpressure_label(e: &session::Failure) -> Option<&'static str> {
     match e {
         session::Failure::Refused(r) if r.code == ErrorCode::LimitExceeded => Some("admit-refused"),
         session::Failure::Refused(r) if r.code == ErrorCode::NotReady => Some("admit-notready"),
+        // Local NOT_READY from the covering check (undeclared chunk): same
+        // code and meaning as the authority's ("not ready yet"), so the
+        // same journaled identity retries. Only reachable with
+        // --test-skip-declare (declares always cover otherwise).
+        session::Failure::Protocol(p) if p.code == ErrorCode::NotReady => Some("admit-notready"),
         session::Failure::Protocol(p) if p.code == ErrorCode::LimitExceeded => Some("admit-ceiling"),
         _ => None,
     }
@@ -687,6 +1114,7 @@ async fn admit_one(
     declaration: OperationId,
     replayed: &std::collections::HashSet<[u8; 16]>,
     ordinal: u64,
+    arm: Option<&KillArm>,
 ) -> Result<()> {
     // The terminal-state probe touches authority metadata too, so under
     // pipelined concurrency it meets the same backpressure as the send;
@@ -742,7 +1170,15 @@ async fn admit_one(
         }),
     };
     let t = Instant::now();
-    send_admission(session, &chunk_path(staging, ordinal), &intent, declaration, ordinal).await?;
+    send_admission(
+        session,
+        &chunk_path(staging, ordinal),
+        &intent,
+        declaration,
+        ordinal,
+        arm,
+    )
+    .await?;
     session.log("admitted", ordinal as i64, &format!("admit={}ms", t.elapsed().as_millis()));
     Ok(())
 }
@@ -757,22 +1193,22 @@ async fn fetch_one(
     ordinal: u64,
     staging: &Path,
     stall_read_ms: u64,
-    kill_after_verified: bool,
+    arm: Option<&KillArm>,
     first_usable: &std::sync::atomic::AtomicBool,
 ) -> Result<()> {
     use std::sync::atomic::Ordering;
     // Watch for terminal state. Backpressure retries; a dead worker's
     // cancelled watch (the F3 signal) fails fast.
     let t = Instant::now();
-    let (attempt, _) = fetch_retry(session, ordinal, || async {
-        watch_terminal(session, ordinal).await
+    let (attempt, _) = fetch_retry(session, ordinal, arm, || async {
+        watch_terminal(session, ordinal, arm).await
     })
     .await?;
     session.log("succeeded", ordinal as i64, &format!("attempt {} watch={}ms", attempt.0, t.elapsed().as_millis()));
     // Transfer the output. Backpressure retries; anything else fails fast.
     let t = Instant::now();
-    let shortcut = fetch_retry(session, ordinal, || async {
-        fetch_transfer(session, seed, total, ordinal, attempt, staging, stall_read_ms).await
+    let shortcut = fetch_retry(session, ordinal, arm, || async {
+        fetch_transfer(session, seed, total, ordinal, attempt, staging, stall_read_ms, arm).await
     })
     .await?;
     if shortcut {
@@ -791,16 +1227,11 @@ async fn fetch_one(
         session.log("first-usable-output", ordinal as i64, "");
     }
     session.log("chunk-verified", ordinal as i64, &format!("fetch={}ms", t.elapsed().as_millis()));
-    // TEST-ONLY F4 hook: abort at the first RESULT_VERIFIED boundary.
-    // The chunk-verified row above proves the boundary was reached.
-    // One-shot via sentinel so the --resume restart proceeds past it.
-    if kill_after_verified {
-        let sentinel = staging.join("kill-f4-fired");
-        if !sentinel.exists() {
-            std::fs::write(&sentinel, b"fired")?;
-            eprintln!("TEST-ONLY test-kill-after-first-verified: aborting");
-            std::process::abort();
-        }
+    // TEST-ONLY kill hook at RESULT_VERIFIED (legacy F4 alias or
+    // --test-kill-at). The chunk-verified row above proves the boundary was
+    // reached. One-shot via the arm's sentinel so --resume proceeds past it.
+    if let Some(arm) = arm {
+        arm.fire(session, ClientBoundary::ResultVerified, ordinal);
     }
     Ok(())
 }
@@ -842,7 +1273,26 @@ async fn run_session(
     // the scope: sealing earlier would conflict the following batches.
     // Declare (fresh runs only) then replay anything the journal still
     // holds as uncertain.
-    let plan = declare_plan(seed, worker, &ordinals);
+    // TEST-ONLY armed crash shared by this session's tasks (Arc: the
+    // pipelined loops spawn 'static tasks).
+    let arm = build_kill_arm(run, staging)?;
+    let arm_ref = arm.as_deref();
+    // Per-ordinal declaration identity from the full plan: the declare op
+    // whose batch covers the ordinal. Untouched batches keep historical
+    // identities; a skipped ordinal keeps its would-be op (never journaled,
+    // so the covering check refuses NOT_READY).
+    let full_plan = declare_plan(seed, worker, &ordinals);
+    let declare_ops: Vec<OperationId> = ordinals
+        .iter()
+        .map(|o| {
+            full_plan
+                .iter()
+                .find(|(_, ids, _)| ids.iter().any(|id| id.0 == o + 1))
+                .map(|(op, _, _)| *op)
+                .expect("declare plan covers every shard ordinal")
+        })
+        .collect();
+    let plan = apply_declare_skip(seed, worker, full_plan, run.test_skip_declare);
     if fresh {
         for (b, (op, ids, seal)) in plan.iter().enumerate() {
             session
@@ -863,15 +1313,15 @@ async fn run_session(
             );
         }
     }
-    let declare_ops: Vec<OperationId> = plan.iter().map(|(op, _, _)| *op).collect();
-    let replayed = replay_unresolved(&session, staging, &ordinals, &declare_ops).await?;
+    let replayed =
+        replay_unresolved(&session, staging, &ordinals, &declare_ops, arm_ref).await?;
     // Admit every chunk of this shard under its frozen identity, except
     // terminal work and just-replayed operations. Pipelined by default
     // (up to pending-limit in flight); --serial keeps the old order.
     // Every admission journals its intent before sending either way.
     if run.serial {
         for (pos, &ordinal) in ordinals.iter().enumerate() {
-            admit_one(&session, seed, total, worker, run.execution_ms, staging, declare_ops[pos / DECLARE_BATCH], &replayed, ordinal).await?;
+            admit_one(&session, seed, total, worker, run.execution_ms, staging, declare_ops[pos], &replayed, ordinal, arm_ref).await?;
         }
     } else {
         let execution_ms = run.execution_ms;
@@ -886,9 +1336,10 @@ async fn run_session(
             let s = session.clone();
             let st = staging.to_path_buf();
             let rp = replayed.clone();
-            let declaration = declare_ops[pos / DECLARE_BATCH];
+            let declaration = declare_ops[pos];
+            let arm_task = arm.clone();
             set.spawn(async move {
-                admit_one(&s, seed, total, worker, execution_ms, &st, declaration, &rp, ordinal).await
+                admit_one(&s, seed, total, worker, execution_ms, &st, declaration, &rp, ordinal, arm_task.as_deref()).await
             });
         }
         while let Some(r) = set.join_next().await {
@@ -920,7 +1371,7 @@ async fn run_session(
     let first_usable = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     if run.serial {
         for &ordinal in &ordinals {
-            fetch_one(&session, seed, total, ordinal, staging, run.test_stall_read_ms, run.test_kill_after_first_verified, first_usable.as_ref()).await?;
+            fetch_one(&session, seed, total, ordinal, staging, run.test_stall_read_ms, arm_ref, first_usable.as_ref()).await?;
         }
     } else {
         let mut set = tokio::task::JoinSet::new();
@@ -933,10 +1384,10 @@ async fn run_session(
             let s = session.clone();
             let st = staging.to_path_buf();
             let stall = run.test_stall_read_ms;
-            let kill = run.test_kill_after_first_verified;
+            let arm_task = arm.clone();
             let fu = first_usable.clone();
             set.spawn(async move {
-                fetch_one(&s, seed, total, ordinal, &st, stall, kill, fu.as_ref()).await
+                fetch_one(&s, seed, total, ordinal, &st, stall, arm_task.as_deref(), fu.as_ref()).await
             });
         }
         while let Some(r) = set.join_next().await {
@@ -1491,6 +1942,8 @@ async fn main() -> Result<()> {
             test_swap_inputs: None,
             test_drop_input: None,
             test_kill_after_first_verified: run.test_kill_after_first_verified,
+            test_kill_at: run.test_kill_at.clone(),
+            test_skip_declare: run.test_skip_declare,
             test_no_fetch: run.test_no_fetch,
             test_fetch_delay_ms: run.test_fetch_delay_ms,
             test_stall_read_ms: run.test_stall_read_ms,

@@ -7,6 +7,7 @@
 //! It is not a plugin inside the shipped CLI's fixed registry.
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
+use pipestream_core::v2::fixture;
 use rusqlite::OpenFlags;
 use pipestream_quic::{
     persistence::PhysicalLimits,
@@ -369,6 +370,53 @@ struct Network {
     /// every use is recorded by run-faults-boundary.sh.
     #[arg(long, default_value_t = 0)]
     test_kill_after_output_installed: u64,
+    /// TEST-ONLY neutral-driver fixture hooks (interface v1); never a
+    /// production admin API. When any is set, --fixture-events,
+    /// --fixture-run and --fixture-scenario are all required;
+    /// --fixture-schedule is optional. Arming is process-local and happens
+    /// before any connection is accepted; a malformed schedule fails
+    /// startup instead of a run. Every use is recorded by
+    /// run-faults-rust-authority.sh.
+    #[arg(long)]
+    fixture_events: Option<PathBuf>,
+    #[arg(long)]
+    fixture_run: Option<String>,
+    #[arg(long)]
+    fixture_scenario: Option<String>,
+    #[arg(long)]
+    fixture_schedule: Option<PathBuf>,
+}
+
+/// TEST-ONLY fixture arming (interface-v1 schedule): validates the four
+/// --fixture-* flags as an all-or-nothing group and parses the schedule.
+/// Returns None when no flag is set. Unit-tested below.
+fn fixture_arms(
+    events: Option<&Path>,
+    run: Option<&str>,
+    scenario: Option<&str>,
+    schedule: Option<&Path>,
+) -> Result<Option<(PathBuf, String, String, Vec<fixture::Arm>)>> {
+    match (events, run, scenario) {
+        (None, None, None) if schedule.is_none() => Ok(None),
+        (Some(events), Some(run), Some(scenario)) => {
+            let arms = match schedule {
+                Some(path) => {
+                    fixture::parse_schedule(path, run, scenario).map_err(anyhow::Error::msg)?
+                }
+                None => Vec::new(),
+            };
+            Ok(Some((
+                events.to_path_buf(),
+                run.to_string(),
+                scenario.to_string(),
+                arms,
+            )))
+        }
+        _ => bail!(
+            "--fixture-events, --fixture-run and --fixture-scenario must be set together; \
+             --fixture-schedule additionally requires them"
+        ),
+    }
 }
 
 /// Idle-IO anchor (C16f): the library opens one SQLite connection per
@@ -396,6 +444,20 @@ fn idle_anchor(state_db: &Path) -> Result<rusqlite::Connection> {
 async fn serve(storage: Storage, network: Network) -> Result<()> {
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    // Arming is process-local and happens before any connection is
+    // accepted; a malformed schedule fails startup instead of a run.
+    if let Some((events, run, scenario, arms)) = fixture_arms(
+        network.fixture_events.as_deref(),
+        network.fixture_run.as_deref(),
+        network.fixture_scenario.as_deref(),
+        network.fixture_schedule.as_deref(),
+    )? {
+        eprintln!(
+            "TEST-ONLY fixture armed: run={run} scenario={scenario} arms={}",
+            arms.len()
+        );
+        fixture::arm(&events, &run, &scenario, arms).map_err(anyhow::Error::msg)?;
+    }
     let (store, payloads, principals) = storage.open(false)?;
     let _anchor = idle_anchor(&storage.state_db).context("idle IO anchor")?;
     let authentication = ClientAuthentication::new(
@@ -537,5 +599,68 @@ mod kill_hook_tests {
         assert!(!kill_now(2, 3));
         assert!(kill_now(3, 3));
         assert!(!kill_now(4, 3));
+    }
+}
+
+#[cfg(test)]
+mod fixture_tests {
+    use super::*;
+
+    #[test]
+    fn no_flags_means_no_arming() {
+        assert!(fixture_arms(None, None, None, None).unwrap().is_none());
+    }
+
+    #[test]
+    fn partial_flags_rejected() {
+        let events = Path::new("events.tsv");
+        let schedule = Path::new("schedule.tsv");
+        assert!(fixture_arms(Some(events), None, None, None).is_err());
+        assert!(fixture_arms(Some(events), Some("run"), None, None).is_err());
+        assert!(fixture_arms(None, Some("run"), Some("scen"), None).is_err());
+        assert!(fixture_arms(None, None, None, Some(schedule)).is_err());
+    }
+
+    #[test]
+    fn full_flags_without_schedule_arm_empty() {
+        let armed = fixture_arms(
+            Some(Path::new("events.tsv")),
+            Some("run"),
+            Some("scen"),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(armed.3.is_empty());
+    }
+
+    #[test]
+    fn schedule_parsed_and_mismatch_rejected() {
+        let path = std::env::temp_dir().join(format!("fixture-test-{}.tsv", std::process::id()));
+        std::fs::write(
+            &path,
+            "1\trun-x\tscen-x\tserver\tADMISSION_COMMITTED\tkill\t0\t1000\n",
+        )
+        .unwrap();
+        let armed = fixture_arms(
+            Some(Path::new("events.tsv")),
+            Some("run-x"),
+            Some("scen-x"),
+            Some(&path),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(armed.3.len(), 1);
+        assert_eq!(armed.3[0].boundary, "ADMISSION_COMMITTED");
+        assert!(
+            fixture_arms(
+                Some(Path::new("events.tsv")),
+                Some("other-run"),
+                Some("scen-x"),
+                Some(&path),
+            )
+            .is_err()
+        );
+        std::fs::remove_file(&path).unwrap();
     }
 }

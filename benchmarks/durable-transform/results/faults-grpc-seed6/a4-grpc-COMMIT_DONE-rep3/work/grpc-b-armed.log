@@ -1,0 +1,3 @@
+TEST-ONLY test-kill-at armed: COMMIT_DONE occurrence 1
+LISTENING 127.0.0.1:18444
+TEST-ONLY test-kill-at: COMMIT_DONE firing (occurrence 1)

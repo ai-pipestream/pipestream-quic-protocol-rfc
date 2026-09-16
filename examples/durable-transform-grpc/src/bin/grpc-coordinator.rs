@@ -14,7 +14,10 @@ use std::{
     io::{Read, Write},
     os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 use tokio::time::sleep;
@@ -104,6 +107,17 @@ struct Run {
     /// limit.
     #[arg(long, default_value_t = 16)]
     pending_limit: usize,
+    /// TEST-ONLY: abort at the firing of a client boundary for one chunk
+    /// ordinal: "BOUNDARY:N" (N indexes chunk ordinals; "first" for the
+    /// first firing on any ordinal). Runnable on this arm: INTENT_JOURNALED
+    /// (submit intent row committed), RECEIPT_JOURNALED (commit response
+    /// received and journaled), RESULT_VERIFIED, RESULT_INSTALLED. The rest
+    /// are rejected at startup with the exact reason (see
+    /// GrpcBoundary::unavailable_on_grpc). The boundary row is the last
+    /// event row; --resume on the same db must complete byte-exact. Never
+    /// set in a measured cell.
+    #[arg(long)]
+    test_kill_at: Option<String>,
 }
 
 /// TEST-ONLY: parse an "A:B" ordinal pair with distinct ordinals.
@@ -256,6 +270,7 @@ async fn fetch_output(
     staging: &Path,
     stall_read_ms: u64,
     log_ctx: (&Path, Instant, i64),
+    arm: Option<&KillArm>,
 ) -> Result<()> {
     let path = out_path(staging, ordinal);
     let mut stream = client
@@ -327,7 +342,175 @@ async fn fetch_output(
     }
     std::fs::rename(&tmp, &path)?;
     sync_file(&path)?;
+    // The staged output file is installed; killing here dies after install
+    // with verification still ahead.
+    if let Some(arm) = arm {
+        let (events, started, worker) = log_ctx;
+        arm.fire(events, started, worker, GrpcBoundary::ResultInstalled, ordinal);
+    }
     Ok(())
+}
+
+/// TEST-ONLY kill boundary names shared with the PipeStream arm's
+/// --test-kill-at (same flag, same ordinal rule). Only the boundaries with
+/// a durable commit on this arm are runnable; the rest are rejected in
+/// build_kill_arm with the exact reason.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum GrpcBoundary {
+    IntentJournaled,
+    RequestSent,
+    ReceiptValidated,
+    ReceiptJournaled,
+    ObservationJournaled,
+    ResultVerified,
+    ResultInstalled,
+    RefusalReceived,
+}
+
+impl GrpcBoundary {
+    fn name(&self) -> &'static str {
+        match self {
+            GrpcBoundary::IntentJournaled => "INTENT_JOURNALED",
+            GrpcBoundary::RequestSent => "REQUEST_SENT",
+            GrpcBoundary::ReceiptValidated => "RECEIPT_VALIDATED",
+            GrpcBoundary::ReceiptJournaled => "RECEIPT_JOURNALED",
+            GrpcBoundary::ObservationJournaled => "OBSERVATION_JOURNALED",
+            GrpcBoundary::ResultVerified => "RESULT_VERIFIED",
+            GrpcBoundary::ResultInstalled => "RESULT_INSTALLED",
+            GrpcBoundary::RefusalReceived => "REFUSAL_RECEIVED",
+        }
+    }
+
+    fn parse(name: &str) -> Result<GrpcBoundary> {
+        match name {
+            "INTENT_JOURNALED" => Ok(GrpcBoundary::IntentJournaled),
+            "REQUEST_SENT" => Ok(GrpcBoundary::RequestSent),
+            "RECEIPT_VALIDATED" => Ok(GrpcBoundary::ReceiptValidated),
+            "RECEIPT_JOURNALED" => Ok(GrpcBoundary::ReceiptJournaled),
+            "OBSERVATION_JOURNALED" => Ok(GrpcBoundary::ObservationJournaled),
+            "RESULT_VERIFIED" => Ok(GrpcBoundary::ResultVerified),
+            "RESULT_INSTALLED" => Ok(GrpcBoundary::ResultInstalled),
+            "REFUSAL_RECEIVED" => Ok(GrpcBoundary::RefusalReceived),
+            other => bail!("test-kill-at: unknown client boundary {other:?}"),
+        }
+    }
+
+    /// Why this boundary cannot be armed on the gRPC arm (None = runnable).
+    fn unavailable_on_grpc(&self) -> Option<&'static str> {
+        match self {
+            GrpcBoundary::IntentJournaled
+            | GrpcBoundary::ReceiptJournaled
+            | GrpcBoundary::ResultVerified
+            | GrpcBoundary::ResultInstalled => None,
+            GrpcBoundary::RequestSent => Some(
+                "tonic submit is one atomic request/response call from the caller, \
+                 so there is no inter-commit seam between request-sent and \
+                 response-received (the durable boundary is RECEIPT_JOURNALED)",
+            ),
+            GrpcBoundary::ReceiptValidated => Some(
+                "receipt validation is a pure in-memory check with no journal \
+                 commit (the commit is RECEIPT_JOURNALED)",
+            ),
+            GrpcBoundary::ObservationJournaled => Some(
+                "manifest polling never journals (wait_manifest only reads), \
+                 so there is no observation commit to kill at",
+            ),
+            GrpcBoundary::RefusalReceived => Some(
+                "this arm has no backpressure-refusal vocabulary: submit \
+                 errors fail fast with no retry rows, so no refusal row exists",
+            ),
+        }
+    }
+}
+
+/// Parse "BOUNDARY:N" (N = chunk ordinal) or "BOUNDARY:first".
+fn parse_kill_at(spec: &str) -> Result<(GrpcBoundary, Option<u64>)> {
+    let (name, n) = spec
+        .split_once(':')
+        .context("test-kill-at needs BOUNDARY:N")?;
+    let boundary = GrpcBoundary::parse(name)?;
+    if n == "first" {
+        return Ok((boundary, None));
+    }
+    let ordinal: u64 = n.parse().context("test-kill-at N must be a chunk ordinal")?;
+    Ok((boundary, Some(ordinal)))
+}
+
+/// TEST-ONLY armed crash: at most one firing per process (abort is
+/// immediate) and one per staging dir (sentinel file, so --resume proceeds
+/// past it). fire() logs the boundary row itself so the last event row
+/// always names the reached boundary.
+struct KillArm {
+    boundary: GrpcBoundary,
+    /// None = first firing on any ordinal.
+    ordinal: Option<u64>,
+    sentinel: PathBuf,
+    fired: AtomicBool,
+}
+
+impl KillArm {
+    fn should_fire(&self, boundary: GrpcBoundary, ordinal: u64) -> bool {
+        if self.boundary != boundary {
+            return false;
+        }
+        if let Some(n) = self.ordinal {
+            if n != ordinal {
+                return false;
+            }
+        }
+        !self.sentinel.exists()
+    }
+
+    fn fire(
+        &self,
+        events: &Path,
+        started: Instant,
+        worker: i64,
+        boundary: GrpcBoundary,
+        ordinal: u64,
+    ) {
+        if !self.should_fire(boundary, ordinal) {
+            return;
+        }
+        if self.ordinal.is_none() && self.fired.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        log(
+            events,
+            started,
+            worker,
+            ordinal as i64,
+            "boundary",
+            &format!("{} reached, killing", boundary.name()),
+        );
+        let _ = std::fs::write(&self.sentinel, format!("{}:{ordinal}", boundary.name()));
+        eprintln!(
+            "TEST-ONLY test-kill-at: {} firing for ordinal {ordinal}, aborting",
+            boundary.name()
+        );
+        std::process::abort();
+    }
+}
+
+/// Build the TEST-ONLY crash arm for one worker from the run flags.
+fn build_kill_arm(run: &Run, staging: &Path) -> Result<Option<Arc<KillArm>>> {
+    if let Some(spec) = &run.test_kill_at {
+        let (boundary, ordinal) = parse_kill_at(spec)?;
+        if let Some(reason) = boundary.unavailable_on_grpc() {
+            bail!(
+                "TEST-ONLY test-kill-at {} unavailable on the gRPC arm: {}",
+                boundary.name(),
+                reason
+            );
+        }
+        return Ok(Some(Arc::new(KillArm {
+            boundary,
+            ordinal,
+            sentinel: staging.join("kill-armed"),
+            fired: AtomicBool::new(false),
+        })));
+    }
+    Ok(None)
 }
 
 /// Submit and admit one chunk (frozen submit identity). Shared by the
@@ -350,6 +533,7 @@ async fn grpc_admit_one(
     drop_input: Option<u64>,
     resume: bool,
     ordinal: u64,
+    arm: Option<&KillArm>,
 ) -> Result<()> {
     let t = Instant::now();
     let op = operation_id(seed, worker, "submit", ordinal);
@@ -381,6 +565,24 @@ async fn grpc_admit_one(
         .map_err(anyhow::Error::from)?;
     let input = generate_chunk(seed, upload_ordinal, chunk_len(total, ordinal));
     if known.as_deref() != Some(COMMITTED) {
+        // Durable submit intent (always on, WAL+FULL commit): a death
+        // between here and the commit row leaves this same identity for
+        // the resume to resubmit. Resume treats any non-COMMITTED state
+        // identically, so unarmed behavior is unchanged.
+        let mut input_sha = [0u8; 32];
+        input_sha.copy_from_slice(&Sha256::digest(&input));
+        let digest = params_digest(
+            authority, owner, generation, ordinal, &op,
+            input.len() as u64, &input_sha, execution_ms,
+        );
+        db.lock().unwrap().execute(
+            "INSERT OR IGNORE INTO operations(op_id, params_digest, kind, state, attempt, committed_at_ms, detail)
+             VALUES(?1, ?2, 'submit', 'submitted', 0, ?3, '')",
+            rusqlite::params![op.as_slice(), digest, wall_ms() as i64],
+        )?;
+        if let Some(arm) = arm {
+            arm.fire(events, started, worker as i64, GrpcBoundary::IntentJournaled, ordinal);
+        }
         let reply = submit_chunk(
             client, authority, owner, generation,
             ordinal, op, &input, execution_ms,
@@ -403,6 +605,11 @@ async fn grpc_admit_one(
              VALUES(?1, ?2, 'submit', ?3, 1, ?4, '')",
             rusqlite::params![op.as_slice(), reply.params_digest, COMMITTED, wall_ms() as i64],
         )?;
+        // The commit response is received and journaled; killing here dies
+        // with the receipt durable and nothing fetched yet.
+        if let Some(arm) = arm {
+            arm.fire(events, started, worker as i64, GrpcBoundary::ReceiptJournaled, ordinal);
+        }
         log(events, started, worker as i64, ordinal as i64, "admitted", &format!("admit={}ms", t.elapsed().as_millis()));
     }
     Ok(())
@@ -426,6 +633,7 @@ async fn grpc_fetch_one(
     stall_read_ms: u64,
     first_usable: &std::sync::Arc<std::sync::atomic::AtomicBool>,
     ordinal: u64,
+    arm: Option<&KillArm>,
 ) -> Result<()> {
     let t = Instant::now();
     let op = operation_id(seed, worker, "submit", ordinal);
@@ -438,7 +646,7 @@ async fn grpc_fetch_one(
     if manifest.output_sha256.is_empty() {
         bail!("empty manifest commitment");
     }
-    fetch_output(client, authority, owner, generation, ordinal, op, &manifest, staging, stall_read_ms, (events, started, worker as i64)).await?;
+    fetch_output(client, authority, owner, generation, ordinal, op, &manifest, staging, stall_read_ms, (events, started, worker as i64), arm).await?;
     let bytes = std::fs::read(out_path(staging, ordinal))?;
     if bytes != expected {
         bail!("chunk {ordinal} failed oracle byte verification");
@@ -447,6 +655,11 @@ async fn grpc_fetch_one(
         log(events, started, worker as i64, ordinal as i64, "first-usable-output", "");
     }
     log(events, started, worker as i64, ordinal as i64, "chunk-verified", &format!("fetch={}ms", t.elapsed().as_millis()));
+    // TEST-ONLY kill hook at RESULT_VERIFIED: the chunk-verified row above
+    // proves the boundary was reached.
+    if let Some(arm) = arm {
+        arm.fire(events, started, worker as i64, GrpcBoundary::ResultVerified, ordinal);
+    }
     Ok(())
 }
 
@@ -473,11 +686,15 @@ async fn run_worker(
         .map(parse_swap_pair)
         .transpose()?;
     let first_usable = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // TEST-ONLY armed crash shared by this worker's tasks (Arc: the
+    // pipelined loops spawn 'static tasks).
+    let arm = build_kill_arm(run, staging)?;
+    let arm_ref = arm.as_deref();
     // Admit phase: pipelined by default (up to pending-limit in flight);
     // --serial keeps the old one-at-a-time order.
     if run.serial {
         for &ordinal in &ordinals {
-            grpc_admit_one(&mut client, &db, authority, &run.owner, run.generation, seed, worker, run.execution_ms, total, staging, &run.events, started, swap, run.test_drop_input, run.resume, ordinal).await?;
+            grpc_admit_one(&mut client, &db, authority, &run.owner, run.generation, seed, worker, run.execution_ms, total, staging, &run.events, started, swap, run.test_drop_input, run.resume, ordinal, arm_ref).await?;
         }
     } else {
         let limit = run.pending_limit.max(1);
@@ -495,8 +712,9 @@ async fn run_worker(
             let ev = run.events.clone();
             let st = staging.to_path_buf();
             let (generation, ems, drop_in, res) = (run.generation, run.execution_ms, run.test_drop_input, run.resume);
+            let arm_task = arm.clone();
             set.spawn(async move {
-                grpc_admit_one(&mut c, &d, &auth, &own, generation, seed, worker, ems, total, &st, &ev, started, swap, drop_in, res, ordinal).await
+                grpc_admit_one(&mut c, &d, &auth, &own, generation, seed, worker, ems, total, &st, &ev, started, swap, drop_in, res, ordinal, arm_task.as_deref()).await
             });
         }
         while let Some(r) = set.join_next().await {
@@ -519,7 +737,7 @@ async fn run_worker(
         }
         if run.serial {
             for &ordinal in &ordinals {
-                grpc_fetch_one(&mut client, authority, &run.owner, run.generation, seed, worker, run.execution_ms, total, staging, &run.events, started, run.test_stall_read_ms, &first_usable, ordinal).await?;
+                grpc_fetch_one(&mut client, authority, &run.owner, run.generation, seed, worker, run.execution_ms, total, staging, &run.events, started, run.test_stall_read_ms, &first_usable, ordinal, arm_ref).await?;
             }
         } else {
             let limit = run.pending_limit.max(1);
@@ -537,8 +755,9 @@ async fn run_worker(
                 let st = staging.to_path_buf();
                 let fu = first_usable.clone();
                 let (generation, ems, stall) = (run.generation, run.execution_ms, run.test_stall_read_ms);
+                let arm_task = arm.clone();
                 set.spawn(async move {
-                    grpc_fetch_one(&mut c, &auth, &own, generation, seed, worker, ems, total, &st, &ev, started, stall, &fu, ordinal).await
+                    grpc_fetch_one(&mut c, &auth, &own, generation, seed, worker, ems, total, &st, &ev, started, stall, &fu, ordinal, arm_task.as_deref()).await
                 });
             }
             while let Some(r) = set.join_next().await {
@@ -614,6 +833,7 @@ async fn main() -> Result<()> {
         let (seed, size, generation, execution_ms, resume, test_no_fetch, test_fetch_delay_ms, test_stall_read_ms) =
             (run.seed, run.size, run.generation, run.execution_ms, run.resume, run.test_no_fetch, run.test_fetch_delay_ms, run.test_stall_read_ms);
         let swap_inputs = run.test_swap_inputs.clone();
+        let kill_at = run.test_kill_at.clone();
         handles.push(tokio::spawn(async move {
             let run = Run {
                 tls,
@@ -635,6 +855,7 @@ async fn main() -> Result<()> {
                 resume,
                 test_swap_inputs: swap_inputs.clone(),
                 test_drop_input: run.test_drop_input,
+                test_kill_at: kill_at.clone(),
                 test_no_fetch,
                 test_fetch_delay_ms,
                 test_stall_read_ms,
@@ -709,5 +930,67 @@ mod swap_tests {
         assert!(parse_swap_pair("0:0").is_err());
         assert!(parse_swap_pair("0").is_err());
         assert!(parse_swap_pair("a:b").is_err());
+    }
+
+    #[test]
+    fn kill_at_parses_shared_boundary_vocabulary() {
+        for (name, boundary) in [
+            ("INTENT_JOURNALED", GrpcBoundary::IntentJournaled),
+            ("REQUEST_SENT", GrpcBoundary::RequestSent),
+            ("RECEIPT_VALIDATED", GrpcBoundary::ReceiptValidated),
+            ("RECEIPT_JOURNALED", GrpcBoundary::ReceiptJournaled),
+            ("OBSERVATION_JOURNALED", GrpcBoundary::ObservationJournaled),
+            ("RESULT_VERIFIED", GrpcBoundary::ResultVerified),
+            ("RESULT_INSTALLED", GrpcBoundary::ResultInstalled),
+            ("REFUSAL_RECEIVED", GrpcBoundary::RefusalReceived),
+        ] {
+            assert_eq!(parse_kill_at(&format!("{name}:2")).unwrap(), (boundary, Some(2)));
+            assert_eq!(parse_kill_at(&format!("{name}:first")).unwrap(), (boundary, None));
+            assert_eq!(boundary.name(), name);
+        }
+        assert!(parse_kill_at("COMMITTED:0").is_err());
+        assert!(parse_kill_at("RESULT_VERIFIED").is_err());
+        assert!(parse_kill_at("RESULT_VERIFIED:x").is_err());
+    }
+
+    #[test]
+    fn grpc_runnable_boundaries_are_exactly_four() {
+        let runnable: Vec<&str> = [
+            GrpcBoundary::IntentJournaled,
+            GrpcBoundary::RequestSent,
+            GrpcBoundary::ReceiptValidated,
+            GrpcBoundary::ReceiptJournaled,
+            GrpcBoundary::ObservationJournaled,
+            GrpcBoundary::ResultVerified,
+            GrpcBoundary::ResultInstalled,
+            GrpcBoundary::RefusalReceived,
+        ]
+        .into_iter()
+        .filter(|b| b.unavailable_on_grpc().is_none())
+        .map(|b| b.name())
+        .collect();
+        assert_eq!(
+            runnable,
+            vec!["INTENT_JOURNALED", "RECEIPT_JOURNALED", "RESULT_VERIFIED", "RESULT_INSTALLED"]
+        );
+    }
+
+    #[test]
+    fn kill_arm_fires_only_on_match_without_sentinel() {
+        let dir = std::env::temp_dir().join("grpc-kill-arm-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let arm = KillArm {
+            boundary: GrpcBoundary::ReceiptJournaled,
+            ordinal: Some(2),
+            sentinel: dir.join("kill-armed"),
+            fired: AtomicBool::new(false),
+        };
+        assert!(!arm.should_fire(GrpcBoundary::IntentJournaled, 2));
+        assert!(!arm.should_fire(GrpcBoundary::ReceiptJournaled, 1));
+        assert!(arm.should_fire(GrpcBoundary::ReceiptJournaled, 2));
+        std::fs::write(dir.join("kill-armed"), b"x").unwrap();
+        assert!(!arm.should_fire(GrpcBoundary::ReceiptJournaled, 2));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

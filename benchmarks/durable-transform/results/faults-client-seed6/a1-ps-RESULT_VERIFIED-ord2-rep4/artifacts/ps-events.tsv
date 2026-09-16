@@ -1,0 +1,44 @@
+174	1789248336963	0	-1	session-open	workload-a
+174	1789248336963	2	-1	session-open	workload-c
+178	1789248336967	1	-1	session-open	workload-b
+255	1789248337044	0	-1	declared	batch 0: 2 entities
+255	1789248337044	2	-1	declared	batch 0: 1 entities
+260	1789248337048	1	-1	declared	batch 0: 1 entities
+395	1789248337184	1	1	admitted	admit=134ms
+395	1789248337184	2	2	admitted	admit=139ms
+405	1789248337194	0	3	admitted	admit=149ms
+441	1789248337229	0	0	admitted	admit=184ms
+584	1789248337373	2	2	succeeded	attempt 1 watch=189ms
+584	1789248337373	1	1	succeeded	attempt 1 watch=189ms
+659	1789248337447	1	1	first-usable-output	
+659	1789248337447	1	1	chunk-verified	fetch=74ms
+664	1789248337453	2	2	first-usable-output	
+664	1789248337453	2	2	chunk-verified	fetch=79ms
+664	1789248337453	2	2	boundary	RESULT_VERIFIED reached, killing
+15	1789248339001	2	-1	session-open	workload-c
+15	1789248339001	1	-1	session-open	workload-b
+16	1789248339002	1	1	succeeded	attempt 1 watch=0ms
+16	1789248339002	2	2	succeeded	attempt 1 watch=0ms
+24	1789248339010	0	-1	session-open	workload-a
+25	1789248339012	0	3	admitted	admit=1ms
+26	1789248339012	0	0	succeeded	attempt 1 watch=0ms
+53	1789248339039	1	-1	scope-pages	1 pages
+53	1789248339039	2	-1	scope-pages	1 pages
+59	1789248339045	0	3	succeeded	attempt 1 watch=33ms
+79	1789248339065	1	-1	checkpoint	declared 1
+80	1789248339067	1	-1	complete	declared 1
+80	1789248339067	1	-1	commits	1 chunks
+84	1789248339070	2	-1	checkpoint	declared 1
+85	1789248339071	2	-1	complete	declared 1
+85	1789248339071	2	-1	commits	1 chunks
+137	1789248339123	0	0	first-usable-output	
+137	1789248339123	0	0	chunk-verified	fetch=110ms
+149	1789248339135	0	3	chunk-verified	fetch=90ms
+165	1789248339151	0	-1	scope-pages	1 pages
+166	1789248339152	1	-1	session-close	
+168	1789248339154	2	-1	session-close	
+186	1789248339172	0	-1	checkpoint	declared 2
+187	1789248339173	0	-1	complete	declared 2
+187	1789248339173	0	-1	commits	2 chunks
+267	1789248339253	0	-1	session-close	
+0	1789248339263	-	-	final-verified	200000 bytes

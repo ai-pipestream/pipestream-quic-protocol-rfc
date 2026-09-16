@@ -1,0 +1,6 @@
+M1 wall time (from per-cell DONE timestamps, seed 6)
+A1 CLIENT SUITE PASS (120 kill+resume-complete, 12 kill+nofalse, 10 twins, 1 UNAVAILABLE)
+first DONE: 2026-09-12T21:05:19Z
+last DONE:  2026-09-13T02:40:05Z
+suite wall: 5h34m46s (142/142 cells DONE)
+source: /home/krickert/.rfc-tmp/a1-seed6/ (this archive is its pruned copy)

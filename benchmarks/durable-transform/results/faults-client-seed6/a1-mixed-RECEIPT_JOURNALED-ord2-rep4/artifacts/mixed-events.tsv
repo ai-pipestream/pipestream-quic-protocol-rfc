@@ -1,0 +1,44 @@
+166	1789248131281	0	-1	session-open	workload-a
+170	1789248131286	1	-1	session-open	workload-b
+247	1789248131363	2	-1	session-open	workload-c
+252	1789248131368	0	-1	declared	batch 0: 2 entities
+252	1789248131368	1	-1	declared	batch 0: 1 entities
+333	1789248131448	2	-1	declared	batch 0: 1 entities
+386	1789248131502	1	1	admitted	admit=133ms
+386	1789248131502	0	3	admitted	admit=133ms
+422	1789248131538	0	0	admitted	admit=169ms
+518	1789248131633	0	3	succeeded	attempt 1 watch=95ms
+584	1789248131700	1	1	succeeded	attempt 1 watch=197ms
+622	1789248131737	2	2	boundary	RECEIPT_JOURNALED reached, killing
+24	1789248133645	1	-1	session-open	workload-b
+24	1789248133646	0	-1	session-open	workload-a
+25	1789248133647	1	1	succeeded	attempt 1 watch=0ms
+26	1789248133648	0	0	admitted	admit=1ms
+27	1789248133649	0	3	succeeded	attempt 1 watch=0ms
+47	1789248133668	0	0	succeeded	attempt 1 watch=20ms
+68	1789248133689	1	1	first-usable-output	
+68	1789248133689	1	1	chunk-verified	fetch=42ms
+84	1789248133706	2	-1	session-open	workload-c
+94	1789248133715	0	3	first-usable-output	
+94	1789248133715	0	3	chunk-verified	fetch=66ms
+104	1789248133726	1	-1	scope-pages	1 pages
+111	1789248133732	2	2	admitted	admit=26ms
+119	1789248133741	0	0	chunk-verified	fetch=72ms
+139	1789248133760	1	-1	checkpoint	declared 1
+140	1789248133762	1	-1	complete	declared 1
+140	1789248133762	1	-1	commits	1 chunks
+149	1789248133771	2	2	succeeded	attempt 1 watch=38ms
+154	1789248133775	0	-1	scope-pages	1 pages
+190	1789248133811	0	-1	checkpoint	declared 2
+191	1789248133812	0	-1	complete	declared 2
+191	1789248133812	0	-1	commits	2 chunks
+223	1789248133845	1	-1	session-close	
+233	1789248133855	2	2	first-usable-output	
+233	1789248133855	2	2	chunk-verified	fetch=84ms
+251	1789248133872	2	-1	scope-pages	1 pages
+269	1789248133891	2	-1	checkpoint	declared 1
+271	1789248133892	0	-1	session-close	
+273	1789248133894	2	-1	complete	declared 1
+273	1789248133894	2	-1	commits	1 chunks
+366	1789248133987	2	-1	session-close	
+0	1789248133998	-	-	final-verified	200000 bytes

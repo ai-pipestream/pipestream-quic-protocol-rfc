@@ -1,0 +1,6 @@
+java-worker: c
+java-jar: /home/krickert/.rfc-tmp/a1-seed6/java-28c3369b-all.jar
+restart-safety: Pure (Rust) / IDEMPOTENT (Java transform/v2)
+fixture-schedule-schema: kimi interface-v1 1452f60 (c566751a...)
+rust-phys-funding-mib: db=256 wal=64
+java-phys-funding-mib: db=256 wal=64

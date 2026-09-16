@@ -1,0 +1,23 @@
+55	1789267165400	2	-1	session-open	workload-c
+56	1789267165400	1	-1	session-open	workload-b
+56	1789267165400	0	-1	session-open	workload-a
+103	1789267165448	0	3	admitted	admit=47ms
+109	1789267165454	2	2	admitted	admit=54ms
+117	1789267165462	0	0	boundary	RECEIPT_JOURNALED reached, killing
+1	1789267168999	2	-1	session-open	workload-c
+2	1789267169000	0	-1	session-open	workload-a
+2	1789267169000	1	-1	session-open	workload-b
+52	1789267169050	0	3	first-usable-output	
+52	1789267169050	0	3	chunk-verified	fetch=49ms
+80	1789267169078	1	1	first-usable-output	
+80	1789267169078	1	1	chunk-verified	fetch=77ms
+80	1789267169078	0	0	chunk-verified	fetch=78ms
+80	1789267169078	2	2	first-usable-output	
+80	1789267169078	1	-1	commits	1 chunks
+80	1789267169078	1	-1	session-close	
+80	1789267169078	2	2	chunk-verified	fetch=78ms
+80	1789267169078	0	-1	commits	2 chunks
+80	1789267169078	0	-1	session-close	
+80	1789267169078	2	-1	commits	1 chunks
+80	1789267169078	2	-1	session-close	
+0	1789267169091	-	-	final-verified	200000 bytes

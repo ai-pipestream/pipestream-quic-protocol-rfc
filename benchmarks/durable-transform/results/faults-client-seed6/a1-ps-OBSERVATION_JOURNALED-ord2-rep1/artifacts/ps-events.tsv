@@ -1,0 +1,44 @@
+174	1789248249551	0	-1	session-open	workload-a
+180	1789248249556	1	-1	session-open	workload-b
+180	1789248249556	2	-1	session-open	workload-c
+260	1789248249637	0	-1	declared	batch 0: 2 entities
+265	1789248249641	1	-1	declared	batch 0: 1 entities
+265	1789248249641	2	-1	declared	batch 0: 1 entities
+405	1789248249781	1	1	admitted	admit=139ms
+405	1789248249781	2	2	admitted	admit=139ms
+410	1789248249787	0	3	admitted	admit=149ms
+500	1789248249877	0	0	admitted	admit=238ms
+599	1789248249976	1	1	succeeded	attempt 1 watch=194ms
+604	1789248249980	2	2	boundary	OBSERVATION_JOURNALED reached, killing
+15	1789248251464	1	-1	session-open	workload-b
+15	1789248251465	2	-1	session-open	workload-c
+16	1789248251465	0	-1	session-open	workload-a
+16	1789248251466	1	1	succeeded	attempt 1 watch=0ms
+17	1789248251466	2	2	succeeded	attempt 1 watch=0ms
+18	1789248251467	0	3	admitted	admit=1ms
+18	1789248251468	0	0	admitted	admit=1ms
+52	1789248251502	0	0	succeeded	attempt 1 watch=34ms
+82	1789248251531	0	3	succeeded	attempt 1 watch=63ms
+97	1789248251546	2	2	first-usable-output	
+97	1789248251546	2	2	chunk-verified	fetch=80ms
+97	1789248251546	1	1	first-usable-output	
+97	1789248251546	1	1	chunk-verified	fetch=80ms
+128	1789248251577	2	-1	scope-pages	1 pages
+128	1789248251577	1	-1	scope-pages	1 pages
+158	1789248251607	2	-1	checkpoint	declared 1
+158	1789248251607	1	-1	checkpoint	declared 1
+159	1789248251609	1	-1	complete	declared 1
+159	1789248251609	1	-1	commits	1 chunks
+160	1789248251609	2	-1	complete	declared 1
+160	1789248251609	2	-1	commits	1 chunks
+179	1789248251629	0	0	first-usable-output	
+179	1789248251629	0	0	chunk-verified	fetch=127ms
+201	1789248251650	0	3	chunk-verified	fetch=119ms
+219	1789248251668	0	-1	scope-pages	1 pages
+235	1789248251685	0	-1	checkpoint	declared 2
+237	1789248251686	0	-1	complete	declared 2
+237	1789248251686	0	-1	commits	2 chunks
+242	1789248251691	1	-1	session-close	
+244	1789248251694	2	-1	session-close	
+317	1789248251766	0	-1	session-close	
+0	1789248251777	-	-	final-verified	200000 bytes

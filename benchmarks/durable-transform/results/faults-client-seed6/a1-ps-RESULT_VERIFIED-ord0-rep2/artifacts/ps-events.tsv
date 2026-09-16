@@ -1,0 +1,56 @@
+173	1789248291544	0	-1	session-open	workload-a
+173	1789248291544	2	-1	session-open	workload-c
+177	1789248291548	1	-1	session-open	workload-b
+261	1789248291632	2	-1	declared	batch 0: 1 entities
+266	1789248291637	0	-1	declared	batch 0: 2 entities
+266	1789248291637	1	-1	declared	batch 0: 1 entities
+402	1789248291773	1	1	admitted	admit=135ms
+402	1789248291773	2	2	admitted	admit=140ms
+408	1789248291778	0	3	admitted	admit=141ms
+445	1789248291816	0	0	admitted	admit=178ms
+600	1789248291971	2	2	succeeded	attempt 1 watch=197ms
+600	1789248291971	1	1	succeeded	attempt 1 watch=198ms
+670	1789248292041	1	1	first-usable-output	
+670	1789248292041	1	1	chunk-verified	fetch=69ms
+690	1789248292061	2	2	first-usable-output	
+690	1789248292061	2	2	chunk-verified	fetch=89ms
+706	1789248292077	1	-1	scope-pages	1 pages
+711	1789248292081	0	0	succeeded	attempt 1 watch=265ms
+731	1789248292102	2	-1	scope-pages	1 pages
+741	1789248292112	1	-1	checkpoint	declared 1
+742	1789248292113	1	-1	complete	declared 1
+742	1789248292113	1	-1	commits	1 chunks
+746	1789248292117	0	3	succeeded	attempt 1 watch=301ms
+761	1789248292132	2	-1	checkpoint	declared 1
+762	1789248292133	2	-1	complete	declared 1
+762	1789248292133	2	-1	commits	1 chunks
+826	1789248292196	1	-1	session-close	
+845	1789248292216	2	-1	session-close	
+847	1789248292218	0	0	first-usable-output	
+847	1789248292218	0	0	chunk-verified	fetch=136ms
+847	1789248292218	0	0	boundary	RESULT_VERIFIED reached, killing
+18	1789248293727	0	-1	session-open	workload-a
+19	1789248293729	0	3	succeeded	attempt 1 watch=0ms
+19	1789248293729	0	0	succeeded	attempt 1 watch=0ms
+22	1789248293731	2	-1	session-open	workload-c
+22	1789248293732	1	-1	session-open	workload-b
+23	1789248293733	2	2	succeeded	attempt 1 watch=0ms
+24	1789248293733	2	-1	scope-pages	1 pages
+24	1789248293733	1	1	succeeded	attempt 1 watch=0ms
+24	1789248293734	2	-1	checkpoint	declared 1
+25	1789248293735	1	-1	scope-pages	1 pages
+25	1789248293735	2	-1	complete	declared 1
+25	1789248293735	2	-1	commits	1 chunks
+26	1789248293735	1	-1	checkpoint	declared 1
+27	1789248293736	1	-1	complete	declared 1
+27	1789248293736	1	-1	commits	1 chunks
+47	1789248293757	0	3	first-usable-output	
+47	1789248293757	0	3	chunk-verified	fetch=28ms
+63	1789248293773	0	-1	scope-pages	1 pages
+80	1789248293790	0	-1	checkpoint	declared 2
+81	1789248293791	0	-1	complete	declared 2
+81	1789248293791	0	-1	commits	2 chunks
+107	1789248293816	2	-1	session-close	
+113	1789248293822	1	-1	session-close	
+162	1789248293872	0	-1	session-close	
+0	1789248293882	-	-	final-verified	200000 bytes

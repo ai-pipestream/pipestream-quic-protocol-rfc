@@ -1,0 +1,46 @@
+172	1789248149326	0	-1	session-open	workload-a
+178	1789248149332	1	-1	session-open	workload-b
+178	1789248149332	2	-1	session-open	workload-c
+253	1789248149407	2	-1	declared	batch 0: 1 entities
+258	1789248149413	1	-1	declared	batch 0: 1 entities
+258	1789248149413	0	-1	declared	batch 0: 2 entities
+393	1789248149547	2	2	admitted	admit=139ms
+397	1789248149552	0	3	admitted	admit=138ms
+403	1789248149557	1	1	admitted	admit=143ms
+440	1789248149595	0	0	admitted	admit=181ms
+540	1789248149694	0	3	succeeded	attempt 1 watch=99ms
+590	1789248149744	2	2	succeeded	attempt 1 watch=196ms
+625	1789248149779	1	1	succeeded	attempt 1 watch=221ms
+664	1789248149818	2	2	first-usable-output	
+664	1789248149818	2	2	chunk-verified	fetch=74ms
+694	1789248149848	1	1	first-usable-output	
+694	1789248149848	1	1	chunk-verified	fetch=69ms
+699	1789248149853	0	3	first-usable-output	
+699	1789248149853	0	3	chunk-verified	fetch=159ms
+699	1789248149854	2	-1	scope-pages	1 pages
+724	1789248149878	0	0	boundary	OBSERVATION_JOURNALED reached, killing
+15	1789248151377	0	-1	session-open	workload-a
+17	1789248151379	0	3	succeeded	attempt 1 watch=0ms
+17	1789248151379	0	0	succeeded	attempt 1 watch=0ms
+19	1789248151381	2	-1	session-open	workload-c
+20	1789248151382	2	2	succeeded	attempt 1 watch=0ms
+21	1789248151383	2	-1	scope-pages	1 pages
+34	1789248151397	1	-1	session-open	workload-b
+35	1789248151398	1	1	succeeded	attempt 1 watch=0ms
+36	1789248151398	1	-1	scope-pages	1 pages
+47	1789248151409	2	-1	checkpoint	declared 1
+48	1789248151410	2	-1	complete	declared 1
+48	1789248151410	2	-1	commits	1 chunks
+66	1789248151429	1	-1	checkpoint	declared 1
+68	1789248151430	1	-1	complete	declared 1
+68	1789248151430	1	-1	commits	1 chunks
+88	1789248151450	0	0	first-usable-output	
+88	1789248151450	0	0	chunk-verified	fetch=70ms
+104	1789248151466	0	-1	scope-pages	1 pages
+120	1789248151483	0	-1	checkpoint	declared 2
+122	1789248151484	0	-1	complete	declared 2
+122	1789248151484	0	-1	commits	2 chunks
+130	1789248151492	2	-1	session-close	
+148	1789248151510	1	-1	session-close	
+202	1789248151564	0	-1	session-close	
+0	1789248151575	-	-	final-verified	200000 bytes

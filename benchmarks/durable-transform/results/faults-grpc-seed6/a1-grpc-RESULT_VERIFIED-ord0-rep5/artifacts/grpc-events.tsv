@@ -1,0 +1,35 @@
+74	1789267217245	2	-1	session-open	workload-c
+74	1789267217245	1	-1	session-open	workload-b
+74	1789267217245	0	-1	session-open	workload-a
+122	1789267217293	0	3	admitted	admit=47ms
+132	1789267217303	2	2	admitted	admit=58ms
+142	1789267217313	1	1	admitted	admit=67ms
+157	1789267217328	0	0	admitted	admit=83ms
+182	1789267217353	2	2	first-usable-output	
+182	1789267217353	2	2	chunk-verified	fetch=49ms
+182	1789267217353	2	-1	commits	1 chunks
+182	1789267217353	2	-1	session-close	
+186	1789267217357	1	1	first-usable-output	
+186	1789267217357	1	1	chunk-verified	fetch=44ms
+187	1789267217357	1	-1	commits	1 chunks
+187	1789267217357	1	-1	session-close	
+207	1789267217377	0	0	first-usable-output	
+207	1789267217377	0	0	chunk-verified	fetch=49ms
+207	1789267217377	0	0	boundary	RESULT_VERIFIED reached, killing
+1	1789267219689	1	-1	session-open	workload-b
+2	1789267219689	0	-1	session-open	workload-a
+2	1789267219689	2	-1	session-open	workload-c
+46	1789267219733	1	1	first-usable-output	
+46	1789267219733	1	1	chunk-verified	fetch=44ms
+46	1789267219733	1	-1	commits	1 chunks
+46	1789267219733	1	-1	session-close	
+65	1789267219753	0	3	first-usable-output	
+65	1789267219753	0	3	chunk-verified	fetch=63ms
+65	1789267219753	2	2	first-usable-output	
+65	1789267219753	2	2	chunk-verified	fetch=63ms
+65	1789267219753	2	-1	commits	1 chunks
+65	1789267219753	2	-1	session-close	
+70	1789267219757	0	0	chunk-verified	fetch=68ms
+70	1789267219757	0	-1	commits	2 chunks
+70	1789267219757	0	-1	session-close	
+0	1789267219768	-	-	final-verified	200000 bytes

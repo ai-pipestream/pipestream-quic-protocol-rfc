@@ -1,0 +1,49 @@
+173	1789248309838	1	-1	session-open	workload-b
+179	1789248309844	0	-1	session-open	workload-a
+256	1789248309921	1	-1	declared	batch 0: 1 entities
+262	1789248309927	0	-1	declared	batch 0: 2 entities
+262	1789248309927	2	-1	session-open	workload-c
+351	1789248310016	2	-1	declared	batch 0: 1 entities
+397	1789248310062	1	1	admitted	admit=139ms
+403	1789248310067	0	3	admitted	admit=140ms
+490	1789248310155	0	0	admitted	admit=227ms
+520	1789248310185	0	3	succeeded	attempt 1 watch=29ms
+599	1789248310264	1	1	succeeded	attempt 1 watch=202ms
+599	1789248310264	2	2	admitted	admit=247ms
+669	1789248310334	1	1	first-usable-output	
+669	1789248310334	1	1	chunk-verified	fetch=70ms
+674	1789248310338	0	3	first-usable-output	
+674	1789248310338	0	3	chunk-verified	fetch=153ms
+706	1789248310371	1	-1	scope-pages	1 pages
+711	1789248310376	0	0	succeeded	attempt 1 watch=221ms
+742	1789248310407	1	-1	checkpoint	declared 1
+743	1789248310408	1	-1	complete	declared 1
+743	1789248310408	1	-1	commits	1 chunks
+798	1789248310463	0	0	chunk-verified	fetch=86ms
+798	1789248310463	0	0	boundary	RESULT_VERIFIED reached, killing
+20	1789248312281	0	-1	session-open	workload-a
+20	1789248312281	1	-1	session-open	workload-b
+22	1789248312283	1	1	succeeded	attempt 1 watch=1ms
+22	1789248312283	0	3	succeeded	attempt 1 watch=1ms
+22	1789248312283	0	0	succeeded	attempt 1 watch=1ms
+23	1789248312284	1	-1	scope-pages	1 pages
+24	1789248312285	1	-1	checkpoint	declared 1
+26	1789248312287	1	-1	complete	declared 1
+26	1789248312287	1	-1	commits	1 chunks
+44	1789248312305	0	-1	scope-pages	1 pages
+61	1789248312322	0	-1	checkpoint	declared 2
+63	1789248312324	0	-1	complete	declared 2
+63	1789248312324	0	-1	commits	2 chunks
+82	1789248312343	2	-1	session-open	workload-c
+97	1789248312358	2	2	admitted	admit=13ms
+108	1789248312369	1	-1	session-close	
+116	1789248312377	2	2	succeeded	attempt 1 watch=19ms
+144	1789248312405	0	-1	session-close	
+184	1789248312445	2	2	first-usable-output	
+184	1789248312445	2	2	chunk-verified	fetch=68ms
+203	1789248312464	2	-1	scope-pages	1 pages
+222	1789248312483	2	-1	checkpoint	declared 1
+225	1789248312486	2	-1	complete	declared 1
+225	1789248312486	2	-1	commits	1 chunks
+320	1789248312581	2	-1	session-close	
+0	1789248312591	-	-	final-verified	200000 bytes

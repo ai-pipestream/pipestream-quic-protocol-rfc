@@ -1,0 +1,44 @@
+169	1789248071600	1	-1	session-open	workload-b
+173	1789248071604	2	-1	session-open	workload-c
+173	1789248071604	0	-1	session-open	workload-a
+249	1789248071680	0	-1	declared	batch 0: 2 entities
+249	1789248071680	1	-1	declared	batch 0: 1 entities
+253	1789248071685	2	-1	declared	batch 0: 1 entities
+389	1789248071821	1	1	admitted	admit=139ms
+400	1789248071831	2	2	admitted	admit=145ms
+400	1789248071831	0	3	admitted	admit=150ms
+437	1789248071868	0	0	boundary	RECEIPT_JOURNALED reached, killing
+14	1789248073370	0	-1	session-open	workload-a
+15	1789248073372	0	3	admitted	admit=1ms
+16	1789248073372	0	0	admitted	admit=1ms
+18	1789248073375	1	-1	session-open	workload-b
+19	1789248073375	2	-1	session-open	workload-c
+20	1789248073376	1	1	admitted	admit=1ms
+21	1789248073377	2	2	admitted	admit=1ms
+47	1789248073404	2	2	succeeded	attempt 1 watch=26ms
+47	1789248073404	0	3	succeeded	attempt 1 watch=31ms
+53	1789248073409	1	1	succeeded	attempt 1 watch=32ms
+83	1789248073440	0	0	succeeded	attempt 1 watch=67ms
+123	1789248073480	1	1	first-usable-output	
+123	1789248073480	1	1	chunk-verified	fetch=70ms
+123	1789248073480	2	2	first-usable-output	
+123	1789248073480	2	2	chunk-verified	fetch=76ms
+157	1789248073514	2	-1	scope-pages	1 pages
+162	1789248073518	1	-1	scope-pages	1 pages
+187	1789248073544	0	3	first-usable-output	
+187	1789248073544	0	3	chunk-verified	fetch=140ms
+192	1789248073548	2	-1	checkpoint	declared 1
+193	1789248073549	2	-1	complete	declared 1
+193	1789248073549	2	-1	commits	1 chunks
+197	1789248073554	1	-1	checkpoint	declared 1
+198	1789248073555	1	-1	complete	declared 1
+198	1789248073555	1	-1	commits	1 chunks
+208	1789248073564	0	0	chunk-verified	fetch=124ms
+224	1789248073580	0	-1	scope-pages	1 pages
+241	1789248073597	0	-1	checkpoint	declared 2
+242	1789248073599	0	-1	complete	declared 2
+242	1789248073599	0	-1	commits	2 chunks
+276	1789248073632	2	-1	session-close	
+279	1789248073635	1	-1	session-close	
+322	1789248073678	0	-1	session-close	
+0	1789248073689	-	-	final-verified	200000 bytes
