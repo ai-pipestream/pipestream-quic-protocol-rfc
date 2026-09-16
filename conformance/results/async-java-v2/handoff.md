@@ -711,6 +711,26 @@ when the holder closes and the owner reconnects) and, in Rust,
 connection" in the message, the per-principal tier is the named code). The
 Java main tree is unchanged by this round; the new test ran green on its own.
 
+### S12-008 closed: no application 0-RTT (2026-09-16)
+
+The last GAP row. `V2TlsTest.resumedClientOfferingEarlyDataIsNeverInEarlyDataAndFramesFollowTheHandshake`
+connects an external client that caches session tickets and offers early data
+(`earlyData(true)`) twice: the second connection is an actual TLS resumption
+(`isSessionReused`), the transport's early-data-ready event never fires on
+either connection because the listener's tickets carry no early-data
+allowance (`TlsAuthentication` builds its context with `earlyData(false)`),
+and both exchanges are answered after the completed handshake with the guard
+authenticated. The control
+`V2TlsTest.theEarlyDataObservationIsLiveAgainstAListenerThatAllowsIt` runs the
+same client against a listener context that allows early data and asserts the
+event does fire on resumption, so the observation is live. `V2TlsTest` 11/11
+(`s12-008-java-v2.log`). The Rust listener is covered by its existing
+`a_resumption_enabled_client_gets_no_ticket_and_expiry_requires_full_handshake`
+(the client enables early data and the 0-RTT attempt cannot proceed).
+Traceability: 362 covered, 5 partial by decision, 0 gaps, 7 not applicable.
+The top-level `REFERENCE_IMPLEMENTATION.md` status section was rewritten the
+same day for the durable-work state of the suite.
+
 ## 6. Build and verification commands
 
 ```

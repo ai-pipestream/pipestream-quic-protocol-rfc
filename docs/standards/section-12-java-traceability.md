@@ -16,7 +16,7 @@ boundary hooks; the summary table is recomputed from the rows). Updated at
 decision, see its row). Updated at `dce9d384` (S12-078 and S12-079 covered by
 `DurableClientResultNegativeTest` and `ResultAbortWireTest`; S12-056 recognised as covered
 by the existing transport-close assertion). Updated at `6174d92d` (S12-294 covered by
-`DurableClientContradictionTest.childMetadataNeverProvesTheParentUntilTheParentItselfIsObserved`). Updated at `c115e292` (S12-005 and S12-010 covered; S12-008 refined as a proposal, see P-TLS-1). Updated 2026-09-16 (S12-056a added with the Section 12.1 per-principal ceiling sentence, covered by `DurableClientCeilingTest`; the summary table is recomputed).
+`DurableClientContradictionTest.childMetadataNeverProvesTheParentUntilTheParentItselfIsObserved`). Updated at `c115e292` (S12-005 and S12-010 covered; S12-008 refined as a proposal, see P-TLS-1). Updated 2026-09-16 (S12-056a added with the Section 12.1 per-principal ceiling sentence, covered by `DurableClientCeilingTest`; the summary table is recomputed). Updated 2026-09-16 (S12-008 covered by `V2TlsTest` early-data tests, P-TLS-1 done; no GAP rows remain; the summary table is recomputed).
 Updated at `3f8846e2` (thirteen store-level partials closed by unit tests, P-STORE-3 and
 P-STORE-5 to P-STORE-16; S12-248 recorded as not producible, D13). Updated at `7583b00f`
 (S12-017, S12-145, S12-193 and S12-215 covered by `SchemaBoundsAndRegistryTest`). Updated at `aa05d201`
@@ -90,7 +90,7 @@ including most of the refusal-code taxonomy.
 | id | statement | enforcing code | tests | status | note |
 |---|---|---|---|---|---|
 | S12-007 | "Use QUIC version 1 ... and its TLS mapping, with TLS 1.3, ALPN `pipestream/2`" | `TlsAuthentication` (ALPN constant, QUIC v1 codec) | `V2TlsTest.actualMutualTlsBindsRotatedCertificatesToTheSameOwner` | COVERED | Asserts `sslEngine().getApplicationProtocol() == ALPN` and `getSession().getProtocol() == "TLSv1.3"` on a live handshake. |
-| S12-008 | "no application 0-RTT" | `TlsAuthentication` client `sessionCacheSize(0)`; no early-data path | - | GAP | No test offers 0-RTT application data. Both TLS contexts are built with `earlyData(false)`, so a test needs a client context that offers early data on a resumed session (`V2TlsTest.external` builds raw contexts and can) and asserts the listener never accepts it; see P-TLS-1. |
+| S12-008 | "no application 0-RTT" | `TlsAuthentication`: the listener context is built with `earlyData(false)`, so its session tickets carry no early-data allowance; the built-in client uses `sessionCacheSize(0)` and `earlyData(false)` | `V2TlsTest.resumedClientOfferingEarlyDataIsNeverInEarlyDataAndFramesFollowTheHandshake` (an external client caching tickets with `earlyData(true)` resumes the session and is never in early data; every answered frame follows the completed handshake) with the control `V2TlsTest.theEarlyDataObservationIsLiveAgainstAListenerThatAllowsIt` (the same client enters early data against a listener that allows it, so the observation can fail) | COVERED | Closed 2026-09-16 (P-TLS-1 done). Rust: `v2_tls::tests::resumption::a_resumption_enabled_client_gets_no_ticket_and_expiry_requires_full_handshake` enables early data on the client and asserts the 0-RTT attempt cannot proceed. |
 | S12-009 | "server identity verification under {{RFC9525}}" | `TlsAuthentication.verify` -> `TlsPeerIdentity.verify` | `V2TlsTest.serverTrustUsageAndSanAreHandshakeChecksNotCommonNameFallback` | COVERED | SAN-only (CN fallback refused), wrong EKU refused, foreign roots refused, DNS compared case-insensitively, IP SAN accepted. |
 | S12-010 | "Connection migration does not change authenticated identity." | `TlsAuthentication.Guard` holds the verified chain per connection | `MigrationWireTest.aRebindingPeerKeepsItsSessionAndOwnerWithoutReauthentication` (relay rebinds its server-facing socket mid-session) | COVERED | After the path change the same connection serves a sequence request, a watch, a second admission and its result under the same owner, replies to the old address being lost; nothing is re-authenticated or re-attached. |
 | S12-011 | "The client opens bidirectional Stream 0 for control. Other bidirectional streams are forbidden." | `DurableServer.Connection.stream` (`streamId != 0 \|\| control != null` -> FRAME_ERROR); `StreamTransport.Limits.configure` sets `initialMaxStreamsBidirectional` | `DurableWireNegativeTest.correlationAndFramingViolationsAreFatalWhileRefusedRequestsConsumeIds` | PARTIAL | The client transport refuses with STREAM_LIMIT before the server's application-level FRAME_ERROR is reachable; that branch is never exercised. Left PARTIAL by decision at `62412c14`: reaching the branch means offering more than one bidirectional stream in the production transport parameters, which is the very thing the clause forbids; the transport-level enforcement is the proven behaviour. |
@@ -503,7 +503,7 @@ including most of the refusal-code taxonomy.
 | subsection | COVERED | PARTIAL | GAP | N/A-JAVA | total |
 |---|---|---|---|---|---|
 | Scope and profiles (preamble, lines 1-28) | 5 | 0 | 0 | 1 | 6 |
-| 12.1 Core Mapping and Negotiation | 49 | 2 | 1 | 0 | 52 |
+| 12.1 Core Mapping and Negotiation | 50 | 2 | 0 | 0 | 52 |
 | 12.2 Correlation and Error Scope | 29 | 0 | 0 | 0 | 29 |
 | 12.3 Authenticated Sessions and Non-Reusable Identity | 37 | 0 | 0 | 0 | 37 |
 | 12.4 Immutable Operations and Replay | 20 | 0 | 0 | 0 | 20 |
@@ -512,7 +512,7 @@ including most of the refusal-code taxonomy.
 | 12.7 Result Publication, Streams and References | 31 | 0 | 0 | 3 | 34 |
 | 12.8 Sealed Closure, Counts and Shutdown | 44 | 0 | 0 | 2 | 46 |
 | 12.9 Lifetimes, Clocks and Crash-Safe Accounting | 39 | 1 | 0 | 0 | 40 |
-| **all subsections** | **361** | **5** | **1** | **7** | **374** |
+| **all subsections** | **362** | **5** | **0** | **7** | **374** |
 
 Read the `PARTIAL` column as the real work queue: 5 clauses have a test whose
 name suggests coverage but whose assertions stop short. The 1 `GAP` row is
@@ -1004,7 +1004,7 @@ requests; the two proposals that need a hook say so.
 
 ### V2TlsTest and TlsAuthentication
 
-- **P-TLS-1** (S12-008). Offer application 0-RTT early data with a cached ticket
+- **P-TLS-1** (S12-008). DONE 2026-09-16 (`V2TlsTest.resumedClientOfferingEarlyDataIsNeverInEarlyDataAndFramesFollowTheHandshake` plus its permissive-listener control). Offer application 0-RTT early data with a cached ticket
   and assert it is refused or never delivered to the application. Refined at
   `c115e292`: build the client context through `V2TlsTest.external` with
   `sessionCacheSize(1)` and `earlyData(true)`, connect twice, and on the resumed

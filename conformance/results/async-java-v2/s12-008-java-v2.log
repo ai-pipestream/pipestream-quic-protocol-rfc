@@ -1,0 +1,5 @@
+start 2026-09-16T23:35:55Z tree 3141a246 tests=ai/pipestream/quic/v2/V2TlsTest
+[INFO] Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.307 s -- in ai.pipestream.quic.v2.V2TlsTest
+[INFO] Tests run: 11, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+RUN_EXIT=0 at 2026-09-16T23:36:02Z
