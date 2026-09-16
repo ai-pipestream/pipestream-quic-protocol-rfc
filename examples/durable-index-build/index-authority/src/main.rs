@@ -458,27 +458,47 @@ impl Application for MergeContract {
                 connect_reader(reader, &authority, creation_sequence, &scratch.join("session"))
                     .await?;
             let mut docs: BTreeMap<u64, Vec<Vec<u8>>> = BTreeMap::new();
+            let mut read_error: Option<anyhow::Error> = None;
             for (doc, scope, producer, entity, digest) in refs.iter() {
                 let work = WorkKey {
                     scope: Number(*scope),
                     producer: Producer(*producer),
                     entity: Id(*entity),
                 };
-                let bytes = read_reference(
+                match read_reference(
                     &client,
                     work,
                     *digest,
                     &scratch.join(format!("ref-{scope}-{producer}-{entity}")),
                 )
-                .await?;
-                docs.entry(*doc).or_default().push(bytes);
+                .await
+                {
+                    Ok(bytes) => {
+                        docs.entry(*doc).or_default().push(bytes);
+                    }
+                    Err(e) => {
+                        read_error = Some(e);
+                        break;
+                    }
+                }
                 context
                     .renew()
                     .map_err(|e| anyhow::anyhow!("lease renew failed: {e:?}"))?;
             }
-            // Release the single reader session now that every reference
-            // is verified, mirroring the Java reader.
-            client.detach().await?;
+            // Release the single reader session on success and on failure
+            // alike: a failed merge must not leave the attachment behind.
+            // A detach error after a read error is secondary; the read
+            // error is the one reported.
+            match client.detach().await {
+                Ok(()) => {}
+                Err(e) if read_error.is_some() => {
+                    eprintln!("index-merge reader detach after failure failed: {e:?}");
+                }
+                Err(e) => return Err(anyhow::Error::from(e)),
+            }
+            if let Some(e) = read_error {
+                return Err(e);
+            }
             Ok::<_, anyhow::Error>(merge_index(&docs.into_iter().collect::<Vec<_>>()))
         }) {
             Ok(merged) => merged,
