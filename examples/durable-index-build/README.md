@@ -48,9 +48,10 @@ timeouts; servers are torn down at exit.
   the merge reader used to open 8 per merge, so rapid runs plus abrupt
   exits tripped the ceiling and reader connects died with a bare
   `connection lost`. Readers now share one connection per merge and
-  the coordinator detaches at clean exit; the kill path stays abrupt
-  (crash simulation) so the resume still waits out the 30s idle
-  backstop. Full story in SPEC-FRICTION F3, filed as a bug.
+  the coordinator detaches at clean exit (success and failure paths);
+  the kill path stays abrupt (crash simulation) so the resume still
+  waits 90s, past the 60s authority idle timeout. Full story in
+  SPEC-FRICTION F3, filed as a bug.
 - Cancel at tiny sizes is timing-sensitive: sent immediately, the cancel
   can seal the scope before expansion admits anything (empty scope,
   vacuous close). The coordinator therefore waits for the first
