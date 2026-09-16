@@ -1,0 +1,9 @@
+1	durable-18d5d9f3653ef1c4	g1-empty-input	java	client	298159-18d5d9f891dad707	1			0:0:1	1		artifacts/input.bin	0	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+1	durable-18d5d9f3653ef1c4	g1-empty-input	java	client	298159-18d5d9f891dad707	2	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5d9f3653ef1c4	g1-empty-input	java	client	298159-18d5d9f891dad707	3	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5d9f3653ef1c4	g1-empty-input	java	client	298159-18d5d9f891dad707	4	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g1-empty-input	java	client	298159-18d5d9f891dad707	5	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g1-empty-input	java	client	298159-18d5d9f891dad707	6	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g1-empty-input	java	client	298159-18d5d9f891dad707	7			0:0:1	1		artifacts/manifest.txt	523	1e04f05c4157ee845b8298554edf5a577b3bc890fe2a11d32a18d3192ac2076d
+1	durable-18d5d9f3653ef1c4	g1-empty-input	java	client	298159-18d5d9f891dad707	8	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g1-empty-input	java	client	298159-18d5d9f891dad707	9	RESULT_INSTALLED		0:0:1	1		artifacts/output.bin	0	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855

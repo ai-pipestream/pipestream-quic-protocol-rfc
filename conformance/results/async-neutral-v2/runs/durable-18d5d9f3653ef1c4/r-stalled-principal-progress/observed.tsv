@@ -1,0 +1,15 @@
+server_subject	rust
+client_subject	alice = rust raw peer (stalls); bob = rust CLI (healthy principal)
+java_memory_freeze	not applicable: no JVM in this subject group (the frozen Java limits are -Xms256m -Xmx2g)
+stalls	3 partial inputs (no FIN), pending watch on 0:0:6, result stream for 0:0:1 unread
+bob_ops	23 rounds x 5 ops, worst latency 250.783116ms
+stall_enforcement	negotiated idle 5s / lifetime 30s; non-writing probes at idle-bound-2s (+3053ms: 0 stopped), idle-bound+0s (+5178ms: 3 stopped), idle-bound+2s (+7090ms: 3 stopped), idle-bound+5s (+10153ms: 3 stopped), idle-bound+10s (+15003ms: 3 stopped), lifetime-bound+10s (+40000ms: 3 stopped); 3/3 distinct streams observed stopped; LIMIT_EXCEEDED input refusals on control at window end: 3/3
+stall_enforcement_bracket	stream-6: last open idle-bound-2s (+3053ms), first stopped idle-bound+0s (+5178ms); stream-10: last open idle-bound-2s (+3053ms), first stopped idle-bound+0s (+5178ms); stream-14: last open idle-bound-2s (+3053ms), first stopped idle-bound+0s (+5178ms)
+collector	912 ticks, 912 sample lines, 0 error lines
+rss_plateau_kib	baseline_median=19692 tail_p90=20660 growth=968
+fd_plateau	baseline_median=12 tail_p90=16
+io_write_bytes_window	delta_bytes=1000226816 span_ms=91151 bytes_per_s=10973295
+io_cancelled_write_bytes_window	delta_bytes=992440320 span_ms=91151 bytes_per_s=10887870
+io_write_cancelled_share	99% of the window's accounted write_bytes was cancelled before writeback (992440320/1000226816)
+heap_scope	not applicable: no JVM in the subject process group. Rust heap is a named gap (no black-box allocator counter); RSS/HWM is a separate scope and is never substituted for it
+store_checkpoints	94 records across start/stalls-established/mid-window/end

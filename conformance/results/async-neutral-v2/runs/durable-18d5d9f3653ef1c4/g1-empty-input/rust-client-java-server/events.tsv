@@ -1,0 +1,9 @@
+1	durable-18d5d9f3653ef1c4	g1-empty-input	rust	client	298159-18d5d9f7f9fa34f3	1			0:0:1	1		artifacts/input.bin	0	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+1	durable-18d5d9f3653ef1c4	g1-empty-input	rust	client	298159-18d5d9f7f9fa34f3	2	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5d9f3653ef1c4	g1-empty-input	rust	client	298159-18d5d9f7f9fa34f3	3	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5d9f3653ef1c4	g1-empty-input	rust	client	298159-18d5d9f7f9fa34f3	4	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g1-empty-input	rust	client	298159-18d5d9f7f9fa34f3	5	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g1-empty-input	rust	client	298159-18d5d9f7f9fa34f3	6	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g1-empty-input	rust	client	298159-18d5d9f7f9fa34f3	7			0:0:1	1		artifacts/manifest.txt	882	4285093e97e1b1adb1b87ac8cd64dfe6754c524feebc3501182f0fc113968964
+1	durable-18d5d9f3653ef1c4	g1-empty-input	rust	client	298159-18d5d9f7f9fa34f3	8	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g1-empty-input	rust	client	298159-18d5d9f7f9fa34f3	9	RESULT_INSTALLED		0:0:1	1		artifacts/output.bin	0	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855

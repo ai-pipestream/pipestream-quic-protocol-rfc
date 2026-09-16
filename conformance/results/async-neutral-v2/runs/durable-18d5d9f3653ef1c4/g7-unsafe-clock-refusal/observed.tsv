@@ -1,0 +1,4 @@
+row_status	INCOMPLETE: no subject fixture clock: the only clock control on either serve is --trust-system-clock, both subjects refuse clock-set at schedule parse, and host UTC is never changed by this driver
+rust_server	clock flags in usage: --trust-system-clock; clock-set refused at schedule parse: /home/krickert/.rfc-tmp/kimi-m21/store/runs/durable-18d5d9f3653ef1c4/g7-unsafe-clock-refusal/schedule.tsv:1: action "clock-set" is driver-side; the Rust subject cannot perform it
+java_server	clock flags in usage: --trust-system-clock; clock-set refused at schedule parse: schedule action clock-set is driven by the fixture, not the subject
+java_jar_sha256	5a149b9ddc88b4c8ce3774c8296e058f7a41ddc384906209d54b9eeefa76202c

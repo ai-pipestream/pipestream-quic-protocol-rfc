@@ -1,0 +1,7 @@
+1	durable-18d5d9f3653ef1c4	g4-eventual-settlement	rust	client	298159-18d5dacdc2378bde	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5d9f3653ef1c4	g4-eventual-settlement	rust	client	298159-18d5dacdc2378bde	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5d9f3653ef1c4	g4-eventual-settlement	rust	client	298159-18d5dacdc2378bde	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g4-eventual-settlement	rust	client	298159-18d5dacdc2378bde	4	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g4-eventual-settlement	rust	client	298159-18d5dacdc2378bde	5	REQUEST_SENT	aa8f0c0e53e694526cc03d767482eda9						
+1	durable-18d5d9f3653ef1c4	g4-eventual-settlement	rust	client	298159-18d5dacdc2378bde	6	RECEIPT_VALIDATED	aa8f0c0e53e694526cc03d767482eda9						
+1	durable-18d5d9f3653ef1c4	g4-eventual-settlement	rust	client	298159-18d5dacdc2378bde	7	OBSERVATION_JOURNALED		0:0:1	1				

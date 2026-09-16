@@ -1,0 +1,11 @@
+started_ms	1789576066348
+mode	acceptance
+seed	24301
+rust_bin	/work/worktrees/pipestream-rfc-kimi/implementations/rust-quinn/target/release/pipestream-quinn	rust_sha256	4156c642b7bea6e4d8df0d32475573df53f6276d0f977c0968ca51506cb26cb6
+java_jar	/work/worktrees/pipestream-rfc-kimi/implementations/java-netty/target/pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar	java_sha256	5a149b9ddc88b4c8ce3774c8296e058f7a41ddc384906209d54b9eeefa76202c
+java_memory_flags	-Xms256m -Xmx2g
+waivers	4
+waive	g7-unsafe-clock-refusal	-	no fixture clock on either subject; interface-v1 has no clock-set boundary
+waive	g7-cleanup-interrupted-refund	-	no cleanup boundary in interface-v1; adding one is an interface revision
+waive	g3-store-ownership	java-client/rust-server	the client subject never owns the store
+waive	g4-revocation-vs-publication	rust-client/java-server	no Java operator revoke command

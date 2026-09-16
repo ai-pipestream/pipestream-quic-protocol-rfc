@@ -1,0 +1,10 @@
+server_subject	java
+java_jar_sha256	5a149b9ddc88b4c8ce3774c8296e058f7a41ddc384906209d54b9eeefa76202c
+cert_1_sha256	fbdca49de38eeda683518ae746a8d62e70212e227db36a6d24db380db04617e5
+cert_2_sha256	ce714b1e966ee6844d6ef343fe8f24f2042c3d4c7daec7d597a206a7c3af7f96
+binding_identical_across_rotation	true
+cert_1_admission_lookup_under_cert_2	RECEIPT
+retry_under_cert_2	accepted: replacement attempt 2; SUCCEEDED(5) under attempt 2
+cancel_under_cert_2	accepted: disposition 0; settled 7 (CANCELLED)
+read_under_cert_2	attempt 2 byte-exact against the independent oracle
+restart	graceful stop (SIGTERM, DRAINED) and restart on the same roots and map

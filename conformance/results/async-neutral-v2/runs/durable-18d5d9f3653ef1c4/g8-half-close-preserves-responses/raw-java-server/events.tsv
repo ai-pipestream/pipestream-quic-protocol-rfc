@@ -1,0 +1,4 @@
+1	durable-18d5d9f3653ef1c4	g8-half-close-preserves-responses	rust	client	298159-18d5db3d98e21f77	1	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d5d9f3653ef1c4	g8-half-close-preserves-responses	rust	client	298159-18d5db3d98e21f77	2	CONTROL_FIN_SENT							
+1	durable-18d5d9f3653ef1c4	g8-half-close-preserves-responses	rust	client	298159-18d5db3d98e21f77	3	BINDING_RECEIVED							
+1	durable-18d5d9f3653ef1c4	g8-half-close-preserves-responses	java	server	298159-18d5db3d98e21f77	4	DETACH_ACKNOWLEDGED							

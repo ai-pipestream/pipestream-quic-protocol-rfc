@@ -1,10 +1,12 @@
 # Handoff — B: neutral failure/resource certification (Kimi)
 
-Status: IN PROGRESS — NOT REVIEW_READY. Rust-only preparation and the
-first both-direction rows exist; the whole B contract has NOT passed.
-This file is maintained as work lands; the REVIEW_READY mark is only
-valid when this section says the complete both-direction matrix, resource
-gates and acceptance integration have passed, with evidence below.
+Status: REVIEW_READY. The whole B contract has passed: the full
+both-direction acceptance matrix (66 rows, archive
+`durable-18d5d9f3653ef1c4`, MANIFEST 5641/5641 verified) ran green in
+acceptance mode on 2026-09-16 with both freshly built subjects, the
+resource rows completed with their named PARTIAL scopes, and the
+run_all.sh acceptance integration is in place — see the M21 sections
+below. This mark is valid only together with that evidence.
 
 ## 1. Branch / base / state
 
@@ -986,15 +988,18 @@ is inferred or substituted.
 
 ## 5. Known limitations / open gates
 
-1. Acceptance mode has never passed: the run_all.sh integration landed at
-   9842e655 (opt-in `PIPESTREAM_DURABLE_ACCEPTANCE=1` block), but the
-   acceptance run itself is pending three subject-side markers (section
-   3k): the two Java findings reported to Claude and the rust client
-   CLI's missing control-timeout option (lane question posted).
-2. Java-server hook directions are live for 5 G2 rows (M7), but
-   `g2-crash-after-create-commit` rust-client/java-server stays
-   INCOMPLETE: Java FixtureMain re-fires drop-reply on the REPLAYED
-   commit (no fresh-commit gating) — subject-side fix reported to Claude
+1. Acceptance mode HAS passed: the full both-direction acceptance matrix
+   (66 rows, the four M20 waivers) ran green on 2026-09-16 in archive
+   `durable-18d5d9f3653ef1c4` (MANIFEST 5641/5641 verified; rust subject
+   4156c642b7be…, Java all-jar 5a149b9ddc88…, gate 816/816). The run_all.sh
+   integration landed at 9842e655 (opt-in `PIPESTREAM_DURABLE_ACCEPTANCE=1`
+   block) and is exercised by that run's exact shape. What remains open
+   here is only the final coordinator review of this handoff.
+2. Java-server hook directions are live for 5 G2 rows (M7). The former
+   `g2-crash-after-create-commit` rust-client/java-server INCOMPLETE
+   (FixtureMain re-firing drop-reply on the replayed commit) was resolved
+   by Claude's defects 19/21 and the direction is green in the M21
+   acceptance archive `durable-18d5d9f3653ef1c4`.
    with archived transcript.
 3. Java findings reported to Claude (all with archived reproducers):
    CLI ignores `--max-execution-ms`; client graceful shutdown hangs
@@ -1932,6 +1937,60 @@ ca24ec4d: fmt 0, clippy -D warnings 0, 113 passed / 0 failed; release
 build reproduces the rust subject byte-identical (4156c642b7be…). No
 acceptance rerun — that still waits on Claude's defect-19 marker-scoping
 fix for g3-orphan-cleanup.
+
+### M21 acceptance rerun (2026-09-16): GREEN — the B contract passes
+
+Claude's defect-21 fix `dd0ffc7b` (the once-per-run fired-* marker now
+keys by schedule file, so a driver can re-arm a row with a fresh file;
+Java-only, verified by `git show --stat`) landed on main and the branch
+fast-forwarded through `ea025865`. Subjects rebuilt: rust
+`4156c642b7be…` byte-identical (release build); Java all-jar
+`5a149b9ddc88…` with the FULL gate (transport build + `mvn install -q
+-Psealed-interop`, no -DskipTests): **816 tests, 0 failures, 0 errors**.
+
+Targeted dev rerun of g3-orphan-cleanup (archive
+`durable-18d5d96dbf76b099`, 112/112 manifest entries, exit 0):
+`SCENARIO OK g3-orphan-cleanup rust-client/rust-server,
+rust-client/java-server, java-client/rust-server`, green for the right
+reason — TWO fired markers, now schedule-keyed
+(`fired-server-schedule-iteration-0.tsv-1-INPUT_INSTALLED-kill` and
+`fired-server-schedule-iteration-1.tsv-1-INPUT_INSTALLED-kill`, both
+archived), TWO INPUT_INSTALLED records on two server pids: iteration 1's
+kill@INPUT_INSTALLED actually fired (defect 21), and the cleanup
+semantics completed.
+
+Full acceptance run (run_all.sh block shape, acceptance mode, the four
+M20 waivers, both fresh subjects, stores/TMPDIR under
+~/.rfc-tmp/kimi-m21, `flock -w 7200`, archive
+`durable-18d5d9f3653ef1c4`): **exit 0. 66 rows: 64 PASS and 2 WAIVED, no
+FAIL, no unwaived INCOMPLETE. MANIFEST 5641/5641 verified, 0 mismatches.
+Wall 48 min 56 s lock-to-lock (16:19:27-17:08:23Z, ~6 min waiting for
+the shared lock under load ~5-8), ~42 min of driver wall.** Per-waiver
+lines verbatim:
+- `WAIVED g7-unsafe-clock-refusal: g7-unsafe-clock-refusal INCOMPLETE:
+  missing subject capability: no subject fixture clock: the only clock
+  control on either serve is --trust-system-clock, both subjects refuse
+  clock-set at schedule parse, and host UTC is never changed by this
+  driver (waiver: no fixture clock on either subject; interface-v1 has
+  no clock-set boundary)`
+- `WAIVED g7-cleanup-interrupted-refund: g7-cleanup-interrupted-refund
+  INCOMPLETE: missing subject capability: interface-v1 section 2.1 has
+  no cleanup boundary (0 matching labels among 29); a kill during
+  terminal cleanup cannot be armed on either subject without a new
+  boundary (waiver: no cleanup boundary in interface-v1; adding one is
+  an interface revision)`
+- direction waivers on their PASS rows: `PASS g3-store-ownership …
+  (waived java-client/rust-server: the client subject never owns the
+  store (named-gap evidence …/java-client-rust-server/INCOMPLETE))` and
+  `PASS g4-revocation-vs-publication … (waived rust-client/java-server:
+  no Java operator revoke command (named-gap evidence
+  …/rust-client-java-server/INCOMPLETE))`.
+- the three PARTIAL R rows PASS with named scopes intact
+  (`r-staging-and-journal-bounds`, `r-network-bytes`, `r-native-credit`,
+  markers verbatim in their observed.tsv).
+
+This header is flipped to REVIEW_READY on this evidence; traceability's
+DONE now means green in acceptance; section 5 item 1 records the pass.
 
 ### Milestone 21 procedure (written in advance, pending Claude's fixture fixes)
 

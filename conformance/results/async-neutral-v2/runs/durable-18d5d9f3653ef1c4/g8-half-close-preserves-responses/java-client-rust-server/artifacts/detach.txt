@@ -1,0 +1,5 @@
+exit=exit status: 0
+stdout:
+DETACHED
+
+stderr:

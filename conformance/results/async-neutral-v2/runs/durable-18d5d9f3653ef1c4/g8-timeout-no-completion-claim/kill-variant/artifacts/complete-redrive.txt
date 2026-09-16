@@ -1,0 +1,5 @@
+exit=exit status: 0
+stdout:
+COMPLETED ScopeSummary { scope: Number(0), producer: Producer(0), parent: None, seal: Digest([68, 71, 2, 64, 143, 192, 108, 225, 168, 144, 159, 13, 179, 98, 244, 104, 25, 155, 73, 12, 172, 132, 149, 230, 76, 7, 158, 238, 197, 93, 166, 171]), declared: Number(1), counts: Counts { success: Number(1), failure: Number(0), cancelled: Number(0), skipped: Number(0) }, status_root: Digest([68, 202, 89, 170, 76, 202, 156, 187, 72, 113, 197, 249, 76, 150, 55, 151, 78, 44, 199, 10, 159, 196, 219, 64, 108, 248, 14, 43, 191, 140, 58, 117]), closed_at: Number(1789577521782) }
+
+stderr:

@@ -1,0 +1,2 @@
+SCOPE scope=1 producer=1 declared=4 membership_verified=true seal=2d09010427587c9be134656575231d2473d316a4d57c84616a613f4c26743780
+MEMBERS [Entry[entity=1, state=SUCCEEDED], Entry[entity=2, state=SUCCEEDED], Entry[entity=3, state=SUCCEEDED], Entry[entity=4, state=SUCCEEDED]] more=false

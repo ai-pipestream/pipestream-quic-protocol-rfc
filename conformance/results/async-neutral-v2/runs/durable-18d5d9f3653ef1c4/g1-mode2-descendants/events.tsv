@@ -1,0 +1,12 @@
+1	durable-18d5d9f3653ef1c4	g1-mode2-descendants	rust	client	298159-18d5da09fdb46c34	1			0:0:1	1		artifacts/input.bin	200000	1dedf2209c2609cd80437d911867f75214bbc91c384c7a53b10d6a16fc53fd34
+1	durable-18d5d9f3653ef1c4	g1-mode2-descendants	rust	client	298159-18d5da09fdb46c34	2	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5d9f3653ef1c4	g1-mode2-descendants	rust	client	298159-18d5da09fdb46c34	3	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5d9f3653ef1c4	g1-mode2-descendants	rust	client	298159-18d5da09fdb46c34	4	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g1-mode2-descendants	rust	client	298159-18d5da09fdb46c34	5	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g1-mode2-descendants	rust	client	298159-18d5da09fdb46c34	6	REQUEST_SENT	5b301422fcc603c4017646b08e534d10						
+1	durable-18d5d9f3653ef1c4	g1-mode2-descendants	rust	client	298159-18d5da09fdb46c34	7		5b301422fcc603c4017646b08e534d10			3			
+1	durable-18d5d9f3653ef1c4	g1-mode2-descendants	rust	client	298159-18d5da09fdb46c34	8	REQUEST_SENT	235e54ac49b999b96a168f0ccd6603ea	1:1:9	1				
+1	durable-18d5d9f3653ef1c4	g1-mode2-descendants	rust	client	298159-18d5da09fdb46c34	9	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g1-mode2-descendants	rust	client	298159-18d5da09fdb46c34	10	RESULT_INSTALLED		0:0:1	1		artifacts/output.bin	200000	1dedf2209c2609cd80437d911867f75214bbc91c384c7a53b10d6a16fc53fd34
+1	durable-18d5d9f3653ef1c4	g1-mode2-descendants	rust	client	298159-18d5da09fdb46c34	11	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g1-mode2-descendants	rust	client	298159-18d5da09fdb46c34	12	RESULT_INSTALLED		0:0:1	1		artifacts/output-pinned.bin	200000	1dedf2209c2609cd80437d911867f75214bbc91c384c7a53b10d6a16fc53fd34

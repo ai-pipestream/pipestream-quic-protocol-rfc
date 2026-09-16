@@ -1,0 +1,62 @@
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	1	LISTENING							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	2	CONNECTION_AUTHENTICATED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	3	CONNECTION_AUTHENTICATED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	4	CONNECTION_AUTHENTICATED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	5	SESSION_COMMITTED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	6	SESSION_RESPONSE_SENT							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	rust	client	298159-18d5dac1eafe7fa7	1			0:0:1	1		artifacts/input.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	rust	client	298159-18d5dac1eafe7fa7	2	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	7	CONNECTION_AUTHENTICATED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	8	SESSION_RESPONSE_SENT							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	9	DECLARATION_COMMITTED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	10	DECLARATION_RESPONSE_SENT							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	rust	client	298159-18d5dac1eafe7fa7	3	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	rust	client	298159-18d5dac1eafe7fa7	4	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	11	CONNECTION_AUTHENTICATED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	12	SESSION_RESPONSE_SENT							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	13	INPUT_INSTALLED	d82b4f0e9f3814f1161c84240d038f52	0:0:1					
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	14	ADMISSION_COMMITTED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	15	ADMISSION_RESPONSE_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	16	EXECUTION_CLAIMED		0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	rust	client	298159-18d5dac1eafe7fa7	5	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	17	CONNECTION_AUTHENTICATED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	18	SESSION_RESPONSE_SENT							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	19	PUBLICATION_COMMITTED		0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	20	CONNECTION_AUTHENTICATED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	21	SESSION_RESPONSE_SENT							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	rust	client	298159-18d5dac1eafe7fa7	6	REQUEST_SENT	98cd7e29007ff1ae6e11437f96ed7c64	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	22	CONNECTION_AUTHENTICATED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	23	SESSION_RESPONSE_SENT							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	24	RETRY_COMMITTED	98cd7e29007ff1ae6e11437f96ed7c64	0:0:1					
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	25	EXECUTION_CLAIMED		0:0:1	2				
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	rust	client	298159-18d5dac1eafe7fa7	7	RECEIPT_VALIDATED	98cd7e29007ff1ae6e11437f96ed7c64	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	rust	client	298159-18d5dac1eafe7fa7	8	REQUEST_SENT	27baeee1ff31c7e8cd7a457593ed766b	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	26	CONNECTION_AUTHENTICATED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	27	SESSION_RESPONSE_SENT							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	28	REFUSAL_SENT				7			
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	rust	client	298159-18d5dac1eafe7fa7	9		27baeee1ff31c7e8cd7a457593ed766b	0:0:1	1	7			
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	29	CONNECTION_AUTHENTICATED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	30	SESSION_RESPONSE_SENT							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	31	OUTPUT_INSTALLED		0:0:1	2				
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	32	PUBLICATION_COMMITTED		0:0:1	2				
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	33	CLOSURE_COMMITTED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	34	CONNECTION_AUTHENTICATED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	35	SESSION_RESPONSE_SENT							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	rust	client	298159-18d5dac1eafe7fa7	10	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	36	CONNECTION_AUTHENTICATED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	37	SESSION_RESPONSE_SENT							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	rust	client	298159-18d5dac1eafe7fa7	11	RECEIPT_VALIDATED	98cd7e29007ff1ae6e11437f96ed7c64	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	38	CONNECTION_AUTHENTICATED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	39	SESSION_RESPONSE_SENT							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	40	CONNECTION_AUTHENTICATED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	41	SESSION_RESPONSE_SENT							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	42	CONNECTION_AUTHENTICATED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	43	SESSION_RESPONSE_SENT							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	44	RESULT_HEADER_SENT		0:0:1	2				
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	45	RESULT_FIN_SENT		0:0:1	2				
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	rust	client	298159-18d5dac1eafe7fa7	12	RESULT_VERIFIED		0:0:1	2				
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	rust	client	298159-18d5dac1eafe7fa7	13	RESULT_INSTALLED		0:0:1	2		artifacts/output.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	46	CONNECTION_AUTHENTICATED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	47	SESSION_RESPONSE_SENT							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	48	DETACH_ACKNOWLEDGED							
+1	durable-18d5d9f3653ef1c4	g4-stale-attempt-retry	java	server	435828-18d5dac1d8c56a80	49	SHUTDOWN_DRAINED							

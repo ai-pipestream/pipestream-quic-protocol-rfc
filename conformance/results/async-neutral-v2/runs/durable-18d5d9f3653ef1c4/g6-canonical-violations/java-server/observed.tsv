@@ -1,0 +1,22 @@
+server_subject	java
+client_subject	rust (raw probe)
+alpn	pipestream/2
+caps-extra-position	vector caps-extra-position (v2-capabilities, position 0): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason="array cardinality exceeds schema or remaining bytes"
+caps-missing-lifetime	vector caps-missing-lifetime (v2-capabilities, position 0): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason="wrong array cardinality"
+caps-control-too-small	vector caps-control-too-small (v2-capabilities, position 0): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason="integer outside schema range"
+caps-duplicate-profile	vector caps-duplicate-profile (v2-capabilities, position 0): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason="profile list not strictly increasing"
+caps-required-not-supported	vector caps-required-not-supported (v2-capabilities, position 0): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason="required profile not supported"
+result-profile-without-durable	vector result-profile-without-durable (v2-capabilities, position 0): expected EXTENSION_UNSUPPORTED connection-fatal; observed APPLICATION_CLOSE code=0x202 reason="result delivery requires durable work"
+caps-idle-exceeds-lifetime	vector caps-idle-exceeds-lifetime (v2-capabilities, position 0): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason="idle deadline exceeds lifetime"
+zero-request	vector zero-request (v2-session-message, position 1): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason="integer outside schema range"
+generation-overflow	vector generation-overflow (v2-session-message, position 1): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason="nonminimal or out-of-range CBOR argument"
+session-policy-zero	vector session-policy-zero (v2-session-message, position 1): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason="integer outside schema range"
+session-nonascii-owner	vector session-nonascii-owner (v2-session-message, position 1): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason="invalid identity character"
+noncanonical-session-request	vector noncanonical-session-request (v2-session-message, position 1): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason="nonminimal or out-of-range CBOR argument"
+trailing-cbor-item	vector trailing-cbor-item (v2-session-message, position 1): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason="trailing CBOR item"
+zero-operation-id	vector zero-operation-id (v2-scope-message, position 2): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason="zero operation identity"
+unsorted-declaration	vector unsorted-declaration (v2-scope-message, position 2): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason="declaration IDs not increasing"
+empty-unsealed-batch	vector empty-unsealed-batch (v2-scope-message, position 2): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason="empty unsealed declaration"
+extra-work-key-position	vector extra-work-key-position (v2-work-message, position 2): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason="array cardinality exceeds schema or remaining bytes"
+unknown-work-state	vector unknown-work-state (v2-work-message, position 2): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason="integer outside schema range"
+inconsistent-success-without-input	vector inconsistent-success-without-input (v2-work-message, position 2): expected FRAME_ERROR connection-fatal; observed APPLICATION_CLOSE code=0x201 reason="state requires admitted input"
