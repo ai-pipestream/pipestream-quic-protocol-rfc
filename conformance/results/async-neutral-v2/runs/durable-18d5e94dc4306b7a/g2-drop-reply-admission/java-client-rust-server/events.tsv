@@ -1,0 +1,10 @@
+1	durable-18d5e94dc4306b7a	g2-drop-reply-admission	java	client	857596-18d5e99616dd5a1a	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5e94dc4306b7a	g2-drop-reply-admission	java	client	857596-18d5e99616dd5a1a	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5e94dc4306b7a	g2-drop-reply-admission	java	client	857596-18d5e99616dd5a1a	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g2-drop-reply-admission	rust	server	883633-18d5e9961cf05703	1	ADMISSION_COMMITTED							
+1	durable-18d5e94dc4306b7a	g2-drop-reply-admission	java	client	857596-18d5e99616dd5a1a	4	REFUSAL_RECEIVED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1	14	artifacts/admit-withheld.txt	251	44af7356e9a0df4c934ec6c9e940565b95a437fb0a138bbd08c570521cd8c4bb
+1	durable-18d5e94dc4306b7a	g2-drop-reply-admission	java	client	857596-18d5e99616dd5a1a	5	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g2-drop-reply-admission	java	client	857596-18d5e99616dd5a1a	6	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g2-drop-reply-admission	java	client	857596-18d5e99616dd5a1a	7	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g2-drop-reply-admission	java	client	857596-18d5e99616dd5a1a	8	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g2-drop-reply-admission	java	client	857596-18d5e99616dd5a1a	9	REFUSAL_RECEIVED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1	7	artifacts/changed-admit-refusal.txt	194	168aae72158f8e2fc230d8ee524da15991320a0fe99ea29a0221b422b262bb70

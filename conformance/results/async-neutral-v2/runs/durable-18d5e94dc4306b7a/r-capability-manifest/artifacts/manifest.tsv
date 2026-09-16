@@ -1,0 +1,26 @@
+schema	pipestream-resource-manifest-v1
+os_type	Linux
+kernel_release	7.0.0-31-generic
+cpu_count	32
+mem_total_kb	127121904
+fixture_fs_type	ext4
+fixture_mount	/
+fixture_device	/dev/nvme3n1p2
+proc_permissions_self	io=true status=true fd=true net_dev=true
+tool_jstat	/home/krickert/.sdkman/candidates/java/current/bin/jstat
+tool_jcmd	/home/krickert/.sdkman/candidates/java/current/bin/jcmd
+calibration_samples	20
+calibration_total_ns	235004
+calibration_per_sample_ns	11750
+calibration_scope	process scopes only (status/io/fd of one pid); the optional java-heap probe is a separate jstat process on its own cadence and is not included in this figure
+scope_rss_hwm	/proc/<pid>/status VmRSS+VmHWM; whole-process; per sample
+scope_threads	/proc/<pid>/status Threads; per sample
+scope_fds	/proc/<pid>/fd entry count; per sample
+scope_disk_io	/proc/<pid>/io read_bytes/write_bytes/cancelled_write_bytes; per sample. All three are MANDATORY and read from the same file: write_bytes alone cannot be read as device traffic, because pages a process accounted as written and then truncated away before writeback are counted in write_bytes and again in cancelled_write_bytes
+resources_schema	# pipestream-resources-v2 (14 columns per record)
+java_memory_freeze	-Xms256m -Xmx2g on every Java subject process, frozen before any measurement row and identical in every direction and row. -Xmx bounds the heap and, through the JVM's default direct-memory ceiling, the direct scope with it; -Xms is held far below the ceiling so the RSS plateau is measured rather than pre-committed by the launch flags
+scope_java_heap	jstat -gc <pid> 1 1 (S0U+S1U+EU+OU), JVM pids only, sampled every 1000ms (each probe is itself a JVM launch, so it runs at a slower cadence than the /proc scopes); ticks that collected it carry a heap:jstat method note and ticks that did not leave the column absent, never zero; named gap when jstat reports nothing — the RSS scope is never substituted for it
+scope_rust_heap	named gap: no black-box Rust heap collector exists for the subject binary (no allocator instrumentation is exposed); RSS/HWM is a separate scope and is never reported as Rust heap
+scope_file_lengths	stat(2) st_size per fixture-root file at named checkpoints
+scope_allocated_blocks	stat(2) st_blocks*512 per fixture-root file at named checkpoints
+mandatory_scopes	rss,hwm,threads,fd,disk_io (unavailable => the dependent row fails, never zero); java_heap optional (named gap)

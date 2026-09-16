@@ -1,0 +1,14 @@
+server_subject	java
+client_subject	rust (raw probe)
+alpn	pipestream/2
+declared_length_over	refusal code=8 (INTEGRITY_ERROR) tagged [1, 2] — expected code 8; sent bytes archived at artifacts/declared_length_over.sent-hex
+declared_length_under	refusal code=8 (INTEGRITY_ERROR) tagged [1, 6] — expected code 8; sent bytes archived at artifacts/declared_length_under.sent-hex
+wrong_digest	refusal code=8 (INTEGRITY_ERROR) tagged [1, 10] — expected code 8; sent bytes archived at artifacts/wrong_digest.sent-hex
+missing_fin	refusal code=8 (INTEGRITY_ERROR) tagged [1, 14] — expected code 8; sent bytes archived at artifacts/missing_fin.sent-hex
+frozen_invalid_input_mode	refusal code=1 (FRAME_ERROR) tagged [1, 18] — expected code 1; sent bytes archived at artifacts/frozen_invalid_input_mode.sent-hex
+frozen_short_input_digest	refusal code=1 (FRAME_ERROR) tagged [1, 22] — expected code 1; sent bytes archived at artifacts/frozen_short_input_digest.sent-hex
+declaration_survives	scope page after all refusals: declared=1, entries=[(entity 1, state 0 DECLARED)] — the declaration was never discarded
+replacement_input_admitted	valid input on replacement stream 26 ADMITTED — refused partial receptions never became receipts
+server_record_roots	named gap: result-noncontiguous-index, result-locator-userinfo and summary-count-mismatch target server-record roots; a raw client cannot make either server emit malformed records
+result_header_unknown_request	named gap: result headers are server-chosen; a raw client cannot make the server emit one naming an unknown request
+post_detach_close	server left connection close to the client (MAY, Section 12.8); probe closed the connection with application code 0

@@ -1,0 +1,20 @@
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	1			0:0:1	1		artifacts/parent-input.bin	65000	9e1572ca5d5b092815ebf83c1ef53831065d73e5a29268f6bb7711c2553c6ba0
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	2	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	3	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	4	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	5	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	6	REQUEST_SENT	49e555316b8d6cf8b0aee3fab60dbfb8						
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	7	RECEIPT_VALIDATED	49e555316b8d6cf8b0aee3fab60dbfb8						
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	8	REQUEST_SENT	9306bc48e8cdcfbc510b670e27601a1e						
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	9		9306bc48e8cdcfbc510b670e27601a1e			7			
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	10	REQUEST_SENT	61391c258d95ee0020667eda3683b35b	1:0:1	1				
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	11	RECEIPT_VALIDATED	61391c258d95ee0020667eda3683b35b	1:0:1	1				
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	12	OBSERVATION_JOURNALED	61391c258d95ee0020667eda3683b35b	1:0:1	1				
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	13	REQUEST_SENT	670566df8622f68c891c36f96c029276	1:0:2	1				
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	14	RECEIPT_VALIDATED	670566df8622f68c891c36f96c029276	1:0:2	1				
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	15	OBSERVATION_JOURNALED	670566df8622f68c891c36f96c029276	1:0:2	1				
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	16	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	17	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	18	RESULT_INSTALLED		0:0:1	1		artifacts/parent-output.bin	65000	9e1572ca5d5b092815ebf83c1ef53831065d73e5a29268f6bb7711c2553c6ba0
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	19	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d5e94dc4306b7a	g1-mode1-branch	java	client	857596-18d5e95b9dec16f4	20	RESULT_INSTALLED		0:0:1	1		artifacts/parent-output-pinned.bin	65000	9e1572ca5d5b092815ebf83c1ef53831065d73e5a29268f6bb7711c2553c6ba0

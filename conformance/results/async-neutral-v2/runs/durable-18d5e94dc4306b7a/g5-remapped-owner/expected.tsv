@@ -1,0 +1,5 @@
+alice_leaf_sha256	0bc00b692ca82d573efc79c1680e8c4eefe70d0e5c567b3bd1336efcb7a81749
+input_sha256	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+operator_action	graceful stop; principal map edited so alice's leaf hash maps to owner mallory; restart on the same roots
+after_remap	attach, retry, cancel, lookup and result read by that credential are each refused with a named code; none names a state-disclosing code (EXPIRED, CONFLICT, NOT_READY, CANCELLED, ALREADY_TERMINAL); no silent success
+delivered_bytes	the output read before the remap is still byte-exact on disk

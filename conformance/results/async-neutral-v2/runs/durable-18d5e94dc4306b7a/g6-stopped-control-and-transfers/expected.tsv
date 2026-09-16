@@ -1,0 +1,5 @@
+reset_stream_on_control	RESET_STREAM on control stream 0: CONTROL_RESET (14) terminates the connection — QUIC application close 0x20e
+stop_sending_on_control_responses	STOP_SENDING on the control response direction: CONTROL_RESET class, connection terminates (0x20e)
+abort_mid_input	a client abort (RESET_STREAM — the client-side stop primitive for a send-only stream) mid-input is never an admission receipt: correlated INTEGRITY_ERROR (8), no admission committed, the declaration survives (scope page lookup)
+connection_loss_mid_session	abrupt connection loss changes no obligations: a replacement connection attaches the same session, next-sequence still advances by exactly the one creation, the declaration is intact
+stream_credit	concurrent unidirectional opens are bounded by the peer's transport MAX_STREAMS; a refused input releases its credit (the pipestream.4 regression surface): a replacement open succeeds while the other held streams stay held

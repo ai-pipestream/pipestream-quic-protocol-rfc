@@ -1,0 +1,25 @@
+server_subject	java
+client_subject	rust
+iteration_1_input_len	8388608
+iteration_1_winning_order	deadline
+iteration_1_final_state	6 (FAILED)
+iteration_1_diagnostic	DEADLINE_EXCEEDED (11)
+iteration_1_read	refused NOT_FOUND (5): NOT_FOUND: no retained output selection
+iteration_2_input_len	4194304
+iteration_2_winning_order	deadline
+iteration_2_final_state	6 (FAILED)
+iteration_2_diagnostic	DEADLINE_EXCEEDED (11)
+iteration_2_read	refused NOT_FOUND (5): NOT_FOUND: no retained output selection
+iteration_3_input_len	1048576
+iteration_3_winning_order	deadline
+iteration_3_final_state	6 (FAILED)
+iteration_3_diagnostic	DEADLINE_EXCEEDED (11)
+iteration_3_read	refused NOT_FOUND (5): NOT_FOUND: no retained output selection
+iteration_4_input_len	262144
+iteration_4_winning_order	publication
+iteration_4_final_state	5 (SUCCEEDED)
+iteration_4_diagnostic	none
+iteration_4_read	result read byte-exact (sha256=ea0936f447744f3df49b9a36b31ec08d17403a7ad1bd6c59ab85a01e73c84127)
+orders_observed	publication:1,deadline:3
+retry_after_deadline_refusal	work 0:0:1: retry refused authority refusal ALREADY_TERMINAL: logical work is already terminal; settled view persists byte-identical
+java_jar_sha256	6f028be764810386da92948dddcbd085893821f5580e44a821bbe59400f46b5f

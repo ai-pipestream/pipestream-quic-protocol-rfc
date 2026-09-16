@@ -1,0 +1,16 @@
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	rust	client	857596-18d5ea701b80d0c7	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	rust	client	857596-18d5ea701b80d0c7	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	rust	client	857596-18d5ea701b80d0c7	3	REQUEST_SENT	5d27d2ca6918e155c992f51eb542cac5	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	rust	client	857596-18d5ea701b80d0c7	4	RECEIPT_VALIDATED	5d27d2ca6918e155c992f51eb542cac5	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	rust	client	857596-18d5ea701b80d0c7	5	OBSERVATION_JOURNALED	5d27d2ca6918e155c992f51eb542cac5	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	rust	client	857596-18d5ea701b80d0c7	6	REQUEST_SENT	03f2da9f5a6e089317ffb2e46c20af2d	0:0:2	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	rust	client	857596-18d5ea701b80d0c7	7	RECEIPT_VALIDATED	03f2da9f5a6e089317ffb2e46c20af2d	0:0:2	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	rust	client	857596-18d5ea701b80d0c7	8	REQUEST_SENT	49e555316b8d6cf8b0aee3fab60dbfb8						
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	rust	client	857596-18d5ea701b80d0c7	9	RECEIPT_VALIDATED	49e555316b8d6cf8b0aee3fab60dbfb8						
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	rust	client	857596-18d5ea701b80d0c7	10	REQUEST_SENT	61391c258d95ee0020667eda3683b35b	1:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	rust	client	857596-18d5ea701b80d0c7	11	RECEIPT_VALIDATED	61391c258d95ee0020667eda3683b35b	1:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	rust	client	857596-18d5ea701b80d0c7	12	OBSERVATION_JOURNALED	61391c258d95ee0020667eda3683b35b	1:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	rust	client	857596-18d5ea701b80d0c7	13	REQUEST_SENT	670566df8622f68c891c36f96c029276	1:0:2	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	rust	client	857596-18d5ea701b80d0c7	14	RECEIPT_VALIDATED	670566df8622f68c891c36f96c029276	1:0:2	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	rust	client	857596-18d5ea701b80d0c7	15	OBSERVATION_JOURNALED	670566df8622f68c891c36f96c029276	1:0:2	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	rust	client	857596-18d5ea701b80d0c7	16	OBSERVATION_JOURNALED	03f2da9f5a6e089317ffb2e46c20af2d	0:0:2	1				

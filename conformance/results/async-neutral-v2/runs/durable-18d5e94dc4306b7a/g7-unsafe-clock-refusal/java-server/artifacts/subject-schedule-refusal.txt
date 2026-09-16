@@ -1,0 +1,4 @@
+v2 serve exited before readiness (exit status: 1)
+log:
+Picked up JAVA_TOOL_OPTIONS: -Djava.io.tmpdir=/home/krickert/.rfc-tmp/claude-m22/tmp
+schedule action clock-set is driven by the fixture, not the subject

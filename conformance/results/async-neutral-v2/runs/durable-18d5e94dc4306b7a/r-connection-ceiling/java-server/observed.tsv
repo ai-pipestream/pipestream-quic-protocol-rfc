@@ -1,0 +1,13 @@
+server_subject	java
+client_subject	rust (raw probe, one held connection per attempt)
+documented_global_bound	32
+documented_per_principal_bound	8
+per_principal_admitted	8
+per_principal_refusal_attempt	9
+per_principal_refusal_class	post-auth refusal (connection closed after handshake): APPLICATION_CLOSE code=0x204 reason="owner connection ceiling"
+global_admitted_total	32
+global_refusal_principal	dave
+per_principal_refusals_before_global	2
+global_refusal_class	post-auth refusal (connection closed after handshake): transport close (aborted by peer: the server refused to accept a new connection)
+recovery_after_close	held on attempt 1
+incomplete_handshake_accounting	named gap: not observable through the quinn client (handshakes complete atomically)

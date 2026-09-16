@@ -1,0 +1,7 @@
+input_len	12582912
+input_sha256	ab0e2b4417deba665487ff89294e266427c72bf5b0de42a136d46acf2da4a60a
+kill_delay_ms	23
+kill_label	SIGKILL to the one-shot client after the request was sent, mid-admission
+journal_replay	adopt the durable receipt, or on NOT_FOUND re-send the SAME operation
+expected_admissions	exactly 1 (page members + subject records)
+expected_attempt	1

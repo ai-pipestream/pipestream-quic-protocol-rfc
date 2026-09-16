@@ -1,0 +1,2 @@
+expected_outcome	durable activation refused (UNAUTHORIZED class); no disclosure of any owner's retained sessions
+expected_state_unchanged	alice next-sequence stays 1

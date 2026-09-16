@@ -1,0 +1,18 @@
+server_subject	rust
+client_subject	java
+alpn	pipestream/2
+child_scope	1:0
+parent_state_children_open	3
+child_checkpoint_open	NOT_READY: NOT_READY: scope membership not observed
+complete_open	NOT_READY: NOT_READY: root summary not yet verified
+root_checkpoint_open	WAIT_TIMEOUT: WAIT_TIMEOUT: authority refused: checkpoint wait expired
+child_scope_replacement	CONFLICT: CONFLICT: authority refused: membership is sealed or IDs did not increase
+parent_state_one_child_terminal	3
+output_sha256	9e1572ca5d5b092815ebf83c1ef53831065d73e5a29268f6bb7711c2553c6ba0
+output_matches_input	true
+child_page	producer=0 declared=2 members SUCCEEDED,SUCCEEDED
+child_seal_matches_oracle	true
+settlement	child COVERAGE, root COVERAGE, COMPLETED
+post_settlement_output	VERIFIED byte-exact
+leaf_children	named gap: neither CLI expresses attaching children to an existing leaf; children attach only via branch admission
+java_jar_sha256	6f028be764810386da92948dddcbd085893821f5580e44a821bbe59400f46b5f

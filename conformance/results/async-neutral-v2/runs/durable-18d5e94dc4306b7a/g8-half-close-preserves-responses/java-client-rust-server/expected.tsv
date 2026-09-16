@@ -1,0 +1,4 @@
+work	0:0:1 copy/v2 settled
+half_close_surface	the single-shot CLIs cannot send FIN on the request direction while responses are pending; the wire-level FIN probe is implemented by the raw peer in this row's raw-rust-server/ and raw-java-server/ directions (milestone 14)
+detach_ack_full_delivery	DETACHED marker and exit 0: the ack (and everything committed before it) is delivered in full
+post_detach_op	a post-detach op on the same journal is a fresh attach attempt; the actual outcome is recorded

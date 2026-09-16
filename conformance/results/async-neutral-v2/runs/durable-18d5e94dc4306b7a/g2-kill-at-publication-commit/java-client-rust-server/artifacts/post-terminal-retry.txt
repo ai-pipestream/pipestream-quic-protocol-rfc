@@ -1,0 +1,7 @@
+exit=exit status: 1
+stdout:
+REFUSED code=ALREADY_TERMINAL detail=work already terminal
+
+stderr:
+Picked up JAVA_TOOL_OPTIONS: -Djava.io.tmpdir=/home/krickert/.rfc-tmp/claude-m22/tmp
+ALREADY_TERMINAL: ALREADY_TERMINAL: authority refused: work already terminal

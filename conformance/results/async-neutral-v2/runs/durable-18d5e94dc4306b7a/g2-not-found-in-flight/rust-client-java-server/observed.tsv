@@ -1,0 +1,12 @@
+server_subject	java
+client_subject	rust
+pending_window	header + 131072 of 262144 bytes written, no FIN, 500 ms settle before the lookup
+lookup_while_pending	refused NOT_FOUND (5) detail "operation receipt unavailable" on control request 2
+admission_receipt	attempt=1 admitted_at=1789593422970 deadline=1789593482970
+raw_receipts_identical	true (Work::Admitted and Work::OperationResponse receipt bytes equal)
+cli_replay	RECEIPT with deadline 1789593482970; identical to both CLI lookups
+terminal_attempt	1
+page_members	1
+execution_claimed_records	1 (subject record)
+result_read	attempt 1 byte-exact against the independent oracle
+java_jar_sha256	6f028be764810386da92948dddcbd085893821f5580e44a821bbe59400f46b5f

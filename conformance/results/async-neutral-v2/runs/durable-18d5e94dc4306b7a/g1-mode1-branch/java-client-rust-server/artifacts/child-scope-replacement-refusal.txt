@@ -1,0 +1,7 @@
+exit=exit status: 1
+stdout:
+REFUSED code=CONFLICT detail=membership is sealed or IDs did not increase
+
+stderr:
+Picked up JAVA_TOOL_OPTIONS: -Djava.io.tmpdir=/home/krickert/.rfc-tmp/claude-m22/tmp
+CONFLICT: CONFLICT: authority refused: membership is sealed or IDs did not increase

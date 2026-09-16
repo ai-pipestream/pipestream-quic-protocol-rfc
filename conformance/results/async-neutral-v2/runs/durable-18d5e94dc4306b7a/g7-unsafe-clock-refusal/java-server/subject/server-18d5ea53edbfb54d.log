@@ -1,0 +1,2 @@
+Picked up JAVA_TOOL_OPTIONS: -Djava.io.tmpdir=/home/krickert/.rfc-tmp/claude-m22/tmp
+schedule action clock-set is driven by the fixture, not the subject

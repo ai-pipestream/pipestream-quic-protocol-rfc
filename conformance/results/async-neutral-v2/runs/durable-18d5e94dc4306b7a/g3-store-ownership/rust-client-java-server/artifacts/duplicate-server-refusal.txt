@@ -1,0 +1,4 @@
+exit=exit status: 1
+log:
+Picked up JAVA_TOOL_OPTIONS: -Djava.io.tmpdir=/home/krickert/.rfc-tmp/claude-m22/tmp
+V2 input store is already locked

@@ -1,0 +1,6 @@
+exit=exit status: 1
+stdout:
+
+stderr:
+Picked up JAVA_TOOL_OPTIONS: -Djava.io.tmpdir=/home/krickert/.rfc-tmp/claude-m22/tmp
+CONFLICT: CONFLICT: operation identity reused with different parameters

@@ -1,0 +1,16 @@
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	java	client	857596-18d5ea7237575e2f	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	java	client	857596-18d5ea7237575e2f	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	java	client	857596-18d5ea7237575e2f	3	REQUEST_SENT	5d27d2ca6918e155c992f51eb542cac5	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	java	client	857596-18d5ea7237575e2f	4	RECEIPT_VALIDATED	5d27d2ca6918e155c992f51eb542cac5	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	java	client	857596-18d5ea7237575e2f	5	OBSERVATION_JOURNALED	5d27d2ca6918e155c992f51eb542cac5	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	java	client	857596-18d5ea7237575e2f	6	REQUEST_SENT	03f2da9f5a6e089317ffb2e46c20af2d	0:0:2	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	java	client	857596-18d5ea7237575e2f	7	RECEIPT_VALIDATED	03f2da9f5a6e089317ffb2e46c20af2d	0:0:2	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	java	client	857596-18d5ea7237575e2f	8	REQUEST_SENT	49e555316b8d6cf8b0aee3fab60dbfb8						
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	java	client	857596-18d5ea7237575e2f	9	RECEIPT_VALIDATED	49e555316b8d6cf8b0aee3fab60dbfb8						
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	java	client	857596-18d5ea7237575e2f	10	REQUEST_SENT	61391c258d95ee0020667eda3683b35b	1:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	java	client	857596-18d5ea7237575e2f	11	RECEIPT_VALIDATED	61391c258d95ee0020667eda3683b35b	1:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	java	client	857596-18d5ea7237575e2f	12	OBSERVATION_JOURNALED	61391c258d95ee0020667eda3683b35b	1:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	java	client	857596-18d5ea7237575e2f	13	REQUEST_SENT	670566df8622f68c891c36f96c029276	1:0:2	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	java	client	857596-18d5ea7237575e2f	14	RECEIPT_VALIDATED	670566df8622f68c891c36f96c029276	1:0:2	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	java	client	857596-18d5ea7237575e2f	15	OBSERVATION_JOURNALED	670566df8622f68c891c36f96c029276	1:0:2	1				
+1	durable-18d5e94dc4306b7a	g8-complete-with-pending	java	client	857596-18d5ea7237575e2f	16	OBSERVATION_JOURNALED	03f2da9f5a6e089317ffb2e46c20af2d	0:0:2	1				

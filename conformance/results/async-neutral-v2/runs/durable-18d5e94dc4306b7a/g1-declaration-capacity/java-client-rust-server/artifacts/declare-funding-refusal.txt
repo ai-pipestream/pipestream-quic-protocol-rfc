@@ -1,0 +1,7 @@
+exit=exit status: 1
+stdout:
+REFUSED code=LIMIT_EXCEEDED detail=authority record completion capacity exhausted
+
+stderr:
+Picked up JAVA_TOOL_OPTIONS: -Djava.io.tmpdir=/home/krickert/.rfc-tmp/claude-m22/tmp
+LIMIT_EXCEEDED: LIMIT_EXCEEDED: authority refused: authority record completion capacity exhausted

@@ -1,0 +1,5 @@
+1	durable-18d5e94dc4306b7a	r-memory-ladder	rust	client	857596-18d5eaebc7480700	1	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d5e94dc4306b7a	r-memory-ladder	rust	client	857596-18d5eaebc7480700	2	DECLARATION_COMMITTED							
+1	durable-18d5e94dc4306b7a	r-memory-ladder	rust	client	857596-18d5eaebc7480700	3	ADMISSION_COMMITTED							
+1	durable-18d5e94dc4306b7a	r-memory-ladder	rust	client	857596-18d5eaebc7480700	4	LIMIT_REFUSAL_OBSERVED							
+1	durable-18d5e94dc4306b7a	r-memory-ladder	rust	client	857596-18d5eaebc7480700	5	LADDER_EVIDENCE					artifacts/rungs.tsv	969	6a5962e212e3221fe5d2bad02871798511424bf76a7020dc6940cfaa75a4fc24

@@ -1,0 +1,7 @@
+exit=exit status: 1
+stdout:
+REFUSED code=UNAUTHORIZED detail=declaration origin does not own scope membership
+
+stderr:
+Picked up JAVA_TOOL_OPTIONS: -Djava.io.tmpdir=/home/krickert/.rfc-tmp/claude-m22/tmp
+UNAUTHORIZED: UNAUTHORIZED: authority refused: declaration origin does not own scope membership

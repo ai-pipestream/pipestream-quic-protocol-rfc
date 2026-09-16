@@ -1,0 +1,10 @@
+server_subject	rust
+client_subject	java
+alpn	pipestream/2
+settled	0:0:1 over 1:0:1 + 1:0:2
+checkpoint_wrong_seal	authority: INTEGRITY_ERROR: INTEGRITY_ERROR: checkpoint seal contradicts verified membership
+complete_child_only_coverage	refused before any completion claim (client journal layer): exit=exit status: 1
+session_open_after_refusals	true
+complete	COMPLETED equals the saved root coverage
+complete_second	replayed the durable completion identical to the first COMPLETED — no second claim
+java_jar_sha256	6f028be764810386da92948dddcbd085893821f5580e44a821bbe59400f46b5f

@@ -1,0 +1,7 @@
+exit=exit status: 1
+stdout:
+REFUSED code=CONTROL_RESET detail=peer closed connection
+
+stderr:
+Picked up JAVA_TOOL_OPTIONS: -Djava.io.tmpdir=/home/krickert/.rfc-tmp/claude-m22/tmp
+CONTROL_RESET: CONTROL_RESET: authority refused: peer closed connection

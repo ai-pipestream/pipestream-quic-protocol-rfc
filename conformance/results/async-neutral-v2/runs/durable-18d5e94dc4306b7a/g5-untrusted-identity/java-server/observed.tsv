@@ -1,0 +1,8 @@
+server_subject	java
+java_jar_sha256	6f028be764810386da92948dddcbd085893821f5580e44a821bbe59400f46b5f
+foreign_ca_sha256	de1a5e8745469fae7d314b4c1442a11d7ea19f6fdd4377a68a91501f8525be26
+probe_exit	exit status: 1
+probe_stderr_first_line	connection ended during negotiation: aborted by peer: the cryptographic handshake failed: error 80: connection lost: aborted by peer: the cryptographic handshake failed: error 80
+probe_named_code	none (transport failure, no application refusal)
+application_refusal_surfaced	false
+alice_next_sequence_after	1

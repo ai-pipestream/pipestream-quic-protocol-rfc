@@ -10,6 +10,17 @@ below. This mark is valid only together with that evidence.
 
 ## 1. Branch / base / state
 
+- State at landing (2026-09-16, written by the coordinator): everything below
+  in this section is the history of the branch as the driver author kept it.
+  Since then the coordinator has merged the branch into `main` three times on
+  the owner's standing authorization (rounds 11, 15 and 18: `1ec31045`,
+  `ea025865`, `88cb6e02`), so `main` now carries the driver, the archives and
+  this handoff; the branch base is `main`, and pushes to both remotes were made
+  by the coordinator, never by the driver author. The acceptance archive
+  `durable-18d5d9f3653ef1c4` was produced against the Rust subject
+  `4156c642…`, which predates the Rust client change at `6cff1543`
+  (negotiation error reporting only); the M22 rerun on the final subjects,
+  archive `durable-18d5e94dc4306b7a`, is recorded below and is green.
 - Branch: `agent/rfc-kimi-neutral-v2`, worktree `/work/worktrees/pipestream-rfc-kimi`.
 - Base: `8eb5a17` on `feat/durable-work-results-v2` (contains `82a1b11`).
 - Peer dependency consumed: Claude `5e3138a` (SERVER_READY+CLIENT_READY
@@ -1991,6 +2002,28 @@ lines verbatim:
 
 This header is flipped to REVIEW_READY on this evidence; traceability's
 DONE now means green in acceptance; section 5 item 1 records the pass.
+
+### M22 (2026-09-16, coordinator rerun): the matrix is green on the final subjects
+
+Run by the coordinator on the owner's instruction, from `main` at `88cb6e02`
+(the tree after the Rust client change `6cff1543` and the last landings),
+with the run_all.sh acceptance block shape, the four M20 waivers, stores
+and TMPDIR under `~/.rfc-tmp/claude-m22`, under BENCHMARK.lock. Both subjects
+rebuilt from that tree with full gates: transport build (297 Netty QUIC
+tests green), `mvn install -q -Psealed-interop` exit 0 with no -DskipTests,
+Java all-jar `6f028be764810386…`; `cargo build --release --locked --workspace`,
+rust `7b58ccc7108c8b39…` (the client change moves the hash off `4156c642…`;
+no authority or wire behaviour changed).
+
+Archive `durable-18d5e94dc4306b7a`: **exit 0, 66 rows, 64 PASS and 2 WAIVED,
+no FAIL, no unwaived INCOMPLETE, MANIFEST 5491 entries all rehashed OK**;
+the only INCOMPLETE markers are the two waived directions
+(`g3-store-ownership` java-client/rust-server, `g4-revocation-vs-publication`
+rust-client/java-server); the three PARTIAL R rows PASS with their named
+scopes. Driver wall 21:09:07 to 21:48:40Z. Summary log
+`m22-coordinator-rerun.log` beside this file. This closes the second
+follow-up of the coordinator review: the B evidence now stands on the
+subjects that `main` ships.
 
 ### Milestone 21 procedure (written in advance, pending Claude's fixture fixes)
 

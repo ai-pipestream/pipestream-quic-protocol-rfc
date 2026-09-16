@@ -1,0 +1,6 @@
+exit=exit status: 0
+stdout:
+VERIFIED length=12582912 sha256=ab0e2b4417deba665487ff89294e266427c72bf5b0de42a136d46acf2da4a60a
+
+stderr:
+Picked up JAVA_TOOL_OPTIONS: -Djava.io.tmpdir=/home/krickert/.rfc-tmp/claude-m22/tmp

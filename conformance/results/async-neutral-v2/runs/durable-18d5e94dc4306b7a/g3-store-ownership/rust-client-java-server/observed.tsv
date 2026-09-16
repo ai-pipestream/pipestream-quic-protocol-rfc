@@ -1,0 +1,6 @@
+live_server	java
+duplicate_startup	refused: exit status: 1
+duplicate_refusal_log	Picked up JAVA_TOOL_OPTIONS: -Djava.io.tmpdir=/home/krickert/.rfc-tmp/claude-m22/tmp
+storage_probe_scope	private-storage-supplementary
+first_server_unaffected	watch state=5
+second_server_after_stop	started cleanly; retained session served
