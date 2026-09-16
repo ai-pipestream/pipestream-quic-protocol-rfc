@@ -76,3 +76,12 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 **Scope Digest**
 :   A cryptographic summary (Merkle root) of all Entity statuses within a completed scope, propagated to parent scopes for efficient verification. (Protocol Layer 1)
+
+**Declaration, Admission, Outstanding**
+:   Terms of the sealed and durable lifecycles, used from Section 5 onward and
+    defined in Section 9.8 and Section 12. A *declaration* names the entities a
+    scope will contain before their payloads are sent; the receiver's
+    *declaration acknowledgement* commits to that membership, and each declared
+    entity is a *declared obligation* until it is *admitted* (its validated
+    payload accepted for processing) or settled otherwise. An obligation
+    *remains outstanding* while it is declared but not yet admitted or settled.

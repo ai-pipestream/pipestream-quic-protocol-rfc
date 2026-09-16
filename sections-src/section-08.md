@@ -49,6 +49,10 @@ The following application-role model illustrates connection setup, decomposition
 ## CONNECT Action
 
 The CONNECT action establishes the session with capability negotiation.
+CONNECT is a phase, not a frame: it is the QUIC handshake followed by the
+initial CAPABILITIES exchange on Stream 0 (Section 3.4). "Refusing CONNECT"
+means answering the peer's initial CAPABILITIES with the named error and
+closing the connection before any entity stream is accepted.
 
 ### ALPN Identifier
 

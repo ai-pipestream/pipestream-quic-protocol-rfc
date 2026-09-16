@@ -36,7 +36,7 @@ The following frame types are defined by this document. All frames use the commo
 | 0x54 | SCOPE_DIGEST | 1 | Fixed 72-octet payload |
 | 0x55 | BARRIER | 1 | Fixed 12-octet payload |
 | 0x56 | GOAWAY | 0 | Fixed 8-octet payload |
-| 0x80 | CAPABILITIES | 0 | Serialized message payload (negotiated format) |
+| 0x80 | CAPABILITIES | 0 | Serialized message payload (default CBOR for the initial exchange, Section 3.4.2; the negotiated format afterwards) |
 | 0x81 | CHECKPOINT | 0 | Serialized message payload (negotiated format) |
 | 0x82 | CLAIM_REDEMPTION | 2 | Serialized message payload (negotiated format) |
 | 0x83 | WORK_SET | 1 | Negotiated sealed work declarations (Section 9.8) |
@@ -109,9 +109,15 @@ Reserved (32 bits):
 | 0xB   | SKIPPED     | 2     | Intentionally skipped                  |
 | 0xC   | ABANDONED   | 2     | Timed out                              |
 
+The CHECKPOINT status (0x5) and the CHECKPOINT frame (0x81, Section 9.3) are
+two sides of one event, not two mechanisms: the frame is the request and
+acknowledgement exchange on Stream 0 that establishes the barrier, and the
+status reports, per entity, that the entity is held at that barrier; it
+returns to PROCESSING when the barrier is satisfied.
+
 The base STATUS payload is 16 octets (21 octets on the wire including the UCF header). When C=1, a 4-octet cursor value follows (20-octet payload, 25 octets on the wire). When E=1, an Extension Header follows all other STATUS fields.
 
-PROCESSING reports admission of the validated entity, not merely an opened stream or arrival of payload octets. The receiver MUST complete the applicable header, payload, and chunk checks before reporting admission. Whether admission is durable depends on the negotiated lifecycle. Neither PROCESSING nor a declaration acknowledgment proves successful computation. Reversible speculative processing during reception is permitted under Section 10.2, but MUST NOT be reported as validated admission before those checks succeed.
+PROCESSING reports admission of the validated entity, not merely an opened stream or arrival of payload octets. The receiver MUST complete the applicable header, payload, and chunk checks before reporting admission. Whether admission is durable depends on the negotiated lifecycle (the set of statuses enabled for the entity by capability negotiation, Section 3.4: Layer 0 alone, or with the Layer 1 and Layer 2 statuses of Section 6.2.2, or the sealed lifecycle of Section 9.8). Neither PROCESSING nor a declaration acknowledgment proves successful computation. Reversible speculative processing during reception is permitted under Section 10.2, but MUST NOT be reported as validated admission before those checks succeed.
 
 ### Entity Status State Machine
 

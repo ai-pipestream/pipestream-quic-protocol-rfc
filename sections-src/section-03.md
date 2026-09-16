@@ -46,7 +46,11 @@ Layer 2 is OPTIONAL and requires Layer 1. Implementations advertise Layer 2 supp
 
 PipeStream uses a two-tier negotiation model. The ALPN identifier (Section 11.1) identifies the base PipeStream transport mapping, while the `capabilities` structure handles dynamic resource limits and optional layer support that may vary based on endpoint configuration or real-time load.
 
-During CONNECT, endpoints exchange supported capabilities using the `capabilities` structure. This message MUST be encoded using the default CBOR format for both the client's initiation and the server's response (Section 3.4.2).
+During CONNECT (the connection-establishment phase: the QUIC handshake and
+this initial exchange, Section 8), endpoints exchange supported capabilities
+using the `capabilities` structure. The CAPABILITIES frame (type 0x80,
+Section 6.1) carries exactly one such structure, a CBOR map; this document
+calls it the Capabilities message. This message MUST be encoded using the default CBOR format for both the client's initiation and the server's response (Section 3.4.2).
 
 ~~~~ cddl
 serialization-format = uint .le 255
