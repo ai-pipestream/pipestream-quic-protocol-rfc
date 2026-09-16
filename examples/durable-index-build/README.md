@@ -42,15 +42,16 @@ timeouts; servers are torn down at exit.
   sizing is an operator concern; the gate stays inside the default
   envelope on purpose.
 - Each demo group gets a fresh authority pair (wipe + re-init +
-  relaunch), and the kill demos settle 40s before resume. The authority
-  refuses new handshakes past 16 connections (4 per principal) with no
-  client-visible code; every coordinator run holds 2 connections and
-  the merge reader used to open 8 per merge, so rapid runs plus abrupt
-  exits tripped the ceiling and reader connects died with a bare
-  `connection lost`. Readers now share one connection per merge and
-  the coordinator detaches at clean exit; the kill path stays abrupt
-  (crash simulation) so the resume still waits out the 30s idle
-  backstop. Full story in SPEC-FRICTION F3, filed as a bug.
+  relaunch), and the kill demos settle 40s before resume. The Rust
+  authority allows 4 connections per principal (16 in total) and closes
+  a connection over that ceiling with LIMIT_EXCEEDED; every actor here is
+  one principal, each coordinator run held 2 connections without
+  detaching, the merge reader opened one per TF reference, and a killed
+  coordinator's connections stay counted until the 60s idle timeout.
+  The Java client names that refusal; the Rust client reports it as a
+  bare `connection lost` (a client bug, SPEC-FRICTION F3). Readers now
+  share one connection per merge and the coordinator detaches at clean
+  exit; the kill path stays abrupt (crash simulation).
 - Cancel at tiny sizes is timing-sensitive: sent immediately, the cancel
   can seal the scope before expansion admits anything (empty scope,
   vacuous close). The coordinator therefore waits for the first

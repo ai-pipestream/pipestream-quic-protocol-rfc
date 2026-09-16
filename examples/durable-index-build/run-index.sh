@@ -196,11 +196,12 @@ grep -q $'scope-counts\tscope 0: declared=2 success=1 failure=1 cancelled=0 skip
 note "PASS cancel (4xCANCELLED, exclusion VERIFIED, sums match)"
 
 # --- kill/resume demos, each on a fresh rust pair ---
-# A 40s settle between kill and resume: the killed coordinator's
-# connections need server-side reaping (past the 30s idle backstop),
-# otherwise the resume plus the merge reader trips the 4-connections-
-# per-principal ceiling and the reader connect is refused. Production
-# crash supervision restarts slower than that anyway; see README (F3).
+# A 40s settle between kill and resume as margin: the killed coordinator's
+# connections stay counted against the 4-per-principal ceiling until the
+# authority's 60s idle timeout reaps them, so what keeps the resume plus
+# its merge reader under the ceiling is the one-connection-per-merge
+# reader, not the settle. Production crash supervision restarts slower
+# than this anyway; see README and SPEC-FRICTION F3.
 for stage in stage2 stage3; do
   fresh_rust_pair "$WORK/rust"
   rm -f "$WORK/rust/k.sqlite"* "$WORK/rust/kb.sqlite"*; rm -rf "$WORK/rust/stage-k$stage" "$WORK/rust/events-k$stage.tsv"
