@@ -1,0 +1,76 @@
+start 2026-09-16T13:16:01Z tree bb269713 tests=FixtureMainTest,V2MainProcessTest,DurableClientControlDeadlineTest,LossyTransportCreditTest,DurableBranchTest,RetentionStoreTest,BranchExecutionTest,SessionRetirementCrashTest,OutputRetentionStoreTest,DurableHostIdleWritesTest,RetryStoreTest,HookPlacementTest,BranchExecutionCapacityTest,DurableMutationTest,V2CoreServerTest,ResultServiceTest,ProducedAdmissionTest,AuthorityExpansionRuntimeFailureTest,FixedRecordsTest,ExecutionStoreTest,RetentionStoreRecoveryTest,ResultAbortWireTest,V2TlsTest,AdmissionCapacityTest,V2CoreClientTest,DurableClientLocatorTest,AdmissionStoreTest,DurableServerTest,AuthorityExpansionSchedulingTest,RetirementChildScopeTest,OrphanStoreTest,V2CommitmentResourceTest,ProducedDeclarationTest,AdmissionPolicyTest,OrphanRetainedReleaseTest,ProducedRecoveryTest,RetirementServiceTest,PublicationStoreRecoveryTest,StoreBindingTest,BranchSchedulerTest,DurableClientTest,CompletedSessionObservationTest,ExecutionRuntimeCreditTest,PublicationStoreCapacityTest,ResultDeliveryWireGapTest,DurableRequestsTest,DurableClientResultNegativeTest,MigrationWireTest,OutputStoreRecoveryTest,ScopePagingWireTest,ExecutionDiscoverySuffixTest,InputStorePinnedInstallTest,InputStoreFundingRecoveryTest,OutputStoreReclaimTest,StreamTransportTest,CredentialExpiryReconnectTest,OutputStoreTest,InputStoreReceiverPinsTest,InputRetirementGateTest,V2ObjectResourceTest,V2ClientCorrelationTest,V2ObjectStreamTest,TransportDependencyTest,CapabilityListBoundsTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.482 s -- in ai.pipestream.quic.v2.AdmissionCapacityTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.498 s -- in ai.pipestream.quic.v2.AdmissionPolicyTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.114 s -- in ai.pipestream.quic.v2.AdmissionStoreTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.822 s -- in ai.pipestream.quic.v2.AuthorityExpansionRuntimeFailureTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.949 s -- in ai.pipestream.quic.v2.AuthorityExpansionSchedulingTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.427 s -- in ai.pipestream.quic.v2.BranchExecutionCapacityTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 5.847 s -- in ai.pipestream.quic.v2.BranchExecutionTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.932 s -- in ai.pipestream.quic.v2.BranchSchedulerTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in ai.pipestream.quic.v2.CapabilityListBoundsTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.930 s -- in ai.pipestream.quic.v2.CompletedSessionObservationTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.462 s -- in ai.pipestream.quic.v2.CredentialExpiryReconnectTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 9.987 s -- in ai.pipestream.quic.v2.DurableBranchTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 18.61 s -- in ai.pipestream.quic.v2.DurableClientControlDeadlineTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.132 s -- in ai.pipestream.quic.v2.DurableClientLocatorTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.673 s -- in ai.pipestream.quic.v2.DurableClientResultNegativeTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.999 s -- in ai.pipestream.quic.v2.DurableClientTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.113 s -- in ai.pipestream.quic.v2.DurableHostIdleWritesTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.524 s -- in ai.pipestream.quic.v2.DurableMutationTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.859 s -- in ai.pipestream.quic.v2.DurableRequestsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.245 s -- in ai.pipestream.quic.v2.DurableServerTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.481 s -- in ai.pipestream.quic.v2.ExecutionDiscoverySuffixTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.853 s -- in ai.pipestream.quic.v2.ExecutionRuntimeCreditTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.750 s -- in ai.pipestream.quic.v2.ExecutionStoreTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.528 s -- in ai.pipestream.quic.v2.FixedRecordsTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 92.30 s -- in ai.pipestream.quic.v2.FixtureMainTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.474 s -- in ai.pipestream.quic.v2.HookPlacementTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.126 s -- in ai.pipestream.quic.v2.InputRetirementGateTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.378 s -- in ai.pipestream.quic.v2.InputStoreFundingRecoveryTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.419 s -- in ai.pipestream.quic.v2.InputStorePinnedInstallTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.172 s -- in ai.pipestream.quic.v2.InputStoreReceiverPinsTest
+io.netty.handler.codec.quic.QuicStreamResetException: STREAM_RESET
+	at io.netty.handler.codec.quic.Quiche.convertToException(Quiche.java:939)
+	at ai.pipestream.quic.v2.DurableServer$Connection$InputTransfer.begin(DurableServer.java:1086)
+	at ai.pipestream.quic.v2.DurableServer$Connection.stream(DurableServer.java:479)
+	at ai.pipestream.quic.v2.DurableServer$1.initChannel(DurableServer.java:182)
+	at ai.pipestream.quic.v2.DurableServer$1.initChannel(DurableServer.java:171)
+	at ai.pipestream.quic.v2.TlsAuthentication$Guard.channelRead(TlsAuthentication.java:392)
+	at ai.pipestream.quic.v2.DurableServer$3$1.channelRead(DurableServer.java:201)
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.081 s -- in ai.pipestream.quic.v2.LossyTransportCreditTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.563 s -- in ai.pipestream.quic.v2.MigrationWireTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.363 s -- in ai.pipestream.quic.v2.OrphanRetainedReleaseTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.694 s -- in ai.pipestream.quic.v2.OrphanStoreTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.572 s -- in ai.pipestream.quic.v2.OutputRetentionStoreTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.370 s -- in ai.pipestream.quic.v2.OutputStoreReclaimTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.516 s -- in ai.pipestream.quic.v2.OutputStoreRecoveryTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.248 s -- in ai.pipestream.quic.v2.OutputStoreTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.006 s -- in ai.pipestream.quic.v2.ProducedAdmissionTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.375 s -- in ai.pipestream.quic.v2.ProducedDeclarationTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.683 s -- in ai.pipestream.quic.v2.ProducedRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.047 s -- in ai.pipestream.quic.v2.PublicationStoreCapacityTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.360 s -- in ai.pipestream.quic.v2.PublicationStoreRecoveryTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.481 s -- in ai.pipestream.quic.v2.ResultAbortWireTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.906 s -- in ai.pipestream.quic.v2.ResultDeliveryWireGapTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.048 s -- in ai.pipestream.quic.v2.ResultServiceTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.716 s -- in ai.pipestream.quic.v2.RetentionStoreRecoveryTest
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.281 s -- in ai.pipestream.quic.v2.RetentionStoreTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.247 s -- in ai.pipestream.quic.v2.RetirementChildScopeTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.870 s -- in ai.pipestream.quic.v2.RetirementServiceTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.046 s -- in ai.pipestream.quic.v2.RetryStoreTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.501 s -- in ai.pipestream.quic.v2.ScopePagingWireTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.884 s -- in ai.pipestream.quic.v2.SessionRetirementCrashTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.997 s -- in ai.pipestream.quic.v2.StoreBindingTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.321 s -- in ai.pipestream.quic.v2.StreamTransportTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.002 s -- in ai.pipestream.quic.v2.TransportDependencyTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in ai.pipestream.quic.v2.V2ObjectStreamTest
+[INFO] Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in ai.pipestream.quic.v2.V2ClientCorrelationTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.598 s -- in ai.pipestream.quic.v2.V2CommitmentResourceTest
+[INFO] Tests run: 13, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.206 s -- in ai.pipestream.quic.v2.V2CoreClientTest
+[INFO] Tests run: 13, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.294 s -- in ai.pipestream.quic.v2.V2CoreServerTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 23.55 s -- in ai.pipestream.quic.v2.V2MainProcessTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.076 s -- in ai.pipestream.quic.v2.V2ObjectResourceTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.348 s -- in ai.pipestream.quic.v2.V2TlsTest
+[INFO] Tests run: 267, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+RUN_EXIT=0 at 2026-09-16T13:20:23Z

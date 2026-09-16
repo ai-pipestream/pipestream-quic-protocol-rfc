@@ -556,6 +556,63 @@ final class FixtureMainTest {
     }
   }
 
+  /**
+   * Fixture defect 21 (Kimi M21, g3-orphan-cleanup rust-client/java-server): a driver that re-arms
+   * a row on purpose hands the subject a fresh schedule file per iteration, and those files may
+   * repeat a line byte for byte. The once-per-run marker is keyed by the schedule file as well, so a
+   * second file fires again while the same file handed back after a restart still does not.
+   */
+  @Test
+  void aRowInAFreshScheduleFileFiresAgainEvenWhenItsContentRepeats() throws Exception {
+    Path root = authority("rearm-file");
+    Path serverEvents = directory.resolve("rearm-file-fixture/server-events.tsv");
+    Path clientEvents = directory.resolve("rearm-file-fixture/client-events.tsv");
+    String row = "1\trun-rf\tlost-ack\tserver\tSESSION_COMMITTED\tdrop-reply\t0\t5000\n";
+    Path iteration0 = directory.resolve("rearm-file-iteration-0.tsv");
+    Path iteration1 = directory.resolve("rearm-file-iteration-1.tsv");
+    Files.writeString(iteration0, row);
+    Files.writeString(iteration1, row);
+    String[] declare = {"declare", "--operation", hexOperation(1), "--entities", "1", "--seal"};
+    Path journal;
+    try (FixtureServer first =
+        new FixtureServer(
+            root, "rf-1", fixture(serverEvents, iteration0, "run-rf", "lost-ack"))) {
+      journal = journal("rearm-file", first.address);
+      Run lost =
+          fixtureClient(journal, first.address, clientEvents, "run-rf", "lost-ack", declare);
+      assertNotEquals(0, lost.exit(), "iteration 0 withholds the creation reply:\n" + lost.output());
+    }
+    try (FixtureServer second =
+        new FixtureServer(
+            root, "rf-2", fixture(serverEvents, iteration1, "run-rf", "lost-ack"))) {
+      Run lostAgain =
+          fixtureClient(journal, second.address, clientEvents, "run-rf", "lost-ack", declare);
+      assertNotEquals(
+          0,
+          lostAgain.exit(),
+          "iteration 1 is a fresh schedule file and withholds the replayed reply too:\n"
+              + lostAgain.output());
+    }
+    try (FixtureServer third =
+        new FixtureServer(
+            root, "rf-3", fixture(serverEvents, iteration1, "run-rf", "lost-ack"))) {
+      Run replayed =
+          fixtureClient(journal, third.address, clientEvents, "run-rf", "lost-ack", declare);
+      assertEquals(0, replayed.exit(), "the same file after a restart does not fire again:\n" + replayed.output());
+      assertTrue(replayed.output().contains("RECEIPT"), replayed.output());
+      long observations =
+          records(serverEvents).stream()
+              .filter(
+                  r ->
+                      r[BOUNDARY].isEmpty()
+                          && r[REFUSAL].equals(
+                              Integer.toString(ProtocolError.Code.CONTROL_RESET.value())))
+              .count();
+      assertEquals(2, observations, "one withhold per schedule file, none for the repeat");
+      shipped(client(journal, third.address, "detach").toArray(String[]::new));
+    }
+  }
+
   @Test
   void pauseHoldsTheCommittedDeclarationUntilTheReleaseMarkerAppears() throws Exception {
     Path root = authority("pause");

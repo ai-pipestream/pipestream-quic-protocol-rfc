@@ -1,0 +1,23 @@
+start 2026-09-16T13:23:52Z tree bb269713 tests=ai/pipestream/quic/*
+[INFO] Tests run: 23, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 116.3 s -- in ai.pipestream.quic.SealedJobsTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in ai.pipestream.quic.SealedProducerInputsTest
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.900 s -- in ai.pipestream.quic.SealedProducerJournalTest
+[INFO] Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 5.541 s -- in ai.pipestream.quic.SealedReconciliationTest
+[INFO] Tests run: 25, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 33.19 s -- in ai.pipestream.quic.SealedServerTest
+[INFO] Tests run: 16, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 25.18 s -- in ai.pipestream.quic.SealedSessionStoreTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 7.771 s -- in ai.pipestream.quic.SealedSqliteFilesTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.841 s -- in ai.pipestream.quic.SealedSqliteImagesTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in ai.pipestream.quic.SealedTransportTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in ai.pipestream.quic.SealedWorkTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.024 s -- in ai.pipestream.quic.WireTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 26.32 s -- in ai.pipestream.quic.SealedCheckpointStoreTest
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 40.39 s -- in ai.pipestream.quic.SealedCompletionReservationsTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 5.396 s -- in ai.pipestream.quic.SealedExecutorTest
+[INFO] Tests run: 15, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.896 s -- in ai.pipestream.quic.SealedPayloadStoreTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in ai.pipestream.quic.SealedScopeTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.778 s -- in ai.pipestream.quic.SealedStateImagesTest
+[INFO] Tests run: 14, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.191 s -- in ai.pipestream.quic.SealedStoreBindingTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.001 s -- in ai.pipestream.quic.TlsPeerIdentityTest
+[INFO] Tests run: 184, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+RUN_EXIT=0 at 2026-09-16T13:28:22Z

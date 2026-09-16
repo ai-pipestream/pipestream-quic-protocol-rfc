@@ -645,8 +645,9 @@ against both subjects) shows:
   saw a drop-reply armed at SESSION_COMMITTED fire again on the creation replay
   (`g2-crash-after-create-commit`, rust-client/java-server, CONTROL_RESET on the
   replay). Rows now fire once per run: `take` writes a marker named by the row's
-  target, line, boundary and action into the events directory before acting, and
-  a restarted subject skips rows whose marker exists. The server's withhold path
+  target, schedule file, line, boundary and action into the events directory
+  before acting, and a restarted subject skips rows whose marker exists (the
+  schedule file joined the name with defect 21, below). The server's withhold path
   is unchanged: a test hook may still withhold a replay's reply on purpose
   (`ClientRecoveryTest` exhausts a retry budget that way), which is why the
   once-per-run rule lives in the adapter, not in `DurableServer`. Regression:
@@ -669,6 +670,29 @@ against both subjects) shows:
   backpressure, not a stream-id fact; the test now drains to terminal and
   resends on a fresh stream when it meets that refusal, and it passes on either
   disk. The rule for every Java run stands: `JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=/home/krickert/.rfc-tmp`.
+
+### Fixture adapter defect 21 (2026-09-16, from Kimi's first M21 acceptance run)
+
+Kimi's first acceptance run `durable-18d5c7d31cb32b00` was 65 of 66 green; the
+one FAIL was `g3-orphan-cleanup` rust-client/java-server, and it was the
+defect 19 fix itself. That row re-arms a kill on purpose for each of its
+iterations by handing the subject a fresh schedule file
+(`schedule-iteration-0.tsv`, then `-1.tsv`, byte-identical content), and the
+once-per-run marker named only target, line, boundary and action, so
+iteration 0's marker suppressed iteration 1's kill and the direction timed
+out waiting for a restart that never came.
+
+- **Fix.** The marker now names the schedule file as well:
+  `fired-<target>-<file>-<line>-<boundary>-<action>`. The same file handed back
+  after a restart is the same row and still fires once; a fresh file fires
+  again even when its content repeats. Regression:
+  `FixtureMainTest.aRowInAFreshScheduleFileFiresAgainEvenWhenItsContentRepeats`
+  (two identical files, one withhold each, none on the repeat of the second).
+  The D19 regression test is unchanged and still passes.
+- **Gate.** 802/802 on the fixed tree in the three explicit slices (267 + 351 + 184,
+  `fixture-defect-21-java-v2-half1.log`, `-half2.log`, `-sealed.log`), stores on the
+  root drive; the new test was run red first against the previous `FixtureMain`
+  (fails at the iteration 1 assertion) before the fix.
 
 ## 6. Build and verification commands
 
