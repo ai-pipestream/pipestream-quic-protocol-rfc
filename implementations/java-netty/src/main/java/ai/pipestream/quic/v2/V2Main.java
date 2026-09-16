@@ -82,12 +82,16 @@ public final class V2Main {
             required(options, "authority"), required(options, "result-authority"));
     if (!options.containsKey("db-mib") && !options.containsKey("wal-mib")) return defaults;
     BoundedSqlite.Limits files = defaults.files();
+    long walBytes = mebibytes(options, "wal-mib", files.walBytes());
+    // The log is only usable as far as its shared-memory index reaches: scale the sidecar with
+    // the funded log (the store's page size is SQLite's 4096), never below the reference bound.
     files =
         new BoundedSqlite.Limits(
             mebibytes(options, "db-mib", files.databaseBytes()),
-            mebibytes(options, "wal-mib", files.walBytes()),
+            walBytes,
             files.journalBytes(),
-            files.sharedMemoryBytes());
+            Math.max(
+                files.sharedMemoryBytes(), BoundedSqlite.Limits.sharedMemoryFor(walBytes, 4096)));
     return new DurableHost.Configuration(
         defaults.authority(),
         defaults.resultAuthority(),

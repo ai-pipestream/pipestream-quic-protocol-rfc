@@ -1,0 +1,6 @@
+1	durable-18d4ac9f7d4e9880	g3-partial-retirement	rust	client	130819-18d4ad24fd9962d5	1			0:0:1	1		artifacts/input.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+1	durable-18d4ac9f7d4e9880	g3-partial-retirement	rust	client	130819-18d4ad24fd9962d5	2	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4ac9f7d4e9880	g3-partial-retirement	rust	client	130819-18d4ad24fd9962d5	3	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4ac9f7d4e9880	g3-partial-retirement	rust	client	130819-18d4ad24fd9962d5	4	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ac9f7d4e9880	g3-partial-retirement	rust	client	130819-18d4ad24fd9962d5	5	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ac9f7d4e9880	g3-partial-retirement	rust	client	130819-18d4ad24fd9962d5	6	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				

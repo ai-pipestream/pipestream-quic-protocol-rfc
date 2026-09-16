@@ -263,6 +263,129 @@ final class CancellationReconciliationTest {
     }
   }
 
+  /**
+   * Section 12.6: revocation "settles all unresolved declarations as well as admitted work" and
+   * "does not leave unadmitted obligations waiting". One session holds an admitted, leased member
+   * and an unadmitted declaration; after the owner is revoked, owner-independent maintenance
+   * settles both CANCELLED in the same run, the stale lease cannot publish, and the settlement
+   * survives a reopen.
+   */
+  @Test
+  void revocationSettlesAdmittedAndUnadmittedMembersTogetherWithoutTheOwner() throws Exception {
+    try (Fixture fixture = new Fixture("revoke-mixed")) {
+      Records.WorkKey unadmitted = new Records.WorkKey(0, 0, 2);
+      fixture.declare(0, operation(60), List.of(1L, 2L), false);
+      fixture.admit(PARENT, operation(61), 0, 1000);
+      ExecutionStore.Lease lease =
+          fixture.sessions.claimExecution(
+              execAccess(), fixture.generation, PARENT, fixture.inputs, 500, clock(1100), ADMIT);
+      assertEquals(Records.State.ACTIVE, fixture.view(PARENT).state());
+      assertEquals(1, fixture.view(PARENT).attempt());
+      assertEquals(Records.State.DECLARED, fixture.view(unadmitted).state());
+
+      fixture.sessions.revoke(access(), fixture.generation, clock(1200));
+      assertCode(ProtocolError.Code.UNAUTHORIZED, () -> fixture.view(PARENT));
+      assertCode(
+          ProtocolError.Code.UNAUTHORIZED,
+          () ->
+              fixture.sessions.succeedExecution(
+                  execAccess(), lease, fixture.inputs, 0, ENDPOINT, clock(1250), ADMIT));
+      assertEquals(Records.State.ACTIVE, state(fixture, PARENT));
+      assertEquals(Records.State.DECLARED, state(fixture, unadmitted));
+
+      FenceStore.Cursor fences = new FenceStore.Cursor();
+      ClosureStore.Cursor closures = new ClosureStore.Cursor();
+      int settled = 0;
+      int sealed = 0;
+      for (int calls = 0; calls < 32 && (settled < 2 || sealed == 0); calls++) {
+        FenceStore.Progress cancellation =
+            fixture.sessions.reconcileCancellation(fences, 1, clock(1300));
+        settled += cancellation.settledWork();
+        sealed += cancellation.sealedScopes();
+        fixture.sessions.reconcileClosures(closures, 1, clock(1300));
+      }
+      assertEquals(2, settled);
+      assertTrue(sealed > 0);
+      assertEquals(Records.State.CANCELLED, state(fixture, PARENT));
+      assertEquals(Records.State.CANCELLED, state(fixture, unadmitted));
+      assertNull(view(fixture, unadmitted).input());
+      assertEquals(1, view(fixture, PARENT).attempt());
+      assertCode(
+          ProtocolError.Code.UNAUTHORIZED,
+          () ->
+              fixture.sessions.succeedExecution(
+                  execAccess(), lease, fixture.inputs, 0, ENDPOINT, clock(1400), ADMIT));
+
+      fixture.reopen();
+      assertEquals(Records.State.CANCELLED, state(fixture, PARENT));
+      assertEquals(Records.State.CANCELLED, state(fixture, unadmitted));
+      FenceStore.Progress replay =
+          fixture.sessions.reconcileCancellation(new FenceStore.Cursor(), 1, clock(1400));
+      assertEquals(0, replay.settledWork());
+    }
+  }
+
+  @Test
+  void skippedBranchSettlesSkippedWhileItsUnresolvedChildSettlesCancelled() throws Exception {
+    try (Fixture fixture = new Fixture("skip-branch")) {
+      fixture.declare(0, operation(50), List.of(1L), true);
+      fixture.admit(PARENT, operation(51), 1, 1000);
+      Records.ChildScope child = fixture.view(PARENT).child();
+      assertNotNull(child);
+      Records.WorkKey unresolved = new Records.WorkKey(child.scope(), child.producer(), 1);
+      fixture.declare(child.scope(), operation(52), List.of(1L), false);
+
+      Messages.SkipResponse response =
+          fixture.sessions.skip(
+              access(),
+              SELECTED,
+              fixture.generation,
+              new Messages.Skip(53, operation(53), PARENT),
+              clock(1100),
+              FENCE);
+      Records.Skipped skipped =
+          assertInstanceOf(Records.Skipped.class, response.receipt().outcome());
+      assertEquals(0, skipped.disposition());
+      assertEquals(Records.State.CANCELLING, skipped.state());
+      assertEquals(Records.State.CANCELLING, fixture.view(PARENT).state());
+      assertEquals(Records.State.DECLARED, fixture.view(unresolved).state());
+
+      FenceStore.Cursor fences = new FenceStore.Cursor();
+      ClosureStore.Cursor closures = new ClosureStore.Cursor();
+      for (int calls = 0; calls < 32 && !fixture.view(PARENT).state().terminal(); calls++) {
+        fixture.sessions.reconcileCancellation(fences, 1, clock(1200));
+        fixture.sessions.reconcileClosures(closures, 1, clock(1200));
+      }
+      assertEquals(Records.State.SKIPPED, fixture.view(PARENT).state());
+      assertEquals(Records.State.CANCELLED, fixture.view(unresolved).state());
+      assertNull(fixture.view(unresolved).input());
+      for (int calls = 0; calls < 8; calls++) {
+        fixture.sessions.reconcileClosures(closures, 1, clock(1200));
+      }
+
+      Records.Digest childSeal =
+          seal(fixture.binding, child.scope(), child.producer(), PARENT, List.of(1L));
+      Records.ScopeSummary childSummary =
+          fixture.sessions.scopeSummary(
+              access(), SELECTED, fixture.generation, child.scope(), childSeal);
+      assertEquals(new Records.Counts(0, 0, 1, 0), childSummary.counts());
+      Records.Digest rootSeal = seal(fixture.binding, 0, 0, null, List.of(1L));
+      Records.ScopeSummary root =
+          fixture.sessions.scopeSummary(access(), SELECTED, fixture.generation, 0, rootSeal);
+      assertEquals(new Records.Counts(0, 0, 0, 1), root.counts());
+
+      fixture.reopen();
+      assertEquals(Records.State.SKIPPED, fixture.view(PARENT).state());
+      assertEquals(Records.State.CANCELLED, fixture.view(unresolved).state());
+      assertEquals(
+          childSummary,
+          fixture.sessions.scopeSummary(
+              access(), SELECTED, fixture.generation, child.scope(), childSeal));
+      assertEquals(
+          root, fixture.sessions.scopeSummary(access(), SELECTED, fixture.generation, 0, rootSeal));
+    }
+  }
+
   private final class Fixture implements AutoCloseable {
     final Path database;
     final Path inputPath;
@@ -325,6 +448,18 @@ final class CancellationReconciliationTest {
     @Override
     public void close() throws IOException {
       inputs.close();
+    }
+  }
+
+  /** Durable work state read directly, because a revoked owner can no longer snapshot it. */
+  private static Records.State state(Fixture fixture, Records.WorkKey work) throws Exception {
+    return view(fixture, work).state();
+  }
+
+  private static Records.WorkView view(Fixture fixture, Records.WorkKey work) throws Exception {
+    try (var connection =
+        BoundedSqlite.open(fixture.database, configuration().files()).connect()) {
+      return DeclarationStore.member(connection, fixture.binding, work).view();
     }
   }
 

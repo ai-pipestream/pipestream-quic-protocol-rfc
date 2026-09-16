@@ -293,6 +293,30 @@ fn authorization_precedes_lookup_and_revocation_denies_replay() {
         fixture.store.attach_session(&owner("bob"), &wrong, &caps()),
         ErrorCode::Unauthorized,
     );
+    // Section 12.3 (owner decision 2026-09-13): after owner authorization, a foreign expected
+    // authority is CONFLICT for a retained and an absent generation alike; an unauthorized owner
+    // naming it stays UNAUTHORIZED.
+    let mut foreign = binding.identity.clone();
+    foreign.authority = owner("other-authority");
+    refuse(
+        fixture
+            .store
+            .attach_session(&owner("alice"), &foreign, &caps()),
+        ErrorCode::Conflict,
+    );
+    foreign.generation = Id(999);
+    refuse(
+        fixture
+            .store
+            .attach_session(&owner("alice"), &foreign, &caps()),
+        ErrorCode::Conflict,
+    );
+    refuse(
+        fixture
+            .store
+            .attach_session(&owner("bob"), &foreign, &caps()),
+        ErrorCode::Unauthorized,
+    );
     fixture.authorization.allowed.store(false, Ordering::SeqCst);
     refuse(
         fixture.store.next_creation(&owner("alice")),

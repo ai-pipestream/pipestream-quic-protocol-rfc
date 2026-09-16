@@ -1,0 +1,9 @@
+server_subject	rust
+cert_1_sha256	bbc059ea89439e8d416e882fe5b53ee9faeda5a089bb5dc4e0d38977dab31261
+cert_2_sha256	d909c156e321a8d9f051b39d41e5a8b70c496761afce4c6f213371a835dad0ea
+binding_identical_across_rotation	true
+cert_1_admission_lookup_under_cert_2	RECEIPT
+retry_under_cert_2	accepted: replacement attempt 2; SUCCEEDED(5) under attempt 2
+cancel_under_cert_2	accepted: disposition 0; settled 7 (CANCELLED)
+read_under_cert_2	attempt 2 byte-exact against the independent oracle
+restart	graceful stop (SIGTERM, DRAINED) and restart on the same roots and map

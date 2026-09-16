@@ -118,7 +118,8 @@ final class StreamTransport {
     <B extends QuicCodecBuilder<B>> B configure(B builder, boolean server) {
       // The explicit replenishment window avoids quiche's unrelated default 48 KiB cap.
       // Fixing both maxima prevents autotuning from invalidating these configured ceilings.
-      // End-to-end reservation under independent credit delivery still needs transport tests.
+      // End-to-end reservation under independent credit delivery: LossyTransportCreditTest drives
+      // refused, reset and finished streams through a dropping, reordering datagram relay.
       return builder
           .initialMaxData(receiveWindowBytes())
           .initialConnectionWindow(receiveWindowBytes())

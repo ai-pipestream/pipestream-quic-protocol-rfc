@@ -1,0 +1,12 @@
+server_subject	java
+java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+alice_leaf_sha256	50bcf20e8d25f4ad5c8edc18ce0fac21f9fbce6354ca4906b00413d2a5630dd3
+remap	alice's leaf hash -> owner mallory (map edited between stop and restart)
+after_remap_attach	refused UNAUTHORIZED (3): authority refusal UNAUTHORIZED: session access denied
+after_remap_retry	refused UNAUTHORIZED (3): authority refusal UNAUTHORIZED: session access denied
+after_remap_cancel	refused UNAUTHORIZED (3): authority refusal UNAUTHORIZED: session access denied
+after_remap_lookup	refused UNAUTHORIZED (3): authority refusal UNAUTHORIZED: session access denied
+after_remap_read	refused UNAUTHORIZED (3): authority refusal UNAUTHORIZED: session access denied
+refusal_codes_after_remap	UNAUTHORIZED (3)
+pre_remap_output_still_valid	true (sha256=e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682)
+live_connection_recheck	not observable through stop/restart: every connection died with the graceful stop, so only fresh connections are re-evaluated here

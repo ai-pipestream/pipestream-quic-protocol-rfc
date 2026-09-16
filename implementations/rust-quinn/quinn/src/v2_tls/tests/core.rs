@@ -295,7 +295,8 @@ async fn core_unknown_types_oversize_noncanonical_ids_and_wrong_direction_have_n
     let cases = [
         (vec![0x00, 0, 0, 0, 0], ErrorCode::FrameError),
         (vec![0xc0, 0, 0, 0, 0], ErrorCode::ExtensionUnsupported),
-        (vec![0x06, 0xff, 0xff, 0xff, 0xff], ErrorCode::FrameError),
+        (vec![0xc0, 0xff, 0xff, 0xff, 0xff], ErrorCode::LimitExceeded),
+        (vec![0x06, 0xff, 0xff, 0xff, 0xff], ErrorCode::LimitExceeded),
         (
             vec![0x06, 0, 0, 0, 4, 0x82, 0x02, 0x18, 0x01],
             ErrorCode::FrameError,
@@ -333,17 +334,20 @@ async fn core_unknown_types_oversize_noncanonical_ids_and_wrong_direction_have_n
 #[tokio::test]
 async fn core_truncated_and_unnegotiated_control_frames_fail_closed() {
     let running = Running::start(Options::default());
-    for bytes in [
-        vec![],
-        vec![1, 0],
-        vec![1, 0, 0, 0, 10, 0x80],
-        vec![0x80, 0, 0, 0, 0],
-        vec![1, 0xff, 0xff, 0xff, 0xff],
+    // An over-limit body is LIMIT_EXCEEDED whatever its type, before negotiation too (Section
+    // 12.1, owner decision 2026-09-13); truncation and a non-capabilities frame are FRAME_ERROR.
+    for (bytes, code) in [
+        (vec![], ErrorCode::FrameError),
+        (vec![1, 0], ErrorCode::FrameError),
+        (vec![1, 0, 0, 0, 10, 0x80], ErrorCode::FrameError),
+        (vec![0x80, 0, 0, 0, 0], ErrorCode::FrameError),
+        (vec![1, 0xff, 0xff, 0xff, 0xff], ErrorCode::LimitExceeded),
+        (vec![0x80, 0xff, 0xff, 0xff, 0xff], ErrorCode::LimitExceeded),
     ] {
         let mut client = running.session(None).await;
         client.write(&bytes).await;
         client.send.finish().unwrap();
-        client.closed(ErrorCode::FrameError).await;
+        client.closed(code).await;
     }
     running.finish().await;
 }

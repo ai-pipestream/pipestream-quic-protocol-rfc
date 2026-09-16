@@ -1,0 +1,8 @@
+view_0:0:1	state=5 attempt=1 deadline=Some(1789245404116) (pre-crash state=5)
+view_0:0:2	state=5 attempt=1 deadline=Some(1789245404809) (pre-crash state=5)
+view_0:0:3	state=5 attempt=1 deadline=Some(1789245406658) (pre-crash state=1)
+root_seal_matches_oracle_after_restart	true
+child_seal_matches_oracle_after_restart	true
+new_capacity_after_reconcile	0:0:4 admitted and settled
+settlement	mode-2 child COVERAGE, root COVERAGE, COMPLETED
+java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c

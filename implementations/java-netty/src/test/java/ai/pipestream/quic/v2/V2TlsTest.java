@@ -335,6 +335,9 @@ final class V2TlsTest {
       assertTlsClose(attempt.probe.closed.get(5, TimeUnit.SECONDS));
       assertEquals(0, peer.active.get());
       assertEquals(0, net.responses.get());
+      // S12-005: the refusal is final. The client makes no further attempt, as version 1 or
+      // anything else: no second connection reaches the server within a second of the close.
+      assertNull(net.accepted.poll(1, TimeUnit.SECONDS), "a follow-up connection attempt");
     }
   }
 

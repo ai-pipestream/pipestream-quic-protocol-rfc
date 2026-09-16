@@ -155,6 +155,54 @@ class DurableClientContradictionTest {
 
   @Test
   @Timeout(60)
+  void childMetadataNeverProvesTheParentUntilTheParentItselfIsObserved() throws Exception {
+    // S12-294: scope 5 names (0,0,1) as its parent before that work has been admitted at all.
+    // The client keeps that as a bounded pending relationship and concludes it only from the
+    // parent's own later observation, in whichever direction that observation points.
+    java.util.concurrent.atomic.AtomicReference<Records.WorkView> parentView =
+        new java.util.concurrent.atomic.AtomicReference<>(declared(PARENT));
+    java.util.concurrent.atomic.AtomicLong revision = new java.util.concurrent.atomic.AtomicLong();
+    RawDurableAuthority.ControlScript evolving =
+        request ->
+            switch (request) {
+              case Messages.Page p -> page(p.request(), p.scope(), 0, PARENT, 1);
+              case Messages.Watch w ->
+                  new Messages.WatchResponse(
+                      w.request(), revision.incrementAndGet(), parentView.get());
+              default -> null;
+            };
+    try (var session = new Session("pending-parent")) {
+      session.authority.controls = evolving;
+      assertTrue(DurableClientTest.get(session.client.page(5, 0, 256)).membershipVerified());
+      // Retained as pending relationship evidence, never as a synthesized parent commitment.
+      assertEquals(PARENT, session.journal.scope(5).orElseThrow().parent());
+      assertTrue(session.journal.observedWork(PARENT).isEmpty(), "parent admission synthesized");
+      // The parent arrives unadmitted: accepted, still no admission, relationship still pending.
+      Records.WorkView pending = DurableClientTest.get(session.client.watch(PARENT, 0, 0)).view();
+      assertEquals(Records.State.DECLARED, pending.state());
+      assertEquals(0, session.journal.observedWork(PARENT).orElseThrow().view().attempt());
+      // Concluded against: the parent is admitted as a leaf, or owns a different child scope.
+      parentView.set(branch(PARENT, null));
+      ProtocolError leaf = DurableClientTest.refusal(session.client.watch(PARENT, 0, 0));
+      assertEquals(ProtocolError.Code.INTEGRITY_ERROR, leaf.code(), leaf.toString());
+      parentView.set(branch(PARENT, new Records.ChildScope(6, 0)));
+      ProtocolError other = DurableClientTest.refusal(session.client.watch(PARENT, 0, 0));
+      assertEquals(ProtocolError.Code.INTEGRITY_ERROR, other.code(), other.toString());
+      assertEquals(
+          Records.State.DECLARED,
+          session.journal.observedWork(PARENT).orElseThrow().view().state(),
+          "contradicting view journaled");
+      assertEquals(PARENT, session.journal.scope(5).orElseThrow().parent());
+      // Concluded for: the matching parent admission is accepted and journaled.
+      parentView.set(branch(PARENT, new Records.ChildScope(5, 0)));
+      Records.WorkView admitted = DurableClientTest.get(session.client.watch(PARENT, 0, 0)).view();
+      assertEquals(new Records.ChildScope(5, 0), admitted.child());
+      assertEquals(1, session.journal.observedWork(PARENT).orElseThrow().view().attempt());
+    }
+  }
+
+  @Test
+  @Timeout(60)
   void memberOutsideTheVerifiedSealedMembershipIsIntegrityError() throws Exception {
     Records.WorkKey stranger = new Records.WorkKey(0, 0, 2);
     Records.WorkKey wrongProducer = new Records.WorkKey(0, 1, 1);

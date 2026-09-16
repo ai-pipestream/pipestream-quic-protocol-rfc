@@ -689,12 +689,15 @@ public final class DurableServer implements AutoCloseable {
             blocking(
                 ticket,
                 () -> {
-                  Binding binding = sessions.create(access, selected, r);
-                  boundaries.committed(
-                      Boundaries.Boundary.SESSION_COMMITTED,
-                      Boundaries.Details.NONE
-                          .owner(binding.owner())
-                          .generation(binding.generation()));
+                  // Committed boundaries fire only for a fresh durable commit, never for a replay.
+                  SessionStore.Commit<Binding> created = sessions.createCommit(access, selected, r);
+                  Binding binding = created.value();
+                  if (created.fresh())
+                    boundaries.committed(
+                        Boundaries.Boundary.SESSION_COMMITTED,
+                        Boundaries.Details.NONE
+                            .owner(binding.owner())
+                            .generation(binding.generation()));
                   return binding;
                 },
                 binding -> bindAndRespond(ticket, binding),
@@ -709,11 +712,13 @@ public final class DurableServer implements AutoCloseable {
             blocking(
                 ticket,
                 () -> {
-                  DeclarationResponse response = sessions.declare(access, selected, generation, r);
-                  boundaries.committed(
-                      Boundaries.Boundary.DECLARATION_COMMITTED,
-                      Boundaries.Details.NONE.operation(r.operation()).generation(generation));
-                  return response;
+                  SessionStore.Commit<DeclarationResponse> declared =
+                      sessions.declareCommit(access, selected, generation, r);
+                  if (declared.fresh())
+                    boundaries.committed(
+                        Boundaries.Boundary.DECLARATION_COMMITTED,
+                        Boundaries.Details.NONE.operation(r.operation()).generation(generation));
+                  return declared.value();
                 },
                 v -> respondSent(ticket, v, Boundaries.Boundary.DECLARATION_RESPONSE_SENT),
                 f -> respondRefusal(ticket, f));
@@ -730,13 +735,14 @@ public final class DurableServer implements AutoCloseable {
             blocking(
                 ticket,
                 () -> {
-                  var response =
-                      sessions.cancelScope(
+                  var fenced =
+                      sessions.cancelScopeCommit(
                           access, selected, generation, r, clock, host.fenceAuthorization());
-                  boundaries.committed(
-                      Boundaries.Boundary.FENCE_COMMITTED,
-                      Boundaries.Details.NONE.operation(r.operation()).generation(generation));
-                  return response;
+                  if (fenced.fresh())
+                    boundaries.committed(
+                        Boundaries.Boundary.FENCE_COMMITTED,
+                        Boundaries.Details.NONE.operation(r.operation()).generation(generation));
+                  return fenced.value();
                 },
                 v -> respond(ticket, v),
                 f -> respondRefusal(ticket, f));
@@ -750,16 +756,17 @@ public final class DurableServer implements AutoCloseable {
             blocking(
                 ticket,
                 () -> {
-                  var response =
-                      sessions.retry(
+                  var retried =
+                      sessions.retryCommit(
                           access, selected, generation, r, clock, host.applicationAuthorization());
-                  boundaries.committed(
-                      Boundaries.Boundary.RETRY_COMMITTED,
-                      Boundaries.Details.NONE
-                          .operation(r.operation())
-                          .work(r.work())
-                          .generation(generation));
-                  return response;
+                  if (retried.fresh())
+                    boundaries.committed(
+                        Boundaries.Boundary.RETRY_COMMITTED,
+                        Boundaries.Details.NONE
+                            .operation(r.operation())
+                            .work(r.work())
+                            .generation(generation));
+                  return retried.value();
                 },
                 v -> respond(ticket, v),
                 f -> respondRefusal(ticket, f));
@@ -767,16 +774,17 @@ public final class DurableServer implements AutoCloseable {
             blocking(
                 ticket,
                 () -> {
-                  var response =
-                      sessions.cancel(
+                  var fenced =
+                      sessions.cancelCommit(
                           access, selected, generation, r, clock, host.fenceAuthorization());
-                  boundaries.committed(
-                      Boundaries.Boundary.FENCE_COMMITTED,
-                      Boundaries.Details.NONE
-                          .operation(r.operation())
-                          .work(r.work())
-                          .generation(generation));
-                  return response;
+                  if (fenced.fresh())
+                    boundaries.committed(
+                        Boundaries.Boundary.FENCE_COMMITTED,
+                        Boundaries.Details.NONE
+                            .operation(r.operation())
+                            .work(r.work())
+                            .generation(generation));
+                  return fenced.value();
                 },
                 v -> respond(ticket, v),
                 f -> respondRefusal(ticket, f));
@@ -784,16 +792,17 @@ public final class DurableServer implements AutoCloseable {
             blocking(
                 ticket,
                 () -> {
-                  var response =
-                      sessions.skip(
+                  var fenced =
+                      sessions.skipCommit(
                           access, selected, generation, r, clock, host.fenceAuthorization());
-                  boundaries.committed(
-                      Boundaries.Boundary.FENCE_COMMITTED,
-                      Boundaries.Details.NONE
-                          .operation(r.operation())
-                          .work(r.work())
-                          .generation(generation));
-                  return response;
+                  if (fenced.fresh())
+                    boundaries.committed(
+                        Boundaries.Boundary.FENCE_COMMITTED,
+                        Boundaries.Details.NONE
+                            .operation(r.operation())
+                            .work(r.work())
+                            .generation(generation));
+                  return fenced.value();
                 },
                 v -> respond(ticket, v),
                 f -> respondRefusal(ticket, f));

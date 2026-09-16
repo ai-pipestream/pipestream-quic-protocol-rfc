@@ -1,0 +1,10 @@
+principal_map	two leaf hashes, both mapped to owner alice
+cert_1_sha256	54e5706a80e28919d1ac4d9f0d38d7120a07b64302bddf13b9c54b29dac1a42d
+cert_2_sha256	06669b522cb4d867622b1eeb7517e719ba4d6419325bbe8c8e4bd83d22eaf575
+input_len	65536
+input_sha256	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+sequence	create + declare [1,2] + admit retry-copy/v2 twice under cert 1 (both park in AWAITING_RETRY); stop; restart on the same roots; attach under cert 2
+attach_under_cert_2	identical BINDING text
+committed_under_cert_1	lookup of the cert-1 admission returns its receipt
+mutations_under_cert_2	retry 0:0:1 (expected 1) accepted with replacement attempt 2 and settles SUCCEEDED; cancel 0:0:2 accepted and settles CANCELLED
+read_under_cert_2	0:0:1 attempt 2 byte-exact against the oracle

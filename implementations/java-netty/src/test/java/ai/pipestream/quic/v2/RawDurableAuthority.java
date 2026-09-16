@@ -67,6 +67,9 @@ final class RawDurableAuthority implements AutoCloseable {
   private final Records.Policy policy;
   private final Channel listener;
   final BlockingQueue<Message> received = new LinkedBlockingQueue<>();
+  /** The client connection's close event, as the transport reported it to this authority. */
+  final java.util.concurrent.CompletableFuture<io.netty.handler.codec.quic.QuicConnectionCloseEvent>
+      clientClosed = new java.util.concurrent.CompletableFuture<>();
   volatile ResultScript script = (read, stream) -> stream.shutdownOutput().sync();
   /** Default: stop the input at once (STOP_SENDING 0) and never answer it. */
   volatile InputScript inputs = (header, stream, reply) -> stream.close();
@@ -96,6 +99,19 @@ final class RawDurableAuthority implements AutoCloseable {
                   protected void initChannel(QuicChannel channel) {
                     TlsAuthentication.Guard guard = authentication.guard();
                     channel.pipeline().addLast(guard, new Control(guard));
+                    channel
+                        .pipeline()
+                        .addLast(
+                            new io.netty.channel.ChannelInboundHandlerAdapter() {
+                              @Override
+                              public void userEventTriggered(
+                                  io.netty.channel.ChannelHandlerContext ctx, Object event) {
+                                if (event
+                                    instanceof io.netty.handler.codec.quic.QuicConnectionCloseEvent
+                                        close) clientClosed.complete(close);
+                                ctx.fireUserEventTriggered(event);
+                              }
+                            });
                   }
                 })
             .streamHandler(
@@ -196,6 +212,27 @@ final class RawDurableAuthority implements AutoCloseable {
       };
     }
 
+    /**
+     * A genuine declaration receipt for a scope-0 declaration: the digest the client journals for
+     * the normalized request, the accepted count, and the seal over the declared members when
+     * sealed, so a client can hold its covering receipt before sending an input.
+     */
+    private Records.OperationReceipt declared(Declare d) {
+      Commitments.Context context =
+          new Commitments.Context(manifest.authority(), manifest.owner(), manifest.generation());
+      Records.Digest seal = null;
+      if (d.seal()) {
+        Commitments.Seal sealing =
+            new Commitments.Seal(context, d.scope(), 0, null, d.entityIds().size());
+        for (long member : d.entityIds()) sealing.add(member);
+        seal = sealing.finish();
+      }
+      return new Records.OperationReceipt(
+          d.operation(),
+          Commitments.operation(context, 0, ClientJournal.withRequest(d, 1)),
+          new Records.Declared(d.scope(), 0, d.entityIds().size(), d.entityIds().size(), seal));
+    }
+
     private void handle(Message message) {
       received.add(message);
       if (selected == null) {
@@ -232,6 +269,7 @@ final class RawDurableAuthority implements AutoCloseable {
                     policy,
                     LIMITS));
         case GetManifest g -> send(new ManifestResponse(g.request(), manifest));
+        case Declare d -> send(new DeclarationResponse(d.request(), declared(d)));
         case Read r -> {
           ResultScript current = script;
           stream

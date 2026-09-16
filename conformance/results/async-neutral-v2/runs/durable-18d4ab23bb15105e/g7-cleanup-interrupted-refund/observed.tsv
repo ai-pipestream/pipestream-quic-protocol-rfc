@@ -1,0 +1,4 @@
+row_status	INCOMPLETE: interface-v1 section 2.1 has no cleanup boundary (0 matching labels among 29); a kill during terminal cleanup cannot be armed on either subject without a new boundary
+rust_server	no armable cleanup boundary: retention-* and retirement-* commit keys are supplementary and unarmable (src/v2/fixture.rs commit_label); nearest armable boundary CLOSURE_COMMITTED is scope closure, not cleanup
+java_server	no cleanup boundary in Boundaries.Boundary (FixtureMain accepts only interface-v1 labels); nearest CLOSURE_COMMITTED is scope closure, not cleanup
+java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c

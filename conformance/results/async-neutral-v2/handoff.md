@@ -62,7 +62,10 @@ gates and acceptance integration have passed, with evidence below.
 | 9deed6a0 | M18b: `r-staging-and-journal-bounds` implemented against both subjects (PARTIAL: journal/retained-byte ceilings recorded, not driven); the raw peer's tokio runtime is now driven continuously, which withdraws the M17b stalled-abort bracket as a client artefact |
 | 0d5dded6 | M18c: `r-stalled-principal-progress` re-run with non-writing probes on the driven client — both subjects enforce at their own negotiated idle bound inside a two-second bracket; every R row plus `g1-leaf-copy` re-run as the group regression |
 | 1d3569ee | M18d: `r-network-bytes` implemented against both subjects (PARTIAL: no network namespace and no packet capture on this host, both recorded by the checks that failed); new network scope with its own schema and validating reader |
-| this commit | M18e: `r-native-credit` implemented against both subjects (PARTIAL: no packet capture, and one endpoint's view only); group R is now four DONE and three PARTIAL, with every row implemented |
+| 54d93487 | M18e: `r-native-credit` implemented against both subjects (PARTIAL: no packet capture, and one endpoint's view only); group R is now four DONE and three PARTIAL, with every row implemented |
+| 2a9aad5d / b849d8c5 | M19a (work in Kimi's role): attempt-2 hold at EXECUTION_CLAIMED for g4-stale-attempt-retry on the Java server, release file under both subject spellings, work-view parser reads the Java record form; affected rows rerun, all directions green (durable-18d4aacfca57bb0b) |
+| 69b197aa | M19b (work in Kimi's role): the ten remaining matrix rows; seven green on both servers (g2-not-found-in-flight, g5-cert-rotation-same-owner, g5-remapped-owner, g5-cross-authority-reference, g7-read-pin-past-expiry, g7-deadline-queue-time, g5-expired-identity), three INCOMPLETE with the named missing capability; archives durable-18d4ab23bb15105e and durable-18d4abe3eae3a613 |
+| 03ce9a44 / this commit | M19c (work in Kimi's role): full-matrix rerun durable-18d4ac9f7d4e9880 (67 rows, 64 OK, 3 missing-capability INCOMPLETE) compared line by line with M17b durable-18d3ed6c2f040515; changed-policy probe flag fix and its supplementary rerun durable-18d4af67e48effbd; acceptance-mode proposal for run_all.sh |
 
 ## 3. Verification evidence (M8 snapshot; superseded by §3c for the
 current milestone's gates, counts and subject pins)
@@ -999,7 +1002,8 @@ is inferred or substituted.
    (`release-<target>-<boundary>`) differs from interface-v1
    (`release-<boundary>`) — reconciliation proposed.
 4. g7-unsafe-clock-refusal needs a subject fixture clock (proposal
-   pending); host UTC is never used.
+   pending); host UTC is never used. Since M19b the row runs and archives
+   both subjects' usage texts and clock-set refusals as its evidence.
 5. require-durable and wire-level cross-owner paths are unreachable via
    the published CLIs (recorded findings, M4) — final certification of
    those arms needs either CLI surface or documented implementation-test
@@ -1020,10 +1024,11 @@ is inferred or substituted.
    does not claim a value inside that bracket.
 7. Client-side commit boundaries are driver-side observations only;
    uncontrolled client-death rows are labelled as such.
-8. g2-drop-reply-publication is registered but unimplemented: neither
-   subject exposes a PUBLICATION reply pair to withhold (publication is
-   observed via watch, not a correlated reply); the kill-at-boundary
-   variant is the delivered evidence.
+8. g2-drop-reply-publication RUNS since M19b and reports the missing
+   capability: neither subject exposes a PUBLICATION reply pair to withhold
+   (publication is observed via watch, not a correlated reply), both refuse
+   the schedule at parse; the kill-at-boundary variant is the delivered
+   evidence and a proposal to accept it as such awaits Kimi's decision.
 9. Group R at M18b: `r-capability-manifest`, `r-connection-ceiling`,
    `r-stalled-principal-progress` and `r-memory-ladder` are DONE;
    `r-staging-and-journal-bounds` is PARTIAL (pending and staging ceilings
@@ -1049,6 +1054,13 @@ is inferred or substituted.
    is substituted by another scope.
 
 ## 6. Safe next action
+
+Updated at M19c (work in Kimi's role): the full 67-row matrix HAS now been
+rerun on the fixed runtime (durable-18d4ac9f7d4e9880, section 3j.19c) and
+the acceptance-mode integration is written up as a proposal
+(acceptance-mode-proposal.md) awaiting Kimi's decisions on the three
+missing-capability rows and the remaining per-direction markers. The text
+below is Kimi's M18 wording, kept for the record.
 
 Finish group R. `r-memory-ladder` is DONE (M18a) and
 `r-staging-and-journal-bounds` is PARTIAL (M18b). Two things are queued:
@@ -1085,3 +1097,367 @@ milestone of M18, including across the tokio `rt-multi-thread` feature
 change. `run.tsv` in every archive records the subject hashes the run
 actually used, and the nc-stale-binary control re-hashes them after every
 scenario.
+
+## 3j. Milestone 19 (work in Kimi's role, 2026-09-12)
+
+Everything in this section was done by a follow-on agent in Kimi's role with
+the project owner's written authorization, on `agent/rfc-kimi-neutral-v2` in
+Kimi's worktree, while Kimi is away until about 2026-09-17. It is REVIEW_READY
+for Kimi's review and accepted by nobody. Nothing was merged, fast-forwarded,
+pushed or rebased. The Java subject for this milestone is Claude's all-jar
+`32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c`, copied
+from his read-only tree to `~/.rfc-tmp/jars/pipestream-quic-netty-32360ec3-all.jar`
+and hash-verified before every run (never rebuilt here); its sources are NOT
+merged into this branch (the last merged Java pin is `7585a9dc` at `c5b4f30`),
+so unlike M17b the jar is a pinned external artifact and `run.tsv` names the
+copy's path. The Rust subject is the release build of this tree,
+`097829fa45d8…`, rebuilt before every run and byte-identical throughout (the
+server crate is untouched). Java storage funding flags (`--db-mib`,
+`--wal-mib`) are NOT passed: both subjects run their defaults, as every
+earlier milestone did, so the M17b comparison stays like for like. Stores,
+artifacts and `TMPDIR` for every run are under `~/.rfc-tmp/kimi-m19/` on the
+root drive (never `/work`, never `/tmp`), and every run and release build was
+taken under the coordination `BENCHMARK.lock`.
+
+### 19a. Two driver fixes (commit 2a9aad5d), rerun archived as durable-18d4aacfca57bb0b
+
+Gates on the fix commit: `cargo fmt --all -- --check` exit 0; `cargo clippy
+--all-targets -p pipestream-conformance -- -D warnings` exit 0; `cargo test -p
+pipestream-conformance` 93 passed / 0 failed (92 at M18e; the new test pins
+the attempt-2 hold schedule). Both fixes carry a unit test that was RED on the
+old code and is green now, checked by running the new tests against the old
+function bodies before committing: `watch_field_parser_reads_deadline_values`
+(the Java record string) and `release_file_targets_the_events_directory` (the
+Java FixtureMain release name). Driver binary for the rerun
+`bac2dbceee8094cf7ed444afb87ea950cd153834ae7b5d4a725dfa77cac3f9da`; rust
+subject `097829fa45d8…` reproduced byte-identical by the release build.
+
+(a) g4-stale-attempt-retry. The rust-client/java-server direction answered
+ALREADY_TERMINAL instead of CONFLICT because the copy under attempt 2 finished
+before the driver's stale-retry process arrived; both authorities check
+terminal state before the attempt mismatch. The Java direction now holds
+attempt 2 at its claim: a schedule of `pause`, `release`, `pause` at
+EXECUTION_CLAIMED (Claude's FixtureMain consumes one pause row per reached
+boundary, so attempt 1's claim takes the first row and is released the moment
+the subject records it, attempt 2's takes the second), the stale retry is
+sent into the hold, CONFLICT "retry attempt changed" is observed, and only
+then is the release written. The subject's own record is the evidence:
+EXECUTION_CLAIMED appears twice in the Java events before the stale retry
+(`attempt_2_live_evidence`). The Rust subject rejects a pause outside its
+three reply pairs (`src/v2/fixture.rs` REPLY_PAIRS, checked at schedule
+parse), so that direction keeps attempt 2 live with a 16 MiB copy (the
+negotiated object limit) and names the gap in `expected.tsv`/`observed.tsv`
+(`attempt_2_hold`); a deterministic hold there needs a server-crate hook,
+which this milestone does not touch and which is a request to Meta. The
+driver now writes the release file under both spellings the subjects poll
+(`release-<BOUNDARY>` for the Rust hooks, `release-server-<BOUNDARY>` for the
+Java FixtureMain; the interface-v1 reconciliation is still a proposal) and
+can clear it so a later pause on the same boundary holds again.
+
+(b) `parse_field_u64` matched only the Rust CLI's Debug form. The Java client
+prints `VIEW` plus a Java record (`Records.WorkView`), so `deadline=N` and
+`deadline=null`; the parser now accepts the Rust view form
+`deadline: Some(Number(N))`, the Rust receipt form `deadline: Number(N)`, and
+the Java record form with the camelCase spelling derived from the snake_case
+field name (`admitted_at` reads `admittedAt=`), `null` read as absent.
+
+Rerun (dev, INCOMPLETE-labelled, 384/384 manifest entries verified after
+archiving, exit 0): `durable-18d4aacfca57bb0b` over g4-stale-attempt-retry,
+g2-kill-after-admission-before-publication, g2-kill-at-publication-commit
+and g3-restart-same-roots. Every direction of every row ran green:
+g4-stale-attempt-retry rust-client/java-server records
+`stale_retry_refusal authority refusal CONFLICT: retry attempt changed`
+(M17b: ALREADY_TERMINAL, direction INCOMPLETE); the java-client/rust-server
+directions of the two kill rows, INCOMPLETE at M17b with "post-restart watch
+did not report a deadline" (that message was the parser, but the M17b marker
+text was "process timed out", see the note below), now record terminal
+state 5 under attempt 1 with `automatic-redispatch-under-attempt-1`;
+g3-restart-same-roots java-client/rust-server records identical attempts and
+deadlines across the restart with the Java client's `deadline=` values now
+read. No run directory was deleted.
+
+Note on the M17b markers: the M17b archive's java-client/rust-server
+INCOMPLETE markers for the two kill rows read "process timed out" (the Java
+client's graceful shutdown after a server kill, a Java finding already
+reported), not the parser message; the parser failure was what the
+coordinating owner's 2026-09-12 rerun on the 28c3369b jar exposed once the
+timeout no longer occurred. At the 32360ec3 jar neither failure occurs in
+these rows.
+
+### 19b. The ten rows the matrix still listed as unimplemented (this commit)
+
+Every row of the matrix is now registered as implemented (67 of 67): seven
+run green in dev on every direction their subjects allow, and three run what
+they can and report the subject capability they lack (a `MissingCapability`
+outcome: INCOMPLETE with the named reason in dev, FAIL in acceptance).
+
+Gates on this tree: `cargo fmt --all -- --check` exit 0; `cargo clippy
+--all-targets -p pipestream-conformance -- -D warnings` exit 0; `cargo test -p
+pipestream-conformance` exit 0, 96 passed / 0 failed (93 at 19a; the three
+new tests cover the raw operation-lookup and receipt-byte parsers, the result
+header parser, and short-lived mapped principals with a second authority's
+map); `cargo build --release` exit 0 reproducing the rust subject
+`097829fa45d8…` byte-identical. The conformance crate gained no dependency:
+the short-lived leaf windows are built from rcgen's 1975 anchor plus a std
+`Duration`, so no calendar crate is named.
+
+Archived dev runs, both INCOMPLETE-labelled, both kept, each MANIFEST.sha256
+verified after archiving:
+
+- `durable-18d4ab23bb15105e` (driver `cd4ef23c…`) — all ten rows, exit 0,
+  457/457 entries. Seven outcomes stand; two rows failed on FIXTURE defects
+  that are recorded rather than hidden: g7-read-pin-past-expiry spawned its
+  16 MiB admission without the session's short policy triple (the Rust
+  client refuses "journal format, identity or policy changed"), and
+  g7-deadline-queue-time admitted its two load parents concurrently on one
+  Rust client journal (CONFLICT "client journal already owned"). The run is
+  kept as the evidence for those two defects and for the other eight rows.
+- `durable-18d4abe3eae3a613` (driver `95b87a32…`) — the decisive rerun of
+  g7-read-pin-past-expiry, g7-deadline-queue-time and g5-expired-identity
+  after the fixes (admission through the session, load parents admitted
+  back to back, and the live-connection refusal frame decoded instead of
+  reported as an unexpected frame), exit 0, 203/203 entries.
+
+Per row (dev evidence, never an acceptance claim; details in the matrix
+files):
+
+1. g2-not-found-in-flight, three directions. The pending admission is a raw
+   peer holding the input header plus half the payload open without FIN; a
+   second raw connection of the same principal sends the wire lookup and is
+   refused NOT_FOUND (5) on its own request tag on both subjects (rust
+   "operation not retained", java "operation receipt unavailable"); after
+   the FIN the Work::Admitted and Work::OperationResponse receipts are
+   byte-identical; the CLI replay of the same admission returns the durable
+   receipt with the same deadline, two CLI lookups are identical to it, the
+   page shows one member, the result reads byte-exact, and the Java subject
+   recorded EXECUTION_CLAIMED exactly once for the work. The raw hold is
+   used for both servers because the Rust subject never reaches
+   INPUT_INSTALLED and pauses only at reply pairs.
+2. g5-cert-rotation-same-owner, both servers: identical BINDING under the
+   rotated leaf after a stop/restart on the same roots, the cert-1 admission
+   looked up, retry (to attempt 2, SUCCEEDED, byte-exact) and cancel
+   (disposition 0, CANCELLED) accepted as the same owner.
+3. g5-remapped-owner, both servers: after alice's hash is remapped to
+   mallory between a stop and a restart, attach, retry, cancel, lookup and
+   read are each refused UNAUTHORIZED (3) with no state-disclosing code, the
+   refused read writes nothing, and the pre-remap output still hashes to the
+   oracle. This attach is the wire Attach carrying the journaled owner from
+   a credential the server now maps elsewhere, so the authority-side
+   cross-owner branch g5-foreign-owner could not reach is exercised here.
+4. g5-cross-authority-reference, both servers: X's journal against
+   authority Y (`issuer-b`, own roots and map) is refused on attach, read,
+   lookup and watch with no bytes written; rust UNAUTHORIZED "authority
+   access denied", java CONFLICT "authority differs"; a Y-bound journal
+   selecting X's identifiers is refused NOT_FOUND on both with X's digest
+   absent from the transcript; X reads byte-exact. The code class Java
+   picks (CONFLICT) under the authorization-before-existence precedence
+   rule is raised as a question to Claude, not scored.
+5. g7-read-pin-past-expiry, both servers: a raw reader draining 256 KiB
+   every 150 ms had 8.1 MiB of 16 MiB when availability passed; a CLI read
+   issued then refused named EXPIRED (6) on both; the pinned read completed
+   byte-exact; the Rust object directory was unchanged during the read and
+   emptied within 30 s after it; the Java directory lost one 16 MiB object
+   WHILE the read was open (5 files / 33.5 MB to 4 / 16.8 MB) and the read
+   still completed byte-exact — either the expired output unlinked under the
+   open descriptor or the retained input reclaimed; recorded as an
+   observation for Claude, not a defect.
+6. g7-deadline-queue-time, both servers: the receipt deadline equals
+   admitted_at + 1000 ms (the Java client honours --execution-ms), the probe
+   settled FAILED with DEADLINE_EXCEEDED (11) while still queued on both, on
+   Java before the two EXECUTION_CLAIMED pauses were released and with zero
+   claim records for it; retry then refuses ALREADY_TERMINAL (18) on both
+   (matrix: DEADLINE_EXCEEDED; both named codes accepted, as in
+   g4-deadline-settlement); read refuses NOT_FOUND. The Rust direction has no
+   hold and uses two 4 MiB chunk-copy parents as load; it names the
+   mechanism and would report INCOMPLETE rather than claim the property if
+   the load did not outlast the deadline in three fresh authorities.
+7. g5-expired-identity, both servers: a 25 s leaf; after expiry the Rust
+   server refuses the next request on the LIVE connection UNAUTHORIZED
+   "credential validity or mapping changed" with the connection kept, the
+   Java server closes it APPLICATION_CLOSE 0x203 "caller credential
+   unavailable" (S12-098); a fresh connection with the expired leaf fails
+   the handshake on both (TLS alert 45, no application refusal); the renewed
+   leaf attaches to the identical binding and sees the declaration. Host UTC
+   was never changed; the leaf windows come from the fixture's own UTC.
+8. g2-drop-reply-publication: INCOMPLETE, missing capability. Both subjects
+   refuse drop-reply at PUBLICATION_COMMITTED at schedule parse (rust:
+   "requires a committed reply-pair boundary"; java: "withholds a reply at
+   PUBLICATION_COMMITTED, which has no pending reply"), archived verbatim.
+   Proposal for Kimi in scenario-matrix-g2.md: accept the kill variant as
+   the boundary's evidence and retire this row.
+9. g7-unsafe-clock-refusal: INCOMPLETE, missing capability. Both usage texts
+   name only --trust-system-clock; both subjects refuse clock-set at parse
+   (archived). The request for a fixture clock to both owners stands.
+10. g7-cleanup-interrupted-refund: INCOMPLETE, missing capability.
+    interface-v1 has no cleanup boundary (29 labels archived, none matches);
+    adding one is an interface revision proposal for both subjects.
+
+Candidate defects: none scored this milestone. Two observations go to Claude
+(the Java object removed under an open read; CONFLICT "authority differs"
+as the cross-authority class) and two hook requests go to Meta (a pause at
+EXECUTION_CLAIMED and an emit-only arming for the Rust subject).
+
+Driver defects found and fixed before the decisive run: the two named above
+(short-policy flags on a spawned admission; concurrent admissions on one
+Rust client journal), both fixture-side.
+
+### 19c. The full matrix rerun on the fixed runtime, compared line by line with M17b
+
+Archive `durable-18d4ac9f7d4e9880`: every registered row (67; the 53 that M17b
+ran plus the 4 rows implemented in M18 and the 10 of 19b), `--dev`,
+INCOMPLETE-labelled, exit 0, 40 minutes of wall time (lock acquired
+2026-09-12T20:25:43Z, driver exit 21:05:18Z), 5591/5591 manifest entries
+verified after archiving. 64 rows SCENARIO OK, 3 rows INCOMPLETE with a named
+missing capability. Driver binary `18966bbd…` (commit 69b197aa); rust subject
+`097829fa45d8…` rebuilt byte-identical; Java all-jar `32360ec3…` hash-verified.
+Supplementary archive `durable-18d4af67e48effbd`: g2-crash-after-create-commit
+rerun after the driver fix in 03ce9a44 (below), 89/89 entries verified.
+
+Comparison method: `compare.sh` from the coordinating owner's 2026-09-12
+rerun, copied to the scratch area unchanged: every `observed.tsv` and
+`INCOMPLETE` file of the new archive is diffed against the same path in the
+baseline (M17b `durable-18d3ed6c2f040515` for every G row and
+r-capability-manifest, r-connection-ceiling and r-stalled-principal-progress;
+the M18c/M18d/M18e archives for the R rows added or re-run since), with
+12-digit-or-longer numbers and durations masked, and any baseline INCOMPLETE
+marker the new run no longer has is listed. 94 entries came out CHANGED or
+NO BASELINE FILE; every one is accounted for below. The full diff is
+`runs/durable-18d4ac9f7d4e9880/COMPARE-M17B.txt` (checked in next to the
+archive, outside the manifest).
+
+Per-direction INCOMPLETE set, M19c against M17b:
+
+| Marker | M17b | M19c | Explanation |
+|---|---|---|---|
+| g2-kill-after-admission-before-publication java-client/rust-server | INCOMPLETE ("process timed out") | green | The parser fix (19a) reads the Java deadline; at the 32360ec3 jar the Java client no longer times out on this row |
+| g2-kill-at-publication-commit java-client/rust-server | INCOMPLETE ("process timed out") | green | same |
+| g2-crash-before-create-commit java-client/rust-server | INCOMPLETE | INCOMPLETE ("process timed out") | unchanged: the Java client hangs in its graceful shutdown after the server is killed at CONNECTION_AUTHENTICATED (Java finding already reported in section 5.3) |
+| g2-crash-after-create-commit java-client/rust-server | INCOMPLETE ("process timed out") | INCOMPLETE in the matrix run ("changed-policy replay must refuse named CONFLICT", the Java client exited 0 with the ORIGINAL binding); GREEN in the supplementary archive | A DRIVER defect, found by this rerun and fixed in 03ce9a44: the changed-policy probe passed --max-execution-ms (the Rust spelling) to the Java client, whose option parser ignores unknown keys, so the "changed" policy was the default and the replay identical. With the Java spelling the Rust server refuses CONFLICT "creation policy changed" and CONFLICT "creation sequence is ahead of authority" (durable-18d4af67e48effbd). This direction had never tested what it claimed; at M17b the shutdown timeout hid it |
+| g2-crash-after-create-commit rust-client/java-server | INCOMPLETE (CANCELLED "client transport closed") | INCOMPLETE, same text | unchanged at the 32360ec3 jar: after the drop-reply at SESSION_COMMITTED and the restart, the Rust client's creation replay against the Java server has its transport closed; Kimi's section 5.2 finding (FixtureMain re-fires drop-reply on the REPLAYED commit, no fresh-commit gating), reported to Claude with the M7 transcript, still stands as a candidate defect: expected BINDING with generation 1, actual transport close, direction rust-client/java-server, runs durable-18d3ed6c2f040515 and durable-18d4ac9f7d4e9880 |
+| g3-store-ownership java-client/rust-server | named gap | named gap | unchanged (the client subject never owns the store) |
+| g4-revocation-vs-publication rust-client/java-server | named gap | named gap | unchanged (no Java operator revoke command) |
+| g8-timeout-no-completion-claim kill-variant rust-client/java-server | INCOMPLETE ("process timed out") | INCOMPLETE, same | unchanged: the Rust client's op against the Java server killed mid-complete does not return inside the driver's 30 s op timeout; recorded at M13/M15, not new |
+| g2-drop-reply-publication, g7-unsafe-clock-refusal, g7-cleanup-interrupted-refund | not run ("not implemented yet") | whole-row INCOMPLETE, missing capability | 19b |
+
+So the per-direction set shrank from 8 markers to 6 (5 after the
+supplementary run), two closed by the 19a parser fix, one closed by the
+03ce9a44 probe fix, none opened.
+
+Every other CHANGED entry, grouped:
+
+1. `java_jar_sha256` only (the pin moved from 61ab64a3 to 32360ec3): all
+   sixteen G1 mixed directions, g3-input-before-metadata java-client,
+   g4-publication-vs-cancel java-server, g5-foreign-owner,
+   g5-missing-client-cert, g5-no-existence-disclosure, g5-unmapped-principal
+   java-server, g7-no-deadline-extension, g7-output-before-receipt-expiry,
+   g7-receipt-before-output-expiry, g3-terminal-cleanup java-server, the
+   g8 mixed directions of g8-child-cut-conflict, g8-complete-with-pending,
+   g8-exact-root-complete and g8-half-close-preserves-responses. No other
+   line differs in any of them.
+2. Per-run identifiers and timings: g2-simultaneous-duplicate first_pid;
+   g5-untrusted-identity foreign_ca_sha256 (minted per run; the masker
+   turned a 12-digit run inside one hash into `<T>`); g1-oversize-payload
+   control_latency_ms (1353 -> 1478 java client, 126 -> 100 java server);
+   g8-detach-drains detach_wall_ms (100 -> 125/150, 1328 -> 1378) and the
+   count of concurrent same-journal watch probes (12 -> 8); g4-eventual-
+   settlement settlement_wall_ms (250 -> 351 rust, 276 -> 175 java).
+3. The host rule moved every store from `/work` (xfs, the RAID with the 31 ms
+   fsync latency) to the root drive (ext4): r-capability-manifest records
+   `fixture_fs_type ext4`, `fixture_mount /` (M17b: xfs, /work) and
+   mem_total_kb 127121904 (M17b: 127121896, the kernel's own reading). This
+   is the single largest cause of the timing shifts in group 4.
+4. Race and timing outcomes that the rows record and never assert:
+   g4-ancestor-fence-publication rust/rust now observes BOTH orders in one run
+   (publication:1, fence:2; M17b publication:3, fence:0), which the matrix
+   asks for; g4-deadline-settlement iteration 3 (1 MiB) went deadline on
+   rust/rust and iteration 4 (256 KiB) went deadline on the Java server
+   (orders 1:3 and 0:4 against 2:2 and 1:3), the deterministic leg still
+   producing the retry evidence on both; g4-publication-vs-skip java
+   iteration 2 flipped fence -> publication (5:1 against 4:2);
+   g4-eventual-settlement rust children 1 succeeded / 127 cancelled against
+   8 / 120 and objects 7 -> 4 against 22 -> 18; g3-restart-same-roots
+   pre-crash state of the in-flight mode-2 parent 1 (ACTIVE) against 3
+   (WAITING_CHILDREN) on both servers (the seeded kill lands earlier in the
+   expansion on the faster store). None of these changes any assertion.
+5. Object-directory figures that follow the uncontrolled kill's timing:
+   g3-orphan-cleanup rust/rust retained orphan 66207 -> 70883 B (M17b
+   16844587 -> 16849263 B: the kill landed before the 16 MiB staging file
+   existed this time) and java-server baseline/final figures swapped the
+   same way (5 files 131865 B against 4 files 66141 B); g3-input-before-metadata
+   java-server object_dir_after_readmission 5 files / 25.2 MB against 4 /
+   12.6 MB (the staged orphan of the mid-stream kill survived alongside the
+   readmission this time); g3-nonreusable-history and g3-partial-retirement
+   java-server object_metrics_before swapped between the same two shapes.
+   The rows' assertions (lookup NOT_FOUND then clean re-admission; no
+   restart-time cleanup on the Rust CLI; reclamation during store
+   operations on Java) held in every case.
+6. g3-restart-same-roots java-client/rust-server: the three views now carry
+   `deadline=Some(<T>)` where M17b recorded `deadline=None` — the 19a parser
+   fix reads the Java client's deadline, so the pre/post-restart comparison
+   is now a real comparison instead of None == None.
+7. g4-stale-attempt-retry both directions: two NEW lines (`attempt_2_hold`,
+   `attempt_2_live_evidence`, 19a); every M17b line unchanged, and the
+   rust-client/java-server direction is green where M17b had the
+   ALREADY_TERMINAL marker.
+8. Group R against the M18c/M18d/M18e baselines, all within the rows' own
+   allowances and with no assertion change: r-stalled-principal-progress
+   brackets unchanged to within 30 ms (rust open +3128 ms / stopped +5102 ms
+   against +3102 / +5101; java +28000 / +30031 against +28000 / +30156),
+   3/3 refusals readable on both, cancelled-write share 99% rust / 4% java as
+   before; r-memory-ladder rust payload growth 816 KiB (1744), inventory
+   1724 (1108), java payload 21352 (8792), inventory 0 (4396), all against
+   allowances of 131072/66560/524288/278528 KiB; r-staging-and-journal-bounds
+   rust pending ceiling fired at attempt 14 ("metadata concurrency
+   exhausted") against attempt 8 at M18c and 17 at M18b, the instability
+   already raised with Meta, java figures within 2% (fds 150 held, 22
+   released, unchanged); r-native-credit java lost 12 packets / 16038 B
+   against 15 / 20394, rust 0 as before; r-network-bytes java lost 13
+   packets against 9 and the rust host idle baseline moved 1495 B this run
+   against 0 (the host-scoped method's contamination floor, which is the
+   point the row makes).
+9. NO BASELINE FILE: the ten 19b rows and the java-client directions of the
+   two g2 kill rows (M17b had markers there, now observed.tsv).
+
+Candidate defects with evidence (none scored; all raised, two of them
+already known):
+
+- Java subject, still open from Kimi's M7 finding: g2-crash-after-create-commit
+  rust-client/java-server, expected the replayed creation to return the
+  generation-1 binding after the drop-reply and restart, actual
+  `CANCELLED: client transport closed` on the replay; runs
+  durable-18d3ed6c2f040515 and durable-18d4ac9f7d4e9880, both jars.
+- Java client, still open from section 5.3: graceful shutdown hangs after a
+  server kill (g2-crash-before-create-commit java-client/rust-server,
+  "process timed out", both archives).
+- Java subject, observation for Claude (19b): one 16 MiB object leaves the
+  object directory while a pinned result read is open and the read still
+  completes byte-exact (g7-read-pin-past-expiry rust-client/java-server,
+  durable-18d4abe3eae3a613 and durable-18d4ac9f7d4e9880).
+- Java subject, question for Claude (19b): CONFLICT "authority differs" as
+  the refusal class when a journal bound to another authority attaches
+  (g5-cross-authority-reference java-server); the Rust subject answers
+  UNAUTHORIZED. Neither discloses the session.
+- Driver (this milestone, fixed): the changed-policy probe's flag spelling
+  (03ce9a44); the two 19b fixture defects (69b197aa).
+
+Rows left INCOMPLETE and why: g2-drop-reply-publication (no PUBLICATION
+reply pair on either subject), g7-unsafe-clock-refusal (no fixture clock on
+either subject), g7-cleanup-interrupted-refund (no cleanup boundary in
+interface-v1). Directions left INCOMPLETE: the four in the table above
+(one Java subject candidate defect, two Java client timeouts, and the two
+named gaps that are not defects). The rust-client/rust-server direction of
+g7-deadline-queue-time ran green with the load-based queue and names the
+missing EXECUTION_CLAIMED hold as a gap rather than a marker.
+
+Acceptance-mode integration: `acceptance-mode-proposal.md` in this
+directory is the written proposal (not an edit) for `conformance/run_all.sh`,
+with the block to insert, the preconditions that would make it red today,
+and what a reviewer must decide first.
+
+Deviations recorded for 19c: the matrix was run once and its archive kept
+with its two failed-by-driver-defect directions rather than rerun whole after
+03ce9a44; the supplementary archive covers the one row the fix touches, and
+the fix does not affect any other row (only binding_attempt calls it). No run
+directory was deleted. The Java subject's sources at 32360ec3 are not merged
+into this branch; the jar is a pinned external artifact whose path and hash
+`run.tsv` records.

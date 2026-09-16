@@ -478,12 +478,16 @@ public final class ClientJournal implements AutoCloseable {
   }
 
   /**
-   * Journal an input admission's immutable header before opening its stream.
+   * Journal an input admission's immutable header before opening its stream. A first send
+   * requires the covering declaration's receipt to be held already, for the input's scope and
+   * producer (Section 12.5: the producer receives its covering receipt before sending an input);
+   * a resend of an operation already journaled held it when it was first sent.
    *
    * @param header immutable input header
    * @param declaration covering declaration operation
    * @return journal sequence
    * @throws SQLException storage failure
+   * @throws ProtocolError NOT_READY when the covering declaration receipt is not held
    */
   public synchronized long journalInput(Records.InputHeader header, Records.OperationId declaration)
       throws SQLException {
@@ -491,6 +495,16 @@ public final class ClientJournal implements AutoCloseable {
     Objects.requireNonNull(declaration);
     if (header.generation() != context().generation())
       throw new ProtocolError(ProtocolError.Code.CONFLICT, "input names another session");
+    if (receipt(header.operation()).isEmpty()) {
+      Records.WorkKey work = header.parameters().work();
+      Optional<Records.OperationReceipt> covering = receipt(declaration);
+      if (covering.isEmpty()
+          || !(covering.get().outcome() instanceof Records.Declared declared)
+          || declared.scope() != work.scope()
+          || declared.producer() != work.producer())
+        throw new ProtocolError(
+            ProtocolError.Code.NOT_READY, "covering declaration receipt not held");
+    }
     Records.Digest digest = Commitments.operation(context(), 0, header);
     return journal(
         header.operation(),

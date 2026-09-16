@@ -1,0 +1,1 @@
+COMPLETED ScopeSummary[scope=0, producer=0, parent=null, seal=6ec1e47e0903f171dee0ca62cac1741850a8fdc3bf3087b00eeff09a518005b6, declared=3, counts=Counts[success=3, failure=0, cancelled=0, skipped=0], statusRoot=29016f3cc729d16156ff06e9efd286cb6a0f5df2b6e473f7499ba7d32f627de7, closedAt=1789245876467]

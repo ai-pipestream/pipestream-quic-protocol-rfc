@@ -1,0 +1,6 @@
+1	durable-18d4ac9f7d4e9880	g7-deadline-queue-time	rust	client	130819-18d4ad9a751a7397	1	REQUEST_SENT	78301964bdd02a012a44382498495579						
+1	durable-18d4ac9f7d4e9880	g7-deadline-queue-time	rust	client	130819-18d4ad9a751a7397	2	RECEIPT_VALIDATED	78301964bdd02a012a44382498495579						
+1	durable-18d4ac9f7d4e9880	g7-deadline-queue-time	rust	client	130819-18d4ad9a751a7397	3	REQUEST_SENT	23fcec7f886a5cbee71760693f94c4f1	0:0:3	1				
+1	durable-18d4ac9f7d4e9880	g7-deadline-queue-time	rust	client	130819-18d4ad9a751a7397	4	RECEIPT_VALIDATED	23fcec7f886a5cbee71760693f94c4f1	0:0:3	1				
+1	durable-18d4ac9f7d4e9880	g7-deadline-queue-time	rust	client	130819-18d4ad9a751a7397	5	REQUEST_SENT	e763e62f8851a9a356e05d5557db3baa	0:0:3	1				
+1	durable-18d4ac9f7d4e9880	g7-deadline-queue-time	rust	client	130819-18d4ad9a751a7397	6		e763e62f8851a9a356e05d5557db3baa	0:0:3	1	18			

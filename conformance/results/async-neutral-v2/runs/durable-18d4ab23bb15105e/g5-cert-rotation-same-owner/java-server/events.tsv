@@ -1,0 +1,14 @@
+1	durable-18d4ab23bb15105e	g5-cert-rotation-same-owner	rust	client	65230-18d4ab29eeccd417	1			0:0:1	1		artifacts/input.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+1	durable-18d4ab23bb15105e	g5-cert-rotation-same-owner	rust	client	65230-18d4ab29eeccd417	2	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4ab23bb15105e	g5-cert-rotation-same-owner	rust	client	65230-18d4ab29eeccd417	3	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d4ab23bb15105e	g5-cert-rotation-same-owner	rust	client	65230-18d4ab29eeccd417	4	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ab23bb15105e	g5-cert-rotation-same-owner	rust	client	65230-18d4ab29eeccd417	5	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d4ab23bb15105e	g5-cert-rotation-same-owner	rust	client	65230-18d4ab29eeccd417	6	REQUEST_SENT	bafad0a485db9dc8609c9c576f846995	0:0:2	1				
+1	durable-18d4ab23bb15105e	g5-cert-rotation-same-owner	rust	client	65230-18d4ab29eeccd417	7	RECEIPT_VALIDATED	bafad0a485db9dc8609c9c576f846995	0:0:2	1				
+1	durable-18d4ab23bb15105e	g5-cert-rotation-same-owner	rust	client	65230-18d4ab29eeccd417	8								
+1	durable-18d4ab23bb15105e	g5-cert-rotation-same-owner	rust	client	65230-18d4ab29eeccd417	9	REQUEST_SENT	98cd7e29007ff1ae6e11437f96ed7c64	0:0:1	1				
+1	durable-18d4ab23bb15105e	g5-cert-rotation-same-owner	rust	client	65230-18d4ab29eeccd417	10	RECEIPT_VALIDATED	98cd7e29007ff1ae6e11437f96ed7c64	0:0:1	1				
+1	durable-18d4ab23bb15105e	g5-cert-rotation-same-owner	rust	client	65230-18d4ab29eeccd417	11	REQUEST_SENT	fc94468a34682fc05102c0d2b46c34e3	0:0:2	1				
+1	durable-18d4ab23bb15105e	g5-cert-rotation-same-owner	rust	client	65230-18d4ab29eeccd417	12	RECEIPT_VALIDATED	fc94468a34682fc05102c0d2b46c34e3	0:0:2	1				
+1	durable-18d4ab23bb15105e	g5-cert-rotation-same-owner	rust	client	65230-18d4ab29eeccd417	13	RESULT_VERIFIED		0:0:1	2				
+1	durable-18d4ab23bb15105e	g5-cert-rotation-same-owner	rust	client	65230-18d4ab29eeccd417	14	RESULT_INSTALLED		0:0:1	2		artifacts/output-attempt-2.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682

@@ -216,6 +216,49 @@ final class ExpansionTransitionTest {
     }
   }
 
+  @Test
+  void completionAcceptsASealedMemberThatReachedATerminalOutcomeWithoutAdmission()
+      throws Exception {
+    try (Fixture fixture = new Fixture("terminal-member")) {
+      ExecutionStore.Lease lease = fixture.prepareParent(2, 1100, 500);
+      fixture.declare(lease, operation(40), List.of(10L, 11L), true, 1100);
+      Records.InputHeader admitted = fixture.childHeader(10, operation(41), new byte[] {1});
+      fixture.receive(admitted, new byte[] {1}, 1100);
+      fixture.sessions.admitProduced(
+          execAccess(), lease, SELECTED, fixture.inputs, admitted, clock(1100), ALLOW);
+      Records.WorkKey unadmitted =
+          new Records.WorkKey(fixture.child.scope(), fixture.child.producer(), 11);
+      assertCode(
+          ProtocolError.Code.NOT_READY,
+          () -> fixture.sessions.finishExpansion(execAccess(), lease, true, clock(1100), ALLOW));
+      assertActiveLease(fixture, lease);
+
+      Messages.CancelResponse cancelled =
+          fixture.sessions.cancel(
+              sessionAccess(),
+              SELECTED,
+              fixture.binding.generation(),
+              new Messages.Cancel(42, operation(42), unadmitted),
+              clock(1100),
+              (binding, request) -> {});
+      Records.Cancelled outcome =
+          assertInstanceOf(Records.Cancelled.class, cancelled.receipt().outcome());
+      assertEquals(0, outcome.disposition());
+      assertEquals(Records.State.CANCELLED, outcome.state());
+      assertNull(fixture.view(unadmitted).input());
+      assertTrue(fixture.view(unadmitted).state().terminal());
+
+      Records.WorkView completed =
+          fixture.sessions.finishExpansion(execAccess(), lease, true, clock(1100), ALLOW);
+      assertEquals(Records.State.WAITING_CHILDREN, completed.state());
+      assertTrue(fixture.job().expansionComplete());
+      assertNull(fixture.job().leaseUntil());
+      fixture.reopen();
+      assertEquals(Records.State.WAITING_CHILDREN, fixture.view(PARENT).state());
+      assertEquals(Records.State.CANCELLED, fixture.view(unadmitted).state());
+    }
+  }
+
   private final class Fixture implements AutoCloseable {
     final Path database;
     final Path inputPath;

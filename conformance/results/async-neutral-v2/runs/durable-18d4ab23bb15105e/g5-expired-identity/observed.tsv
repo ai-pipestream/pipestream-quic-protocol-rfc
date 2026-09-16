@@ -1,0 +1,7 @@
+server_subject	rust
+validity_seconds	25
+waited_ms	32384
+existing_connection_after_expiry	request failed without a close within 3 s: expected control frame 3, got 7 (body 8382000303782663726564656e7469616c2076616c6964697479206f72206d617070696e67206368616e676564)
+fresh_connection_after_expiry	refused at the handshake, no application refusal: connection lost: aborted by peer: the cryptographic handshake failed: error 45: invalid peer certificate: certificate expired: verification time 1789243198 (UNIX), but certificate is not valid after 1789243191 (7 seconds ago)
+renewed_leaf_binding_identical	true
+renewed_leaf_sees_declaration	true (declared=1)

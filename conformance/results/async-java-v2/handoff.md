@@ -47,6 +47,20 @@ given); no CI exists for this branch; no draft/deploy action taken; the
 shared feature branch and main were not merged.
 | `4fb8f747` | authority fix for defect 11: the session write-ahead log is restarted with a truncating checkpoint by the retention service once it exceeds one sixty-fourth of its bound (`SessionStore.restartLog`, `RetentionService`, `DurableHost.Status.logRestarts`), because SQLite restarts it only when no reader holds it and a continuously polled authority never reaches that moment; root cause of Meta's C16a xlarge64 mixed refusal LIMIT_EXCEEDED `SQLite file capacity exhausted` after 4 declare batches and 333 admissions at 1024/256 MiB funding (Meta request 3); reproduced with six unpaused readers over 100 work units (`SessionLogGrowthTest`: 12.7 MiB before, under 8 MiB after, restarts counted); gate: 108 tests in 30 store, retention, host and wire classes green, full run queued behind the benchmark lock; jar pin unchanged until the rebuild (section 2) |
 | `ada67cec` | reference-application fix for defect 12: `chunk-copy/v2` admitted every expansion child with a fixed 1,000 ms execution duration, so a child admitted just before an authority restart expired while the process came back (Kimi driver `g3-restart-same-roots` rust-client/java-server on `28c3369b`: child 2:1:3 FAILED `execution deadline reached`, STRICT parent FAILED); children now carry the parent's execution duration through `DurableHost.Production.executionMs`, as the Rust reference does; `DurableBranchTest` asserts it on every child (red before at 1,000 ms); full offline suite 745/745 (`raw/full-offline-2026-09-12b.summary.log`); new jar pin (section 2) |
+| `52d4776d` | `HookPlacementTest`: boundary hooks pin four ordering clauses deterministically (S12-221 fence-first and publication-first, S12-208 control progress with a parked callback, S12-158 input-store usage unchanged at the refusal, S12-311 checkpoint wait counted from acceptance behind a parked storage worker); traceability 296/62/8/7 at `c7c059a4` |
+| `62412c14` | `LossyTransportCreditTest`: a seeded UDP relay drops 8% and reorders every seventh datagram in both directions while 2n+1 transfers (refused, reset, admitted) run on an allowance of n; no stream-limit failure, correlated refusals, credit never below n/2, injection counted (about 190 drops and 90 reorders per run); observation O-1 recorded (section 5); S12-046 covered, S12-011 left PARTIAL by decision; traceability 297/62/7/7 |
+| `dce9d384` | `ResultAbortWireTest` (a RESULT_HEADER_SENT hook truncates the published object: the result stream aborts without FIN, no second control response, work still SUCCEEDED; S12-079) and the no-wrong-direction-refusal assertions over every frame the raw authority recorded (S12-078); S12-056 recognised as covered by the ceiling test's transport-close assertion; traceability 300/60/6/7 |
+| `6174d92d` | `DurableClientContradictionTest`: a child scope naming an unadmitted parent stays pending evidence (no synthesized parent commitment) and is concluded only by the parent's own view, for and against (S12-294); traceability 301/60/5/7 |
+| `c115e292` | `DatagramRelay` test helper (loss, reordering, mid-session rebind) shared by `LossyTransportCreditTest` and the new `MigrationWireTest`: the same session continues under the same owner after the peer's packets arrive from a new address, nothing re-authenticated (S12-010); `V2TlsTest` asserts no follow-up attempt after an ALPN refusal (S12-005); S12-008 (0-RTT) refined as proposal P-TLS-1 |
+| `3f8846e2` | thirteen store-level traceability partials closed by unit tests written in a separate worktree and reviewed here (P-STORE-3, 5 to 16; each confirmed red by inverting its load-bearing assertion): S12-100, 112, 169, 170, 171, 177, 206, 218, 219, 226, 247, 249, 251, 345, 346, 347, 355, 361; `ResultFixture` takes a policy; S12-248 not producible (D13, spec-owner question); traceability 321/43/2/7 |
+| `7583b00f` | `SchemaBoundsAndRegistryTest`: work-view nullable sweep with null and boolean refusals (S12-017), the 256-id declaration bound (S12-145), the nine-state integer registry (S12-193), the WORK operation numbers 8 to 11 read off encoded frames (S12-215); traceability 327/37/2/7 |
+| `aa05d201` | `PeerRuleWireTest` (raw peer and raw authority): ignorable frame activates no profile (S12-024), a hundred never-reused stream ids (S12-068), no second refusal for a replayed admitted input (S12-077), unrecognised close code releases slots without implying success (S12-082), client drain close is application error 0 observed at the authority (S12-321); traceability 332/32/2/7 |
+| `d26c5a92` | receiver-side abort of a stalled result read releases the listener's read with no control response (S12-076); 30 000 ms wait bound at the schema (S12-239); client makes no discovery call from a bare locator (S12-284) and keeps delivered bytes across a later revocation (S12-285); traceability 336/28/2/7 |
+| `ea55c57d` | CLIENT FIX defect 14: the client sent an input on the caller's word that a declaration covered it (the journal checked only the session generation); a first send is now refused NOT_READY unless the named declaration's receipt is held for the input's scope and producer, resends unaffected (S12-150, red before at a raw authority); the raw test authority answers declarations with genuine receipts; reconnect offers require every journaled profile (S12-038) |
+| `54267a72` | second store-level round from the agent worktree, reviewed and cherry-picked (P2-STORE-1 to 3, 5 to 11, 13 to 15, P2-WIRE-5; each confirmed red): S12-114, 139, 140, 141, 199, 204, 227, 237, 240, 263, 276, 278, 300, 316, 348, 353; S12-164 not producible (child scope row is inserted in the parent's admission transaction); D4 and D6 closed; traceability 354/10/2/7 |
+| `77ee4830` | `PeerRuleWireTest`: a 1 MiB object over a 64 KiB stream window both ways with bounded credit (S12-041); control answered within a second with every data slot held open, then every slot returned (S12-043, S12-044, S12-045); traceability 358/6/2/7 |
+| `1cbb389f` | LAUNCHER FIX defect 15: `--wal-mib` above about 257 MiB was capped by the fixed 512 KiB shared-memory sidecar that indexes the log, so Meta's xlarge64 cell refused at 332 admissions on every jar; the sidecar now scales with the funded log (`BoundedSqlite.Limits.sharedMemoryFor`, 16 MiB ceiling); `FundingScaleTest` (arithmetic plus 2 000 declarations over the wire) |
+| `3e1547dd` | LISTENER FIX defect 16: committed boundaries (session, declaration, fence, retry) fired on replays too, so Kimi's drop-reply at SESSION_COMMITTED fired again on the creation replay after the restart (`g2-crash-after-create-commit` rust-client/java-server, M17b and M19c archives); `SessionStore` now reports fresh versus replayed commits and `DurableServer` fires only for fresh ones (`HookPlacementTest`, red before at 2/2/6); client launcher gains `--control-timeout-ms` so a driver's 30 s operation bound can see a dead authority (`ClientControlTimeoutOptionTest`); Kimi M19 reviewed (section 5, observations O-2 to O-4) |
 
 ## 1. Contract to source to tests to evidence
 
@@ -126,7 +140,23 @@ native jar `e49d88b724cc79c936899542c1565a00454a93d512816de6e8cfefa637c51c50`.
   carry the parent's execution duration, defect 12; wire behaviour otherwise
   unchanged; the tree passed 745/745 before the build): lib jar `03f8c85b29469563075f96fa1d52e582aa9ebd4d0a9f44a00fdf7a811a032b1f`,
   shaded all-jar `32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c`.
-  This is the pin Meta's xlarge64 mixed cell needs.
+  That pin cannot run Meta's xlarge64 mixed cell: its launcher caps the usable
+  log at about 257 MiB (defect 15). Superseded at `c9d432d0` (launcher: the
+  shared-memory index scales with `--wal-mib`, defect 15; client: an input is
+  sent only with its covering declaration receipt held, defect 14; authority
+  wire behaviour unchanged; the tree passed 794/794 before the build): lib jar
+  `f8d76f23c228b95924b9195124c3bcaeca01ced99e1e291776a99fe8f74be07f`, shaded
+  all-jar `282d3589d4849e08bca67c7a6b3b1461005be703b565764e4db553eca4bb93cf`,
+  also staged at `/home/krickert/.rfc-tmp/jars/pipestream-quic-netty-282d3589-all.jar`.
+  Superseded at `73dcc79c` (listener: committed fixture boundaries fire only for
+  fresh commits, defect 16; client launcher: `--control-timeout-ms`; wire
+  behaviour unchanged; the tree passed 796/796 before the build): lib jar
+  `09c80f748fce4236c6db0e0e6ae3abca474ca5a1e3035cc84abc6d7ab97c9940`, shaded
+  all-jar `01b54c5512775ee2f3e7f68b88dc8dafb80da0209628ad1d447b1dfb058280de`,
+  staged at `/home/krickert/.rfc-tmp/jars/pipestream-quic-netty-01b54c55-all.jar`.
+  Meta's xlarge64 mixed cell needs this pin (or `282d3589`) with `--wal-mib 512`
+  or more on both commands and a fresh root; Kimi's driver needs this pin for
+  the creation-replay row.
   Kimi's driver (run by follow-on agents while Kimi is away) merged `0176855`
   at milestone 17 (`add98fd6`, archive `durable-18d3ea398f09f12e`, JVM heap
   frozen at `-Xms256m -Xmx2g`) and `7585a9dc` at milestone 17b.
@@ -206,7 +236,7 @@ no longer rewrites the WAL index on every store call. Full offline run at
 6. **Cancelled-scope declaration and replay codes** aside, no other refusal
    code disagreement was found between the Java and Rust reference endpoints
    in the exercised matrix.
-7. **Oversized private-type frames (traceability D2, needs a spec call).**
+7. **Oversized private-type frames (traceability D2). DECIDED 2026-09-13 by the owner: LIMIT_EXCEEDED; Section 12.1 now states that length validation precedes type classification, Java is pinned and Rust changed from FRAME_ERROR to match.**
    Section 12.1 says both "Validate lengths before allocating buffers" and
    "Private types 0xC0..0xFF require an activated defining profile; otherwise
    refuse EXTENSION_UNSUPPORTED". The Java decoder (`Wire.Decoder`) judges the
@@ -219,8 +249,8 @@ no longer rewrites the WAL index on every store call. Full offline run at
    probing profile support with a large private frame should learn
    EXTENSION_UNSUPPORTED), the Java decoder changes one branch. No code change
    until decided; `V2WireTest` will pin whichever code is chosen.
-8. **Client-side seal mismatch on checkpoint (traceability D3, needs a spec
-   call).** Section 12.8 gives the authority's answer to a checkpoint over a
+8. **Client-side seal mismatch on checkpoint (traceability D3). DECIDED 2026-09-13 by the owner: the local refusal is allowed and is INTEGRITY_ERROR; Section 12.8 now permits it and `DurableClient.checkpoint` answers so, keeping NOT_READY only while membership is unverified.** Original question:
+   Section 12.8 gives the authority's answer to a checkpoint over a
    different seal (INTEGRITY_ERROR) and requires the client to verify identity,
    seal, count partition and commitments "before acknowledging coverage". The
    Java client also refuses *before sending* when its journal holds verified
@@ -399,7 +429,12 @@ no longer rewrites the WAL index on every store call. Full offline run at
    the busy timeout, only for readers already on the log, later readers use
    the database file, and a busy checkpoint is not counted. `DurableHost.Status`
    gains `logRestarts`. Funding knobs are unchanged; 1024/256 MiB funds the
-   xlarge64 cell. Jar pin at `ada67cec` (section 2).
+   xlarge64 cell. Jar pin at `ada67cec` (section 2). Correction at `1cbb389f`:
+   the log restart is real and stays, but it was not what refused Meta's
+   xlarge64 cell. That cell refuses at the same count (332 admissions) with
+   and without this fix, with the store nearly empty and no log file present:
+   the bound is the shared-memory index cap, defect 15 below, and 1024/256 MiB
+   never funded more than about 257 MiB of usable log.
 
 12. **Java reference application: chunk-copy children could not survive an
    authority restart.** `ReferenceApplications.chunkCopy` admitted every
@@ -429,6 +464,102 @@ no longer rewrites the WAL index on every store call. Full offline run at
    `b5af2b1d` (main + this branch + Meta C16) passed the 116-test targeted
    confirmation run.
 
+14. **Java client: an input could be sent before its covering declaration
+   receipt was held.** `ClientJournal.journalInput` checked only that the
+   header named the journaled session; the declaration operation the caller
+   named was journaled as a reference without checking that its receipt had
+   arrived. An admission whose declaration had never been receipted therefore
+   went to the authority and was refused there (CONFLICT, undeclared), which
+   is the authority's rule but not the client's: Section 12.5 (S12-150) says
+   the producer MUST receive its covering receipt before sending an input.
+   Found by `AuthorityRuleClientTest.anInputIsNeverSentBeforeItsCoveringDeclarationReceiptIsHeld`
+   against a raw authority that records input streams (red: the input
+   arrived and the admission hung). Fixed in `ea55c57d`: a first send is
+   refused NOT_READY `covering declaration receipt not held` unless the named
+   declaration's receipt is held for the input's scope and producer; a resend
+   of an already journaled operation is unaffected. Three tests that relied
+   on sending undeclared inputs to reach authority-side behaviour now declare
+   first or expect the local refusal; the raw test authority answers
+   declarations with genuine receipts (the client's own digest, the seal when
+   sealed). Wire behaviour of the authority is unchanged; the jar pin stays
+   `32360ec3` for the server subject, and the client CLI in the same jar gains
+   the check at the next rebuild.
+
+15. **Java launcher: `--wal-mib` above about 257 MiB was silently ineffective.**
+   SQLite indexes the write-ahead log through the shared-memory sidecar, in
+   32 KiB regions of 4096 frames (4062 in the first); `V2Main` scaled the
+   log bound with `--wal-mib` but kept the sidecar at the reference 512 KiB,
+   which indexes about 257 MiB of log at the 4096-byte page. `FixedRecords`
+   computes the usable log as the smaller of the funded bound and what the
+   sidecar indexes, and reserves the retained promises' share of it (about
+   86 KiB per rewrite credit, roughly 0.8 MiB per admitted unit with its job,
+   view and fence records), so one authority topped out near 330 admitted
+   units whatever the flag said. That is Meta's xlarge64 mixed refusal
+   (`c4-xlarge64-seed6-r2/REPRO-DEFECT11.txt`: 332 admissions on jar
+   `e1763b4a` and again on `32360ec3`, deterministic, store 4.3 MiB, no log
+   file). Fixed in `1cbb389f`: `BoundedSqlite.Limits.sharedMemoryFor` sizes
+   the sidecar for the funded log (never below 512 KiB, a 64 KiB multiple,
+   never above the 16 MiB ceiling that indexes about 8 GiB) and the launcher
+   applies it. `FundingScaleTest` pins the arithmetic and shows twenty
+   hundred-member declarations refused under a 256 MiB log and all accepted
+   under 2048 MiB. Sizing rule for Meta: fund about 1 MiB of `--wal-mib` per
+   unit a session will hold at once, so xlarge64 (341 units per worker) needs
+   `--wal-mib 512` at least on the next jar, and the retained file policy
+   means a fresh root per funding. Jar pin at `c9d432d0` (section 2); full
+   offline suite 794/794 at that head (`raw/full-offline-2026-09-12d.summary.log`).
+
+16. **Java listener: committed fixture boundaries fired on replays.**
+   `DurableServer` fired SESSION_COMMITTED after every creation, and the
+   declaration, fence and retry boundaries after every such request, whether
+   the store had committed a new record or replayed a retained receipt. A
+   replay commits nothing, and the neutral driver relies on that: its
+   `g2-crash-after-create-commit` row arms one drop-reply at SESSION_COMMITTED,
+   restarts the server, and expects the client's creation replay to be
+   answered; on the Java subject the replay reached the boundary again, the
+   schedule row fired again and the reply was withheld a second time
+   (`CANCELLED: client transport closed`, Kimi's M7 finding, unchanged through
+   M19c: archives `durable-18d3ed6c2f040515` and `durable-18d4ac9f7d4e9880`).
+   Fixed in `3e1547dd`: `SessionStore.createCommit`, `declareCommit`,
+   `retryCommit`, `cancelCommit`, `skipCommit` and `cancelScopeCommit` return
+   the response together with whether this call committed a new record, and
+   the listener fires a committed boundary only then.
+   `HookPlacementTest.committedBoundariesFireOnceAcrossReplays` replays each
+   mutation (the creation from a second connection) and counts one, one and
+   three; it was red at two, two and six. Admission and publication boundaries
+   were already fired only on fresh commits. Jar pin at `73dcc79c` (section 2);
+   full offline suite 796/796 at that head (`raw/full-offline-2026-09-12e.summary.log`).
+
+Kimi milestone 19 (five commits `2a9aad5d` to `ab40d2e0` on
+`agent/rfc-kimi-neutral-v2`, work in Kimi's role, REVIEW_READY for Kimi) was
+reviewed here on 2026-09-12: footprint `conformance/results/async-neutral-v2/`
+plus four files in the conformance crate, nothing else; the two driver fixes
+with red/green tests, all 67 rows registered, the 67-row rerun archived and
+compared with M17b line by line. Its Java items, answered:
+
+- Observation O-2 (Java client): "graceful shutdown hangs after a server
+  kill" (`g2-crash-before-create-commit` java-client/rust-server, `g8-timeout`
+  kill variant) is the client's default 30 s control response deadline meeting
+  the driver's 30 s per-operation bound. A killed server sends nothing; the
+  connection's idle timeout is the stream lifetime (300 s), so a pending
+  request fails only at the control deadline, after which the launcher closes
+  and exits within about two seconds. Not a hang and not a defect, but the
+  driver could not observe the bound. The launcher now takes
+  `--control-timeout-ms N` (`3e1547dd`); the driver should pass a value below
+  its operation bound on kill rows, or raise that bound above 30 s.
+- Observation O-3 (Java subject): a 16 MiB object leaves the object directory
+  while a pinned read is open and the read still completes byte-exact
+  (`g7-read-pin-past-expiry` rust-client/java-server). Expected: the pinned
+  read holds an open descriptor, so reclaiming the name at expiry cannot recall
+  bytes already promised (S12-285 in the client direction, and the pin rule),
+  and the row's byte-exact completion is the clause satisfied.
+- Question D18 (DECIDED 2026-09-13 by the owner: CONFLICT; Section 12.3 states it, Java is pinned by `SessionStoreTest`, Rust changed from UNAUTHORIZED): a journal bound to another authority that
+  attaches is refused CONFLICT `authority differs` by Java and UNAUTHORIZED by
+  Rust (`g5-cross-authority-reference`); neither discloses the session. Section
+  12.3 names UNAUTHORIZED for an owner that cannot be authorized and CONFLICT
+  for a contradiction with retained identity; the attach names the wrong
+  authority, which reads as a contradiction, so Java keeps CONFLICT until the
+  owner decides.
+
 The 53-row driver run on `28c3369b` (2026-09-12, stores on the root drive)
 otherwise matched the milestone 17b baseline: 52 rows PASS on every
 implemented direction, the INCOMPLETE directions identical to the baseline
@@ -441,6 +572,27 @@ copy under attempt 2 finished first. Both authorities check terminal state
 before the attempt mismatch (Rust `retry_work`: `eligible` precedes
 "retry attempt changed"), so the row needs a way to hold attempt 2 live
 (noted for Kimi's branch on the board).
+
+Observation O-1 (transport pin, not a Java defect; recorded at `62412c14`): the
+pinned quiche retransmits a lost RESET_STREAM only while the local stream still
+exists (`quiche/src/lib.rs`, lost-frame handling: `if self.streams.get(stream_id)
+.is_some() { insert_reset }`). A peer that resets an input after a partial
+payload and lets its stream go at once can therefore lose the reset for good
+under packet loss; the listener then refuses the stalled input at the
+negotiated idle bound (LIMIT_EXCEEDED `input receive deadline`, 1 s at the
+offered minimum, 5 s at the raw peer default) instead of at the reset, and the
+slot returns with that refusal. `LossyTransportCreditTest` sees this on about
+one reset in ten under 8% loss with reordering, and about once in a hundred
+for a FIN-terminated (truncated) input whose tail is lost, which the same
+guard does not explain and is left unattributed; it records the count per
+shape and the latency per run in `target/lossy-credit-observations.tsv`. The Java client resets through the
+same transport, so its resets have the same exposure; the credit reservation
+(S12-046) is unaffected. A fix belongs in the transport pin (keep a reset
+stream until its RESET_STREAM is acknowledged, or retransmit regardless), not
+in the endpoints. Separately, one run in roughly ten of the first test shape
+timed out waiting for a control response before the observations were logged
+incrementally; the test now records the transfer and credit at that moment so
+the next occurrence can be attributed.
 
 Kimi's milestone 17b question (2), the per-stream abort of stalled inputs
 landing between idle+10 s and lifetime+10 s instead of at the 30 s idle bound,

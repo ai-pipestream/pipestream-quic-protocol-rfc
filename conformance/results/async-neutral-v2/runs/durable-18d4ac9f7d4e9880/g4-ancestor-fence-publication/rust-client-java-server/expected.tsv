@@ -1,0 +1,9 @@
+application	chunk-copy/v2
+mode	2
+input_len	8388608
+iterations	3
+iteration_pre_fence_delay_ms	0,2,10
+session_model	one fresh authority per iteration: the root-scope fence accepted by cancel-scope is permanent, so iterations cannot share a session
+parent_rule	the accepted ancestor fence is never overwritten: the parent ends CANCELLED(7) — never FAILED(6); it stays CANCELLING(4) while descendants settle, or settles immediately when the fence lands before any descendant exists
+child_rule	every descendant reaches exactly one terminal state within the bounded deadline; committed pre-fence successes (SUCCEEDED) survive; the rest settle CANCELLED — never FAILED
+winning_order_rule	per iteration: any child committed SUCCEEDED before the fence → "publication" (partial); otherwise "fence"

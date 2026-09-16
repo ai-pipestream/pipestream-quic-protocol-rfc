@@ -1199,11 +1199,15 @@ public final class DurableClient implements AutoCloseable {
                         .scope(scope)
                         .orElseThrow(
                             () -> new ProtocolError(NOT_READY, "scope membership not observed"));
-                if (!evidence.membershipVerified()
-                    || evidence.seal() == null
-                    || !evidence.seal().equals(seal))
+                if (!evidence.membershipVerified() || evidence.seal() == null)
+                  throw new ProtocolError(NOT_READY, "sealed membership not verified");
+                // Section 12.8: a client holding verified membership under another seal may refuse
+                // locally without sending, and names that refusal INTEGRITY_ERROR as the authority
+                // would.
+                if (!evidence.seal().equals(seal))
                   throw new ProtocolError(
-                      NOT_READY, "sealed membership not verified for this seal");
+                      ProtocolError.Code.INTEGRITY_ERROR,
+                      "checkpoint seal contradicts verified membership");
                 return evidence;
               },
               evidence -> {

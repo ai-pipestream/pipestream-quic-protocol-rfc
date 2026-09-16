@@ -77,11 +77,58 @@ final class SessionStoreTest {
     assertCode(
         ProtocolError.Code.CONFLICT,
         () -> store.create(alice, durable(8192, 1 << 20), new Messages.Create(13, 3, POLICY)));
+    // Section 12.3: an attach whose limits cannot hold the retained representations is refused
+    // LIMIT_EXCEEDED "without changing the session": the durable session row, the retained
+    // operation count and the binding a later attach returns are byte for byte what they were.
+    String operations = "SELECT count(*) FROM ps_v2_operations WHERE generation=1";
+    List<String> rowBefore = sessionRow(path);
+    long operationsBefore = scalar(path, operations);
     assertCode(
         ProtocolError.Code.LIMIT_EXCEEDED,
         () ->
             store.attach(
                 alice, durable(4096, 1 << 20), new Messages.Attach(14, "issuer-a", "alice", 1)));
+    assertEquals(rowBefore, sessionRow(path));
+    assertEquals(operationsBefore, scalar(path, operations));
+    assertEquals(
+        rowBefore.get(sessionColumn(path, "operation_count")),
+        Long.toString(
+            scalar(path, "SELECT operation_count FROM ps_v2_sessions WHERE generation=1")));
+    Messages.Binding reattached =
+        store.attach(
+            alice, durable(8192, 512 << 10), new Messages.Attach(15, "issuer-a", "alice", 1));
+    assertEquals(created, withRequest(reattached, 2));
+    assertArrayEquals(
+        Wire.encode(withRequest(created, 15), 8192), Wire.encode(reattached, 8192));
+  }
+
+  @Test
+  void attachNamingAnotherAuthorityIsConflictAfterOwnerAuthorization() throws Exception {
+    SessionStore store =
+        SessionStore.initialize(database("foreign-authority"), configuration(8, 8, 4));
+    SessionStore.Access alice = access("alice");
+    store.create(alice, durable(8192, 1 << 20), new Messages.Create(1, 1, POLICY));
+    // Section 12.3 (owner decision 2026-09-13): the owner is authorized first; then an expected
+    // authority other than the serving one is CONFLICT, for a retained and an absent generation
+    // alike, so the code discloses nothing about retained sessions.
+    assertCode(
+        ProtocolError.Code.CONFLICT,
+        () ->
+            store.attach(
+                alice, durable(8192, 1 << 20), new Messages.Attach(2, "issuer-b", "alice", 1)));
+    assertCode(
+        ProtocolError.Code.CONFLICT,
+        () ->
+            store.attach(
+                alice, durable(8192, 1 << 20), new Messages.Attach(3, "issuer-b", "alice", 999)));
+    // An owner that cannot be authorized for the named owner stays UNAUTHORIZED.
+    assertCode(
+        ProtocolError.Code.UNAUTHORIZED,
+        () ->
+            store.attach(
+                access("mallory"),
+                durable(8192, 1 << 20),
+                new Messages.Attach(4, "issuer-b", "alice", 1)));
   }
 
   @Test
@@ -119,6 +166,47 @@ final class SessionStoreTest {
     assertCode(
         ProtocolError.Code.EXTENSION_UNSUPPORTED,
         () -> store.nextSequence(alice, core(), new Messages.NextSequence(6)));
+  }
+
+  @Test
+  void ownerLabelsOutsideTheIdentityGrammarAreFrameErrorsBeforeAuthorization() throws Exception {
+    SessionStore store = SessionStore.initialize(database("owner-grammar"), configuration(8, 8, 4));
+    store.create(access("alice"), durable(8192, 1 << 20), new Messages.Create(1, 1, POLICY));
+    AtomicInteger checks = new AtomicInteger();
+    SessionStore.Access counting = new SessionStore.Access("alice", checks::incrementAndGet);
+    for (String owner :
+        List.of("", "a".repeat(129), "alice/1", "al ice", "alice@issuer", "al" + (char) 233)) {
+      ProtocolError attach =
+          assertCode(
+              ProtocolError.Code.FRAME_ERROR,
+              () ->
+                  store.attach(
+                      counting,
+                      durable(8192, 1 << 20),
+                      new Messages.Attach(2, "issuer-a", owner, 1)));
+      assertTrue(attach.getMessage().contains("invalid identity"), attach.getMessage());
+      ProtocolError principal =
+          assertCode(
+              ProtocolError.Code.FRAME_ERROR, () -> new SessionStore.Access(owner, () -> {}));
+      assertTrue(principal.getMessage().contains("invalid identity"), principal.getMessage());
+    }
+    assertEquals(0, checks.get());
+
+    String longest = "a".repeat(128);
+    assertEquals(longest, new Messages.Attach(3, "issuer-a", longest, 1).owner());
+    assertEquals("Az09-._~", new Messages.Attach(4, "issuer-a", "Az09-._~", 1).owner());
+    assertCode(
+        ProtocolError.Code.UNAUTHORIZED,
+        () ->
+            store.attach(
+                access(longest),
+                durable(8192, 1 << 20),
+                new Messages.Attach(5, "issuer-a", longest, 1)));
+    Messages.Binding attached =
+        store.attach(
+            counting, durable(8192, 1 << 20), new Messages.Attach(6, "issuer-a", "alice", 1));
+    assertEquals("alice", attached.owner());
+    assertTrue(checks.get() > 0);
   }
 
   @Test
@@ -599,6 +687,43 @@ final class SessionStoreTest {
         var rows = statement.executeQuery(sql)) {
       assertTrue(rows.next());
       return rows.getLong(1);
+    }
+  }
+
+  private static long scalar(Path path, String sql) throws Exception {
+    try (var connection = BoundedSqlite.open(path, configuration(8, 8, 4).files()).connect()) {
+      return scalar(connection, sql);
+    }
+  }
+
+  /** Every column of generation 1's session row, blobs rendered as hex, in declaration order. */
+  private static List<String> sessionRow(Path path) throws Exception {
+    try (var connection = BoundedSqlite.open(path, configuration(8, 8, 4).files()).connect();
+        var statement = connection.createStatement();
+        var rows = statement.executeQuery("SELECT * FROM ps_v2_sessions WHERE generation=1")) {
+      assertTrue(rows.next());
+      List<String> values = new java.util.ArrayList<>();
+      for (int column = 1; column <= rows.getMetaData().getColumnCount(); column++) {
+        Object value = rows.getObject(column);
+        values.add(
+            value instanceof byte[] bytes
+                ? java.util.HexFormat.of().formatHex(bytes)
+                : String.valueOf(value));
+      }
+      assertFalse(rows.next());
+      return values;
+    }
+  }
+
+  /** Zero-based position of a named column in {@link #sessionRow}. */
+  private static int sessionColumn(Path path, String name) throws Exception {
+    try (var connection = BoundedSqlite.open(path, configuration(8, 8, 4).files()).connect();
+        var statement = connection.createStatement();
+        var rows = statement.executeQuery("SELECT * FROM ps_v2_sessions WHERE generation=1")) {
+      var metadata = rows.getMetaData();
+      for (int column = 1; column <= metadata.getColumnCount(); column++)
+        if (metadata.getColumnName(column).equals(name)) return column - 1;
+      return fail("ps_v2_sessions lacks column " + name);
     }
   }
 

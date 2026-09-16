@@ -652,7 +652,7 @@ final class FixedRecords {
     return add(32, multiply(dirty + 1 + Math.ceilDiv(65536, frame), frame));
   }
 
-  private static long usable(BoundedSqlite.Limits limits, long page) {
+  static long usable(BoundedSqlite.Limits limits, long page) {
     long regions = limits.sharedMemoryBytes() / 32768;
     long frames = 4062 + (regions - 1) * 4096;
     return Math.min(limits.walBytes(), add(32, multiply(frames, page + 24)));

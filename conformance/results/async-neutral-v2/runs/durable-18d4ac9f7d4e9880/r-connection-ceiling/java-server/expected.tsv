@@ -1,0 +1,6 @@
+documented_global_bound	32 (java)
+documented_per_principal_bound	8 (java)
+boundedness	a refusal is observed at a finite connection count from one principal and from a second principal while the first holds; the observed admitted counts never exceed the documented bounds
+refusal_class	pre-auth CONNECTION_REFUSED (transport refusal) or post-auth refusal — the observed class is recorded per subject
+recovery	after every held connection closes, a fresh connection from the first principal succeeds
+incomplete_handshake_accounting	named gap: the quinn client completes handshakes atomically; half-open handshake counts are not observable black-box

@@ -37,9 +37,20 @@ final class RetryStoreTest {
       ExecutionStore.Lease stale = fixture.claim(1100, 500);
       long leaseNumber = stale.number();
       long[] before = fixture.credits();
+      // Section 12.6: retry "preserves input, membership, child scope, admission time, deadline
+      // and retention policy"; the membership page and the retained policy are captured here and
+      // compared byte for byte after the retry, its replay and a reopen.
+      Messages.PageResponse membership = fixture.page(0);
+      byte[] membershipBytes = Wire.encode(membership, SELECTED.controlLimit());
+      Records.Policy policy = fixture.policy();
+      byte[] policyBytes = Wire.encodeRecord(policy, 256);
       Messages.Retry request = new Messages.Retry(20, operation(20), WORK, 1);
 
       Messages.RetryResponse first = fixture.retry(request, 1200, ALLOW);
+      assertEquals(membership, fixture.page(0));
+      assertArrayEquals(membershipBytes, Wire.encode(fixture.page(0), SELECTED.controlLimit()));
+      assertEquals(policy, fixture.policy());
+      assertArrayEquals(policyBytes, Wire.encodeRecord(fixture.policy(), 256));
       Records.Retried outcome = assertInstanceOf(Records.Retried.class, first.receipt().outcome());
       assertEquals(WORK, outcome.work());
       assertEquals(1, outcome.expectedAttempt());
@@ -61,12 +72,16 @@ final class RetryStoreTest {
       assertEquals(21, replay.request());
       assertEquals(first.receipt(), replay.receipt());
       assertReplacement(fixture, 2, leaseNumber, true);
+      assertArrayEquals(membershipBytes, Wire.encode(fixture.page(0), SELECTED.controlLimit()));
+      assertArrayEquals(policyBytes, Wire.encodeRecord(fixture.policy(), 256));
 
       fixture.reopen();
       Messages.RetryResponse reopened =
           fixture.retry(new Messages.Retry(22, operation(20), WORK, 1), 0, ALLOW);
       assertEquals(first.receipt(), reopened.receipt());
       assertReplacement(fixture, 2, leaseNumber, true);
+      assertArrayEquals(membershipBytes, Wire.encode(fixture.page(0), SELECTED.controlLimit()));
+      assertArrayEquals(policyBytes, Wire.encodeRecord(fixture.policy(), 256));
     }
   }
 
@@ -95,6 +110,47 @@ final class RetryStoreTest {
       assertEquals(
           receipt.receipt(),
           fixture.retry(new Messages.Retry(32, operation(30), WORK, 1), 0, ALLOW).receipt());
+      // Section 12.8: redoing terminal failed logical work takes a new work identity and scope
+      // membership. The same input admitted under entity 2 starts independently at attempt 1
+      // while the failed outcome of entity 1 is left as it was, not rewritten.
+      Records.WorkView failed = fixture.view();
+      assertEquals(Records.State.FAILED, failed.state());
+      assertEquals(2, failed.attempt());
+      Records.WorkKey fresh = new Records.WorkKey(0, 0, 2);
+      fixture.sessions.declare(
+          sessionAccess(),
+          SELECTED,
+          fixture.binding.generation(),
+          new Messages.Declare(33, operation(33), 0, List.of(2L), false));
+      Records.Admitted admitted =
+          assertInstanceOf(
+              Records.Admitted.class, fixture.admit(fresh, operation(34), 1600).outcome());
+      assertEquals(fresh, admitted.work());
+      assertEquals(1, admitted.attempt());
+      assertEquals(1600, admitted.admittedAt());
+      Records.WorkView redone = fixture.view(fresh);
+      assertEquals(Records.State.ACTIVE, redone.state());
+      assertEquals(1, redone.attempt());
+      assertEquals(failed.input(), redone.input());
+      ExecutionStore.Lease freshLease = fixture.claim(fresh, 1700, 500);
+      assertEquals(1, freshLease.attempt());
+      assertEquals(
+          Records.State.SUCCEEDED,
+          fixture
+              .sessions
+              .succeedExecution(
+                  execAccess(),
+                  freshLease,
+                  fixture.inputs,
+                  0,
+                  new PublicationStore.Endpoint("localhost:443"),
+                  clock(1800),
+                  ALLOW)
+              .state());
+      assertEquals(failed, fixture.view());
+      assertCode(
+          ProtocolError.Code.ALREADY_TERMINAL,
+          () -> fixture.retry(new Messages.Retry(35, operation(35), WORK, 2), 1800, ALLOW));
     }
 
     try (Fixture fixture = new Fixture("deadline", 0)) {
@@ -314,6 +370,59 @@ final class RetryStoreTest {
     }
   }
 
+  /**
+   * Section 12.6: "Revision starts at 1 on declaration and strictly increases on observable
+   * durable change." One work is driven through declaration, admission, an explicit retry, a
+   * retryable failure, a second retry and a terminal failure; the snapshot revision is read after
+   * each and must be strictly greater than the one before, and a plain re-read does not move it.
+   */
+  @Test
+  void revisionStartsAtOneAndStrictlyIncreasesAcrossAdmitRetryFailAndSettle() throws Exception {
+    try (Fixture fixture = new Fixture("revision", 0)) {
+      Records.WorkKey work = new Records.WorkKey(0, 0, 2);
+      fixture.sessions.declare(
+          sessionAccess(),
+          SELECTED,
+          fixture.binding.generation(),
+          new Messages.Declare(100, operation(100), 0, List.of(2L), false));
+      long declared = fixture.revision(work);
+      assertEquals(1, declared);
+      assertEquals(declared, fixture.revision(work));
+
+      fixture.admit(work, operation(101), 1100);
+      long admitted = fixture.revision(work);
+      assertTrue(admitted > declared, admitted + " after " + declared);
+      assertEquals(Records.State.ACTIVE, fixture.view(work).state());
+
+      fixture.retry(new Messages.Retry(102, operation(102), work, 1), 1200, ALLOW);
+      long retried = fixture.revision(work);
+      assertTrue(retried > admitted, retried + " after " + admitted);
+      assertEquals(2, fixture.view(work).attempt());
+
+      ExecutionStore.Lease lease = fixture.claim(work, 1300, 500);
+      fixture.sessions.failExecution(
+          execAccess(), lease, new Records.Diagnostic(7, "again"), true, clock(1400), ALLOW);
+      long failed = fixture.revision(work);
+      assertTrue(failed > retried, failed + " after " + retried);
+      assertEquals(Records.State.AWAITING_RETRY, fixture.view(work).state());
+
+      fixture.retry(new Messages.Retry(103, operation(103), work, 2), 1500, ALLOW);
+      long replaced = fixture.revision(work);
+      assertTrue(replaced > failed, replaced + " after " + failed);
+
+      ExecutionStore.Lease last = fixture.claim(work, 1600, 500);
+      fixture.sessions.failExecution(
+          execAccess(), last, new Records.Diagnostic(8, "terminal"), false, clock(1700), ALLOW);
+      long settled = fixture.revision(work);
+      assertTrue(settled > replaced, settled + " after " + replaced);
+      assertEquals(Records.State.FAILED, fixture.view(work).state());
+      assertEquals(settled, fixture.revision(work));
+
+      fixture.reopen();
+      assertEquals(settled, fixture.revision(work));
+    }
+  }
+
   @Test
   void changedOperationExpectedAttemptAndFinalAuthorizationRefuseAtomically() throws Exception {
     try (Fixture fixture = new Fixture("conflict", 0)) {
@@ -423,8 +532,12 @@ final class RetryStoreTest {
     }
 
     ExecutionStore.Lease claim(long now, long duration) throws Exception {
+      return claim(WORK, now, duration);
+    }
+
+    ExecutionStore.Lease claim(Records.WorkKey work, long now, long duration) throws Exception {
       return sessions.claimExecution(
-          execAccess(), binding.generation(), WORK, inputs, duration, clock(now), ALLOW);
+          execAccess(), binding.generation(), work, inputs, duration, clock(now), ALLOW);
     }
 
     Records.WorkView view() throws Exception {
@@ -439,6 +552,63 @@ final class RetryStoreTest {
               binding.generation(),
               new Messages.Watch(request++, work, 0, 0))
           .work();
+    }
+
+    long revision(Records.WorkKey work) throws Exception {
+      return sessions
+          .snapshot(
+              sessionAccess(),
+              SELECTED,
+              binding.generation(),
+              new Messages.Watch(request++, work, 0, 0))
+          .revision();
+    }
+
+    /** Root membership under a fixed request number so two pages can be compared byte for byte. */
+    Messages.PageResponse page(long scope) throws Exception {
+      return sessions.page(
+          sessionAccess(), SELECTED, binding.generation(), new Messages.Page(99, scope, 0, 256));
+    }
+
+    /** The retained session policy as a fresh attach returns it. */
+    Records.Policy policy() throws Exception {
+      return sessions
+          .attach(
+              sessionAccess(),
+              SELECTED,
+              new Messages.Attach(98, binding.authority(), binding.owner(), binding.generation()))
+          .policy();
+    }
+
+    /** Admit another declared member with the fixture's input bytes and a leaf mode. */
+    Records.OperationReceipt admit(
+        Records.WorkKey work, Records.OperationId operation, long utc) throws Exception {
+      Records.InputHeader header =
+          new Records.InputHeader(
+              binding.generation(),
+              operation,
+              new Records.AdmitParameters(
+                  work,
+                  new Records.Input(0, digest(new byte[0]), "application/octet-stream"),
+                  "copy",
+                  0,
+                  10_000,
+                  new Records.OutputBudget(0, 0)));
+      try (InputStore.Receiver receiver = inputs.begin(context(), header, SELECTED, utc)) {
+        receiver.write(ByteBuffer.allocate(0), utc);
+        receiver.finish(utc);
+      }
+      return sessions
+          .admit(
+              sessionAccess(),
+              SELECTED,
+              binding.generation(),
+              inputs,
+              header,
+              request++,
+              clock(utc),
+              ALLOW)
+          .receipt();
     }
 
     JobRecord job() throws Exception {

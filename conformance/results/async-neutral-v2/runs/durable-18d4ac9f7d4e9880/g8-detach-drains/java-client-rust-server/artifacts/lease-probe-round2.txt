@@ -1,0 +1,6 @@
+exit=exit status: 0
+stdout:
+WORK revision=3 state=5 attempt=1 child=none
+VIEW WorkView[work=WorkKey[scope=0, producer=0, entity=1], state=SUCCEEDED, attempt=1, input=Input[length=12582912, sha256=ab0e2b4417deba665487ff89294e266427c72bf5b0de42a136d46acf2da4a60a, contentType=application/octet-stream], admittedAt=1789246014404, deadline=1789246074404, terminalAt=1789246014991, receiptUntil=1789332414991, outputUntil=1789249614991, child=null, manifest=Manifest[authority=issuer-a, owner=alice, generation=1, work=WorkKey[scope=0, producer=0, entity=1], attempt=1, inputSha256=ab0e2b4417deba665487ff89294e266427c72bf5b0de42a136d46acf2da4a60a, committedAt=1789246014991, availableUntil=1789249614991, outputs=[Output[index=0, length=12582912, sha256=ab0e2b4417deba665487ff89294e266427c72bf5b0de42a136d46acf2da4a60a, contentType=application/octet-stream, locator=Locator[value=pipestream://localhost:7443/v2/sessions/1/scopes/0/producers/0/entities/1/attempts/1/outputs/0]]]], diagnostic=null]
+
+stderr:

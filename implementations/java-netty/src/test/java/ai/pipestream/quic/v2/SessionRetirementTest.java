@@ -255,6 +255,245 @@ final class SessionRetirementTest {
     }
   }
 
+  @Test
+  void retiredCreationSequenceStaysExpiredAfterAllSessionMetadataIsRemoved() throws Exception {
+    Path database = directory.resolve("retired.sqlite");
+    Path inputPath = directory.resolve("retired-inputs");
+    Records.Policy policy = new Records.Policy(10_000, 20_000, 30_000);
+    SessionStore sessions = SessionStore.initialize(database, ResultFixture.configuration());
+    Messages.Binding binding =
+        sessions.create(
+            ResultFixture.sessionAccess("alice"),
+            ResultFixture.SELECTED,
+            new Messages.Create(1, 1, policy));
+    try (InputStore inputs =
+        InputStore.initializeForAuthority(
+            inputPath, ResultFixture.INPUT_LIMITS, sessions.identity())) {
+      sessions.bindInputs(inputs);
+      sessions.declare(
+          ResultFixture.sessionAccess("alice"),
+          ResultFixture.SELECTED,
+          binding.generation(),
+          new Messages.Declare(2, ResultFixture.operation(1), 0, List.of(), true));
+      closeRoot(sessions, binding, List.of(), 1000);
+      assertEquals(
+          RetirementStore.State.STARTED,
+          sessions
+              .retireSession(binding.generation(), inputs, 1, ResultFixture.clock(31_000))
+              .state());
+      assertEquals(
+          RetirementStore.State.COMPLETE,
+          finish(sessions, inputs, binding.generation(), 31_000).state());
+      assertEquals(
+          RetirementStore.State.ABSENT,
+          sessions
+              .retireSession(binding.generation(), inputs, 1, ResultFixture.clock(31_000))
+              .state());
+      assertEquals(0, sessionCount(database));
+      assertCode(
+          ProtocolError.Code.NOT_FOUND,
+          () ->
+              sessions.attach(
+                  ResultFixture.sessionAccess("alice"),
+                  ResultFixture.SELECTED,
+                  new Messages.Attach(
+                      3, binding.authority(), binding.owner(), binding.generation())));
+
+      assertCode(
+          ProtocolError.Code.EXPIRED,
+          () ->
+              sessions.create(
+                  ResultFixture.sessionAccess("alice"),
+                  ResultFixture.SELECTED,
+                  new Messages.Create(4, binding.creationSequence(), policy)));
+      assertEquals(0, sessionCount(database));
+      assertEquals(
+          2,
+          sessions
+              .nextSequence(
+                  ResultFixture.sessionAccess("alice"),
+                  ResultFixture.SELECTED,
+                  new Messages.NextSequence(5))
+              .nextCreationSequence());
+
+      SessionStore reopened = SessionStore.open(database, ResultFixture.configuration());
+      reopened.verifyInputs(inputs);
+      assertCode(
+          ProtocolError.Code.EXPIRED,
+          () ->
+              reopened.create(
+                  ResultFixture.sessionAccess("alice"),
+                  ResultFixture.SELECTED,
+                  new Messages.Create(6, binding.creationSequence(), policy)));
+      assertEquals(0, sessionCount(database));
+      Messages.Binding replacement =
+          reopened.create(
+              ResultFixture.sessionAccess("alice"),
+              ResultFixture.SELECTED,
+              new Messages.Create(7, 2, policy));
+      assertTrue(replacement.generation() > binding.generation());
+      assertEquals(2, replacement.creationSequence());
+    }
+  }
+
+  @Test
+  void retirementCutoffExtendsToAnOutputPromiseLongerThanTheReceiptRetention()
+      throws Exception {
+    Records.Policy receiptFirst = new Records.Policy(10_000, 60_000, 5_000);
+    try (ResultFixture fixture =
+        new ResultFixture(directory, "output-cutoff", new byte[] {1}, receiptFirst)) {
+      assertEquals(6_200, fixture.published.receiptUntil());
+      assertEquals(61_200, fixture.published.outputUntil());
+      fixture.sessions.declare(
+          ResultFixture.sessionAccess("alice"),
+          ResultFixture.SELECTED,
+          fixture.binding.generation(),
+          new Messages.Declare(80, ResultFixture.operation(80), 0, List.of(), true));
+      closeRoot(fixture.sessions, fixture.binding, List.of(1L), 1200);
+      assertEquals(
+          RetentionStore.Result.RELEASED,
+          fixture.sessions.reclaimInput(
+              fixture.binding.generation(),
+              ResultFixture.WORK,
+              fixture.inputs,
+              ResultFixture.clock(6_200)));
+      assertEquals(
+          RetentionStore.Result.NOT_READY,
+          fixture.sessions.reclaimOutput(
+              fixture.binding.generation(),
+              ResultFixture.WORK,
+              fixture.inputs,
+              ResultFixture.clock(61_199)));
+      assertEquals(
+          RetirementStore.State.NOT_READY,
+          fixture
+              .sessions
+              .retireSession(
+                  fixture.binding.generation(), fixture.inputs, 1, ResultFixture.clock(61_199))
+              .state());
+      assertEquals(
+          RetentionStore.Result.RELEASED,
+          fixture.sessions.reclaimOutput(
+              fixture.binding.generation(),
+              ResultFixture.WORK,
+              fixture.inputs,
+              ResultFixture.clock(61_200)));
+      assertEquals(
+          RetirementStore.State.STARTED,
+          fixture
+              .sessions
+              .retireSession(
+                  fixture.binding.generation(), fixture.inputs, 1, ResultFixture.clock(61_200))
+              .state());
+      assertEquals(
+          RetirementStore.State.COMPLETE,
+          finish(fixture.sessions, fixture.inputs, fixture.binding.generation(), 61_200).state());
+    }
+  }
+
+  /**
+   * Section 12.4 and 12.9: after a work's receipt deadline on a live (not retiring) session an
+   * operation lookup may answer EXPIRED but never NOT_FOUND, and a replay can never become a fresh
+   * mutation; enough terminal and identity state remains to prevent reuse. The Java store takes
+   * the permitted retention branch: full receipts stay readable until session retirement, so the
+   * lookup returns the retained receipt, the replay returns that same receipt without a new
+   * operation row, and the work view still reports the terminal state and identity.
+   */
+  @Test
+  void receiptDeadlineOnALiveSessionRetainsIdentityAndNeverReplaysAsAFreshMutation()
+      throws Exception {
+    Records.Policy receiptFirst = new Records.Policy(10_000, 60_000, 5_000);
+    try (ResultFixture fixture =
+        new ResultFixture(directory, "live-receipt-deadline", new byte[] {1}, receiptFirst)) {
+      assertEquals(1200, fixture.published.terminalAt());
+      assertEquals(6_200, fixture.published.receiptUntil());
+      long operations = operationCount(fixture.database);
+      Records.OperationReceipt retained =
+          fixture
+              .sessions
+              .lookupOperation(
+                  ResultFixture.sessionAccess("alice"),
+                  ResultFixture.SELECTED,
+                  fixture.binding.generation(),
+                  new Messages.LookupOperation(70, fixture.inputHeader.operation()))
+              .receipt();
+      assertInstanceOf(Records.Admitted.class, retained.outcome());
+      for (long now : new long[] {6_200, 6_201, 30_000}) {
+        Records.OperationReceipt lookup =
+            fixture
+                .sessions
+                .lookupOperation(
+                    ResultFixture.sessionAccess("alice"),
+                    ResultFixture.SELECTED,
+                    fixture.binding.generation(),
+                    new Messages.LookupOperation(now, fixture.inputHeader.operation()))
+                .receipt();
+        assertEquals(retained, lookup);
+        Records.Admitted admitted = assertInstanceOf(Records.Admitted.class, lookup.outcome());
+        assertEquals(ResultFixture.WORK, admitted.work());
+        assertEquals(1, admitted.attempt());
+        Messages.AdmissionResponse replay =
+            fixture.sessions.admit(
+                ResultFixture.sessionAccess("alice"),
+                ResultFixture.SELECTED,
+                fixture.binding.generation(),
+                fixture.inputs,
+                fixture.inputHeader,
+                now + 1,
+                ResultFixture.clock(now),
+                ResultFixture.ALLOW_EXECUTION);
+        assertEquals(retained, replay.receipt());
+        assertEquals(operations, operationCount(fixture.database));
+        Records.WorkView view =
+            fixture
+                .sessions
+                .snapshot(
+                    ResultFixture.sessionAccess("alice"),
+                    ResultFixture.SELECTED,
+                    fixture.binding.generation(),
+                    new Messages.Watch(now + 2, ResultFixture.WORK, 0, 0))
+                .work();
+        assertEquals(fixture.published, view);
+        assertEquals(Records.State.SUCCEEDED, view.state());
+        assertEquals(1, view.attempt());
+        assertEquals(1200, view.terminalAt());
+        assertEquals(6_200, view.receiptUntil());
+      }
+      assertCode(
+          ProtocolError.Code.ALREADY_TERMINAL,
+          () ->
+              fixture.sessions.retry(
+                  ResultFixture.sessionAccess("alice"),
+                  ResultFixture.SELECTED,
+                  fixture.binding.generation(),
+                  new Messages.Retry(71, ResultFixture.operation(71), ResultFixture.WORK, 1),
+                  ResultFixture.clock(30_000),
+                  ResultFixture.ALLOW_EXECUTION));
+      assertEquals(operations, operationCount(fixture.database));
+      fixture.reopen();
+      assertEquals(
+          retained,
+          fixture
+              .sessions
+              .lookupOperation(
+                  ResultFixture.sessionAccess("alice"),
+                  ResultFixture.SELECTED,
+                  fixture.binding.generation(),
+                  new Messages.LookupOperation(72, fixture.inputHeader.operation()))
+              .receipt());
+    }
+  }
+
+  private static long operationCount(Path database) throws Exception {
+    try (var connection =
+            BoundedSqlite.open(database, ResultFixture.configuration().files()).connect();
+        var statement = connection.createStatement();
+        var rows = statement.executeQuery("SELECT count(*) FROM ps_v2_operations")) {
+      assertTrue(rows.next());
+      return rows.getLong(1);
+    }
+  }
+
   private static void closeRoot(
       SessionStore sessions, Messages.Binding binding, List<Long> members, long utc)
       throws Exception {

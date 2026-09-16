@@ -37,7 +37,7 @@ final class ClientCommands {
         "  client --journal FILE --authority LABEL --owner LABEL --creation-sequence N <connection>"
             + " <operation>",
         "    connection: --connect HOST:PORT --server-name NAME --ca PEM --cert PEM --key PEM"
-            + " [--object-limit BYTES]",
+            + " [--object-limit BYTES] [--control-timeout-ms N]",
         "    recovery: [--retry-budget N] [--retry-backoff-ms N] (default 0: one-shot; the next"
             + " invocation replays the journal)",
         "    operations: capabilities | binding"
@@ -113,9 +113,39 @@ final class ClientCommands {
 
   private static ClientOptions clientOptions(Map<String, String> options) {
     ClientOptions defaults = ClientOptions.defaults();
-    if (!options.containsKey("object-limit")) return defaults;
+    if (!options.containsKey("object-limit") && !options.containsKey("control-timeout-ms"))
+      return defaults;
+    CoreOptions core = defaults.core();
+    if (options.containsKey("control-timeout-ms")) {
+      // A shorter control deadline also bounds how long a dead server is waited for.
+      long controlTimeoutMs =
+          Checks.range(Long.parseLong(options.get("control-timeout-ms")), 1, 300_000);
+      core =
+          new CoreOptions(
+              core.controlLimit(),
+              core.pendingLimit(),
+              core.streamIdleMs(),
+              core.streamLifetimeMs(),
+              core.connections(),
+              core.connectionsPerOwner(),
+              core.queuedControlBytes(),
+              core.controlWindowBytes(),
+              core.readChunkBytes(),
+              core.handshakeTimeoutMs(),
+              controlTimeoutMs);
+    }
+    if (!options.containsKey("object-limit"))
+      return new ClientOptions(
+          core,
+          defaults.dataStreams(),
+          defaults.maxDataStreams(),
+          defaults.dataSendBytes(),
+          defaults.streamWindowBytes(),
+          defaults.chunkBytes(),
+          defaults.objectLimit(),
+          defaults.headerTimeoutMs());
     return new ClientOptions(
-        defaults.core(),
+        core,
         defaults.dataStreams(),
         defaults.maxDataStreams(),
         defaults.dataSendBytes(),

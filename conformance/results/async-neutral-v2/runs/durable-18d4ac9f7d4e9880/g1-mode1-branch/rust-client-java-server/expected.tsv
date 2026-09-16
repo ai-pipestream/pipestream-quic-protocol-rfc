@@ -1,0 +1,15 @@
+application	reassemble/v2
+mode	1
+parent_work	0:0:1
+parent_input_len	65000
+parent_input_sha256	9e1572ca5d5b092815ebf83c1ef53831065d73e5a29268f6bb7711c2553c6ba0
+child_scope	1:0
+child_ids	1,2
+child_part_lens	40000,25000
+expected_output_sha256	9e1572ca5d5b092815ebf83c1ef53831065d73e5a29268f6bb7711c2553c6ba0
+expected_child_seal_sha256	22dc4585accb68c0694f23ff813e863cd217aef3b1b915dc0a0bb7707918b14b
+expected_root_seal_sha256	444702408fc06ce1a8909f0db362f468199b490cac8495e64c079eeec55da6ab
+open_child_completion	complete/checkpoint refuse while the child scope is open (actual codes recorded)
+child_scope_replacement	declare into the sealed child scope refuses CONFLICT (7)
+leaf_children	named gap: neither CLI can attach children to an existing leaf work; children attach only via branch admission
+settlement	child checkpoint, root checkpoint, complete (bottom-up)

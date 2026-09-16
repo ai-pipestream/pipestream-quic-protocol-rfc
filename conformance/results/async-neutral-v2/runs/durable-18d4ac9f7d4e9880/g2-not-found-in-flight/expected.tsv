@@ -1,0 +1,8 @@
+input_len	262144
+input_sha256	4bef0e5afcb9f8147d10556077d60ca601abebdbb67f06d7909eb49037538ac5
+prefix_len_before_lookup	131072
+pending_construction	raw peer writes the input header and the prefix on an open object stream without FIN; a second raw connection of the same principal attached to the same session sends Work::Operation for the id
+lookup_while_pending	named NOT_FOUND (5) on the lookup's control request tag; never a receipt, never a fabricated outcome
+after_fin	Work::Admitted receipt to the holder and Work::OperationResponse receipt to the prober byte-identical; attempt 1
+cli_replay	the CLI client replays the same admission (same id, bytes, parameters) and receives the durable receipt (attempt 1), no second effect
+exactly_one_effect	scope page members=1; terminal SUCCEEDED under attempt 1; result byte-exact; EXECUTION_CLAIMED recorded once for the work where the subject records it

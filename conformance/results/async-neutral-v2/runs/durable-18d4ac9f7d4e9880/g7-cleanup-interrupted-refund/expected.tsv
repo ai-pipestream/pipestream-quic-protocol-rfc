@@ -1,0 +1,3 @@
+would_do	kill the server during terminal cleanup after output expiry, before accounting reconciliation finishes; restart
+would_assert	cleanup is replayable; reserved capacity is never refunded while a dependent read-pin or callback retains it; the restart completes the refund exactly once (capacity accounting before/after recorded; double refund is a defect)
+missing_capability	an interface-v1 cleanup boundary (an interface revision proposal) implemented by both subjects

@@ -1,0 +1,9 @@
+declared_length_over	declared 48 bytes, 32 sent, FIN: correlated INTEGRITY_ERROR (8) on the [1, streamId] tag; the partial reception is discarded
+declared_length_under	declared 16 bytes, 32 sent (trailing bytes), FIN: correlated INTEGRITY_ERROR (8)
+wrong_digest	declared 32, 32 sent, digest of zeros: correlated INTEGRITY_ERROR (8)
+missing_fin	client resets instead of FIN: correlated INTEGRITY_ERROR (8) (input stream interrupted, normative-clarifications item 3)
+frozen_invalid_input_mode	wire.tsv invalid-input-mode row replayed verbatim: header decode refusal FRAME_ERROR (1) correlated on [1, streamId]
+frozen_short_input_digest	wire.tsv short-input-digest row replayed verbatim: FRAME_ERROR (1) correlated
+declaration_survives	after every refusal a scope page still shows entity 1 declared (state 0); a subsequent valid input on a replacement stream is ADMITTED — the partial receptions were discarded, never the declaration
+server_record_roots	named gap: result-manifest/scope-summary refuse-rows are server-direction records; the raw client cannot make either server emit a malformed record
+result_header_unknown_request	named gap: a result header names a server-chosen result request; the raw client cannot make the server emit one against an unknown request

@@ -1,0 +1,24 @@
+PipeStream V2 durable endpoints (Java/Netty)
+  init-authority --root DIR --authority LABEL --result-authority HOST:PORT
+        [--db-mib MIB] [--wal-mib MIB]
+  serve --root DIR --authority LABEL --result-authority HOST:PORT --bind HOST:PORT
+        --cert PEM --key PEM --client-ca PEM --principal-map TSV --trust-system-clock
+        [--allow-skip] [--ready-file PATH] [--object-limit BYTES]
+        [--db-mib MIB] [--wal-mib MIB]  (must repeat the init-authority values)
+  next-sequence <connection>
+  init-client --journal FILE --authority LABEL --owner LABEL --creation-sequence N
+              [--no-results] [--execution-ms N] [--output-retention-ms N] [--receipt-retention-ms N]
+  client --journal FILE --authority LABEL --owner LABEL --creation-sequence N <connection> <operation>
+    connection: --connect HOST:PORT --server-name NAME --ca PEM --cert PEM --key PEM [--object-limit BYTES]
+    recovery: [--retry-budget N] [--retry-backoff-ms N] (default 0: one-shot; the next invocation replays the journal)
+    operations: capabilities | binding | declare --operation HEX [--scope N] --entities A,B,.. [--seal]
+      admit --operation HEX --declaration HEX --work S:P:E --input FILE --application LABEL [--mode N] [--execution-ms N] [--content-type T] [--output-count N] [--output-bytes N]
+      replay --operation HEX [--input FILE] | lookup --operation HEX | unresolved [--after N] [--limit N]
+      watch --work S:P:E [--after REV] [--wait-ms N] | page [--scope N] [--after E] [--limit N]
+      checkpoint [--scope N] --seal HEX [--wait-ms N] | manifest --work S:P:E --attempt N
+      select --work S:P:E --attempt N --index N | read --work S:P:E --attempt N --index N --output FILE
+      retry --operation HEX --work S:P:E --expected-attempt N | cancel --operation HEX --work S:P:E
+      skip --operation HEX --work S:P:E | cancel-scope --operation HEX [--scope N]
+      complete | detach
+Legacy version-1 commands remain in ai.pipestream.quic.Main.
+

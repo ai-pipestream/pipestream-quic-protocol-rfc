@@ -1,0 +1,8 @@
+server_subject	rust
+client_subject	rust
+alpn	pipestream/2
+subject_exit_code	86
+subject_boundary_record	COMPLETE_RESPONSE_SENT recorded before the exit
+withheld_op	exit=exit status: 1 answered=false refusal=Some((12, "CANCELLED: client transport closed"))
+next_sequence_after_restart	2
+redrive_complete	idempotent replay of the durable completion (equals saved coverage)

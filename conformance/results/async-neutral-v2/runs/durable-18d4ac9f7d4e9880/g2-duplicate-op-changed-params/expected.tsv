@@ -1,0 +1,7 @@
+first_input_len	65536
+first_input_sha256	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+changed_input_len	32768
+changed_input_sha256	6ce3eb21194c3d0d957f5f5edeb4200f3f33287cc1a5ca7a70d70243bd22f535
+expected_refusal_code	7 (CONFLICT)
+expected_lookup	first receipt unchanged
+expected_page_members	1

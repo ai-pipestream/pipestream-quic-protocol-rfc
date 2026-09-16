@@ -1,0 +1,8 @@
+server_subject	java
+java_jar_sha256	32360ec3dbff58a1581c9b64f8afca32dfe7b6c42c49bf5c43d6fad64d19aa7c
+validity_seconds	25
+waited_ms	29407
+existing_connection_after_expiry	closed by the subject: APPLICATION_CLOSE code=0x203 reason="caller credential unavailable"
+fresh_connection_after_expiry	refused at the handshake, no application refusal: connection lost: aborted by peer: the cryptographic handshake failed: error 45
+renewed_leaf_binding_identical	true
+renewed_leaf_sees_declaration	true (declared=1)

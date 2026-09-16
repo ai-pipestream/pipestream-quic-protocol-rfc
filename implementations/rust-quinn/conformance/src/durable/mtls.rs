@@ -11,12 +11,14 @@ use rcgen::{
     BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256, SanType,
 };
+use rustls::pki_types::{CertificateDer, pem::PemObject};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs,
     net::{IpAddr, Ipv4Addr},
     path::{Path, PathBuf},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 pub const AUTHORITY: &str = "issuer-a";
@@ -60,15 +62,58 @@ impl Material {
             .or_else(|| self.foreign.get(name))
             .with_context(|| format!("no generated client identity named {name:?}"))
     }
+
+    /// SHA-256 over a minted leaf's DER, exactly as the principal map keys
+    /// it. Used by rows that edit a map by hand (remap, cross-authority).
+    pub fn leaf_sha256(identity: &Identity) -> Result<String> {
+        let mut leaves = CertificateDer::pem_file_iter(&identity.cert)
+            .with_context(|| format!("read leaf PEM {}", identity.cert.display()))?;
+        let leaf = leaves
+            .next()
+            .with_context(|| format!("no certificate in {}", identity.cert.display()))??;
+        Ok(hex(&Sha256::digest(leaf.as_ref())))
+    }
+
+    /// The same CA, server identity and client identities with a DIFFERENT
+    /// principal map file: a second authority that trusts the same roots but
+    /// maps (or does not map) the same principals its own way
+    /// (g5-cross-authority-reference).
+    pub fn with_principal_map(&self, principal_map: &Path) -> Material {
+        let mut material = self.clone();
+        material.principal_map = principal_map.to_path_buf();
+        material
+    }
 }
+
+/// Seconds from the Unix epoch to 1975-01-01T00:00:00Z, the fixed date rcgen
+/// renders with `date_time_ymd`; the short-lived leaf windows are built from
+/// that anchor plus a std `Duration`, so no calendar crate is named here.
+const EPOCH_TO_1975_SECS: u64 = 157_766_400;
+
+/// Clock skew allowance before the short-lived leaf becomes valid.
+const SHORT_LIVED_NOT_BEFORE_SKEW: Duration = Duration::from_secs(60);
 
 fn mint_client(
     directory: &Path,
     ca: &CertifiedIssuer<KeyPair>,
     name: &str,
+    validity: Option<Duration>,
 ) -> Result<(Identity, Vec<u8>)> {
     let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
     let mut params = CertificateParams::new(vec!["localhost".to_owned()])?;
+    if let Some(validity) = validity {
+        // A short-validity leaf for g5-expired-identity: valid from a little
+        // before now (skew) until now + validity, on the host UTC both
+        // subjects verify against. Host UTC is never changed by any row.
+        let since_1975 = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("host clock precedes the Unix epoch")?
+            .checked_sub(Duration::from_secs(EPOCH_TO_1975_SECS))
+            .context("host clock precedes 1975")?;
+        let anchor = rcgen::date_time_ymd(1975, 1, 1);
+        params.not_before = anchor + since_1975.saturating_sub(SHORT_LIVED_NOT_BEFORE_SKEW);
+        params.not_after = anchor + since_1975 + validity;
+    }
     params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
     params.distinguished_name.push(DnType::CommonName, name);
@@ -96,6 +141,20 @@ pub fn generate_full(
     principals: &[(&str, &str)],
     unmapped: &[&str],
     foreign: &[&str],
+) -> Result<Material> {
+    generate_spec(directory, principals, unmapped, foreign, &[])
+}
+
+/// [`generate_full`] plus MAPPED principals whose leaf is valid only for the
+/// given window from now (g5-expired-identity): `(identity name, owner label,
+/// validity)`. Their leaf DER hashes are written into the principal map like
+/// any other mapped principal; the map never says anything about validity.
+pub fn generate_spec(
+    directory: &Path,
+    principals: &[(&str, &str)],
+    unmapped: &[&str],
+    foreign: &[&str],
+    short_lived: &[(&str, &str, Duration)],
 ) -> Result<Material> {
     fs::create_dir_all(directory)?;
     ensure!(!principals.is_empty(), "at least one principal is required");
@@ -135,14 +194,23 @@ pub fn generate_full(
             !owner.is_empty(),
             "principal owner labels must not be empty for identity {name:?}"
         );
-        let (identity, der) = mint_client(directory, &ca, name)?;
+        let (identity, der) = mint_client(directory, &ca, name, None)?;
+        map.push_str(&format!("{}\t{owner}\n", hex(&Sha256::digest(der))));
+        identities.insert((*name).to_owned(), identity);
+    }
+    for (name, owner, validity) in short_lived {
+        ensure!(
+            !owner.is_empty(),
+            "principal owner labels must not be empty for identity {name:?}"
+        );
+        let (identity, der) = mint_client(directory, &ca, name, Some(*validity))?;
         map.push_str(&format!("{}\t{owner}\n", hex(&Sha256::digest(der))));
         identities.insert((*name).to_owned(), identity);
     }
 
     let mut unmapped_identities = BTreeMap::new();
     for name in unmapped {
-        let (identity, _) = mint_client(directory, &ca, name)?;
+        let (identity, _) = mint_client(directory, &ca, name, None)?;
         unmapped_identities.insert((*name).to_owned(), identity);
     }
 
@@ -162,7 +230,7 @@ pub fn generate_full(
         let foreign_ca_path = directory.join("foreign-ca.crt");
         fs::write(&foreign_ca_path, foreign_ca.pem())?;
         for name in foreign {
-            let (identity, _) = mint_client(directory, &foreign_ca, name)?;
+            let (identity, _) = mint_client(directory, &foreign_ca, name, None)?;
             foreign_identities.insert((*name).to_owned(), identity);
         }
         foreign_ca_cert = Some(foreign_ca_path);
@@ -194,6 +262,42 @@ pub fn generate(directory: &Path, principals: &[(&str, &str)]) -> Result<Materia
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_lived_principals_are_mapped_and_hashed_like_any_other() {
+        let directory = tempfile::tempdir().unwrap();
+        let material = generate_spec(
+            directory.path(),
+            &[("alice-renewed", "alice")],
+            &[],
+            &[],
+            &[("alice", "alice", Duration::from_secs(20))],
+        )
+        .unwrap();
+        let short = material.principal("alice").unwrap();
+        assert!(short.cert.is_file() && short.key.is_file());
+        let map = fs::read_to_string(&material.principal_map).unwrap();
+        let hash = Material::leaf_sha256(short).unwrap();
+        assert!(map.contains(&format!("{hash}\talice\n")));
+        let renewed_hash =
+            Material::leaf_sha256(material.principal("alice-renewed").unwrap()).unwrap();
+        assert!(map.contains(&format!("{renewed_hash}\talice\n")));
+        assert_ne!(hash, renewed_hash);
+        // Validity is in the certificate, never in the map: the short leaf's
+        // not_after is inside the window, the renewed leaf's is far off.
+        let pem = fs::read_to_string(&short.cert).unwrap();
+        assert!(pem.contains("BEGIN CERTIFICATE"));
+        // A second authority sharing this CA but its own map.
+        let other_map = directory.path().join("other.tsv");
+        fs::write(&other_map, format!("sha256\tprincipal\n{hash}\tmallory\n")).unwrap();
+        let other = material.with_principal_map(&other_map);
+        assert_eq!(other.ca_cert, material.ca_cert);
+        assert_eq!(other.principal_map, other_map);
+        assert_eq!(
+            Material::leaf_sha256(other.principal("alice").unwrap()).unwrap(),
+            hash
+        );
+    }
 
     #[test]
     fn generates_isolated_ca_server_and_principal_map() {

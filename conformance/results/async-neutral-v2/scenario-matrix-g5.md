@@ -53,6 +53,14 @@ denials must not disclose another owner's retained state.
   operations under cert-1 remain valid; retry/cancel under cert-2 are
   accepted as the same owner. The accepted job's retained grant survives
   the presenting certificate's lifetime subject to current policy.
+- Status (milestone 19b, work in Kimi's role): implemented, green on both
+  servers (durable-18d4ab23bb15105e). Both leaf hashes are minted into the
+  map at fixture time; two retry-copy works are parked AWAITING_RETRY under
+  cert 1, the server is stopped (SIGTERM, DRAINED) and restarted on the same
+  roots, and cert 2 attaches with the byte-identical BINDING, looks up the
+  cert-1 admission, retries one work to attempt 2 (SUCCEEDED, result
+  byte-exact) and cancels the other (disposition 0, CANCELLED). Both
+  fingerprints are in expected.tsv and observed.tsv.
 
 ## g5-remapped-owner-denies
 
@@ -64,6 +72,19 @@ denials must not disclose another owner's retained state.
   credential are refused; already-transmitted bytes are not retracted
   (previously delivered output stays delivered — driver verifies the
   pre-remap read artifact remains valid); no silent success.
+- Status (milestone 19b, work in Kimi's role; driver row id
+  `g5-remapped-owner`): implemented, green on both servers. The map is edited
+  between a graceful stop and the restart so alice's leaf hash maps to owner
+  mallory; attach, retry, cancel, lookup and result read by that credential
+  are each refused UNAUTHORIZED (3) on both subjects (rust "authority access
+  denied", java "session access denied"), none names a state-disclosing
+  code, the refused read writes no bytes, and the output read before the
+  remap still hashes to the oracle. The attach here is the wire Attach
+  carrying the journaled owner alice from a credential the server now maps
+  to mallory, so the authority-side cross-owner attach branch that
+  g5-foreign-owner could not reach through the CLIs is exercised. Live
+  connections are not re-checked by this row because the stop kills them;
+  recorded, not claimed either way.
 
 ## g5-expired-identity
 
@@ -75,6 +96,19 @@ denials must not disclose another owner's retained state.
   a fresh connection with the expired certificate fails TLS validation
   (CRYPTO_ERROR); a renewed certificate mapping to the same principal
   reconnects to the same retained session.
+- Status (milestone 19b, work in Kimi's role): implemented, green on both
+  servers (durable-18d4abe3eae3a613). The short leaf is minted with a 25 s
+  validity from the fixture's own host UTC (rcgen not_before/not_after;
+  host UTC never changed). While valid the CLI creates the session and
+  declares, and a raw connection attaches and is kept open with QUIC PINGs.
+  After expiry the two subjects enforce on the LIVE connection in different
+  kinds, both recorded: the Rust server refuses the next request UNAUTHORIZED
+  "credential validity or mapping changed" on a connection that stays open,
+  the Java server closes the connection APPLICATION_CLOSE 0x203 "caller
+  credential unavailable" (S12-098). A fresh connection with the expired leaf
+  fails the handshake on both (TLS alert 45 certificate expired, no
+  application refusal), and the renewed leaf mapped to the same owner
+  attaches to the identical binding and sees the declaration.
 
 ## g5-cross-authority-reference
 
@@ -87,6 +121,22 @@ denials must not disclose another owner's retained state.
   unauthorized holder of the exact locator learns nothing. The
   positive arm (same owner authorized on the issuing authority) reads
   the exact bytes via manifest commitments.
+- Status (milestone 19b, work in Kimi's role): implemented, green on both
+  servers. Authority Y shares X's CA and client identities, has its own
+  roots and principal map (alice mapped) and the label `issuer-b`; it holds
+  no session of X's. Arm A points X's journal (bound to X, selection
+  saved) at Y: attach, read, lookup and watch are each refused with a named
+  code and no result bytes are written; the two subjects name different
+  codes, both recorded verbatim (rust UNAUTHORIZED "authority access
+  denied", java CONFLICT "authority differs"; neither discloses anything of
+  X's session, and whether CONFLICT is the right class under the
+  precedence rule is a question for the owners, not a defect claim). Arm B
+  binds a journal on Y and selects X's identifiers: NOT_FOUND on both
+  (rust "work not declared", java "work identity is undeclared"), X's
+  output digest absent from the transcript. The positive arm reads the
+  exact bytes on X. The REFERENCE text is archived; neither client
+  dereferences a locator's authority (recorded from the sources, not
+  asserted by the row).
 
 ## g5-no-existence-disclosure (paired-probe matrix)
 
