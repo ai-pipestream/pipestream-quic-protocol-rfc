@@ -817,6 +817,12 @@ These are code observations, not test failures. Each names a file and line.
   drop-reply fired again on the creation replay. Fixed 2026-09-16: rows fire once per run
   through a marker in the events directory (`FixtureMainTest.aFiredScheduleRowNeverReArmsAcrossARestart`).
   Found by Kimi milestone 20 (`g2-crash-after-create-commit`).
+- **D21.** `FixtureMain.Hooks` (fixture adapter). The D19 marker named target, line, boundary
+  and action but not the schedule file, so a driver that re-arms a row on purpose with a fresh
+  file per iteration (`g3-orphan-cleanup`, `schedule-iteration-0.tsv` then `-1.tsv`, identical
+  content) saw iteration 1's kill suppressed by iteration 0's marker. Fixed 2026-09-16: the
+  marker names the schedule file too (`FixtureMainTest.aRowInAFreshScheduleFileFiresAgainEvenWhenItsContentRepeats`).
+  Found by Kimi milestone 21 (first acceptance run `durable-18d5c7d31cb32b00`, the one FAIL).
 - **D20.** `FixtureMain.Hooks.sent`. Kill and exit rows were consumed only by the committed
   hook, so a kill armed at a `*_RESPONSE_SENT` boundary never fired. Fixed 2026-09-16: the
   sent hook takes the row, records the boundary and halts 137

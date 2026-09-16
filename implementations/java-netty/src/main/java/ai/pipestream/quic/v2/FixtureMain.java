@@ -46,6 +46,7 @@ public final class FixtureMain {
       String action,
       long seed,
       long deadlineMs,
+      String schedule,
       int line) {}
 
   /**
@@ -139,6 +140,7 @@ public final class FixtureMain {
               action,
               Long.parseLong(columns[6]),
               Long.parseLong(columns[7]),
+              file.getFileName().toString(),
               i + 1));
     }
     return rows;
@@ -185,13 +187,23 @@ public final class FixtureMain {
     }
 
     private Path marker(Row row) {
-      // Identity is the row's line plus its content: a driver may hand a subject several schedule
-      // files for one run, and two rows at the same line of different files are the same row only
-      // if they arm the same boundary and action.
+      // Identity is the schedule file, the line and the row's content. A driver hands a subject a
+      // fresh schedule file when it re-arms a row on purpose (one file per kill iteration, say),
+      // and two such files may repeat a line byte for byte; the same file handed back after a
+      // restart is the same row and must not fire again.
       return recorder
           .directory()
           .resolve(
-              "fired-" + target + "-" + row.line() + "-" + row.boundary() + "-" + row.action());
+              "fired-"
+                  + target
+                  + "-"
+                  + row.schedule()
+                  + "-"
+                  + row.line()
+                  + "-"
+                  + row.boundary()
+                  + "-"
+                  + row.action());
     }
 
     private synchronized Row take(Boundary boundary, String... actions) {
