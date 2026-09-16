@@ -1,0 +1,5 @@
+exit=exit status: 0
+stdout:
+RECEIPT OperationReceipt { operation: OperationId([17, 249, 210, 103, 72, 102, 87, 11, 55, 38, 211, 22, 158, 139, 241, 32]), request_digest: Digest([132, 175, 216, 244, 97, 142, 229, 73, 132, 39, 145, 132, 21, 249, 195, 184, 195, 32, 63, 227, 190, 16, 161, 165, 207, 218, 14, 163, 252, 186, 243, 115]), body: Cancelled { work: WorkKey { scope: Number(0), producer: Producer(0), entity: Id(1) }, accepted_at: Number(1789576911884), disposition: Disposition(1), state_at_commit: State(8) } }
+
+stderr:

@@ -1,0 +1,8 @@
+first_pid=369151
+first_exit=exit status: 0
+first_stdout:
+RECEIPT OperationReceipt { operation: OperationId([216, 43, 79, 14, 159, 56, 20, 241, 22, 28, 132, 36, 13, 3, 143, 82]), request_digest: Digest([181, 58, 187, 116, 170, 241, 251, 40, 89, 93, 3, 36, 233, 72, 229, 181, 52, 32, 3, 125, 191, 248, 4, 236, 102, 188, 232, 125, 235, 214, 49, 155]), body: Admitted { work: WorkKey { scope: Number(0), producer: Producer(0), entity: Id(1) }, attempt: Id(1), admitted_at: Number(1789576552999), deadline: Number(1789576612999), child: None } }
+
+second_exit=exit status: 0
+second_stdout:
+RECEIPT OperationReceipt { operation: OperationId([216, 43, 79, 14, 159, 56, 20, 241, 22, 28, 132, 36, 13, 3, 143, 82]), request_digest: Digest([181, 58, 187, 116, 170, 241, 251, 40, 89, 93, 3, 36, 233, 72, 229, 181, 52, 32, 3, 125, 191, 248, 4, 236, 102, 188, 232, 125, 235, 214, 49, 155]), body: Admitted { work: WorkKey { scope: Number(0), producer: Producer(0), entity: Id(1) }, attempt: Id(1), admitted_at: Number(1789576552999), deadline: Number(1789576612999), child: None } }

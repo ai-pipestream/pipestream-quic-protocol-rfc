@@ -1,0 +1,10 @@
+=== unshare -n true (exit exit status: 1) ===
+unshare: unshare failed: Operation not permitted
+
+=== unshare -r -n true (exit exit status: 1) ===
+unshare: write failed /proc/self/uid_map: Operation not permitted
+
+=== tcpdump -i lo -c 1 -w /dev/null (exit exit status: 1) ===
+tcpdump: lo: You don't have permission to perform this capture on that device
+(Attempt to create packet socket failed - CAP_NET_RAW may be required)
+

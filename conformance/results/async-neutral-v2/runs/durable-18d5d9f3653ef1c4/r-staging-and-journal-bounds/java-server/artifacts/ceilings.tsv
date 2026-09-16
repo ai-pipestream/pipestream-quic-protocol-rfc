@@ -1,0 +1,184 @@
+phase	attempt	principal	connection	outcome	detail
+pending-fill	1	alice	0	pending	request 3 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	2	alice	0	pending	request 4 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	3	alice	0	pending	request 5 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	4	alice	0	pending	request 6 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	5	alice	0	pending	request 7 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	6	alice	0	pending	request 8 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	7	alice	0	pending	request 9 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	8	alice	0	pending	request 10 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	9	alice	0	pending	request 11 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	10	alice	0	pending	request 12 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	11	alice	0	pending	request 13 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	12	alice	0	pending	request 14 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	13	alice	0	pending	request 15 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	14	alice	0	pending	request 16 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	15	alice	0	pending	request 17 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	16	alice	0	pending	request 18 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	17	alice	0	pending	request 19 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	18	alice	0	pending	request 20 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	19	alice	0	pending	request 21 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	20	alice	0	pending	request 22 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	21	alice	0	pending	request 23 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	22	alice	0	pending	request 24 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	23	alice	0	pending	request 25 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	24	alice	0	pending	request 26 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	25	alice	0	pending	request 27 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	26	alice	0	pending	request 28 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	27	alice	0	pending	request 29 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	28	alice	0	pending	request 30 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	29	alice	0	pending	request 31 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	30	alice	0	pending	request 32 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	31	alice	0	pending	request 33 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	32	alice	0	pending	request 34 granted and unanswered (after_revision 1, wait 30000ms)
+pending-fill	33	alice	0	refused	request 35 tag_kind=0 tag_id=35 code=4 detail="request refused"
+pending-drain	-	alice	0	summary	32/32 granted waits answered, 0 other frames
+staging	1	alice	0	staged	stream=2 work=0:0:100001 4096/65536 bytes, no FIN
+staging	2	alice	0	staged	stream=6 work=0:0:100002 4096/65536 bytes, no FIN
+staging	3	alice	0	staged	stream=10 work=0:0:100003 4096/65536 bytes, no FIN
+staging	4	alice	0	staged	stream=14 work=0:0:100004 4096/65536 bytes, no FIN
+staging	5	alice	0	staged	stream=18 work=0:0:100005 4096/65536 bytes, no FIN
+staging	6	alice	0	staged	stream=22 work=0:0:100006 4096/65536 bytes, no FIN
+staging	7	alice	0	staged	stream=26 work=0:0:100007 4096/65536 bytes, no FIN
+staging	8	alice	0	staged	stream=30 work=0:0:100008 4096/65536 bytes, no FIN
+staging	9	alice	0	staged	stream=34 work=0:0:100009 4096/65536 bytes, no FIN
+staging	10	alice	0	staged	stream=38 work=0:0:100010 4096/65536 bytes, no FIN
+staging	11	alice	0	staged	stream=42 work=0:0:100011 4096/65536 bytes, no FIN
+staging	12	alice	0	staged	stream=46 work=0:0:100012 4096/65536 bytes, no FIN
+staging	13	alice	0	staged	stream=50 work=0:0:100013 4096/65536 bytes, no FIN
+staging	14	alice	0	staged	stream=54 work=0:0:100014 4096/65536 bytes, no FIN
+staging	15	alice	0	staged	stream=58 work=0:0:100015 4096/65536 bytes, no FIN
+staging	16	alice	0	staged	stream=62 work=0:0:100016 4096/65536 bytes, no FIN
+staging	17	alice	1	staged	stream=2 work=0:0:100018 4096/65536 bytes, no FIN
+staging	18	alice	1	staged	stream=6 work=0:0:100019 4096/65536 bytes, no FIN
+staging	19	alice	1	staged	stream=10 work=0:0:100020 4096/65536 bytes, no FIN
+staging	20	alice	1	staged	stream=14 work=0:0:100021 4096/65536 bytes, no FIN
+staging	21	alice	1	staged	stream=18 work=0:0:100022 4096/65536 bytes, no FIN
+staging	22	alice	1	staged	stream=22 work=0:0:100023 4096/65536 bytes, no FIN
+staging	23	alice	1	staged	stream=26 work=0:0:100024 4096/65536 bytes, no FIN
+staging	24	alice	1	staged	stream=30 work=0:0:100025 4096/65536 bytes, no FIN
+staging	25	alice	1	staged	stream=34 work=0:0:100026 4096/65536 bytes, no FIN
+staging	26	alice	1	staged	stream=38 work=0:0:100027 4096/65536 bytes, no FIN
+staging	27	alice	1	staged	stream=42 work=0:0:100028 4096/65536 bytes, no FIN
+staging	28	alice	1	staged	stream=46 work=0:0:100029 4096/65536 bytes, no FIN
+staging	29	alice	1	staged	stream=50 work=0:0:100030 4096/65536 bytes, no FIN
+staging	30	alice	1	staged	stream=54 work=0:0:100031 4096/65536 bytes, no FIN
+staging	31	alice	1	staged	stream=58 work=0:0:100032 4096/65536 bytes, no FIN
+staging	32	alice	1	staged	stream=62 work=0:0:100033 4096/65536 bytes, no FIN
+staging	33	alice	2	staged	stream=2 work=0:0:100035 4096/65536 bytes, no FIN
+staging	34	alice	2	staged	stream=6 work=0:0:100036 4096/65536 bytes, no FIN
+staging	35	alice	2	staged	stream=10 work=0:0:100037 4096/65536 bytes, no FIN
+staging	36	alice	2	staged	stream=14 work=0:0:100038 4096/65536 bytes, no FIN
+staging	37	alice	2	staged	stream=18 work=0:0:100039 4096/65536 bytes, no FIN
+staging	38	alice	2	staged	stream=22 work=0:0:100040 4096/65536 bytes, no FIN
+staging	39	alice	2	staged	stream=26 work=0:0:100041 4096/65536 bytes, no FIN
+staging	40	alice	2	staged	stream=30 work=0:0:100042 4096/65536 bytes, no FIN
+staging	41	alice	2	staged	stream=34 work=0:0:100043 4096/65536 bytes, no FIN
+staging	42	alice	2	staged	stream=38 work=0:0:100044 4096/65536 bytes, no FIN
+staging	43	alice	2	staged	stream=42 work=0:0:100045 4096/65536 bytes, no FIN
+staging	44	alice	2	staged	stream=46 work=0:0:100046 4096/65536 bytes, no FIN
+staging	45	alice	2	staged	stream=50 work=0:0:100047 4096/65536 bytes, no FIN
+staging	46	alice	2	staged	stream=54 work=0:0:100048 4096/65536 bytes, no FIN
+staging	47	alice	2	staged	stream=58 work=0:0:100049 4096/65536 bytes, no FIN
+staging	48	alice	2	staged	stream=62 work=0:0:100050 4096/65536 bytes, no FIN
+staging	49	alice	3	staged	stream=2 work=0:0:100052 4096/65536 bytes, no FIN
+staging	50	alice	3	staged	stream=6 work=0:0:100053 4096/65536 bytes, no FIN
+staging	51	alice	3	staged	stream=10 work=0:0:100054 4096/65536 bytes, no FIN
+staging	52	alice	3	staged	stream=14 work=0:0:100055 4096/65536 bytes, no FIN
+staging	53	alice	3	staged	stream=18 work=0:0:100056 4096/65536 bytes, no FIN
+staging	54	alice	3	staged	stream=22 work=0:0:100057 4096/65536 bytes, no FIN
+staging	55	alice	3	staged	stream=26 work=0:0:100058 4096/65536 bytes, no FIN
+staging	56	alice	3	staged	stream=30 work=0:0:100059 4096/65536 bytes, no FIN
+staging	57	alice	3	staged	stream=34 work=0:0:100060 4096/65536 bytes, no FIN
+staging	58	alice	3	staged	stream=38 work=0:0:100061 4096/65536 bytes, no FIN
+staging	59	alice	3	staged	stream=42 work=0:0:100062 4096/65536 bytes, no FIN
+staging	60	alice	3	staged	stream=46 work=0:0:100063 4096/65536 bytes, no FIN
+staging	61	alice	3	staged	stream=50 work=0:0:100064 4096/65536 bytes, no FIN
+staging	62	alice	3	staged	stream=54 work=0:0:100065 4096/65536 bytes, no FIN
+staging	63	alice	3	staged	stream=58 work=0:0:100066 4096/65536 bytes, no FIN
+staging	64	alice	3	staged	stream=62 work=0:0:100067 4096/65536 bytes, no FIN
+staging	65	alice	4	staged	stream=2 work=0:0:100069 4096/65536 bytes, no FIN
+staging	66	alice	4	staged	stream=6 work=0:0:100070 4096/65536 bytes, no FIN
+staging	67	alice	4	staged	stream=10 work=0:0:100071 4096/65536 bytes, no FIN
+staging	68	alice	4	staged	stream=14 work=0:0:100072 4096/65536 bytes, no FIN
+staging	69	alice	4	staged	stream=18 work=0:0:100073 4096/65536 bytes, no FIN
+staging	70	alice	4	staged	stream=22 work=0:0:100074 4096/65536 bytes, no FIN
+staging	71	alice	4	staged	stream=26 work=0:0:100075 4096/65536 bytes, no FIN
+staging	72	alice	4	staged	stream=30 work=0:0:100076 4096/65536 bytes, no FIN
+staging	73	alice	4	staged	stream=34 work=0:0:100077 4096/65536 bytes, no FIN
+staging	74	alice	4	staged	stream=38 work=0:0:100078 4096/65536 bytes, no FIN
+staging	75	alice	4	staged	stream=42 work=0:0:100079 4096/65536 bytes, no FIN
+staging	76	alice	4	staged	stream=46 work=0:0:100080 4096/65536 bytes, no FIN
+staging	77	alice	4	staged	stream=50 work=0:0:100081 4096/65536 bytes, no FIN
+staging	78	alice	4	staged	stream=54 work=0:0:100082 4096/65536 bytes, no FIN
+staging	79	alice	4	staged	stream=58 work=0:0:100083 4096/65536 bytes, no FIN
+staging	80	alice	4	staged	stream=62 work=0:0:100084 4096/65536 bytes, no FIN
+staging	81	alice	5	staged	stream=2 work=0:0:100086 4096/65536 bytes, no FIN
+staging	82	alice	5	staged	stream=6 work=0:0:100087 4096/65536 bytes, no FIN
+staging	83	alice	5	staged	stream=10 work=0:0:100088 4096/65536 bytes, no FIN
+staging	84	alice	5	staged	stream=14 work=0:0:100089 4096/65536 bytes, no FIN
+staging	85	alice	5	staged	stream=18 work=0:0:100090 4096/65536 bytes, no FIN
+staging	86	alice	5	staged	stream=22 work=0:0:100091 4096/65536 bytes, no FIN
+staging	87	alice	5	staged	stream=26 work=0:0:100092 4096/65536 bytes, no FIN
+staging	88	alice	5	staged	stream=30 work=0:0:100093 4096/65536 bytes, no FIN
+staging	89	alice	5	staged	stream=34 work=0:0:100094 4096/65536 bytes, no FIN
+staging	90	alice	5	staged	stream=38 work=0:0:100095 4096/65536 bytes, no FIN
+staging	91	alice	5	staged	stream=42 work=0:0:100096 4096/65536 bytes, no FIN
+staging	92	alice	5	staged	stream=46 work=0:0:100097 4096/65536 bytes, no FIN
+staging	93	alice	5	staged	stream=50 work=0:0:100098 4096/65536 bytes, no FIN
+staging	94	alice	5	staged	stream=54 work=0:0:100099 4096/65536 bytes, no FIN
+staging	95	alice	5	staged	stream=58 work=0:0:100100 4096/65536 bytes, no FIN
+staging	96	alice	5	staged	stream=62 work=0:0:100101 4096/65536 bytes, no FIN
+staging	-	alice	6	setup-refused	read control frame prefix: connection lost: closed by peer: owner connection ceiling (code 516)
+staging	97	bob	0	staged	stream=2 work=0:0:100120 4096/65536 bytes, no FIN
+staging	98	bob	0	staged	stream=6 work=0:0:100121 4096/65536 bytes, no FIN
+staging	99	bob	0	staged	stream=10 work=0:0:100122 4096/65536 bytes, no FIN
+staging	100	bob	0	staged	stream=14 work=0:0:100123 4096/65536 bytes, no FIN
+staging	101	bob	0	staged	stream=18 work=0:0:100124 4096/65536 bytes, no FIN
+staging	102	bob	0	staged	stream=22 work=0:0:100125 4096/65536 bytes, no FIN
+staging	103	bob	0	staged	stream=26 work=0:0:100126 4096/65536 bytes, no FIN
+staging	104	bob	0	staged	stream=30 work=0:0:100127 4096/65536 bytes, no FIN
+staging	105	bob	0	staged	stream=34 work=0:0:100128 4096/65536 bytes, no FIN
+staging	106	bob	0	staged	stream=38 work=0:0:100129 4096/65536 bytes, no FIN
+staging	107	bob	0	staged	stream=42 work=0:0:100130 4096/65536 bytes, no FIN
+staging	108	bob	0	staged	stream=46 work=0:0:100131 4096/65536 bytes, no FIN
+staging	109	bob	0	staged	stream=50 work=0:0:100132 4096/65536 bytes, no FIN
+staging	110	bob	0	staged	stream=54 work=0:0:100133 4096/65536 bytes, no FIN
+staging	111	bob	0	staged	stream=58 work=0:0:100134 4096/65536 bytes, no FIN
+staging	112	bob	0	staged	stream=62 work=0:0:100135 4096/65536 bytes, no FIN
+staging	113	bob	1	staged	stream=2 work=0:0:100137 4096/65536 bytes, no FIN
+staging	114	bob	1	staged	stream=6 work=0:0:100138 4096/65536 bytes, no FIN
+staging	115	bob	1	staged	stream=10 work=0:0:100139 4096/65536 bytes, no FIN
+staging	116	bob	1	staged	stream=14 work=0:0:100140 4096/65536 bytes, no FIN
+staging	117	bob	1	staged	stream=18 work=0:0:100141 4096/65536 bytes, no FIN
+staging	118	bob	1	staged	stream=22 work=0:0:100142 4096/65536 bytes, no FIN
+staging	119	bob	1	staged	stream=26 work=0:0:100143 4096/65536 bytes, no FIN
+staging	120	bob	1	staged	stream=30 work=0:0:100144 4096/65536 bytes, no FIN
+staging	121	bob	1	staged	stream=34 work=0:0:100145 4096/65536 bytes, no FIN
+staging	122	bob	1	staged	stream=38 work=0:0:100146 4096/65536 bytes, no FIN
+staging	123	bob	1	staged	stream=42 work=0:0:100147 4096/65536 bytes, no FIN
+staging	124	bob	1	staged	stream=46 work=0:0:100148 4096/65536 bytes, no FIN
+staging	125	bob	1	staged	stream=50 work=0:0:100149 4096/65536 bytes, no FIN
+staging	126	bob	1	staged	stream=54 work=0:0:100150 4096/65536 bytes, no FIN
+staging	127	bob	1	staged	stream=58 work=0:0:100151 4096/65536 bytes, no FIN
+staging	128	bob	1	staged	stream=62 work=0:0:100152 4096/65536 bytes, no FIN
+staging	132	bob	2	refused	tag_kind=1 tag_id=14 code=4 detail="input handle capacity exhausted"
+staging	134	bob	2	refused	tag_kind=1 tag_id=22 code=4 detail="input handle capacity exhausted"
+staging	129	bob	2	refused	tag_kind=1 tag_id=2 code=4 detail="input handle capacity exhausted"
+staging	130	bob	2	refused	tag_kind=1 tag_id=6 code=4 detail="input handle capacity exhausted"
+staging	131	bob	2	refused	tag_kind=1 tag_id=10 code=4 detail="input handle capacity exhausted"
+staging	133	bob	2	refused	tag_kind=1 tag_id=18 code=4 detail="input handle capacity exhausted"
+staging	135	bob	2	refused	tag_kind=1 tag_id=26 code=4 detail="input handle capacity exhausted"
+staging	143	bob	2	refused	tag_kind=1 tag_id=58 code=4 detail="input handle capacity exhausted"
+staging	136	bob	2	refused	tag_kind=1 tag_id=30 code=4 detail="input handle capacity exhausted"
+staging	137	bob	2	refused	tag_kind=1 tag_id=34 code=4 detail="input handle capacity exhausted"
+staging	138	bob	2	refused	tag_kind=1 tag_id=38 code=4 detail="input handle capacity exhausted"
+staging	139	bob	2	refused	tag_kind=1 tag_id=42 code=4 detail="input handle capacity exhausted"
+staging	140	bob	2	refused	tag_kind=1 tag_id=46 code=4 detail="input handle capacity exhausted"
+staging	141	bob	2	refused	tag_kind=1 tag_id=50 code=4 detail="input handle capacity exhausted"
+staging	142	bob	2	refused	tag_kind=1 tag_id=54 code=4 detail="input handle capacity exhausted"
+staging	144	bob	2	refused	tag_kind=1 tag_id=62 code=4 detail="input handle capacity exhausted"
+charged	-	-	-	probe	still charged: a further staging attempt while every transfer is held is refused again, code=4 detail="input handle capacity exhausted"
+existing	-	-	-	completion	kept: the staging transfer accepted before exhaustion (work 0:0:100152, stream 62) completed to an admission receipt naming stream 62 while NEW work stayed refused
+recovery-after-cleanup	1	alice	-	probe	accepted on attempt 1 (staging transfer 2 opened)
+recovery-after-restart	1	alice	-	probe	accepted on attempt 1 (staging transfer 2 opened)

@@ -1,0 +1,10 @@
+policy_execution_limit_ms	60000
+policy_output_retention_ms	5000
+policy_receipt_retention_ms	20000
+clock_mode	real-short-policy
+input_len	16777216
+input_sha256	3b464e0b55d7c0c95dcb66ed412d4812840a32abeddd8ee5650012d1a11cef7a
+slow_reader	raw result stream opened before output expiry and drained 262144 bytes every 150 ms, so the transfer is open when availability passes
+new_read_after_expiry	CLI read refuses named EXPIRED (6), never OUTPUT_UNAVAILABLE (16), while the pinned read is still open
+pinned_read	completes byte-exact against the oracle after the expiry
+object_dir_evidence	sampled after publication, at expiry during the read, after the read; reclamation recorded (supplementary), never inferred

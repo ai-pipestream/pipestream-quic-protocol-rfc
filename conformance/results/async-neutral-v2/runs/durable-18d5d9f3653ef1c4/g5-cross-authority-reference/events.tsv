@@ -1,0 +1,13 @@
+1	durable-18d5d9f3653ef1c4	g5-cross-authority-reference	rust	client	298159-18d5dae1b75cd27c	1			0:0:1	1		artifacts/input.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+1	durable-18d5d9f3653ef1c4	g5-cross-authority-reference	rust	client	298159-18d5dae1b75cd27c	2	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5d9f3653ef1c4	g5-cross-authority-reference	rust	client	298159-18d5dae1b75cd27c	3	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5d9f3653ef1c4	g5-cross-authority-reference	rust	client	298159-18d5dae1b75cd27c	4	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g5-cross-authority-reference	rust	client	298159-18d5dae1b75cd27c	5	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g5-cross-authority-reference	rust	client	298159-18d5dae1b75cd27c	6	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g5-cross-authority-reference	rust	client	298159-18d5dae1b75cd27c	7	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d5d9f3653ef1c4	g5-cross-authority-reference	rust	client	298159-18d5dae1b75cd27c	8	RESULT_INSTALLED		0:0:1	1		artifacts/output-x.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+1	durable-18d5d9f3653ef1c4	g5-cross-authority-reference	rust	client	298159-18d5dae1b75cd27c	9	REFUSAL_RECEIVED		0:0:1	1	7	artifacts/arm-a-attach-against-y.txt	83	261fb2c1a3bbb450381764f94b8d802a5005e1137b79e0f0a0ba2484a0859420
+1	durable-18d5d9f3653ef1c4	g5-cross-authority-reference	rust	client	298159-18d5dae1b75cd27c	10	REFUSAL_RECEIVED		0:0:1	1	7	artifacts/arm-a-read-against-y.txt	83	261fb2c1a3bbb450381764f94b8d802a5005e1137b79e0f0a0ba2484a0859420
+1	durable-18d5d9f3653ef1c4	g5-cross-authority-reference	rust	client	298159-18d5dae1b75cd27c	11	REFUSAL_RECEIVED		0:0:1	1	7	artifacts/arm-a-lookup-against-y.txt	83	261fb2c1a3bbb450381764f94b8d802a5005e1137b79e0f0a0ba2484a0859420
+1	durable-18d5d9f3653ef1c4	g5-cross-authority-reference	rust	client	298159-18d5dae1b75cd27c	12	REFUSAL_RECEIVED		0:0:1	1	7	artifacts/arm-a-watch-against-y.txt	83	261fb2c1a3bbb450381764f94b8d802a5005e1137b79e0f0a0ba2484a0859420
+1	durable-18d5d9f3653ef1c4	g5-cross-authority-reference	rust	client	298159-18d5dae1b75cd27c	13	REFUSAL_RECEIVED		0:0:1	1	5	artifacts/arm-b-select-on-y.txt	84	83875cfa7bbf75aab36fe110600de439eef66804333535aff98b082020d6a0c3

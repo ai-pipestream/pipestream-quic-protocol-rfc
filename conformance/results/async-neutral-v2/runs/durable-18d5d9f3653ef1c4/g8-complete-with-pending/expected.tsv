@@ -1,0 +1,7 @@
+root_members	0:0:1 copy/v2 (settled first), 0:0:2 reassemble/v2 mode 1 (held)
+expected_root_seal_sha256	a9f577c055a6c3bce8693ebb32ca91363c3a24c4bce904045bf04a71d44ecee5
+complete_pending_parent	refusal, never a COMPLETED claim; parent must stay nonterminal
+checkpoint_open_root	named wire refusal while obligations are open (actual code recorded)
+live_transfer_same_connection	named gap: single-shot CLI ops each own a connection; approximated by a concurrent download on a second journal
+child_checkpoint	descendant COVERAGE before root COVERAGE (bottom-up settlement; the authority refuses a root checkpoint while descendant coverage is missing)
+settled_complete	root COVERAGE then COMPLETED

@@ -1,0 +1,5 @@
+iterations	6
+iteration_input_lens	12582912,8388608,1048576,262144,65536,65536
+winning_order_rule	per iteration: disposition=1 → publication won (terminal SUCCEEDED(5), result read byte-exact); disposition=0 → fence won (terminal CANCELLED(7), result read refuses a named Section 12.2 code); exactly one terminal state
+evidence_rule	hook-free statistical variant (scenario-matrix-g4.md): no subject hook can pause inside the application callback, so seeded input sizes create the order asymmetry; winning_order is recorded per iteration, never faked
+never	both winners, neither winner, terminal FAILED(6), silent read failure

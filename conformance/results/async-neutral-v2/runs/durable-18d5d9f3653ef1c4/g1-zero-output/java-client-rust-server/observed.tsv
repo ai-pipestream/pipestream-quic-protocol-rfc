@@ -1,0 +1,10 @@
+server_subject	rust
+client_subject	java
+alpn	pipestream/2
+application	consume/v2
+input_len	65536
+terminal_state	5
+manifest_objects	0
+select_index0_refusal	FRAME_ERROR: integer outside schema range (java-client deviation; server refuses NOT_FOUND)
+watch_terminal	WORK revision=3 state=5 attempt=1 child=none VIEW WorkView[work=WorkKey[scope=0, producer=0, entity=1], state=SUCCEEDED, attempt=1, input=Input[length=65536, sha256=e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682, contentType=application/octet-stream], admittedAt=1789576112567, deadline=1789576172567, terminalAt=1789576112686, receiptUntil=1789662512686, outputUntil=1789579712686, child=null, manifest=Manifest[authority=issuer-a, owner=alice, generation=1, work=WorkKey[scope=0, producer=0, entity=1], attempt=1, inputSha256=e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682, committedAt=1789576112686, availableUntil=1789579712686, outputs=[]], diagnostic=null]
+java_jar_sha256	5a149b9ddc88b4c8ce3774c8296e058f7a41ddc384906209d54b9eeefa76202c

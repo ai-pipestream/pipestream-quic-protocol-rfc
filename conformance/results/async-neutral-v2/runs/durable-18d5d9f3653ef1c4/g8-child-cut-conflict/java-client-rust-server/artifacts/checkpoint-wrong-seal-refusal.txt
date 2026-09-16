@@ -1,0 +1,5 @@
+exit=exit status: 1
+stdout:
+
+stderr:
+INTEGRITY_ERROR: INTEGRITY_ERROR: checkpoint seal contradicts verified membership

@@ -1,0 +1,39 @@
+server_subject	rust
+client_subject	rust
+iteration_1_input_len	12582912
+iteration_1_winning_order	fence
+iteration_1_disposition	0
+iteration_1_final_state	7 (CANCELLED)
+iteration_1_state_at_commit	CANCELLED
+iteration_1_read	result read refused NOT_FOUND (5): NOT_FOUND: no retained output selection
+iteration_2_input_len	8388608
+iteration_2_winning_order	fence
+iteration_2_disposition	0
+iteration_2_final_state	7 (CANCELLED)
+iteration_2_state_at_commit	CANCELLED
+iteration_2_read	result read refused NOT_FOUND (5): NOT_FOUND: no retained output selection
+iteration_3_input_len	1048576
+iteration_3_winning_order	publication
+iteration_3_disposition	1
+iteration_3_final_state	5 (SUCCEEDED)
+iteration_3_state_at_commit	SUCCEEDED
+iteration_3_read	result read byte-exact (sha256=5a6cf9381ea769cda94180bb005d9edcd6bc756075c53645cc6b85c7cee927a3)
+iteration_4_input_len	262144
+iteration_4_winning_order	publication
+iteration_4_disposition	1
+iteration_4_final_state	5 (SUCCEEDED)
+iteration_4_state_at_commit	SUCCEEDED
+iteration_4_read	result read byte-exact (sha256=ea0936f447744f3df49b9a36b31ec08d17403a7ad1bd6c59ab85a01e73c84127)
+iteration_5_input_len	65536
+iteration_5_winning_order	publication
+iteration_5_disposition	1
+iteration_5_final_state	5 (SUCCEEDED)
+iteration_5_state_at_commit	SUCCEEDED
+iteration_5_read	result read byte-exact (sha256=8e511e6bb397e1af9d661ec08f7dd2072b8b562c3789d398c6cc45683181ded9)
+iteration_6_input_len	65536
+iteration_6_winning_order	publication
+iteration_6_disposition	1
+iteration_6_final_state	5 (SUCCEEDED)
+iteration_6_state_at_commit	SUCCEEDED
+iteration_6_read	result read byte-exact (sha256=f308f0c930e7dbee2d9bad02ef635bcb22ad17002dec38c16df326da906d69c9)
+orders_observed	publication:4,fence:2

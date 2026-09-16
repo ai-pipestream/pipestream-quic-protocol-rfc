@@ -1,0 +1,8 @@
+server_subject	rust
+client_subject	rust
+clock_mode	real-short-policy
+read_after_output_expiry	named EXPIRED (6), never OUTPUT_UNAVAILABLE (16) (artifacts/read-after-output-expiry.txt)
+manifest_after_output_expiry	readable (MANIFEST)
+work_view_after_output_expiry	state=5 attempt=1, view unchanged
+lookup_after_output_expiry	RECEIPT answers
+receipt_until	1789577186687

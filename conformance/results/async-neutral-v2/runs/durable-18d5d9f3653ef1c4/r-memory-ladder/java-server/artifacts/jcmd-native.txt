@@ -1,0 +1,8 @@
+=== jcmd 543889 VM.native_memory summary (exit exit status: 0) ===
+543889:
+Native memory tracking is not enabled
+
+=== jcmd 543889 VM.flags (exit exit status: 0) ===
+543889:
+-XX:-AOTInvokeDynamicLinking -XX:-AOTRecordTraining -XX:-AOTReplayTraining -XX:CICompilerCount=15 -XX:ConcGCThreads=6 -XX:+EagerJVMCI -XX:+EnableJVMCI -XX:+EnableJVMCIProduct -XX:G1ConcRefinementThreads=23 -XX:G1EagerReclaimRemSetThreshold=10 -XX:G1HeapRegionSize=1048576 -XX:G1RemSetArrayOfCardsEntries=10 -XX:G1RemSetHowlMaxNumBuckets=8 -XX:G1RemSetHowlNumBuckets=4 -XX:InitialHeapSize=268435456 -XX:-IntelJccErratumMitigation -XX:MarkStackSize=4194304 -XX:MarkStackSizeMax=536870912 -XX:MaxHeapSize=2147483648 -XX:MaxNewSize=1287651328 -XX:MinHeapDeltaBytes=1048576 -XX:MinHeapSize=268435456 -XX:NonNMethodCodeHeapSize=8765440 -XX:NonProfiledCodeHeapSize=121450496 -XX:ProfiledCodeHeapSize=121450496 -XX:ReservedCodeCacheSize=251666432 -XX:+SegmentedCodeCache -XX:SoftMaxHeapSize=2147483648 -XX:-THPStackMitigation -XX:ThreadPriorityPolicy=1 -XX:-UnlockExperimentalVMOptions -XX:+UseCompressedOops -XX:+UseG1GC -XX:X86ICacheSync=3 
+

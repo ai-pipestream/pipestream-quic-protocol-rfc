@@ -1,0 +1,4 @@
+1	durable-18d5d9f3653ef1c4	r-native-credit	rust	client	298159-18d5dc187a37da50	1	REQUEST_SENT					artifacts/capabilities-offer.hex	84	c40cc304b3bf5366ec41a3a239d42a96f26a73a4c2e05ed6582fb0bbb7eba8eb
+1	durable-18d5d9f3653ef1c4	r-native-credit	rust	client	298159-18d5dc187a37da50	2	CREDIT_TRANSFER_MEASURED							
+1	durable-18d5d9f3653ef1c4	r-native-credit	rust	client	298159-18d5dc187a37da50	3	CREDIT_RELEASE_OBSERVED							
+1	durable-18d5d9f3653ef1c4	r-native-credit	rust	client	298159-18d5dc187a37da50	4	CREDIT_EVIDENCE					artifacts/credit.tsv	867	01cc2c2fb505cf1732298ac839cf6c1a3c6a938a8ff12c4981e23ea1d8242218

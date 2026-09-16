@@ -1,0 +1,3 @@
+would_do	regress the subject's clock, then attempt admission, retry, publication and destructive expiry
+would_assert	fresh promises refuse CLOCK_UNSAFE (17); read-only retrieval continues; no destructive expiry under unsafe time; after recovery the persisted watermark still refuses back-dated commits
+missing_capability	a subject fixture clock (interface-v1 clock-set) or an untrusted-clock mode on both subjects
