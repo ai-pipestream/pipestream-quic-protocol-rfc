@@ -167,3 +167,11 @@ pinned by tests.
   and the answer discloses nothing about retained sessions. An owner that
   cannot be authorized is still UNAUTHORIZED. Java already did this; Rust
   answered UNAUTHORIZED and changed.
+- **Per-principal connection ceiling (Section 12.1, 2026-09-16).** Connection
+  admission over a global ceiling stays a transport CONNECTION_REFUSED, as
+  before. A per-principal ceiling is only known after authentication, so the
+  surplus connection is closed with an application close carrying
+  LIMIT_EXCEEDED before capabilities are selected, and a client reports that
+  code rather than a bare transport failure. Both authorities already did the
+  former; the Rust client dropped the code and now maps it, as the Java client
+  did. Found by the durable-index-build example (friction note F3).

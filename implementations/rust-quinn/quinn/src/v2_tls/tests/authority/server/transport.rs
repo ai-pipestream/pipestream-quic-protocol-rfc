@@ -334,3 +334,99 @@ async fn abandoned_input_is_refused_without_poisoning_following_control() {
     client.closed().await;
     running.finish().await;
 }
+
+async fn try_connect(running: &Running, principal: usize) -> anyhow::Result<Transport> {
+    Transport::connect(
+        "127.0.0.1:0".parse().unwrap(),
+        running.address,
+        "localhost",
+        wire::Security::new(
+            roots(&running.tls.issuer),
+            Some(running.tls.clients[principal].identity()),
+        )
+        .unwrap(),
+        client_options(),
+    )
+    .await
+}
+
+async fn connect_refusal(running: &Running, principal: usize) -> anyhow::Error {
+    match try_connect(running, principal).await {
+        Ok(_) => panic!("connect succeeded past the ceiling"),
+        Err(e) => e,
+    }
+}
+
+/// Section 12.1 connection ceilings as a public client sees them (the
+/// durable-index-build example met this as a bare "connection lost"): over the
+/// global ceiling the peer refuses at the transport and that name reaches the
+/// caller; over the per-principal ceiling the peer closes with LIMIT_EXCEEDED
+/// before selecting capabilities and the client reports exactly that code, as
+/// the Java client does; and the slot is free again once its holder leaves.
+#[tokio::test]
+async fn public_client_names_a_connection_ceiling_refusal_and_reconnects_once_the_holder_leaves() {
+    let mut limits = options();
+    limits.connections = 2;
+    limits.connections_per_principal = 1;
+    limits.anonymous_connections = 1;
+    let running = Running::new(limits);
+    let first = connect(&running, client_options(), 0).await;
+    // Every mapped fixture certificate is one owner, so the second global slot is
+    // held by an anonymous Core connection.
+    let (anonymous_endpoint, anonymous) = running.raw(None).await;
+    let anonymous = anonymous.unwrap();
+    // Global ceiling: a transport refusal, named as such.
+    let refused = connect_refusal(&running, 0).await;
+    assert!(
+        refused
+            .downcast_ref::<pipestream_core::v2::Error>()
+            .is_none()
+            && format!("{refused:#}").contains("refused to accept a new connection"),
+        "{refused:#}"
+    );
+    drop(anonymous);
+    drop(anonymous_endpoint);
+    // Per-principal ceiling: an application close naming LIMIT_EXCEEDED, reported by code.
+    let named = tokio::time::timeout(HANDSHAKE, async {
+        loop {
+            let failure = connect_refusal(&running, 0).await;
+            if let Some(e) = failure.downcast_ref::<pipestream_core::v2::Error>() {
+                return e.clone();
+            }
+            // The global slot the second holder released may still be draining.
+            assert!(
+                format!("{failure:#}").contains("refused to accept a new connection"),
+                "{failure:#}"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(named.code, ErrorCode::LimitExceeded, "{named}");
+    assert_eq!(named.detail, "peer closed connection", "{named}");
+    // The holder leaves and the same principal connects again.
+    drop(first);
+    let again = tokio::time::timeout(HANDSHAKE, async {
+        loop {
+            match try_connect(&running, 0).await {
+                Ok(client) => return client,
+                Err(failure) => {
+                    let named = failure.downcast_ref::<pipestream_core::v2::Error>();
+                    assert!(
+                        named.is_some_and(|e| e.code == ErrorCode::LimitExceeded)
+                            || format!("{failure:#}")
+                                .contains("refused to accept a new connection"),
+                        "{failure:#}"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(again.selected().has(DURABLE_WORK));
+    drop(again);
+    running.finish().await;
+}

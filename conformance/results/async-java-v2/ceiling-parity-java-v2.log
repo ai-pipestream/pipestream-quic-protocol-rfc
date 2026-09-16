@@ -1,0 +1,5 @@
+start 2026-09-16T16:19:14Z tree ea025865 tests=ai/pipestream/quic/v2/DurableClientCeilingTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.845 s -- in ai.pipestream.quic.v2.DurableClientCeilingTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+RUN_EXIT=0 at 2026-09-16T16:19:19Z

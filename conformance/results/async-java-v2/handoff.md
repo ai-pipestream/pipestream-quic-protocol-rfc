@@ -694,6 +694,23 @@ out waiting for a restart that never came.
   root drive; the new test was run red first against the previous `FixtureMain`
   (fails at the iteration 1 assertion) before the fix.
 
+### Connection ceiling parity (2026-09-16, from Muse's durable-index-build example, F3)
+
+The example's merge reader met the Rust authority's per-principal connection
+ceiling (4 by default, 16 connections in all) and the Rust client reported it
+as a bare "connection lost". Not a Java defect: `CoreServer` closes the surplus
+connection with an application close LIMIT_EXCEEDED "owner connection ceiling"
+and `DurableClient` already maps close codes 0x201..0x212 to the named refusal
+"peer closed connection". The Rust client now does the same
+(`negotiation_failure`), Section 12.1 states the rule (S12-056a), and both
+implementations pin it: `DurableClientCeilingTest.aSurplusConnectionForTheOwnerIsRefusedLimitExceededAndTheSlotFreesWhenTheHolderLeaves`
+(one connection per owner, the second reports LIMIT_EXCEEDED, the slot frees
+when the holder closes and the owner reconnects) and, in Rust,
+`public_client_names_a_connection_ceiling_refusal_and_reconnects_once_the_holder_leaves`
+(both tiers: the global tier keeps the transport's "refused to accept a new
+connection" in the message, the per-principal tier is the named code). The
+Java main tree is unchanged by this round; the new test ran green on its own.
+
 ## 6. Build and verification commands
 
 ```

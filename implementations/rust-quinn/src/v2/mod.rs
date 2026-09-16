@@ -84,6 +84,31 @@ impl ErrorCode {
     pub fn quic_error(self) -> u64 {
         0x200 + self as u64
     }
+
+    /// The code named by an application close frame, when it is one of these.
+    pub fn from_quic_error(code: u64) -> Option<Self> {
+        const ALL: [ErrorCode; 18] = [
+            ErrorCode::FrameError,
+            ErrorCode::ExtensionUnsupported,
+            ErrorCode::Unauthorized,
+            ErrorCode::LimitExceeded,
+            ErrorCode::NotFound,
+            ErrorCode::Expired,
+            ErrorCode::Conflict,
+            ErrorCode::IntegrityError,
+            ErrorCode::NotReady,
+            ErrorCode::WaitTimeout,
+            ErrorCode::DeadlineExceeded,
+            ErrorCode::Cancelled,
+            ErrorCode::ApplicationUnsupported,
+            ErrorCode::ControlReset,
+            ErrorCode::InternalError,
+            ErrorCode::OutputUnavailable,
+            ErrorCode::ClockUnsafe,
+            ErrorCode::AlreadyTerminal,
+        ];
+        ALL.into_iter().find(|c| c.quic_error() == code)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
