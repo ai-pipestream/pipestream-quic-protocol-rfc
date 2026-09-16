@@ -1,0 +1,3 @@
+corpus	19 frozen control refuse-rows of test-vectors/v2/wire.tsv; the driver checks each row's sha256 and replays the bytes verbatim (input-header roots and server-record roots are not control frames: two go to g6-stream-identity-and-fin, three are named gaps there)
+expected_scope	connection-fatal: the server closes the connection with QUIC application code 0x201 (FRAME_ERROR) or 0x202 (the one EXTENSION_UNSUPPORTED vector), never a correlated refusal frame
+position_rule	capabilities roots replay as the first frame; session roots after a valid capabilities exchange; scope/work roots after a session create receipt

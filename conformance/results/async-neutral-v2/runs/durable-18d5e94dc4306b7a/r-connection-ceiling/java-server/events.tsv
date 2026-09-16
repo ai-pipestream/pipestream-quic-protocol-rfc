@@ -1,0 +1,3 @@
+1	durable-18d5e94dc4306b7a	r-connection-ceiling	rust	client	857596-18d5ea9cea92b070	1	CONNECTION_REFUSAL_OBSERVED							
+1	durable-18d5e94dc4306b7a	r-connection-ceiling	rust	client	857596-18d5ea9cea92b070	2	CONNECTION_REFUSAL_OBSERVED							
+1	durable-18d5e94dc4306b7a	r-connection-ceiling	rust	client	857596-18d5ea9cea92b070	3	CEILING_EVIDENCE					artifacts/connections.tsv	1457	acfd5c047a39635914a287e47b9de62e3e1da7e64ff234597b523c0a66987b43

@@ -1,0 +1,11 @@
+checkpoint	elapsed_ms	udp_tx_bytes	udp_rx_bytes	sent_packets	lost_packets	rx_max_data	rx_max_stream_data	rx_max_streams_uni	rx_stop_sending	tx_data_blocked	tx_stream_data_blocked	tx_streams_blocked_uni	tx_stream
+session-established	0	8473	7357	16	0	0	0	0	0	0	0	0	2
+header-written	37	8576	7491	18	0	0	0	0	0	0	0	0	3
+payload-write-returned	122	17219738	147657	13322	0	340	2040	0	0	0	0	0	12289
+transport-completion	200	17220020	148020	13330	0	341	2048	1	0	0	0	0	12290
+admission-receipt	218	17220020	148140	13330	0	341	2048	1	0	0	0	0	12290
+before-refusals	223	17220020	148140	13330	0	341	2048	1	0	0	0	0	12290
+refusals-read	224	17220662	148664	13335	0	341	2048	1	4	0	0	0	12294
+credit-released	8356	17220817	148792	13339	0	341	2048	2	4	0	0	0	12294
+credit-reused	8356	17220817	148792	13339	0	341	2048	2	4	0	0	0	12294
+end	8364	17220883	148886	13341	0	341	2048	3	4	0	0	0	12295

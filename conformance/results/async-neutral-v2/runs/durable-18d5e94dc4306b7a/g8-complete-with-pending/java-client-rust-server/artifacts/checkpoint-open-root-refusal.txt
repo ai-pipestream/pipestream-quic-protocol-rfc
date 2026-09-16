@@ -1,0 +1,7 @@
+exit=exit status: 1
+stdout:
+REFUSED code=WAIT_TIMEOUT detail=checkpoint wait expired
+
+stderr:
+Picked up JAVA_TOOL_OPTIONS: -Djava.io.tmpdir=/home/krickert/.rfc-tmp/claude-m22/tmp
+WAIT_TIMEOUT: WAIT_TIMEOUT: authority refused: checkpoint wait expired

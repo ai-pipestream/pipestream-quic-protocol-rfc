@@ -1,0 +1,6 @@
+exit=exit status: 0
+stdout:
+COMPLETED ScopeSummary[scope=0, producer=0, parent=null, seal=444702408fc06ce1a8909f0db362f468199b490cac8495e64c079eeec55da6ab, declared=1, counts=Counts[success=1, failure=0, cancelled=0, skipped=0], statusRoot=14abf7f1f87f7bacc03c918648f46036ae3827e6efb47a161ba93b8ffa1e3e00, closedAt=1789594178122]
+
+stderr:
+Picked up JAVA_TOOL_OPTIONS: -Djava.io.tmpdir=/home/krickert/.rfc-tmp/claude-m22/tmp

@@ -1,0 +1,11 @@
+server_subject	rust
+client_subject	rust (raw probe)
+alpn	pipestream/2
+wrong_direction_message	APPLICATION_CLOSE code=0x201 reason="FRAME_ERROR"
+second_capabilities	APPLICATION_CLOSE code=0x201 reason="FRAME_ERROR"
+unsolicited_selection	APPLICATION_CLOSE code=0x201 reason="FRAME_ERROR"
+repeated_request_id	APPLICATION_CLOSE code=0x201 reason="FRAME_ERROR"
+decreasing_request_id	APPLICATION_CLOSE code=0x201 reason="FRAME_ERROR"
+bare_control_fin	APPLICATION_CLOSE code=0x201 reason="FRAME_ERROR"
+second_bidirectional_stream	second client bidirectional stream blocked past the 4s budget window while stream 0 stayed open: transport-level enforcement (peer max_concurrent_bidi_streams); no application refusal frame is expected or waited for
+unidirectional_ceiling	concurrent unidirectional opens accepted: 4; blocked at the transport ceiling: true; after resetting the held streams a replacement open succeeded — credit released

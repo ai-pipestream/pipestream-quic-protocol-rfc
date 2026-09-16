@@ -1,0 +1,17 @@
+server_subject	java
+client_subject	rust
+clock_mode	real-short-policy
+output_until	1789594066937
+raw_read_started_ms	1789594062370
+raw_read_finished_ms	1789594072300
+bytes_received_before_expiry	8126464
+bytes_received_total	16777216
+pinned_read	completed byte-exact after expiry (sha256=3b464e0b55d7c0c95dcb66ed412d4812840a32abeddd8ee5650012d1a11cef7a)
+new_read_after_expiry	named EXPIRED (6) while the pinned read was open (authority refusal EXPIRED: output availability expired)
+object_dir_after_publish	files=4 bytes=16777821 allocated_blocks=32792
+object_dir_at_expiry_during_read	files=4 bytes=16777821 allocated_blocks=32792
+object_dir_after_read	files=2 bytes=122 allocated_blocks=8
+reclaimed_after_read	true (within 30 s of the read finishing)
+reclaimed_during_read	false (object directory unchanged while the read was open)
+work_view_after_read	state=5 attempt=1 (receipt retention holds)
+java_jar_sha256	6f028be764810386da92948dddcbd085893821f5580e44a821bbe59400f46b5f

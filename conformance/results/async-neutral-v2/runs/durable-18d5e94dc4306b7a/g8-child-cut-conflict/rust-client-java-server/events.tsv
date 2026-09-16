@@ -1,0 +1,15 @@
+1	durable-18d5e94dc4306b7a	g8-child-cut-conflict	rust	client	857596-18d5ea689ee4fe49	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5e94dc4306b7a	g8-child-cut-conflict	rust	client	857596-18d5ea689ee4fe49	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5e94dc4306b7a	g8-child-cut-conflict	rust	client	857596-18d5ea689ee4fe49	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-child-cut-conflict	rust	client	857596-18d5ea689ee4fe49	4	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-child-cut-conflict	rust	client	857596-18d5ea689ee4fe49	5	REQUEST_SENT	49e555316b8d6cf8b0aee3fab60dbfb8						
+1	durable-18d5e94dc4306b7a	g8-child-cut-conflict	rust	client	857596-18d5ea689ee4fe49	6	RECEIPT_VALIDATED	49e555316b8d6cf8b0aee3fab60dbfb8						
+1	durable-18d5e94dc4306b7a	g8-child-cut-conflict	rust	client	857596-18d5ea689ee4fe49	7	REQUEST_SENT	61391c258d95ee0020667eda3683b35b	1:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-child-cut-conflict	rust	client	857596-18d5ea689ee4fe49	8	RECEIPT_VALIDATED	61391c258d95ee0020667eda3683b35b	1:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-child-cut-conflict	rust	client	857596-18d5ea689ee4fe49	9	OBSERVATION_JOURNALED	61391c258d95ee0020667eda3683b35b	1:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-child-cut-conflict	rust	client	857596-18d5ea689ee4fe49	10	REQUEST_SENT	670566df8622f68c891c36f96c029276	1:0:2	1				
+1	durable-18d5e94dc4306b7a	g8-child-cut-conflict	rust	client	857596-18d5ea689ee4fe49	11	RECEIPT_VALIDATED	670566df8622f68c891c36f96c029276	1:0:2	1				
+1	durable-18d5e94dc4306b7a	g8-child-cut-conflict	rust	client	857596-18d5ea689ee4fe49	12	OBSERVATION_JOURNALED	670566df8622f68c891c36f96c029276	1:0:2	1				
+1	durable-18d5e94dc4306b7a	g8-child-cut-conflict	rust	client	857596-18d5ea689ee4fe49	13	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-child-cut-conflict	rust	client	857596-18d5ea689ee4fe49	14	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-child-cut-conflict	rust	client	857596-18d5ea689ee4fe49	15	RESULT_INSTALLED		0:0:1	1		artifacts/parent-output.bin	65000	9e1572ca5d5b092815ebf83c1ef53831065d73e5a29268f6bb7711c2553c6ba0

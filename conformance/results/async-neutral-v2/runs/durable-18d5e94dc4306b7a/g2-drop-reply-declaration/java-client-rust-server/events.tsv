@@ -1,0 +1,7 @@
+1	durable-18d5e94dc4306b7a	g2-drop-reply-declaration	java	client	857596-18d5e9931a28609a	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5e94dc4306b7a	g2-drop-reply-declaration	rust	server	882163-18d5e993203ada4a	1	DECLARATION_COMMITTED							
+1	durable-18d5e94dc4306b7a	g2-drop-reply-declaration	java	client	857596-18d5e9931a28609a	2	REFUSAL_RECEIVED	90969342182e3f4d978188605cf5b1ca			14	artifacts/declare-withheld.txt	251	44af7356e9a0df4c934ec6c9e940565b95a437fb0a138bbd08c570521cd8c4bb
+1	durable-18d5e94dc4306b7a	g2-drop-reply-declaration	java	client	857596-18d5e9931a28609a	3	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5e94dc4306b7a	g2-drop-reply-declaration	java	client	857596-18d5e9931a28609a	4	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5e94dc4306b7a	g2-drop-reply-declaration	java	client	857596-18d5e9931a28609a	5	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5e94dc4306b7a	g2-drop-reply-declaration	java	client	857596-18d5e9931a28609a	6	REFUSAL_RECEIVED	90969342182e3f4d978188605cf5b1ca			7	artifacts/changed-declare-refusal.txt	194	168aae72158f8e2fc230d8ee524da15991320a0fe99ea29a0221b422b262bb70

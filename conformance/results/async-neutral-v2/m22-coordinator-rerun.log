@@ -1,0 +1,83 @@
+# M22 coordinator rerun of the acceptance matrix on the final subjects, main 88cb6e02, 2026-09-16 (script ~/.rfc-tmp/claude-scratch/m22.sh under BENCHMARK.lock; transport build output omitted)
+M22 start 2026-09-16T20:53:08Z tree 88cb6e02
+RUST_BUILD_EXIT=0
+rust_bin_sha256=7b58ccc7108c8b391a55f3456ed6ece44722fd661bfb1339a6202e6e5b6160aa
+MVN_EXIT=0
+java_jar=implementations/java-netty/target/pipestream-quic-netty-0.1.0-SNAPSHOT-all.jar sha256=6f028be764810386da92948dddcbd085893821f5580e44a821bbe59400f46b5f
+driver start 2026-09-16T21:09:07Z
+INCOMPLETE g4-revocation-vs-publication rust-client-java-server: rust-client/java-server is a named gap for this row: neither Java CLI (V2Main/ClientCommands) exposes an operator revoke command; DurableHost.revoke(long) is host-internal only. The row evidence is the rust-client/rust-server direction.
+PASS g1-leaf-copy rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g1-empty-input rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g1-zero-output rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g1-mode1-branch rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g1-mode2-descendants rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g1-oversize-payload rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g1-out-of-order-pages rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g1-declaration-capacity rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g2-crash-before-create-commit rust-client/rust-server, java-client/rust-server
+PASS g2-crash-after-create-commit rust-client/rust-server, java-client/rust-server, rust-client/java-server
+PASS g2-drop-reply-declaration rust-client/rust-server, java-client/rust-server, rust-client/java-server
+PASS g2-drop-reply-admission rust-client/rust-server, java-client/rust-server, rust-client/java-server
+PASS g2-kill-after-admission-before-publication rust-client/rust-server, java-client/rust-server, rust-client/java-server
+PASS g2-kill-at-publication-commit rust-client/rust-server, java-client/rust-server, rust-client/java-server
+PASS g2-kill-client-after-request-sent rust-client/rust-server, java-client/rust-server
+PASS g2-duplicate-op-changed-params rust-client/rust-server
+PASS g2-simultaneous-duplicate rust-client/rust-server
+PASS g2-kill-server-after-admission-recovery rust-client/rust-server
+PASS g2-not-found-in-flight rust-raw-peer+rust-client/rust-server, rust-raw-peer+rust-client/java-server, rust-raw-peer+java-client/rust-server
+PASS g3-input-before-metadata rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g3-orphan-cleanup rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g3-terminal-cleanup rust-client/rust-server, rust-client/java-server
+PASS g3-partial-retirement rust-client/rust-server, rust-client/java-server
+PASS g3-restart-same-roots rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g3-store-ownership rust-client/rust-server, rust-client/java-server (waived java-client/rust-server: the client subject never owns the store (named-gap evidence /home/krickert/.rfc-tmp/claude-m22/store/runs/durable-18d5e94dc4306b7a/g3-store-ownership/java-client-rust-server/INCOMPLETE))
+PASS g3-nonreusable-history rust-client/rust-server, rust-client/java-server
+PASS g4-publication-vs-cancel rust-client/rust-server, rust-client/java-server
+PASS g4-publication-vs-skip rust-client/rust-server, rust-client/java-server
+PASS g4-stale-attempt-retry rust-client/rust-server, rust-client/java-server
+PASS g4-ancestor-fence-publication rust-client/rust-server, rust-client/java-server
+PASS g4-deadline-settlement rust-client/rust-server, rust-client/java-server
+PASS g4-revocation-vs-publication rust-client/rust-server (rust-client/java-server: named gap — the Java subject exposes no operator revoke command) (waived rust-client/java-server: no Java operator revoke command (named-gap evidence /home/krickert/.rfc-tmp/claude-m22/store/runs/durable-18d5e94dc4306b7a/g4-revocation-vs-publication/rust-client-java-server/INCOMPLETE))
+PASS g4-eventual-settlement rust-client/rust-server, rust-client/java-server
+PASS g5-cert-rotation-same-owner rust-client/rust-server, rust-client/java-server
+PASS g5-missing-client-cert rust-client/rust-server, rust-client/java-server
+PASS g5-unmapped-principal rust-client/rust-server, rust-client/java-server
+PASS g5-foreign-owner rust-client/rust-server, rust-client/java-server
+PASS g5-untrusted-identity rust-client/rust-server, rust-client/java-server
+PASS g5-expired-identity rust-client/rust-server, rust-client/java-server
+PASS g5-remapped-owner rust-client/rust-server, rust-client/java-server
+PASS g5-cross-authority-reference rust-client/rust-server, rust-client/java-server
+PASS g5-no-existence-disclosure rust-client/rust-server, rust-client/java-server
+PASS g6-canonical-violations rust-probe/rust-server, rust-probe/java-server
+PASS g6-direction-and-correlation rust-probe/rust-server, rust-probe/java-server
+PASS g6-stream-identity-and-fin rust-probe/rust-server, rust-probe/java-server
+PASS g6-stopped-control-and-transfers rust-probe/rust-server, rust-probe/java-server
+PASS g7-receipt-before-output-expiry rust-client/rust-server, rust-client/java-server
+PASS g7-output-before-receipt-expiry rust-client/rust-server, rust-client/java-server
+PASS g7-read-pin-past-expiry rust-client+rust-raw-reader/rust-server, rust-client+rust-raw-reader/java-server
+WAIVED g7-unsafe-clock-refusal: g7-unsafe-clock-refusal INCOMPLETE: missing subject capability: no subject fixture clock: the only clock control on either serve is --trust-system-clock, both subjects refuse clock-set at schedule parse, and host UTC is never changed by this driver (waiver: no fixture clock on either subject; interface-v1 has no clock-set boundary)
+PASS g7-deadline-queue-time rust-client/rust-server (hook-free load queue, named gap), rust-client/java-server (EXECUTION_CLAIMED pauses)
+WAIVED g7-cleanup-interrupted-refund: g7-cleanup-interrupted-refund INCOMPLETE: missing subject capability: interface-v1 section 2.1 has no cleanup boundary (0 matching labels among 29); a kill during terminal cleanup cannot be armed on either subject without a new boundary (waiver: no cleanup boundary in interface-v1; adding one is an interface revision)
+PASS g7-no-deadline-extension rust-client/rust-server, rust-client/java-server
+PASS g8-exact-root-complete rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g8-child-cut-conflict rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g8-complete-with-pending rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g8-detach-drains rust-client/rust-server, rust-client/java-server, java-client/rust-server
+PASS g8-half-close-preserves-responses rust-client/rust-server, rust-client/java-server, java-client/rust-server, raw-probe/rust-server, raw-probe/java-server (wire-level FIN MUST)
+PASS g8-timeout-no-completion-claim rust-client/rust-server (kill variants: lost-reply outcome recording and strict restart-sequence assertions), rust-client/java-server (kill variant)
+PASS r-capability-manifest host-capability measurement (no subject direction; informs every R row)
+PASS r-connection-ceiling rust-raw-client/rust-server, rust-raw-client/java-server
+PASS r-stalled-principal-progress rust-cli-client(bob)+rust-raw-client(alice)/rust-server, rust-cli-client(bob)+rust-raw-client(alice)/java-server
+PASS r-memory-ladder rust-raw-client/rust-server, rust-raw-client/java-server
+PASS r-staging-and-journal-bounds rust-raw-client/rust-server, rust-raw-client/java-server (row_status PARTIAL in /home/krickert/.rfc-tmp/claude-m22/store/runs/durable-18d5e94dc4306b7a/r-staging-and-journal-bounds/java-server/observed.tsv: unmeasured scopes named; row_status PARTIAL in /home/krickert/.rfc-tmp/claude-m22/store/runs/durable-18d5e94dc4306b7a/r-staging-and-journal-bounds/observed.tsv: unmeasured scopes named)
+PASS r-network-bytes rust-raw-client/rust-server, rust-raw-client/java-server (row_status PARTIAL in /home/krickert/.rfc-tmp/claude-m22/store/runs/durable-18d5e94dc4306b7a/r-network-bytes/java-server/observed.tsv: unmeasured scopes named; row_status PARTIAL in /home/krickert/.rfc-tmp/claude-m22/store/runs/durable-18d5e94dc4306b7a/r-network-bytes/observed.tsv: unmeasured scopes named)
+PASS r-native-credit rust-raw-client/rust-server, rust-raw-client/java-server (row_status PARTIAL in /home/krickert/.rfc-tmp/claude-m22/store/runs/durable-18d5e94dc4306b7a/r-native-credit/java-server/observed.tsv: unmeasured scopes named; row_status PARTIAL in /home/krickert/.rfc-tmp/claude-m22/store/runs/durable-18d5e94dc4306b7a/r-native-credit/observed.tsv: unmeasured scopes named)
+waivers recorded: 4 (run.tsv; dev mode does not neutralise rows)
+  WAIVED g7-unsafe-clock-refusal: no fixture clock on either subject; interface-v1 has no clock-set boundary
+  WAIVED g7-cleanup-interrupted-refund: no cleanup boundary in interface-v1; adding one is an interface revision
+  WAIVED g3-store-ownership:java-client/rust-server: the client subject never owns the store
+  WAIVED g4-revocation-vs-publication:rust-client/java-server: no Java operator revoke command
+acceptance run durable-18d5e94dc4306b7a: /home/krickert/.rfc-tmp/claude-m22/store/runs/durable-18d5e94dc4306b7a
+DRIVER_EXIT=0
+M22 end 2026-09-16T21:48:40Z
+# archive verification by the coordinator: 66 row directories, 0 FAIL markers, INCOMPLETE markers only in the two waived directions, MANIFEST 5491 entries all rehashed OK

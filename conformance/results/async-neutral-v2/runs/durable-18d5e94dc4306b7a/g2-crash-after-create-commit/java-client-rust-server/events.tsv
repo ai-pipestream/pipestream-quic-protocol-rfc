@@ -1,0 +1,6 @@
+1	durable-18d5e94dc4306b7a	g2-crash-after-create-commit	java	client	857596-18d5e98fba3be87a	1	REQUEST_SENT							
+1	durable-18d5e94dc4306b7a	g2-crash-after-create-commit	rust	server	880388-18d5e98fc04ad25d	1	SESSION_COMMITTED							
+1	durable-18d5e94dc4306b7a	g2-crash-after-create-commit	java	client	857596-18d5e98fba3be87a	2	REFUSAL_RECEIVED				14	artifacts/binding-withheld.txt	251	44af7356e9a0df4c934ec6c9e940565b95a437fb0a138bbd08c570521cd8c4bb
+1	durable-18d5e94dc4306b7a	g2-crash-after-create-commit	java	client	857596-18d5e98fba3be87a	3	RECEIPT_VALIDATED							
+1	durable-18d5e94dc4306b7a	g2-crash-after-create-commit	java	client	857596-18d5e98fba3be87a	4	REFUSAL_RECEIVED				7	artifacts/changed-policy-refusal.txt	238	11be3517f9cb3811e89ead053ad5b7e438246863d29d03911321136ecee62862
+1	durable-18d5e94dc4306b7a	g2-crash-after-create-commit	java	client	857596-18d5e98fba3be87a	5	REFUSAL_RECEIVED				7	artifacts/ahead-sequence-refusal.txt	270	463c0d2e52fe5364e8fb0c9be1befe7f1807b2bceecacaa31d81010ebadd5760

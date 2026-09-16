@@ -1,0 +1,6 @@
+exit=exit status: 1
+stdout:
+
+stderr:
+Picked up JAVA_TOOL_OPTIONS: -Djava.io.tmpdir=/home/krickert/.rfc-tmp/claude-m22/tmp
+NOT_READY: NOT_READY: scope membership not observed

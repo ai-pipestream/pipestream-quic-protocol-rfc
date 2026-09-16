@@ -1,0 +1,7 @@
+server_subject	rust
+validity_seconds	25
+waited_ms	29365
+existing_connection_after_expiry	request refused on the live connection: UNAUTHORIZED (3) detail "credential validity or mapping changed"
+fresh_connection_after_expiry	refused at the handshake, no application refusal: connection ended during negotiation: aborted by peer: the cryptographic handshake failed: error 45: invalid peer certificate: certificate expired: verification time 1789593874 (UNIX), but certificate is not valid after 1789593870 (4 seconds ago): connection lost: aborted by peer: the cryptographic handshake failed: error 45: invalid peer certificate: certificate expired: verification time 1789593874 (UNIX), but certificate is not valid after 1789593870 (4 seconds ago)
+renewed_leaf_binding_identical	true
+renewed_leaf_sees_declaration	true (declared=1)

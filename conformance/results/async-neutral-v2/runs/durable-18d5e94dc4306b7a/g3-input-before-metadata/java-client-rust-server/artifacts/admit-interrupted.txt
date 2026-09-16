@@ -1,0 +1,5 @@
+exit=signal: 9 (SIGKILL)
+stdout:
+
+stderr:
+Picked up JAVA_TOOL_OPTIONS: -Djava.io.tmpdir=/home/krickert/.rfc-tmp/claude-m22/tmp

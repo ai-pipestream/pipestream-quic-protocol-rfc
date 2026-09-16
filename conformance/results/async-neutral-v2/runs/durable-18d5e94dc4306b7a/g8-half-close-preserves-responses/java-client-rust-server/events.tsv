@@ -1,0 +1,7 @@
+1	durable-18d5e94dc4306b7a	g8-half-close-preserves-responses	java	client	857596-18d5ea8530752c49	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5e94dc4306b7a	g8-half-close-preserves-responses	java	client	857596-18d5ea8530752c49	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5e94dc4306b7a	g8-half-close-preserves-responses	java	client	857596-18d5ea8530752c49	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-half-close-preserves-responses	java	client	857596-18d5ea8530752c49	4	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-half-close-preserves-responses	java	client	857596-18d5ea8530752c49	5	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-half-close-preserves-responses	java	client	857596-18d5ea8530752c49	6	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d5e94dc4306b7a	g8-half-close-preserves-responses	java	client	857596-18d5ea8530752c49	7	RESULT_INSTALLED		0:0:1	1		artifacts/output.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682

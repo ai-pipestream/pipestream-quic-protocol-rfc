@@ -1,0 +1,10 @@
+1	durable-18d5e94dc4306b7a	g2-kill-at-publication-commit	rust	client	857596-18d5e9b251b221d9	1	REQUEST_SENT	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5e94dc4306b7a	g2-kill-at-publication-commit	rust	client	857596-18d5e9b251b221d9	2	RECEIPT_VALIDATED	90969342182e3f4d978188605cf5b1ca						
+1	durable-18d5e94dc4306b7a	g2-kill-at-publication-commit	rust	client	857596-18d5e9b251b221d9	3	REQUEST_SENT	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g2-kill-at-publication-commit	rust	server	895344-18d5e9b25abf0a64	1	PUBLICATION_COMMITTED							
+1	durable-18d5e94dc4306b7a	g2-kill-at-publication-commit	rust	client	857596-18d5e9b251b221d9	4	RECEIPT_VALIDATED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g2-kill-at-publication-commit	rust	client	857596-18d5e9b251b221d9	5	OBSERVATION_JOURNALED	d82b4f0e9f3814f1161c84240d038f52	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g2-kill-at-publication-commit	rust	client	857596-18d5e9b251b221d9	6	RESULT_VERIFIED		0:0:1	1				
+1	durable-18d5e94dc4306b7a	g2-kill-at-publication-commit	rust	client	857596-18d5e9b251b221d9	7	RESULT_INSTALLED		0:0:1	1		artifacts/output.bin	65536	e320972bcd0ddc716cf3ae45e1e47a8b4de7a88016906f231087b2985ce20682
+1	durable-18d5e94dc4306b7a	g2-kill-at-publication-commit	rust	client	857596-18d5e9b251b221d9	8	REQUEST_SENT	6ba0a160173156dc1d6aad583477d576	0:0:1	1				
+1	durable-18d5e94dc4306b7a	g2-kill-at-publication-commit	rust	client	857596-18d5e9b251b221d9	9	REFUSAL_RECEIVED	6ba0a160173156dc1d6aad583477d576	0:0:1	1	18	artifacts/post-terminal-retry.txt	95	84e7c604d1301c52c9245d0bff8158ea1726167aad4af2865c3b5d3623b01b42

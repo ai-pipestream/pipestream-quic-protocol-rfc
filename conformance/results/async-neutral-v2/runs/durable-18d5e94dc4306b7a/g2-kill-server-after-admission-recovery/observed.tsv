@@ -1,0 +1,10 @@
+seed	24301
+kill_delay_ms	271
+crash_label	crash at uncontrolled point after ADMISSION_RECEIPT_OBSERVED - process death, not power loss, not a boundary test
+pre_crash_state	1
+pre_crash_deadline_ms	1789593476750
+post_restart_state	5
+post_restart_attempt	1
+post_restart_deadline_ms	1789593476750
+deadline_preserved	true
+recovery_path	automatic-redispatch-under-attempt-1

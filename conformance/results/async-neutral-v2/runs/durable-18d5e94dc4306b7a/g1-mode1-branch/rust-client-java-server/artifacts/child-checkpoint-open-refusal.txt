@@ -1,0 +1,5 @@
+exit=exit status: 1
+stdout:
+
+stderr:
+authority refusal NOT_READY: scope membership is not sealed

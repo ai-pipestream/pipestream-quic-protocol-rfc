@@ -1,0 +1,11 @@
+server_subject	rust
+client_subject	java
+alpn	pipestream/2
+application	copy/v2
+input_len	0
+terminal_state	5
+manifest_objects	1
+output_len	0
+output_sha256	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+watch_terminal	WORK revision=3 state=5 attempt=1 child=none VIEW WorkView[work=WorkKey[scope=0, producer=0, entity=1], state=SUCCEEDED, attempt=1, input=Input[length=0, sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855, contentType=application/octet-stream], admittedAt=1789592974929, deadline=1789593034929, terminalAt=1789592974987, receiptUntil=1789679374987, outputUntil=1789596574987, child=null, manifest=Manifest[authority=issuer-a, owner=alice, generation=1, work=WorkKey[scope=0, producer=0, entity=1], attempt=1, inputSha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855, committedAt=1789592974987, availableUntil=1789596574987, outputs=[Output[index=0, length=0, sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855, contentType=application/octet-stream, locator=Locator[value=pipestream://localhost:7443/v2/sessions/1/scopes/0/producers/0/entities/1/attempts/1/outputs/0]]]], diagnostic=null]
+java_jar_sha256	6f028be764810386da92948dddcbd085893821f5580e44a821bbe59400f46b5f
