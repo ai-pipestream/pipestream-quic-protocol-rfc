@@ -32,16 +32,21 @@ pub const BOUNDARIES: &[&str] = &[
     "SESSION_RESPONSE_SENT",
     "DECLARATION_COMMITTED",
     "DECLARATION_RESPONSE_SENT",
+    "INPUT_INSTALLED",
     "ADMISSION_COMMITTED",
     "ADMISSION_RESPONSE_SENT",
     "EXECUTION_CLAIMED",
+    "OUTPUT_INSTALLED",
     "PUBLICATION_COMMITTED",
     "RETRY_COMMITTED",
     "FENCE_COMMITTED",
     "CLOSURE_COMMITTED",
+    "RESULT_HEADER_SENT",
+    "RESULT_FIN_SENT",
     "COMPLETE_RESPONSE_SENT",
     "DETACH_ACKNOWLEDGED",
     "REFUSAL_SENT",
+    "SHUTDOWN_DRAINED",
 ];
 /// Committed boundaries whose reply is written on the same connection: the only
 /// boundaries where `pause`, `drop-reply` or `disconnect` can act pre-queue.
@@ -310,6 +315,12 @@ pub fn sent_boundary(control: &Control) {
 
 /// Emits CONNECTION_AUTHENTICATED once per authenticated connection when the
 /// boundary is armed, then performs a scheduled kill.
+/// A boundary the listener or its stores reach outside the commit and reply paths
+/// (installed input or output bytes, result header and FIN, the finished drain).
+pub fn reached_boundary(boundary: &'static str) {
+    boundary_hook(boundary);
+}
+
 pub fn connection_authenticated() {
     boundary_hook("CONNECTION_AUTHENTICATED");
 }

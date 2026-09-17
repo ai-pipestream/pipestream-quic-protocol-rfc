@@ -1,6 +1,7 @@
 //! Actual retained-result streams. The enclosing endpoint still owns control
 //! decoding/writing, profile negotiation and lifecycle maintenance.
 use super::*;
+use pipestream_core::v2::fixture;
 use std::{
     collections::BTreeMap,
     future::Future,
@@ -389,6 +390,7 @@ async fn send_object(
         used += count;
         *started |= count != 0;
     }
+    fixture::reached_boundary("RESULT_HEADER_SENT");
     let mut buffer = vec![0; shared.authority.payloads.chunk_limit().min(16384)];
     loop {
         let workers = shared.workers.clone();
@@ -455,6 +457,7 @@ async fn send_object(
     live(pins, deadline.min(lifetime))?;
     send.finish()
         .map_err(|_| error(ErrorCode::Cancelled, "result stream closed before FIN"))?;
+    fixture::reached_boundary("RESULT_FIN_SENT");
     let now = std::time::Instant::now();
     bounded(
         deadline.min(lifetime),
