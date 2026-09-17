@@ -105,7 +105,9 @@ class LossyTransportCreditTest {
                   16,
                   64,
                   1 << 20,
-                  1000,
+                  // Idle bound short enough that loss-delayed resets and FINs are refused at it, long
+                  // enough that an undisturbed admitted transfer is never refused on a loaded host.
+                  3000,
                   30_000));
       int allowance = selected.streamLimit();
       assertTrue(allowance >= 2 && allowance <= 16, selected.toString());

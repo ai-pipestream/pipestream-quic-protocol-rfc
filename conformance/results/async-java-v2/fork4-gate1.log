@@ -1,0 +1,23 @@
+START 2026-09-17T01:18:47Z
+[ERROR] Tests run: 2, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 9.481 s <<< FAILURE! -- in ai.pipestream.quic.v2.AuthorityExpansionRuntimeTest
+[ERROR] ai.pipestream.quic.v2.AuthorityExpansionRuntimeTest.oneWorkerExpandsRealInputsExecutesChildrenAndReassemblesPublishedParent -- Time elapsed: 8.468 s <<< FAILURE!
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 5.309 s <<< FAILURE! -- in ai.pipestream.quic.v2.LossyTransportCreditTest
+[ERROR] ai.pipestream.quic.v2.LossyTransportCreditTest.creditReservationHoldsUnderDatagramLossAndReordering -- Time elapsed: 5.276 s <<< FAILURE!
+[ERROR] Failures: 
+[ERROR]   AuthorityExpansionRuntimeTest.oneWorkerExpandsRealInputsExecutesChildrenAndReassemblesPublishedParent:92->await:344 condition not reached before bounded deadline
+[ERROR]   LossyTransportCreditTest.creditReservationHoldsUnderDatagramLossAndReordering:165 admitted shape answered Refusal[request=RequestTag[input=true, id=34], code=LIMIT_EXCEEDED, detail=input receive deadline] ==> Unexpected type, expected: <ai.pipestream.quic.v2.Messages.AdmissionResponse> but was: <ai.pipestream.quic.v2.Messages.Refusal>
+[ERROR] Tests run: 807, Failures: 2, Errors: 0, Skipped: 0
+[INFO] BUILD FAILURE
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.6.0:test (default-test) on project pipestream-quic-netty: There are test failures.
+[ERROR] 
+[ERROR] See /work/worktrees/pipestream-rfc-claude/implementations/java-netty/target/surefire-reports for the individual test results.
+[ERROR] See dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
+END 2026-09-17T01:23:46Z
+RUN_DONE

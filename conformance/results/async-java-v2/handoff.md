@@ -767,6 +767,21 @@ same day for the durable-work state of the suite.
   (`rawclient::StreamState::Stopped(code)`), so a matrix row asserting code 0
   on a replayed input against both authorities is requested from Kimi; the row
   will cite it.
+- **Parallel surefire forks, measured, not adopted.** `mvn test -DforkCount=4`
+  finishes in 5 min 0 s against about 12 min sequential (`fork4-gate*.log`),
+  but three runs each failed two classes: `AuthorityExpansionRuntimeTest`
+  (its bounded wait for the expansion pipeline expires; the database
+  operation permits were all free at the failure, so it is not a leak) and,
+  alternately, `LossyTransportCreditTest` (no control reply within its bound)
+  or `AuthorityExpansionRuntimeFailureTest` (CONFLICT "local monotonic lease
+  interval ended"). The common cause is timing tuned for a quiet host: short
+  execution leases and receive idle bounds meet four JVMs committing through
+  SQLite on one disk. The default stays sequential. Two bounds were widened
+  because they are waits, not assertions (expansion wait 8 s to 20 s; the
+  lossy test's receive idle 1 s to 3 s); the lease intervals in the expansion
+  tests are the next thing to scale if a parallel gate is wanted.
+- **Kimi's host-facts test** now accepts the root filesystem as a matched
+  mount, so it passes with the temp directory on either drive.
 
 ## 6. Build and verification commands
 
