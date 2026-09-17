@@ -215,13 +215,25 @@ fn kill() -> ! {
 
 /// Boundary hook for a label the subject emits directly: emits the event
 /// record when armed, then performs a scheduled kill at the boundary.
+/// Every reached boundary is recorded once the fixture is armed (interface-v1 section 2: one
+/// record per reached boundary), whether or not a schedule row names it; only an armed row
+/// acts. The reached count is what the once-per-process gate in the listener compares.
 fn boundary_hook(boundary: &'static str) {
     let Some(fixture) = fixture() else { return };
-    if let Some(arms) = fixture.armed.get(boundary) {
-        emit(fixture, boundary);
-        if arms.iter().any(|arm| arm.action == Action::Kill) {
-            kill();
-        }
+    emit(fixture, boundary);
+    fixture
+        .reached
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .entry(boundary)
+        .and_modify(|count| *count += 1)
+        .or_insert(1);
+    if fixture
+        .armed
+        .get(boundary)
+        .is_some_and(|arms| arms.iter().any(|arm| arm.action == Action::Kill))
+    {
+        kill();
     }
 }
 
@@ -251,22 +263,8 @@ pub fn commit_label(key: &str) -> Option<&'static str> {
 /// no armed `:before` arm, matching interface-v1 `kill` semantics
 /// ("after the boundary's commit, before any further reply").
 pub fn commit_boundary(key: &str) {
-    let Some(fixture) = fixture() else { return };
-    let Some(boundary) = commit_label(key) else {
-        return;
-    };
-    if let Some(arms) = fixture.armed.get(boundary) {
-        emit(fixture, boundary);
-        fixture
-            .reached
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .entry(boundary)
-            .and_modify(|count| *count += 1)
-            .or_insert(1);
-        if arms.iter().any(|arm| arm.action == Action::Kill) {
-            kill();
-        }
+    if let Some(boundary) = commit_label(key) {
+        boundary_hook(boundary);
     }
 }
 
@@ -305,15 +303,8 @@ pub fn sent_label(control: &Control) -> Option<&'static str> {
 /// (never from the job after `queue()`). Emits the `*_SENT` event record when
 /// armed, then performs a scheduled kill at the SENT boundary.
 pub fn sent_boundary(control: &Control) {
-    let Some(fixture) = fixture() else { return };
-    let Some(boundary) = sent_label(control) else {
-        return;
-    };
-    if let Some(arms) = fixture.armed.get(boundary) {
-        emit(fixture, boundary);
-        if arms.iter().any(|arm| arm.action == Action::Kill) {
-            kill();
-        }
+    if let Some(boundary) = sent_label(control) {
+        boundary_hook(boundary);
     }
 }
 
@@ -623,6 +614,42 @@ mod tests {
         assert!(boundaries.contains(&"SESSION_COMMITTED"));
         assert!(boundaries.contains(&"ADMISSION_COMMITTED"));
         assert_eq!(reached("NOT_A_BOUNDARY"), 0);
+        // interface-v1 section 2: one record per reached boundary. Boundaries no row arms are
+        // recorded and counted too, so this subject's evidence has the same shape as Java's.
+        let recorded_before = File::open(&events)
+            .map(|mut file| {
+                let mut text = String::new();
+                file.read_to_string(&mut text).unwrap();
+                text.lines().count()
+            })
+            .unwrap();
+        // Other tests in this process commit concurrently and now append records too, so the
+        // assertions are on this test's own boundaries, not on an exact tail.
+        let listening_before = reached("LISTENING");
+        let claimed_before = reached("EXECUTION_CLAIMED");
+        boundary_hook("LISTENING");
+        commit_boundary("worker-claim");
+        commit_boundary("not-a-commit-key");
+        assert_eq!(reached("LISTENING"), listening_before + 1);
+        assert!(reached("EXECUTION_CLAIMED") > claimed_before);
+        let mut after = String::new();
+        File::open(&events)
+            .unwrap()
+            .read_to_string(&mut after)
+            .unwrap();
+        let unarmed: Vec<&str> = after
+            .lines()
+            .skip(recorded_before)
+            .map(|line| line.split('\t').nth(7).unwrap())
+            .collect();
+        let listening = unarmed.iter().position(|label| *label == "LISTENING");
+        let claimed = unarmed
+            .iter()
+            .rposition(|label| *label == "EXECUTION_CLAIMED");
+        assert!(
+            matches!((listening, claimed), (Some(l), Some(c)) if l < c),
+            "unarmed boundaries recorded in order: {unarmed:?}"
+        );
 
         match reply_gate("SESSION_COMMITTED") {
             Gate::Hold { deadline, .. } => {

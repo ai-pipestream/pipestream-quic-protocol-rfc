@@ -731,6 +731,36 @@ Traceability: 362 covered, 5 partial by decision, 0 gaps, 7 not applicable.
 The top-level `REFERENCE_IMPLEMENTATION.md` status section was rewritten the
 same day for the durable-work state of the suite.
 
+### Code review round (2026-09-17): gate trap corrected, D7 pinned, Rust fixture evidence
+
+- **The three-slice gate was a workaround for a pattern, not for `mvn test`.** A
+  plain `mvn test` on this tree runs 806 tests in 147 classes, every class the
+  three explicit slices run plus the four tests added since, so the default
+  gate is trustworthy; only the `-Dtest=ai/pipestream/quic/v2/**/*` pattern
+  form silently drops classes. Earlier notes in this handoff that treated the
+  default run as untrustworthy are corrected by this one; a full gate from now
+  on is `mvn test` (`default-gate.log`).
+- **S12-338 closed (D7 pinned).** `V2WireTest.decodedAggregateOverflowIsFrameErrorNotLimitExceeded`
+  asserts FRAME_ERROR for a peer-supplied aggregate that overflows while decoded.
+  Traceability: 363 covered, 4 partial by decision, 0 gaps, 7 not applicable.
+- **Rust fixture recorded only armed boundaries (Rust tree, fixed).** A diff of
+  the server-side boundary records between the two authorities across the M22
+  archive showed the Rust subject recording only the boundary a schedule row
+  armed, while interface-v1 section 2 asks for one record per reached boundary
+  and the Java adapter records them all; the neutral evidence for the Rust
+  subject was therefore thinner than for Java. `src/v2/fixture.rs` now records
+  and counts every reached boundary once armed, acting only on armed rows
+  (test extended in the fixture module; one dev-mode row rerun shows the Rust
+  server's full boundary set). Five interface labels still have no Rust hook
+  (INPUT_INSTALLED, OUTPUT_INSTALLED, RESULT_HEADER_SENT, RESULT_FIN_SENT,
+  SHUTDOWN_DRAINED); that is the next Rust-side gap, noted on the board.
+- **S12-184 (STOP_SENDING code 0 on a replayed input) stays PARTIAL for a
+  reason the Java tree cannot fix:** Netty exposes no stop code to the sending
+  peer. The neutral driver's raw client does observe stop codes
+  (`rawclient::StreamState::Stopped(code)`), so a matrix row asserting code 0
+  on a replayed input against both authorities is requested from Kimi; the row
+  will cite it.
+
 ## 6. Build and verification commands
 
 ```
