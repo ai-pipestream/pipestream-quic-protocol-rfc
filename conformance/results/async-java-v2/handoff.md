@@ -751,9 +751,16 @@ same day for the durable-work state of the suite.
   subject was therefore thinner than for Java. `src/v2/fixture.rs` now records
   and counts every reached boundary once armed, acting only on armed rows
   (test extended in the fixture module; one dev-mode row rerun shows the Rust
-  server's full boundary set). Five interface labels still have no Rust hook
-  (INPUT_INSTALLED, OUTPUT_INSTALLED, RESULT_HEADER_SENT, RESULT_FIN_SENT,
-  SHUTDOWN_DRAINED); that is the next Rust-side gap, noted on the board.
+  server's full boundary set). The five interface labels the Rust fixture
+  could not name (INPUT_INSTALLED, OUTPUT_INSTALLED, RESULT_HEADER_SENT,
+  RESULT_FIN_SENT, SHUTDOWN_DRAINED) are now hooked at the same points as in
+  Java: after the received input is finished and before admission, after an
+  output object is finished, after the result header is fully written, after
+  the result FIN, and at the end of the listener's drain. A rerun of
+  `g2-not-found-in-flight` and `g2-kill-at-publication-commit` shows the two
+  authorities recording identical boundary sets
+  (`rust-fixture-hooks-check.log`), and schedules may now arm those
+  boundaries on the Rust subject too.
 - **S12-184 (STOP_SENDING code 0 on a replayed input) stays PARTIAL for a
   reason the Java tree cannot fix:** Netty exposes no stop code to the sending
   peer. The neutral driver's raw client does observe stop codes

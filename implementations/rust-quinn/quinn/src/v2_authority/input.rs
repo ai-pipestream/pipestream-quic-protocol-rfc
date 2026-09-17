@@ -4,6 +4,7 @@ use super::*;
 use pipestream_core::v2::authority::ingress::{
     Applications, InputPreparation, InputReception, ReceivingInput,
 };
+use pipestream_core::v2::fixture;
 use std::collections::BTreeMap;
 
 #[derive(Clone)]
@@ -369,6 +370,7 @@ async fn receive(
             job_pins.authorize()?;
             let (receiving, _value_pins) = receiving.take();
             let validated = receiving.finish(now).map_err(storage)?;
+            fixture::reached_boundary("INPUT_INSTALLED");
             match service
                 .authority
                 .store

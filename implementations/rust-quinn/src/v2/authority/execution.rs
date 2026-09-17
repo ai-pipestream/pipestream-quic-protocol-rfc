@@ -396,6 +396,7 @@ impl WorkContext {
                 .take()
                 .ok_or_else(|| protocol(ErrorCode::Conflict, "no output is open"))?
                 .finish(Instant::now())?;
+            crate::v2::fixture::reached_boundary("OUTPUT_INSTALLED");
             let index = OutputIndex(self.produced.len() as u64);
             let input = installed.descriptor();
             self.produced.push(Output {

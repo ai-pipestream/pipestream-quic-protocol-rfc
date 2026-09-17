@@ -356,6 +356,7 @@ impl Server {
         let transport_idle = tokio::time::timeout_at(deadline, self.endpoint.wait_idle())
             .await
             .is_ok();
+        fixture::reached_boundary("SHUTDOWN_DRAINED");
         Ok(Shutdown {
             fault: fault.or_else(|| runtime_fault(&snapshot)),
             runtime: snapshot,
