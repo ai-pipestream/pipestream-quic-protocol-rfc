@@ -1,0 +1,4 @@
+self-check negative controls behaved as required (nc-torn-event-line rejected, subject hash fresh)
+SCENARIO OK g2-drop-reply-admission rust-client/rust-server, java-client/rust-server, rust-client/java-server (dev mode: labelled INCOMPLETE)
+SCENARIO OK g1-leaf-copy rust-client/rust-server, rust-client/java-server, java-client/rust-server (dev mode: labelled INCOMPLETE)
+dev run durable-18d5f623b5402494: partial results only; run directory is NOT a conformance PASS: /home/krickert/.rfc-tmp/claude-fixture-check/store/runs/durable-18d5f623b5402494

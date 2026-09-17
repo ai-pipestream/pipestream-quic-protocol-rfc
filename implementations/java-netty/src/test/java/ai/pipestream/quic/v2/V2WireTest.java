@@ -242,6 +242,26 @@ final class V2WireTest {
     assertThrows(ProtocolError.class, () -> ProtocolError.Code.from(19));
   }
 
+  /**
+   * S12-338 and decision D7: an aggregate that overflows the schema range while a peer-supplied
+   * value is decoded is FRAME_ERROR, the code for malformed input, not LIMIT_EXCEEDED, which is
+   * reserved for a bound the authority applies before commitment. Kimi's G6 vectors assert the
+   * same code on the wire.
+   */
+  @Test
+  void decodedAggregateOverflowIsFrameErrorNotLimitExceeded() {
+    ProtocolError counts =
+        assertThrows(ProtocolError.class, () -> new Counts(Long.MAX_VALUE, 1, 0, 0));
+    assertEquals(ProtocolError.Code.FRAME_ERROR, counts.code(), counts.toString());
+    ProtocolError nested =
+        assertThrows(
+            ProtocolError.class,
+            () -> new Counts(Long.MAX_VALUE / 2, Long.MAX_VALUE / 2, 1, 1));
+    assertEquals(ProtocolError.Code.FRAME_ERROR, nested.code(), nested.toString());
+    assertEquals(
+        Long.MAX_VALUE, new Counts(Long.MAX_VALUE - 3, 1, 1, 1).total(), "the exact range fits");
+  }
+
   @Test
   void capabilitySelectionNeverActivatesUnknownProfilesOrIncreasesOffers() {
     Capabilities offer =
