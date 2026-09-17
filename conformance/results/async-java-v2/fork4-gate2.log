@@ -1,0 +1,13 @@
+START1 2026-09-17T01:24:54Z
+[ERROR] Tests run: 2, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 21.46 s <<< FAILURE! -- in ai.pipestream.quic.v2.AuthorityExpansionRuntimeTest
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 9.269 s <<< FAILURE! -- in ai.pipestream.quic.v2.BranchSchedulerTest
+[ERROR] Tests run: 807, Failures: 2, Errors: 0, Skipped: 0
+[INFO] BUILD FAILURE
+END1 2026-09-17T01:30:02Z
+START2 2026-09-17T01:30:02Z
+[ERROR] Tests run: 2, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 21.46 s <<< FAILURE! -- in ai.pipestream.quic.v2.AuthorityExpansionRuntimeTest
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 17.87 s <<< FAILURE! -- in ai.pipestream.quic.v2.LossyTransportCreditTest
+[ERROR] Tests run: 807, Failures: 2, Errors: 0, Skipped: 0
+[INFO] BUILD FAILURE
+END2 2026-09-17T01:35:12Z
+RUN_DONE

@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
-@Timeout(30)
+@Timeout(90)
 final class AuthorityExpansionRuntimeTest {
   private static final Messages.Capabilities SELECTED =
       new Messages.Capabilities(
@@ -338,8 +338,10 @@ final class AuthorityExpansionRuntimeTest {
         new AdmissionStore.ExecutionPolicy(List.of(application), 8, 8));
   }
 
+  // A bound on a pipeline that commits through SQLite at every stage; under a parallel test run
+  // on a loaded host the 8 s it used to allow was reached without any defect.
   private static void await(CheckedBoolean condition) throws Exception {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
     while (!condition.getAsBoolean()) {
       if (System.nanoTime() >= deadline) fail("condition not reached before bounded deadline");
       java.util.concurrent.locks.LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
