@@ -106,4 +106,24 @@ final class WireTest {
       Wire.decodeCheckpoint(frame.payload());
     }
   }
+
+  /**
+   * Section 6.2.1: the Layer 0 decoder treats nonzero depth or scope in a STATUS as
+   * PIPESTREAM_LAYER_UNSUPPORTED; the Layer 0 endpoints decode every status through it.
+   */
+  @Test
+  void layerZeroDecoderRefusesScopeFieldsInAStatus() throws Exception {
+    for (Wire.Status scoped :
+        List.of(
+            new Wire.Status(Wire.STATUS_PROCESSING, 9, 7, null, 2),
+            new Wire.Status(Wire.STATUS_PROCESSING, 9, 0, null, 1),
+            new Wire.Status(Wire.STATUS_PROCESSING, 9, 7, null, 0))) {
+      byte[] payload = Wire.decodeControl(Wire.encodeStatus(scoped)).payload();
+      ProtocolException refused =
+          assertThrows(ProtocolException.class, () -> Wire.decodeStatus(payload));
+      assertEquals(Wire.ERROR_LAYER_UNSUPPORTED, refused.errorCode(), refused.getMessage());
+    }
+    Wire.Status flat = new Wire.Status(Wire.STATUS_PROCESSING, 9, 0, null, 0);
+    assertEquals(flat, Wire.decodeStatus(Wire.decodeControl(Wire.encodeStatus(flat)).payload()));
+  }
 }

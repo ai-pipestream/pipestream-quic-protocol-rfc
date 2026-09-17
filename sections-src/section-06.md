@@ -77,7 +77,9 @@ C (1 bit):
 :   Cursor update flag. A 4-octet cursor value follows (Section 6.2.4).
 
 D (3 bits):
-:   Explicit scope nesting depth (0-7). 0=Root. Layer 1.
+:   Explicit scope nesting depth (0-7). 0=Root. Layer 1. An endpoint that has
+    not negotiated Layer 1 MUST send 0 here and 0 in Scope ID, and MUST treat
+    a received nonzero value in either field as PIPESTREAM_LAYER_UNSUPPORTED.
 
 Flags (19 bits):
 :   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
@@ -267,6 +269,12 @@ The BARRIER payload is 12 octets (17 octets on the wire including the UCF header
 ## GOAWAY Frame (0x56)
 
 The GOAWAY frame signals that the sender will not accept new entities beyond a specified Entity ID. It enables graceful shutdown: in-flight entities with IDs at or below the Last Entity ID are processed to completion, while the peer refrains from opening new Entity Streams.
+
+The Last Entity ID is unscoped. In version 1 it is interpreted in the root
+scope, and Appendix E.2 records that this is not reconciled with scoped
+entity identifiers; the sealed profile (Section 9.8) defines a root GOAWAY
+cut, and version 2 replaces the frame with scope-qualified cursors and
+connection draining (Section 12).
 
 ~~~~
 

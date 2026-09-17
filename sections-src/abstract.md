@@ -21,4 +21,6 @@ negotiated durable-work and result-delivery profiles, including authenticated
 replay, non-reusable logical identities, fenced attempts, sealed closure,
 and output streams and references. A new major mapping preserves the meaning
 of existing version-1 implementations rather than silently weakening their
-mandatory behavior.
+mandatory behavior. Version 2 (Section 12) is the protocol this document
+asks new implementations to build; Sections 3 through 11 remain the
+specification of version 1.

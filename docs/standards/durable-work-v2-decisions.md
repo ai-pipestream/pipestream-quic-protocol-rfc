@@ -175,3 +175,33 @@ pinned by tests.
   code rather than a bare transport failure. Both authorities already did the
   former; the Rust client dropped the code and now maps it, as the Java client
   did. Found by the durable-index-build example (friction note F3).
+
+## Decisions from the cold read of draft-05 (2026-09-16)
+
+An outside front-to-back read of the rendered draft reported thirteen points of
+confusion. Nine were editorial and were applied the same day (CONNECT defined
+as a phase, one name for the capabilities exchange, checkpoint status versus
+frame, early vocabulary, request-id exhaustion, Core-only detach). The owner
+decided the remaining five, with clarity for a human reader as the rule:
+
+- **Which protocol is the ask (structure).** Version 2 (Section 12) is the
+  protocol new implementations are asked to build; Sections 3 through 11 stay
+  normative for version 1. The abstract says so, Section 1 gains "How to Read
+  This Document" with a reading order, and Section 12 opens by saying it.
+  Section numbers are unchanged: clause identifiers, traceability rows and
+  code comments key on them.
+- **Appendix D.** Cut to the shape RFC 7942 asks for: a dated summary, one
+  entry per implementation, the interoperability evidence and its limits. The
+  dated working notes moved to `docs/standards/implementation-status-notebook.md`.
+- **"Explicitly agreed" private-use profiles.** The profiles are specified
+  completely in the text; "agreed" means both endpoints select the identifier
+  in the capability exchange, nothing more, and the private-use values are
+  placeholders pending the assignment requested in Section 11.
+- **GOAWAY's unscoped Last Entity ID.** Stated at the frame: version 1 reads it
+  in the root scope, Appendix E.2 records the unreconciled identity model, the
+  sealed profile defines a root cut, version 2 replaces the frame.
+- **Depth field in a Layer 0 STATUS.** An endpoint without Layer 1 sends zero
+  depth and scope and treats nonzero values as PIPESTREAM_LAYER_UNSUPPORTED.
+  Both codecs already did this; each now has a test that pins it
+  (`WireTest.layerZeroDecoderRefusesScopeFieldsInAStatus`,
+  `a_layer0_endpoint_refuses_scope_fields_in_a_status`).

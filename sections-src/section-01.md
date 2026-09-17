@@ -15,6 +15,34 @@ storage. Existing transports and RPC systems can carry equivalent application
 logic; the interoperability question is whether a shared protocol vocabulary
 reduces the coordination that each pair of applications must define.
 
+## How to Read This Document
+
+This document specifies two major versions of PipeStream, distinguished by
+their ALPN identifiers, and a reader should know which one they are
+implementing before going further.
+
+- **Version 2, Section 12 and Appendix F**, identified by `pipestream/2`, is
+  the protocol this document asks new implementations to build. It is
+  self-contained: a small mandatory Core plus two profiles, durable work and
+  result delivery, with authenticated callers, retained replay and sealed
+  closure. It does not depend on the version-1 frames, layers or profiles,
+  and Section 12 says so where the two differ. The two reference
+  implementations described in Appendix D implement it completely and were
+  certified against each other in both client and server roles.
+- **Version 1, Sections 3 through 11 and Appendices A through E**, identified
+  by `pipestream/1`, is the earlier mapping: a mandatory Layer 0 with
+  negotiable recursion (Layer 1) and resilience (Layer 2) layers and three
+  private-use profiles. It remains normative for endpoints that speak
+  `pipestream/1`; the reference implementations still interoperate on its
+  Layer 0, and its recursive and resilience layers are where the durable
+  design was first worked out. An implementer who wants durable work does not
+  need it.
+
+A suggested reading order: Section 2 (terms), this section, then Section 12
+for version 2, returning to Sections 3 through 11 only when Section 12 refers
+to them. Appendix D is the implementation status; Appendix E lists the open
+questions that remain in version 1.
+
 ## Applicability
 
 Candidate workloads include document enrichment, chunked file processing,
