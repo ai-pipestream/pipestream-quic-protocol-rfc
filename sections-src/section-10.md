@@ -205,7 +205,9 @@ not disclose that additional context.
 ### Authenticated Session Binding (Private-Use Profile)
 
 The `authenticated-session-v1` profile uses private-use extension identifier
-65282 (0xFF02) by explicit agreement. It can accompany the sealed-work profile
+65282 (0xFF02), a private-use value pending assignment (Section 11); both
+endpoints select it in the capability exchange and it is specified
+completely here. It can accompany the sealed-work profile
 in Section 9.8 or another negotiated lifecycle. It does not itself activate
 Layer 2, change claim replay semantics, or provide retained recovery outcomes.
 This is an authentication binding, not a complete resilience profile.
@@ -258,7 +260,9 @@ fencing and application idempotency under Section 10.6.1.
 ### Retained Authenticated Recovery (Private-Use Profile)
 
 The `authenticated-recovery-v1` profile uses private-use extension identifier
-65283 (0xFF03) by explicit agreement. Both endpoints MUST require this extension
+65283 (0xFF03), a private-use value pending assignment (Section 11), selected
+by both endpoints in the capability exchange and specified completely here.
+Both endpoints MUST require this extension
 and `authenticated-session-v1` (65282). It requires Layer 2 and excludes the
 sealed-work profile. An incompatible selection MUST fail CONNECT with
 PIPESTREAM_EXTENSION_UNSUPPORTED; a client MUST reject an invalid response.

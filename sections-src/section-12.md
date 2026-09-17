@@ -1,7 +1,7 @@
 # Version 2: Durable Work and Results
 
-This section defines the successor major mapping, identified by ALPN
-`pipestream/2`. Sections 2 through 10 and Appendix C describe version 1;
+This section defines version 2, the protocol this document asks new
+implementations to build, identified by ALPN `pipestream/2`. Sections 2 through 10 and Appendix C describe version 1;
 their layer booleans, mandatory recursion, circular cursors, status words,
 storage-provider metadata and private-use profiles do not implicitly apply
 to version 2. This section and Appendix F define version 2 completely.
@@ -10,8 +10,12 @@ IANA assignment merely because an implementation uses this draft.
 
 Version 2 has a small mandatory Core: QUIC/TLS, bounded deterministic CBOR
 framing, capability selection, correlation, refusal and connection draining.
-Two explicitly agreed private-use profiles add durable work (65284, named
-`durable-work-v2`) and result delivery (65285, `result-delivery-v2`). Result
+Two profiles, specified completely in this section, add durable work (65284,
+named `durable-work-v2`) and result delivery (65285, `result-delivery-v2`).
+Their identifiers are private-use values pending the assignment requested in
+Section 11; "agreed" means only that both endpoints select them in the
+capability exchange. Any implementation can implement them from this text
+alone; no arrangement with the authors is needed. Result
 delivery requires durable work. Their meanings are immutable; incompatible
 changes require a different identifier or major mapping. Version-1 profile
 identifiers 65281 through 65283 MUST NOT be selected on version 2. An endpoint

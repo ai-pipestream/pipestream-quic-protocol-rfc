@@ -197,8 +197,11 @@ stopping-point-validation = {
 ## Sealed Work Sets (Private-Use Profile)
 
 The `sealed-work-sets-v1` profile uses private-use extension identifier
-65281 (0xFF01) by explicit agreement between its peers. This is a draft
-profile, not an IANA assignment or a complete bidirectional work protocol.
+65281 (0xFF01). "By agreement" means only that both endpoints select the
+identifier in the capability exchange; the profile is specified completely
+here and any implementation can implement it from this text. The identifier
+is a private-use value pending the assignment requested in Section 11; this
+is not a complete bidirectional work protocol.
 It requires Layer 1 and excludes Layer 2. A server selecting the profile
 with any other layer combination MUST refuse CONNECT with
 PIPESTREAM_EXTENSION_UNSUPPORTED (0x0F). A client MUST reject an invalid

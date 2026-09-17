@@ -1808,6 +1808,26 @@ fn cbor_decode(error: minicbor::decode::Error) -> ProtocolError {
 mod tests {
     use super::*;
 
+    /// Section 6.2.1: an endpoint without Layer 1 treats nonzero depth or scope in a STATUS as
+    /// PIPESTREAM_LAYER_UNSUPPORTED; zero in both is the Layer 0 form.
+    #[test]
+    fn a_layer0_endpoint_refuses_scope_fields_in_a_status() {
+        let status = |scope_id: u32, depth: u8| Status {
+            state: STATUS_PROCESSING,
+            entity_id: 9,
+            scope_id,
+            cursor: None,
+            depth,
+        };
+        for (scope_id, depth) in [(7, 2), (0, 1), (7, 0)] {
+            let error = validate_status(&status(scope_id, depth), None, LayerSupport::LAYER0)
+                .expect_err("scope fields accepted without Layer 1");
+            assert_eq!(error.code, ERROR_LAYER_UNSUPPORTED, "{error:?}");
+        }
+        validate_status(&status(0, 0), None, LayerSupport::LAYER0).unwrap();
+        validate_status(&status(7, 2), None, LayerSupport::LAYER1).unwrap();
+    }
+
     #[test]
     fn optional_fields_preserve_received_representation() {
         for row in include_str!("../../../test-vectors/optional-fields.tsv")

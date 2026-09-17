@@ -278,8 +278,11 @@ behavior, wire values, failure handling, and test vectors. Registration
 of an extension does not allocate its frame types or status values;
 those require their own registry entries. Designated experts apply
 Section 11.7 and check that activation is unambiguous and dependencies
-can be evaluated during CONNECT. Private-use values MUST NOT be used
-without prior agreement on the same contract and are not IANA assignments.
+can be evaluated during CONNECT. Private-use values are not IANA assignments. The profiles this document
+defines on private-use identifiers (65281 through 65285) are specified
+completely in their sections; "agreement" for them is capability selection
+by both endpoints, nothing more, and IANA is requested to assign them
+Specification Required values, at which point the private-use values retire.
 
 ## Version 2 Registries
 
