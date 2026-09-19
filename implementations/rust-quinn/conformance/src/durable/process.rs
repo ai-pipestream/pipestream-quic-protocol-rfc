@@ -65,6 +65,19 @@ const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 /// sleep and leaves the row assertions untouched.
 pub const KILL_ROW_OP_TIMEOUT: Duration = Duration::from_secs(90);
 
+/// The per-run scratch directory every spawned Java subject is pointed at.
+/// HotSpot ignores the TMPDIR environment variable (java.io.tmpdir defaults
+/// to /tmp), so without this each JVM extracts sqlite-jdbc's libsqlitejdbc
+/// plus a .lck under /tmp (a FRESH uuid whenever the previous JVM was
+/// killed and left the lock - the kill rows do this constantly), writes
+/// hsperfdata_<user>, and ClientCommands drops its per-invocation
+/// pipestream-v2-sequence-*.sqlite scratch there: the /tmp flood the owner
+/// hit. Keyed by the run id so a run's subjects share one directory and
+/// `run()` can remove exactly it afterwards.
+pub fn java_tmp_dir(run_id: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("pipestream-java-{run_id}"))
+}
+
 /// Test-only fixture-hook arming for one server process (milestone-5 subject
 /// flags). The driver writes the schedule TSV before starting the server;
 /// arming is per-process, so a restart re-arms with the rows it has not yet
@@ -146,6 +159,9 @@ pub struct AuthorityFixture {
     /// journal binds to. [`AUTHORITY`] for every fixture but the second
     /// authority of g5-cross-authority-reference.
     authority: String,
+    /// The durable run this fixture belongs to; keys the Java subjects'
+    /// tmp directory (see [`java_tmp_dir`]).
+    run_id: String,
 }
 
 impl AuthorityFixture {
@@ -156,6 +172,7 @@ impl AuthorityFixture {
         certs: Material,
         server: Subject,
         client: Subject,
+        run_id: String,
     ) -> Result<Self> {
         fs::create_dir_all(root)?;
         Ok(Self {
@@ -171,6 +188,7 @@ impl AuthorityFixture {
             client_control_timeout_ms: None,
             client_op_timeout: OP_TIMEOUT,
             authority: AUTHORITY.to_owned(),
+            run_id,
         })
     }
 
@@ -208,6 +226,19 @@ impl AuthorityFixture {
         &self.authority
     }
 
+    /// Create the Java subjects' run-keyed tmp directory if this fixture
+    /// drives a Java subject. Idempotent; called from both entry points so
+    /// server and client spawns alike find it (base() always runs at
+    /// init-authority time, before any client, but client_base() creates it
+    /// too so no ordering assumption is load-bearing).
+    fn ensure_java_tmp(&self) -> Result<()> {
+        if self.server == Subject::Java || self.client == Subject::Java {
+            fs::create_dir_all(java_tmp_dir(&self.run_id))
+                .context("create the Java subjects' tmp directory")?;
+        }
+        Ok(())
+    }
+
     fn subject_base(&self, subject: Subject) -> Result<Vec<String>> {
         Ok(match subject {
             Subject::Rust => vec![path(&self.rust_bin), "v2".to_owned()],
@@ -219,6 +250,11 @@ impl AuthorityFixture {
                 let mut base = vec!["java".to_owned()];
                 // Frozen before any measurement run; see JAVA_MEMORY_FLAGS.
                 base.extend(JAVA_MEMORY_FLAGS.iter().map(|flag| (*flag).to_owned()));
+                // HotSpot ignores TMPDIR; point the JVM and sqlite-jdbc at
+                // the run-keyed scratch directory explicitly (before -cp).
+                let tmp = java_tmp_dir(&self.run_id);
+                base.push(format!("-Djava.io.tmpdir={}", path(&tmp)));
+                base.push(format!("-Dorg.sqlite.tmpdir={}", path(&tmp)));
                 base.extend([
                     "--enable-native-access=ALL-UNNAMED".to_owned(),
                     "-cp".to_owned(),
@@ -232,11 +268,13 @@ impl AuthorityFixture {
 
     /// Entry-point prefix for the fixture's server subject.
     pub fn base(&self) -> Result<Vec<String>> {
+        self.ensure_java_tmp()?;
         self.subject_base(self.server)
     }
 
     /// Entry-point prefix for the fixture's client subject.
     pub fn client_base(&self) -> Result<Vec<String>> {
+        self.ensure_java_tmp()?;
         self.subject_base(self.client)
     }
 
@@ -707,21 +745,45 @@ mod tests {
             certs,
             Subject::Java,
             Subject::Java,
+            "java-tmp-test".to_owned(),
         )
         .unwrap();
         let base = fixture.base().unwrap();
         assert_eq!(base[0], "java");
         assert_eq!(&base[1..3], JAVA_MEMORY_FLAGS);
-        // The limits are argument-order sensitive: they must precede the
-        // classpath and main class, which stay last so serve_base can swap
-        // V2Main for FixtureMain.
-        assert_eq!(base[3], "--enable-native-access=ALL-UNNAMED");
-        assert_eq!(base[4], "-cp");
+        // HotSpot ignores the TMPDIR environment variable: every spawned
+        // JVM is pointed at the run-keyed tmp directory explicitly (the
+        // driver's TMPDIR governs the root), before the classpath, and the
+        // directory must exist - base() creates it.
+        let tmp = java_tmp_dir("java-tmp-test");
+        assert_eq!(
+            base[3],
+            format!("-Djava.io.tmpdir={}", path(&tmp)),
+            "{base:?}"
+        );
+        assert_eq!(
+            base[4],
+            format!("-Dorg.sqlite.tmpdir={}", path(&tmp)),
+            "{base:?}"
+        );
+        assert!(tmp.is_dir(), "base() must create the java tmp directory");
+        // The limits and flags are argument-order sensitive: they must
+        // precede the classpath and main class, which stay last so
+        // serve_base can swap V2Main for FixtureMain.
+        assert_eq!(base[5], "--enable-native-access=ALL-UNNAMED");
+        assert_eq!(base[6], "-cp");
         assert_eq!(base.last().unwrap(), "ai.pipestream.quic.v2.V2Main");
         assert_eq!(java_memory_flags_text(), "-Xms256m -Xmx2g");
         // The rust subject is never given JVM flags.
         let rust = fixture.subject_base(Subject::Rust).unwrap();
         assert!(!rust.iter().any(|argument| argument.starts_with("-Xm")));
+        assert!(
+            !rust
+                .iter()
+                .any(|argument| argument.starts_with("-Djava.io.tmpdir")),
+            "the rust subject is never given JVM flags: {rust:?}"
+        );
+        fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]
@@ -758,6 +820,7 @@ mod tests {
             certs.clone(),
             Subject::Java,
             Subject::Java,
+            "java-tmp-test".to_owned(),
         )
         .unwrap()
         .with_client_control_timeout_ms(Some(JAVA_CLIENT_KILL_CONTROL_TIMEOUT_MS));
@@ -795,6 +858,7 @@ mod tests {
             certs.clone(),
             Subject::Java,
             Subject::Java,
+            "java-tmp-test".to_owned(),
         )
         .unwrap();
         let plain = plain_java
@@ -814,6 +878,7 @@ mod tests {
             certs,
             Subject::Rust,
             Subject::Rust,
+            "java-tmp-test".to_owned(),
         )
         .unwrap()
         .with_client_control_timeout_ms(Some(JAVA_CLIENT_KILL_CONTROL_TIMEOUT_MS));
@@ -848,6 +913,7 @@ mod tests {
             certs,
             Subject::Java,
             Subject::Java,
+            "java-tmp-test".to_owned(),
         )
         .unwrap();
         assert_eq!(fixture.client_op_timeout, OP_TIMEOUT);

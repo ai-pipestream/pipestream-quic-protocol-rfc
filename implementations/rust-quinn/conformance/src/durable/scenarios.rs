@@ -557,6 +557,7 @@ fn setup_session_serve_args(
         certs,
         server,
         client,
+        context.run_id.clone(),
     )?
     .with_extra_serve_args(serve_args);
     fixture.run_init_authority()?;
@@ -643,6 +644,7 @@ fn setup_session_policy(
         certs,
         server,
         client,
+        context.run_id.clone(),
     )?;
     fixture.run_init_authority()?;
     let server = fixture.start_server()?;
@@ -4293,6 +4295,7 @@ fn setup_armed(
         certs,
         server,
         client,
+        context.run_id.clone(),
     )?;
     fixture.run_init_authority()?;
     let events = scenario_dir.join("events.tsv");
@@ -12102,6 +12105,7 @@ fn g5_fixture(
         certs,
         server,
         Subject::Rust,
+        context.run_id.clone(),
     )?;
     fixture.run_init_authority()?;
     let server = fixture.start_server()?;
@@ -15988,6 +15992,7 @@ fn setup_raw_probe(
         certs,
         server,
         Subject::Rust,
+        context.run_id.clone(),
     )?;
     fixture.run_init_authority()?;
     let server = fixture.start_server()?;
@@ -17601,6 +17606,7 @@ fn r_connection_ceiling_direction(
         certs,
         server,
         Subject::Rust,
+        context.run_id.clone(),
     )?;
     fixture.run_init_authority()?;
     let owned = fixture.start_server()?;
@@ -18135,6 +18141,7 @@ fn r_stalled_principal_progress_direction(
         certs,
         server,
         Subject::Rust,
+        context.run_id.clone(),
     )?;
     fixture.run_init_authority()?;
     let owned = fixture.start_server()?;
@@ -19083,6 +19090,7 @@ fn r_memory_ladder_direction(
         certs,
         server,
         Subject::Rust,
+        context.run_id.clone(),
     )?;
     fixture.run_init_authority()?;
     let owned = fixture.start_server()?;
@@ -20063,6 +20071,7 @@ fn r_staging_and_journal_bounds_direction(
         certs,
         server,
         Subject::Rust,
+        context.run_id.clone(),
     )?;
     fixture.run_init_authority()?;
     let mut owned = fixture.start_server()?;
@@ -21306,6 +21315,7 @@ fn r_network_bytes_direction(
         certs,
         server,
         Subject::Rust,
+        context.run_id.clone(),
     )?;
     fixture.run_init_authority()?;
     let owned = fixture.start_server()?;
@@ -21747,6 +21757,7 @@ fn r_native_credit_direction(
         certs,
         server,
         Subject::Rust,
+        context.run_id.clone(),
     )?;
     fixture.run_init_authority()?;
     let owned = fixture.start_server()?;
@@ -23255,6 +23266,7 @@ fn g5_cross_authority_reference_direction(
         fixture_x.certs.with_principal_map(&y_map),
         server_subject,
         Subject::Rust,
+        context.run_id.clone(),
     )?
     .with_authority(AUTHORITY_Y);
     fixture_y.run_init_authority()?;
@@ -23499,6 +23511,7 @@ fn g5_expired_identity_direction(
         certs,
         server_subject,
         Subject::Rust,
+        context.run_id.clone(),
     )?;
     fixture.run_init_authority()?;
     let server = fixture.start_server()?;
@@ -24652,6 +24665,7 @@ fn subject_schedule_refusal(
         certs,
         server,
         Subject::Rust,
+        context.run_id.clone(),
     )?;
     fixture.run_init_authority()?;
     let schedule_path = direction_dir.join("schedule.tsv");

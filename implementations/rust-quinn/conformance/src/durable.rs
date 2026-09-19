@@ -633,6 +633,19 @@ pub fn run(args: DurableArgs) -> Result<()> {
         archive_run(&run_root, archive, &run_id)?;
         println!("archived run {run_id}: {}", archive.join(&run_id).display());
     }
+    // Remove the Java subjects' run-keyed scratch directory (see
+    // process::java_tmp_dir) after archiving: it lives outside the run
+    // root, so the archive never contains it, and evidence runs litter
+    // neither /tmp nor the fast drive. A cleanup failure is a warning,
+    // never a run failure.
+    match fs::remove_dir_all(process::java_tmp_dir(&run_id)) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => eprintln!(
+            "warning: could not remove the Java tmp directory {}: {error:#}",
+            process::java_tmp_dir(&run_id).display()
+        ),
+    }
     Ok(())
 }
 
