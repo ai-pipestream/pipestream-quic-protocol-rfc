@@ -1992,6 +1992,56 @@ lines verbatim:
 This header is flipped to REVIEW_READY on this evidence; traceability's
 DONE now means green in acceptance; section 5 item 1 records the pass.
 
+### M22 (2026-09-19): Java subjects' /tmp flood fixed driver-side (commit 56e9eca4)
+
+Diagnosis (verified live): HotSpot ignores the TMPDIR environment
+variable — `java.io.tmpdir` defaults to /tmp unless -Djava.io.tmpdir is
+passed. Every spawned Java subject extracted sqlite-jdbc's
+`sqlite-<ver>-<uuid>-libsqlitejdbc.so` plus `.lck` under /tmp (a FRESH
+uuid whenever the previous JVM was killed and left the lock — the kill
+rows do this constantly), alongside hsperfdata and ClientCommands'
+per-invocation `pipestream-v2-sequence-*.sqlite` scratch: the >15k-file
+/tmp flood the owner hit on the RAID.
+
+Driver fix (56e9eca4): the fixture now carries the run id and
+`subject_base` prepends `-Djava.io.tmpdir=<TMPDIR>/pipestream-java-<run_id>`
+and `-Dorg.sqlite.tmpdir=<same>` before -cp (the driver's TMPDIR governs
+the root; unset keeps the system default, as today); `base()`/
+`client_base()` create the directory and propagate a creation failure
+instead of silently falling back to /tmp; `run()` removes the per-run
+directory after archiving (a cleanup failure is a stderr warning, never
+a run failure). Red-first test pins the flag order, the run-keyed path,
+the creation, and the rust subject staying flag-free. Gates: fmt 0,
+clippy -D warnings 0, 113 passed / 0 failed; release build reproduces
+the rust subject byte-identical (4156c642b7be…); driver binary
+112819fb… (hash changed - expected, conformance crate only).
+
+Live verification (probe: g1-leaf-copy, --dev, TMPDIR=
+~/.rfc-tmp/tmp-probe2/tmp, three JVM directions; evidence in
+~/.rfc-tmp/tmp-probe2/probe3.log): the run-keyed tmp dir appeared at
+~2 s and held `sqlite-3.53.4.0-…-libsqlitejdbc.so` + `.lck` mid-run
+(watcher sample); `find /tmp -newer <marker> \( -name 'sqlite-*' -o
+-name 'pipestream-*' \)` counted ZERO new files; the dir was removed by
+cleanup afterwards; SCENARIO OK all three directions, DRIVER_EXIT=0.
+Cosmetic residual: `/tmp/hsperfdata_krickert/<pid>` entries still
+appear (two observed) — hsperfdata placement is JVM-version-dependent
+and is eliminated by the -XX:-UsePerfData board item below, not a
+driver matter.
+
+Sequencing note: this driver change POSTDATES the green acceptance run
+`durable-18d5d9f3653ef1c4`. No row asserts wall-clock timings — the
+timing rows assert negotiated protocol-deadline brackets, not host
+speed — so the acceptance evidence stands; the owner may nonetheless
+request a re-acceptance with the new driver, which is a rerun of the
+same block shape.
+
+Board items (posted by the parent, not code here): for Claude — honor
+an early PIPESTREAM_TMPDIR/--tmpdir in V2Main/FixtureMain, a
+pre-extracted org.sqlite.lib.path to kill per-JVM extraction,
+ClientCommands scratch placement/cleanup, and -XX:-UsePerfData for
+fixture launches; for Meta — the runner scripts need the same
+-Djava.io.tmpdir flag for any Java subjects they spawn.
+
 ### Milestone 21 procedure (written in advance, pending Claude's fixture fixes)
 
 When the two Java fixture defects (finding 2: withhold fresh-gate,
