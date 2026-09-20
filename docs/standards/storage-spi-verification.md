@@ -59,6 +59,7 @@ from `agent/storage-spi-rust` (`06c27638`) and `agent/storage-spi-java`
 | `durable-18d6fbf9b0f2cd9f` | FAIL at startup on every row — rustls CryptoProvider panic in the Rust subject (feature-resolution shift from the new crate edge); fixed by `06c27638` (ring pinned). Process worked as intended: the matrix caught what unit gates missed. |
 | `durable-18d6fd296148339e` | 63 PASS + 4 waivers + 1 FAIL: the documented g2 host-load flake |
 | `durable-18d702e2f77fb30a` | 63 PASS + 4 waivers + 1 FAIL: identical flake signature |
+| `durable-18d7051e17c5c0f2` | **GREEN: exit 0, 64 PASS + 4 named waivers, all directions of all rows including g2-kill-after-admission-before-publication.** The SPI plane (fs backend) is certified equivalent to the v2 baseline. |
 
 The g2 row fires identically on the v2 plane with identical builds (control
 runs), so the SPI plane introduces no divergence; every other row passes with
