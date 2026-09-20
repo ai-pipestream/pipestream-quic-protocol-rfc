@@ -19,6 +19,7 @@
     <postgresql.version>42.7.13</postgresql.version>
     <awssdk.version>2.55.1</awssdk.version>
     <kafka.version>4.2.1</kafka.version>
+    <mongodb.version>5.12.0</mongodb.version>
     <sqlite.version>3.53.4.0</sqlite.version>
     <test.excludedGroups>sealed-interop</test.excludedGroups>
   </properties>
@@ -72,6 +73,11 @@
       <groupId>org.apache.kafka</groupId>
       <artifactId>kafka-clients</artifactId>
       <version>${kafka.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.mongodb</groupId>
+      <artifactId>mongodb-driver-sync</artifactId>
+      <version>${mongodb.version}</version>
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
