@@ -233,6 +233,7 @@ public final class DurableHost implements AutoCloseable {
    * @param storageWorkers off-loop storage pool limits
    * @param producer local producer-1 limits for authority expansion
    * @param objectPlane per-installation object payload plane; recorded with the installation
+   * @param spiBackend SPI object backend selection when the plane is SPI; recorded with the installation
    */
   public record Configuration(
       String authority,
@@ -253,7 +254,8 @@ public final class DurableHost implements AutoCloseable {
       WaitLimits waits,
       WorkerLimits storageWorkers,
       ProducerLimits producer,
-      ObjectPlane objectPlane) {
+      ObjectPlane objectPlane,
+      SpiObjectBackend spiBackend) {
     /** Validate every bound and the locator endpoint syntax. */
     public Configuration {
       Checks.identity(authority);
@@ -275,6 +277,7 @@ public final class DurableHost implements AutoCloseable {
       Objects.requireNonNull(storageWorkers);
       Objects.requireNonNull(producer);
       Objects.requireNonNull(objectPlane);
+      Objects.requireNonNull(spiBackend);
       if (execution.workers() > maxJobs || execution.workersPerOwner() > maxJobsPerOwner)
         throw new IllegalArgumentException("execution workers exceed funded job ceilings");
     }
@@ -286,6 +289,18 @@ public final class DurableHost implements AutoCloseable {
      * @param objectPlane replacement object plane
      */
     public Configuration(Configuration configuration, ObjectPlane objectPlane) {
+      this(configuration, objectPlane, configuration.spiBackend());
+    }
+
+    /**
+     * Rebuilds a configuration with a different object plane and SPI backend, every other bound retained.
+     *
+     * @param configuration source configuration
+     * @param objectPlane replacement object plane
+     * @param spiBackend replacement SPI backend selection
+     */
+    public Configuration(
+        Configuration configuration, ObjectPlane objectPlane, SpiObjectBackend spiBackend) {
       this(
           configuration.authority(),
           configuration.resultAuthority(),
@@ -305,7 +320,8 @@ public final class DurableHost implements AutoCloseable {
           configuration.waits(),
           configuration.storageWorkers(),
           configuration.producer(),
-          objectPlane);
+          objectPlane,
+          spiBackend);
     }
 
     /**
@@ -335,7 +351,58 @@ public final class DurableHost implements AutoCloseable {
           new WaitLimits(1024, 64, 4, 50),
           new WorkerLimits(8, 512, 64),
           new ProducerLimits(1 << 20, 64, 64, 16L << 20, 30_000, 300_000),
-          ObjectPlane.V2);
+          ObjectPlane.V2,
+          SpiObjectBackend.fs());
+    }
+  }
+
+  /**
+   * SPI object backend selection for an {@link ObjectPlane#SPI} installation.
+   * Only non-secret coordinates are recorded: credentials arrive per open
+   * from the operator environment and are never persisted or compared. A
+   * changed selection at reopen is refused with the installation's
+   * config-exactness idiom.
+   *
+   * @param kind backend kind: {@code fs}, {@code postgres}, {@code s3} or {@code mongo}
+   * @param endpoint non-secret service coordinate (PG URL, S3 endpoint, Mongo URI), null for fs
+   * @param bucket second non-secret coordinate (S3 bucket, Mongo database), null unless required
+   */
+  public record SpiObjectBackend(String kind, String endpoint, String bucket) {
+    /** Validate the kind and its required coordinates. */
+    public SpiObjectBackend {
+      Objects.requireNonNull(kind, "kind");
+      switch (kind) {
+        case "fs" -> {
+          if (endpoint != null || bucket != null) {
+            throw new IllegalArgumentException("the fs SPI backend takes no coordinates");
+          }
+        }
+        case "postgres" -> {
+          if (endpoint == null || bucket != null) {
+            throw new IllegalArgumentException("the postgres SPI backend needs exactly a URL");
+          }
+        }
+        case "s3" -> {
+          if (endpoint == null || bucket == null) {
+            throw new IllegalArgumentException("the s3 SPI backend needs an endpoint and a bucket");
+          }
+        }
+        case "mongo" -> {
+          if (endpoint == null || bucket == null) {
+            throw new IllegalArgumentException("the mongo SPI backend needs a URI and a database");
+          }
+        }
+        default -> throw new IllegalArgumentException("unknown SPI backend: " + kind);
+      }
+    }
+
+    /**
+     * The filesystem backend under the installation root; the default.
+     *
+     * @return fs backend selection
+     */
+    public static SpiObjectBackend fs() {
+      return new SpiObjectBackend("fs", null, null);
     }
   }
 
@@ -1231,16 +1298,40 @@ public final class DurableHost implements AutoCloseable {
       OwnerPolicy owners,
       UtcClock clock)
       throws IOException, SQLException {
+    return initialize(
+        root, configuration, applications, owners, clock, java.util.Map.of());
+  }
+
+  /**
+   * Initializes with an SPI credential environment for non-fs object plane
+   * backends; see {@link SpiPlaneStores} for the variable conventions.
+   *
+   * @param spiEnvironment credential and option environment, ignored on the v2 plane
+   * @return live host
+   * @throws IOException existing history, unsafe filesystem state or object-store failure
+   * @throws SQLException failed durable initialization
+   */
+  public static DurableHost initialize(
+      Path root,
+      Configuration configuration,
+      List<Application> applications,
+      OwnerPolicy owners,
+      UtcClock clock,
+      java.util.Map<String, String> spiEnvironment)
+      throws IOException, SQLException {
     Objects.requireNonNull(root);
     Objects.requireNonNull(configuration);
     Objects.requireNonNull(owners);
     Objects.requireNonNull(clock);
+    Objects.requireNonNull(spiEnvironment);
     Files.createDirectories(root);
     ObjectStore payloadPlane = null;
     if (configuration.objectPlane() == ObjectPlane.SPI) {
       try {
-        payloadPlane = FileObjectStore.open(root.resolve(SPI_OBJECTS));
-      } catch (StorageException failure) {
+        payloadPlane =
+            SpiPlaneStores.open(
+                configuration.spiBackend(), root.resolve(SPI_OBJECTS), spiEnvironment);
+      } catch (StorageException | RuntimeException failure) {
         throw new IOException("SPI payload backend open failed", failure);
       }
     }
@@ -1249,7 +1340,7 @@ public final class DurableHost implements AutoCloseable {
           SessionStore.initialize(
               root.resolve(DATABASE), storeConfiguration(configuration, applications));
       if (configuration.objectPlane() != ObjectPlane.V2) {
-        sessions.recordObjectPlane(configuration.objectPlane());
+        sessions.recordObjectPlane(configuration.objectPlane(), configuration.spiBackend());
       }
       InputStore inputs =
           payloadPlane != null
@@ -1296,28 +1387,57 @@ public final class DurableHost implements AutoCloseable {
       OwnerPolicy owners,
       UtcClock clock)
       throws IOException, SQLException {
+    return open(root, configuration, applications, owners, clock, java.util.Map.of());
+  }
+
+  /**
+   * Recovers with an SPI credential environment for non-fs object plane
+   * backends; see {@link SpiPlaneStores} for the variable conventions.
+   *
+   * @param spiEnvironment credential and option environment, ignored on the v2 plane
+   * @return live host
+   * @throws IOException missing files, changed policy or object-store recovery failure
+   * @throws SQLException unsupported format, corruption or storage failure
+   */
+  public static DurableHost open(
+      Path root,
+      Configuration configuration,
+      List<Application> applications,
+      OwnerPolicy owners,
+      UtcClock clock,
+      java.util.Map<String, String> spiEnvironment)
+      throws IOException, SQLException {
     Objects.requireNonNull(root);
     Objects.requireNonNull(configuration);
     Objects.requireNonNull(owners);
     Objects.requireNonNull(clock);
+    Objects.requireNonNull(spiEnvironment);
     SessionStore sessions =
         SessionStore.open(root.resolve(DATABASE), storeConfiguration(configuration, applications));
-    ObjectPlane recordedPlane = sessions.objectPlane();
-    if (recordedPlane != configuration.objectPlane()) {
+    SessionStore.RecordedPlane recorded = sessions.objectPlane();
+    String refusal =
+        recorded.plane() != configuration.objectPlane()
+            ? "object plane differs: recorded '" + recorded.plane().wire() + "' but configured '"
+                + configuration.objectPlane().wire() + "'"
+            : recorded.plane() == ObjectPlane.SPI
+                    && !recorded.backend().equals(configuration.spiBackend())
+                ? "SPI backend differs: recorded " + recorded.backend() + " but configured "
+                    + configuration.spiBackend()
+                : null;
+    if (refusal != null) {
       try {
         sessions.close();
       } catch (SQLException cleanup) {
         // close best effort; the refusal below is the primary failure
       }
-      throw new IOException(
-          "object plane differs: recorded '" + recordedPlane.wire() + "' but configured '"
-              + configuration.objectPlane().wire() + "'");
+      throw new IOException(refusal);
     }
     ObjectStore payloadPlane = null;
-    if (recordedPlane == ObjectPlane.SPI) {
+    if (recorded.plane() == ObjectPlane.SPI) {
       try {
-        payloadPlane = FileObjectStore.open(root.resolve(SPI_OBJECTS));
-      } catch (StorageException failure) {
+        payloadPlane =
+            SpiPlaneStores.open(configuration.spiBackend(), root.resolve(SPI_OBJECTS), spiEnvironment);
+      } catch (StorageException | RuntimeException failure) {
         try {
           sessions.close();
         } catch (SQLException cleanup) {

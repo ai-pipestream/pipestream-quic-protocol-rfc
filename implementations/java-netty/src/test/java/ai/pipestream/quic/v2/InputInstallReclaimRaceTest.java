@@ -86,7 +86,8 @@ class InputInstallReclaimRaceTest {
         defaults.waits(),
         defaults.storageWorkers(),
         defaults.producer(),
-        DurableHost.ObjectPlane.V2);
+        DurableHost.ObjectPlane.V2,
+        DurableHost.SpiObjectBackend.fs());
   }
 
   @Test

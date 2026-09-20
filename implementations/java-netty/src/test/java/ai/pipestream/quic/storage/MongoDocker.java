@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit;
  * docker} CLI is unavailable every Mongo test class is skipped with an
  * explicit assumption message, keeping the suite portable.
  */
-final class MongoDocker implements AutoCloseable {
+public final class MongoDocker implements AutoCloseable {
   private static final String IMAGE = "mongo:8.2";
   private static MongoDocker shared;
   private static int sharedUsers;
@@ -40,7 +40,7 @@ final class MongoDocker implements AutoCloseable {
   }
 
   /** Starts (or reuses) the shared server; aborts the test class with a clear message when docker is unavailable. */
-  static synchronized MongoDocker shared() {
+  public static synchronized MongoDocker shared() {
     assumeTrue(dockerAvailable(), "docker CLI is required for the Mongo backend tests");
     if (shared == null) {
       shared = start();
@@ -52,7 +52,7 @@ final class MongoDocker implements AutoCloseable {
   }
 
   /** Releases one {@link #shared()} claim; stops and removes the server when the last claim goes away. */
-  static synchronized void releaseShared() {
+  public static synchronized void releaseShared() {
     if (sharedUsers <= 0) return;
     sharedUsers--;
     if (sharedUsers == 0 && shared != null) {
@@ -93,7 +93,7 @@ final class MongoDocker implements AutoCloseable {
   }
 
   /** MongoDB connection string of the running server. */
-  String connectionString() {
+  public String connectionString() {
     return "mongodb://127.0.0.1:" + port;
   }
 
@@ -107,13 +107,13 @@ final class MongoDocker implements AutoCloseable {
   }
 
   /** Stops the server without removing the container or its data files; the restart-persistence proof. */
-  void stopServer() throws Exception {
+  public void stopServer() throws Exception {
     ProcessResult stopped = run(List.of("docker", "stop", container));
     assertTrue(stopped.exitCode() == 0, "docker stop failed: " + stopped.output());
   }
 
   /** Restarts a container previously stopped via {@link #stopServer()}. */
-  void startServer() throws Exception {
+  public void startServer() throws Exception {
     ProcessResult started = run(List.of("docker", "start", container));
     assertTrue(started.exitCode() == 0, "docker start failed: " + started.output());
     awaitReady();

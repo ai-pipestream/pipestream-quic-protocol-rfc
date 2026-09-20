@@ -27,7 +27,7 @@ import java.util.concurrent.TimeUnit;
  * CLI is unavailable every S3 test class is skipped with an explicit
  * assumption message, keeping the suite portable.
  */
-final class MinioDocker implements AutoCloseable {
+public final class MinioDocker implements AutoCloseable {
   private static final String IMAGE = "quay.io/minio/minio:latest";
   private static final String ACCESS_KEY = "minioadmin";
   private static final String SECRET_KEY = "minioadmin";
@@ -45,7 +45,7 @@ final class MinioDocker implements AutoCloseable {
   }
 
   /** Starts (or reuses) the shared container; aborts the test class with a clear message when docker is unavailable. */
-  static synchronized MinioDocker shared() {
+  public static synchronized MinioDocker shared() {
     assumeTrue(dockerAvailable(), "docker CLI is required for the S3 backend tests");
     if (shared == null) {
       shared = start();
@@ -57,7 +57,7 @@ final class MinioDocker implements AutoCloseable {
   }
 
   /** Releases one {@link #shared()} claim; stops and removes the container when the last claim goes away. */
-  static synchronized void releaseShared() {
+  public static synchronized void releaseShared() {
     if (sharedUsers <= 0) return;
     sharedUsers--;
     if (sharedUsers == 0 && shared != null) {
@@ -100,33 +100,33 @@ final class MinioDocker implements AutoCloseable {
   }
 
   /** S3 service endpoint of the running container. */
-  URI endpoint() {
+  public URI endpoint() {
     return URI.create("http://127.0.0.1:" + port);
   }
 
   /** Service access key. */
-  String accessKey() {
+  public String accessKey() {
     return ACCESS_KEY;
   }
 
   /** Service secret key. */
-  String secretKey() {
+  public String secretKey() {
     return SECRET_KEY;
   }
 
   /** Shared bucket created at startup; every test store uses a unique key prefix inside it. */
-  String bucket() {
+  public String bucket() {
     return BUCKET;
   }
 
   /** Stops the MinIO server without removing the container or its data; the restart-persistence proof. */
-  void stopServer() throws Exception {
+  public void stopServer() throws Exception {
     ProcessResult stopped = run(List.of("docker", "stop", container));
     assertTrue(stopped.exitCode() == 0, "docker stop failed: " + stopped.output());
   }
 
   /** Restarts a container previously stopped via {@link #stopServer()}. */
-  void startServer() throws Exception {
+  public void startServer() throws Exception {
     ProcessResult started = run(List.of("docker", "start", container));
     assertTrue(started.exitCode() == 0, "docker start failed: " + started.output());
     awaitReady();

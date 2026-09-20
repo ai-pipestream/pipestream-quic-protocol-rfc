@@ -67,7 +67,7 @@ final class ObjectPlaneBindingTest {
     SessionStore sessions =
         SessionStore.open(
             root.resolve(DurableHost.DATABASE), storeConfiguration(DurableHost.ObjectPlane.SPI));
-    sessions.recordObjectPlane(DurableHost.ObjectPlane.SPI);
+    sessions.recordObjectPlane(DurableHost.ObjectPlane.SPI, DurableHost.SpiObjectBackend.fs());
     sessions.close();
 
     IOException refusal = assertThrows(IOException.class, () -> open(root, DurableHost.ObjectPlane.V2));
@@ -82,13 +82,14 @@ final class ObjectPlaneBindingTest {
     SessionStore legacy =
         SessionStore.initialize(
             directory.resolve("legacy.sqlite"), storeConfiguration(DurableHost.ObjectPlane.V2));
-    assertEquals(DurableHost.ObjectPlane.V2, legacy.objectPlane());
-    legacy.recordObjectPlane(DurableHost.ObjectPlane.SPI);
-    assertEquals(DurableHost.ObjectPlane.SPI, legacy.objectPlane());
+    assertEquals(DurableHost.ObjectPlane.V2, legacy.objectPlane().plane());
+    assertEquals(DurableHost.SpiObjectBackend.fs(), legacy.objectPlane().backend());
+    legacy.recordObjectPlane(DurableHost.ObjectPlane.SPI, DurableHost.SpiObjectBackend.fs());
+    assertEquals(DurableHost.ObjectPlane.SPI, legacy.objectPlane().plane());
     legacy.close();
     SessionStore reopened =
         SessionStore.open(directory.resolve("legacy.sqlite"), storeConfiguration(DurableHost.ObjectPlane.SPI));
-    assertEquals(DurableHost.ObjectPlane.SPI, reopened.objectPlane());
+    assertEquals(DurableHost.ObjectPlane.SPI, reopened.objectPlane().plane());
     reopened.close();
   }
 

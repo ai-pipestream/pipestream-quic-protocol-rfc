@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit;
  * unavailable every Postgres test class is skipped with an explicit assumption
  * message, keeping the suite portable.
  */
-final class PostgresDocker implements AutoCloseable {
+public final class PostgresDocker implements AutoCloseable {
   private static final String IMAGE = "postgres:16-alpine";
   private static final String USER = "postgres";
   private static final String PASSWORD = "pipestream";
@@ -41,7 +41,7 @@ final class PostgresDocker implements AutoCloseable {
   }
 
   /** Starts (or reuses) the shared container; aborts the test class with a clear message when docker is unavailable. */
-  static synchronized PostgresDocker shared() {
+  public static synchronized PostgresDocker shared() {
     assumeTrue(dockerAvailable(), "docker CLI is required for the Postgres backend tests");
     if (shared == null) {
       shared = start();
@@ -53,7 +53,7 @@ final class PostgresDocker implements AutoCloseable {
   }
 
   /** Releases one {@link #shared()} claim; stops and removes the container when the last claim goes away. */
-  static synchronized void releaseShared() {
+  public static synchronized void releaseShared() {
     if (sharedUsers <= 0) return;
     sharedUsers--;
     if (sharedUsers == 0 && shared != null) {
@@ -96,33 +96,33 @@ final class PostgresDocker implements AutoCloseable {
   }
 
   /** JDBC URL of the running container. */
-  String url() {
+  public String url() {
     return url;
   }
 
   /** Database role. */
-  String user() {
+  public String user() {
     return USER;
   }
 
   /** Database password. */
-  String password() {
+  public String password() {
     return PASSWORD;
   }
 
   /** Opens a fresh administrative JDBC connection for test setup and tamper helpers. */
-  Connection connect() throws java.sql.SQLException {
+  public Connection connect() throws java.sql.SQLException {
     return DriverManager.getConnection(url, USER, PASSWORD);
   }
 
   /** Stops the postgres server without removing the container or its data; the kill/resume durability proof. */
-  void stopServer() throws Exception {
+  public void stopServer() throws Exception {
     ProcessResult stopped = run(List.of("docker", "stop", container));
     assertTrue(stopped.exitCode() == 0, "docker stop failed: " + stopped.output());
   }
 
   /** Restarts a container previously stopped via {@link #stopServer()}. */
-  void startServer() throws Exception {
+  public void startServer() throws Exception {
     ProcessResult started = run(List.of("docker", "start", container));
     assertTrue(started.exitCode() == 0, "docker start failed: " + started.output());
     awaitReady();

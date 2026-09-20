@@ -83,7 +83,8 @@ final class ClientRecoveryTest {
         defaults.waits(),
         new DurableHost.WorkerLimits(1, 3, 3),
         defaults.producer(),
-        DurableHost.ObjectPlane.V2);
+        DurableHost.ObjectPlane.V2,
+        DurableHost.SpiObjectBackend.fs());
   }
 
   /**

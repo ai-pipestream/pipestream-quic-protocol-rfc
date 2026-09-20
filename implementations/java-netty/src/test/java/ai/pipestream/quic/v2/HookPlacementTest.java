@@ -101,7 +101,8 @@ class HookPlacementTest {
                 defaults.waits(),
                 new DurableHost.WorkerLimits(workers, 3, 3),
                 defaults.producer(),
-                DurableHost.ObjectPlane.V2);
+                DurableHost.ObjectPlane.V2,
+                DurableHost.SpiObjectBackend.fs());
     return DurableHost.initialize(
         directory.resolve(name),
         configuration,

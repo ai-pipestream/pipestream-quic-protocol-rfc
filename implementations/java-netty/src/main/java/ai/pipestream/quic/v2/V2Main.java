@@ -83,10 +83,11 @@ public final class V2Main {
     DurableHost.ObjectPlane objectPlane =
         DurableHost.ObjectPlane.parse(
             options.getOrDefault("object-plane", DurableHost.ObjectPlane.V2.wire()));
+    DurableHost.SpiObjectBackend spiBackend = spiBackend(options);
     if (!options.containsKey("db-mib") && !options.containsKey("wal-mib")) {
-      return objectPlane == DurableHost.ObjectPlane.V2
+      return objectPlane == DurableHost.ObjectPlane.V2 && spiBackend.kind().equals("fs")
           ? defaults
-          : new DurableHost.Configuration(defaults, objectPlane);
+          : new DurableHost.Configuration(defaults, objectPlane, spiBackend);
     }
     BoundedSqlite.Limits files = defaults.files();
     long walBytes = mebibytes(options, "wal-mib", files.walBytes());
@@ -118,7 +119,59 @@ public final class V2Main {
         defaults.waits(),
         defaults.storageWorkers(),
         defaults.producer(),
-        objectPlane);
+        objectPlane,
+        spiBackend);
+  }
+
+  /**
+   * SPI object backend selection from flags: {@code --spi-backend fs|postgres|s3|mongo}
+   * (default fs) with {@code --spi-pg-url}, {@code --spi-s3-endpoint},
+   * {@code --spi-s3-bucket}, {@code --spi-mongo-uri} and {@code --spi-mongo-database}
+   * carrying the persisted non-secret coordinates. A non-fs selection requires
+   * {@code --object-plane spi}.
+   */
+  static DurableHost.SpiObjectBackend spiBackend(Map<String, String> options) {
+    String kind = options.getOrDefault("spi-backend", "fs");
+    DurableHost.SpiObjectBackend backend =
+        switch (kind) {
+          case "fs" -> DurableHost.SpiObjectBackend.fs();
+          case "postgres" -> new DurableHost.SpiObjectBackend(kind, options.get("spi-pg-url"), null);
+          case "s3" ->
+              new DurableHost.SpiObjectBackend(
+                  kind, options.get("spi-s3-endpoint"), options.get("spi-s3-bucket"));
+          case "mongo" ->
+              new DurableHost.SpiObjectBackend(
+                  kind, options.get("spi-mongo-uri"), options.get("spi-mongo-database"));
+          default -> throw new IllegalArgumentException("unknown --spi-backend: " + kind);
+        };
+    if (!backend.kind().equals("fs")
+        && !DurableHost.ObjectPlane.SPI.wire().equals(options.get("object-plane"))) {
+      throw new IllegalArgumentException("an SPI backend selection requires --object-plane spi");
+    }
+    return backend;
+  }
+
+  /**
+   * SPI credential environment for {@link DurableHost} opens: each {@code PROBE_*}
+   * variable comes from the matching {@code --spi-*} flag when present, else from
+   * the process environment.
+   */
+  static Map<String, String> spiEnvironment(Map<String, String> options) {
+    Map<String, String> environment = new java.util.HashMap<>();
+    String[][] names = {
+      {"PROBE_PG_USER", "spi-pg-user"},
+      {"PROBE_PG_PASSWORD", "spi-pg-password"},
+      {"PROBE_S3_ACCESS_KEY", "spi-s3-access-key"},
+      {"PROBE_S3_SECRET_KEY", "spi-s3-secret-key"},
+      {"PROBE_S3_REGION", "spi-s3-region"},
+      {"PROBE_S3_PREFIX", "spi-s3-prefix"}
+    };
+    for (String[] name : names) {
+      String value = options.get(name[1]);
+      if (value == null) value = System.getenv(name[0]);
+      if (value != null) environment.put(name[0], value);
+    }
+    return environment;
   }
 
   /**
@@ -159,7 +212,8 @@ public final class V2Main {
             configuration(options),
             ReferenceApplications.all(),
             DurableHost.OwnerPolicy.fromPrincipals(Map::of, false),
-            DurableHost.UtcClock.system(options.containsKey("trust-system-clock")));
+            DurableHost.UtcClock.system(options.containsKey("trust-system-clock")),
+            spiEnvironment(options));
     host.close();
     System.out.println("INITIALIZED " + root.toAbsolutePath());
   }
@@ -212,7 +266,8 @@ public final class V2Main {
             ReferenceApplications.all(),
             DurableHost.OwnerPolicy.fromPrincipals(
                 () -> principals, options.containsKey("allow-skip")),
-            DurableHost.UtcClock.system(true));
+            DurableHost.UtcClock.system(true),
+            spiEnvironment(options));
     if (boundaries != null) host.boundaries(boundaries);
     DurableServer server;
     try {
@@ -369,7 +424,9 @@ public final class V2Main {
     List<String> lines = new ArrayList<>();
     lines.add("PipeStream V2 durable endpoints (Java/Netty)");
     lines.add("  init-authority --root DIR --authority LABEL --result-authority HOST:PORT");
-    lines.add("        [--db-mib MIB] [--wal-mib MIB] [--object-plane v2|spi]");
+    lines.add(
+        "        [--db-mib MIB] [--wal-mib MIB] [--object-plane v2|spi]"
+            + " [--spi-backend fs|postgres|s3|mongo]");
     lines.add("  serve --root DIR --authority LABEL --result-authority HOST:PORT --bind HOST:PORT");
     lines.add(
         "        --cert PEM --key PEM --client-ca PEM --principal-map TSV --trust-system-clock");

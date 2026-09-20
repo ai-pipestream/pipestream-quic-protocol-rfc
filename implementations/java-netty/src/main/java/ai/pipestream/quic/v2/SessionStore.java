@@ -3424,15 +3424,21 @@ final class SessionStore {
     }
   }
 
+  /** The durably recorded object plane selection. */
+  record RecordedPlane(DurableHost.ObjectPlane plane, DurableHost.SpiObjectBackend backend) {}
+
   /**
-   * Records the per-installation object plane durably, before the host is
-   * live, so reopen can refuse a changed selection. The plane table is
-   * additive: default v2 installations keep the exact original schema.
+   * Records the per-installation object plane and SPI backend durably,
+   * before the host is live, so reopen can refuse a changed selection. The
+   * table is additive: default v2 installations keep the exact original
+   * schema, and records predating the backend columns read as fs.
    *
    * @param plane configured object plane
+   * @param backend configured SPI backend when the plane is SPI
    * @throws SQLException failed transaction
    */
-  synchronized void recordObjectPlane(DurableHost.ObjectPlane plane) throws SQLException {
+  synchronized void recordObjectPlane(
+      DurableHost.ObjectPlane plane, DurableHost.SpiObjectBackend backend) throws SQLException {
     try (Connection connection = database.connect();
         var statement = connection.createStatement()) {
       statement.execute("BEGIN IMMEDIATE");
@@ -3441,13 +3447,20 @@ final class SessionStore {
             """
             CREATE TABLE IF NOT EXISTS ps_v2_object_plane (
               singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-              plane TEXT NOT NULL CHECK(plane IN ('v2','spi'))
+              plane TEXT NOT NULL CHECK(plane IN ('v2','spi')),
+              backend TEXT NOT NULL DEFAULT 'fs' CHECK(backend IN ('fs','postgres','s3','mongo')),
+              endpoint TEXT,
+              bucket TEXT
             ) STRICT
             """);
         try (var insert =
             connection.prepareStatement(
-                "INSERT INTO ps_v2_object_plane (singleton, plane) VALUES (1, ?)")) {
+                "INSERT INTO ps_v2_object_plane (singleton, plane, backend, endpoint, bucket)"
+                    + " VALUES (1, ?, ?, ?, ?)")) {
           insert.setString(1, plane.wire());
+          insert.setString(2, backend.kind());
+          insert.setString(3, backend.endpoint());
+          insert.setString(4, backend.bucket());
           insert.executeUpdate();
         }
         statement.execute("COMMIT");
@@ -3459,26 +3472,43 @@ final class SessionStore {
   }
 
   /**
-   * The recorded object plane. Installations predating the plane record
-   * report the v2 default.
+   * The recorded object plane and SPI backend. Installations predating the
+   * record report the v2 plane with the fs backend.
    *
-   * @return recorded plane, or {@link DurableHost.ObjectPlane#V2} when absent
+   * @return recorded selection, or v2/fs when absent
    * @throws SQLException storage failure
    */
-  synchronized DurableHost.ObjectPlane objectPlane() throws SQLException {
+  synchronized RecordedPlane objectPlane() throws SQLException {
     try (Connection connection = database.connect();
         var statement = connection.createStatement();
         var row =
             statement.executeQuery(
                 "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='ps_v2_object_plane'")) {
-      if (!row.next() || row.getLong(1) != 1) return DurableHost.ObjectPlane.V2;
+      if (!row.next() || row.getLong(1) != 1) {
+        return new RecordedPlane(DurableHost.ObjectPlane.V2, DurableHost.SpiObjectBackend.fs());
+      }
     }
+    boolean extended;
     try (Connection connection = database.connect();
         var statement = connection.createStatement();
-        var row =
-            statement.executeQuery("SELECT plane FROM ps_v2_object_plane WHERE singleton=1")) {
-      if (!row.next()) return DurableHost.ObjectPlane.V2;
-      return DurableHost.ObjectPlane.parse(row.getString(1));
+        var row = statement.executeQuery("PRAGMA table_info(ps_v2_object_plane)")) {
+      extended = false;
+      while (row.next()) if ("backend".equals(row.getString(2))) extended = true;
+    }
+    String select =
+        extended
+            ? "SELECT plane, backend, endpoint, bucket FROM ps_v2_object_plane WHERE singleton=1"
+            : "SELECT plane, 'fs', NULL, NULL FROM ps_v2_object_plane WHERE singleton=1";
+    try (Connection connection = database.connect();
+        var statement = connection.prepareStatement(select)) {
+      try (var row = statement.executeQuery()) {
+        if (!row.next()) {
+          return new RecordedPlane(DurableHost.ObjectPlane.V2, DurableHost.SpiObjectBackend.fs());
+        }
+        return new RecordedPlane(
+            DurableHost.ObjectPlane.parse(row.getString(1)),
+            new DurableHost.SpiObjectBackend(row.getString(2), row.getString(3), row.getString(4)));
+      }
     }
   }
 
