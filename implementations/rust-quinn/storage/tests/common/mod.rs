@@ -3,6 +3,10 @@
 //! Each helper starts a throwaway container, waits for readiness, and
 //! returns a handle whose Drop removes the container. Tests skip (pass
 //! trivially) when docker is unavailable.
+//!
+//! Every test binary compiles this module and uses only its own backend's
+//! helpers, hence the blanket dead-code allowance.
+#![allow(dead_code)]
 
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -142,5 +146,63 @@ impl PostgresContainer {
             .execute(&format!("CREATE DATABASE {db}"), &[])
             .expect("create fresh database");
         format!("{}/{db}", self.base_url)
+    }
+}
+
+/// A running MinIO container with its endpoint and credentials.
+#[derive(Debug)]
+pub struct MinioContainer {
+    // Held for its Drop impl: kills the container when this handle drops.
+    _container: Container,
+    /// HTTP endpoint, e.g. `http://127.0.0.1:32900`.
+    pub endpoint: String,
+    bucket_seq: std::sync::atomic::AtomicU64,
+}
+
+impl MinioContainer {
+    /// Starts a MinIO container and waits for the API port to accept TCP.
+    /// Returns None when docker is unavailable or startup times out.
+    pub fn start() -> Option<Self> {
+        if !docker_available() {
+            return None;
+        }
+        let container = Container::start(
+            "quay.io/minio/minio:latest",
+            &["server", "/data"],
+            &[
+                "MINIO_ROOT_USER=pipestream",
+                "MINIO_ROOT_PASSWORD=pipestream-secret",
+            ],
+            9000,
+        )?;
+        let port = container.host_port(9000)?;
+        let endpoint = format!("http://127.0.0.1:{port}");
+        let ready = container.wait_until(Duration::from_secs(60), || {
+            std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok()
+        });
+        if !ready {
+            eprintln!("minio container did not become ready");
+            return None;
+        }
+        Some(MinioContainer {
+            _container: container,
+            endpoint,
+            bucket_seq: std::sync::atomic::AtomicU64::new(0),
+        })
+    }
+
+    /// A store config pointing at a fresh, uniquely named bucket.
+    pub fn fresh_config(&self) -> pipestream_storage::S3Config {
+        let seq = self
+            .bucket_seq
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        pipestream_storage::S3Config {
+            bucket: format!("spi-{}-{seq}", std::process::id()),
+            prefix: String::new(),
+            endpoint_url: Some(self.endpoint.clone()),
+            region: "us-east-1".to_string(),
+            access_key: "pipestream".to_string(),
+            secret_key: "pipestream-secret".to_string(),
+        }
     }
 }

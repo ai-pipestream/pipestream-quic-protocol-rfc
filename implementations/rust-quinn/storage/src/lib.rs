@@ -29,6 +29,7 @@ pub mod fs;
 pub mod layout;
 mod memory;
 pub mod postgres;
+mod s3;
 mod spi;
 
 pub use error::StorageError;
@@ -36,4 +37,5 @@ pub use fs::FsStore;
 pub use layout::{Digest32, EntityId, ScopePath, sha256};
 pub use memory::MemoryStore;
 pub use postgres::PostgresStore;
+pub use s3::{S3Config, S3Store};
 pub use spi::{Cursor, Journal, JournalEntry, JournalKind, ObjectStore, SealRecord};
