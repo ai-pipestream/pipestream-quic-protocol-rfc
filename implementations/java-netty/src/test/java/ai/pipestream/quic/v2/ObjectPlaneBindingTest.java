@@ -34,24 +34,27 @@ final class ObjectPlaneBindingTest {
     }
   }
 
-  @Test void spiPlaneIsRefusedAtInitializeWithoutSideEffects() {
+  @Test void spiPlaneInitializesRecordsAndReopens() throws Exception {
     Path root = directory.resolve("spi-init");
     DurableHost.Configuration configuration =
         new DurableHost.Configuration(
             DurableHost.Configuration.defaults("issuer-a", "localhost:7443"),
             DurableHost.ObjectPlane.SPI);
-    assertThrows(
-        UnsupportedOperationException.class,
-        () ->
-            DurableHost.initialize(
-                root,
-                configuration,
-                ReferenceApplications.all(),
-                DurableHost.OwnerPolicy.fromPrincipals(Map::of, false),
-                DurableHost.UtcClock.system(true)));
-    assertTrue(
-        !Files.exists(root) || Files.notExists(root.resolve(DurableHost.DATABASE)),
-        "refused initialize leaves no database behind");
+    try (DurableHost host =
+        DurableHost.initialize(
+            root,
+            configuration,
+            ReferenceApplications.all(),
+            DurableHost.OwnerPolicy.fromPrincipals(Map::of, false),
+            DurableHost.UtcClock.system(true))) {
+      assertEquals(DurableHost.ObjectPlane.SPI, host.configuration().objectPlane());
+    }
+    assertTrue(Files.isDirectory(root.resolve(DurableHost.SPI_OBJECTS)), "SPI payload backend root exists");
+    try (DurableHost reopened = open(root, DurableHost.ObjectPlane.SPI)) {
+      assertEquals(DurableHost.ObjectPlane.SPI, reopened.configuration().objectPlane());
+    }
+    IOException refusal = assertThrows(IOException.class, () -> open(root, DurableHost.ObjectPlane.V2));
+    assertTrue(refusal.getMessage().contains("object plane differs"), refusal.getMessage());
   }
 
   @Test void openRefusesAChangedRecordedPlane() throws Exception {
@@ -69,10 +72,10 @@ final class ObjectPlaneBindingTest {
 
     IOException refusal = assertThrows(IOException.class, () -> open(root, DurableHost.ObjectPlane.V2));
     assertTrue(refusal.getMessage().contains("object plane differs"), refusal.getMessage());
-    // The matching spi selection passes the plane check but this build refuses
-    // it anyway until stage 3 wires the plane.
-    IOException unimplemented = assertThrows(IOException.class, () -> open(root, DurableHost.ObjectPlane.SPI));
-    assertTrue(unimplemented.getMessage().contains("not implemented"), unimplemented.getMessage());
+    // The matching spi selection reopens against the SPI payload plane (stage 3).
+    try (DurableHost reopened = open(root, DurableHost.ObjectPlane.SPI)) {
+      assertEquals(DurableHost.ObjectPlane.SPI, reopened.configuration().objectPlane());
+    }
   }
 
   @Test void storeLevelPlaneRecordDefaultsToV2ForLegacyInstallations() throws Exception {

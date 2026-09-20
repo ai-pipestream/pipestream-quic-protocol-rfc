@@ -1,6 +1,9 @@
 package ai.pipestream.quic.v2;
 
 import ai.pipestream.quic.BoundedSqlite;
+import ai.pipestream.quic.storage.FileObjectStore;
+import ai.pipestream.quic.storage.ObjectStore;
+import ai.pipestream.quic.storage.StorageException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
@@ -33,6 +36,8 @@ import java.util.function.Supplier;
 public final class DurableHost implements AutoCloseable {
   /** Name of the authority metadata database inside the root directory. */
   public static final String DATABASE = "authority.sqlite";
+  /** Input payload plane root for installations recorded on the SPI object plane. */
+  public static final String SPI_OBJECTS = "spi-objects";
 
   /** Name of the paired immutable object directory inside the root directory. */
   public static final String OBJECTS = "objects";
@@ -1230,28 +1235,45 @@ public final class DurableHost implements AutoCloseable {
     Objects.requireNonNull(configuration);
     Objects.requireNonNull(owners);
     Objects.requireNonNull(clock);
-    if (configuration.objectPlane() == ObjectPlane.SPI) {
-      // Stage 3 wires the SPI payload plane; refuse before any file exists.
-      throw new UnsupportedOperationException(
-          "object plane '" + ObjectPlane.SPI.wire() + "' is not implemented in this build");
-    }
     Files.createDirectories(root);
-    SessionStore sessions =
-        SessionStore.initialize(
-            root.resolve(DATABASE), storeConfiguration(configuration, applications));
-    if (configuration.objectPlane() != ObjectPlane.V2) {
-      sessions.recordObjectPlane(configuration.objectPlane());
+    ObjectStore payloadPlane = null;
+    Path payloadPlaneRoot = null;
+    if (configuration.objectPlane() == ObjectPlane.SPI) {
+      payloadPlaneRoot = root.resolve(SPI_OBJECTS);
+      try {
+        payloadPlane = FileObjectStore.open(payloadPlaneRoot);
+      } catch (StorageException failure) {
+        throw new IOException("SPI payload backend open failed", failure);
+      }
     }
-    InputStore inputs =
-        InputStore.initializeForAuthority(
-            root.resolve(OBJECTS), configuration.objects().toStore(), sessions.identity());
     try {
-      sessions.bindInputs(inputs);
-      sessions.anchor();
-      return new DurableHost(root, configuration, applications, owners, clock, sessions, inputs);
+      SessionStore sessions =
+          SessionStore.initialize(
+              root.resolve(DATABASE), storeConfiguration(configuration, applications));
+      if (configuration.objectPlane() != ObjectPlane.V2) {
+        sessions.recordObjectPlane(configuration.objectPlane());
+      }
+      InputStore inputs =
+          payloadPlane != null
+              ? InputStore.initializeForAuthority(
+                  root.resolve(OBJECTS),
+                  configuration.objects().toStore(),
+                  sessions.identity(),
+                  payloadPlane,
+                  payloadPlaneRoot)
+              : InputStore.initializeForAuthority(
+                  root.resolve(OBJECTS), configuration.objects().toStore(), sessions.identity());
+      try {
+        sessions.bindInputs(inputs);
+        sessions.anchor();
+        return new DurableHost(root, configuration, applications, owners, clock, sessions, inputs);
+      } catch (IOException | SQLException | RuntimeException | Error failure) {
+        closeQuietly(inputs, failure);
+        releaseQuietly(sessions, failure);
+        throw failure;
+      }
     } catch (IOException | SQLException | RuntimeException | Error failure) {
-      closeQuietly(inputs, failure);
-      releaseQuietly(sessions, failure);
+      if (payloadPlane != null) closeQuietly(payloadPlane, failure);
       throw failure;
     }
   }
@@ -1284,29 +1306,52 @@ public final class DurableHost implements AutoCloseable {
     SessionStore sessions =
         SessionStore.open(root.resolve(DATABASE), storeConfiguration(configuration, applications));
     ObjectPlane recordedPlane = sessions.objectPlane();
-    String refusal =
-        recordedPlane != configuration.objectPlane()
-            ? "object plane differs: recorded '" + recordedPlane.wire() + "' but configured '"
-                + configuration.objectPlane().wire() + "'"
-            : configuration.objectPlane() == ObjectPlane.SPI
-                ? "object plane '" + ObjectPlane.SPI.wire() + "' is not implemented in this build"
-                : null;
-    if (refusal != null) {
+    if (recordedPlane != configuration.objectPlane()) {
       try {
         sessions.close();
       } catch (SQLException cleanup) {
         // close best effort; the refusal below is the primary failure
       }
-      throw new IOException(refusal);
+      throw new IOException(
+          "object plane differs: recorded '" + recordedPlane.wire() + "' but configured '"
+              + configuration.objectPlane().wire() + "'");
     }
-    InputStore inputs = InputStore.open(root.resolve(OBJECTS), configuration.objects().toStore());
+    ObjectStore payloadPlane = null;
+    Path payloadPlaneRoot = null;
+    if (recordedPlane == ObjectPlane.SPI) {
+      payloadPlaneRoot = root.resolve(SPI_OBJECTS);
+      try {
+        payloadPlane = FileObjectStore.open(payloadPlaneRoot);
+      } catch (StorageException failure) {
+        try {
+          sessions.close();
+        } catch (SQLException cleanup) {
+          // close best effort; the refusal below is the primary failure
+        }
+        throw new IOException("SPI payload backend open failed", failure);
+      }
+    }
     try {
-      sessions.verifyInputs(inputs);
-      sessions.anchor();
-      return new DurableHost(root, configuration, applications, owners, clock, sessions, inputs);
+      InputStore inputs =
+          payloadPlane != null
+              ? InputStore.open(
+                  root.resolve(OBJECTS),
+                  configuration.objects().toStore(),
+                  payloadPlane,
+                  payloadPlaneRoot,
+                  null)
+              : InputStore.open(root.resolve(OBJECTS), configuration.objects().toStore());
+      try {
+        sessions.verifyInputs(inputs);
+        sessions.anchor();
+        return new DurableHost(root, configuration, applications, owners, clock, sessions, inputs);
+      } catch (IOException | SQLException | RuntimeException | Error failure) {
+        closeQuietly(inputs, failure);
+        releaseQuietly(sessions, failure);
+        throw failure;
+      }
     } catch (IOException | SQLException | RuntimeException | Error failure) {
-      closeQuietly(inputs, failure);
-      releaseQuietly(sessions, failure);
+      if (payloadPlane != null) closeQuietly(payloadPlane, failure);
       throw failure;
     }
   }
