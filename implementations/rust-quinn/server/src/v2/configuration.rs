@@ -124,9 +124,10 @@ pub struct Storage {
     trust_system_clock: bool,
     #[arg(long)]
     allow_skip: bool,
-    /// Payload storage backend; only "fs" exists today (SPI backends land
-    /// under the adoption plan). Persisted in the store binding: reopening
-    /// with a different backend is refused.
+    /// Payload storage backend: "fs" (the default stage-file store) or
+    /// "spi-fs" (SPI plane: content in a pipestream-storage store, local
+    /// header stubs). Persisted in the store binding: reopening with a
+    /// different backend is refused.
     #[arg(long, default_value = "fs")]
     payload_backend: String,
     #[arg(long, default_value_t = 1024)]
