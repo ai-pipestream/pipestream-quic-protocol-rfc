@@ -5,7 +5,7 @@
 use super::*;
 
 fn object(root: &Root, key: &str, entry: &Entry, releasing: bool) -> Result<()> {
-    match read_header(&root.path(key, entry.incomplete), false) {
+    match read_header(&root.path(key, entry.incomplete), false, root.spi.is_some()) {
         Ok((header, offset))
             if !entry.incomplete && header == entry.header()? && offset == entry.offset =>
         {

@@ -72,7 +72,7 @@ const RECORD_HEADER_BYTES: usize = 1 + 8 + 4 + 4;
 /// The journal log handle. Production uses a real file; tests install a
 /// failing sink to prove a failed append truncates back to the pre-append
 /// offset.
-pub(crate) trait LogIo: Send {
+pub(crate) trait LogIo: Send + Sync {
     /// Current logical length of the log.
     fn len(&mut self) -> std::io::Result<u64>;
     /// Appends bytes at the end of the log.

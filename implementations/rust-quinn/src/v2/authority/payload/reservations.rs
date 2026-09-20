@@ -796,6 +796,7 @@ impl OutputStaging {
         file.sync_all().map_err(io)?;
         #[cfg(test)]
         tests::crash_point("output-synced");
+        self.store.spi_install(&self.key, &input.sha256)?;
         install_file(
             &self.store.root,
             &self.store.root.path(&self.key, true),
