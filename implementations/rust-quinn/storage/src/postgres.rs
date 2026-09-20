@@ -3,16 +3,18 @@
 //! Physical mapping of the shared logical layout:
 //!
 //! - Scope path → `TEXT` column holding the `/`-joined hex components
-//!   ([`ScopePath::to_path_string`](crate::ScopePath::to_path_string)). The
-//!   fanout bucket is derivable from the entity id and is not stored.
+//!   ([`ScopePath::to_path_string`]). The fanout bucket is derivable from
+//!   the entity id and is not stored.
 //! - Objects → `pipestream_objects(scope_path, entity_id, digest, payload)`:
 //!   metadata and payload (`bytea`) in one row. The digest recorded at
 //!   [`put`](ObjectStore::put) time is stored alongside so
 //!   [`verify_scope`](ObjectStore::verify_scope) can rehash and compare.
 //! - Seal records → `pipestream_seals(scope_path, digest, entity_count)`.
-//! - Journal → `pipestream_journal(seq, kind, intent_cursor, payload)` with
+//! - Journal → `pipestream_journal(seq, kind, intent_id, payload)` with
 //!   `seq` an identity column; a record's cursor is its `seq`. Commits are
-//!   appended as tail records, exactly like the log-based backends.
+//!   appended as tail records and consume cursors in the global order,
+//!   exactly like the log-based backends; replay folds each commit into its
+//!   intent's entry.
 //!
 //! Durability configuration: every mutating call runs as a single
 //! transaction and returns only after the commit succeeds; with the stock
@@ -33,8 +35,8 @@
 
 use crate::layout;
 use crate::{
-    Cursor, Digest32, EntityId, Journal, JournalEntry, JournalKind, ObjectStore, ScopePath,
-    SealRecord, StorageError,
+    Cursor, Digest32, EntityId, Intent, Journal, MAX_RECORD_BYTES, ObjectStore, ReplayEntry,
+    ScopePath, SealRecord, StorageError,
 };
 use postgres::{Client, GenericClient, NoTls};
 use std::io::{self, Read};
@@ -59,7 +61,7 @@ CREATE TABLE IF NOT EXISTS pipestream_seals (
 CREATE TABLE IF NOT EXISTS pipestream_journal (
     seq BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     kind SMALLINT NOT NULL,
-    intent_cursor BIGINT,
+    intent_id TEXT NOT NULL,
     payload BYTEA NOT NULL
 );
 ";
@@ -92,7 +94,7 @@ impl PostgresStore {
     fn lock(&self) -> Result<MutexGuard<'_, Client>, StorageError> {
         self.client
             .lock()
-            .map_err(|_| StorageError::backend("postgres store lock poisoned"))
+            .map_err(|_| StorageError::failed("postgres store lock poisoned"))
     }
 }
 
@@ -109,12 +111,12 @@ impl Read for PostgresReader {
 }
 
 /// Maps a postgres client error into the taxonomy: a closed connection is
-/// retryable; everything else is a general backend error.
+/// retryable; everything else is a general failure.
 fn map_pg_error(error: postgres::Error) -> StorageError {
     if error.is_closed() {
         return StorageError::transient(format!("postgres: {error}"));
     }
-    StorageError::backend(format!("postgres: {error}"))
+    StorageError::failed(format!("postgres: {error}"))
 }
 
 fn path_key(scope: &ScopePath) -> String {
@@ -122,30 +124,21 @@ fn path_key(scope: &ScopePath) -> String {
 }
 
 fn entity_to_row(entity: EntityId) -> i64 {
-    i64::from(entity)
+    // Entity ids are validated as unsigned 63-bit before any SQL runs.
+    entity as i64
 }
 
 fn entity_from_row(value: i64, scope: &ScopePath) -> Result<EntityId, StorageError> {
-    u32::try_from(value)
-        .map_err(|_| StorageError::corrupt(format!("entity id {value} in {scope} out of range")))
-}
-
-fn cursor_to_row(cursor: Cursor) -> Result<i64, StorageError> {
-    i64::try_from(cursor.0).map_err(|_| StorageError::backend("cursor exceeds i64"))
-}
-
-fn digest_from_row(bytes: &[u8], scope: &ScopePath) -> Result<Digest32, StorageError> {
-    let digest: Digest32 = bytes
-        .try_into()
-        .map_err(|_| StorageError::corrupt(format!("malformed digest stored for {scope}")))?;
-    Ok(digest)
+    if value < 0 {
+        return Err(StorageError::corrupt(format!(
+            "negative entity id {value} stored for {scope}"
+        )));
+    }
+    Ok(value as u64)
 }
 
 /// Fails with [`StorageError::AlreadySealed`] when the scope has a seal row.
-fn require_unsealed(
-    client: &mut impl GenericClient,
-    scope: &ScopePath,
-) -> Result<(), StorageError> {
+fn require_unsealed(client: &mut impl GenericClient, scope: &ScopePath) -> Result<(), StorageError> {
     let sealed: bool = client
         .query_one(
             "SELECT EXISTS(SELECT 1 FROM pipestream_seals WHERE scope_path = $1)",
@@ -176,12 +169,17 @@ fn read_seal(
         Some(row) => {
             let digest: Vec<u8> = row.get(0);
             let entity_count: i64 = row.get(1);
-            let entity_count = u64::try_from(entity_count).map_err(|_| {
-                StorageError::corrupt(format!("negative entity count stored for {scope}"))
+            if entity_count < 0 {
+                return Err(StorageError::corrupt(format!(
+                    "negative entity count stored for {scope}"
+                )));
+            }
+            let digest: Digest32 = digest.as_slice().try_into().map_err(|_| {
+                StorageError::corrupt(format!("malformed digest stored for {scope}"))
             })?;
             Ok(Some(SealRecord {
-                digest: digest_from_row(&digest, scope)?,
-                entity_count,
+                digest,
+                entity_count: entity_count as u64,
             }))
         }
         None => Ok(None),
@@ -199,25 +197,27 @@ impl ObjectStore for PostgresStore {
         expected_digest: &Digest32,
     ) -> Result<(), StorageError> {
         layout::check_entity_id(entity)?;
+        let mut client = self.lock()?;
+        let mut tx = client.transaction().map_err(map_pg_error)?;
+        // Seal is checked before the digest: a sealed scope rejects every
+        // put regardless of bytes.
+        require_unsealed(&mut tx, scope)?;
         let digest = layout::sha256(bytes);
         if &digest != expected_digest {
             return Err(StorageError::corrupt(format!(
                 "digest mismatch for entity {entity} in {scope}"
             )));
         }
-        let mut client = self.lock()?;
-        let mut tx = client.transaction().map_err(map_pg_error)?;
-        require_unsealed(&mut tx, scope)?;
-        let existing: Option<Vec<u8>> = tx
+        let existing: Option<(Vec<u8>, Vec<u8>)> = tx
             .query_opt(
-                "SELECT digest FROM pipestream_objects \
+                "SELECT digest, payload FROM pipestream_objects \
                  WHERE scope_path = $1 AND entity_id = $2",
                 &[&path_key(scope), &entity_to_row(entity)],
             )
             .map_err(map_pg_error)?
-            .map(|row| row.get(0));
+            .map(|row| (row.get(0), row.get(1)));
         match existing {
-            Some(recorded) if recorded.as_slice() == digest => {}
+            Some((_, payload)) if payload == bytes => {}
             Some(_) => {
                 return Err(StorageError::corrupt(format!(
                     "conflicting bytes for entity {entity} in {scope}"
@@ -259,7 +259,7 @@ impl ObjectStore for PostgresStore {
                 bytes: io::Cursor::new(bytes),
             }),
             None => Err(StorageError::not_found(format!(
-                "entity {entity} in {scope}"
+                "entity {entity} is absent from scope {scope}"
             ))),
         }
     }
@@ -271,7 +271,7 @@ impl ObjectStore for PostgresStore {
         entity_count: u64,
     ) -> Result<(), StorageError> {
         let count = i64::try_from(entity_count)
-            .map_err(|_| StorageError::backend("entity count exceeds i64"))?;
+            .map_err(|_| StorageError::failed("entity count exceeds i64"))?;
         let mut client = self.lock()?;
         let mut tx = client.transaction().map_err(map_pg_error)?;
         match read_seal(&mut tx, scope)? {
@@ -279,7 +279,7 @@ impl ObjectStore for PostgresStore {
                 if existing.digest == *digest && existing.entity_count == entity_count => {}
             Some(_) => {
                 return Err(StorageError::corrupt(format!(
-                    "scope {scope} already sealed with a different digest or entity count"
+                    "scope {scope} already carries a different seal"
                 )));
             }
             None => {
@@ -297,7 +297,7 @@ impl ObjectStore for PostgresStore {
     fn verify_scope(&self, scope: &ScopePath) -> Result<SealRecord, StorageError> {
         let mut client = self.lock()?;
         let seal = read_seal(&mut *client, scope)?
-            .ok_or_else(|| StorageError::not_found(format!("seal record for {scope}")))?;
+            .ok_or_else(|| StorageError::not_found(format!("scope {scope} has no seal record")))?;
         let rows = client
             .query(
                 "SELECT entity_id, digest, payload FROM pipestream_objects \
@@ -305,23 +305,30 @@ impl ObjectStore for PostgresStore {
                 &[&path_key(scope)],
             )
             .map_err(map_pg_error)?;
-        if rows.len() as u64 != seal.entity_count {
-            return Err(StorageError::corrupt(format!(
-                "scope {scope} holds {} entities but the seal record says {}",
-                rows.len(),
-                seal.entity_count
-            )));
-        }
+        let mut digests = Vec::with_capacity(rows.len());
         for row in &rows {
-            let entity: i64 = row.get(0);
+            let entity = entity_from_row(row.get(0), scope)?;
             let recorded: Vec<u8> = row.get(1);
-            let payload: Vec<u8> = row.get(2);
-            if layout::sha256(&payload) != recorded.as_slice() {
+            let payload: &[u8] = row.get(2);
+            if layout::sha256(payload) != recorded.as_slice() {
                 return Err(StorageError::corrupt(format!(
-                    "entity {} in {scope} no longer matches its recorded digest",
-                    entity_from_row(entity, scope)?
+                    "entity {entity} in {scope} fails its recorded digest"
                 )));
             }
+            let recorded: Digest32 = recorded.as_slice().try_into().map_err(|_| {
+                StorageError::corrupt(format!("malformed digest stored for {scope}"))
+            })?;
+            digests.push((entity, recorded));
+        }
+        if digests.len() as u64 != seal.entity_count {
+            return Err(StorageError::corrupt(format!(
+                "scope {scope} entity count differs from its seal"
+            )));
+        }
+        if layout::scope_digest(&digests)? != seal.digest {
+            return Err(StorageError::corrupt(format!(
+                "scope {scope} digest differs from its seal"
+            )));
         }
         Ok(seal)
     }
@@ -359,8 +366,20 @@ impl ObjectStore for PostgresStore {
             tx.commit().map_err(map_pg_error)?;
             return Ok(removed);
         }
+        let remaining: bool = client
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM pipestream_objects WHERE scope_path = $1)",
+                &[&path_key(scope)],
+            )
+            .map_err(map_pg_error)?
+            .get(0);
+        if !remaining {
+            return Err(StorageError::not_found(format!(
+                "scope {scope} holds nothing to retire"
+            )));
+        }
         let cursor = i64::try_from(retention_cursor)
-            .map_err(|_| StorageError::backend("retention cursor exceeds i64"))?;
+            .map_err(|_| StorageError::failed("retention cursor exceeds i64"))?;
         let removed = client
             .execute(
                 "DELETE FROM pipestream_objects WHERE scope_path = $1 AND entity_id <= $2",
@@ -372,41 +391,64 @@ impl ObjectStore for PostgresStore {
 }
 
 impl Journal for PostgresStore {
-    fn append_intent(&mut self, record: &[u8]) -> Result<Cursor, StorageError> {
+    fn append_intent(&mut self, intent: &Intent) -> Result<Cursor, StorageError> {
         let mut client = self.lock()?;
-        let seq: i64 = client
+        let mut tx = client.transaction().map_err(map_pg_error)?;
+        let existing: Option<(i64, Vec<u8>)> = tx
+            .query_opt(
+                "SELECT seq, payload FROM pipestream_journal \
+                 WHERE kind = $1 AND intent_id = $2",
+                &[&KIND_INTENT, &intent.id()],
+            )
+            .map_err(map_pg_error)?
+            .map(|row| (row.get(0), row.get(1)));
+        if let Some((seq, payload)) = existing {
+            if payload == intent.record() {
+                return Ok(Cursor(seq as u64));
+            }
+            return Err(StorageError::corrupt(format!(
+                "intent {} already exists with different bytes",
+                intent.id()
+            )));
+        }
+        let seq: i64 = tx
             .query_one(
-                "INSERT INTO pipestream_journal (kind, intent_cursor, payload) \
-                 VALUES ($1, NULL, $2) RETURNING seq",
-                &[&KIND_INTENT, &record],
+                "INSERT INTO pipestream_journal (kind, intent_id, payload) \
+                 VALUES ($1, $2, $3) RETURNING seq",
+                &[&KIND_INTENT, &intent.id(), &intent.record()],
             )
             .map_err(map_pg_error)?
             .get(0);
-        u64::try_from(seq)
-            .map(Cursor)
-            .map_err(|_| StorageError::corrupt("negative journal sequence".to_string()))
+        tx.commit().map_err(map_pg_error)?;
+        Ok(Cursor(seq as u64))
     }
 
-    fn commit(&mut self, intent: Cursor, record: &[u8]) -> Result<(), StorageError> {
-        let intent_seq = cursor_to_row(intent)?;
+    fn commit(&mut self, intent_id: &str, record: &[u8]) -> Result<(), StorageError> {
+        if record.is_empty() || record.len() > MAX_RECORD_BYTES {
+            return Err(StorageError::failed(format!(
+                "commit record must be 1 to {MAX_RECORD_BYTES} octets"
+            )));
+        }
         let mut client = self.lock()?;
         let mut tx = client.transaction().map_err(map_pg_error)?;
-        let intent_kind: Option<i16> = tx
-            .query_opt(
-                "SELECT kind FROM pipestream_journal WHERE seq = $1",
-                &[&intent_seq],
+        let intent_present: bool = tx
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM pipestream_journal \
+                 WHERE kind = $1 AND intent_id = $2)",
+                &[&KIND_INTENT, &intent_id],
             )
             .map_err(map_pg_error)?
-            .map(|row| row.get(0));
-        match intent_kind {
-            Some(KIND_INTENT) => {}
-            _ => return Err(StorageError::not_found(format!("intent at {intent:?}"))),
+            .get(0);
+        if !intent_present {
+            return Err(StorageError::not_found(format!(
+                "intent {intent_id} has no durable append"
+            )));
         }
         let prior: Option<Vec<u8>> = tx
             .query_opt(
                 "SELECT payload FROM pipestream_journal \
-                 WHERE kind = $1 AND intent_cursor = $2",
-                &[&KIND_COMMIT, &intent_seq],
+                 WHERE kind = $1 AND intent_id = $2",
+                &[&KIND_COMMIT, &intent_id],
             )
             .map_err(map_pg_error)?
             .map(|row| row.get(0));
@@ -414,14 +456,14 @@ impl Journal for PostgresStore {
             Some(existing) if existing == record => {}
             Some(_) => {
                 return Err(StorageError::corrupt(format!(
-                    "intent at {intent:?} already committed with a different record"
+                    "intent {intent_id} already carries a different commit"
                 )));
             }
             None => {
                 tx.execute(
-                    "INSERT INTO pipestream_journal (kind, intent_cursor, payload) \
+                    "INSERT INTO pipestream_journal (kind, intent_id, payload) \
                      VALUES ($1, $2, $3)",
-                    &[&KIND_COMMIT, &intent_seq, &record],
+                    &[&KIND_COMMIT, &intent_id, &record],
                 )
                 .map_err(map_pg_error)?;
             }
@@ -429,43 +471,38 @@ impl Journal for PostgresStore {
         tx.commit().map_err(map_pg_error)
     }
 
-    fn replay(&self, since: Cursor) -> Result<Vec<JournalEntry>, StorageError> {
-        let since_seq = cursor_to_row(since)?;
+    fn replay(&self, since: Cursor) -> Result<Vec<ReplayEntry>, StorageError> {
+        let since_seq = i64::try_from(since.0)
+            .map_err(|_| StorageError::failed("cursor exceeds i64"))?;
         let mut client = self.lock()?;
         let rows = client
             .query(
-                "SELECT seq, kind, intent_cursor, payload FROM pipestream_journal \
-                 WHERE seq > $1 ORDER BY seq",
-                &[&since_seq],
+                "SELECT i.seq, i.intent_id, i.payload, c.payload \
+                 FROM pipestream_journal i \
+                 LEFT JOIN pipestream_journal c \
+                   ON c.kind = $2 AND c.intent_id = i.intent_id \
+                 WHERE i.kind = $3 AND i.seq > $1 \
+                 ORDER BY i.seq",
+                &[&since_seq, &KIND_COMMIT, &KIND_INTENT],
             )
             .map_err(map_pg_error)?;
         let mut entries = Vec::with_capacity(rows.len());
         for row in rows {
             let seq: i64 = row.get(0);
-            let kind: i16 = row.get(1);
-            let payload: Vec<u8> = row.get(3);
-            let cursor = u64::try_from(seq)
-                .map(Cursor)
-                .map_err(|_| StorageError::corrupt("negative journal sequence".to_string()))?;
-            let kind = match kind {
-                KIND_INTENT => JournalKind::Intent(payload),
-                KIND_COMMIT => {
-                    let intent_seq: i64 = row.get(2);
-                    let intent = u64::try_from(intent_seq).map(Cursor).map_err(|_| {
-                        StorageError::corrupt("negative intent cursor in journal".to_string())
-                    })?;
-                    JournalKind::Commit {
-                        intent,
-                        record: payload,
-                    }
-                }
-                other => {
-                    return Err(StorageError::corrupt(format!(
-                        "unknown journal record kind {other} at seq {seq}"
-                    )));
-                }
-            };
-            entries.push(JournalEntry { cursor, kind });
+            if seq < 0 {
+                return Err(StorageError::corrupt("negative journal sequence".to_string()));
+            }
+            let id: String = row.get(1);
+            let record: Vec<u8> = row.get(2);
+            let commit: Option<Vec<u8>> = row.get(3);
+            let intent = Intent::new(id, record).map_err(|_| {
+                StorageError::corrupt("journal intent fails validation".to_string())
+            })?;
+            entries.push(ReplayEntry {
+                cursor: Cursor(seq as u64),
+                intent,
+                commit,
+            });
         }
         Ok(entries)
     }

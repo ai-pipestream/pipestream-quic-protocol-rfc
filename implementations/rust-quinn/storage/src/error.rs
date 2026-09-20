@@ -1,38 +1,34 @@
 //! Error taxonomy for the storage SPI.
 //!
 //! The taxonomy is part of the SPI contract: recovery behavior differs per
-//! class, so every backend must map its failures into these categories.
+//! class, so every backend must map its failures into these categories. The
+//! five classes match the Java lane's `StorageException.Kind` exactly.
 
 use std::fmt;
 
 /// The one error type returned by every [`crate::ObjectStore`] and
 /// [`crate::Journal`] operation.
-///
-/// The variants distinguish the four classes the contract requires —
-/// [`NotFound`](StorageError::NotFound),
-/// [`AlreadySealed`](StorageError::AlreadySealed),
-/// [`Corrupt`](StorageError::Corrupt), and
-/// [`Transient`](StorageError::Transient) — plus a general category,
-/// [`Backend`](StorageError::Backend), for everything else (I/O failures,
-/// invalid arguments, backend-internal invariant violations).
 #[derive(Debug)]
 pub enum StorageError {
-    /// The named scope, entity, or intent does not exist.
+    /// The addressed scope, entity, intent, or seal record does not exist.
     NotFound(String),
-    /// The operation targets a scope that is already sealed. After a scope
-    /// seals, `put` into it fails with this class.
+    /// The addressed scope is sealed and rejects mutation. After a scope
+    /// seals, `put` into it fails with this class regardless of bytes.
     AlreadySealed(String),
-    /// A digest or content mismatch: conflicting bytes for an existing
-    /// entity, an `expected_digest` that does not match the payload, a
-    /// `verify_scope` recompute that disagrees with the seal record, or a
-    /// conflicting re-seal or re-commit.
+    /// Stored or submitted bytes contradict a recorded or expected digest:
+    /// conflicting bytes for an existing entity, an `expected_digest` that
+    /// does not match the payload, a `verify_scope` recompute that
+    /// disagrees with the seal record, a conflicting re-seal, or a
+    /// conflicting intent append or commit.
     Corrupt(String),
-    /// A retryable failure (lock contention, temporarily unreachable
-    /// service). Callers may retry the identical operation.
+    /// Retryable failure: I/O errors, timeouts, lock contention, a
+    /// temporarily unreachable service. The identical operation may be
+    /// retried.
     Transient(String),
-    /// General category for failures outside the four contract classes:
-    /// I/O errors, invalid arguments, and backend-internal violations.
-    Backend(String),
+    /// General durable failure that is neither retryable nor corruption:
+    /// invalid arguments, double-writer acquisition, use-after-close, and
+    /// backend-internal violations.
+    Failed(String),
 }
 
 impl StorageError {
@@ -56,9 +52,9 @@ impl StorageError {
         StorageError::Transient(detail.into())
     }
 
-    /// Builds a [`StorageError::Backend`] with the given detail.
-    pub fn backend(detail: impl Into<String>) -> Self {
-        StorageError::Backend(detail.into())
+    /// Builds a [`StorageError::Failed`] with the given detail.
+    pub fn failed(detail: impl Into<String>) -> Self {
+        StorageError::Failed(detail.into())
     }
 
     /// Returns true when the failure is [`StorageError::Transient`] and the
@@ -75,7 +71,7 @@ impl fmt::Display for StorageError {
             StorageError::AlreadySealed(detail) => write!(f, "already sealed: {detail}"),
             StorageError::Corrupt(detail) => write!(f, "corrupt: {detail}"),
             StorageError::Transient(detail) => write!(f, "transient: {detail}"),
-            StorageError::Backend(detail) => write!(f, "backend: {detail}"),
+            StorageError::Failed(detail) => write!(f, "failed: {detail}"),
         }
     }
 }
@@ -83,7 +79,8 @@ impl fmt::Display for StorageError {
 impl std::error::Error for StorageError {}
 
 impl From<std::io::Error> for StorageError {
+    /// Per the pinned error mapping, I/O failures are transient.
     fn from(error: std::io::Error) -> Self {
-        StorageError::Backend(format!("i/o: {error}"))
+        StorageError::Transient(format!("i/o: {error}"))
     }
 }

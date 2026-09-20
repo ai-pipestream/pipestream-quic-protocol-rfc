@@ -23,19 +23,20 @@ fn postgres_backend_passes_the_spi_contract() {
 
 #[test]
 fn postgres_verify_detects_tampered_payload() {
-    use pipestream_storage::{ObjectStore, ScopePath, StorageError, sha256};
+    use pipestream_storage::{ObjectStore, ScopePath, StorageError, layout, sha256};
     let Some(pg) = common::PostgresContainer::start() else {
         eprintln!("docker unavailable: skipping postgres tamper test");
         return;
     };
     let db = pg.fresh_database();
     let mut store = PostgresStore::open(&db).expect("open store");
-    let scope = ScopePath::root();
+    let scope = ScopePath::root(0);
     let payload = b"postgres integrity";
     store
         .put(&scope, 3, payload, &sha256(payload))
         .expect("put");
-    store.seal_scope(&scope, &sha256(b"scope"), 1).expect("seal");
+    let digest = layout::scope_digest(&[(3, sha256(payload))]).expect("scope digest");
+    store.seal_scope(&scope, &digest, 1).expect("seal");
     // Tamper behind the backend's back.
     let mut client = postgres::Client::connect(&db, postgres::NoTls).expect("connect");
     client

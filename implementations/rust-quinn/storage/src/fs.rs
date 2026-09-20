@@ -1,55 +1,73 @@
-//! Filesystem backend implementing both SPI roles.
+//! Filesystem backend implementing both SPI roles: the reference default.
 //!
-//! Physical layout under the configured root (the shared logical layout from
-//! [`crate::layout`], rendered as directories and files):
+//! The scope tree maps to directories, entities shard into 2-hex-character
+//! fanout buckets within their leaf, and one seal record holding the scope
+//! digest and entity count lives beside the objects. The physical formats
+//! are pinned cross-language (design note, "Pinned decisions"):
 //!
 //! ```text
 //! <root>/
-//!   objects/<scope-id-hex>/...        one directory per scope-path component
-//!     objects/<bucket-hex>/<entity-hex>   entity file: 32-byte content digest, then payload
-//!     seal                            40 bytes: 32-byte SCOPE_DIGEST + u64 BE entity count
-//!   journal/log                     append-only journal (see below)
-//!   scratch/                        staging area for atomic writes
+//!   objects/<scope-hex>/.../scope.seal          [32B digest][8B BE entity count]
+//!   objects/<scope-hex>/.../<bucket-2hex>/<entity-16hex>
+//!                                               [8B BE payload length][32B sha256][payload]
+//!   objects/writer.lock                         exclusive-writer lock (see below)
+//!   journal/journal.log                         append-only journal (see below)
+//!   journal/writer.lock
 //! ```
 //!
-//! Journal record framing: `u32 BE payload_len | u8 kind | payload`, where
-//! kind 0 is an intent (payload = record) and kind 1 is a commit
-//! (payload = `u64 BE intent cursor` followed by the record). The file is
-//! append-only; a record's cursor is its 1-based position in the file.
+//! Journal framing: the file starts with the 7-byte magic `PSJSL01`, then
+//! records of `[type:1][cursor:8 BE][idLen:4 BE][payloadLen:4 BE][id]
+//! [payload][sha256(header || id || payload):32]`. A torn trailing record
+//! left by a killed writer is truncated at open — that append never
+//! returned success; corruption anywhere else fails the open with
+//! [`StorageError::Corrupt`].
 //!
-//! Durability configuration: every mutating operation writes through a
-//! scratch file, fsyncs the file, atomically renames it into place, and
-//! fsyncs the containing directory before returning success. Journal appends
-//! write the record and fsync the log before returning. A success therefore
-//! survives a process kill (assuming the filesystem honors fsync).
+//! Durability configuration: every mutation writes to a scratch file in the
+//! target directory (`write-*.tmp`), fsyncs it, atomically renames it into
+//! place, and fsyncs the containing directories before returning success;
+//! journal appends fsync the log before returning. Success implies survival
+//! of a process kill. Scratch is never placed in an ambient temp directory
+//! and is swept on open and on close.
 //!
-//! Scratch files live under `<root>/scratch` — never an ambient temp dir —
-//! and are removed by [`FsStore::close`] (and best-effort on drop).
+//! One cooperating process owns a store root: opening takes an exclusive
+//! advisory lock on both `writer.lock` files, and a second opener fails
+//! with [`StorageError::Failed`]. On Linux this uses `flock(2)`; note that
+//! the Java lane's `FileLock` uses `fcntl(2)` record locks, and the two
+//! families do not interlock — the guard is same-language.
 //!
 //! Open-read survival relies on POSIX semantics: an open file descriptor
-//! stays valid after the file is unlinked, so retiring an unsealed object
-//! does not invalidate a live reader.
+//! stays valid after the file is unlinked, so retiring an object does not
+//! invalidate a live reader.
 
 use crate::layout;
 use crate::{
-    Cursor, Digest32, EntityId, Journal, JournalEntry, JournalKind, ObjectStore, ScopePath,
-    SealRecord, StorageError,
+    Cursor, Digest32, EntityId, Intent, Journal, MAX_INTENT_ID_BYTES, MAX_RECORD_BYTES,
+    ObjectStore, ReplayEntry, ScopePath, SealRecord, StorageError,
 };
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 const OBJECTS_DIR: &str = "objects";
-const SEAL_FILE: &str = "seal";
+const SEAL_FILE_NAME: &str = "scope.seal";
 const JOURNAL_DIR: &str = "journal";
-const JOURNAL_LOG: &str = "log";
-const SCRATCH_DIR: &str = "scratch";
+const JOURNAL_LOG_NAME: &str = "journal.log";
+const WRITER_LOCK_NAME: &str = "writer.lock";
+const SCRATCH_PREFIX: &str = "write-";
+const SCRATCH_SUFFIX: &str = ".tmp";
+const ENTITY_HEADER_BYTES: usize = 8 + 32;
 const SEAL_RECORD_LEN: usize = 32 + 8;
-const KIND_INTENT: u8 = 0;
-const KIND_COMMIT: u8 = 1;
 const READ_CHUNK: usize = 64 * 1024;
+
+const JOURNAL_MAGIC: &[u8; 7] = b"PSJSL01";
+const TYPE_INTENT: u8 = 0;
+const TYPE_COMMIT: u8 = 1;
+/// `[type:1][cursor:8][idLen:4][payloadLen:4]`.
+const RECORD_HEADER_BYTES: usize = 1 + 8 + 4 + 4;
 
 /// Filesystem backend for both the [`ObjectStore`] and [`Journal`] roles.
 ///
@@ -58,37 +76,163 @@ const READ_CHUNK: usize = 64 * 1024;
 #[derive(Debug)]
 pub struct FsStore {
     root: PathBuf,
-    journal: Vec<JournalKind>,
+    journal: JournalIndex,
+    log: File,
     scratch_seq: AtomicU64,
+    _locks: WriterLocks,
+}
+
+/// In-process guard against a second writer on the same root (the OS locks
+/// cover the cross-process case).
+static OPEN_ROOTS: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
+
+fn open_roots() -> &'static Mutex<std::collections::HashSet<PathBuf>> {
+    OPEN_ROOTS.get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+}
+
+/// Held writer locks; dropping releases them.
+#[derive(Debug)]
+struct WriterLocks {
+    _objects_lock: File,
+    _journal_lock: File,
+    objects_dir: PathBuf,
+    journal_dir: PathBuf,
+}
+
+impl WriterLocks {
+    fn acquire(root: &Path) -> Result<Self, StorageError> {
+        let objects_dir = root.join(OBJECTS_DIR);
+        let journal_dir = root.join(JOURNAL_DIR);
+        let objects_lock = acquire_one(&objects_dir)?;
+        let journal_lock = match acquire_one(&journal_dir) {
+            Ok(lock) => lock,
+            Err(error) => {
+                drop(objects_lock);
+                return Err(error);
+            }
+        };
+        {
+            let mut roots = open_roots()
+                .lock()
+                .map_err(|_| StorageError::failed("writer registry lock poisoned"))?;
+            if !roots.insert(canonical_key(&objects_dir)) {
+                return Err(StorageError::failed(format!(
+                    "store at {} already has a writer in this process",
+                    root.display()
+                )));
+            }
+            if !roots.insert(canonical_key(&journal_dir)) {
+                roots.remove(&canonical_key(&objects_dir));
+                return Err(StorageError::failed(format!(
+                    "store at {} already has a writer in this process",
+                    root.display()
+                )));
+            }
+        }
+        Ok(WriterLocks {
+            _objects_lock: objects_lock,
+            _journal_lock: journal_lock,
+            objects_dir,
+            journal_dir,
+        })
+    }
+}
+
+impl Drop for WriterLocks {
+    fn drop(&mut self) {
+        if let Ok(mut roots) = open_roots().lock() {
+            roots.remove(&canonical_key(&self.objects_dir));
+            roots.remove(&canonical_key(&self.journal_dir));
+        }
+    }
+}
+
+fn canonical_key(dir: &Path) -> PathBuf {
+    fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())
+}
+
+/// Takes the exclusive advisory lock on `dir/writer.lock`.
+#[cfg(unix)]
+fn acquire_one(dir: &Path) -> Result<File, StorageError> {
+    use rustix::fs::{FlockOperation, flock};
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(dir.join(WRITER_LOCK_NAME))?;
+    match flock(&file, FlockOperation::NonBlockingLockExclusive) {
+        Ok(()) => Ok(file),
+        Err(_) => Err(StorageError::failed(format!(
+            "store directory {} already has a writer",
+            dir.display()
+        ))),
+    }
+}
+
+/// Non-unix fallback: presence of the lock file rejects a second writer.
+/// Stale locks after a kill are not recovered on these platforms.
+#[cfg(not(unix))]
+fn acquire_one(dir: &Path) -> Result<File, StorageError> {
+    match OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(dir.join(WRITER_LOCK_NAME))
+    {
+        Ok(file) => Ok(file),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(
+            StorageError::failed(format!(
+                "store directory {} already has a writer",
+                dir.display()
+            )),
+        ),
+        Err(error) => Err(error.into()),
+    }
 }
 
 impl FsStore {
-    /// Opens (creating if necessary) the store rooted at `root`.
-    ///
-    /// Validates the journal's framing and loads its in-memory index. A
-    /// truncated or malformed journal fails with [`StorageError::Corrupt`].
-    /// Leftover scratch files from a previous unclean shutdown are removed.
+    /// Opens (creating if necessary) the exclusively owned store rooted at
+    /// `root`. Abandoned scratch files from a killed predecessor are swept
+    /// before the store accepts operations; a torn trailing journal record
+    /// is truncated; real journal corruption fails the open with
+    /// [`StorageError::Corrupt`].
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, StorageError> {
         let root = root.into();
-        fs::create_dir_all(root.join(OBJECTS_DIR))?;
-        fs::create_dir_all(root.join(JOURNAL_DIR))?;
-        let scratch = root.join(SCRATCH_DIR);
-        if scratch.exists() {
-            fs::remove_dir_all(&scratch)?;
+        if root.exists() && !root.is_dir() {
+            return Err(StorageError::failed(format!(
+                "store root {} is not a real directory",
+                root.display()
+            )));
         }
-        fs::create_dir_all(&scratch)?;
-        let journal = read_journal_index(&root.join(JOURNAL_DIR).join(JOURNAL_LOG))?;
-        Ok(FsStore {
-            root,
-            journal,
-            scratch_seq: AtomicU64::new(0),
-        })
+        create_dirs_durable(&root.join(OBJECTS_DIR))?;
+        create_dirs_durable(&root.join(JOURNAL_DIR))?;
+        let locks = WriterLocks::acquire(&root)?;
+        let open_result = (|| -> Result<(JournalIndex, File), StorageError> {
+            sweep_scratch(&root.join(OBJECTS_DIR))?;
+            let log_path = root.join(JOURNAL_DIR).join(JOURNAL_LOG_NAME);
+            // Recovery creates the log and its magic when absent, truncates
+            // a torn tail, and rebuilds the index; the store's own handle
+            // opens in append mode so writes always land at EOF.
+            let journal = recover_journal(&log_path)?;
+            let log = OpenOptions::new().append(true).open(&log_path)?;
+            Ok((journal, log))
+        })();
+        match open_result {
+            Ok((journal, log)) => Ok(FsStore {
+                root,
+                journal,
+                log,
+                scratch_seq: AtomicU64::new(0),
+                _locks: locks,
+            }),
+            Err(error) => Err(error),
+        }
     }
 
-    /// Removes the scratch directory. Called automatically on drop on a
-    /// best-effort basis; explicit close surfaces errors.
+    /// Sweeps any scratch files left under the root and releases the writer
+    /// locks. Also done best-effort on drop; explicit close surfaces errors.
     pub fn close(self) -> Result<(), StorageError> {
-        fs::remove_dir_all(self.root.join(SCRATCH_DIR))?;
+        self.log.sync_all()?;
+        sweep_scratch(&self.root.join(OBJECTS_DIR))?;
         Ok(())
     }
 
@@ -102,71 +246,49 @@ impl FsStore {
 
     fn entity_path(&self, scope: &ScopePath, entity: EntityId) -> PathBuf {
         self.scope_dir(scope)
-            .join(OBJECTS_DIR)
             .join(layout::bucket_hex(entity))
             .join(layout::entity_component(entity))
     }
 
-    fn scratch_path(&self) -> PathBuf {
+    /// Fresh scratch path inside `dir` (the same directory as the final
+    /// target, so rename is atomic on the same filesystem).
+    fn scratch_path(&self, dir: &Path) -> PathBuf {
         let seq = self.scratch_seq.fetch_add(1, Ordering::Relaxed);
-        self.root
-            .join(SCRATCH_DIR)
-            .join(format!("scratch-{}-{seq}", std::process::id()))
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        dir.join(format!(
+            "{SCRATCH_PREFIX}{}-{seq}-{nanos}{SCRATCH_SUFFIX}",
+            std::process::id()
+        ))
     }
 
-    /// Creates `dir` and any missing ancestors, fsyncing along the way so
-    /// the directory structure itself is durable.
-    fn create_dirs_durable(&self, dir: &Path) -> Result<(), StorageError> {
-        let mut ancestors: Vec<&Path> = dir.ancestors().collect();
-        ancestors.reverse();
-        let mut created_any = false;
-        for path in ancestors {
-            if !path.exists() {
-                fs::create_dir(path)?;
-                created_any = true;
+    /// Writes `parts` to a scratch file in the target's directory, fsyncs
+    /// it, renames it onto `target`, and fsyncs the containing directory.
+    fn write_durable(&self, target: &Path, parts: &[&[u8]]) -> Result<(), StorageError> {
+        let dir = match target.parent() {
+            Some(dir) => dir.to_path_buf(),
+            None => return Err(StorageError::failed("target path has no parent")),
+        };
+        create_dirs_durable(&dir)?;
+        let scratch = self.scratch_path(&dir);
+        let result = (|| -> Result<(), StorageError> {
+            {
+                let mut file = OpenOptions::new().create_new(true).write(true).open(&scratch)?;
+                for part in parts {
+                    file.write_all(part)?;
+                }
+                file.sync_all()?;
             }
-            if created_any {
-                sync_dir(path)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Writes `contents` to a scratch file, fsyncs it, renames it onto
-    /// `target`, and fsyncs the target's directory.
-    fn write_file_durable(&self, target: &Path, contents: &[u8]) -> Result<(), StorageError> {
-        let scratch = self.scratch_path();
-        let write_result = (|| -> Result<(), StorageError> {
-            let mut file = File::create(&scratch)?;
-            file.write_all(contents)?;
-            file.sync_all()?;
+            fs::rename(&scratch, target)?;
+            sync_dir(&dir)?;
             Ok(())
         })();
-        if let Err(error) = write_result {
+        if result.is_err() {
             let _ = fs::remove_file(&scratch);
-            return Err(error);
         }
-        let rename_result = fs::rename(&scratch, target);
-        if rename_result.is_err() {
-            let _ = fs::remove_file(&scratch);
-            rename_result?;
-        }
-        if let Some(parent) = target.parent() {
-            sync_dir(parent)?;
-        }
-        Ok(())
-    }
-
-    fn append_journal_record(&mut self, kind: u8, payload: &[u8]) -> Result<Cursor, StorageError> {
-        let log = self.root.join(JOURNAL_DIR).join(JOURNAL_LOG);
-        let mut file = OpenOptions::new().create(true).append(true).open(&log)?;
-        let len = u32::try_from(payload.len())
-            .map_err(|_| StorageError::backend("journal record exceeds 4 GiB"))?;
-        file.write_all(&len.to_be_bytes())?;
-        file.write_all(&[kind])?;
-        file.write_all(payload)?;
-        file.sync_all()?;
-        Ok(Cursor(self.journal.len() as u64 + 1))
+        result
     }
 }
 
@@ -181,21 +303,23 @@ impl ObjectStore for FsStore {
         expected_digest: &Digest32,
     ) -> Result<(), StorageError> {
         layout::check_entity_id(entity)?;
+        let scope_dir = self.scope_dir(scope);
+        // Seal is checked before the digest: a sealed scope rejects every
+        // put regardless of bytes.
+        if scope_dir.join(SEAL_FILE_NAME).is_file() {
+            return Err(StorageError::already_sealed(format!(
+                "scope {scope} is sealed"
+            )));
+        }
         let digest = layout::sha256(bytes);
         if &digest != expected_digest {
             return Err(StorageError::corrupt(format!(
                 "digest mismatch for entity {entity} in {scope}"
             )));
         }
-        let scope_dir = self.scope_dir(scope);
-        if scope_dir.join(SEAL_FILE).exists() {
-            return Err(StorageError::already_sealed(format!(
-                "scope {scope} is sealed"
-            )));
-        }
         let target = self.entity_path(scope, entity);
         if target.exists() {
-            let recorded = read_entity_header(&target)?;
+            let (recorded, _) = read_entity_header(&target)?;
             if recorded == digest {
                 return Ok(());
             }
@@ -203,28 +327,28 @@ impl ObjectStore for FsStore {
                 "conflicting bytes for entity {entity} in {scope}"
             )));
         }
-        let bucket_dir = match target.parent() {
-            Some(dir) => dir.to_path_buf(),
-            None => return Err(StorageError::backend("entity path has no parent")),
-        };
-        self.create_dirs_durable(&bucket_dir)?;
-        let mut contents = Vec::with_capacity(32 + bytes.len());
-        contents.extend_from_slice(&digest);
-        contents.extend_from_slice(bytes);
-        self.write_file_durable(&target, &contents)
+        let mut header = Vec::with_capacity(ENTITY_HEADER_BYTES);
+        header.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
+        header.extend_from_slice(&digest);
+        self.write_durable(&target, &[&header, bytes])
     }
 
     fn open_read(&self, scope: &ScopePath, entity: EntityId) -> Result<File, StorageError> {
+        layout::check_entity_id(entity)?;
         let path = self.entity_path(scope, entity);
-        let mut file = File::open(&path).map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                StorageError::not_found(format!("entity {entity} in {scope}"))
-            } else {
-                StorageError::from(error)
-            }
-        })?;
-        use std::io::Seek;
-        file.seek(std::io::SeekFrom::Start(32))?;
+        if !path.is_file() {
+            return Err(StorageError::not_found(format!(
+                "entity {entity} is absent from scope {scope}"
+            )));
+        }
+        let mut file = File::open(&path)?;
+        if file.metadata()?.len() < ENTITY_HEADER_BYTES as u64 {
+            return Err(StorageError::corrupt(format!(
+                "entity file {} is truncated",
+                path.display()
+            )));
+        }
+        file.seek(SeekFrom::Start(ENTITY_HEADER_BYTES as u64))?;
         Ok(file)
     }
 
@@ -235,94 +359,92 @@ impl ObjectStore for FsStore {
         entity_count: u64,
     ) -> Result<(), StorageError> {
         let scope_dir = self.scope_dir(scope);
-        let seal_path = scope_dir.join(SEAL_FILE);
+        let seal_path = scope_dir.join(SEAL_FILE_NAME);
         if seal_path.exists() {
-            let existing = read_seal_record(&seal_path)?;
+            let existing = read_seal_record(&seal_path, scope)?;
             if existing.digest == *digest && existing.entity_count == entity_count {
                 return Ok(());
             }
             return Err(StorageError::corrupt(format!(
-                "scope {scope} already sealed with a different digest or entity count"
+                "scope {scope} already carries a different seal"
             )));
         }
-        self.create_dirs_durable(&scope_dir)?;
         let mut contents = Vec::with_capacity(SEAL_RECORD_LEN);
         contents.extend_from_slice(digest);
         contents.extend_from_slice(&entity_count.to_be_bytes());
-        self.write_file_durable(&seal_path, &contents)
+        self.write_durable(&seal_path, &[&contents])
     }
 
     fn verify_scope(&self, scope: &ScopePath) -> Result<SealRecord, StorageError> {
         let scope_dir = self.scope_dir(scope);
-        let seal_path = scope_dir.join(SEAL_FILE);
+        let seal_path = scope_dir.join(SEAL_FILE_NAME);
         if !seal_path.exists() {
-            return Err(StorageError::not_found(format!("seal record for {scope}")));
+            return Err(StorageError::not_found(format!(
+                "scope {scope} has no seal record"
+            )));
         }
-        let seal = read_seal_record(&seal_path)?;
-        let mut live_count = 0u64;
-        let objects_dir = scope_dir.join(OBJECTS_DIR);
-        if objects_dir.exists() {
-            for bucket in read_dir_sorted(&objects_dir)? {
-                for entity_file in read_dir_sorted(&bucket.path())? {
-                    let entity = parse_entity_name(&entity_file.path())?;
-                    verify_entity_file(&entity_file.path(), entity, scope)?;
-                    live_count += 1;
-                }
-            }
+        let seal = read_seal_record(&seal_path, scope)?;
+        let mut digests = Vec::new();
+        for entity in self.list(scope)? {
+            digests.push((entity, read_verified_digest(&self.entity_path(scope, entity), entity, scope)?));
         }
-        if live_count != seal.entity_count {
+        if digests.len() as u64 != seal.entity_count {
             return Err(StorageError::corrupt(format!(
-                "scope {scope} holds {live_count} entities but the seal record says {}",
-                seal.entity_count
+                "scope {scope} entity count differs from its seal"
+            )));
+        }
+        if layout::scope_digest(&digests)? != seal.digest {
+            return Err(StorageError::corrupt(format!(
+                "scope {scope} digest differs from its seal"
             )));
         }
         Ok(seal)
     }
 
     fn list(&self, scope: &ScopePath) -> Result<Vec<EntityId>, StorageError> {
-        let objects_dir = self.scope_dir(scope).join(OBJECTS_DIR);
-        let mut entities = Vec::new();
-        if objects_dir.exists() {
-            for bucket in read_dir_sorted(&objects_dir)? {
-                for entity_file in read_dir_sorted(&bucket.path())? {
-                    entities.push(parse_entity_name(&entity_file.path())?);
-                }
-            }
+        let scope_dir = self.scope_dir(scope);
+        if !scope_dir.is_dir() {
+            return Ok(Vec::new());
         }
-        entities.sort_unstable();
-        Ok(entities)
+        list_entity_ids(&scope_dir, scope)
     }
 
     fn retire(&mut self, scope: &ScopePath, retention_cursor: u64) -> Result<u64, StorageError> {
         let scope_dir = self.scope_dir(scope);
-        if !scope_dir.exists() {
-            return Ok(0);
+        if !scope_dir.is_dir() {
+            return Err(StorageError::not_found(format!(
+                "scope {scope} holds nothing to retire"
+            )));
         }
-        if scope_dir.join(SEAL_FILE).exists() {
-            let removed = self.list(scope)?.len() as u64;
+        if scope_dir.join(SEAL_FILE_NAME).exists() {
+            // A sealed scope retires whole: every entity and the seal record.
+            let removed = list_entity_ids(&scope_dir, scope)?.len() as u64;
             fs::remove_dir_all(&scope_dir)?;
+            if let Some(parent) = scope_dir.parent() {
+                sync_dir(parent)?;
+            }
             self.prune_empty_ancestors(scope);
             return Ok(removed);
         }
-        let objects_dir = scope_dir.join(OBJECTS_DIR);
+        let ids = list_entity_ids(&scope_dir, scope)?;
+        if ids.is_empty() {
+            return Err(StorageError::not_found(format!(
+                "scope {scope} holds nothing to retire"
+            )));
+        }
         let mut removed = 0u64;
-        if objects_dir.exists() {
-            let mut touched_buckets = Vec::new();
-            for bucket in read_dir_sorted(&objects_dir)? {
-                for entity_file in read_dir_sorted(&bucket.path())? {
-                    let entity = parse_entity_name(&entity_file.path())?;
-                    if u64::from(entity) <= retention_cursor {
-                        fs::remove_file(entity_file.path())?;
-                        removed += 1;
-                        touched_buckets.push(bucket.path());
-                    }
-                }
+        for entity in ids {
+            if entity > retention_cursor {
+                continue;
             }
-            for bucket in touched_buckets {
-                sync_dir(&bucket)?;
-                let _ = fs::remove_dir(&bucket);
+            let target = self.entity_path(scope, entity);
+            fs::remove_file(&target)?;
+            removed += 1;
+            if let Some(bucket) = target.parent() {
+                sync_dir(bucket)?;
+                // Remove the bucket directory when it went empty.
+                let _ = fs::remove_dir(bucket);
             }
-            sync_dir(&objects_dir)?;
         }
         Ok(removed)
     }
@@ -346,55 +468,124 @@ impl FsStore {
     }
 }
 
+/// In-memory mirror of the journal: intents in append order plus the id
+/// index. Commit records consume cursors but fold into their intent.
+#[derive(Debug, Default)]
+struct JournalIndex {
+    intents: Vec<IntentState>,
+    by_intent_id: HashMap<String, usize>,
+    last_cursor: u64,
+}
+
+#[derive(Debug)]
+struct IntentState {
+    intent: Intent,
+    cursor: Cursor,
+    commit: Option<Vec<u8>>,
+}
+
+impl FsStore {
+    /// Appends one framed record and fsyncs the log before returning.
+    fn append_journal_record(
+        &mut self,
+        record_type: u8,
+        id: &[u8],
+        payload: &[u8],
+    ) -> Result<Cursor, StorageError> {
+        let cursor = Cursor(self.journal.last_cursor + 1);
+        let mut header = Vec::with_capacity(RECORD_HEADER_BYTES);
+        header.push(record_type);
+        header.extend_from_slice(&cursor.0.to_be_bytes());
+        header.extend_from_slice(&(id.len() as u32).to_be_bytes());
+        header.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        let mut hasher = Sha256::new();
+        hasher.update(&header);
+        hasher.update(id);
+        hasher.update(payload);
+        let checksum: Digest32 = hasher.finalize().into();
+        let offset = self.log.metadata()?.len();
+        let append_result = (|| -> Result<(), StorageError> {
+            self.log.write_all(&header)?;
+            self.log.write_all(id)?;
+            self.log.write_all(payload)?;
+            self.log.write_all(&checksum)?;
+            self.log.sync_all()?;
+            Ok(())
+        })();
+        if let Err(error) = append_result {
+            // The partial record never returned success; truncate it so a
+            // later open is not wedged behind an unparseable tail.
+            let _ = self.log.set_len(offset);
+            let _ = self.log.seek(SeekFrom::Start(offset));
+            return Err(error);
+        }
+        self.journal.last_cursor = cursor.0;
+        Ok(cursor)
+    }
+}
+
 impl Journal for FsStore {
-    fn append_intent(&mut self, record: &[u8]) -> Result<Cursor, StorageError> {
-        let cursor = self.append_journal_record(KIND_INTENT, record)?;
-        self.journal.push(JournalKind::Intent(record.to_vec()));
+    fn append_intent(&mut self, intent: &Intent) -> Result<Cursor, StorageError> {
+        if let Some(index) = self.journal.by_intent_id.get(intent.id()) {
+            let existing = &self.journal.intents[*index];
+            if existing.intent.record() == intent.record() {
+                return Ok(existing.cursor);
+            }
+            return Err(StorageError::corrupt(format!(
+                "intent {} already exists with different bytes",
+                intent.id()
+            )));
+        }
+        let cursor = self.append_journal_record(TYPE_INTENT, intent.id().as_bytes(), intent.record())?;
+        self.journal
+            .by_intent_id
+            .insert(intent.id().to_string(), self.journal.intents.len());
+        self.journal.intents.push(IntentState {
+            intent: intent.clone(),
+            cursor,
+            commit: None,
+        });
         Ok(cursor)
     }
 
-    fn commit(&mut self, intent: Cursor, record: &[u8]) -> Result<(), StorageError> {
-        if intent.0 == 0 || intent.0 as usize > self.journal.len() {
-            return Err(StorageError::not_found(format!("intent at {intent:?}")));
+    fn commit(&mut self, intent_id: &str, record: &[u8]) -> Result<(), StorageError> {
+        if record.is_empty() || record.len() > MAX_RECORD_BYTES {
+            return Err(StorageError::failed(format!(
+                "commit record must be 1 to {MAX_RECORD_BYTES} octets"
+            )));
         }
-        if !matches!(self.journal[intent.0 as usize - 1], JournalKind::Intent(_)) {
-            return Err(StorageError::not_found(format!("intent at {intent:?}")));
-        }
-        let prior = self.journal.iter().find_map(|kind| match kind {
-            JournalKind::Commit { intent: settled, record: existing } if *settled == intent => {
-                Some(existing)
-            }
-            _ => None,
-        });
-        match prior {
-            Some(existing) if existing == record => Ok(()),
-            Some(_) => Err(StorageError::corrupt(format!(
-                "intent at {intent:?} already committed with a different record"
-            ))),
-            None => {
-                let mut payload = Vec::with_capacity(8 + record.len());
-                payload.extend_from_slice(&intent.0.to_be_bytes());
-                payload.extend_from_slice(record);
-                let cursor = self.append_journal_record(KIND_COMMIT, &payload)?;
-                debug_assert_eq!(cursor.0, self.journal.len() as u64 + 1);
-                self.journal.push(JournalKind::Commit {
-                    intent,
-                    record: record.to_vec(),
-                });
-                Ok(())
+        let Some(index) = self.journal.by_intent_id.get(intent_id).copied() else {
+            return Err(StorageError::not_found(format!(
+                "intent {intent_id} has no durable append"
+            )));
+        };
+        {
+            let entry = &self.journal.intents[index];
+            match &entry.commit {
+                Some(existing) if existing == record => return Ok(()),
+                Some(_) => {
+                    return Err(StorageError::corrupt(format!(
+                        "intent {intent_id} already carries a different commit"
+                    )));
+                }
+                None => {}
             }
         }
+        self.append_journal_record(TYPE_COMMIT, intent_id.as_bytes(), record)?;
+        self.journal.intents[index].commit = Some(record.to_vec());
+        Ok(())
     }
 
-    fn replay(&self, since: Cursor) -> Result<Vec<JournalEntry>, StorageError> {
+    fn replay(&self, since: Cursor) -> Result<Vec<ReplayEntry>, StorageError> {
         Ok(self
             .journal
+            .intents
             .iter()
-            .enumerate()
-            .skip(since.0 as usize)
-            .map(|(index, kind)| JournalEntry {
-                cursor: Cursor(index as u64 + 1),
-                kind: kind.clone(),
+            .filter(|entry| entry.cursor > since)
+            .map(|entry| ReplayEntry {
+                cursor: entry.cursor,
+                intent: entry.intent.clone(),
+                commit: entry.commit.clone(),
             })
             .collect())
     }
@@ -402,8 +593,27 @@ impl Journal for FsStore {
 
 impl Drop for FsStore {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(self.root.join(SCRATCH_DIR));
+        let _ = self.log.sync_all();
+        let _ = sweep_scratch(&self.root.join(OBJECTS_DIR));
     }
+}
+
+/// Creates `dir` and any missing ancestors, fsyncing each level so the
+/// directory structure itself is durable.
+fn create_dirs_durable(dir: &Path) -> Result<(), StorageError> {
+    let mut ancestors: Vec<&Path> = dir.ancestors().collect();
+    ancestors.reverse();
+    let mut created_any = false;
+    for path in ancestors {
+        if !path.exists() {
+            fs::create_dir(path)?;
+            created_any = true;
+        }
+        if created_any {
+            sync_dir(path)?;
+        }
+    }
+    Ok(())
 }
 
 fn sync_dir(dir: &Path) -> Result<(), StorageError> {
@@ -411,62 +621,122 @@ fn sync_dir(dir: &Path) -> Result<(), StorageError> {
     Ok(())
 }
 
-fn read_dir_sorted(dir: &Path) -> Result<Vec<fs::DirEntry>, StorageError> {
-    let mut entries: Vec<fs::DirEntry> = fs::read_dir(dir)?.collect::<Result<_, _>>()?;
-    entries.sort_by_key(|entry| entry.file_name());
-    Ok(entries)
+/// True for scratch file names (`write-*.tmp`).
+fn is_scratch(name: &str) -> bool {
+    name.starts_with(SCRATCH_PREFIX) && name.ends_with(SCRATCH_SUFFIX)
 }
 
-/// Reads the 32-byte content digest header of an entity file.
-fn read_entity_header(path: &Path) -> Result<Digest32, StorageError> {
+/// Recursively deletes scratch files under `dir`, fsyncing each affected
+/// directory.
+fn sweep_scratch(dir: &Path) -> Result<(), StorageError> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            sweep_scratch(&path)?;
+        } else if entry.file_name().to_str().is_some_and(is_scratch) {
+            fs::remove_file(&path)?;
+            sync_dir(dir)?;
+        }
+    }
+    Ok(())
+}
+
+/// Lists the entity ids of a scope directory, validating the pinned layout:
+/// 2-hex directories are this scope's buckets, 8-hex directories are child
+/// scopes, `scope.seal` and scratch files are skipped, anything else is
+/// corruption.
+fn list_entity_ids(scope_dir: &Path, scope: &ScopePath) -> Result<Vec<EntityId>, StorageError> {
+    let mut ids = Vec::new();
+    for entry in fs::read_dir(scope_dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            return Err(StorageError::corrupt(format!(
+                "non-UTF-8 entry in scope {scope}"
+            )));
+        };
+        let path = entry.path();
+        if name == SEAL_FILE_NAME || is_scratch(name) {
+            continue;
+        }
+        if name.len() == 8 && name.bytes().all(|b| b.is_ascii_hexdigit()) && path.is_dir() {
+            continue; // child scope
+        }
+        if !(name.len() == 2 && name.bytes().all(|b| b.is_ascii_hexdigit()) && path.is_dir()) {
+            return Err(StorageError::corrupt(format!(
+                "unexpected entry {name} in scope {scope}"
+            )));
+        }
+        for entity in fs::read_dir(&path)? {
+            let entity = entity?;
+            let entity_name = entity.file_name();
+            let Some(entity_name) = entity_name.to_str() else {
+                return Err(StorageError::corrupt(format!(
+                    "non-UTF-8 entry in scope {scope}"
+                )));
+            };
+            if is_scratch(entity_name) {
+                continue;
+            }
+            if !(entity_name.len() == 16
+                && entity_name.bytes().all(|b| b.is_ascii_hexdigit())
+                && entity.path().is_file())
+            {
+                return Err(StorageError::corrupt(format!(
+                    "unexpected entry {entity_name} in scope {scope}"
+                )));
+            }
+            let id = EntityId::from_str_radix(entity_name, 16).map_err(|_| {
+                StorageError::corrupt(format!("unparseable entity name {entity_name} in {scope}"))
+            })?;
+            ids.push(id);
+        }
+    }
+    ids.sort_unstable();
+    Ok(ids)
+}
+
+/// Reads an entity file's header: `[8B BE payload length][32B digest]`.
+/// Validates the payload length against the actual file size.
+fn read_entity_header(path: &Path) -> Result<(Digest32, u64), StorageError> {
     let mut file = File::open(path)?;
-    let mut digest: Digest32 = [0; 32];
-    file.read_exact(&mut digest).map_err(|error| {
-        StorageError::corrupt(format!("truncated entity file {}: {error}", path.display()))
-    })?;
-    Ok(digest)
-}
-
-fn read_seal_record(path: &Path) -> Result<SealRecord, StorageError> {
-    let bytes = fs::read(path)?;
-    if bytes.len() != SEAL_RECORD_LEN {
+    let size = file.metadata()?.len();
+    if size < ENTITY_HEADER_BYTES as u64 {
         return Err(StorageError::corrupt(format!(
-            "seal record {} is {} bytes, expected {SEAL_RECORD_LEN}",
-            path.display(),
-            bytes.len()
+            "entity file {} is truncated",
+            path.display()
         )));
     }
+    let mut header = [0u8; ENTITY_HEADER_BYTES];
+    file.read_exact(&mut header)?;
+    let mut len = [0u8; 8];
+    len.copy_from_slice(&header[..8]);
+    let len = u64::from_be_bytes(len);
     let mut digest: Digest32 = [0; 32];
-    digest.copy_from_slice(&bytes[..32]);
-    let mut count = [0u8; 8];
-    count.copy_from_slice(&bytes[32..]);
-    Ok(SealRecord {
-        digest,
-        entity_count: u64::from_be_bytes(count),
-    })
-}
-
-fn parse_entity_name(path: &Path) -> Result<EntityId, StorageError> {
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    u32::from_str_radix(name, 16).map_err(|_| {
-        StorageError::corrupt(format!(
-            "unparseable entity file name {}",
+    digest.copy_from_slice(&header[8..]);
+    if len != size - ENTITY_HEADER_BYTES as u64 {
+        return Err(StorageError::corrupt(format!(
+            "entity file {} length differs from its header",
             path.display()
-        ))
-    })
+        )));
+    }
+    Ok((digest, len))
 }
 
-/// Rehashes an entity file's payload and compares it against the recorded
-/// digest header.
-fn verify_entity_file(path: &Path, entity: EntityId, scope: &ScopePath) -> Result<(), StorageError> {
+/// Rehashes an entity file's payload and returns the recorded digest when
+/// it still matches.
+fn read_verified_digest(
+    path: &Path,
+    entity: EntityId,
+    scope: &ScopePath,
+) -> Result<Digest32, StorageError> {
+    let (recorded, _len) = read_entity_header(path)?;
     let mut file = File::open(path)?;
-    let mut recorded: Digest32 = [0; 32];
-    file.read_exact(&mut recorded).map_err(|error| {
-        StorageError::corrupt(format!("truncated entity file {}: {error}", path.display()))
-    })?;
+    file.seek(SeekFrom::Start(ENTITY_HEADER_BYTES as u64))?;
     let mut hasher = Sha256::new();
     let mut chunk = [0u8; READ_CHUNK];
     loop {
@@ -479,62 +749,155 @@ fn verify_entity_file(path: &Path, entity: EntityId, scope: &ScopePath) -> Resul
     let actual: Digest32 = hasher.finalize().into();
     if actual != recorded {
         return Err(StorageError::corrupt(format!(
-            "entity {entity} in {scope} no longer matches its recorded digest"
+            "entity {entity} in {scope} fails its recorded digest"
         )));
     }
-    Ok(())
+    Ok(recorded)
 }
 
-/// Scans the journal log, returning the in-memory index. Missing log yields
-/// an empty index; malformed framing fails with [`StorageError::Corrupt`].
-fn read_journal_index(log: &Path) -> Result<Vec<JournalKind>, StorageError> {
-    let bytes = match fs::read(log) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error.into()),
-    };
-    let corrupt = || StorageError::corrupt(format!("truncated journal log {}", log.display()));
-    let mut entries = Vec::new();
-    let mut position = 0usize;
+fn read_seal_record(path: &Path, scope: &ScopePath) -> Result<SealRecord, StorageError> {
+    let bytes = fs::read(path)?;
+    if bytes.len() != SEAL_RECORD_LEN {
+        return Err(StorageError::corrupt(format!(
+            "seal record of scope {scope} has wrong length"
+        )));
+    }
+    let mut digest: Digest32 = [0; 32];
+    digest.copy_from_slice(&bytes[..32]);
+    let mut count = [0u8; 8];
+    count.copy_from_slice(&bytes[32..]);
+    Ok(SealRecord {
+        digest,
+        entity_count: u64::from_be_bytes(count),
+    })
+}
+
+/// Rebuilds the journal index from the log, truncating at most one torn
+/// trailing record: bytes after the last checksummed record never belonged
+/// to an append that returned success.
+fn recover_journal(log_path: &Path) -> Result<JournalIndex, StorageError> {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(log_path)?;
+    let size = file.metadata()?.len();
+    let mut index = JournalIndex::default();
+    if size == 0 {
+        file.write_all(JOURNAL_MAGIC)?;
+        file.sync_all()?;
+        if let Some(parent) = log_path.parent() {
+            sync_dir(parent)?;
+        }
+        return Ok(index);
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    if bytes.len() < JOURNAL_MAGIC.len() || &bytes[..JOURNAL_MAGIC.len()] != JOURNAL_MAGIC {
+        return Err(StorageError::corrupt("journal log carries a foreign magic"));
+    }
+    let mut position = JOURNAL_MAGIC.len();
+    let mut last_good = position;
     while position < bytes.len() {
-        if bytes.len() - position < 5 {
-            return Err(corrupt());
-        }
-        let mut len_buf = [0u8; 4];
-        len_buf.copy_from_slice(&bytes[position..position + 4]);
-        let len = u32::from_be_bytes(len_buf) as usize;
-        let kind = bytes[position + 4];
-        position += 5;
-        if bytes.len() - position < len {
-            return Err(corrupt());
-        }
-        let payload = &bytes[position..position + len];
-        position += len;
-        match kind {
-            KIND_INTENT => entries.push(JournalKind::Intent(payload.to_vec())),
-            KIND_COMMIT => {
-                if payload.len() < 8 {
-                    return Err(StorageError::corrupt(format!(
-                        "commit record in {} shorter than 8 bytes",
-                        log.display()
-                    )));
-                }
-                let mut cursor = [0u8; 8];
-                cursor.copy_from_slice(&payload[..8]);
-                entries.push(JournalKind::Commit {
-                    intent: Cursor(u64::from_be_bytes(cursor)),
-                    record: payload[8..].to_vec(),
-                });
+        match scan_record(&bytes, position, &mut index)? {
+            Some(next) => {
+                position = next;
+                last_good = next;
             }
-            other => {
-                return Err(StorageError::corrupt(format!(
-                    "unknown journal record kind {other} in {}",
-                    log.display()
-                )));
-            }
+            None => break, // torn tail
         }
     }
-    Ok(entries)
+    if last_good < bytes.len() {
+        file.set_len(last_good as u64)?;
+        file.sync_all()?;
+    }
+    Ok(index)
+}
+
+/// Validates the record at `position`, folding it into the index. Returns
+/// the offset just past it, or `None` for a torn tail.
+fn scan_record(
+    bytes: &[u8],
+    position: usize,
+    index: &mut JournalIndex,
+) -> Result<Option<usize>, StorageError> {
+    if bytes.len() - position < RECORD_HEADER_BYTES + 32 {
+        return Ok(None); // torn tail
+    }
+    let header = &bytes[position..position + RECORD_HEADER_BYTES];
+    let record_type = header[0];
+    let mut cursor_bytes = [0u8; 8];
+    cursor_bytes.copy_from_slice(&header[1..9]);
+    let cursor = u64::from_be_bytes(cursor_bytes);
+    let mut id_len = [0u8; 4];
+    id_len.copy_from_slice(&header[9..13]);
+    let id_len = u32::from_be_bytes(id_len) as usize;
+    let mut payload_len = [0u8; 4];
+    payload_len.copy_from_slice(&header[13..17]);
+    let payload_len = u32::from_be_bytes(payload_len) as usize;
+    if (record_type != TYPE_INTENT && record_type != TYPE_COMMIT)
+        || id_len == 0
+        || id_len > MAX_INTENT_ID_BYTES
+        || payload_len == 0
+        || payload_len > MAX_RECORD_BYTES
+    {
+        return Err(StorageError::corrupt("journal record geometry is invalid"));
+    }
+    let end = position + RECORD_HEADER_BYTES + id_len + payload_len + 32;
+    if end > bytes.len() {
+        return Ok(None); // torn tail
+    }
+    let id = &bytes[position + RECORD_HEADER_BYTES..position + RECORD_HEADER_BYTES + id_len];
+    let payload = &bytes[position + RECORD_HEADER_BYTES + id_len..end - 32];
+    let recorded = &bytes[end - 32..end];
+    let mut hasher = Sha256::new();
+    hasher.update(header);
+    hasher.update(id);
+    hasher.update(payload);
+    let checksum: Digest32 = hasher.finalize().into();
+    if checksum[..] != recorded[..] {
+        return Err(StorageError::corrupt("journal record checksum mismatch"));
+    }
+    if cursor != index.last_cursor + 1 {
+        return Err(StorageError::corrupt("journal cursor sequence has a gap"));
+    }
+    index.last_cursor = cursor;
+    let intent_id = std::str::from_utf8(id)
+        .map_err(|_| StorageError::corrupt("journal intent id is not UTF-8"))?
+        .to_string();
+    match record_type {
+        TYPE_INTENT => {
+            if index.by_intent_id.contains_key(&intent_id) {
+                return Err(StorageError::corrupt(format!(
+                    "journal replays intent identifier {intent_id}"
+                )));
+            }
+            let intent = Intent::new(&intent_id, payload)
+                .map_err(|_| StorageError::corrupt("journal intent fails validation"))?;
+            index.by_intent_id.insert(intent_id, index.intents.len());
+            index.intents.push(IntentState {
+                intent,
+                cursor: Cursor(cursor),
+                commit: None,
+            });
+        }
+        _ => {
+            let Some(intent_index) = index.by_intent_id.get(&intent_id).copied() else {
+                return Err(StorageError::corrupt(format!(
+                    "journal commit has no uncommitted intent {intent_id}"
+                )));
+            };
+            let entry = &mut index.intents[intent_index];
+            if entry.commit.is_some() {
+                return Err(StorageError::corrupt(format!(
+                    "journal commit has no uncommitted intent {intent_id}"
+                )));
+            }
+            entry.commit = Some(payload.to_vec());
+        }
+    }
+    Ok(Some(end))
 }
 
 #[cfg(test)]
@@ -551,7 +914,7 @@ mod tests {
     #[test]
     fn put_then_open_read_roundtrips_payload() {
         let (_dir, mut store) = store();
-        let scope = ScopePath::root();
+        let scope = ScopePath::root(0);
         let payload = b"hello pipestream";
         store.put(&scope, 7, payload, &sha256(payload)).unwrap();
         let mut reader = store.open_read(&scope, 7).unwrap();
@@ -561,53 +924,49 @@ mod tests {
     }
 
     #[test]
-    fn journal_survives_reopen() {
+    fn journal_survives_reopen_with_commit_state() {
         let (dir, mut store) = store();
-        let intent = store.append_intent(b"work-1").unwrap();
-        store.commit(intent, b"done-1").unwrap();
+        let intent = Intent::new("work-1", b"admitted".to_vec()).unwrap();
+        let cursor = store.append_intent(&intent).unwrap();
+        assert_eq!(cursor, Cursor(1));
+        store.commit("work-1", b"done").unwrap();
         drop(store);
-        let store = FsStore::open(dir.path()).unwrap();
+        let mut store = FsStore::open(dir.path()).unwrap();
         let entries = store.replay(Cursor(0)).unwrap();
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].kind, JournalKind::Intent(b"work-1".to_vec()));
-        assert_eq!(
-            entries[1].kind,
-            JournalKind::Commit {
-                intent,
-                record: b"done-1".to_vec()
-            }
-        );
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].intent.id(), "work-1");
+        assert!(entries[0].committed());
+        assert_eq!(entries[0].commit.as_deref(), Some(b"done".as_slice()));
+        // The commit consumed cursor 2; the next intent gets cursor 3.
+        let next = store
+            .append_intent(&Intent::new("work-2", b"more".to_vec()).unwrap())
+            .unwrap();
+        assert_eq!(next, Cursor(3));
     }
 
     #[test]
     fn seal_record_survives_reopen() {
         let (dir, mut store) = store();
-        let scope = ScopePath::root().child(3).unwrap();
+        let scope = ScopePath::root(0).child(3).unwrap();
         let payload = b"sealed bytes";
         store.put(&scope, 1, payload, &sha256(payload)).unwrap();
-        store.seal_scope(&scope, &sha256(b"scope"), 1).unwrap();
+        let digest = crate::layout::scope_digest(&[(1, sha256(payload))]).unwrap();
+        store.seal_scope(&scope, &digest, 1).unwrap();
         drop(store);
         let store = FsStore::open(dir.path()).unwrap();
         let record = store.verify_scope(&scope).unwrap();
         assert_eq!(record.entity_count, 1);
-        assert_eq!(record.digest, sha256(b"scope"));
-    }
-
-    #[test]
-    fn scratch_dir_is_inside_root_and_cleaned_on_close() {
-        let (dir, store) = store();
-        assert!(dir.path().join(SCRATCH_DIR).exists());
-        store.close().unwrap();
-        assert!(!dir.path().join(SCRATCH_DIR).exists());
+        assert_eq!(record.digest, digest);
     }
 
     #[test]
     fn verify_scope_detects_tampered_entity_file() {
         let (dir, mut store) = store();
-        let scope = ScopePath::root();
+        let scope = ScopePath::root(0);
         let payload = b"integrity matters";
         store.put(&scope, 5, payload, &sha256(payload)).unwrap();
-        store.seal_scope(&scope, &sha256(b"scope"), 1).unwrap();
+        let digest = crate::layout::scope_digest(&[(5, sha256(payload))]).unwrap();
+        store.seal_scope(&scope, &digest, 1).unwrap();
         // Flip a payload byte behind the backend's back.
         let entity_path = store.entity_path(&scope, 5);
         let mut contents = std::fs::read(&entity_path).unwrap();
@@ -619,6 +978,50 @@ mod tests {
             other => panic!("expected Corrupt after tampering, got {other:?}"),
         }
         drop(dir);
+    }
+
+    #[test]
+    fn torn_journal_tail_is_truncated_at_open() {
+        let (dir, mut store) = store();
+        store
+            .append_intent(&Intent::new("kept", b"record".to_vec()).unwrap())
+            .unwrap();
+        drop(store);
+        // Simulate a killed writer mid-append: garbage bytes at the tail.
+        let log_path = dir.path().join(JOURNAL_DIR).join(JOURNAL_LOG_NAME);
+        let mut log = OpenOptions::new().append(true).open(&log_path).unwrap();
+        log.write_all(&[0xaa, 0xbb, 0xcc]).unwrap();
+        log.sync_all().unwrap();
+        drop(log);
+        let store = FsStore::open(dir.path()).unwrap();
+        let entries = store.replay(Cursor(0)).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].intent.id(), "kept");
+    }
+
+    #[test]
+    fn second_writer_is_refused() {
+        let (_dir, _first) = store();
+        match FsStore::open(_dir.path()) {
+            Err(StorageError::Failed(_)) => {}
+            other => panic!("expected Failed for a second writer, got {:?}", other.map(|_| ())),
+        }
+    }
+
+    #[test]
+    fn scratch_is_swept_on_open_and_close() {
+        let (dir, store) = store();
+        let scratch = dir
+            .path()
+            .join(OBJECTS_DIR)
+            .join("write-abandoned.tmp");
+        std::fs::write(&scratch, b"partial").unwrap();
+        drop(store);
+        assert!(!scratch.exists(), "drop sweeps scratch");
+        std::fs::write(&scratch, b"partial").unwrap();
+        let store = FsStore::open(dir.path()).unwrap();
+        assert!(!scratch.exists(), "open sweeps scratch");
+        store.close().unwrap();
     }
 }
 

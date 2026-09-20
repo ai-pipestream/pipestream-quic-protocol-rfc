@@ -7,17 +7,16 @@
 //! replay).
 //!
 //! Physical mapping of the shared logical layout, under a configurable key
-//! prefix inside one bucket:
+//! prefix inside one bucket. Object bytes are identical to the filesystem
+//! backend's files, so the two backends can be mirrored byte-for-byte:
 //!
 //! ```text
-//! <prefix>objects/<scope-id-hex>/.../seal            40 bytes, same format as the fs backend
-//! <prefix>objects/<scope-id-hex>/.../objects/<bucket-hex>/<entity-hex>
-//!                                                   32-byte digest header + payload, same as fs
+//! <prefix>objects/<scope-hex>/.../scope.seal                  [32B digest][8B BE count]
+//! <prefix>objects/<scope-hex>/.../<bucket-2hex>/<entity-16hex>
+//!                                       [8B BE payload length][32B sha256][payload]
 //! ```
 //!
-//! Object bytes are identical to the filesystem backend's entity files, so
-//! the two backends can be mirrored byte-for-byte. The seal record is a
-//! single PUT, which S3 applies atomically.
+//! The seal record is a single PUT, which S3 applies atomically.
 //!
 //! Durability configuration: a PUT returns success only after the service
 //! has durably stored the object (S3's strong read-after-write consistency);
@@ -78,13 +77,18 @@ impl std::fmt::Debug for S3Store {
     }
 }
 
+const OBJECTS_DIR: &str = "objects";
+const SEAL_FILE_NAME: &str = "scope.seal";
+const ENTITY_HEADER_BYTES: usize = 8 + 32;
+const SEAL_RECORD_LEN: usize = 32 + 8;
+
 impl S3Store {
     /// Connects using `config` and creates the bucket when absent.
     pub fn open(config: &S3Config) -> Result<Self, StorageError> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .map_err(|e| StorageError::backend(format!("tokio runtime: {e}")))?;
+            .map_err(|e| StorageError::failed(format!("tokio runtime: {e}")))?;
         let credentials = Credentials::new(
             config.access_key.clone(),
             config.secret_key.clone(),
@@ -118,12 +122,7 @@ impl S3Store {
         if exists {
             return Ok(());
         }
-        match self.block_on(
-            self.client
-                .create_bucket()
-                .bucket(&self.bucket)
-                .send(),
-        ) {
+        match self.block_on(self.client.create_bucket().bucket(&self.bucket).send()) {
             Ok(_) => Ok(()),
             Err(error) => {
                 // Another store may have created it concurrently.
@@ -143,27 +142,25 @@ impl S3Store {
 
     fn object_key(&self, scope: &ScopePath, entity: EntityId) -> String {
         format!(
-            "{}objects/{}/{}/{}/{}",
-            self.prefix,
-            scope.to_path_string(),
-            OBJECTS_DIR,
+            "{}{}/{}",
+            self.scope_prefix(scope),
             layout::bucket_hex(entity),
             layout::entity_component(entity)
         )
     }
 
     fn seal_key(&self, scope: &ScopePath) -> String {
-        format!("{}objects/{}/{}", self.prefix, scope.to_path_string(), SEAL_FILE)
+        format!("{}{}", self.scope_prefix(scope), SEAL_FILE_NAME)
     }
 
-    /// Everything under the scope's directory, objects and seal alike.
+    /// Everything under the scope's prefix, objects and seal alike.
     fn scope_prefix(&self, scope: &ScopePath) -> String {
-        format!("{}objects/{}/", self.prefix, scope.to_path_string())
-    }
-
-    /// Only the scope's entity objects.
-    fn entities_prefix(&self, scope: &ScopePath) -> String {
-        format!("{}objects/{}/{}/", self.prefix, scope.to_path_string(), OBJECTS_DIR)
+        format!(
+            "{}{}/{}/",
+            self.prefix,
+            OBJECTS_DIR,
+            scope.to_path_string()
+        )
     }
 
     /// GETs an object's full bytes; None when the key does not exist.
@@ -233,13 +230,42 @@ impl S3Store {
         }
     }
 
+    /// Entity ids of a scope: keys directly below the scope prefix whose
+    /// first segment is a 2-hex bucket and whose second is a 16-hex entity
+    /// name. Child scopes (8-hex segments) are skipped.
+    fn list_entities(&self, scope: &ScopePath) -> Result<Vec<EntityId>, StorageError> {
+        let prefix = self.scope_prefix(scope);
+        let mut entities = Vec::new();
+        for key in self.list_keys(&prefix)? {
+            let relative = &key[prefix.len()..];
+            let mut segments = relative.split('/');
+            let (Some(bucket), Some(name), None) =
+                (segments.next(), segments.next(), segments.next())
+            else {
+                continue; // deeper keys belong to child scopes
+            };
+            if bucket.len() == 2
+                && bucket.bytes().all(|b| b.is_ascii_hexdigit())
+                && name.len() == 16
+                && name.bytes().all(|b| b.is_ascii_hexdigit())
+            {
+                let id = EntityId::from_str_radix(name, 16).map_err(|_| {
+                    StorageError::corrupt(format!("unparseable entity key {key} in {scope}"))
+                })?;
+                entities.push(id);
+            }
+        }
+        entities.sort_unstable();
+        Ok(entities)
+    }
+
     fn delete_keys(&self, keys: &[String]) -> Result<(), StorageError> {
         use aws_sdk_s3::types::{Delete, ObjectIdentifier};
         for chunk in keys.chunks(1000) {
             let mut identifiers = Vec::with_capacity(chunk.len());
             for key in chunk {
                 let identifier = ObjectIdentifier::builder().key(key).build().map_err(|e| {
-                    StorageError::backend(format!("invalid object key {key}: {e}"))
+                    StorageError::failed(format!("invalid object key {key}: {e}"))
                 })?;
                 identifiers.push(identifier);
             }
@@ -247,7 +273,7 @@ impl S3Store {
                 .set_objects(Some(identifiers))
                 .quiet(true)
                 .build()
-                .map_err(|e| StorageError::backend(format!("delete request: {e}")))?;
+                .map_err(|e| StorageError::failed(format!("delete request: {e}")))?;
             self.block_on(
                 self.client
                     .delete_objects()
@@ -260,10 +286,6 @@ impl S3Store {
         Ok(())
     }
 }
-
-const OBJECTS_DIR: &str = "objects";
-const SEAL_FILE: &str = "seal";
-const SEAL_RECORD_LEN: usize = 32 + 8;
 
 /// True when the SDK error is a 404/NoSuchKey/NotFound service error.
 fn is_not_found<E>(error: &aws_sdk_s3::error::SdkError<E>) -> bool
@@ -281,7 +303,7 @@ where
 
 /// Maps an SDK error into the taxonomy: transport failures, timeouts,
 /// throttling, and 5xx service responses are retryable; everything else is
-/// a general backend error.
+/// a general failure.
 fn map_sdk_error<E>(operation: &str, error: aws_sdk_s3::error::SdkError<E>) -> StorageError
 where
     E: std::fmt::Debug + aws_sdk_s3::error::ProvideErrorMetadata,
@@ -303,14 +325,13 @@ where
         }
         _ => {}
     }
-    StorageError::backend(format!("s3 {operation}: {error}"))
+    StorageError::failed(format!("s3 {operation}: {error}"))
 }
 
 fn parse_seal_record(bytes: &[u8], scope: &ScopePath) -> Result<SealRecord, StorageError> {
     if bytes.len() != SEAL_RECORD_LEN {
         return Err(StorageError::corrupt(format!(
-            "seal record for {scope} is {} bytes, expected {SEAL_RECORD_LEN}",
-            bytes.len()
+            "seal record of scope {scope} has wrong length"
         )));
     }
     let mut digest: Digest32 = [0; 32];
@@ -323,25 +344,35 @@ fn parse_seal_record(bytes: &[u8], scope: &ScopePath) -> Result<SealRecord, Stor
     })
 }
 
-/// Parses the entity id out of an entity key's final path segment.
-fn entity_from_key(key: &str, scope: &ScopePath) -> Result<EntityId, StorageError> {
-    let name = key.rsplit('/').next().unwrap_or_default();
-    u32::from_str_radix(name, 16).map_err(|_| {
-        StorageError::corrupt(format!("unparseable entity key {key} in {scope}"))
-    })
+/// Encodes a stored object: `[8B BE payload length][32B digest][payload]`.
+fn encode_object(bytes: &[u8], digest: &Digest32) -> Vec<u8> {
+    let mut contents = Vec::with_capacity(ENTITY_HEADER_BYTES + bytes.len());
+    contents.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
+    contents.extend_from_slice(digest);
+    contents.extend_from_slice(bytes);
+    contents
 }
 
-/// Splits a stored object into its recorded digest header and payload.
+/// Splits a stored object into its recorded digest header and payload,
+/// validating the length header against the actual size.
 fn split_object<'a>(bytes: &'a [u8], scope: &ScopePath) -> Result<(Digest32, &'a [u8]), StorageError> {
-    if bytes.len() < 32 {
+    if bytes.len() < ENTITY_HEADER_BYTES {
         return Err(StorageError::corrupt(format!(
-            "object in {scope} is {} bytes, shorter than the digest header",
+            "object in {scope} is {} bytes, shorter than the entity header",
             bytes.len()
         )));
     }
+    let mut len = [0u8; 8];
+    len.copy_from_slice(&bytes[..8]);
+    let len = u64::from_be_bytes(len);
+    if len != (bytes.len() - ENTITY_HEADER_BYTES) as u64 {
+        return Err(StorageError::corrupt(format!(
+            "object in {scope} length differs from its header"
+        )));
+    }
     let mut digest: Digest32 = [0; 32];
-    digest.copy_from_slice(&bytes[..32]);
-    Ok((digest, &bytes[32..]))
+    digest.copy_from_slice(&bytes[8..ENTITY_HEADER_BYTES]);
+    Ok((digest, &bytes[ENTITY_HEADER_BYTES..]))
 }
 
 /// S3 backend reader: a snapshot of the object bytes taken at open time.
@@ -367,37 +398,35 @@ impl ObjectStore for S3Store {
         expected_digest: &Digest32,
     ) -> Result<(), StorageError> {
         layout::check_entity_id(entity)?;
+        // Seal is checked before the digest: a sealed scope rejects every
+        // put regardless of bytes.
+        if self.get_object(&self.seal_key(scope))?.is_some() {
+            return Err(StorageError::already_sealed(format!(
+                "scope {scope} is sealed"
+            )));
+        }
         let digest = layout::sha256(bytes);
         if &digest != expected_digest {
             return Err(StorageError::corrupt(format!(
                 "digest mismatch for entity {entity} in {scope}"
             )));
         }
-        if self.get_object(&self.seal_key(scope))?.is_some() {
-            return Err(StorageError::already_sealed(format!(
-                "scope {scope} is sealed"
-            )));
-        }
         let key = self.object_key(scope, entity);
         if let Some(existing) = self.get_object(&key)? {
-            let (recorded, _) = split_object(&existing, scope)?;
-            if recorded == digest {
+            let (_, payload) = split_object(&existing, scope)?;
+            if payload == bytes {
                 return Ok(());
             }
             return Err(StorageError::corrupt(format!(
                 "conflicting bytes for entity {entity} in {scope}"
             )));
         }
-        let mut contents = Vec::with_capacity(32 + bytes.len());
-        contents.extend_from_slice(&digest);
-        contents.extend_from_slice(bytes);
-        self.put_object(&key, contents)
+        self.put_object(&key, encode_object(bytes, &digest))
     }
 
     fn open_read(&self, scope: &ScopePath, entity: EntityId) -> Result<S3Reader, StorageError> {
         let key = self.object_key(scope, entity);
-        let existing = self.get_object(&key)?;
-        match existing {
+        match self.get_object(&key)? {
             Some(bytes) => {
                 let (_, payload) = split_object(&bytes, scope)?;
                 Ok(S3Reader {
@@ -405,7 +434,7 @@ impl ObjectStore for S3Store {
                 })
             }
             None => Err(StorageError::not_found(format!(
-                "entity {entity} in {scope}"
+                "entity {entity} is absent from scope {scope}"
             ))),
         }
     }
@@ -423,7 +452,7 @@ impl ObjectStore for S3Store {
                 return Ok(());
             }
             return Err(StorageError::corrupt(format!(
-                "scope {scope} already sealed with a different digest or entity count"
+                "scope {scope} already carries a different seal"
             )));
         }
         let mut contents = Vec::with_capacity(SEAL_RECORD_LEN);
@@ -436,59 +465,59 @@ impl ObjectStore for S3Store {
     fn verify_scope(&self, scope: &ScopePath) -> Result<SealRecord, StorageError> {
         let seal_bytes = self
             .get_object(&self.seal_key(scope))?
-            .ok_or_else(|| StorageError::not_found(format!("seal record for {scope}")))?;
+            .ok_or_else(|| StorageError::not_found(format!("scope {scope} has no seal record")))?;
         let seal = parse_seal_record(&seal_bytes, scope)?;
-        let keys = self.list_keys(&self.entities_prefix(scope))?;
-        if keys.len() as u64 != seal.entity_count {
+        let entities = self.list_entities(scope)?;
+        if entities.len() as u64 != seal.entity_count {
             return Err(StorageError::corrupt(format!(
-                "scope {scope} holds {} entities but the seal record says {}",
-                keys.len(),
-                seal.entity_count
+                "scope {scope} entity count differs from its seal"
             )));
         }
-        for key in &keys {
-            let entity = entity_from_key(key, scope)?;
+        let mut digests = Vec::with_capacity(entities.len());
+        for entity in entities {
             let bytes = self
-                .get_object(key)?
-                .ok_or_else(|| StorageError::corrupt(format!("entity {entity} vanished under verify")))?;
+                .get_object(&self.object_key(scope, entity))?
+                .ok_or_else(|| {
+                    StorageError::corrupt(format!("entity {entity} vanished under verify"))
+                })?;
             let (recorded, payload) = split_object(&bytes, scope)?;
             if layout::sha256(payload) != recorded {
                 return Err(StorageError::corrupt(format!(
-                    "entity {entity} in {scope} no longer matches its recorded digest"
+                    "entity {entity} in {scope} fails its recorded digest"
                 )));
             }
+            digests.push((entity, recorded));
+        }
+        if layout::scope_digest(&digests)? != seal.digest {
+            return Err(StorageError::corrupt(format!(
+                "scope {scope} digest differs from its seal"
+            )));
         }
         Ok(seal)
     }
 
     fn list(&self, scope: &ScopePath) -> Result<Vec<EntityId>, StorageError> {
-        let keys = self.list_keys(&self.entities_prefix(scope))?;
-        let mut entities = Vec::with_capacity(keys.len());
-        for key in &keys {
-            entities.push(entity_from_key(key, scope)?);
-        }
-        entities.sort_unstable();
-        Ok(entities)
+        self.list_entities(scope)
     }
 
     fn retire(&mut self, scope: &ScopePath, retention_cursor: u64) -> Result<u64, StorageError> {
-        let sealed = self.get_object(&self.seal_key(scope))?.is_some();
-        if sealed {
+        if self.get_object(&self.seal_key(scope))?.is_some() {
             // A sealed scope retires whole: every entity and the seal record.
             let keys = self.list_keys(&self.scope_prefix(scope))?;
-            let removed = keys
-                .iter()
-                .filter(|key| key.rsplit('/').nth(2) == Some(OBJECTS_DIR))
-                .count() as u64;
+            let removed = self.list_entities(scope)?.len() as u64;
             self.delete_keys(&keys)?;
             return Ok(removed);
         }
-        let keys = self.list_keys(&self.entities_prefix(scope))?;
+        let entities = self.list_entities(scope)?;
+        if entities.is_empty() {
+            return Err(StorageError::not_found(format!(
+                "scope {scope} holds nothing to retire"
+            )));
+        }
         let mut doomed = Vec::new();
-        for key in keys {
-            let entity = entity_from_key(&key, scope)?;
-            if u64::from(entity) <= retention_cursor {
-                doomed.push(key);
+        for entity in entities {
+            if entity <= retention_cursor {
+                doomed.push(self.object_key(scope, entity));
             }
         }
         let removed = doomed.len() as u64;

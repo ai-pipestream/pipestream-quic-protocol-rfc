@@ -2123,6 +2123,7 @@ dependencies = [
  "chrono",
  "postgres",
  "rskafka",
+ "rustix",
  "sha2 0.11.0",
  "tempfile",
  "tokio",

@@ -7,11 +7,13 @@
 //!
 //! Physical mapping: one Kafka topic with exactly one partition (a single
 //! partition is what makes "ordered replay" meaningful in Kafka). Record
-//! values carry the same framing as the filesystem journal, minus the
-//! length prefix a message boundary already provides: `u8 kind | payload`,
-//! kind 0 = intent (payload = record), kind 1 = commit (payload =
-//! `u64 BE intent cursor` then record). A record's cursor is
-//! `offset + 1`, so `Cursor(0)` stays "the beginning".
+//! values frame the same fields as the filesystem journal, minus the
+//! cursor and checksum a partition log already provides:
+//! `u8 type | u32 BE id length | id | payload`, type 0 = intent, type 1 =
+//! commit (payload = commit record). A record's cursor is `offset + 1`, so
+//! `Cursor(0)` stays "the beginning"; commits consume cursor positions just
+//! like on the log backends, and replay folds each commit into its intent's
+//! entry.
 //!
 //! Durability configuration: produces use `required_acks = -1` (all
 //! in-sync replicas) and every append awaits the broker's acknowledgment,
@@ -20,21 +22,23 @@
 //! The journal assumes the reference deployment's single-writer recovery
 //! model: [`KafkaJournal::open`] loads the whole partition into an
 //! in-memory index, appends go through this instance, and `replay` reads
-//! the index. Records produced by another live writer between `open` and
-//! `replay` are not the recovery path's concern.
+//! the index.
 //!
 //! The client (`rskafka`, pure Rust) is async; the store owns a private
 //! current-thread tokio runtime and blocks on each call, keeping the SPI
 //! synchronous.
 
-use crate::{Cursor, Journal, JournalEntry, JournalKind, StorageError};
+use crate::{
+    Cursor, Intent, Journal, MAX_INTENT_ID_BYTES, MAX_RECORD_BYTES, ReplayEntry, StorageError,
+};
 use rskafka::client::ClientBuilder;
 use rskafka::client::partition::{Compression, UnknownTopicHandling};
 use rskafka::record::Record;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
-const KIND_INTENT: u8 = 0;
-const KIND_COMMIT: u8 = 1;
+const TYPE_INTENT: u8 = 0;
+const TYPE_COMMIT: u8 = 1;
 const PARTITION: i32 = 0;
 
 /// Configuration for [`KafkaJournal`].
@@ -53,10 +57,23 @@ pub struct KafkaConfig {
 pub struct KafkaJournal {
     client: rskafka::client::Client,
     runtime: tokio::runtime::Runtime,
-    topic: String,
-    /// In-memory mirror of the partition, loaded at open. Entry `i` is the
-    /// record at offset `i`, cursor `i + 1`.
-    index: Vec<JournalKind>,
+    topic: Arc<str>,
+    /// In-memory mirror of the partition, loaded at open.
+    index: JournalIndex,
+}
+
+#[derive(Debug, Default)]
+struct JournalIndex {
+    intents: Vec<IntentState>,
+    by_intent_id: HashMap<String, usize>,
+    last_cursor: u64,
+}
+
+#[derive(Debug)]
+struct IntentState {
+    intent: Intent,
+    cursor: Cursor,
+    commit: Option<Vec<u8>>,
 }
 
 impl std::fmt::Debug for KafkaJournal {
@@ -74,16 +91,15 @@ impl KafkaJournal {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .map_err(|e| StorageError::backend(format!("tokio runtime: {e}")))?;
-        let client = runtime.block_on(ClientBuilder::new(vec![
-            config.bootstrap_servers.clone(),
-        ]).build());
-        let client = client.map_err(map_kafka_error)?;
+            .map_err(|e| StorageError::failed(format!("tokio runtime: {e}")))?;
+        let client = runtime
+            .block_on(ClientBuilder::new(vec![config.bootstrap_servers.clone()]).build())
+            .map_err(map_kafka_error)?;
         let mut journal = KafkaJournal {
             client,
             runtime,
-            topic: config.topic.clone(),
-            index: Vec::new(),
+            topic: Arc::from(config.topic.as_str()),
+            index: JournalIndex::default(),
         };
         journal.ensure_topic()?;
         journal.index = journal.load_index()?;
@@ -96,7 +112,7 @@ impl KafkaJournal {
 
     fn ensure_topic(&self) -> Result<(), StorageError> {
         let controller = self.client.controller_client().map_err(map_kafka_error)?;
-        let result = self.block_on(controller.create_topic(&self.topic, 1, 1, 30_000));
+        let result = self.block_on(controller.create_topic(self.topic.as_ref(), 1, 1, 30_000));
         match result {
             Ok(()) => Ok(()),
             // TopicAlreadyExists: another store created it first; fine.
@@ -109,7 +125,7 @@ impl KafkaJournal {
         &self,
     ) -> Result<rskafka::client::partition::PartitionClient, StorageError> {
         self.block_on(self.client.partition_client(
-            self.topic.as_str(),
+            self.topic.as_ref(),
             PARTITION,
             UnknownTopicHandling::Error,
         ))
@@ -117,32 +133,40 @@ impl KafkaJournal {
     }
 
     /// Fetches the whole partition into the in-memory index.
-    fn load_index(&self) -> Result<Vec<JournalKind>, StorageError> {
+    fn load_index(&self) -> Result<JournalIndex, StorageError> {
         let partition = self.partition_client()?;
-        let mut index = Vec::new();
+        let mut index = JournalIndex::default();
+        let mut offset = 0i64;
         loop {
+            let previous_offset = offset;
             let (records, high_watermark) = self
-                .block_on(partition.fetch_records(
-                    index.len() as i64,
-                    1..16 * 1024 * 1024,
-                    5_000,
-                ))
+                .block_on(partition.fetch_records(offset, 1..16 * 1024 * 1024, 5_000))
                 .map_err(map_kafka_error)?;
             for entry in records {
                 let payload = entry.record.value.unwrap_or_default();
-                index.push(decode_record(&self.topic, entry.offset, &payload)?);
+                fold_record(&mut index, &self.topic, entry.offset, &payload)?;
             }
-            if index.len() as i64 >= high_watermark {
+            offset = index.last_cursor as i64;
+            if offset >= high_watermark {
                 return Ok(index);
+            }
+            if offset == previous_offset {
+                return Err(StorageError::transient(format!(
+                    "journal {} fetch made no progress at offset {offset}",
+                    self.topic
+                )));
             }
         }
     }
 
     /// Appends one framed record and awaits the broker's acknowledgment.
-    fn append_record(&mut self, kind: u8, payload: &[u8]) -> Result<Cursor, StorageError> {
+    /// Returns the record's cursor (`offset + 1`).
+    fn append_record(&mut self, record_type: u8, id: &[u8], payload: &[u8]) -> Result<Cursor, StorageError> {
         let partition = self.partition_client()?;
-        let mut value = Vec::with_capacity(1 + payload.len());
-        value.push(kind);
+        let mut value = Vec::with_capacity(5 + id.len() + payload.len());
+        value.push(record_type);
+        value.extend_from_slice(&(id.len() as u32).to_be_bytes());
+        value.extend_from_slice(id);
         value.extend_from_slice(payload);
         let record = Record {
             key: None,
@@ -154,7 +178,7 @@ impl KafkaJournal {
             .block_on(partition.produce(vec![record], Compression::NoCompression))
             .map_err(map_kafka_error)?;
         let base_offset = offsets.first().copied().ok_or_else(|| {
-            StorageError::backend("kafka produce returned no offset".to_string())
+            StorageError::failed("kafka produce returned no offset".to_string())
         })?;
         let cursor = u64::try_from(base_offset + 1)
             .map(Cursor)
@@ -163,35 +187,72 @@ impl KafkaJournal {
     }
 }
 
-/// Decodes one stored record.
-fn decode_record(topic: &str, offset: i64, payload: &[u8]) -> Result<JournalKind, StorageError> {
-    let corrupt = |detail: &str| {
+/// Validates one stored record and folds it into the index.
+fn fold_record(
+    index: &mut JournalIndex,
+    topic: &str,
+    offset: i64,
+    payload: &[u8],
+) -> Result<(), StorageError> {
+    let corrupt = |detail: String| {
         StorageError::corrupt(format!("journal {topic} offset {offset}: {detail}"))
     };
-    let (kind, body) = match payload.split_first() {
-        Some((kind, body)) => (*kind, body),
-        None => return Err(corrupt("empty record")),
-    };
-    match kind {
-        KIND_INTENT => Ok(JournalKind::Intent(body.to_vec())),
-        KIND_COMMIT => {
-            if body.len() < 8 {
-                return Err(corrupt("commit record shorter than 8 bytes"));
-            }
-            let mut cursor = [0u8; 8];
-            cursor.copy_from_slice(&body[..8]);
-            Ok(JournalKind::Commit {
-                intent: Cursor(u64::from_be_bytes(cursor)),
-                record: body[8..].to_vec(),
-            })
-        }
-        other => Err(corrupt(&format!("unknown record kind {other}"))),
+    if payload.len() < 5 {
+        return Err(corrupt("record shorter than its header".to_string()));
     }
+    let record_type = payload[0];
+    let mut id_len = [0u8; 4];
+    id_len.copy_from_slice(&payload[1..5]);
+    let id_len = u32::from_be_bytes(id_len) as usize;
+    if id_len == 0 || id_len > MAX_INTENT_ID_BYTES || payload.len() < 5 + id_len {
+        return Err(corrupt("record geometry is invalid".to_string()));
+    }
+    let id = &payload[5..5 + id_len];
+    let body = &payload[5 + id_len..];
+    if body.is_empty() || body.len() > MAX_RECORD_BYTES {
+        return Err(corrupt("record payload is invalid".to_string()));
+    }
+    let intent_id = std::str::from_utf8(id)
+        .map_err(|_| corrupt("intent id is not UTF-8".to_string()))?
+        .to_string();
+    let cursor = Cursor(u64::try_from(offset + 1).map_err(|_| corrupt("negative offset".to_string()))?);
+    index.last_cursor = cursor.0;
+    match record_type {
+        TYPE_INTENT => {
+            if index.by_intent_id.contains_key(&intent_id) {
+                return Err(corrupt(format!("journal replays intent identifier {intent_id}")));
+            }
+            let intent = Intent::new(&intent_id, body)
+                .map_err(|_| corrupt("intent fails validation".to_string()))?;
+            index.by_intent_id.insert(intent_id, index.intents.len());
+            index.intents.push(IntentState {
+                intent,
+                cursor,
+                commit: None,
+            });
+        }
+        TYPE_COMMIT => {
+            let Some(intent_index) = index.by_intent_id.get(&intent_id).copied() else {
+                return Err(corrupt(format!(
+                    "journal commit has no uncommitted intent {intent_id}"
+                )));
+            };
+            let entry = &mut index.intents[intent_index];
+            if entry.commit.is_some() {
+                return Err(corrupt(format!(
+                    "journal commit has no uncommitted intent {intent_id}"
+                )));
+            }
+            entry.commit = Some(body.to_vec());
+        }
+        other => return Err(corrupt(format!("unknown record kind {other}"))),
+    }
+    Ok(())
 }
 
 /// Maps a kafka client error into the taxonomy: transport failures and
 /// retryable protocol errors are transient, everything else is a general
-/// backend error.
+/// failure.
 fn map_kafka_error(error: rskafka::client::error::Error) -> StorageError {
     use rskafka::client::error::{Error, ProtocolError};
     match &error {
@@ -204,60 +265,71 @@ fn map_kafka_error(error: rskafka::client::error::Error) -> StorageError {
                 | ProtocolError::UnknownServerError,
             ..
         } => StorageError::transient(format!("kafka: {error}")),
-        _ => StorageError::backend(format!("kafka: {error}")),
+        _ => StorageError::failed(format!("kafka: {error}")),
     }
 }
 
 impl Journal for KafkaJournal {
-    fn append_intent(&mut self, record: &[u8]) -> Result<Cursor, StorageError> {
-        let cursor = self.append_record(KIND_INTENT, record)?;
-        self.index.push(JournalKind::Intent(record.to_vec()));
-        debug_assert_eq!(cursor.0, self.index.len() as u64);
+    fn append_intent(&mut self, intent: &Intent) -> Result<Cursor, StorageError> {
+        if let Some(index) = self.index.by_intent_id.get(intent.id()) {
+            let existing = &self.index.intents[*index];
+            if existing.intent.record() == intent.record() {
+                return Ok(existing.cursor);
+            }
+            return Err(StorageError::corrupt(format!(
+                "intent {} already exists with different bytes",
+                intent.id()
+            )));
+        }
+        let cursor = self.append_record(TYPE_INTENT, intent.id().as_bytes(), intent.record())?;
+        self.index
+            .by_intent_id
+            .insert(intent.id().to_string(), self.index.intents.len());
+        self.index.intents.push(IntentState {
+            intent: intent.clone(),
+            cursor,
+            commit: None,
+        });
+        self.index.last_cursor = cursor.0;
         Ok(cursor)
     }
 
-    fn commit(&mut self, intent: Cursor, record: &[u8]) -> Result<(), StorageError> {
-        if intent.0 == 0 || intent.0 as usize > self.index.len() {
-            return Err(StorageError::not_found(format!("intent at {intent:?}")));
+    fn commit(&mut self, intent_id: &str, record: &[u8]) -> Result<(), StorageError> {
+        if record.is_empty() || record.len() > MAX_RECORD_BYTES {
+            return Err(StorageError::failed(format!(
+                "commit record must be 1 to {MAX_RECORD_BYTES} octets"
+            )));
         }
-        if !matches!(self.index[intent.0 as usize - 1], JournalKind::Intent(_)) {
-            return Err(StorageError::not_found(format!("intent at {intent:?}")));
-        }
-        let prior = self.index.iter().find_map(|kind| match kind {
-            JournalKind::Commit { intent: settled, record: existing } if *settled == intent => {
-                Some(existing)
+        let Some(index) = self.index.by_intent_id.get(intent_id).copied() else {
+            return Err(StorageError::not_found(format!(
+                "intent {intent_id} has no durable append"
+            )));
+        };
+        match &self.index.intents[index].commit {
+            Some(existing) if existing == record => return Ok(()),
+            Some(_) => {
+                return Err(StorageError::corrupt(format!(
+                    "intent {intent_id} already carries a different commit"
+                )));
             }
-            _ => None,
-        });
-        match prior {
-            Some(existing) if existing == record => Ok(()),
-            Some(_) => Err(StorageError::corrupt(format!(
-                "intent at {intent:?} already committed with a different record"
-            ))),
-            None => {
-                let mut payload = Vec::with_capacity(8 + record.len());
-                payload.extend_from_slice(&intent.0.to_be_bytes());
-                payload.extend_from_slice(record);
-                let cursor = self.append_record(KIND_COMMIT, &payload)?;
-                self.index.push(JournalKind::Commit {
-                    intent,
-                    record: record.to_vec(),
-                });
-                debug_assert_eq!(cursor.0, self.index.len() as u64);
-                Ok(())
-            }
+            None => {}
         }
+        let cursor = self.append_record(TYPE_COMMIT, intent_id.as_bytes(), record)?;
+        self.index.intents[index].commit = Some(record.to_vec());
+        self.index.last_cursor = cursor.0;
+        Ok(())
     }
 
-    fn replay(&self, since: Cursor) -> Result<Vec<JournalEntry>, StorageError> {
+    fn replay(&self, since: Cursor) -> Result<Vec<ReplayEntry>, StorageError> {
         Ok(self
             .index
+            .intents
             .iter()
-            .enumerate()
-            .skip(since.0 as usize)
-            .map(|(index, kind)| JournalEntry {
-                cursor: Cursor(index as u64 + 1),
-                kind: kind.clone(),
+            .filter(|entry| entry.cursor > since)
+            .map(|entry| ReplayEntry {
+                cursor: entry.cursor,
+                intent: entry.intent.clone(),
+                commit: entry.commit.clone(),
             })
             .collect())
     }

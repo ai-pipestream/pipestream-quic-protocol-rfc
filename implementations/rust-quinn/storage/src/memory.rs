@@ -2,16 +2,18 @@
 //!
 //! Volatile by design: state lives in process memory and does not survive a
 //! kill. This is the test and development backbone and the fast lane for
-//! conformance fuzzing, not a durability backend. [`MemoryStore`] is
-//! [`Clone`]: clones share the same underlying state, so a "reopen" in the
-//! contract suite is modeled as cloning a handle.
+//! conformance fuzzing, not a durability backend. Append order, cursor
+//! assignment, idempotent retries, and replay semantics are identical to
+//! the durable backends. [`MemoryStore`] is [`Clone`]: clones share the
+//! same underlying state, so a "reopen" in the contract suite is modeled as
+//! cloning a handle.
 
 use crate::layout;
 use crate::{
-    Cursor, Digest32, EntityId, Journal, JournalEntry, JournalKind, ObjectStore, ScopePath,
-    SealRecord, StorageError,
+    Cursor, Digest32, EntityId, Intent, Journal, ObjectStore, ReplayEntry, ScopePath, SealRecord,
+    StorageError,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{self, Read};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -28,11 +30,19 @@ struct StoredObject {
     bytes: Vec<u8>,
 }
 
+#[derive(Debug)]
+struct IntentState {
+    intent: Intent,
+    cursor: Cursor,
+    commit: Option<Vec<u8>>,
+}
+
 #[derive(Debug, Default)]
 struct State {
     scopes: BTreeMap<ScopePath, ScopeState>,
-    /// Append-only log. A record's cursor is its 1-based position.
-    journal: Vec<JournalKind>,
+    intents: Vec<IntentState>,
+    by_intent_id: HashMap<String, usize>,
+    last_cursor: u64,
 }
 
 /// In-memory backend for both the [`ObjectStore`] and [`Journal`] roles.
@@ -52,13 +62,13 @@ impl MemoryStore {
     fn read(&self) -> Result<RwLockReadGuard<'_, State>, StorageError> {
         self.state
             .read()
-            .map_err(|_| StorageError::backend("memory store lock poisoned"))
+            .map_err(|_| StorageError::failed("memory store lock poisoned"))
     }
 
     fn write(&self) -> Result<RwLockWriteGuard<'_, State>, StorageError> {
         self.state
             .write()
-            .map_err(|_| StorageError::backend("memory store lock poisoned"))
+            .map_err(|_| StorageError::failed("memory store lock poisoned"))
     }
 }
 
@@ -93,21 +103,23 @@ impl ObjectStore for MemoryStore {
         expected_digest: &Digest32,
     ) -> Result<(), StorageError> {
         layout::check_entity_id(entity)?;
+        let mut state = self.write()?;
+        let scope_state = state.scopes.entry(scope.clone()).or_default();
+        // Seal is checked before the digest: a sealed scope rejects every
+        // put regardless of bytes.
+        if scope_state.seal.is_some() {
+            return Err(StorageError::already_sealed(format!(
+                "scope {scope} is sealed"
+            )));
+        }
         let digest = layout::sha256(bytes);
         if &digest != expected_digest {
             return Err(StorageError::corrupt(format!(
                 "digest mismatch for entity {entity} in {scope}"
             )));
         }
-        let mut state = self.write()?;
-        let scope_state = state.scopes.entry(scope.clone()).or_default();
-        if scope_state.seal.is_some() {
-            return Err(StorageError::already_sealed(format!(
-                "scope {scope} is sealed"
-            )));
-        }
         match scope_state.objects.get(&entity) {
-            Some(existing) if existing.digest == digest => Ok(()),
+            Some(existing) if existing.bytes == bytes => Ok(()),
             Some(_) => Err(StorageError::corrupt(format!(
                 "conflicting bytes for entity {entity} in {scope}"
             ))),
@@ -153,7 +165,7 @@ impl ObjectStore for MemoryStore {
                 Ok(())
             }
             Some(_) => Err(StorageError::corrupt(format!(
-                "scope {scope} already sealed with a different digest or entity count"
+                "scope {scope} already carries a different seal"
             ))),
             None => {
                 scope_state.seal = Some(SealRecord {
@@ -173,20 +185,25 @@ impl ObjectStore for MemoryStore {
             .ok_or_else(|| StorageError::not_found(format!("scope {scope}")))?;
         let seal = scope_state
             .seal
-            .ok_or_else(|| StorageError::not_found(format!("seal record for {scope}")))?;
-        let live_count = scope_state.objects.len() as u64;
-        if live_count != seal.entity_count {
-            return Err(StorageError::corrupt(format!(
-                "scope {scope} holds {live_count} entities but the seal record says {}",
-                seal.entity_count
-            )));
-        }
+            .ok_or_else(|| StorageError::not_found(format!("scope {scope} has no seal record")))?;
+        let mut digests = Vec::with_capacity(scope_state.objects.len());
         for (entity, object) in &scope_state.objects {
             if layout::sha256(&object.bytes) != object.digest {
                 return Err(StorageError::corrupt(format!(
-                    "entity {entity} in {scope} no longer matches its recorded digest"
+                    "entity {entity} in {scope} fails its recorded digest"
                 )));
             }
+            digests.push((*entity, object.digest));
+        }
+        if digests.len() as u64 != seal.entity_count {
+            return Err(StorageError::corrupt(format!(
+                "scope {scope} entity count differs from its seal"
+            )));
+        }
+        if layout::scope_digest(&digests)? != seal.digest {
+            return Err(StorageError::corrupt(format!(
+                "scope {scope} digest differs from its seal"
+            )));
         }
         Ok(seal)
     }
@@ -203,17 +220,24 @@ impl ObjectStore for MemoryStore {
     fn retire(&mut self, scope: &ScopePath, retention_cursor: u64) -> Result<u64, StorageError> {
         let mut state = self.write()?;
         let Some(scope_state) = state.scopes.get_mut(scope) else {
-            return Ok(0);
+            return Err(StorageError::not_found(format!(
+                "scope {scope} holds nothing to retire"
+            )));
         };
         if scope_state.seal.is_some() {
             let removed = scope_state.objects.len() as u64;
             state.scopes.remove(scope);
             return Ok(removed);
         }
+        if scope_state.objects.is_empty() {
+            return Err(StorageError::not_found(format!(
+                "scope {scope} holds nothing to retire"
+            )));
+        }
         let doomed: Vec<EntityId> = scope_state
             .objects
             .keys()
-            .filter(|id| u64::from(**id) <= retention_cursor)
+            .filter(|id| **id <= retention_cursor)
             .copied()
             .collect();
         let removed = doomed.len() as u64;
@@ -225,51 +249,73 @@ impl ObjectStore for MemoryStore {
 }
 
 impl Journal for MemoryStore {
-    fn append_intent(&mut self, record: &[u8]) -> Result<Cursor, StorageError> {
-        let mut state = self.write()?;
-        state.journal.push(JournalKind::Intent(record.to_vec()));
-        Ok(Cursor(state.journal.len() as u64))
-    }
-
-    fn commit(&mut self, intent: Cursor, record: &[u8]) -> Result<(), StorageError> {
-        let mut state = self.write()?;
-        if intent.0 == 0 || intent.0 as usize > state.journal.len() {
-            return Err(StorageError::not_found(format!("intent at {intent:?}")));
-        }
-        if !matches!(state.journal[intent.0 as usize - 1], JournalKind::Intent(_)) {
-            return Err(StorageError::not_found(format!("intent at {intent:?}")));
-        }
-        let prior = state.journal.iter().find_map(|kind| match kind {
-            JournalKind::Commit { intent: settled, record: existing } if *settled == intent => {
-                Some(existing)
+    fn append_intent(&mut self, intent: &Intent) -> Result<Cursor, StorageError> {
+        let mut guard = self.write()?;
+        let state = &mut *guard;
+        if let Some(index) = state.by_intent_id.get(intent.id()) {
+            let existing = &state.intents[*index];
+            if existing.intent.record() == intent.record() {
+                return Ok(existing.cursor);
             }
-            _ => None,
+            return Err(StorageError::corrupt(format!(
+                "intent {} already exists with different bytes",
+                intent.id()
+            )));
+        }
+        state.last_cursor += 1;
+        let cursor = Cursor(state.last_cursor);
+        let position = state.intents.len();
+        state.by_intent_id.insert(intent.id().to_string(), position);
+        state.intents.push(IntentState {
+            intent: intent.clone(),
+            cursor,
+            commit: None,
         });
-        match prior {
-            Some(existing) if existing == record => Ok(()),
-            Some(_) => Err(StorageError::corrupt(format!(
-                "intent at {intent:?} already committed with a different record"
-            ))),
-            None => {
-                state.journal.push(JournalKind::Commit {
-                    intent,
-                    record: record.to_vec(),
-                });
-                Ok(())
-            }
-        }
+        Ok(cursor)
     }
 
-    fn replay(&self, since: Cursor) -> Result<Vec<JournalEntry>, StorageError> {
+    fn commit(&mut self, intent_id: &str, record: &[u8]) -> Result<(), StorageError> {
+        if record.is_empty() || record.len() > crate::MAX_RECORD_BYTES {
+            return Err(StorageError::failed(format!(
+                "commit record must be 1 to {} octets",
+                crate::MAX_RECORD_BYTES
+            )));
+        }
+        let mut guard = self.write()?;
+        let state = &mut *guard;
+        let Some(&index) = state.by_intent_id.get(intent_id) else {
+            return Err(StorageError::not_found(format!(
+                "intent {intent_id} has no durable append"
+            )));
+        };
+        {
+            let entry = &state.intents[index];
+            match &entry.commit {
+                Some(existing) if existing == record => return Ok(()),
+                Some(_) => {
+                    return Err(StorageError::corrupt(format!(
+                        "intent {intent_id} already carries a different commit"
+                    )));
+                }
+                None => {}
+            }
+        }
+        // A commit consumes a cursor in the global append order.
+        state.last_cursor += 1;
+        state.intents[index].commit = Some(record.to_vec());
+        Ok(())
+    }
+
+    fn replay(&self, since: Cursor) -> Result<Vec<ReplayEntry>, StorageError> {
         let state = self.read()?;
         let entries = state
-            .journal
+            .intents
             .iter()
-            .enumerate()
-            .skip(since.0 as usize)
-            .map(|(index, kind)| JournalEntry {
-                cursor: Cursor(index as u64 + 1),
-                kind: kind.clone(),
+            .filter(|entry| entry.cursor > since)
+            .map(|entry| ReplayEntry {
+                cursor: entry.cursor,
+                intent: entry.intent.clone(),
+                commit: entry.commit.clone(),
             })
             .collect();
         Ok(entries)
@@ -287,17 +333,5 @@ mod tests {
         // handle onto the same shared state (clones share the Arc).
         let shared = MemoryStore::new();
         contract::run_all(MemoryStore::new, move || shared.clone());
-    }
-
-    #[test]
-    fn reopen_via_clone_shares_state() {
-        let mut store = MemoryStore::new();
-        let scope = ScopePath::root();
-        let bytes = b"shared state";
-        store
-            .put(&scope, 1, bytes, &crate::sha256(bytes))
-            .unwrap();
-        let handle = store.clone();
-        assert_eq!(handle.list(&scope).unwrap(), vec![1]);
     }
 }

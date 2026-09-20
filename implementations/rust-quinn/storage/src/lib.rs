@@ -40,4 +40,7 @@ pub use kafka::{KafkaConfig, KafkaJournal};
 pub use memory::MemoryStore;
 pub use postgres::PostgresStore;
 pub use s3::{S3Config, S3Store};
-pub use spi::{Cursor, Journal, JournalEntry, JournalKind, ObjectStore, SealRecord};
+pub use spi::{
+    Cursor, Intent, Journal, MAX_INTENT_ID_BYTES, MAX_RECORD_BYTES, ObjectStore, ReplayEntry,
+    SealRecord,
+};
