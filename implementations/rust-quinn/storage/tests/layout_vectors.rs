@@ -108,3 +108,43 @@ fn empty_scope_digest_is_sha256_of_empty_input() {
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     );
 }
+
+/// Java lane's hashlib-verified literals (coordination message); both lanes
+/// assert these exact values.
+#[test]
+fn java_lane_literals_match() {
+    // Buckets: first byte of SHA-256 over the 4-octet big-endian id.
+    for (entity, expected) in [
+        (0u32, "df"),
+        (1, "b4"),
+        (255, "e3"),
+        (0x0102_0304, "9f"),
+        (0xffff_ffff, "ad"),
+    ] {
+        assert_eq!(layout::bucket_hex(entity), expected, "bucket({entity:#x})");
+    }
+    // Entity names: 8-hex.
+    assert_eq!(layout::entity_component(0x001a_2b3c), "001a2b3c");
+    assert_eq!(layout::entity_component(0xffff_ffff), "ffffffff");
+    // Canonical content digests (0x00 || id-be32 || digest32, ascending).
+    let zero: layout::Digest32 = [0x00; 32];
+    let one: layout::Digest32 = [0x11; 32];
+    let two: layout::Digest32 = [0x22; 32];
+    let three: layout::Digest32 = [0x33; 32];
+    assert_eq!(
+        hex(&layout::scope_digest(&[]).expect("empty")),
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    );
+    assert_eq!(
+        hex(&layout::scope_digest(&[(1, zero)]).expect("single")),
+        "120c4e5a29b8f49b3401db6e5b5f065ac35a068c62efa3431553e3cd409136c9"
+    );
+    // Deliberately unsorted input must canonicalize to the same digest.
+    assert_eq!(
+        hex(
+            &layout::scope_digest(&[(0x89ab_cdef, three), (1, one), (0x100, two)])
+                .expect("three-entity")
+        ),
+        "9f738d058efa80d9e0ae6e57c6f450f93fc5ca0028b4833ce0a59356642dd05f"
+    );
+}
