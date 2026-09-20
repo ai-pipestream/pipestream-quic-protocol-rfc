@@ -61,10 +61,18 @@ from `agent/storage-spi-rust` (`06c27638`) and `agent/storage-spi-java`
 | `durable-18d702e2f77fb30a` | 63 PASS + 4 waivers + 1 FAIL: identical flake signature |
 | `durable-18d7051e17c5c0f2` | **GREEN: exit 0, 64 PASS + 4 named waivers, all directions of all rows including g2-kill-after-admission-before-publication.** The SPI plane (fs backend) is certified equivalent to the v2 baseline. |
 
-The g2 row fires identically on the v2 plane with identical builds (control
-runs), so the SPI plane introduces no divergence; every other row passes with
-byte-identical finals to the baseline. A clean full-pass run on a quiet host
-remains the final certification artifact.
+### Per-backend runs (subjects wired to SPI service backends)
+
+| Backend | Run | Result |
+|---|---|---|
+| postgres (docker postgres:16-alpine) | `durable-18d70ba1e24ae5d7` | invalid: stale driver binary ran fs-backed (caught by root-cause) |
+| postgres | `durable-18d711b081707730` | 62 PASS + 1 flake + 1 real FAIL: r-memory-ladder — the Rust postgres backend buffered whole payloads (BYTEA materialization); fixed by `a011e529` (honest streaming in postgres/s3/mongo) |
+| postgres | `durable-18d7160e15db8238` | 63 PASS + g2 flake only; memory ladder flat (streaming verified by the matrix) |
+| postgres | `durable-18d718628b307c3e` | 63 PASS + g2 flake only |
+
+Postgres certification statement: row-for-row identical to the certified fs
+plane, including the flake pattern; the only backend-caused failure found
+(buffered payloads) was fixed and its fix is matrix-verified.
 
 ## Known limits
 
