@@ -19,15 +19,30 @@ import java.util.TreeSet;
  * {@code expected-report-v1.txt} and to the Rust lane's probe on the same
  * backend kind. The class lives in test sources on purpose.
  *
- * <p>Usage: {@code Probe <backend> <script>} with backend one of
- * {@code memory}, {@code fs}, {@code postgres}, {@code s3}, {@code mongo}
- * (object store plus journal where the backend has both roles), or
- * {@code kafka} (journal only; an object-only backend omits the journal
- * section and a journal-only backend omits the scope sections, per the
- * README). Backend configuration comes from the environment; every variable
- * can also be supplied to {@link #execute(String[], Map, PrintStream, PrintStream)}
- * directly, which is how the tests inject configuration without mutating the
- * process environment:
+ * <p>Usage: {@code Probe <backend> <script>} executes the script, or
+ * {@code Probe <backend> --report [scope ...]} prints the canonical report
+ * for state that already exists, which is what crossed-store verification
+ * needs: re-executing a script on an already-run store fails semantically
+ * (puts hit sealed scopes), so the report must be derived from enumeration
+ * instead. Scope discovery is backend-specific. {@code fs} walks the scope
+ * directory hierarchy under {@code <root>/objects} (every directory whose
+ * name is 8 lowercase hex digits is one scope level, so the relative path of
+ * such a directory is a scope) and requires an initialized root, refusing
+ * with a usage error when {@code <root>/objects} does not exist. Backends
+ * without enumeration take explicit scope arguments after {@code --report}
+ * and report exactly those scopes; the in-memory backend has no directory
+ * tree and always works that way, which is sufficient because the crossed
+ * gate is filesystem-only. A backend with no Journal role omits the journal
+ * section; a journal-only backend reports only it; script operations for
+ * roles a backend does not implement are skipped.
+ *
+ * <p>Backends: {@code memory}, {@code fs}, {@code postgres}, {@code s3},
+ * {@code mongo} (object store plus journal where the backend has both roles),
+ * or {@code kafka} (journal only). Backend configuration comes from the
+ * environment; every variable can also be supplied to
+ * {@link #execute(String[], Map, PrintStream, PrintStream)} directly, which
+ * is how the tests inject configuration without mutating the process
+ * environment:
  *
  * <ul>
  *   <li>{@code fs}: {@code PROBE_FS_ROOT} (required) — store root directory
@@ -66,23 +81,31 @@ public final class Probe {
   /**
    * Runs the probe, writing the canonical report to {@code out}.
    *
-   * @param args {@code <backend> <script>}
+   * @param args {@code <backend> <script>} or {@code <backend> --report [scope ...]}
    * @param config backend configuration; normally {@code System.getenv()}
    * @param out report destination
    * @param err diagnostic destination
    * @return {@link #OK}, {@link #FAILURE}, or {@link #USAGE}
    */
   static int execute(String[] args, Map<String, String> config, PrintStream out, PrintStream err) {
-    if (args == null || args.length != 2) {
+    if (args == null || args.length < 2) {
       usage(err);
       return USAGE;
     }
     try {
+      if (args[1].equals("--report")) {
+        report(args[0], config, List.of(java.util.Arrays.copyOfRange(args, 2, args.length)), out);
+        return OK;
+      }
+      if (args.length != 2) {
+        usage(err);
+        return USAGE;
+      }
       Backend backend = Backend.open(args[0], config);
       try (backend) {
         List<String> lines = Files.readAllLines(Path.of(args[1]));
-        Report report = runScript(backend, lines);
-        out.print(render(backend, report));
+        Report script = runScript(backend, lines);
+        out.print(render(backend, new ArrayList<>(script.scopes())));
       }
       return OK;
     } catch (IllegalArgumentException failure) {
@@ -98,9 +121,60 @@ public final class Probe {
     }
   }
 
+  /** Backends that can enumerate their scopes without explicit arguments. */
+  private static boolean supportsDiscovery(String backend) {
+    return backend.equals("fs");
+  }
+
+  /** Report mode: render existing state without executing any operation. */
+  private static void report(String backendName, Map<String, String> config, List<String> scopeArgs,
+      PrintStream out) throws Exception {
+    TreeSet<ScopePath> scopes = new TreeSet<>(Comparator.comparing(ScopePath::render));
+    if (!scopeArgs.isEmpty()) {
+      for (String scope : scopeArgs) scopes.add(ScopePath.parse(scope));
+    } else if (supportsDiscovery(backendName)) {
+      scopes.addAll(discoverFilesystem(config));
+    }
+    Backend backend = Backend.openReport(backendName, config);
+    try (backend) {
+      out.print(render(backend, new ArrayList<>(scopes)));
+    }
+  }
+
+  /**
+   * Discovers scopes by walking the filesystem store's scope directory
+   * hierarchy: under {@code <root>/objects}, every directory whose name is
+   * eight lowercase hex digits is one scope level, so the relative path of
+   * such a directory is one scope. Bucket directories (two hex digits) and
+   * foreign names are not scopes and are skipped.
+   */
+  private static List<ScopePath> discoverFilesystem(Map<String, String> config) throws java.io.IOException {
+    Path objects = Path.of(Backend.required(config, "PROBE_FS_ROOT")).resolve("objects");
+    if (!Files.isDirectory(objects, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+      throw new IllegalArgumentException("fs root is not an initialized store (missing " + objects + ")");
+    }
+    TreeSet<ScopePath> found = new TreeSet<>(Comparator.comparing(ScopePath::render));
+    try (java.util.stream.Stream<Path> walk = Files.walk(objects)) {
+      for (Path directory : walk
+          .filter(Files::isDirectory)
+          .filter(path -> path.getFileName().toString().matches("[0-9a-f]{8}"))
+          .toList()) {
+        Path relative = objects.relativize(directory);
+        long[] components = new long[relative.getNameCount()];
+        for (int i = 0; i < components.length; i++) {
+          components[i] = Long.parseLong(relative.getName(i).toString(), 16);
+        }
+        found.add(ScopePath.of(components));
+      }
+    }
+    return new ArrayList<>(found);
+  }
+
   private static void usage(PrintStream err) {
-    err.println("usage: Probe <backend> <script>");
+    err.println("usage: Probe <backend> <script> | Probe <backend> --report [scope ...]");
     err.println("backends: memory fs postgres s3 mongo (object store + journal), kafka (journal only)");
+    err.println("scope discovery: fs walks <root>/objects (requires an initialized root); other backends");
+    err.println("take explicit scope arguments after --report, none means no scope sections");
     err.println("configuration: PROBE_FS_ROOT | PROBE_PG_URL/USER/PASSWORD | PROBE_S3_ENDPOINT/BUCKET/"
         + "ACCESS_KEY/SECRET_KEY[/REGION/PREFIX/PATH_STYLE] | PROBE_MONGO_URI/DATABASE | "
         + "PROBE_KAFKA_BOOTSTRAP/TOPIC");
@@ -117,11 +191,27 @@ public final class Probe {
     }
 
     static Backend open(String name, Map<String, String> config) throws StorageException {
+      return open(name, config, false);
+    }
+
+    /**
+     * Opens a backend for report mode. The filesystem store keeps whatever
+     * state exists and takes its journal section only when a journal
+     * directory is present, so reporting an objects-only store does not
+     * create anything.
+     */
+    static Backend openReport(String name, Map<String, String> config) throws StorageException {
+      return open(name, config, true);
+    }
+
+    private static Backend open(String name, Map<String, String> config, boolean report) throws StorageException {
       return switch (name) {
         case "memory" -> new Backend(MemoryObjectStore.create(), MemoryJournal.create());
         case "fs" -> {
           Path root = Path.of(required(config, "PROBE_FS_ROOT"));
-          yield new Backend(FileObjectStore.open(root), FileJournal.open(root));
+          Journal journal = report && !java.nio.file.Files.isDirectory(root.resolve("journal"))
+              ? null : FileJournal.open(root);
+          yield new Backend(FileObjectStore.open(root), journal);
         }
         case "postgres" -> {
           String url = required(config, "PROBE_PG_URL");
@@ -261,11 +351,11 @@ public final class Probe {
     return StoreLayout.scopeDigest(digests);
   }
 
-  private static String render(Backend backend, Report report) throws StorageException {
+  private static String render(Backend backend, List<ScopePath> scopes) throws StorageException {
     StringBuilder out = new StringBuilder();
     HexFormat hex = HexFormat.of();
     if (backend.store != null) {
-      for (ScopePath scope : report.scopes()) {
+      for (ScopePath scope : scopes) {
         out.append("scope ").append(scope.render()).append('\n');
         List<StoreLayout.EntityDigest> digests = new ArrayList<>();
         for (long entityId : backend.store.list(scope)) {
