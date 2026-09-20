@@ -631,7 +631,24 @@ impl PutWriter for S3PutWriter {
         // Patch part 1's length field now that the total is known, then
         // upload deferred part 1 and the remainder as the final part.
         self.part1[..8].copy_from_slice(&self.total.to_be_bytes());
-        let upload_id = self.upload_id.take().expect("multipart started");
+        // The upload is created lazily on the second part's flush, so a
+        // payload between one and two parts arrives here with none yet.
+        let upload_id = match self.upload_id.take() {
+            Some(id) => id,
+            None => {
+                let output = self
+                    .runtime
+                    .block_on(
+                        self.client
+                            .create_multipart_upload()
+                            .bucket(&self.bucket)
+                            .key(&self.key)
+                            .send(),
+                    )
+                    .map_err(|e| map_sdk_error("create multipart upload", e))?;
+                output.upload_id().unwrap_or_default().to_string()
+            }
+        };
         let part1 = std::mem::take(&mut self.part1);
         let first = self.upload_part(&upload_id, 1, part1)?;
         let mut parts = vec![first];

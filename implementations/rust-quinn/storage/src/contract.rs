@@ -72,6 +72,7 @@ pub fn run_object_store<S: ObjectStore + Send>(
     streaming_put_conflict_with_existing_is_corrupt_at_begin(&mut fresh());
     streaming_put_idempotent_absorbing_reput(&mut fresh());
     streaming_put_invisible_until_finish(&mut fresh());
+    streaming_put_medium_payload_boundaries(&mut fresh());
     list_scopes_empty_store(&mut fresh());
     list_scopes_nested_and_canonically_ordered(&mut fresh());
     list_scopes_visibility_across_seal_and_retire(&mut fresh());
@@ -1163,4 +1164,28 @@ pub fn list_scopes_visibility_across_seal_and_retire<S: ObjectStore>(store: &mut
         rendered(&store.list_scopes().unwrap_or_else(|e| panic!("list_scopes: {e}"))),
         vec!["0000003c"]
     );
+}
+
+/// Medium payloads through the streaming writer: the 6 MiB and 8 MiB sizes
+/// that straddle the S3 multipart part boundary (the stashed first part
+/// without an upload started), plus exactly-5-MiB. Every backend must
+/// round-trip them; the pre-fix S3 backend panicked on this window.
+pub fn streaming_put_medium_payload_boundaries<S: ObjectStore>(store: &mut S) {
+    use std::io::Write as _;
+    let scope = ScopePath::root(57);
+    for (entity, mib) in [(1u32, 5usize), (2, 6), (3, 8)] {
+        let total = mib << 20;
+        let payload: Vec<u8> = (0..total).map(|i| ((i / 4096) % 251) as u8).collect();
+        let digest = sha256(&payload);
+        {
+            let mut writer = store
+                .begin_put(&scope, entity, &digest)
+                .unwrap_or_else(|e| panic!("begin_put {mib} MiB: {e}"));
+            for chunk in payload.chunks(256 * 1024) {
+                writer.write_all(chunk).unwrap_or_else(|e| panic!("write {mib} MiB: {e}"));
+            }
+            writer.finish().unwrap_or_else(|e| panic!("finish {mib} MiB: {e}"));
+        }
+        assert_eq!(read_all(store, &scope, entity), payload, "{mib} MiB round-trip");
+    }
 }
