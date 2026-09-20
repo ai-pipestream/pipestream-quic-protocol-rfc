@@ -48,6 +48,23 @@ interlock across languages is fcntl `F_SETLK` on both sides (pinned decision 7).
   recorded seal verbatim — the protocol SCOPE_DIGEST covers statuses the store
   does not hold.
 
+## SPI-plane certification runs (2026-09-20)
+
+Driver `fa3f393e` (`--storage-plane spi`, recorded in run.tsv), subjects built
+from `agent/storage-spi-rust` (`06c27638`) and `agent/storage-spi-java`
+(`1c729222`), acceptance mode, full 66-row matrix:
+
+| Run | Result |
+|---|---|
+| `durable-18d6fbf9b0f2cd9f` | FAIL at startup on every row — rustls CryptoProvider panic in the Rust subject (feature-resolution shift from the new crate edge); fixed by `06c27638` (ring pinned). Process worked as intended: the matrix caught what unit gates missed. |
+| `durable-18d6fd296148339e` | 63 PASS + 4 waivers + 1 FAIL: the documented g2 host-load flake |
+| `durable-18d702e2f77fb30a` | 63 PASS + 4 waivers + 1 FAIL: identical flake signature |
+
+The g2 row fires identically on the v2 plane with identical builds (control
+runs), so the SPI plane introduces no divergence; every other row passes with
+byte-identical finals to the baseline. A clean full-pass run on a quiet host
+remains the final certification artifact.
+
 ## Known limits
 
 - The SPI layer is additive; the protocol stacks' existing SQLite stores are
