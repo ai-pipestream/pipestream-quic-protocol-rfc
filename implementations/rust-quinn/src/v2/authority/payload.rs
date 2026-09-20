@@ -26,6 +26,79 @@ const OVERHEAD: u64 = 12 + HEADER_LIMIT as u64;
 const CONFIG: &str = "binding";
 const LOCK: &str = "root.lock";
 
+/// Storage backend selection for a payload root, persisted in the store
+/// binding so reopen refuses a changed backend (matching the policy
+/// exactness check). Slice 2 of the SPI adoption plan wires only the seam;
+/// `Filesystem` is the current behavior and the only backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PayloadBackendKind {
+    /// The existing stage-file filesystem store.
+    #[default]
+    Filesystem,
+}
+
+impl PayloadBackendKind {
+    const FILESYSTEM_TAG: u64 = 1;
+
+    fn tag(self) -> Id {
+        Id(Self::FILESYSTEM_TAG)
+    }
+
+    fn from_tag(tag: u64) -> Result<Self> {
+        if tag == Self::FILESYSTEM_TAG {
+            Ok(Self::Filesystem)
+        } else {
+            Err(StoreError::Corrupt("unknown payload backend tag"))
+        }
+    }
+
+    /// CLI/config spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PayloadBackendKind::Filesystem => "fs",
+        }
+    }
+}
+
+impl std::fmt::Display for PayloadBackendKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for PayloadBackendKind {
+    type Err = StoreError;
+
+    fn from_str(name: &str) -> Result<Self> {
+        if name == "fs" {
+            Ok(PayloadBackendKind::Filesystem)
+        } else {
+            Err(StoreError::Corrupt("unknown payload backend"))
+        }
+    }
+}
+
+/// The checksummed binding body: CBOR array [backend tag, policy].
+fn encode_root_config(backend: PayloadBackendKind, policy: &PayloadPolicy) -> Result<Vec<u8>> {
+    let mut writer = codec::Writer::new();
+    writer.array(2);
+    backend.tag().write(&mut writer);
+    policy.write(&mut writer);
+    Ok(writer.finish())
+}
+
+fn decode_root_config(bytes: &[u8]) -> Result<(PayloadBackendKind, PayloadPolicy)> {
+    let mut decoder = minicbor::Decoder::new(bytes);
+    codec::array(&mut decoder, 2)?;
+    let tag = Id::read(&mut decoder)?;
+    let policy = PayloadPolicy::read(&mut decoder)?;
+    if decoder.position() != bytes.len() {
+        return Err(StoreError::Corrupt("payload binding has trailing bytes"));
+    }
+    Ok((PayloadBackendKind::from_tag(tag.0)?, policy))
+}
+
+
 mod audit;
 mod local;
 mod read_credit;
@@ -195,6 +268,7 @@ impl Drop for RootLock {
 struct Root {
     path: PathBuf,
     binding: StoreIdentity,
+    backend: PayloadBackendKind,
     policy: PayloadPolicy,
     entries: Mutex<Inventory>,
     uncertain: AtomicBool,
@@ -369,12 +443,25 @@ impl PayloadStore {
     }
     /// Initialization only accepts a newly created directory. A damaged or lost
     /// existing root is never silently replaced, adopted, or cleared.
+    ///
+    /// Uses the default (filesystem) backend; see [`PayloadStore::initialize_with_backend`].
     pub fn initialize(path: &Path, binding: StoreIdentity, policy: PayloadPolicy) -> Result<Self> {
+        Self::initialize_with_backend(path, binding, policy, PayloadBackendKind::default())
+    }
+
+    /// Like [`PayloadStore::initialize`], recording `backend` in the store
+    /// binding so a later open with a different backend is refused.
+    pub fn initialize_with_backend(
+        path: &Path,
+        binding: StoreIdentity,
+        policy: PayloadPolicy,
+        backend: PayloadBackendKind,
+    ) -> Result<Self> {
         policy.check()?;
         fs::create_dir(path)?;
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
         let mut config = new_file(&path.join(CONFIG))?;
-        let encoded = pack(&policy)?;
+        let encoded = encode_root_config(backend, &policy)?;
         let mut bytes = Vec::with_capacity(24 + encoded.len() + 32);
         bytes.extend_from_slice(ROOT_MAGIC);
         bytes.extend_from_slice(binding.as_bytes());
@@ -390,10 +477,23 @@ impl PayloadStore {
                 .filter(|p| !p.as_os_str().is_empty())
                 .unwrap_or(Path::new(".")),
         )?;
-        Self::open(path, binding, policy)
+        Self::open_with_backend(path, binding, policy, backend)
     }
 
+    /// Opens an existing root using the default (filesystem) backend; see
+    /// [`PayloadStore::open_with_backend`].
     pub fn open(path: &Path, binding: StoreIdentity, policy: PayloadPolicy) -> Result<Self> {
+        Self::open_with_backend(path, binding, policy, PayloadBackendKind::default())
+    }
+
+    /// Like [`PayloadStore::open`], refusing a root recorded under a
+    /// different backend (or policy, or binding, as before).
+    pub fn open_with_backend(
+        path: &Path,
+        binding: StoreIdentity,
+        policy: PayloadPolicy,
+        backend: PayloadBackendKind,
+    ) -> Result<Self> {
         policy.check()?;
         let directory = fs::symlink_metadata(path)?;
         if !directory.is_dir() || directory.permissions().mode() & 0o077 != 0 {
@@ -424,15 +524,21 @@ impl PayloadStore {
             || &bytes[..8] != ROOT_MAGIC
             || &bytes[8..24] != binding.as_bytes()
             || Sha256::digest(&bytes[..bytes.len() - 32])[..] != bytes[bytes.len() - 32..]
-            || unpack::<PayloadPolicy>(&bytes[24..bytes.len() - 32])? != policy
         {
             return Err(StoreError::Corrupt(
                 "payload authority binding or policy changed",
             ));
         }
+        let (retained_backend, retained_policy) = decode_root_config(&bytes[24..bytes.len() - 32])?;
+        if retained_backend != backend || retained_policy != policy {
+            return Err(StoreError::Corrupt(
+                "payload backend, authority binding, or policy changed",
+            ));
+        }
         let mut root = Root {
             path,
             binding,
+            backend,
             policy,
             entries: Mutex::new(Inventory::default()),
             uncertain: AtomicBool::new(false),
@@ -522,6 +628,10 @@ impl PayloadStore {
 
     pub fn binding(&self) -> StoreIdentity {
         self.root.binding
+    }
+    /// The backend this root was recorded under.
+    pub fn backend(&self) -> PayloadBackendKind {
+        self.root.backend
     }
     pub(super) fn path(&self) -> &Path {
         &self.root.path
@@ -851,6 +961,11 @@ impl AuthorityStore {
     /// pairing prevents a missing root from being replaced with an empty one.
     pub fn bind_payloads(&self, payloads: &PayloadStore) -> Result<()> {
         payloads.root.owned()?;
+        if payloads.backend() != self.payload_backend {
+            return Err(StoreError::Corrupt(
+                "authority payload backend selection changed",
+            ));
+        }
         let mut connection = self.connect()?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let (identity, retained): (Vec<u8>, Option<String>) = tx.query_row(

@@ -68,12 +68,14 @@ fn initialize_creates_exactly_the_binding_config_and_empty_lock() {
     assert_eq!(root_entries(&store), vec!["binding", "root.lock"]);
 
     let config = fs::read(store.path().join("binding")).unwrap();
-    // [PSROOT04][16B store identity][policy CBOR][32B sha256 of the prefix]
+    // [PSROOT04][16B store identity][CBOR array(2): backend tag, policy][32B sha256]
     assert_eq!(&config[..8], ROOT_MAGIC);
     assert_eq!(&config[8..24], binding.as_bytes());
     let (body, checksum) = config.split_at(config.len() - 32);
     assert_eq!(Sha256::digest(body).as_slice(), checksum);
-    assert_eq!(unpack::<PayloadPolicy>(&body[24..]).unwrap(), policy());
+    let (backend, retained_policy) = decode_root_config(&body[24..]).unwrap();
+    assert_eq!(backend, PayloadBackendKind::Filesystem);
+    assert_eq!(retained_policy, policy());
 
     let lock = fs::metadata(store.path().join("root.lock")).unwrap();
     assert!(lock.is_file());
@@ -197,4 +199,49 @@ fn abandoned_stage_is_reclaimed_at_open() {
     let reopened = PayloadStore::open(&root, binding, policy()).unwrap();
     assert_eq!(reopened.recovered_stages(), 1);
     assert!(!root_entries(&reopened).iter().any(|n| n.starts_with("stage-")));
+}
+
+#[test]
+fn reopen_refuses_a_changed_backend_tag() {
+    let (dir, store, binding) = fresh_root();
+    drop(store);
+    let root = dir.path().join("objects");
+    // Hand-craft a binding with an unknown backend tag (99) — what a store
+    // written under a different backend looks like to this build.
+    let mut writer = codec::Writer::new();
+    writer.array(2);
+    Id(99).write(&mut writer);
+    policy().write(&mut writer);
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(ROOT_MAGIC);
+    bytes.extend_from_slice(binding.as_bytes());
+    bytes.extend_from_slice(&writer.finish());
+    bytes.extend_from_slice(&Sha256::digest(&bytes));
+    fs::write(root.join("binding"), bytes).unwrap();
+    match PayloadStore::open_with_backend(&root, binding, policy(), PayloadBackendKind::Filesystem) {
+        Err(StoreError::Corrupt(_)) => {}
+        Err(other) => panic!("changed backend tag must be refused as Corrupt, got {other:?}"),
+        Ok(_) => panic!("changed backend tag must be refused"),
+    }
+}
+
+#[test]
+fn default_backend_roundtrips() {
+    let (dir, store, binding) = fresh_root();
+    assert_eq!(store.backend(), PayloadBackendKind::Filesystem);
+    drop(store);
+    let reopened = PayloadStore::open_with_backend(
+        &dir.path().join("objects"),
+        binding,
+        policy(),
+        PayloadBackendKind::Filesystem,
+    )
+    .unwrap();
+    assert_eq!(reopened.backend(), PayloadBackendKind::Filesystem);
+    assert_eq!(PayloadBackendKind::Filesystem.as_str(), "fs");
+    assert_eq!(
+        "fs".parse::<PayloadBackendKind>().unwrap(),
+        PayloadBackendKind::Filesystem
+    );
+    assert!("s3".parse::<PayloadBackendKind>().is_err());
 }

@@ -209,7 +209,6 @@ impl SpiJournal for ClientJournalBridge {
 mod tests {
     use super::*;
     use crate::persistence::PhysicalLimits;
-    use pipestream_storage::Journal as _;
     use pipestream_storage::contract::{JournalPayloads, JournalProfile, run_journal_with};
     use std::collections::HashMap;
     use std::path::Path;

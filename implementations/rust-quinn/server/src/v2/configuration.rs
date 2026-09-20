@@ -4,7 +4,7 @@ use super::*;
 use anyhow::Context;
 use pipestream_quic::v2::authority::{
     AuthorityStore, Authorization, Clock, ClockReading, Permission, StorePolicy,
-    payload::{PayloadPolicy, PayloadStore},
+    payload::{PayloadBackendKind, PayloadPolicy, PayloadStore},
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use std::{
@@ -124,6 +124,11 @@ pub struct Storage {
     trust_system_clock: bool,
     #[arg(long)]
     allow_skip: bool,
+    /// Payload storage backend; only "fs" exists today (SPI backends land
+    /// under the adoption plan). Persisted in the store binding: reopening
+    /// with a different backend is refused.
+    #[arg(long, default_value = "fs")]
+    payload_backend: String,
     #[arg(long, default_value_t = 1024)]
     sessions: u64,
     #[arg(long, default_value_t = 10000)]
@@ -163,19 +168,31 @@ impl Storage {
                 retained_output_bytes: Number(1 << 30),
             },
         };
-        let open = if fresh {
-            AuthorityStore::initialize
+        let payload_backend: PayloadBackendKind = self
+            .payload_backend
+            .parse()
+            .map_err(|_| anyhow::anyhow!("unknown --payload-backend"))?;
+        let store = if fresh {
+            AuthorityStore::initialize_with_payload_backend(
+                &self.state_db,
+                IdentityLabel(self.authority.clone()),
+                policy,
+                PhysicalLimits::default(),
+                Arc::new(TrustedSystemClock),
+                access,
+                payload_backend,
+            )?
         } else {
-            AuthorityStore::open
+            AuthorityStore::open_with_payload_backend(
+                &self.state_db,
+                IdentityLabel(self.authority.clone()),
+                policy,
+                PhysicalLimits::default(),
+                Arc::new(TrustedSystemClock),
+                access,
+                payload_backend,
+            )?
         };
-        let store = open(
-            &self.state_db,
-            IdentityLabel(self.authority.clone()),
-            policy,
-            PhysicalLimits::default(),
-            Arc::new(TrustedSystemClock),
-            access,
-        )?;
         let policy = PayloadPolicy {
             objects: Id(self.payload_objects),
             bytes: Number(self.payload_bytes),
@@ -185,12 +202,21 @@ impl Storage {
             handles: Id(256),
             owner_handles: Id(64),
         };
-        let open = if fresh {
-            PayloadStore::initialize
+        let payloads = if fresh {
+            PayloadStore::initialize_with_backend(
+                &self.object_dir,
+                store.payload_identity()?,
+                policy,
+                payload_backend,
+            )?
         } else {
-            PayloadStore::open
+            PayloadStore::open_with_backend(
+                &self.object_dir,
+                store.payload_identity()?,
+                policy,
+                payload_backend,
+            )?
         };
-        let payloads = open(&self.object_dir, store.payload_identity()?, policy)?;
         store.bind_payloads(&payloads)?;
         Ok((store, payloads, mappings))
     }
@@ -199,6 +225,42 @@ impl Storage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        storage: Storage,
+    }
+
+    #[test]
+    fn payload_backend_defaults_to_fs_and_is_selectable() {
+        let base = [
+            "probe",
+            "--state-db",
+            "state.sqlite",
+            "--object-dir",
+            "objects",
+            "--authority",
+            "issuer",
+            "--principal-map",
+            "principals.tsv",
+        ];
+        let storage = TestCli::try_parse_from(base).unwrap().storage;
+        assert_eq!(storage.payload_backend, "fs");
+        let storage = TestCli::try_parse_from(
+            base.iter()
+                .chain(["--payload-backend", "fs"].iter())
+                .copied(),
+        )
+        .unwrap()
+        .storage;
+        assert_eq!(
+            storage.payload_backend.parse::<PayloadBackendKind>().unwrap(),
+            PayloadBackendKind::Filesystem
+        );
+    }
+
     #[test]
     fn startup_reads_reject_nonregular_symlink_and_oversize_files() {
         let directory = tempfile::tempdir().unwrap();
