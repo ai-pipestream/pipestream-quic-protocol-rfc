@@ -55,3 +55,29 @@ interlock across languages is fcntl `F_SETLK` on both sides (pinned decision 7).
   driver's per-backend acceptance runs are the follow-on work.
 - Mongo backend tested against mongo:8.2 (8.0 refuses kernels ≥ 6.19,
   SERVER-121912).
+
+## Adoption slice 1: SPI over the existing client journals (2026-09-20)
+
+Both lanes now expose their proven v2 client journals through the SPI
+`Journal` role, each certified by the shared journal contract suite:
+
+- Java: `ClientJournalAdapter` (`3b91437c`) — bridge table in the same SQLite
+  file (dense global cursors; commits consume cursors), subprocess
+  SIGKILL-recovery proof through SPI replay. 240 storage tests green; the v2
+  `ClientJournal` suite untouched and green. The typed protocol journaling
+  surface (`journalMutation`/`journalInput`/`journalReceipt`) is documented
+  as unbridgeable for opaque SPI bytes rather than faked.
+- Rust: `ClientJournalBridge` (`c64fcb1e`) — `append_intent = prepare`,
+  `commit = record_receipt`, replay = ordered read-only scan (not
+  `unresolved`, which filters committed work). Cursor mapping is sparse
+  (intent rowid r → cursor 2r-1, commit → 2r) because the existing journal
+  gives receipts no independent position; the contract suite runs it under a
+  `JournalProfile::SPARSE` mode instead of faking dense cursors. Verified
+  locally: full `pipestream-storage` suite green (incl. docker backends),
+  clippy `-D warnings` clean, 63/63 `v2::client` regression tests pass.
+
+Asymmetry, documented: the Java bridge produces dense cursors (mapping
+table), the Rust bridge runs sparse. The six certified SPI backends are all
+dense; the profile concept exists so adapters over pre-existing journals can
+declare their cursor shape honestly. `pipestream-core` now depends on
+`pipestream-storage` for SPI types only — no behavior change.
