@@ -3,6 +3,7 @@ package ai.pipestream.quic.storage;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -116,6 +117,17 @@ public final class MemoryObjectStore implements ObjectStore {
     checkOpen();
     ScopeState state = scopes.get(scope);
     return state == null ? List.of() : List.copyOf(state.entities.keySet());
+  }
+
+  @Override public List<ScopePath> listScopes() throws StorageException {
+    checkOpen();
+    List<ScopePath> listed = new ArrayList<>();
+    for (Map.Entry<ScopePath, ScopeState> entry : scopes.entrySet()) {
+      ScopeState state = entry.getValue();
+      if (state.seal != null || !state.entities.isEmpty()) listed.add(entry.getKey());
+    }
+    listed.sort(java.util.Comparator.comparing(ScopePath::render));
+    return List.copyOf(listed);
   }
 
   @Override public void retire(ScopePath scope, long retentionCursor) throws StorageException {

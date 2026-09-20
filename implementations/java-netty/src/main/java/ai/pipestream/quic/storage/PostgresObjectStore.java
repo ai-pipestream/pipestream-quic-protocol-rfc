@@ -240,6 +240,22 @@ public final class PostgresObjectStore implements ObjectStore {
     }
   }
 
+  @Override public synchronized List<ScopePath> listScopes() throws StorageException {
+    checkOpen();
+    List<ScopePath> scopes = new ArrayList<>();
+    try (PreparedStatement select = connection().prepareStatement(
+        "SELECT scope_path FROM ("
+            + "SELECT scope_path FROM ps_object_entities UNION"
+            + " SELECT scope_path FROM ps_object_seals) ORDER BY scope_path ASC")) {
+      try (ResultSet rows = select.executeQuery()) {
+        while (rows.next()) scopes.add(ScopePath.parse(rows.getString(1)));
+      }
+      return List.copyOf(scopes);
+    } catch (SQLException failure) {
+      throw PostgresSupport.mapSqlException(failure, "listScopes");
+    }
+  }
+
   @Override public synchronized void retire(ScopePath scope, long retentionCursor) throws StorageException {
     Objects.requireNonNull(scope, "scope");
     if (retentionCursor < 0) throw new IllegalArgumentException("retention cursor must be non-negative");

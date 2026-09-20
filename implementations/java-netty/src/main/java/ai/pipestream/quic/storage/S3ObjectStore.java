@@ -5,6 +5,7 @@ import java.net.URI;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
@@ -27,6 +28,7 @@ import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
+import software.amazon.awssdk.services.s3.model.CommonPrefix;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.S3Object;
@@ -226,6 +228,84 @@ public final class S3ObjectStore implements ObjectStore {
       ids.add(entityIdFromKey(scope, key));
     }
     return List.copyOf(ids);
+  }
+
+  @Override public List<ScopePath> listScopes() throws StorageException {
+    checkOpen();
+    List<ScopePath> scopes = new ArrayList<>();
+    try {
+      listScopes(prefix, scopes);
+      scopes.sort(Comparator.comparing(ScopePath::render));
+      return List.copyOf(scopes);
+    } catch (S3Exception failure) {
+      throw mapS3Exception(failure, "listScopes");
+    } catch (SdkClientException failure) {
+      throw StorageException.transientFailure("listScopes failed", failure);
+    }
+  }
+
+  /**
+   * Paginated delimiter listing over one scope level. A level holds state
+   * when its own objects include the seal object or an entity key; common
+   * prefixes naming an 8-hex component are child scopes, visited
+   * recursively, and 2-hex prefixes are fanout buckets whose entity keys
+   * count as state at this level.
+   */
+  private void listScopes(String scopePrefix, List<ScopePath> out) throws StorageException {
+    boolean hasState = false;
+    List<String> childScopes = new ArrayList<>();
+    List<String> buckets = new ArrayList<>();
+    String continuation = null;
+    do {
+      ListObjectsV2Request.Builder request =
+          ListObjectsV2Request.builder().bucket(bucket).prefix(scopePrefix).delimiter("/").maxKeys(1000);
+      if (continuation != null) request.continuationToken(continuation);
+      ListObjectsV2Response response = s3.listObjectsV2(request.build());
+      for (S3Object object : response.contents()) {
+        String remainder = object.key().substring(scopePrefix.length());
+        if (remainder.endsWith("/")) continue; // console folder markers
+        if (remainder.equals(SEAL_OBJECT_NAME) || remainder.matches("[0-9a-f]{2}/[0-9a-f]{8}")) {
+          hasState = true;
+          continue;
+        }
+        throw StorageException.corrupt("unexpected key " + object.key() + " under prefix " + scopePrefix);
+      }
+      for (CommonPrefix child : response.commonPrefixes()) {
+        String remainder = child.prefix().substring(scopePrefix.length());
+        if (remainder.matches("[0-9a-f]{2}/")) buckets.add(child.prefix());
+        else if (remainder.matches("[0-9a-f]{8}/")) childScopes.add(child.prefix());
+        else throw StorageException.corrupt("unexpected prefix " + child.prefix());
+      }
+      continuation = response.isTruncated() ? response.nextContinuationToken() : null;
+    } while (continuation != null);
+    for (String bucket : buckets) if (bucketHasEntities(bucket)) hasState = true;
+    if (hasState && !scopePrefix.equals(prefix)) {
+      out.add(ScopePath.parse(scopePrefix.substring(prefix.length(), scopePrefix.length() - 1)));
+    }
+    for (String child : childScopes) listScopes(child, out);
+  }
+
+  /** Whether one fanout bucket prefix holds at least one entity object. */
+  private boolean bucketHasEntities(String bucketPrefix) throws StorageException {
+    boolean hasState = false;
+    String continuation = null;
+    do {
+      ListObjectsV2Request.Builder request =
+          ListObjectsV2Request.builder().bucket(bucket).prefix(bucketPrefix).maxKeys(1000);
+      if (continuation != null) request.continuationToken(continuation);
+      ListObjectsV2Response response = s3.listObjectsV2(request.build());
+      for (S3Object object : response.contents()) {
+        String remainder = object.key().substring(bucketPrefix.length());
+        if (remainder.endsWith("/")) continue;
+        if (remainder.matches("[0-9a-f]{8}")) {
+          hasState = true;
+          continue;
+        }
+        throw StorageException.corrupt("unexpected key " + object.key() + " under prefix " + bucketPrefix);
+      }
+      continuation = response.isTruncated() ? response.nextContinuationToken() : null;
+    } while (continuation != null);
+    return hasState;
   }
 
   @Override public void retire(ScopePath scope, long retentionCursor) throws StorageException {

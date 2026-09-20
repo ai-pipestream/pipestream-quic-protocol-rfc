@@ -43,7 +43,7 @@ final class OutputStoreSpiPlaneTest {
     byte[] payload = pattern(1021, 7);
     Records.InputHeader header = header(1, 2, 8192);
     try (InputStore store =
-        InputStore.initializeForAuthority(root, LIMITS, authority, backend, spiRoot)) {
+        InputStore.initializeForAuthority(root, LIMITS, authority, backend)) {
       store.reserveOutputs(CONTEXT, header);
       OutputStore.Stored published;
       try (OutputStore.Writer writer =
@@ -69,7 +69,7 @@ final class OutputStoreSpiPlaneTest {
     }
     try (ObjectStore reopenedBackend = FileObjectStore.open(spiRoot);
         InputStore reopened =
-            InputStore.open(root, LIMITS, reopenedBackend, spiRoot, null)) {
+            InputStore.open(root, LIMITS, reopenedBackend, null)) {
       OutputStore.Stored found =
           reopened.findOutput(CONTEXT, header, lease(authority, header, 1, 1), 0).orElseThrow();
       assertArrayEquals(payload, read(found));
@@ -86,7 +86,7 @@ final class OutputStoreSpiPlaneTest {
     byte[] payload = pattern(511, 3);
     Records.InputHeader header = header(2, 2, 8192);
     try (InputStore store =
-        InputStore.initializeForAuthority(root, LIMITS, authority, backend, spiRoot)) {
+        InputStore.initializeForAuthority(root, LIMITS, authority, backend)) {
       store.reserveOutputs(CONTEXT, header);
       String reference;
       try (OutputStore.Writer writer =
@@ -115,7 +115,7 @@ final class OutputStoreSpiPlaneTest {
     Records.InputHeader header = header(3, 1, 4096);
     Path sidecar;
     try (InputStore store =
-        InputStore.initializeForAuthority(root, LIMITS, authority, backend, spiRoot)) {
+        InputStore.initializeForAuthority(root, LIMITS, authority, backend)) {
       store.reserveOutputs(CONTEXT, header);
       try (OutputStore.Writer writer =
           store.beginOutput(
@@ -129,7 +129,7 @@ final class OutputStoreSpiPlaneTest {
     Files.delete(sidecar);
     try (ObjectStore reopenedBackend = FileObjectStore.open(spiRoot);
         InputStore reopened =
-            InputStore.open(root, LIMITS, reopenedBackend, spiRoot, null)) {
+            InputStore.open(root, LIMITS, reopenedBackend, null)) {
       assertNotNull(reopened);
       assertThrows(
           IOException.class, () -> readBackendEntity(spiRoot, sidecar),
@@ -147,7 +147,7 @@ final class OutputStoreSpiPlaneTest {
     Records.InputHeader header = header(4, 1, 4096);
     Path sidecar;
     try (InputStore store =
-        InputStore.initializeForAuthority(root, LIMITS, authority, backend, spiRoot)) {
+        InputStore.initializeForAuthority(root, LIMITS, authority, backend)) {
       store.reserveOutputs(CONTEXT, header);
       try (OutputStore.Writer writer =
           store.beginOutput(
@@ -160,7 +160,7 @@ final class OutputStoreSpiPlaneTest {
     Files.delete(entityPath(spiRoot, sidecar));
     try (ObjectStore reopenedBackend = FileObjectStore.open(spiRoot)) {
       assertThrows(
-          IOException.class, () -> InputStore.open(root, LIMITS, reopenedBackend, spiRoot, null));
+          IOException.class, () -> InputStore.open(root, LIMITS, reopenedBackend, null));
     }
   }
 
@@ -170,7 +170,7 @@ final class OutputStoreSpiPlaneTest {
     Path spiRoot = directory.resolve("kill-spi");
     runKillChild(root, spiRoot, "OUTPUT_LINKED");
     try (ObjectStore backend = FileObjectStore.open(spiRoot);
-        InputStore reopened = InputStore.open(root, LIMITS, backend, spiRoot, null)) {
+        InputStore reopened = InputStore.open(root, LIMITS, backend, null)) {
       assertNotNull(reopened);
       assertEquals(0, count(root.resolve("outputs"), "*.output"), "no sidecar survived the kill");
       assertEquals(0, backendPayloadEntities(spiRoot), "orphan output payload swept during recovery");
@@ -183,7 +183,7 @@ final class OutputStoreSpiPlaneTest {
     Path spiRoot = directory.resolve("kill-late-spi");
     runKillChild(root, spiRoot, "OUTPUT_SYNCED");
     try (ObjectStore backend = FileObjectStore.open(spiRoot);
-        InputStore reopened = InputStore.open(root, LIMITS, backend, spiRoot, null)) {
+        InputStore reopened = InputStore.open(root, LIMITS, backend, null)) {
       assertNotNull(reopened);
       assertEquals(1, count(root.resolve("outputs"), "*.output"));
       assertEquals(1, backendPayloadEntities(spiRoot), "payload retained with its sidecar");

@@ -53,7 +53,6 @@ public final class SpiOutputKillChild {
             new InputStore.Limits(16L << 20, 64, 8 << 20, 16),
             authority,
             backend,
-            spiRoot,
             probe)) {
       publish(store, context, header, authority, payload);
     }

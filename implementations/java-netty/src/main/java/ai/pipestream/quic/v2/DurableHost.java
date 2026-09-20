@@ -1237,11 +1237,9 @@ public final class DurableHost implements AutoCloseable {
     Objects.requireNonNull(clock);
     Files.createDirectories(root);
     ObjectStore payloadPlane = null;
-    Path payloadPlaneRoot = null;
     if (configuration.objectPlane() == ObjectPlane.SPI) {
-      payloadPlaneRoot = root.resolve(SPI_OBJECTS);
       try {
-        payloadPlane = FileObjectStore.open(payloadPlaneRoot);
+        payloadPlane = FileObjectStore.open(root.resolve(SPI_OBJECTS));
       } catch (StorageException failure) {
         throw new IOException("SPI payload backend open failed", failure);
       }
@@ -1259,8 +1257,7 @@ public final class DurableHost implements AutoCloseable {
                   root.resolve(OBJECTS),
                   configuration.objects().toStore(),
                   sessions.identity(),
-                  payloadPlane,
-                  payloadPlaneRoot)
+                  payloadPlane)
               : InputStore.initializeForAuthority(
                   root.resolve(OBJECTS), configuration.objects().toStore(), sessions.identity());
       try {
@@ -1317,11 +1314,9 @@ public final class DurableHost implements AutoCloseable {
               + configuration.objectPlane().wire() + "'");
     }
     ObjectStore payloadPlane = null;
-    Path payloadPlaneRoot = null;
     if (recordedPlane == ObjectPlane.SPI) {
-      payloadPlaneRoot = root.resolve(SPI_OBJECTS);
       try {
-        payloadPlane = FileObjectStore.open(payloadPlaneRoot);
+        payloadPlane = FileObjectStore.open(root.resolve(SPI_OBJECTS));
       } catch (StorageException failure) {
         try {
           sessions.close();
@@ -1335,11 +1330,7 @@ public final class DurableHost implements AutoCloseable {
       InputStore inputs =
           payloadPlane != null
               ? InputStore.open(
-                  root.resolve(OBJECTS),
-                  configuration.objects().toStore(),
-                  payloadPlane,
-                  payloadPlaneRoot,
-                  null)
+                  root.resolve(OBJECTS), configuration.objects().toStore(), payloadPlane, null)
               : InputStore.open(root.resolve(OBJECTS), configuration.objects().toStore());
       try {
         sessions.verifyInputs(inputs);

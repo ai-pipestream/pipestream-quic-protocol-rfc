@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.TreeSet;
 import org.bson.Document;
 import org.bson.types.Binary;
 
@@ -224,6 +225,26 @@ public final class MongoObjectStore implements ObjectStore {
       return List.copyOf(ids);
     } catch (MongoException failure) {
       throw MongoSupport.mapMongoException(failure, "list");
+    }
+  }
+
+  @Override public synchronized List<ScopePath> listScopes() throws StorageException {
+    checkOpen();
+    try {
+      TreeSet<String> paths = new TreeSet<>();
+      for (String path : collection(MongoSupport.OBJECTS_COLLECTION)
+          .distinct("scope_path", String.class)) {
+        paths.add(path);
+      }
+      for (String path : collection(MongoSupport.SEALS_COLLECTION)
+          .distinct("scope_path", String.class)) {
+        paths.add(path);
+      }
+      List<ScopePath> scopes = new ArrayList<>();
+      for (String path : paths) scopes.add(ScopePath.parse(path));
+      return List.copyOf(scopes);
+    } catch (MongoException failure) {
+      throw MongoSupport.mapMongoException(failure, "listScopes");
     }
   }
 

@@ -209,6 +209,48 @@ abstract class ObjectStoreContractTest {
     }
   }
 
+  @Test void listScopesOnFreshStoreIsEmpty() throws Exception {
+    try (ObjectStore store = openStore()) {
+      assertEquals(List.of(), store.listScopes());
+    }
+  }
+
+  @Test void listScopesIncludesUnsealedSealedAndNestedScopesInAscendingOrder() throws Exception {
+    try (ObjectStore store = openStore()) {
+      byte[] payload = bytes("scoped");
+      store.put(ScopePath.root(0x40), 1, payload, digest(payload));
+      store.put(ScopePath.of(0x40, 0x41), 2, payload, digest(payload));
+      store.sealScope(ScopePath.of(0x40, 0x41), digest(payload), 1);
+      store.sealScope(ScopePath.root(0x42), digest(payload), 0);
+      assertEquals(
+          List.of(ScopePath.root(0x40), ScopePath.of(0x40, 0x41), ScopePath.root(0x42)),
+          store.listScopes());
+    }
+  }
+
+  @Test void retireUpdatesScopeListingAcrossSealedAndUnsealedScopes() throws Exception {
+    try (ObjectStore store = openStore()) {
+      byte[] payload = bytes("retire-listing");
+      var sealed = ScopePath.root(0x50);
+      var unsealed = ScopePath.root(0x51);
+      for (long entityId = 1; entityId <= 3; entityId++) {
+        store.put(sealed, entityId, payload, digest(payload));
+        store.put(unsealed, entityId, payload, digest(payload));
+      }
+      store.sealScope(sealed, StoreLayout.scopeDigest(List.of(
+          new StoreLayout.EntityDigest(1, digest(payload)),
+          new StoreLayout.EntityDigest(2, digest(payload)),
+          new StoreLayout.EntityDigest(3, digest(payload)))), 3);
+      assertEquals(List.of(sealed, unsealed), store.listScopes());
+      store.retire(sealed, 0);
+      assertEquals(List.of(unsealed), store.listScopes(), "sealed scope retires whole");
+      store.retire(unsealed, 2);
+      assertEquals(List.of(unsealed), store.listScopes(), "partial retire keeps the scope");
+      store.retire(unsealed, 3);
+      assertEquals(List.of(), store.listScopes(), "an emptied unsealed scope holds no state");
+    }
+  }
+
   @Test void retireOfUnsealedScopeRemovesOnlyEntitiesUpToCursor() throws Exception {
     try (ObjectStore store = openStore()) {
       var scope = ScopePath.root(14);

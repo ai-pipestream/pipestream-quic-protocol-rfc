@@ -52,7 +52,7 @@ public final class SpiPlaneKillChild {
     try (InputStore store =
             InputStore.initializeForAuthority(
                 root, new InputStore.Limits(16L << 20, 32, 8 << 20, 8), UUID.randomUUID(), backend,
-                spiRoot, probe);
+                probe);
         InputStore.Receiver receiver =
             store.begin(new Commitments.Context("issuer-a", "alice", 1), header, selected, 1)) {
       receiver.write(ByteBuffer.wrap(payload), 2);

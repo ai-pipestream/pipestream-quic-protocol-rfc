@@ -252,6 +252,65 @@ public final class FileObjectStore implements ObjectStore {
     }
   }
 
+  @Override public List<ScopePath> listScopes() throws StorageException {
+    checkOpen();
+    synchronized (mutationLock) {
+      checkOpen();
+      if (!Files.isDirectory(objects, LinkOption.NOFOLLOW_LINKS)) return List.of();
+      try {
+        List<ScopePath> scopes = new ArrayList<>();
+        listScopes(objects, new ArrayList<>(), scopes);
+        scopes.sort(java.util.Comparator.comparing(ScopePath::render));
+        return List.copyOf(scopes);
+      } catch (IOException failure) {
+        throw StorageException.transientFailure("scope listing failed", failure);
+      }
+    }
+  }
+
+  /** Walks the scope tree; a directory is a scope when it holds a seal or at least one entity. */
+  private void listScopes(Path directory, List<Long> components, List<ScopePath> out)
+      throws IOException, StorageException {
+    boolean hasState =
+        Files.isRegularFile(directory.resolve(SEAL_FILE_NAME), LinkOption.NOFOLLOW_LINKS);
+    try (DirectoryStream<Path> entries = Files.newDirectoryStream(directory)) {
+      for (Path entry : entries) {
+        String name = entry.getFileName().toString();
+        if (name.equals(SEAL_FILE_NAME) || isScratch(name)) continue;
+        if (!Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS)) {
+          // The backend root holds its own lock file; scope content is directories only.
+          if (components.isEmpty()) continue;
+          throw StorageException.corrupt("unexpected entry " + name + " in " + directory);
+        }
+        if (name.matches("[0-9a-f]{8}")) {
+          List<Long> child = new ArrayList<>(components);
+          child.add(Long.parseUnsignedLong(name, 16));
+          listScopes(entry, child, out);
+          continue;
+        }
+        if (!name.matches("[0-9a-f]{2}")) {
+          throw StorageException.corrupt("unexpected entry " + name + " in " + directory);
+        }
+        try (DirectoryStream<Path> entities = Files.newDirectoryStream(entry)) {
+          for (Path entity : entities) {
+            String entityName = entity.getFileName().toString();
+            if (isScratch(entityName)) continue;
+            if (!entityName.matches("[0-9a-f]{8}")
+                || !Files.isRegularFile(entity, LinkOption.NOFOLLOW_LINKS)) {
+              throw StorageException.corrupt("unexpected entry " + entityName + " in " + directory);
+            }
+            hasState = true;
+          }
+        }
+      }
+    }
+    if (hasState && !components.isEmpty()) {
+      long[] path = new long[components.size()];
+      for (int i = 0; i < path.length; i++) path[i] = components.get(i);
+      out.add(ScopePath.of(path));
+    }
+  }
+
   @Override public void retire(ScopePath scope, long retentionCursor) throws StorageException {
     Objects.requireNonNull(scope, "scope");
     if (retentionCursor < 0) throw new IllegalArgumentException("retention cursor must be non-negative");

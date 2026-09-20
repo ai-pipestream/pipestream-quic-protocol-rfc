@@ -87,6 +87,19 @@ public interface ObjectStore extends AutoCloseable {
   List<Long> list(ScopePath scope) throws StorageException;
 
   /**
+   * Lists every scope that currently holds any state — at least one entity
+   * or a seal record — in ascending canonical path order. Scopes that were
+   * retired whole, or that never held state, are absent. This is the
+   * enumeration primitive recovery sweeps and audits use to find retained
+   * state without walking backend-private layouts; what counts as present
+   * is consistent with {@link #list} and {@link #verifyScope}.
+   *
+   * @return ascending scope paths that hold state
+   * @throws StorageException {@code CORRUPT} if stored state cannot be read consistently
+   */
+  List<ScopePath> listScopes() throws StorageException;
+
+  /**
    * Removes retained content. A sealed scope retires whole: every entity and
    * the seal record go away. An unsealed scope retires only the entities at or
    * below the retention cursor, that is every direct entity whose identifier

@@ -42,7 +42,7 @@ final class InputStoreSpiPlaneTest {
     Commitments.Context context = context("alice", 1);
     Records.InputHeader header = header(1, payload, "spi-plane");
     try (InputStore store =
-        InputStore.initializeForAuthority(root, LIMITS, java.util.UUID.randomUUID(), backend, spiRoot)) {
+        InputStore.initializeForAuthority(root, LIMITS, java.util.UUID.randomUUID(), backend)) {
       try (InputStore.Receiver receiver = store.begin(context, header, SELECTED, 1)) {
         receiver.write(ByteBuffer.wrap(payload), 2);
         assertArrayEquals(payload, read(receiver.finish(3)));
@@ -57,7 +57,7 @@ final class InputStoreSpiPlaneTest {
     }
     try (ObjectStore reopenedBackend = FileObjectStore.open(spiRoot);
         InputStore reopened =
-            InputStore.open(root, LIMITS, reopenedBackend, spiRoot, null)) {
+            InputStore.open(root, LIMITS, reopenedBackend, null)) {
       InputStore.Stored found = reopened.find(context, header).orElseThrow();
       assertArrayEquals(payload, read(found));
     }
@@ -72,7 +72,7 @@ final class InputStoreSpiPlaneTest {
     Commitments.Context context = context("alice", 1);
     Records.InputHeader header = header(2, payload, "spi-plane");
     try (InputStore store =
-        InputStore.initializeForAuthority(root, LIMITS, java.util.UUID.randomUUID(), backend, spiRoot)) {
+        InputStore.initializeForAuthority(root, LIMITS, java.util.UUID.randomUUID(), backend)) {
       try (InputStore.Receiver receiver = store.begin(context, header, SELECTED, 1)) {
         receiver.write(ByteBuffer.wrap(payload), 2);
         read(receiver.finish(3));
@@ -96,7 +96,7 @@ final class InputStoreSpiPlaneTest {
     Commitments.Context context = context("alice", 1);
     Records.InputHeader header = header(3, payload, "spi-plane");
     try (InputStore store =
-        InputStore.initializeForAuthority(root, LIMITS, java.util.UUID.randomUUID(), backend, spiRoot)) {
+        InputStore.initializeForAuthority(root, LIMITS, java.util.UUID.randomUUID(), backend)) {
       try (InputStore.Receiver receiver = store.begin(context, header, SELECTED, 1)) {
         receiver.write(ByteBuffer.wrap(payload), 2);
         read(receiver.finish(3));
@@ -119,7 +119,7 @@ final class InputStoreSpiPlaneTest {
     Commitments.Context context = context("alice", 1);
     Records.InputHeader header = header(4, payload, "spi-plane");
     try (InputStore store =
-        InputStore.initializeForAuthority(root, LIMITS, java.util.UUID.randomUUID(), backend, spiRoot)) {
+        InputStore.initializeForAuthority(root, LIMITS, java.util.UUID.randomUUID(), backend)) {
       try (InputStore.Receiver receiver = store.begin(context, header, SELECTED, 1)) {
         receiver.write(ByteBuffer.wrap(payload), 2);
         read(receiver.finish(3));
@@ -147,7 +147,7 @@ final class InputStoreSpiPlaneTest {
     Records.InputHeader header = header(5, payload, "spi-plane");
     Path sidecar;
     try (InputStore store =
-        InputStore.initializeForAuthority(root, LIMITS, java.util.UUID.randomUUID(), backend, spiRoot)) {
+        InputStore.initializeForAuthority(root, LIMITS, java.util.UUID.randomUUID(), backend)) {
       try (InputStore.Receiver receiver = store.begin(context, header, SELECTED, 1)) {
         receiver.write(ByteBuffer.wrap(payload), 2);
         read(receiver.finish(3));
@@ -158,7 +158,7 @@ final class InputStoreSpiPlaneTest {
     Files.delete(sidecar);
     try (ObjectStore reopenedBackend = FileObjectStore.open(spiRoot);
         InputStore reopened =
-            InputStore.open(root, LIMITS, reopenedBackend, spiRoot, null)) {
+            InputStore.open(root, LIMITS, reopenedBackend, null)) {
       assertTrue(reopened.find(context, header).isEmpty());
       assertThrows(IOException.class, () -> readBackendEntity(spiRoot, sidecar),
           "orphan payload is swept during recovery");
@@ -175,7 +175,7 @@ final class InputStoreSpiPlaneTest {
     Records.InputHeader header = header(6, payload, "spi-plane");
     Path sidecar;
     try (InputStore store =
-        InputStore.initializeForAuthority(root, LIMITS, java.util.UUID.randomUUID(), backend, spiRoot)) {
+        InputStore.initializeForAuthority(root, LIMITS, java.util.UUID.randomUUID(), backend)) {
       try (InputStore.Receiver receiver = store.begin(context, header, SELECTED, 1)) {
         receiver.write(ByteBuffer.wrap(payload), 2);
         read(receiver.finish(3));
@@ -184,7 +184,7 @@ final class InputStoreSpiPlaneTest {
     }
     deleteBackendEntity(spiRoot, sidecar);
     try (ObjectStore reopenedBackend = FileObjectStore.open(spiRoot)) {
-      assertThrows(IOException.class, () -> InputStore.open(root, LIMITS, reopenedBackend, spiRoot, null));
+      assertThrows(IOException.class, () -> InputStore.open(root, LIMITS, reopenedBackend, null));
     }
   }
 
@@ -194,7 +194,7 @@ final class InputStoreSpiPlaneTest {
     Path spiRoot = directory.resolve("kill-spi");
     runKillChild(root, spiRoot, "LINKED");
     try (ObjectStore backend = FileObjectStore.open(spiRoot);
-        InputStore reopened = InputStore.open(root, LIMITS, backend, spiRoot, null)) {
+        InputStore reopened = InputStore.open(root, LIMITS, backend, null)) {
       assertNotNull(reopened);
       assertEquals(0, count(root.resolve("objects"), "*.input"), "no sidecar survived the kill");
       assertEquals(0, backendPayloadEntities(spiRoot), "orphan payload swept during recovery");
@@ -207,7 +207,7 @@ final class InputStoreSpiPlaneTest {
     Path spiRoot = directory.resolve("kill-late-spi");
     runKillChild(root, spiRoot, "OBJECT_SYNCED");
     try (ObjectStore backend = FileObjectStore.open(spiRoot);
-        InputStore reopened = InputStore.open(root, LIMITS, backend, spiRoot, null)) {
+        InputStore reopened = InputStore.open(root, LIMITS, backend, null)) {
       assertNotNull(reopened);
       assertEquals(1, count(root.resolve("objects"), "*.input"));
       assertEquals(1, backendPayloadEntities(spiRoot), "payload retained with its sidecar");

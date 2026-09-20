@@ -216,10 +216,8 @@ final class InputStore implements AutoCloseable {
   private final FileLock lock;
   private final Probe probe;
   private final OutputStore outputs;
-  /** SPI object plane: payload bytes for installed inputs, null on the v2 plane. */
+  /** SPI object plane: payload bytes for installed objects, null on the v2 plane. */
   private final ObjectStore spi;
-  /** SPI backend root, used by recovery to sweep payloads orphaned without their sidecar. */
-  private final Path spiRoot;
   private long bytes;
   private int files;
   private int handles;
@@ -262,8 +260,7 @@ final class InputStore implements AutoCloseable {
       FileChannel channel,
       FileLock lock,
       Probe probe,
-      ObjectStore spi,
-      Path spiRoot) {
+      ObjectStore spi) {
     this.root = root;
     this.limits = limits;
     this.identity = identity;
@@ -272,7 +269,6 @@ final class InputStore implements AutoCloseable {
     this.lock = lock;
     this.probe = probe;
     this.spi = spi;
-    this.spiRoot = spiRoot;
     this.outputs = new OutputStore(this, root);
   }
 
@@ -324,21 +320,18 @@ final class InputStore implements AutoCloseable {
    * store. Envelope identity, funding, quotas, pins, orphan charging, and the
    * recovery grammar stay with this store; payload bytes live in the backend
    * under one scope per operation (entity 0), with a small sidecar per object
-   * preserving the identity audit. {@code spiRoot} is the backend's root,
-   * used by recovery to sweep payloads orphaned without their sidecar.
+   * preserving the identity audit.
    *
    * @param directory new input-store directory
    * @param limits immutable file policy
    * @param authorityIdentity persistent database installation identity
    * @param spi exclusively owned SPI payload backend
-   * @param spiRoot backend root for recovery-time orphan sweeps
    * @return exclusively owned store
    * @throws IOException installation failure
    */
   static InputStore initializeForAuthority(
-      Path directory, Limits limits, UUID authorityIdentity, ObjectStore spi, Path spiRoot)
-      throws IOException {
-    return initializeForAuthority(directory, limits, authorityIdentity, spi, spiRoot, null);
+      Path directory, Limits limits, UUID authorityIdentity, ObjectStore spi) throws IOException {
+    return initializeForAuthority(directory, limits, authorityIdentity, spi, null);
   }
 
   /**
@@ -349,39 +342,27 @@ final class InputStore implements AutoCloseable {
    * @param limits immutable file policy
    * @param authorityIdentity persistent database installation identity
    * @param spi exclusively owned SPI payload backend
-   * @param spiRoot backend root for recovery-time orphan sweeps
    * @param probe fault observer, or null
    * @return exclusively owned store
    * @throws IOException installation failure
    */
   static InputStore initializeForAuthority(
-      Path directory,
-      Limits limits,
-      UUID authorityIdentity,
-      ObjectStore spi,
-      Path spiRoot,
-      Probe probe)
+      Path directory, Limits limits, UUID authorityIdentity, ObjectStore spi, Probe probe)
       throws IOException {
     Objects.requireNonNull(authorityIdentity);
     Objects.requireNonNull(spi);
-    Objects.requireNonNull(spiRoot);
     if (authorityIdentity.equals(new UUID(0, 0)))
       throw new IllegalArgumentException("zero authority installation identity");
-    return initialize(directory, limits, authorityIdentity, probe, spi, spiRoot);
+    return initialize(directory, limits, authorityIdentity, probe, spi);
   }
 
   private static InputStore initialize(
       Path directory, Limits limits, UUID authorityIdentity, Probe probe) throws IOException {
-    return initialize(directory, limits, authorityIdentity, probe, null, null);
+    return initialize(directory, limits, authorityIdentity, probe, null);
   }
 
   private static InputStore initialize(
-      Path directory,
-      Limits limits,
-      UUID authorityIdentity,
-      Probe probe,
-      ObjectStore spi,
-      Path spiRoot)
+      Path directory, Limits limits, UUID authorityIdentity, Probe probe, ObjectStore spi)
       throws IOException {
     Objects.requireNonNull(limits);
     Path requested = directory.toAbsolutePath().normalize();
@@ -389,7 +370,7 @@ final class InputStore implements AutoCloseable {
         requested,
         PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
     sync(requested.getParent());
-    return acquire(requested, limits, true, authorityIdentity, probe, spi, spiRoot);
+    return acquire(requested, limits, true, authorityIdentity, probe, spi);
   }
 
   /**
@@ -416,29 +397,26 @@ final class InputStore implements AutoCloseable {
    */
   static InputStore open(Path directory, Limits limits, Probe probe) throws IOException {
     Objects.requireNonNull(limits);
-    return acquire(directory.toAbsolutePath().normalize(), limits, false, null, probe, null, null);
+    return acquire(directory.toAbsolutePath().normalize(), limits, false, null, probe, null);
   }
 
   /**
    * Recover an installation whose input payload plane is the given SPI object
-   * store; see {@link #initializeForAuthority(Path, Limits, UUID, ObjectStore,
-   * Path)} for the plane contract.
+   * store; see {@link #initializeForAuthority(Path, Limits, UUID, ObjectStore)}
+   * for the plane contract.
    *
    * @param directory existing input store
    * @param limits exact retained policy
    * @param spi exclusively owned SPI payload backend
-   * @param spiRoot backend root for recovery-time orphan sweeps
    * @param probe fault observer, or null
    * @return audited exclusive store
    * @throws IOException recovery failure
    */
-  static InputStore open(
-      Path directory, Limits limits, ObjectStore spi, Path spiRoot, Probe probe)
+  static InputStore open(Path directory, Limits limits, ObjectStore spi, Probe probe)
       throws IOException {
     Objects.requireNonNull(limits);
     Objects.requireNonNull(spi);
-    Objects.requireNonNull(spiRoot);
-    return acquire(directory.toAbsolutePath().normalize(), limits, false, null, probe, spi, spiRoot);
+    return acquire(directory.toAbsolutePath().normalize(), limits, false, null, probe, spi);
   }
 
   private static InputStore acquire(
@@ -447,8 +425,7 @@ final class InputStore implements AutoCloseable {
       boolean initialize,
       UUID configuredAuthority,
       Probe probe,
-      ObjectStore spi,
-      Path spiRoot)
+      ObjectStore spi)
       throws IOException {
     if (!Files.isDirectory(requested, LinkOption.NOFOLLOW_LINKS))
       throw new IOException("V2 input store requires a real existing directory");
@@ -514,7 +491,7 @@ final class InputStore implements AutoCloseable {
         }
       }
       InputStore store =
-          new InputStore(root, limits, identity, authorityIdentity, channel, lock, probe, spi, spiRoot);
+          new InputStore(root, limits, identity, authorityIdentity, channel, lock, probe, spi);
       store.recover();
       return store;
     } catch (IOException | RuntimeException failure) {
@@ -2415,34 +2392,29 @@ final class InputStore implements AutoCloseable {
 
   /**
    * Recovery sweep for payloads orphaned without their sidecar (a kill
-   * between the backend put and the sidecar write). Walks the filesystem
-   * backend's scope tree; other backends will need their own enumeration
-   * before they can be certified for this plane (adoption plan stage 5).
+   * between the backend put and the sidecar write). Enumerates scopes
+   * through {@link ObjectStore#listScopes()}, so it works on every SPI
+   * backend; a scope holding entities whose derived name has neither an
+   * input sidecar nor an output sidecar is retired whole. Seal-only scopes
+   * hold no payload bytes and are left alone.
    */
   private void sweepOrphanSpiPayloads() throws IOException {
-    if (spiRoot == null) return;
-    Path base = spiRoot.resolve("objects");
-    if (!Files.isDirectory(base, LinkOption.NOFOLLOW_LINKS)) return;
-    List<Path> scopeDirectories = new ArrayList<>();
-    try (var walk = Files.walk(base)) {
-      for (Path directory : walk.filter(Files::isDirectory).toList()) {
-        Path relative = base.relativize(directory);
-        if (relative.getNameCount() != 8) continue;
-        boolean scope = true;
-        for (Path level : relative) {
-          if (!level.toString().matches("[0-9a-f]{8}")) {
-            scope = false;
-            break;
-          }
-        }
-        if (scope) scopeDirectories.add(directory);
-      }
+    if (spi == null) return;
+    List<ScopePath> scopes;
+    try {
+      scopes = spi.listScopes();
+    } catch (StorageException failure) {
+      throw spiFailure(failure);
     }
-    for (Path directory : scopeDirectories) {
-      Path relative = base.relativize(directory);
-      StringBuilder hex = new StringBuilder(64);
-      for (Path level : relative) hex.append(level.toString());
-      // A scope is owned by an input sidecar or any of its output sidecars.
+    for (ScopePath scope : scopes) {
+      List<Long> entities;
+      try {
+        entities = spi.list(scope);
+      } catch (StorageException failure) {
+        throw spiFailure(failure);
+      }
+      if (entities.isEmpty()) continue;
+      String hex = scope.render().replace("/", "");
       boolean referenced =
           Files.exists(root.resolve("objects").resolve(hex + ".input"), LinkOption.NOFOLLOW_LINKS);
       if (!referenced) {
@@ -2450,16 +2422,7 @@ final class InputStore implements AutoCloseable {
           referenced = entries.iterator().hasNext();
         }
       }
-      if (referenced) continue;
-      long[] components = new long[8];
-      for (int i = 0; i < components.length; i++) {
-        components[i] = Long.parseUnsignedLong(hex.substring(i * 8, i * 8 + 8), 16);
-      }
-      try {
-        spi.retire(ScopePath.of(components), Long.MAX_VALUE);
-      } catch (StorageException failure) {
-        throw spiFailure(failure);
-      }
+      if (!referenced) spiRetireScope(scope);
     }
   }
 
