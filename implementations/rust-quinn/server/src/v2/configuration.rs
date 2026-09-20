@@ -79,6 +79,20 @@ pub fn mappings(path: &Path) -> Result<BTreeMap<[u8; 32], IdentityLabel>> {
     Ok(mappings)
 }
 
+fn open_payloads_at(
+    object_dir: &Path,
+    fresh: bool,
+    spec: &PayloadBackendSpec,
+    identity: pipestream_quic::persistence::StoreIdentity,
+    policy: PayloadPolicy,
+) -> Result<PayloadStore> {
+    Ok(if fresh {
+        PayloadStore::initialize_with_backend(object_dir, identity, policy, spec)?
+    } else {
+        PayloadStore::open_with_backend(object_dir, identity, policy, spec)?
+    })
+}
+
 struct TrustedSystemClock;
 impl Clock for TrustedSystemClock {
     fn read(&self) -> ClockReading {
@@ -213,6 +227,42 @@ impl Storage {
         }
     }
 
+    /// Constructs the payload store. Service SPI backends (postgres, s3,
+    /// mongo) build their own tokio runtime during connect, and tokio
+    /// refuses to drive a runtime from inside an async worker thread ("Cannot
+    /// start a runtime from within a runtime") — so their construction runs
+    /// on a dedicated plain thread. This is the only tokio-worker context
+    /// the store is constructed in: request-time plane work already runs on
+    /// spawn_blocking or dedicated file-worker threads, where block_on is
+    /// legal. Local backends stay on the caller's thread.
+    fn open_payloads(
+        &self,
+        fresh: bool,
+        spec: &PayloadBackendSpec,
+        identity: pipestream_quic::persistence::StoreIdentity,
+        policy: PayloadPolicy,
+    ) -> Result<PayloadStore> {
+        let offloaded = matches!(
+            spec,
+            PayloadBackendSpec::SpiPostgres { .. }
+                | PayloadBackendSpec::SpiS3 { .. }
+                | PayloadBackendSpec::SpiMongo { .. }
+        );
+        if !offloaded {
+            return open_payloads_at(&self.object_dir, fresh, spec, identity, policy);
+        }
+        let object_dir = self.object_dir.clone();
+        let spec = spec.clone();
+        let handle = std::thread::Builder::new()
+            .name("payload-backend-open".to_string())
+            .spawn(move || open_payloads_at(&object_dir, fresh, &spec, identity, policy))
+            .map_err(|e| anyhow::anyhow!("payload backend thread failed to start: {e}"))?;
+        match handle.join() {
+            Ok(result) => result,
+            Err(_) => anyhow::bail!("payload backend construction panicked"),
+        }
+    }
+
     pub fn open(&self, fresh: bool) -> Result<Opened> {
         if !self.trust_system_clock {
             bail!(
@@ -274,21 +324,7 @@ impl Storage {
             handles: Id(256),
             owner_handles: Id(64),
         };
-        let payloads = if fresh {
-            PayloadStore::initialize_with_backend(
-                &self.object_dir,
-                store.payload_identity()?,
-                policy,
-                &spec,
-            )?
-        } else {
-            PayloadStore::open_with_backend(
-                &self.object_dir,
-                store.payload_identity()?,
-                policy,
-                &spec,
-            )?
-        };
+        let payloads = self.open_payloads(fresh, &spec, store.payload_identity()?, policy)?;
         store.bind_payloads(&payloads)?;
         Ok((store, payloads, mappings))
     }

@@ -66,7 +66,7 @@ pub struct S3Config {
 /// durability configuration.
 pub struct S3Store {
     client: Client,
-    runtime: std::sync::Arc<tokio::runtime::Runtime>,
+    runtime: Option<std::sync::Arc<tokio::runtime::Runtime>>,
     bucket: String,
     prefix: String,
 }
@@ -119,7 +119,7 @@ impl S3Store {
         let client = Client::from_conf(builder.build());
         let store = S3Store {
             client,
-            runtime,
+            runtime: Some(runtime),
             bucket: config.bucket.clone(),
             prefix: config.prefix.clone(),
         };
@@ -149,7 +149,10 @@ impl S3Store {
     }
 
     fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
-        self.runtime.block_on(future)
+        self.runtime
+            .as_ref()
+            .expect("s3 store runtime")
+            .block_on(future)
     }
 
     fn object_key(&self, scope: &ScopePath, entity: EntityId) -> String {
@@ -431,7 +434,9 @@ impl ObjectStore for S3Store {
             )));
         }
         let client = self.client.clone();
-        let runtime = std::sync::Arc::clone(&self.runtime);
+        let runtime = std::sync::Arc::clone(
+            self.runtime.as_ref().expect("s3 store runtime"),
+        );
         let bucket = self.bucket.clone();
         let seal_key = self.seal_key(scope);
         let scope = scope.clone();
@@ -631,5 +636,17 @@ impl ObjectStore for S3Store {
         }
         self.delete_keys(&doomed)?;
         Ok(removed)
+    }
+}
+
+impl Drop for S3Store {
+    /// tokio runtimes must not drop on a runtime driver thread; the final
+    /// drop is handed to a plain thread.
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            let _ = std::thread::Builder::new()
+                .name("s3-runtime-drop".to_string())
+                .spawn(move || drop(runtime));
+        }
     }
 }

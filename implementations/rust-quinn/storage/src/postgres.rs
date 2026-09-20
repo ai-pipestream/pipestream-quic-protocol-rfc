@@ -70,7 +70,20 @@ CREATE TABLE IF NOT EXISTS pipestream_journal (
 /// See the [module documentation](self) for the schema and the durability
 /// configuration.
 pub struct PostgresStore {
-    client: std::sync::Arc<Mutex<Client>>,
+    // Option so Drop can take it: the sync postgres client blocks on its
+    // internal runtime in Drop, which panics on a tokio driver thread, so the
+    // final drop is handed to a plain thread.
+    client: Option<std::sync::Arc<Mutex<Client>>>,
+}
+
+impl Drop for PostgresStore {
+    fn drop(&mut self) {
+        if let Some(client) = self.client.take() {
+            let _ = std::thread::Builder::new()
+                .name("postgres-client-drop".to_string())
+                .spawn(move || drop(client));
+        }
+    }
 }
 
 impl std::fmt::Debug for PostgresStore {
@@ -86,12 +99,14 @@ impl PostgresStore {
         let mut client = Client::connect(url, NoTls).map_err(map_pg_error)?;
         client.batch_execute(SCHEMA).map_err(map_pg_error)?;
         Ok(PostgresStore {
-            client: std::sync::Arc::new(Mutex::new(client)),
+            client: Some(std::sync::Arc::new(Mutex::new(client))),
         })
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, Client>, StorageError> {
         self.client
+            .as_ref()
+            .ok_or_else(|| StorageError::failed("postgres store is closed"))?
             .lock()
             .map_err(|_| StorageError::failed("postgres store lock poisoned"))
     }
@@ -220,7 +235,11 @@ impl ObjectStore for PostgresStore {
                 "conflicting bytes for entity {entity} in {scope}"
             )));
         }
-        let writer_client = std::sync::Arc::clone(&self.client);
+        let writer_client = std::sync::Arc::clone(
+            self.client
+                .as_ref()
+                .ok_or_else(|| StorageError::failed("postgres store is closed"))?,
+        );
         let expected = *expected_digest;
         let entity_row = entity_to_row(entity);
         let finish: PgFinish = Box::new(move |bytes: &[u8]| {

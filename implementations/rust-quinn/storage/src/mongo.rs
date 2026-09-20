@@ -53,7 +53,7 @@ pub struct MongoConfig {
 /// durability configuration.
 pub struct MongoStore {
     client: mongodb::Client,
-    runtime: std::sync::Arc<tokio::runtime::Runtime>,
+    runtime: Option<std::sync::Arc<tokio::runtime::Runtime>>,
     database: String,
 }
 
@@ -119,7 +119,7 @@ impl MongoStore {
             .map_err(map_mongo_error)?;
         let store = MongoStore {
             client,
-            runtime,
+            runtime: Some(runtime),
             database: config.database.clone(),
         };
         store.ensure_indexes()?;
@@ -127,7 +127,10 @@ impl MongoStore {
     }
 
     fn block_on<F: std::future::IntoFuture>(&self, action: F) -> F::Output {
-        self.runtime.block_on(action.into_future())
+        self.runtime
+            .as_ref()
+            .expect("mongo store runtime")
+            .block_on(action.into_future())
     }
 
     fn db(&self) -> mongodb::Database {
@@ -358,7 +361,9 @@ impl ObjectStore for MongoStore {
         }
         let objects = self.objects();
         let seals = self.seals();
-        let runtime = std::sync::Arc::clone(&self.runtime);
+        let runtime = std::sync::Arc::clone(
+            self.runtime.as_ref().expect("mongo store runtime"),
+        );
         let scope = scope.clone();
         let expected = *expected_digest;
         let finish: MongoFinish = Box::new(move |bytes: &[u8]| {
@@ -728,5 +733,17 @@ impl Journal for MongoStore {
             });
         }
         Ok(entries)
+    }
+}
+
+impl Drop for MongoStore {
+    /// tokio runtimes must not drop on a runtime driver thread; the final
+    /// drop is handed to a plain thread.
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            let _ = std::thread::Builder::new()
+                .name("mongo-runtime-drop".to_string())
+                .spawn(move || drop(runtime));
+        }
     }
 }
