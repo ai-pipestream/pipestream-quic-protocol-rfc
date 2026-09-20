@@ -16,6 +16,7 @@
     <pipestream.transport.version>4.2.17.Final-pipestream.4</pipestream.transport.version>
     <jackson.version>2.22.2</jackson.version>
     <junit.version>6.1.3</junit.version>
+    <postgresql.version>42.7.13</postgresql.version>
     <sqlite.version>3.53.4.0</sqlite.version>
     <test.excludedGroups>sealed-interop</test.excludedGroups>
   </properties>
@@ -54,6 +55,11 @@
       <groupId>com.fasterxml.jackson.dataformat</groupId>
       <artifactId>jackson-dataformat-cbor</artifactId>
       <version>${jackson.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <version>${postgresql.version}</version>
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
