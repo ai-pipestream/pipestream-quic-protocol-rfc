@@ -56,6 +56,22 @@ pub struct DurableArgs {
     /// named-gap INCOMPLETE evidence in the row directory.
     #[arg(long = "waive", value_name = "ROW[:DIRECTION][=REASON]")]
     waive: Vec<String>,
+    /// Storage plane the subject authorities run their storage on, for every
+    /// matrix row. `spi` passes each subject's own plane flag at
+    /// init-authority and every serve start (Java `--object-plane spi`, Rust
+    /// `--payload-backend spi-fs`) and requires the subjects'
+    /// storage-branch builds; the default `v2` emits no flag, so every
+    /// spawned command line stays byte-identical to a merged-subject run.
+    /// Recorded in run.tsv so an archived run shows its plane. Like the
+    /// other gated acceptance settings (run_all.sh) it is also settable
+    /// through the environment.
+    #[arg(
+        long,
+        value_enum,
+        env = "PIPESTREAM_DURABLE_STORAGE_PLANE",
+        default_value = "v2"
+    )]
+    storage_plane: process::StoragePlane,
 }
 
 /// One `--waive` target: a whole row or one `<row>:<direction>` pair, with
@@ -557,6 +573,7 @@ pub fn run(args: DurableArgs) -> Result<()> {
         seed: args.seed,
         rust_bin: rust_bin.clone(),
         java_jar: java_jar.clone(),
+        storage_plane: args.storage_plane,
     };
     let mut outcomes: Vec<(&scenarios::Row, scenarios::DirectionOutcome)> = Vec::new();
     for row in &selected {
@@ -796,12 +813,14 @@ fn write_run_manifest(
         run_root.join("run.tsv"),
         format!(
             "started_ms\t{started}\nmode\t{}\nseed\t{}\nrust_bin\t{}\trust_sha256\t{}\n\
-             java_jar\t{java_path}\tjava_sha256\t{java_sha}\njava_memory_flags\t{}\n{waivers}",
+             java_jar\t{java_path}\tjava_sha256\t{java_sha}\njava_memory_flags\t{}\n\
+             storage_plane\t{}\n{waivers}",
             if args.dev { "dev" } else { "acceptance" },
             args.seed,
             path(rust_bin),
             rust_hash,
             process::java_memory_flags_text(),
+            args.storage_plane.name(),
             waivers = render_waivers_tsv(waivers),
         ),
     )?;
@@ -833,6 +852,127 @@ fn select_rows<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn storage_plane_flag_parses_and_defaults_match_an_explicit_v2() {
+        use clap::Parser;
+
+        let parsed = crate::Cli::try_parse_from([
+            "pipestream-conformance",
+            "durable",
+            "--storage-plane",
+            "spi",
+        ])
+        .unwrap();
+        let crate::Task::Durable { args } = parsed.command else {
+            panic!("expected the durable subcommand")
+        };
+        assert_eq!(args.storage_plane, process::StoragePlane::Spi);
+
+        let default = crate::Cli::try_parse_from(["pipestream-conformance", "durable"]).unwrap();
+        let crate::Task::Durable { args: default_args } = default.command else {
+            panic!("expected the durable subcommand")
+        };
+        let explicit = crate::Cli::try_parse_from([
+            "pipestream-conformance",
+            "durable",
+            "--storage-plane",
+            "v2",
+        ])
+        .unwrap();
+        let crate::Task::Durable {
+            args: explicit_args,
+        } = explicit.command
+        else {
+            panic!("expected the durable subcommand")
+        };
+        // Absent the flag the run is a v2 run, whatever the outer environment.
+        assert_eq!(default_args.storage_plane, explicit_args.storage_plane);
+        assert_eq!(default_args.storage_plane, process::StoragePlane::V2);
+
+        // An unknown plane spelling is refused, never silently mapped.
+        assert!(
+            crate::Cli::try_parse_from([
+                "pipestream-conformance",
+                "durable",
+                "--storage-plane",
+                "sideways",
+            ])
+            .is_err()
+        );
+    }
+
+    /// The env-var arm of the wiring. std::env::set_var is unsafe in edition
+    /// 2024, so the env-dependent parse runs in a spawned copy of this test
+    /// binary (the crate's established child-arm pattern, see
+    /// main.rs capture_tests) with PIPESTREAM_DURABLE_STORAGE_PLANE set.
+    #[test]
+    fn storage_plane_env_var_reaches_the_durable_args() {
+        if std::env::var_os("PIPESTREAM_DURABLE_PLANE_ENV_CHILD").is_some() {
+            use clap::Parser;
+            let parsed = crate::Cli::try_parse_from(["pipestream-conformance", "durable"]).unwrap();
+            let crate::Task::Durable { args } = parsed.command else {
+                panic!("expected the durable subcommand")
+            };
+            assert_eq!(args.storage_plane, process::StoragePlane::Spi);
+            return;
+        }
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "durable::tests::storage_plane_env_var_reaches_the_durable_args",
+                "--nocapture",
+            ])
+            .env("PIPESTREAM_DURABLE_PLANE_ENV_CHILD", "1")
+            .env("PIPESTREAM_DURABLE_STORAGE_PLANE", "spi")
+            .output()
+            .unwrap();
+        assert!(
+            child.status.success(),
+            "env-armed child failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr)
+        );
+    }
+
+    /// The run manifest records the plane next to the subject hashes so an
+    /// archived run shows whether it was an SPI-plane run.
+    #[test]
+    fn run_manifest_records_the_storage_plane() {
+        let directory = tempfile::tempdir().unwrap();
+        for (plane, spelling) in [
+            (process::StoragePlane::V2, "v2"),
+            (process::StoragePlane::Spi, "spi"),
+        ] {
+            let args = DurableArgs {
+                dev: true,
+                scenario: Vec::new(),
+                seed: 7,
+                artifacts: None,
+                rust_bin: None,
+                java_jar: None,
+                archive: None,
+                waive: Vec::new(),
+                storage_plane: plane,
+            };
+            let run_root = directory.path().join(spelling);
+            fs::create_dir_all(&run_root).unwrap();
+            write_run_manifest(
+                &run_root,
+                &args,
+                std::path::Path::new("/nonexistent/pipestream-quinn"),
+                "rust-sha",
+                None,
+                &[],
+            )
+            .unwrap();
+            let manifest = fs::read_to_string(run_root.join("run.tsv")).unwrap();
+            assert!(
+                manifest.contains(&format!("storage_plane\t{spelling}\n")),
+                "run.tsv must name the plane: {manifest}"
+            );
+        }
+    }
 
     #[test]
     fn nc_stale_binary_detects_a_changed_subject() {

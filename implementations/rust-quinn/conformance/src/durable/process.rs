@@ -100,6 +100,36 @@ pub enum Subject {
     Java,
 }
 
+/// The storage plane a run's authority storage runs on. Both subject types
+/// gained an optional plane selection on their storage branches (not merged
+/// here), at the same seam as their authority storage arguments: Java spells
+/// it `--object-plane v2|spi` on `init-authority` and `serve`
+/// (V2Main/FixtureMain), Rust spells it `--payload-backend fs|spi-fs` on the
+/// shared Storage args of `init-authority` and `serve` (server/src/v2.rs,
+/// configuration::Storage). The driver emits the subject's own flag only
+/// when a run selects SPI, so a default run's spawned command lines stay
+/// byte-identical to a run against the merged subjects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum StoragePlane {
+    /// The merged v2 envelope-keyed store; no plane flag is passed.
+    #[value(name = "v2")]
+    V2,
+    /// The storage-SPI object plane; requires the subjects' storage-branch
+    /// builds, which carry the flag.
+    #[value(name = "spi")]
+    Spi,
+}
+
+impl StoragePlane {
+    /// Run-manifest (run.tsv) spelling of the selection.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::V2 => "v2",
+            Self::Spi => "spi",
+        }
+    }
+}
+
 impl Subject {
     pub fn name(self) -> &'static str {
         match self {
@@ -162,6 +192,11 @@ pub struct AuthorityFixture {
     /// The durable run this fixture belongs to; keys the Java subjects'
     /// tmp directory (see [`java_tmp_dir`]).
     run_id: String,
+    /// Storage plane the server subject's authority storage runs on. The
+    /// default [`StoragePlane::V2`] emits no flag (byte-identical command
+    /// lines); `spi` appends the subject's plane flag to every
+    /// storage-opening invocation (see [`AuthorityFixture::storage_args`]).
+    storage_plane: StoragePlane,
 }
 
 impl AuthorityFixture {
@@ -189,7 +224,18 @@ impl AuthorityFixture {
             client_op_timeout: OP_TIMEOUT,
             authority: AUTHORITY.to_owned(),
             run_id,
+            storage_plane: StoragePlane::V2,
         })
+    }
+
+    /// Run the server subject's authority storage on the storage-SPI plane:
+    /// the subject's own plane flag is appended to `init-authority`, every
+    /// `serve` start, and the other storage-opening invocations built from
+    /// [`AuthorityFixture::storage_args`]. Requires the subjects'
+    /// storage-branch builds; the default [`StoragePlane::V2`] emits nothing.
+    pub fn with_storage_plane(mut self, plane: StoragePlane) -> Self {
+        self.storage_plane = plane;
+        self
     }
 
     /// Shorten the client control deadline on a kill row so the client
@@ -282,6 +328,13 @@ impl AuthorityFixture {
     /// directories explicitly; Java takes the root that contains both
     /// (api-plan.md section 1.5: fixed layout root/authority.sqlite +
     /// root/objects, byte-for-byte paired like Rust).
+    ///
+    /// This is the single choke point for the storage-plane selection too:
+    /// every storage-opening invocation builds from here — `init-authority`,
+    /// every `serve` start (including the g3 duplicate-server probe and the
+    /// hooked FixtureMain path), and the offline `v2 revoke` — so on an
+    /// SPI-plane run they all name the same backend and a v2 run emits no
+    /// plane flag at all.
     pub fn storage_args(&self) -> Vec<String> {
         let mut args = match self.server {
             Subject::Rust => vec![
@@ -299,10 +352,23 @@ impl AuthorityFixture {
             path(&self.certs.principal_map),
             "--trust-system-clock".into(),
         ]);
+        if self.storage_plane == StoragePlane::Spi {
+            // The subjects spell the plane differently (Java `--object-plane
+            // v2|spi`, Rust `--payload-backend fs|spi-fs`); both accept the
+            // flag on init-authority and serve.
+            args.extend(match self.server {
+                Subject::Rust => ["--payload-backend".into(), "spi-fs".into()],
+                Subject::Java => ["--object-plane".into(), "spi".into()],
+            });
+        }
         args
     }
 
-    pub fn run_init_authority(&self) -> Result<()> {
+    /// The full `init-authority` command line this fixture spawns. Kept
+    /// separate from [`AuthorityFixture::run_init_authority`] so the exact
+    /// invocation (including the storage-plane flag) is unit-testable
+    /// without a subject binary.
+    fn init_authority_command(&self) -> Result<Vec<String>> {
         let mut command = with_owned(&self.base()?, &["init-authority".into()]);
         command.extend(self.storage_args());
         if self.server == Subject::Java {
@@ -311,6 +377,11 @@ impl AuthorityFixture {
             // Rust clap definition has no such flag on init-authority.
             command.extend(["--result-authority".into(), "localhost:7443".into()]);
         }
+        Ok(command)
+    }
+
+    pub fn run_init_authority(&self) -> Result<()> {
+        let command = self.init_authority_command()?;
         let output = run_output_owned(&self.root, &command, OP_TIMEOUT)?;
         ensure_success(&output, "v2 init-authority")?;
         ensure!(
@@ -538,21 +609,12 @@ impl AuthorityFixture {
         }
     }
 
-    /// Spawn `v2 serve` with the milestone-5 `--fixture-*` arming. `probe`
-    /// controls the authenticated readiness op: a schedule that kills the
-    /// server at CONNECTION_AUTHENTICATED would kill the probe connection
-    /// itself, so that row starts ready-file-only (process liveness plus
-    /// marker, with the client op as the real readiness check). Both hooked
-    /// subjects are supported: the Rust server takes the flags directly, the
-    /// Java server runs Claude's FixtureMain with the same flags.
-    pub fn start_server_armed(
-        &self,
-        arming: Option<&FixtureArming>,
-        probe: bool,
-    ) -> Result<OwnedServer> {
-        let serial = unique_suffix();
-        let ready = self.root.join(format!("ready-{serial:x}"));
-        let log = self.root.join(format!("server-{serial:x}.log"));
+    /// The full `serve` command line for one server process, ready file and
+    /// fixture arming included. Kept separate from
+    /// [`AuthorityFixture::start_server_armed`] so the exact spawned
+    /// invocation (including the storage-plane flag) is unit-testable
+    /// without a subject binary.
+    fn serve_command(&self, ready: &Path, arming: Option<&FixtureArming>) -> Result<Vec<String>> {
         let mut command = self.serve_base(arming.is_some())?;
         command.extend(self.storage_args());
         command.extend([
@@ -567,7 +629,7 @@ impl AuthorityFixture {
             "--result-authority".into(),
             "localhost:7443".into(),
             "--ready-file".into(),
-            path(&ready),
+            path(ready),
         ]);
         command.extend(self.extra_serve_args.iter().cloned());
         if let Some(arming) = arming {
@@ -583,6 +645,25 @@ impl AuthorityFixture {
                 command.extend(["--fixture-schedule".into(), path(schedule)]);
             }
         }
+        Ok(command)
+    }
+
+    /// Spawn `v2 serve` with the milestone-5 `--fixture-*` arming. `probe`
+    /// controls the authenticated readiness op: a schedule that kills the
+    /// server at CONNECTION_AUTHENTICATED would kill the probe connection
+    /// itself, so that row starts ready-file-only (process liveness plus
+    /// marker, with the client op as the real readiness check). Both hooked
+    /// subjects are supported: the Rust server takes the flags directly, the
+    /// Java server runs Claude's FixtureMain with the same flags.
+    pub fn start_server_armed(
+        &self,
+        arming: Option<&FixtureArming>,
+        probe: bool,
+    ) -> Result<OwnedServer> {
+        let serial = unique_suffix();
+        let ready = self.root.join(format!("ready-{serial:x}"));
+        let log = self.root.join(format!("server-{serial:x}.log"));
+        let command = self.serve_command(&ready, arming)?;
         let log_file = File::create(&log)?;
         let mut spawned = Command::new(&command[0]);
         spawned
@@ -922,5 +1003,111 @@ mod tests {
         let restarted = kill_row.clone();
         assert_eq!(restarted.client_op_timeout, Duration::from_secs(90));
         assert_eq!(fixture.client_op_timeout, Duration::from_secs(30));
+    }
+
+    /// The storage-plane selection is driver-level: an SPI run must pass the
+    /// subject's own plane flag at BOTH storage entry points (init-authority
+    /// and every serve start, hooked or not), and the default v2 plane must
+    /// leave every spawned command line byte-identical — the merged subjects
+    /// do not carry the flag, and clap would refuse an unknown option.
+    #[test]
+    fn storage_plane_flag_is_emitted_only_for_spi_and_at_every_storage_entry_point() {
+        fn fixture_for(
+            directory: &tempfile::TempDir,
+            server: Subject,
+            plane: StoragePlane,
+        ) -> AuthorityFixture {
+            let jar = directory.path().join("subject-all.jar");
+            fs::write(&jar, b"not really a jar").unwrap();
+            let certs = crate::durable::mtls::generate(
+                &directory.path().join("certs"),
+                &[("alice", "alice")],
+            )
+            .unwrap();
+            AuthorityFixture::new(
+                Path::new("/nonexistent/pipestream-quinn"),
+                Some(&jar),
+                directory.path(),
+                certs,
+                server,
+                server,
+                "java-tmp-test".to_owned(),
+            )
+            .unwrap()
+            .with_storage_plane(plane)
+        }
+
+        fn assert_gains_exactly_the_plane_pair(v2: &[String], spi: &[String], pair: [&str; 2]) {
+            assert_eq!(
+                spi.len(),
+                v2.len() + 2,
+                "an SPI command gains exactly the plane pair, nothing else: {spi:?}"
+            );
+            let position = spi
+                .windows(2)
+                .position(|window| window == pair)
+                .unwrap_or_else(|| panic!("the SPI command must carry {pair:?}: {spi:?}"));
+            let mut expected = v2.to_vec();
+            expected.splice(position..position, pair.iter().map(|arg| (*arg).to_owned()));
+            assert_eq!(
+                *spi, expected,
+                "the plane pair must sit at the storage boundary"
+            );
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let ready = directory.path().join("ready");
+        let arming = FixtureArming {
+            events: directory.path().join("events.tsv"),
+            run_id: "run-a".to_owned(),
+            scenario_id: "g2-kill".to_owned(),
+            schedule: Some(directory.path().join("schedule.tsv")),
+        };
+        for (server, pair) in [
+            (Subject::Java, ["--object-plane", "spi"]),
+            (Subject::Rust, ["--payload-backend", "spi-fs"]),
+        ] {
+            let v2 = fixture_for(&directory, server, StoragePlane::V2);
+            let spi = fixture_for(&directory, server, StoragePlane::Spi);
+
+            // The default plane emits no flag at any storage entry point.
+            for command in [
+                v2.init_authority_command().unwrap(),
+                v2.serve_command(&ready, None).unwrap(),
+                v2.serve_command(&ready, Some(&arming)).unwrap(),
+            ] {
+                assert!(
+                    !command
+                        .iter()
+                        .any(|arg| arg == "--object-plane" || arg == "--payload-backend"),
+                    "a default-v2 command must stay byte-identical: {command:?}"
+                );
+            }
+
+            // SPI gains the subject's own pair at init-authority and at
+            // every serve start, hooked (Java FixtureMain) and unarmed.
+            assert_gains_exactly_the_plane_pair(
+                &v2.init_authority_command().unwrap(),
+                &spi.init_authority_command().unwrap(),
+                pair,
+            );
+            assert_gains_exactly_the_plane_pair(
+                &v2.serve_command(&ready, None).unwrap(),
+                &spi.serve_command(&ready, None).unwrap(),
+                pair,
+            );
+            let hooked = spi.serve_command(&ready, Some(&arming)).unwrap();
+            assert!(
+                hooked.windows(2).any(|window| window == pair),
+                "the hooked (FixtureMain) serve must carry {pair:?}: {hooked:?}"
+            );
+
+            // The selection travels with the fixture clone a kill row's
+            // restart builds its recovered session from.
+            assert_eq!(spi.clone().storage_plane, StoragePlane::Spi);
+            assert_eq!(StoragePlane::V2.name(), "v2");
+            assert_eq!(StoragePlane::Spi.name(), "spi");
+        }
+        fs::remove_dir_all(java_tmp_dir("java-tmp-test")).unwrap();
     }
 }
