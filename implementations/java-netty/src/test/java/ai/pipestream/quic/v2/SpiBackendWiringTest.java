@@ -236,6 +236,59 @@ final class SpiBackendWiringTest {
   }
 
   @Test
+  void s3InitWithoutAnyRegionSucceedsOnMinio() throws Exception {
+    MinioDocker minio = MinioDocker.shared();
+    try {
+      Map<String, String> options =
+          Map.of(
+              "authority", "issuer-a",
+              "result-authority", "localhost:7443",
+              "object-plane", "spi",
+              "spi-backend", "s3",
+              "spi-s3-endpoint", minio.endpoint().toString(),
+              "spi-s3-bucket", minio.bucket(),
+              "spi-s3-access-key", minio.accessKey(),
+              "spi-s3-secret-key", minio.secretKey());
+      DurableHost.Configuration configuration = V2Main.configuration(options);
+      // No flag and no environment region: the subject default applies, and
+      // a blank value must behave exactly like an unset one.
+      Map<String, String> withoutRegion = V2Main.spiEnvironment(new java.util.HashMap<>(options));
+      assertFalse(withoutRegion.containsKey("PROBE_S3_REGION"));
+      Map<String, String> blankRegion =
+          V2Main.spiEnvironment(
+              new java.util.HashMap<>(
+                  Map.of(
+                      "spi-s3-access-key", minio.accessKey(),
+                      "spi-s3-secret-key", minio.secretKey(),
+                      "spi-s3-region", "  ")));
+      assertFalse(blankRegion.containsKey("PROBE_S3_REGION"), "blank region behaves as unset");
+      int variant = 0;
+      for (Map<String, String> environment :
+          List.of(
+              withoutRegion,
+              blankRegion,
+              Map.of(
+                  "PROBE_S3_ACCESS_KEY", minio.accessKey(),
+                  "PROBE_S3_SECRET_KEY", minio.secretKey(),
+                  "PROBE_S3_REGION", ""))) {
+        Path root = directory.resolve("s3-noregion-" + variant++);
+        try (DurableHost host =
+            DurableHost.initialize(
+                root,
+                configuration,
+                ReferenceApplications.all(),
+                DurableHost.OwnerPolicy.fromPrincipals(Map::of, false),
+                DurableHost.UtcClock.system(true),
+                environment)) {
+          assertEquals("s3", host.configuration().spiBackend().kind());
+        }
+      }
+    } finally {
+      MinioDocker.releaseShared();
+    }
+  }
+
+  @Test
   void nonFilesystemSelectionRequiresSpiPlaneAndCredentials() {
     DurableHost.SpiObjectBackend missing =
         new DurableHost.SpiObjectBackend("postgres", "jdbc:postgresql://127.0.0.1:1/x", null);

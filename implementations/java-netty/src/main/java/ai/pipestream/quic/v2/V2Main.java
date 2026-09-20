@@ -179,8 +179,8 @@ public final class V2Main {
     };
     for (String[] name : names) {
       String value = options.get(name[1]);
-      if (value == null) value = System.getenv(name[0]);
-      if (value != null) environment.put(name[0], value);
+      if (value == null || value.isBlank()) value = System.getenv(name[0]);
+      if (value != null && !value.isBlank()) environment.put(name[0], value);
     }
     return environment;
   }
@@ -447,7 +447,8 @@ public final class V2Main {
             + " [--spi-backend fs|postgres|s3|mongo]"
             + " [--spi-pg-url jdbc:postgresql://HOST:PORT/DB|postgres://[USER[:PASS]@]HOST:PORT/DB]"
             + " [--spi-s3-endpoint URI] [--spi-s3-bucket NAME] [--spi-s3-access-key KEY]"
-            + " [--spi-s3-secret-key KEY] [--spi-mongo-uri URI] [--spi-mongo-database NAME]"
+            + " [--spi-s3-secret-key KEY] [--spi-s3-region REGION] [--spi-mongo-uri URI]"
+            + " [--spi-mongo-database NAME]  ([--spi-s3-region] defaults to us-east-1)"
             + "  (must repeat the init-authority values)");
     lines.addAll(ClientCommands.usage());
     lines.add("Legacy version-1 commands remain in ai.pipestream.quic.Main.");

@@ -50,12 +50,12 @@ final class SpiPlaneStores {
       case "s3" ->
           S3ObjectStore.open(
               s3Endpoint(backend.endpoint()),
-              environment.getOrDefault("PROBE_S3_REGION", "us-east-1"),
+              option(environment, "PROBE_S3_REGION", "us-east-1"),
               required(environment, "PROBE_S3_ACCESS_KEY"),
               required(environment, "PROBE_S3_SECRET_KEY"),
               true,
               backend.bucket(),
-              environment.getOrDefault("PROBE_S3_PREFIX", "v2-plane/"));
+              option(environment, "PROBE_S3_PREFIX", "v2-plane/"));
       case "mongo" -> MongoObjectStore.open(backend.endpoint(), backend.bucket());
       default -> throw new IllegalArgumentException("unknown SPI backend: " + backend.kind());
     };
@@ -79,6 +79,12 @@ final class SpiPlaneStores {
           "--spi-s3-endpoint must be an absolute http(s) URI: " + endpoint);
     }
     return uri;
+  }
+
+  /** One environment value, blank counting as unset so harness-exported empties cannot break the client. */
+  private static String option(Map<String, String> environment, String key, String fallback) {
+    String value = environment.get(key);
+    return value == null || value.isBlank() ? fallback : value;
   }
 
   private static String required(Map<String, String> environment, String key) {
