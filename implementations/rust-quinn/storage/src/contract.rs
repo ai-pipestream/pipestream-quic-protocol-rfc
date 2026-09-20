@@ -26,14 +26,20 @@ impl<T> Backend for T where T: ObjectStore + Journal {}
 
 /// Runs every contract check against a fresh backend instance; see the
 /// [module documentation](self) for the `fresh`/`reopen` contract.
-pub fn run_all<B: Backend>(mut fresh: impl FnMut() -> B, mut reopen: impl FnMut() -> B) {
+pub fn run_all<B: Backend + Send>(mut fresh: impl FnMut() -> B, mut reopen: impl FnMut() -> B) {
     run_object_store(&mut fresh, &mut reopen);
     run_journal(&mut fresh, &mut reopen);
 }
 
 /// Runs the [`ObjectStore`] contract checks; single-role object backends
 /// (S3) certify against this alone.
-pub fn run_object_store<S: ObjectStore>(mut fresh: impl FnMut() -> S, mut reopen: impl FnMut() -> S) {
+///
+/// The `Send` bound is part of the contract: the SPI is thread-safe, and
+/// the concurrency checks share one store across scoped threads.
+pub fn run_object_store<S: ObjectStore + Send>(
+    mut fresh: impl FnMut() -> S,
+    mut reopen: impl FnMut() -> S,
+) {
     put_then_open_read_returns_identical_bytes(&mut fresh());
     put_rejects_digest_mismatch_as_corrupt(&mut fresh());
     put_is_idempotent_for_identical_bytes_and_digest(&mut fresh());
@@ -54,6 +60,9 @@ pub fn run_object_store<S: ObjectStore>(mut fresh: impl FnMut() -> S, mut reopen
     retire_of_unknown_scope_is_not_found(&mut fresh());
     retire_of_empty_but_existing_unsealed_scope_is_not_found(&mut fresh());
     parent_and_child_scopes_hold_independent_entities(&mut fresh());
+    child_scope_dirs_coexist_with_entity_buckets(&mut fresh());
+    concurrent_conflicting_puts_yield_exactly_one_success(&mut fresh());
+    put_racing_seal_scope_never_publishes_after_seal(&mut fresh());
     object_store_durability_roundtrip(&mut reopen);
 }
 
@@ -441,6 +450,165 @@ pub fn object_store_durability_roundtrip<S: ObjectStore>(reopen: &mut impl FnMut
     assert_eq!(record.digest, digest);
 }
 
+/// Child-scope containers coexist with entity buckets inside a parent scope
+/// container: list and verify_scope iterate entity buckets only and never
+/// error on child-scope entries.
+pub fn child_scope_dirs_coexist_with_entity_buckets<S: ObjectStore>(store: &mut S) {
+    let parent = ScopePath::root(30);
+    let child = match parent.child(1) {
+        Ok(child) => child,
+        Err(error) => panic!("scope: {error}"),
+    };
+    let grandchild = match child.child(2) {
+        Ok(grandchild) => grandchild,
+        Err(error) => panic!("scope: {error}"),
+    };
+    // Write entities at every level, interleaved, so the parent's container
+    // holds child-scope entries alongside its own entity buckets.
+    let parent_payload = bytes("parent");
+    assert!(store.put(&parent, 1, &parent_payload, &sha256(&parent_payload)).is_ok());
+    let child_payload = bytes("child");
+    assert!(store.put(&child, 1, &child_payload, &sha256(&child_payload)).is_ok());
+    let grandchild_payload = bytes("grandchild");
+    assert!(
+        store
+            .put(&grandchild, 1, &grandchild_payload, &sha256(&grandchild_payload))
+            .is_ok()
+    );
+    let parent_payload_2 = bytes("parent-2");
+    assert!(store.put(&parent, 2, &parent_payload_2, &sha256(&parent_payload_2)).is_ok());
+
+    // The parent's list sees only its own direct entities.
+    assert_eq!(
+        store.list(&parent).unwrap_or_else(|e| panic!("list: {e}")),
+        vec![1, 2]
+    );
+    // Sealing and verifying the parent ignores the child's container.
+    let digest = canonical_digest(&[(1, "parent"), (2, "parent-2")]);
+    assert!(store.seal_scope(&parent, &digest, 2).is_ok());
+    assert!(store.verify_scope(&parent).is_ok());
+    // The child remains writable and independent.
+    let child_payload_2 = bytes("child-2");
+    assert!(store.put(&child, 2, &child_payload_2, &sha256(&child_payload_2)).is_ok());
+    assert_eq!(read_all(store, &child, 1), child_payload);
+    assert_eq!(read_all(store, &grandchild, 1), grandchild_payload);
+}
+
+/// Thread safety: concurrent conflicting puts to one entity id yield
+/// exactly one success; every loser fails with Corrupt; the stored content
+/// is the winner's payload.
+pub fn concurrent_conflicting_puts_yield_exactly_one_success<S: ObjectStore + Send>(
+    store: &mut S,
+) {
+    let scope = ScopePath::root(31);
+    let shared = std::sync::Mutex::new(store);
+    let barrier = std::sync::Barrier::new(8);
+    let outcomes: Vec<Result<Vec<u8>, StorageError>> = std::thread::scope(|threads| {
+        let handles: Vec<_> = (0..8u8)
+            .map(|variant| {
+                let shared = &shared;
+                let barrier = &barrier;
+                let scope = &scope;
+                threads.spawn(move || {
+                    let payload = bytes(&format!("variant-{variant}"));
+                    barrier.wait();
+                    shared
+                        .lock()
+                        .unwrap_or_else(|e| panic!("lock: {e}"))
+                        .put(scope, 1, &payload, &sha256(&payload))
+                        .map(|_| payload)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap_or_else(|e| panic!("thread: {e:?}")))
+            .collect()
+    });
+    let winners: Vec<&Vec<u8>> = outcomes.iter().filter_map(|r| r.as_ref().ok()).collect();
+    assert_eq!(winners.len(), 1, "exactly one conflicting put wins: {outcomes:?}");
+    for outcome in &outcomes {
+        match outcome {
+            Ok(_) => {}
+            Err(StorageError::Corrupt(_)) => {}
+            Err(error) => panic!("loser must fail Corrupt, got {error:?}"),
+        }
+    }
+    let guard = shared.lock().unwrap_or_else(|e| panic!("lock: {e}"));
+    assert_eq!(read_all(&**guard, &scope, 1), **winners[0]);
+}
+
+/// Thread safety: a put racing a seal never publishes after the seal —
+/// every put either landed before the seal (readable, counted) or failed
+/// with AlreadySealed, and a put that starts strictly after the seal
+/// returns fails with AlreadySealed.
+pub fn put_racing_seal_scope_never_publishes_after_seal<S: ObjectStore + Send>(store: &mut S) {
+    let scope = ScopePath::root(32);
+    let shared = std::sync::Mutex::new(store);
+    let barrier = std::sync::Barrier::new(8);
+    std::thread::scope(|threads| {
+        let handles: Vec<_> = (0..8u64)
+            .map(|variant| {
+                let shared = &shared;
+                let barrier = &barrier;
+                let scope = &scope;
+                threads.spawn(move || {
+                    let entity = 100 + variant;
+                    let payload = bytes(&format!("racing-{variant}"));
+                    barrier.wait();
+                    shared
+                        .lock()
+                        .unwrap_or_else(|e| panic!("lock: {e}"))
+                        .put(scope, entity, &payload, &sha256(&payload))
+                        .map(|_| entity)
+                })
+            })
+            .collect();
+        let published: Vec<u64> = handles
+            .into_iter()
+            .filter_map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|e| panic!("thread: {e:?}"))
+                    .ok()
+            })
+            .collect();
+        // Every racing put that succeeded is durably readable.
+        let guard = shared.lock().unwrap_or_else(|e| panic!("lock: {e}"));
+        for entity in &published {
+            let payload = bytes(&format!("racing-{}", entity - 100));
+            assert_eq!(read_all(&**guard, &scope, *entity), payload);
+        }
+        // Seal after the race, recording exactly the winners.
+        let digests: Vec<(u64, Digest32)> = published
+            .iter()
+            .map(|id| (*id, sha256(format!("racing-{}", id - 100).as_bytes())))
+            .collect();
+        let digest = layout::scope_digest(&digests).unwrap_or_else(|e| panic!("digest: {e}"));
+        let mut guard = guard;
+        guard
+            .seal_scope(&scope, &digest, published.len() as u64)
+            .unwrap_or_else(|e| panic!("seal: {e}"));
+        guard.verify_scope(&scope).unwrap_or_else(|e| panic!("verify: {e}"));
+        // A put that starts strictly after the seal returned must never
+        // publish.
+        let late = bytes("late");
+        match guard.put(&scope, 999, &late, &sha256(&late)) {
+            Err(StorageError::AlreadySealed(_)) => {}
+            other => panic!("put after seal: expected AlreadySealed, got {other:?}"),
+        }
+        assert!(matches!(
+            guard.open_read(&scope, 999),
+            Err(StorageError::NotFound(_))
+        ));
+        assert_eq!(
+            guard.list(&scope).unwrap_or_else(|e| panic!("list: {e}")).len(),
+            published.len(),
+            "late put never published"
+        );
+    });
+}
+
 /// Durability-of-return for backends implementing both roles.
 pub fn durability_roundtrip<B: Backend>(reopen: &mut impl FnMut() -> B) {
     object_store_durability_roundtrip(reopen);
@@ -579,8 +747,7 @@ pub fn commits_consume_cursors_in_the_global_order<J: Journal>(store: &mut J) {
 
 /// Journal durability-of-return: intents and their commit state survive a
 /// reopen.
-pub fn journal_durability_roundtrip<J: Journal>(reopen: &mut impl FnMut() -> J) {
-    let cursor;
+pub fn journal_durability_roundtrip<J: Journal>(reopen: &mut impl FnMut() -> J) {    let cursor;
     {
         let mut store = reopen();
         cursor = store

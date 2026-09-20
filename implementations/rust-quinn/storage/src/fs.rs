@@ -69,15 +69,46 @@ const TYPE_COMMIT: u8 = 1;
 /// `[type:1][cursor:8][idLen:4][payloadLen:4]`.
 const RECORD_HEADER_BYTES: usize = 1 + 8 + 4 + 4;
 
+/// The journal log handle. Production uses a real file; tests install a
+/// failing sink to prove a failed append truncates back to the pre-append
+/// offset.
+pub(crate) trait LogIo: Send {
+    /// Current logical length of the log.
+    fn len(&mut self) -> std::io::Result<u64>;
+    /// Appends bytes at the end of the log.
+    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()>;
+    /// Flushes the log to stable storage.
+    fn sync(&mut self) -> std::io::Result<()>;
+    /// Truncates the log to `len` bytes.
+    fn truncate(&mut self, len: u64) -> std::io::Result<()>;
+}
+
+impl LogIo for File {
+    fn len(&mut self) -> std::io::Result<u64> {
+        Ok(self.metadata()?.len())
+    }
+
+    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        Write::write_all(self, bytes)
+    }
+
+    fn sync(&mut self) -> std::io::Result<()> {
+        self.sync_all()
+    }
+
+    fn truncate(&mut self, len: u64) -> std::io::Result<()> {
+        self.set_len(len)
+    }
+}
+
 /// Filesystem backend for both the [`ObjectStore`] and [`Journal`] roles.
 ///
 /// See the [module documentation](self) for the on-disk layout and the
 /// durability configuration.
-#[derive(Debug)]
 pub struct FsStore {
     root: PathBuf,
     journal: JournalIndex,
-    log: File,
+    log: Box<dyn LogIo>,
     scratch_seq: AtomicU64,
     _locks: WriterLocks,
 }
@@ -206,14 +237,14 @@ impl FsStore {
         create_dirs_durable(&root.join(OBJECTS_DIR))?;
         create_dirs_durable(&root.join(JOURNAL_DIR))?;
         let locks = WriterLocks::acquire(&root)?;
-        let open_result = (|| -> Result<(JournalIndex, File), StorageError> {
+        let open_result = (|| -> Result<(JournalIndex, Box<dyn LogIo>), StorageError> {
             sweep_scratch(&root.join(OBJECTS_DIR))?;
             let log_path = root.join(JOURNAL_DIR).join(JOURNAL_LOG_NAME);
             // Recovery creates the log and its magic when absent, truncates
             // a torn tail, and rebuilds the index; the store's own handle
             // opens in append mode so writes always land at EOF.
             let journal = recover_journal(&log_path)?;
-            let log = OpenOptions::new().append(true).open(&log_path)?;
+            let log: Box<dyn LogIo> = Box::new(OpenOptions::new().append(true).open(&log_path)?);
             Ok((journal, log))
         })();
         match open_result {
@@ -230,8 +261,8 @@ impl FsStore {
 
     /// Sweeps any scratch files left under the root and releases the writer
     /// locks. Also done best-effort on drop; explicit close surfaces errors.
-    pub fn close(self) -> Result<(), StorageError> {
-        self.log.sync_all()?;
+    pub fn close(mut self) -> Result<(), StorageError> {
+        self.log.sync()?;
         sweep_scratch(&self.root.join(OBJECTS_DIR))?;
         Ok(())
     }
@@ -277,7 +308,7 @@ impl FsStore {
             {
                 let mut file = OpenOptions::new().create_new(true).write(true).open(&scratch)?;
                 for part in parts {
-                    file.write_all(part)?;
+                    Write::write_all(&mut file, part)?;
                 }
                 file.sync_all()?;
             }
@@ -503,20 +534,19 @@ impl FsStore {
         hasher.update(id);
         hasher.update(payload);
         let checksum: Digest32 = hasher.finalize().into();
-        let offset = self.log.metadata()?.len();
+        let offset = self.log.len()?;
         let append_result = (|| -> Result<(), StorageError> {
             self.log.write_all(&header)?;
             self.log.write_all(id)?;
             self.log.write_all(payload)?;
             self.log.write_all(&checksum)?;
-            self.log.sync_all()?;
+            self.log.sync()?;
             Ok(())
         })();
         if let Err(error) = append_result {
             // The partial record never returned success; truncate it so a
             // later open is not wedged behind an unparseable tail.
-            let _ = self.log.set_len(offset);
-            let _ = self.log.seek(SeekFrom::Start(offset));
+            let _ = self.log.truncate(offset);
             return Err(error);
         }
         self.journal.last_cursor = cursor.0;
@@ -593,7 +623,7 @@ impl Journal for FsStore {
 
 impl Drop for FsStore {
     fn drop(&mut self) {
-        let _ = self.log.sync_all();
+        let _ = self.log.sync();
         let _ = sweep_scratch(&self.root.join(OBJECTS_DIR));
     }
 }
@@ -785,7 +815,7 @@ fn recover_journal(log_path: &Path) -> Result<JournalIndex, StorageError> {
     let size = file.metadata()?.len();
     let mut index = JournalIndex::default();
     if size == 0 {
-        file.write_all(JOURNAL_MAGIC)?;
+        Write::write_all(&mut file, JOURNAL_MAGIC)?;
         file.sync_all()?;
         if let Some(parent) = log_path.parent() {
             sync_dir(parent)?;
@@ -990,7 +1020,7 @@ mod tests {
         // Simulate a killed writer mid-append: garbage bytes at the tail.
         let log_path = dir.path().join(JOURNAL_DIR).join(JOURNAL_LOG_NAME);
         let mut log = OpenOptions::new().append(true).open(&log_path).unwrap();
-        log.write_all(&[0xaa, 0xbb, 0xcc]).unwrap();
+        Write::write_all(&mut log, &[0xaa, 0xbb, 0xcc]).unwrap();
         log.sync_all().unwrap();
         drop(log);
         let store = FsStore::open(dir.path()).unwrap();
@@ -1023,6 +1053,39 @@ mod tests {
         assert!(!scratch.exists(), "open sweeps scratch");
         store.close().unwrap();
     }
+
+    #[test]
+    fn failed_append_truncates_back_to_the_committed_prefix() {
+        let (dir, mut store) = store();
+        store
+            .append_intent(&Intent::new("first", b"one".to_vec()).unwrap())
+            .unwrap();
+        // Fail the second part write (the id bytes), mid-record.
+        let log_path = dir.path().join(JOURNAL_DIR).join(JOURNAL_LOG_NAME);
+        let real = OpenOptions::new().append(true).open(&log_path).unwrap();
+        store.log = Box::new(FailingSink {
+            inner: real,
+            writes: 0,
+            fail_at: 1,
+        });
+        match store.append_intent(&Intent::new("second", b"two".to_vec()).unwrap()) {
+            Err(StorageError::Transient(_)) => {}
+            other => panic!("expected Transient for the failed append, got {other:?}"),
+        }
+        drop(store);
+        // Reopen: the committed prefix replays cleanly and the log keeps
+        // working — the failed append left nothing behind.
+        let mut store = FsStore::open(dir.path()).unwrap();
+        let entries = store.replay(Cursor(0)).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].intent.id(), "first");
+        assert_eq!(
+            store
+                .append_intent(&Intent::new("second", b"two".to_vec()).unwrap())
+                .unwrap(),
+            Cursor(2)
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1046,5 +1109,42 @@ mod contract_tests {
         let reopen_root = reopen_dir.path().to_path_buf();
         let reopen = || FsStore::open(&reopen_root).unwrap();
         contract::run_all(fresh, reopen);
+    }
+}
+
+/// A journal sink that fails one chosen write after writing only a prefix
+/// of it, to prove a failed append truncates back to the pre-append offset.
+#[cfg(test)]
+struct FailingSink {
+    inner: File,
+    writes: usize,
+    fail_at: usize,
+}
+
+#[cfg(test)]
+impl LogIo for FailingSink {
+    fn len(&mut self) -> std::io::Result<u64> {
+        Ok(self.inner.metadata()?.len())
+    }
+
+    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.writes += 1;
+        if self.writes == self.fail_at + 1 {
+            // Torn write: part of the record lands, then the write fails.
+            Write::write_all(&mut self.inner, &bytes[..bytes.len() / 2])?;
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WriteZero,
+                "injected write failure",
+            ));
+        }
+        Write::write_all(&mut self.inner, bytes)
+    }
+
+    fn sync(&mut self) -> std::io::Result<()> {
+        self.inner.sync_all()
+    }
+
+    fn truncate(&mut self, len: u64) -> std::io::Result<()> {
+        self.inner.set_len(len)
     }
 }
