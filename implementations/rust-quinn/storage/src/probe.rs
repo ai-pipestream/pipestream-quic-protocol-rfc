@@ -27,6 +27,7 @@ use crate::layout;
 use crate::{Cursor, Intent, Journal, ObjectStore, ScopePath, StorageError, sha256};
 use std::collections::BTreeMap;
 use std::io::{self, Read};
+use std::path::Path;
 
 /// Which SPI roles the probed backend implements; the other role's
 /// operations are skipped and its report section omitted.
@@ -76,7 +77,7 @@ pub fn run<B: ObjectStore + Journal>(
         apply(backend, roles, &mut touched, &tokens)
             .map_err(|error| StorageError::failed(format!("script line {}: {error}", index + 1)))?;
     }
-    render(backend, roles, &touched)
+    render(backend, roles, &touched.into_values().collect::<Vec<_>>())
 }
 
 fn apply<B: ObjectStore + Journal>(
@@ -219,11 +220,11 @@ fn content_digest<B: ObjectStore + Journal>(
 fn render<B: ObjectStore + Journal>(
     backend: &B,
     roles: RoleSelection,
-    touched: &BTreeMap<String, ScopePath>,
+    scopes: &[ScopePath],
 ) -> Result<String, StorageError> {
     let mut out = String::new();
     if roles.object_store {
-        for scope in touched.values() {
+        for scope in scopes {
             out.push_str(&format!("scope {}\n", scope.to_path_string()));
             let mut digests = Vec::new();
             for entity in backend.list(scope)? {
@@ -402,4 +403,72 @@ impl<J: Journal> ObjectStore for JournalOnly<J> {
     fn retire(&mut self, _scope: &ScopePath, _retention_cursor: u64) -> Result<u64, StorageError> {
         Err(StorageError::failed("object-store role absent"))
     }
+}
+
+/// Report-only mode: enumerates the scope tree of a filesystem store by
+/// walking the directory hierarchy under `<root>/objects`, without running
+/// any operations. Used for crossed-store verification: a store written by
+/// either lane renders the canonical report when opened by the other.
+///
+/// Every 8-hex directory is a scope path component (2-hex directories are
+/// entity buckets of the enclosing scope and are not descended into).
+/// Fails with [`StorageError::Failed`] when the root holds no initialized
+/// store.
+pub fn discover_fs_scopes(root: &Path) -> Result<Vec<ScopePath>, StorageError> {
+    let objects = root.join("objects");
+    if !objects.is_dir() {
+        return Err(StorageError::failed(format!(
+            "{} does not hold an initialized store",
+            root.display()
+        )));
+    }
+    let mut scopes = Vec::new();
+    walk_scope_dir(&objects, &[], &mut scopes)?;
+    scopes.sort_by_key(|scope| scope.to_path_string());
+    Ok(scopes)
+}
+
+fn walk_scope_dir(
+    dir: &Path,
+    components: &[u32],
+    scopes: &mut Vec<ScopePath>,
+) -> Result<(), StorageError> {
+    if !components.is_empty() {
+        scopes.push(ScopePath::from_components(components.to_vec())?);
+    }
+    let mut entries: Vec<_> = std::fs::read_dir(dir)?
+        .collect::<Result<_, _>>()
+        .map_err(StorageError::from)?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if name.len() != 8 || !name.bytes().all(|b| b.is_ascii_hexdigit()) {
+            continue; // entity bucket or unrelated directory
+        }
+        let component = u32::from_str_radix(name, 16)
+            .map_err(|_| StorageError::corrupt(format!("malformed scope dir {name}")))?;
+        let mut child = components.to_vec();
+        child.push(component);
+        walk_scope_dir(&path, &child, scopes)?;
+    }
+    Ok(())
+}
+
+/// Renders the canonical report for an existing store with no script —
+/// the report-only mode. `scopes` are the discovered scope paths (any
+/// order; they are sorted here), entities and the journal are read back
+/// from the backend.
+pub fn report<B: ObjectStore + Journal>(
+    backend: &B,
+    roles: RoleSelection,
+    scopes: Vec<ScopePath>,
+) -> Result<String, StorageError> {
+    let mut scopes = scopes;
+    scopes.sort_by_key(|scope| scope.to_path_string());
+    render(backend, roles, &scopes)
 }

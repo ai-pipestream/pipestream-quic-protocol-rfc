@@ -35,6 +35,7 @@ fn required(name: &str) -> Result<String, String> {
 
 fn usage() {
     eprintln!("usage: pipestream-storage-probe <backend> <script>");
+    eprintln!("       pipestream-storage-probe --report fs   (report-only, existing store)");
     eprintln!(
         "backends: memory fs postgres mongo (object store + journal), s3 (object only), kafka (journal only)"
     );
@@ -46,6 +47,22 @@ fn usage() {
 
 fn run() -> Result<String, String> {
     let args: Vec<String> = std::env::args().collect();
+    // Report-only mode: `probe --report fs` renders the canonical report of
+    // an existing store without executing any operations (crossed-store
+    // verification). Only the filesystem layout is enumerable this way.
+    if args.len() == 3 && args[1] == "--report" {
+        if args[2] != "fs" {
+            usage();
+            return Err("usage".to_string());
+        }
+        let root = required("PROBE_FS_ROOT")?;
+        let scopes = probe::discover_fs_scopes(std::path::Path::new(&root)).map_err(|e| {
+            eprintln!("probe: {e}");
+            "usage".to_string()
+        })?;
+        let store = FsStore::open(&root).map_err(|e| e.to_string())?;
+        return probe::report(&store, RoleSelection::BOTH, scopes).map_err(|e| e.to_string());
+    }
     if args.len() != 3 {
         usage();
         return Err("usage".to_string());
