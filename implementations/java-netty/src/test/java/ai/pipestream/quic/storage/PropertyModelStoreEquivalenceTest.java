@@ -30,17 +30,12 @@ import org.junit.jupiter.api.io.TempDir;
  * Deterministic: fixed seeds, no wall-clock dependencies, memory and
  * filesystem only.
  *
- * <p>Found divergence, kept as a bug report rather than fixed here:
- * {@code FileObjectStore.retire} of a <em>sealed</em> scope deletes the
- * scope's directory recursively, which also destroys any live child scopes
- * nested beneath it, while the oracle (and the per-scope semantics of the
- * storage design note) keeps child scopes intact. The driver therefore
- * maintains the invariant that no scope with live state ever sits below a
- * sealed ancestor — put and first-seal operations that would break it observe
- * instead of mutate — so the compared sequences stay within semantics both
- * backends implement. The minimal repro remains pinned in
- * {@link #sealedScopeRetirementLeavesChildScopesIntact}, disabled until the
- * filesystem backend retires exactly the addressed scope.
+ * <p>The driver used to maintain an invariant that no scope with live state
+ * ever sat below a sealed ancestor, working around a since-fixed
+ * {@code FileObjectStore.retire} defect that recursively deleted child scopes.
+ * Retirement is now per-scope on every backend (pinned decision 5), so the
+ * driver mutates freely; {@link #sealedScopeRetirementLeavesChildScopesIntact}
+ * pins the fixed semantics directly.
  */
 final class PropertyModelStoreEquivalenceTest {
   @TempDir Path directory;
@@ -58,18 +53,10 @@ final class PropertyModelStoreEquivalenceTest {
   }
 
   /**
-   * Minimal repro for a divergence the model driver found (see the class
-   * Javadoc): retiring a sealed scope must remove exactly that scope's own
-   * state; child scopes are independent and survive. The in-memory oracle
-   * implements this; the filesystem backend deletes the scope directory
-   * recursively, destroying the child's entity. Disabled until the
-   * {@code deleteRecursively} branch of
-   * {@link FileObjectStore#retire(ScopePath, long)} honors per-scope retirement.
+   * Retiring a sealed scope removes exactly that scope's own state; child
+   * scopes are independent containers and survive (pinned decision 5).
    */
   @Test
-  @org.junit.jupiter.api.Disabled(
-      "documents a real bug: FileObjectStore.retire of a sealed scope deletes child scopes; "
-          + "enable after the sealed branch of FileObjectStore.retire stops recursing")
   void sealedScopeRetirementLeavesChildScopesIntact() throws Exception {
     var parent = ScopePath.of(0x51, 1);
     var child = ScopePath.of(0x51, 1, 2);
@@ -280,33 +267,6 @@ final class PropertyModelStoreEquivalenceTest {
     return pool.get(random.nextInt(pool.size()));
   }
 
-  /**
-   * Invariant guard (see the bug report in the class Javadoc): whether any
-   * ancestor of {@code scope} is sealed. State created under a sealed
-   * ancestor would be destroyed by a later whole-scope retire on the
-   * filesystem backend while the oracle keeps it.
-   */
-  private static boolean hasSealedAncestor(Model model, ScopePath scope) {
-    List<Long> components = scope.components();
-    for (int levels = components.size() - 1; levels > 0; levels--) {
-      ScopeModel ancestor = model.existing(new ScopePath(components.subList(0, levels)));
-      if (ancestor != null && ancestor.sealDigest != null) return true;
-    }
-    return false;
-  }
-
-  /** Invariant guard: whether any descendant of {@code scope} holds live state. */
-  private static boolean hasLiveDescendants(Model model, ScopePath scope) {
-    String prefix = scope.render() + "/";
-    for (Map.Entry<ScopePath, ScopeModel> entry : model.scopes.entrySet()) {
-      if (entry.getKey().render().startsWith(prefix)) {
-        ScopeModel descendant = entry.getValue();
-        if (descendant.sealDigest != null || !descendant.entities.isEmpty()) return true;
-      }
-    }
-    return false;
-  }
-
   private static long pickEntityId(Random random) {
     // Bias small ids so retire cursors hit live entities often.
     if (random.nextInt(100) < 60) return random.nextInt(32);
@@ -331,14 +291,6 @@ final class PropertyModelStoreEquivalenceTest {
   private static void putOp(long seed, int op, Random random, Model model,
       List<ScopePath> pool, BothStores stores, boolean corruptDigest) {
     ScopePath scope = pickScope(random, pool);
-    if (hasSealedAncestor(model, scope)) {
-      // Known divergence (bug report): FileObjectStore retires a sealed scope
-      // by deleting its directory tree, which destroys live child scopes the
-      // oracle keeps. Creating state under a sealed ancestor would feed that
-      // interleaving into the sequence, so observe instead of mutate here.
-      verifyOp(seed, op, random, List.of(scope), stores);
-      return;
-    }
     long entityId = pickEntityId(random);
     byte[] payload = randomPayload(random);
     byte[] submittedDigest = SHA_256.digest(payload);
@@ -399,14 +351,6 @@ final class PropertyModelStoreEquivalenceTest {
         count = count + 1;
         flavor = "reSealConflictingCount";
       }
-    } else if (!sealed && (hasSealedAncestor(model, scope) || hasLiveDescendants(model, scope))) {
-      // Known divergence (bug report): sealing a scope that holds live state
-      // below a sealed ancestor, or that has live descendants of its own,
-      // would later let a whole-scope retire of this scope delete descendant
-      // state on the filesystem backend that the oracle keeps. Keep the
-      // invariant — no live state under a sealed ancestor — by observing here.
-      verifyOp(seed, op, random, List.of(scope), stores);
-      return;
     } else {
       // First seal: usually the canonical digest over live entities, sometimes
       // a wrong count or wrong digest recorded verbatim (verify then reports

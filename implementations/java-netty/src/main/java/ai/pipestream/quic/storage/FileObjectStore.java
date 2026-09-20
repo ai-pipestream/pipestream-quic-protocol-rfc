@@ -324,8 +324,12 @@ public final class FileObjectStore implements ObjectStore {
       Seal seal = readSeal(scopeDir);
       try {
         if (seal != null) {
-          deleteRecursively(scopeDir);
-          syncDirectory(scopeDir.getParent());
+          // Pinned decision 5: retirement is scope-local. Only this scope's
+          // own entities and seal record go; child scopes are independent
+          // containers and survive (a recursive delete would destroy them).
+          retireScopeEntities(scopeDir);
+          Files.delete(scopeDir.resolve(SEAL_FILE_NAME));
+          syncDirectory(root.resolve("objects"));
           return;
         }
         List<Long> ids = listEntityIds(scopeDir, false);
@@ -398,16 +402,12 @@ public final class FileObjectStore implements ObjectStore {
         String bucketName = bucket.getFileName().toString();
         if (bucketName.equals(SEAL_FILE_NAME) || isScratch(bucketName)) continue;
         // 8-hex directories are child scopes (they hold their own entities);
-        // 8-hex regular files are this scope's entities, one per object name.
+        // an 8-hex regular file directly at this level is a shape violation:
+        // entities live inside their fanout bucket, never beside one.
         if (bucketName.matches("[0-9a-f]{8}")) {
           if (Files.isDirectory(bucket, LinkOption.NOFOLLOW_LINKS)) continue;
-          if (!Files.isRegularFile(bucket, LinkOption.NOFOLLOW_LINKS)) {
-            throw StorageException.corrupt("unexpected entry " + bucketName + " in scope " + scopeDir);
-          }
-          long entityId = Long.parseLong(bucketName, 16);
-          ids.add(entityId);
-          if (verifyDigests) readEntityDigest(scopeDir, entityId);
-          continue;
+          throw StorageException.corrupt(
+              "entity file " + bucketName + " sits outside its fanout bucket in scope " + scopeDir);
         }
         if (!bucketName.matches("[0-9a-f]{2}")
             || !Files.isDirectory(bucket, LinkOption.NOFOLLOW_LINKS)) {
@@ -541,14 +541,20 @@ public final class FileObjectStore implements ObjectStore {
     }
   }
 
-  private void deleteRecursively(Path directory) throws IOException {
-    try (DirectoryStream<Path> entries = Files.newDirectoryStream(directory)) {
+  /** Deletes every entity in one scope's own fanout buckets, leaving child scopes untouched. */
+  private void retireScopeEntities(Path scopeDir) throws IOException {
+    try (DirectoryStream<Path> entries = Files.newDirectoryStream(scopeDir)) {
       for (Path entry : entries) {
-        if (Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS)) deleteRecursively(entry);
-        else Files.delete(entry);
+        String name = entry.getFileName().toString();
+        if (!name.matches("[0-9a-f]{2}") || !Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS)) {
+          continue; // child scopes, the seal record, and foreign names all survive
+        }
+        try (DirectoryStream<Path> entities = Files.newDirectoryStream(entry)) {
+          for (Path entity : entities) Files.delete(entity);
+        }
+        Files.delete(entry);
       }
     }
-    Files.delete(directory);
   }
 
   private void removeBucketIfEmpty(Path bucket) throws IOException {
