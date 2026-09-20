@@ -73,8 +73,9 @@ fn initialize_creates_exactly_the_binding_config_and_empty_lock() {
     assert_eq!(&config[8..24], binding.as_bytes());
     let (body, checksum) = config.split_at(config.len() - 32);
     assert_eq!(Sha256::digest(body).as_slice(), checksum);
-    let (backend, retained_policy) = decode_root_config(&body[24..]).unwrap();
+    let (backend, fingerprint, retained_policy) = decode_root_config(&body[24..]).unwrap();
     assert_eq!(backend, PayloadBackendKind::Filesystem);
+    assert_eq!(fingerprint, None);
     assert_eq!(retained_policy, policy());
 
     let lock = fs::metadata(store.path().join("root.lock")).unwrap();
@@ -209,8 +210,9 @@ fn reopen_refuses_a_changed_backend_tag() {
     // Hand-craft a binding with an unknown backend tag (99) — what a store
     // written under a different backend looks like to this build.
     let mut writer = codec::Writer::new();
-    writer.array(2);
+    writer.array(3);
     Id(99).write(&mut writer);
+    writer.bytes(&[]);
     policy().write(&mut writer);
     let mut bytes = Vec::new();
     bytes.extend_from_slice(ROOT_MAGIC);
@@ -218,7 +220,7 @@ fn reopen_refuses_a_changed_backend_tag() {
     bytes.extend_from_slice(&writer.finish());
     bytes.extend_from_slice(&Sha256::digest(&bytes));
     fs::write(root.join("binding"), bytes).unwrap();
-    match PayloadStore::open_with_backend(&root, binding, policy(), PayloadBackendKind::Filesystem) {
+    match PayloadStore::open_with_backend(&root, binding, policy(), &PayloadBackendSpec::Filesystem) {
         Err(StoreError::Corrupt(_)) => {}
         Err(other) => panic!("changed backend tag must be refused as Corrupt, got {other:?}"),
         Ok(_) => panic!("changed backend tag must be refused"),
@@ -234,7 +236,7 @@ fn default_backend_roundtrips() {
         &dir.path().join("objects"),
         binding,
         policy(),
-        PayloadBackendKind::Filesystem,
+        &PayloadBackendSpec::Filesystem,
     )
     .unwrap();
     assert_eq!(reopened.backend(), PayloadBackendKind::Filesystem);

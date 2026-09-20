@@ -49,7 +49,7 @@ fn spi_root() -> (tempfile::TempDir, PayloadStore, StoreIdentity) {
         &directory.path().join("objects"),
         binding,
         policy(),
-        PayloadBackendKind::SpiFilesystem,
+        &PayloadBackendSpec::SpiFilesystem,
     )
     .unwrap();
     (directory, store, binding)
@@ -129,7 +129,7 @@ fn spi_plane_content_survives_reopen() {
         &dir.path().join("objects"),
         binding,
         policy(),
-        PayloadBackendKind::SpiFilesystem,
+        &PayloadBackendSpec::SpiFilesystem,
     )
     .unwrap();
     assert_eq!(read_all(&reopened, &key, &payload), payload);
@@ -165,7 +165,7 @@ fn spi_plane_sweeps_orphaned_entities_at_open() {
         &dir.path().join("objects"),
         binding,
         policy(),
-        PayloadBackendKind::SpiFilesystem,
+        &PayloadBackendSpec::SpiFilesystem,
     )
     .unwrap();
     assert_eq!(spi_entities(&reopened, &dir), vec![plane_entity(&key)]);
@@ -194,7 +194,7 @@ fn spi_plane_reopen_with_the_filesystem_backend_is_refused() {
             &dir.path().join("objects"),
             binding,
             policy(),
-            PayloadBackendKind::Filesystem,
+            &PayloadBackendSpec::Filesystem,
         )
         .is_err()
     );
@@ -216,7 +216,7 @@ fn spi_plane_abandoned_stage_leaves_no_plane_entity() {
         &dir.path().join("objects"),
         binding,
         policy(),
-        PayloadBackendKind::SpiFilesystem,
+        &PayloadBackendSpec::SpiFilesystem,
     )
     .unwrap();
     assert_eq!(reopened.recovered_stages(), 1);

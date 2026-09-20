@@ -39,21 +39,30 @@ pub enum PayloadBackendKind {
     /// The existing stage-file filesystem store.
     #[default]
     Filesystem,
-    /// SPI plane: reception keeps the local stage-file grammar; installed
-    /// object content lives in a pipestream-storage filesystem store under
-    /// `<root>/spi`, with header-only object stubs preserving the local
-    /// inventory/recovery grammar.
+    /// SPI plane on the local pipestream-storage filesystem store.
     SpiFilesystem,
+    /// SPI plane on PostgreSQL.
+    SpiPostgres,
+    /// SPI plane on S3.
+    SpiS3,
+    /// SPI plane on MongoDB.
+    SpiMongo,
 }
 
 impl PayloadBackendKind {
     const FILESYSTEM_TAG: u64 = 1;
     const SPI_FILESYSTEM_TAG: u64 = 2;
+    const SPI_POSTGRES_TAG: u64 = 3;
+    const SPI_S3_TAG: u64 = 4;
+    const SPI_MONGO_TAG: u64 = 5;
 
     fn tag(self) -> Id {
         Id(match self {
             PayloadBackendKind::Filesystem => Self::FILESYSTEM_TAG,
             PayloadBackendKind::SpiFilesystem => Self::SPI_FILESYSTEM_TAG,
+            PayloadBackendKind::SpiPostgres => Self::SPI_POSTGRES_TAG,
+            PayloadBackendKind::SpiS3 => Self::SPI_S3_TAG,
+            PayloadBackendKind::SpiMongo => Self::SPI_MONGO_TAG,
         })
     }
 
@@ -61,6 +70,9 @@ impl PayloadBackendKind {
         match tag {
             Self::FILESYSTEM_TAG => Ok(Self::Filesystem),
             Self::SPI_FILESYSTEM_TAG => Ok(Self::SpiFilesystem),
+            Self::SPI_POSTGRES_TAG => Ok(Self::SpiPostgres),
+            Self::SPI_S3_TAG => Ok(Self::SpiS3),
+            Self::SPI_MONGO_TAG => Ok(Self::SpiMongo),
             _ => Err(StoreError::Corrupt("unknown payload backend tag")),
         }
     }
@@ -70,6 +82,9 @@ impl PayloadBackendKind {
         match self {
             PayloadBackendKind::Filesystem => "fs",
             PayloadBackendKind::SpiFilesystem => "spi-fs",
+            PayloadBackendKind::SpiPostgres => "spi-postgres",
+            PayloadBackendKind::SpiS3 => "spi-s3",
+            PayloadBackendKind::SpiMongo => "spi-mongo",
         }
     }
 }
@@ -87,29 +102,103 @@ impl std::str::FromStr for PayloadBackendKind {
         match name {
             "fs" => Ok(PayloadBackendKind::Filesystem),
             "spi-fs" => Ok(PayloadBackendKind::SpiFilesystem),
+            "spi-postgres" => Ok(PayloadBackendKind::SpiPostgres),
+            "spi-s3" => Ok(PayloadBackendKind::SpiS3),
+            "spi-mongo" => Ok(PayloadBackendKind::SpiMongo),
             _ => Err(StoreError::Corrupt("unknown payload backend")),
         }
     }
 }
 
-/// The checksummed binding body: CBOR array [backend tag, policy].
-fn encode_root_config(backend: PayloadBackendKind, policy: &PayloadPolicy) -> Result<Vec<u8>> {
+/// A complete payload backend selection: the persisted kind plus the
+/// connection parameters needed to reach a service backend. The binding
+/// stores the kind and a fingerprint of the connection string, so reopening
+/// against a different backend or a different endpoint is refused.
+#[derive(Debug, Clone)]
+pub enum PayloadBackendSpec {
+    /// The default stage-file store (no connection parameters).
+    Filesystem,
+    /// SPI plane on the local pipestream-storage filesystem store.
+    SpiFilesystem,
+    /// SPI plane on PostgreSQL; `url` is a full `postgres://` URL.
+    SpiPostgres { url: String },
+    /// SPI plane on S3; credentials travel with the config.
+    SpiS3 { config: Box<pipestream_storage::S3Config> },
+    /// SPI plane on MongoDB.
+    SpiMongo { uri: String, database: String },
+}
+
+impl PayloadBackendSpec {
+    /// The persisted backend kind.
+    pub fn kind(&self) -> PayloadBackendKind {
+        match self {
+            PayloadBackendSpec::Filesystem => PayloadBackendKind::Filesystem,
+            PayloadBackendSpec::SpiFilesystem => PayloadBackendKind::SpiFilesystem,
+            PayloadBackendSpec::SpiPostgres { .. } => PayloadBackendKind::SpiPostgres,
+            PayloadBackendSpec::SpiS3 { .. } => PayloadBackendKind::SpiS3,
+            PayloadBackendSpec::SpiMongo { .. } => PayloadBackendKind::SpiMongo,
+        }
+    }
+
+    /// SHA-256 of the canonical connection parameters, persisted in the
+    /// store binding. Empty for local backends. For S3 the fingerprint
+    /// covers endpoint/bucket/region/prefix only, so rotating credentials
+    /// does not look like a different store.
+    fn connection_fingerprint(&self) -> Option<[u8; 32]> {
+        let canonical = match self {
+            PayloadBackendSpec::Filesystem | PayloadBackendSpec::SpiFilesystem => return None,
+            PayloadBackendSpec::SpiPostgres { url } => url.clone(),
+            PayloadBackendSpec::SpiS3 { config } => format!(
+                "{}
+{}
+{}
+{}",
+                config.endpoint_url.as_deref().unwrap_or(""),
+                config.bucket,
+                config.region,
+                config.prefix
+            ),
+            PayloadBackendSpec::SpiMongo { uri, database } => format!("{uri}
+{database}"),
+        };
+        Some(Sha256::digest(canonical.as_bytes()).into())
+    }
+}
+
+/// The checksummed binding body: CBOR array
+/// [backend tag, connection fingerprint (empty for local backends), policy].
+fn encode_root_config(
+    spec: &PayloadBackendSpec,
+    policy: &PayloadPolicy,
+) -> Result<Vec<u8>> {
     let mut writer = codec::Writer::new();
-    writer.array(2);
-    backend.tag().write(&mut writer);
+    writer.array(3);
+    spec.kind().tag().write(&mut writer);
+    match spec.connection_fingerprint() {
+        Some(hash) => writer.bytes(&hash),
+        None => writer.bytes(&[]),
+    };
     policy.write(&mut writer);
     Ok(writer.finish())
 }
 
-fn decode_root_config(bytes: &[u8]) -> Result<(PayloadBackendKind, PayloadPolicy)> {
+fn decode_root_config(bytes: &[u8]) -> Result<(PayloadBackendKind, Option<[u8; 32]>, PayloadPolicy)> {
     let mut decoder = minicbor::Decoder::new(bytes);
-    codec::array(&mut decoder, 2)?;
+    codec::array(&mut decoder, 3)?;
     let tag = Id::read(&mut decoder)?;
+    let fingerprint = decoder
+        .bytes()
+        .map_err(|_| StoreError::Corrupt("payload binding fingerprint is not bytes"))?;
+    let fingerprint = match fingerprint.len() {
+        0 => None,
+        32 => Some(<[u8; 32]>::try_from(fingerprint).expect("length checked")),
+        _ => return Err(StoreError::Corrupt("payload binding fingerprint length changed")),
+    };
     let policy = PayloadPolicy::read(&mut decoder)?;
     if decoder.position() != bytes.len() {
         return Err(StoreError::Corrupt("payload binding has trailing bytes"));
     }
-    Ok((PayloadBackendKind::from_tag(tag.0)?, policy))
+    Ok((PayloadBackendKind::from_tag(tag.0)?, fingerprint, policy))
 }
 
 
@@ -285,7 +374,7 @@ struct Root {
     backend: PayloadBackendKind,
     /// The SPI object plane (payload bytes only) when the backend selects
     /// it. The mutex serializes begin_put, which takes &mut self.
-    spi: Option<Mutex<pipestream_storage::FsStore>>,
+    spi: Option<Mutex<PlaneStore>>,
     policy: PayloadPolicy,
     entries: Mutex<Inventory>,
     uncertain: AtomicBool,
@@ -477,6 +566,114 @@ fn plane_entity(key: &str) -> u32 {
     u32::from_str_radix(&key[..8], 16).expect("payload keys are 32 lowercase hex")
 }
 
+/// Boxed streaming writer over any SPI object backend.
+trait PlaneWriter: std::io::Write + Send {
+    fn finish(self: Box<Self>) -> std::result::Result<(), pipestream_storage::StorageError>;
+}
+
+impl<W: pipestream_storage::PutWriter + Send + 'static> PlaneWriter for W {
+    fn finish(self: Box<Self>) -> std::result::Result<(), pipestream_storage::StorageError> {
+        pipestream_storage::PutWriter::finish(*self)
+    }
+}
+
+/// The SPI object plane over any pipestream-storage object backend. Only
+/// the operations the payload store needs; readers and writers are boxed
+/// because associated types differ per backend.
+enum PlaneStore {
+    Filesystem(pipestream_storage::FsStore),
+    Postgres(pipestream_storage::PostgresStore),
+    S3(pipestream_storage::S3Store),
+    Mongo(pipestream_storage::MongoStore),
+}
+
+macro_rules! plane_dispatch {
+    ($self:expr, $method:ident ( $( $arg:expr ),* )) => {
+        match $self {
+            PlaneStore::Filesystem(store) => store.$method($($arg),*),
+            PlaneStore::Postgres(store) => store.$method($($arg),*),
+            PlaneStore::S3(store) => store.$method($($arg),*),
+            PlaneStore::Mongo(store) => store.$method($($arg),*),
+        }
+    };
+}
+
+impl PlaneStore {
+    fn open(
+        spec: &PayloadBackendSpec,
+        root_path: &Path,
+    ) -> Result<Option<Mutex<PlaneStore>>> {
+        match spec {
+            PayloadBackendSpec::Filesystem => Ok(None),
+            PayloadBackendSpec::SpiFilesystem => Ok(Some(Mutex::new(PlaneStore::Filesystem(
+                pipestream_storage::FsStore::open(root_path.join(SPI_DIR)).map_err(spi)?,
+            )))),
+            PayloadBackendSpec::SpiPostgres { url } => Ok(Some(Mutex::new(
+                PlaneStore::Postgres(pipestream_storage::PostgresStore::open(url).map_err(spi)?),
+            ))),
+            PayloadBackendSpec::SpiS3 { config } => Ok(Some(Mutex::new(PlaneStore::S3(
+                pipestream_storage::S3Store::open(config).map_err(spi)?,
+            )))),
+            PayloadBackendSpec::SpiMongo { uri, database } => Ok(Some(Mutex::new(
+                PlaneStore::Mongo(
+                    pipestream_storage::MongoStore::open(&pipestream_storage::MongoConfig {
+                        uri: uri.clone(),
+                        database: database.clone(),
+                    })
+                    .map_err(spi)?,
+                ),
+            ))),
+        }
+    }
+
+    fn begin_put(
+        &mut self,
+        scope: &pipestream_storage::ScopePath,
+        digest: &[u8; 32],
+    ) -> std::result::Result<Box<dyn PlaneWriter>, pipestream_storage::StorageError> {
+        Ok(match self {
+            PlaneStore::Filesystem(store) => Box::new(store.begin_put(scope, 0, digest)?),
+            PlaneStore::Postgres(store) => Box::new(store.begin_put(scope, 0, digest)?),
+            PlaneStore::S3(store) => Box::new(store.begin_put(scope, 0, digest)?),
+            PlaneStore::Mongo(store) => Box::new(store.begin_put(scope, 0, digest)?),
+        })
+    }
+
+    fn open_read(
+        &self,
+        scope: &pipestream_storage::ScopePath,
+    ) -> std::result::Result<Box<dyn std::io::Read + Send>, pipestream_storage::StorageError> {
+        Ok(match self {
+            PlaneStore::Filesystem(store) => Box::new(store.open_read(scope, 0)?),
+            PlaneStore::Postgres(store) => Box::new(store.open_read(scope, 0)?),
+            PlaneStore::S3(store) => Box::new(store.open_read(scope, 0)?),
+            PlaneStore::Mongo(store) => Box::new(store.open_read(scope, 0)?),
+        })
+    }
+
+    fn list(
+        &self,
+        scope: &pipestream_storage::ScopePath,
+    ) -> std::result::Result<Vec<u32>, pipestream_storage::StorageError> {
+        plane_dispatch!(self, list(scope))
+    }
+
+    fn list_scopes(
+        &self,
+    ) -> std::result::Result<Vec<pipestream_storage::ScopePath>, pipestream_storage::StorageError>
+    {
+        plane_dispatch!(self, list_scopes())
+    }
+
+    fn retire(
+        &mut self,
+        scope: &pipestream_storage::ScopePath,
+        cursor: u64,
+    ) -> std::result::Result<u64, pipestream_storage::StorageError> {
+        plane_dispatch!(self, retire(scope, cursor))
+    }
+}
+
 impl PayloadStore {
     pub(super) fn pin_worker_pool(&self) -> Result<WorkerPoolPin> {
         self.root.owned()?;
@@ -524,7 +721,7 @@ impl PayloadStore {
     ///
     /// Uses the default (filesystem) backend; see [`PayloadStore::initialize_with_backend`].
     pub fn initialize(path: &Path, binding: StoreIdentity, policy: PayloadPolicy) -> Result<Self> {
-        Self::initialize_with_backend(path, binding, policy, PayloadBackendKind::default())
+        Self::initialize_with_backend(path, binding, policy, &PayloadBackendSpec::Filesystem)
     }
 
     /// Like [`PayloadStore::initialize`], recording `backend` in the store
@@ -533,13 +730,13 @@ impl PayloadStore {
         path: &Path,
         binding: StoreIdentity,
         policy: PayloadPolicy,
-        backend: PayloadBackendKind,
+        spec: &PayloadBackendSpec,
     ) -> Result<Self> {
         policy.check()?;
         fs::create_dir(path)?;
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
         let mut config = new_file(&path.join(CONFIG))?;
-        let encoded = encode_root_config(backend, &policy)?;
+        let encoded = encode_root_config(spec, &policy)?;
         let mut bytes = Vec::with_capacity(24 + encoded.len() + 32);
         bytes.extend_from_slice(ROOT_MAGIC);
         bytes.extend_from_slice(binding.as_bytes());
@@ -555,13 +752,13 @@ impl PayloadStore {
                 .filter(|p| !p.as_os_str().is_empty())
                 .unwrap_or(Path::new(".")),
         )?;
-        Self::open_with_backend(path, binding, policy, backend)
+        Self::open_with_backend(path, binding, policy, spec)
     }
 
     /// Opens an existing root using the default (filesystem) backend; see
     /// [`PayloadStore::open_with_backend`].
     pub fn open(path: &Path, binding: StoreIdentity, policy: PayloadPolicy) -> Result<Self> {
-        Self::open_with_backend(path, binding, policy, PayloadBackendKind::default())
+        Self::open_with_backend(path, binding, policy, &PayloadBackendSpec::Filesystem)
     }
 
     /// Like [`PayloadStore::open`], refusing a root recorded under a
@@ -570,7 +767,7 @@ impl PayloadStore {
         path: &Path,
         binding: StoreIdentity,
         policy: PayloadPolicy,
-        backend: PayloadBackendKind,
+        spec: &PayloadBackendSpec,
     ) -> Result<Self> {
         policy.check()?;
         let directory = fs::symlink_metadata(path)?;
@@ -607,21 +804,21 @@ impl PayloadStore {
                 "payload authority binding or policy changed",
             ));
         }
-        let (retained_backend, retained_policy) = decode_root_config(&bytes[24..bytes.len() - 32])?;
-        if retained_backend != backend || retained_policy != policy {
+        let (retained_backend, retained_fingerprint, retained_policy) =
+            decode_root_config(&bytes[24..bytes.len() - 32])?;
+        if retained_backend != spec.kind()
+            || retained_fingerprint != spec.connection_fingerprint()
+            || retained_policy != policy
+        {
             return Err(StoreError::Corrupt(
-                "payload backend, authority binding, or policy changed",
+                "payload backend, connection, authority binding, or policy changed",
             ));
         }
-        let spi = if backend == PayloadBackendKind::SpiFilesystem {
-            Some(Mutex::new(pipestream_storage::FsStore::open(path.join(SPI_DIR)).map_err(spi)?))
-        } else {
-            None
-        };
+        let spi = PlaneStore::open(spec, &path)?;
         let mut root = Root {
             path,
             binding,
-            backend,
+            backend: spec.kind(),
             spi,
             policy,
             entries: Mutex::new(Inventory::default()),
@@ -866,7 +1063,7 @@ impl PayloadStore {
         let mut writer = plane
             .lock()
             .map_err(|_| StoreError::Corrupt("payload SPI plane poisoned"))?
-            .begin_put(&plane_scope(key), 0, &expected.0)
+            .begin_put(&plane_scope(key), &expected.0)
             .map_err(spi)?;
         let mut chunk = [0u8; 64 * 1024];
         loop {
@@ -876,7 +1073,7 @@ impl PayloadStore {
             }
             std::io::Write::write_all(&mut writer, &chunk[..n])?;
         }
-        pipestream_storage::PutWriter::finish(writer).map_err(spi)?;
+        PlaneWriter::finish(writer).map_err(spi)?;
         // Content now lives in the plane; the local file becomes a stub.
         let stage = OpenOptions::new().write(true).open(&stage_path)?;
         stage.set_len(OVERHEAD)?;
@@ -951,7 +1148,7 @@ impl PayloadStore {
             let reader = plane
                 .lock()
                 .map_err(|_| StoreError::Corrupt("payload SPI plane poisoned"))?
-                .open_read(&plane_scope(key), 0)
+                .open_read(&plane_scope(key))
                 .map_err(|_| {
                     protocol(ErrorCode::OutputUnavailable, "retained object absent")
                 })?;
@@ -1591,5 +1788,7 @@ impl Drop for ObjectReader {
 mod tests;
 #[cfg(test)]
 mod grammar_tests;
+#[cfg(test)]
+mod spi_backend_tests;
 #[cfg(test)]
 mod spi_plane_tests;
