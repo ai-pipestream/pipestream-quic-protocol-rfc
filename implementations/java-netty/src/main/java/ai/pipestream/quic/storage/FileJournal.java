@@ -78,13 +78,30 @@ public final class FileJournal implements Journal {
    * @throws StorageException {@code CORRUPT} for a corrupt log, {@code TRANSIENT} for filesystem failure, {@code FAILED} for a second writer
    */
   public static FileJournal open(Path root) throws StorageException {
+    return open(root, path -> FileChannel.open(path, StandardOpenOption.CREATE,
+        StandardOpenOption.WRITE, StandardOpenOption.READ));
+  }
+
+  /**
+   * Opens a journal with an injected log-channel factory; a fault-injection
+   * seam for tests. The factory supplies the channel every read and append
+   * uses for the log file.
+   *
+   * @param root configured store root; the log lives under it
+   * @param logFactory opens the log channel
+   * @return exclusive journal handle
+   * @throws StorageException {@code CORRUPT} for a corrupt log, {@code TRANSIENT} for filesystem failure, {@code FAILED} for a second writer
+   */
+  static FileJournal open(Path root, LogFactory logFactory) throws StorageException {
     Objects.requireNonNull(root, "root");
+    Objects.requireNonNull(logFactory, "logFactory");
     Path requested = root.toAbsolutePath().normalize();
+    if (Files.exists(requested, LinkOption.NOFOLLOW_LINKS)
+        && !Files.isDirectory(requested, LinkOption.NOFOLLOW_LINKS)) {
+      throw StorageException.failed("journal root is not a real directory", null);
+    }
     try {
       Files.createDirectories(requested);
-      if (!Files.isDirectory(requested, LinkOption.NOFOLLOW_LINKS)) {
-        throw StorageException.failed("journal root is not a real directory", null);
-      }
       Path base = requested.toRealPath();
       Path directory = base.resolve(JOURNAL_DIRECTORY);
       createDirectoriesDurable(directory);
@@ -106,19 +123,26 @@ public final class FileJournal implements Journal {
           throw StorageException.failed("journal already has a writer", failure);
         }
         if (held == null) throw StorageException.failed("journal already has a writer", null);
-        channel = FileChannel.open(directory.resolve(LOG_FILE_NAME), StandardOpenOption.CREATE,
-            StandardOpenOption.WRITE, StandardOpenOption.READ);
+        channel = logFactory.open(directory.resolve(LOG_FILE_NAME));
         var journal = new FileJournal(directory, lockChannel, held, channel);
         journal.recover();
         channel = null;
         lockChannel = null;
         held = null;
         return journal;
-      } finally {
-        if (held != null) try { held.release(); } catch (IOException cleanup) { /* best effort */ }
-        if (lockChannel != null) try { lockChannel.close(); } catch (IOException cleanup) { /* best effort */ }
-        if (channel != null) try { channel.close(); } catch (IOException cleanup) { /* best effort */ }
+      } catch (StorageException | RuntimeException failure) {
+        releaseAfterFailure(held, failure);
+        closeAfterFailure(lockChannel, failure);
+        closeAfterFailure(channel, failure);
         if (registered) synchronized (OPEN_ROOTS) { OPEN_ROOTS.remove(directory); }
+        throw failure;
+      } catch (IOException failure) {
+        StorageException mapped = StorageException.transientFailure("journal open failed", failure);
+        releaseAfterFailure(held, mapped);
+        closeAfterFailure(lockChannel, mapped);
+        closeAfterFailure(channel, mapped);
+        if (registered) synchronized (OPEN_ROOTS) { OPEN_ROOTS.remove(directory); }
+        throw mapped;
       }
     } catch (IOException failure) {
       throw StorageException.transientFailure("journal open failed", failure);
@@ -203,7 +227,7 @@ public final class FileJournal implements Journal {
         } catch (IOException failure) {
           if (cleanup == null) cleanup = StorageException.failed("lock close failed", failure);
         } finally {
-          if (!log.isOpen()) synchronized (OPEN_ROOTS) { OPEN_ROOTS.remove(journalDirectory); }
+          synchronized (OPEN_ROOTS) { OPEN_ROOTS.remove(journalDirectory); }
         }
       }
     }
@@ -219,6 +243,12 @@ public final class FileJournal implements Journal {
     checksum.update(idBytes);
     checksum.update(payload);
     byte[] recordChecksum = checksum.digest();
+    long offset;
+    try {
+      offset = log.size();
+    } catch (IOException failure) {
+      throw StorageException.transientFailure("journal append failed", failure);
+    }
     try {
       writeFully(log, header.array());
       writeFully(log, idBytes);
@@ -226,6 +256,14 @@ public final class FileJournal implements Journal {
       writeFully(log, recordChecksum);
       log.force(true);
     } catch (IOException failure) {
+      // The partial record never returned success; leaving it would wedge
+      // every later append behind a log the next open refuses.
+      try {
+        log.truncate(offset);
+        log.position(offset);
+      } catch (IOException cleanup) {
+        failure.addSuppressed(cleanup);
+      }
       throw StorageException.transientFailure("journal append failed", failure);
     }
     lastCursor = cursor;
@@ -319,6 +357,26 @@ public final class FileJournal implements Journal {
 
   private void checkOpen() throws StorageException {
     if (closed) throw StorageException.failed("journal is closed", null);
+  }
+
+  /** Opens the log channel; a seam so tests can inject channel failures. */
+  @FunctionalInterface
+  interface LogFactory {
+    /**
+     * Opens the channel every log read and append flows through.
+     * @param logPath absolute path of the log file
+     * @return read/write channel, positioned as required by the caller
+     * @throws IOException for filesystem failure
+     */
+    FileChannel open(Path logPath) throws IOException;
+  }
+
+  private static void releaseAfterFailure(FileLock held, Throwable failure) {
+    if (held != null) try { held.release(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+  }
+
+  private static void closeAfterFailure(java.nio.channels.Channel channel, Throwable failure) {
+    if (channel != null) try { channel.close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
   }
 
   private static void writeFully(FileChannel channel, byte[] bytes) throws IOException {

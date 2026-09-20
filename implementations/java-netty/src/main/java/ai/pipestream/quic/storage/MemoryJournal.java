@@ -27,6 +27,7 @@ public final class MemoryJournal implements Journal {
 
   private final List<EntryState> entries = new ArrayList<>();
   private final Map<String, EntryState> byIntentId = new HashMap<>();
+  private long lastCursor;
   private boolean closed;
 
   private MemoryJournal() {}
@@ -47,7 +48,7 @@ public final class MemoryJournal implements Journal {
       if (Arrays.equals(existing.intent.record(), intent.record())) return existing.cursor;
       throw StorageException.corrupt("intent " + intent.intentId() + " already exists with different bytes");
     }
-    EntryState entry = new EntryState(intent, entries.size() + 1L);
+    EntryState entry = new EntryState(intent, ++lastCursor);
     entries.add(entry);
     byIntentId.put(entry.intent.intentId(), entry);
     return entry.cursor;
@@ -68,6 +69,7 @@ public final class MemoryJournal implements Journal {
       if (Arrays.equals(entry.commit, commitRecord)) return;
       throw StorageException.corrupt("intent " + intentId + " already carries a different commit");
     }
+    lastCursor++;
     entry.commit = commitRecord.clone();
   }
 

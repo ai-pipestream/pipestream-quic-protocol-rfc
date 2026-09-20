@@ -6,8 +6,17 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
+
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Role contract every {@link ObjectStore} backend must satisfy. Concrete
@@ -238,5 +247,178 @@ abstract class ObjectStoreContractTest {
     assertStorage(StorageException.Kind.FAILED, () -> store.verifyScope(scope));
     assertStorage(StorageException.Kind.FAILED, () -> store.list(scope));
     assertStorage(StorageException.Kind.FAILED, () -> store.retire(scope, 0));
+  }
+
+  @Test void parentAndChildScopesHoldIndependentEntities() throws Exception {
+    try (ObjectStore store = openStore()) {
+      var parent = ScopePath.root(0x23);
+      var child = ScopePath.of(0x23, 0x29);
+      byte[] parentPayload = bytes("parent-entity");
+      byte[] childPayload = bytes("child-entity");
+      store.put(parent, 1, parentPayload, digest(parentPayload));
+      store.put(child, 2, childPayload, digest(childPayload));
+      assertEquals(List.of(1L), store.list(parent), "parent lists only its direct entities");
+      assertEquals(List.of(2L), store.list(child));
+      store.sealScope(parent, StoreLayout.scopeDigest(
+          List.of(new StoreLayout.EntityDigest(1, digest(parentPayload)))), 1);
+      store.sealScope(child, StoreLayout.scopeDigest(
+          List.of(new StoreLayout.EntityDigest(2, digest(childPayload)))), 1);
+      store.verifyScope(parent);
+      store.verifyScope(child);
+      // Retirement is direct-entity only: child scopes survive their parent.
+      var parent2 = ScopePath.root(0x24);
+      var child2 = ScopePath.of(0x24, 0x30);
+      byte[] p2 = bytes("p2"), c2 = bytes("c2");
+      store.put(parent2, 1, p2, digest(p2));
+      store.put(child2, 2, c2, digest(c2));
+      store.retire(parent2, 1);
+      assertEquals(List.of(), store.list(parent2));
+      assertEquals(List.of(2L), store.list(child2), "child scope survives parent entity retirement");
+    }
+  }
+
+  @Test void concurrentConflictingPutsYieldExactlyOneSuccess() throws Exception {
+    try (ObjectStore store = openStore()) {
+      var scope = ScopePath.root(0x21);
+      int threads = 8;
+      var pool = Executors.newFixedThreadPool(threads);
+      var start = new CountDownLatch(1);
+      var winners = new ConcurrentHashMap<Integer, byte[]>();
+      var corrupt = new AtomicInteger();
+      var unexpected = new AtomicInteger();
+      List<byte[]> payloads = new ArrayList<>();
+      for (int i = 0; i < threads; i++) payloads.add(bytes("variant-" + i));
+      List<Future<?>> futures = new ArrayList<>();
+      for (int i = 0; i < threads; i++) {
+        int variant = i;
+        byte[] payload = payloads.get(i);
+        futures.add(pool.submit(() -> {
+          start.await();
+          try {
+            store.put(scope, 1, payload, digest(payload));
+            winners.put(variant, payload);
+          } catch (StorageException failure) {
+            if (failure.kind() == StorageException.Kind.CORRUPT) corrupt.incrementAndGet();
+            else unexpected.incrementAndGet();
+          }
+          return null;
+        }));
+      }
+      start.countDown();
+      for (Future<?> future : futures) future.get(30, TimeUnit.SECONDS);
+      pool.shutdownNow();
+      assertEquals(0, unexpected.get(), "no unexpected failure kinds");
+      assertEquals(1, winners.size(), "exactly one conflicting put wins");
+      assertEquals(threads - 1, corrupt.get(), "every loser is CORRUPT");
+      var winner = winners.entrySet().iterator().next();
+      try (var stream = store.openRead(scope, 1)) {
+        assertArrayEquals(winner.getValue(), stream.readAllBytes(), "stored content is the winner's payload");
+      }
+      assertArrayEquals(payloads.get(winner.getKey()), winner.getValue());
+    }
+  }
+
+  @Test void putRacingSealScopeNeverPublishesAfterSeal() throws Exception {
+    try (ObjectStore store = openStore()) {
+      var scope = ScopePath.root(0x22);
+      int threads = 8;
+      var pool = Executors.newFixedThreadPool(threads);
+      var start = new CountDownLatch(1);
+      var succeeded = new ConcurrentHashMap<Long, byte[]>();
+      List<Future<?>> futures = new ArrayList<>();
+      for (int i = 0; i < threads; i++) {
+        long entityId = 100 + i;
+        byte[] payload = bytes("racing-" + i);
+        futures.add(pool.submit(() -> {
+          start.await();
+          store.put(scope, entityId, payload, digest(payload));
+          succeeded.put(entityId, payload);
+          return null;
+        }));
+      }
+      start.countDown();
+      for (Future<?> future : futures) future.get(30, TimeUnit.SECONDS);
+      pool.shutdownNow();
+      // Seal only after every racing put resolved, recording exactly the winners.
+      store.sealScope(scope, StoreLayout.scopeDigest(succeeded.entrySet().stream()
+          .map(entry -> new StoreLayout.EntityDigest(entry.getKey(), digest(entry.getValue()))).toList()),
+          succeeded.size());
+      for (var entry : succeeded.entrySet()) {
+        try (var stream = store.openRead(scope, entry.getKey())) {
+          assertArrayEquals(entry.getValue(), stream.readAllBytes(),
+              "every racing put is durably readable");
+        }
+      }
+      store.verifyScope(scope);
+      // A put that starts strictly after the seal returned must never publish.
+      var gate = new CountDownLatch(1);
+      var lateSuccess = new AtomicBoolean();
+      var lateKind = new java.util.concurrent.atomic.AtomicReference<StorageException.Kind>();
+      var late = new Thread(() -> {
+        try {
+          gate.await();
+          store.put(scope, 999, bytes("late"), digest(bytes("late")));
+          lateSuccess.set(true);
+        } catch (StorageException failure) {
+          lateKind.set(failure.kind());
+        } catch (InterruptedException interrupted) {
+          Thread.currentThread().interrupt();
+        }
+      });
+      late.start();
+      gate.countDown();
+      late.join(30_000);
+      assertFalse(late.isAlive(), "late put finished");
+      assertFalse(lateSuccess.get(), "put after the seal returned must not succeed");
+      assertEquals(StorageException.Kind.ALREADY_SEALED, lateKind.get(),
+          "put after seal is ALREADY_SEALED");
+      assertStorage(StorageException.Kind.NOT_FOUND, () -> store.openRead(scope, 999));
+      assertEquals(succeeded.size(), store.list(scope).size(), "late put never published");
+    }
+  }
+
+  @Test void putIntoSealedScopeWithWrongDigestIsAlreadySealed() throws Exception {
+    try (ObjectStore store = openStore()) {
+      var scope = ScopePath.root(0x25);
+      byte[] payload = bytes("sealed");
+      store.put(scope, 1, payload, digest(payload));
+      store.sealScope(scope, digest(payload), 1);
+      assertStorage(StorageException.Kind.ALREADY_SEALED,
+          () -> store.put(scope, 2, bytes("anything"), new byte[32]));
+    }
+  }
+
+  @Test void retireOfEmptyButExistingUnsealedScopeIsNotFound() throws Exception {
+    try (ObjectStore store = openStore()) {
+      var scope = ScopePath.root(0x26);
+      byte[] payload = bytes("lonely");
+      store.put(scope, 1, payload, digest(payload));
+      store.retire(scope, 1);
+      assertEquals(List.of(), store.list(scope));
+      assertStorage(StorageException.Kind.NOT_FOUND, () -> store.retire(scope, 10));
+    }
+  }
+
+  @Test void verifyScopeDetectsPerObjectRecordedDigestTamper() throws Exception {
+    assumeTrue(supportsRecordTamper(), "backend has no physical record to tamper");
+    try (ObjectStore store = openStore()) {
+      var scope = ScopePath.root(0x27);
+      byte[] payload = bytes("tampered");
+      store.put(scope, 1, payload, digest(payload));
+      store.sealScope(scope, StoreLayout.scopeDigest(
+          List.of(new StoreLayout.EntityDigest(1, digest(payload)))), 1);
+      tamperRecord(scope, 1);
+      assertStorage(StorageException.Kind.CORRUPT, () -> store.verifyScope(scope));
+    }
+  }
+
+  /** Whether {@link #tamperRecord} can corrupt one stored record; default false. */
+  protected boolean supportsRecordTamper() {
+    return false;
+  }
+
+  /** Corrupts one stored entity record; only invoked when {@link #supportsRecordTamper()}. */
+  protected void tamperRecord(ScopePath scope, long entityId) throws Exception {
+    throw new UnsupportedOperationException("backend cannot tamper records");
   }
 }

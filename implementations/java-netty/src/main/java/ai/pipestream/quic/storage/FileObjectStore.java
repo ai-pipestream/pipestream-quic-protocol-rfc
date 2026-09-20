@@ -51,6 +51,7 @@ public final class FileObjectStore implements ObjectStore {
   private final Path objects;
   private final FileChannel lockChannel;
   private final FileLock lock;
+  private final Object mutationLock = new Object();
   private final Set<Path> scratchPaths = ConcurrentHashMap.newKeySet();
   private volatile boolean closed;
 
@@ -73,11 +74,12 @@ public final class FileObjectStore implements ObjectStore {
   public static FileObjectStore open(Path root) throws StorageException {
     Objects.requireNonNull(root, "root");
     Path requested = root.toAbsolutePath().normalize();
+    if (Files.exists(requested, LinkOption.NOFOLLOW_LINKS)
+        && !Files.isDirectory(requested, LinkOption.NOFOLLOW_LINKS)) {
+      throw StorageException.failed("object store root is not a real directory", null);
+    }
     try {
       Files.createDirectories(requested);
-      if (!Files.isDirectory(requested, LinkOption.NOFOLLOW_LINKS)) {
-        throw StorageException.failed("object store root is not a real directory", null);
-      }
       Path base = requested.toRealPath();
       Path objects = base.resolve(OBJECTS_DIRECTORY);
       createDirectoriesDurable(objects);
@@ -119,33 +121,43 @@ public final class FileObjectStore implements ObjectStore {
     validateEntityId(entityId);
     byte[] expected = validateDigest(expectedDigest);
     checkOpen();
-    Path scopeDir = scopeDirectory(scope);
-    if (Files.isRegularFile(scopeDir.resolve(SEAL_FILE_NAME), LinkOption.NOFOLLOW_LINKS)) {
-      throw StorageException.alreadySealed("scope " + scope.render() + " is sealed");
-    }
-    byte[] actual = StoreLayout.sha256().digest(bytes);
-    if (!MessageDigest.isEqual(actual, expected)) {
-      throw StorageException.corrupt("put digest mismatch for entity " + entityId);
-    }
-    Path target = entityPath(scopeDir, entityId);
-    if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-      byte[] existing = readEntity(target);
-      if (Arrays.equals(existing, bytes)) return;
-      throw StorageException.corrupt("conflicting content for entity " + entityId);
-    }
-    Path leaf = target.getParent();
-    try {
-      createDirectoriesDurable(leaf);
-    } catch (IOException failure) {
-      throw StorageException.transientFailure("scope directory creation failed", failure);
-    }
-    Path scratch = leaf.resolve(SCRATCH_PREFIX + UUID.randomUUID() + SCRATCH_SUFFIX);
-    scratchPaths.add(scratch);
-    try {
-      writeEntity(scratch, bytes, expected);
-      moveIntoPlace(scratch, target);
-    } finally {
-      scratchPaths.remove(scratch);
+    synchronized (mutationLock) {
+      checkOpen();
+      Path scopeDir = scopeDirectory(scope);
+      if (Files.isRegularFile(scopeDir.resolve(SEAL_FILE_NAME), LinkOption.NOFOLLOW_LINKS)) {
+        throw StorageException.alreadySealed("scope " + scope.render() + " is sealed");
+      }
+      byte[] actual = StoreLayout.sha256().digest(bytes);
+      if (!MessageDigest.isEqual(actual, expected)) {
+        throw StorageException.corrupt("put digest mismatch for entity " + entityId);
+      }
+      Path target = entityPath(scopeDir, entityId);
+      if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+        byte[] existing = readEntity(target);
+        if (Arrays.equals(existing, bytes)) return;
+        throw StorageException.corrupt("conflicting content for entity " + entityId);
+      }
+      Path leaf = target.getParent();
+      try {
+        createDirectoriesDurable(leaf);
+      } catch (IOException failure) {
+        throw StorageException.transientFailure("scope directory creation failed", failure);
+      }
+      Path scratch = leaf.resolve(SCRATCH_PREFIX + UUID.randomUUID() + SCRATCH_SUFFIX);
+      scratchPaths.add(scratch);
+      try {
+        writeEntity(scratch, bytes, expected);
+        moveIntoPlace(scratch, target);
+      } catch (StorageException | RuntimeException failure) {
+        try {
+          Files.deleteIfExists(scratch);
+        } catch (IOException cleanup) {
+          failure.addSuppressed(cleanup);
+        }
+        throw failure;
+      } finally {
+        scratchPaths.remove(scratch);
+      }
     }
   }
 
@@ -175,85 +187,104 @@ public final class FileObjectStore implements ObjectStore {
     byte[] recorded = validateDigest(digest);
     if (entityCount < 0) throw new IllegalArgumentException("entity count must be non-negative");
     checkOpen();
-    Path scopeDir = scopeDirectory(scope);
-    Seal existing = readSeal(scopeDir);
-    if (existing != null) {
-      if (existing.entityCount == entityCount && Arrays.equals(existing.digest, recorded)) return;
-      throw StorageException.corrupt("scope " + scope.render() + " already carries a different seal");
-    }
-    try {
-      createDirectoriesDurable(scopeDir);
-    } catch (IOException failure) {
-      throw StorageException.transientFailure("scope directory creation failed", failure);
-    }
-    Path scratch = scopeDir.resolve(SCRATCH_PREFIX + UUID.randomUUID() + SCRATCH_SUFFIX);
-    scratchPaths.add(scratch);
-    try {
-      ByteBuffer body = ByteBuffer.allocate(SEAL_BYTES).put(recorded).putLong(entityCount);
-      writeFullyAndSync(scratch, body.array());
-      moveIntoPlace(scratch, scopeDir.resolve(SEAL_FILE_NAME));
-    } finally {
-      scratchPaths.remove(scratch);
+    synchronized (mutationLock) {
+      checkOpen();
+      Path scopeDir = scopeDirectory(scope);
+      Seal existing = readSeal(scopeDir);
+      if (existing != null) {
+        if (existing.entityCount == entityCount && Arrays.equals(existing.digest, recorded)) return;
+        throw StorageException.corrupt("scope " + scope.render() + " already carries a different seal");
+      }
+      try {
+        createDirectoriesDurable(scopeDir);
+      } catch (IOException failure) {
+        throw StorageException.transientFailure("scope directory creation failed", failure);
+      }
+      Path scratch = scopeDir.resolve(SCRATCH_PREFIX + UUID.randomUUID() + SCRATCH_SUFFIX);
+      scratchPaths.add(scratch);
+      try {
+        ByteBuffer body = ByteBuffer.allocate(SEAL_BYTES).put(recorded).putLong(entityCount);
+        writeFullyAndSync(scratch, body.array());
+        moveIntoPlace(scratch, scopeDir.resolve(SEAL_FILE_NAME));
+      } catch (StorageException | RuntimeException failure) {
+        try {
+          Files.deleteIfExists(scratch);
+        } catch (IOException cleanup) {
+          failure.addSuppressed(cleanup);
+        }
+        throw failure;
+      } finally {
+        scratchPaths.remove(scratch);
+      }
     }
   }
 
   @Override public void verifyScope(ScopePath scope) throws StorageException {
     Objects.requireNonNull(scope, "scope");
     checkOpen();
-    Path scopeDir = scopeDirectory(scope);
-    Seal seal = readSeal(scopeDir);
-    if (seal == null) {
-      throw StorageException.notFound("scope " + scope.render() + " has no seal record");
-    }
-    List<StoreLayout.EntityDigest> digests = new ArrayList<>();
-    for (Long entityId : listEntityIds(scopeDir, true)) {
-      byte[] storedDigest = readEntityDigest(scopeDir, entityId);
-      digests.add(new StoreLayout.EntityDigest(entityId, storedDigest));
-    }
-    if (digests.size() != seal.entityCount) {
-      throw StorageException.corrupt("scope " + scope.render() + " entity count differs from its seal");
-    }
-    if (!MessageDigest.isEqual(StoreLayout.scopeDigest(digests), seal.digest)) {
-      throw StorageException.corrupt("scope " + scope.render() + " digest differs from its seal");
+    synchronized (mutationLock) {
+      checkOpen();
+      Path scopeDir = scopeDirectory(scope);
+      Seal seal = readSeal(scopeDir);
+      if (seal == null) {
+        throw StorageException.notFound("scope " + scope.render() + " has no seal record");
+      }
+      List<StoreLayout.EntityDigest> digests = new ArrayList<>();
+      for (Long entityId : listEntityIds(scopeDir, true)) {
+        byte[] storedDigest = readEntityDigest(scopeDir, entityId);
+        digests.add(new StoreLayout.EntityDigest(entityId, storedDigest));
+      }
+      if (digests.size() != seal.entityCount) {
+        throw StorageException.corrupt("scope " + scope.render() + " entity count differs from its seal");
+      }
+      if (!MessageDigest.isEqual(StoreLayout.scopeDigest(digests), seal.digest)) {
+        throw StorageException.corrupt("scope " + scope.render() + " digest differs from its seal");
+      }
     }
   }
 
   @Override public List<Long> list(ScopePath scope) throws StorageException {
     Objects.requireNonNull(scope, "scope");
     checkOpen();
-    Path scopeDir = scopeDirectory(scope);
-    if (!Files.isDirectory(scopeDir, LinkOption.NOFOLLOW_LINKS)) return List.of();
-    return listEntityIds(scopeDir, false);
+    synchronized (mutationLock) {
+      checkOpen();
+      Path scopeDir = scopeDirectory(scope);
+      if (!Files.isDirectory(scopeDir, LinkOption.NOFOLLOW_LINKS)) return List.of();
+      return listEntityIds(scopeDir, false);
+    }
   }
 
   @Override public void retire(ScopePath scope, long retentionCursor) throws StorageException {
     Objects.requireNonNull(scope, "scope");
     if (retentionCursor < 0) throw new IllegalArgumentException("retention cursor must be non-negative");
     checkOpen();
-    Path scopeDir = scopeDirectory(scope);
-    if (!Files.isDirectory(scopeDir, LinkOption.NOFOLLOW_LINKS)) {
-      throw StorageException.notFound("scope " + scope.render() + " holds nothing to retire");
-    }
-    Seal seal = readSeal(scopeDir);
-    try {
-      if (seal != null) {
-        deleteRecursively(scopeDir);
-        syncDirectory(scopeDir.getParent());
-        return;
-      }
-      List<Long> ids = listEntityIds(scopeDir, false);
-      if (ids.isEmpty()) {
+    synchronized (mutationLock) {
+      checkOpen();
+      Path scopeDir = scopeDirectory(scope);
+      if (!Files.isDirectory(scopeDir, LinkOption.NOFOLLOW_LINKS)) {
         throw StorageException.notFound("scope " + scope.render() + " holds nothing to retire");
       }
-      for (long entityId : ids) {
-        if (entityId > retentionCursor) continue;
-        Path target = entityPath(scopeDir, entityId);
-        Files.delete(target);
-        syncDirectory(target.getParent());
-        removeBucketIfEmpty(target.getParent());
+      Seal seal = readSeal(scopeDir);
+      try {
+        if (seal != null) {
+          deleteRecursively(scopeDir);
+          syncDirectory(scopeDir.getParent());
+          return;
+        }
+        List<Long> ids = listEntityIds(scopeDir, false);
+        if (ids.isEmpty()) {
+          throw StorageException.notFound("scope " + scope.render() + " holds nothing to retire");
+        }
+        for (long entityId : ids) {
+          if (entityId > retentionCursor) continue;
+          Path target = entityPath(scopeDir, entityId);
+          Files.delete(target);
+          syncDirectory(target.getParent());
+          removeBucketIfEmpty(target.getParent());
+        }
+      } catch (IOException failure) {
+        throw StorageException.transientFailure("scope retirement failed", failure);
       }
-    } catch (IOException failure) {
-      throw StorageException.transientFailure("scope retirement failed", failure);
     }
   }
 
@@ -285,7 +316,7 @@ public final class FileObjectStore implements ObjectStore {
       } catch (IOException failure) {
         if (cleanup == null) cleanup = StorageException.failed("lock close failed", failure);
       } finally {
-        if (!lockChannel.isOpen()) synchronized (OPEN_ROOTS) { OPEN_ROOTS.remove(objects); }
+        synchronized (OPEN_ROOTS) { OPEN_ROOTS.remove(objects); }
       }
     }
     if (cleanup != null) throw cleanup;
@@ -309,7 +340,14 @@ public final class FileObjectStore implements ObjectStore {
       for (Path bucket : buckets) {
         String bucketName = bucket.getFileName().toString();
         if (bucketName.equals(SEAL_FILE_NAME) || isScratch(bucketName)) continue;
-        if (!bucketName.matches("[0-9a-f]{2}") || !Files.isDirectory(bucket, LinkOption.NOFOLLOW_LINKS)) {
+        // Child scopes live inside their parent's container as 8-hex
+        // directories; only 2-hex directories hold this scope's entities.
+        if (bucketName.matches("[0-9a-f]{8}")
+            && Files.isDirectory(bucket, LinkOption.NOFOLLOW_LINKS)) {
+          continue;
+        }
+        if (!bucketName.matches("[0-9a-f]{2}")
+            || !Files.isDirectory(bucket, LinkOption.NOFOLLOW_LINKS)) {
           throw StorageException.corrupt("unexpected entry " + bucketName + " in scope " + scopeDir);
         }
         try (DirectoryStream<Path> entities = Files.newDirectoryStream(bucket)) {

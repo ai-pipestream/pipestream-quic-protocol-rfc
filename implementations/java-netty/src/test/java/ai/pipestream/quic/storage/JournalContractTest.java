@@ -139,4 +139,33 @@ abstract class JournalContractTest {
     assertStorage(StorageException.Kind.FAILED, () -> journal.commit("kept", bytes("x")));
     assertStorage(StorageException.Kind.FAILED, () -> journal.replay(0));
   }
+
+  @Test void replayOutputIsIdenticalAcrossBackends() throws Exception {
+    List<Journal.ReplayEntry> first = scriptedReplay(openJournal());
+    List<Journal.ReplayEntry> second = scriptedReplay(openJournal());
+    assertEquals(first.size(), second.size(), "same script, same entry count");
+    for (int i = 0; i < first.size(); i++) {
+      Journal.ReplayEntry left = first.get(i);
+      Journal.ReplayEntry right = second.get(i);
+      assertEquals(left.cursor(), right.cursor(), "cursor " + i);
+      assertEquals(left.intent().intentId(), right.intent().intentId());
+      assertArrayEquals(left.intent().record(), right.intent().record());
+      assertEquals(left.committed(), right.committed());
+      assertArrayEquals(left.commitRecord(), right.commitRecord());
+    }
+  }
+
+  /** Runs one fixed workload and returns its replay; both backends must produce identical output. */
+  private static List<Journal.ReplayEntry> scriptedReplay(Journal journal) throws Exception {
+    try (journal) {
+      journal.appendIntent(new Journal.Intent("intent-a", bytes("record-a")));
+      journal.appendIntent(new Journal.Intent("intent-b", bytes("record-b")));
+      journal.appendIntent(new Journal.Intent("intent-c", bytes("record-c")));
+      journal.commit("intent-a", bytes("commit-a"));
+      journal.commit("intent-c", bytes("commit-c"));
+      assertEquals(6, journal.appendIntent(new Journal.Intent("intent-d", bytes("record-d"))),
+          "commits consume cursors in the global append order");
+      return journal.replay(0);
+    }
+  }
 }

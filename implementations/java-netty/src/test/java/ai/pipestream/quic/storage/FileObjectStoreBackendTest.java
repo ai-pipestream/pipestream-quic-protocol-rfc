@@ -7,7 +7,9 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -145,6 +147,40 @@ final class FileObjectStoreBackendTest {
          Journal journal = FileJournal.open(directory)) {
       store.put(ScopePath.root(0x6666), 1, bytes("coexists"), digest(bytes("coexists")));
       journal.appendIntent(new Journal.Intent("intent", bytes("record")));
+    }
+  }
+
+  @Test void rootThatIsARegularFileIsFailedNotTransient() throws Exception {
+    Path file = directory.resolve("a-regular-file");
+    Files.write(file, new byte[] {1, 2, 3});
+    assertStorage(StorageException.Kind.FAILED, () -> FileObjectStore.open(file));
+  }
+
+  @Test void failedPutLeavesNoScratchAndStoreRemainsUsable() throws Exception {
+    var scope = ScopePath.root(0x7778);
+    Path bucket = entityFile(directory, scope, 3).getParent();
+    Files.createDirectories(bucket);
+    Set<PosixFilePermission> writable = Files.getPosixFilePermissions(bucket);
+    Files.setPosixFilePermissions(bucket, Set.of(
+        PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_EXECUTE));
+    try (ObjectStore store = FileObjectStore.open(directory)) {
+      assertStorage(StorageException.Kind.TRANSIENT,
+          () -> store.put(scope, 3, bytes("blocked"), digest(bytes("blocked"))));
+    } finally {
+      Files.setPosixFilePermissions(bucket, writable);
+    }
+    try (Stream<Path> paths = Files.walk(directory)) {
+      List<Path> scratch = paths
+          .filter(path -> path.getFileName().toString().endsWith(".tmp"))
+          .toList();
+      assertEquals(List.of(), scratch, "failed put leaves no scratch behind");
+    }
+    try (ObjectStore store = FileObjectStore.open(directory)) {
+      byte[] payload = bytes("after-failure");
+      store.put(scope, 3, payload, digest(payload));
+      try (var stream = store.openRead(scope, 3)) {
+        assertArrayEquals(payload, stream.readAllBytes());
+      }
     }
   }
 }
