@@ -113,4 +113,25 @@ final class S3BackendTest {
       }
     }
   }
+
+  @Test void listScopesSkipsForeignNamespacesSharingThePrefix() throws Exception {
+    String prefix = "shared-" + java.util.UUID.randomUUID() + "/";
+    var scope = ScopePath.root(0x4444);
+    byte[] payload = bytes("ours");
+    try (ObjectStore store = openStore(prefix)) {
+      store.put(scope, 1, payload, digest(payload));
+      // Another lane's S3 layout (its own objects/ subtree) shares our bucket
+      // and prefix, as certification deployments do; enumeration must not
+      // treat its namespace as corruption.
+      try (var raw = minio.newClient()) {
+        raw.putObject(
+            request -> request.bucket(minio.bucket()).key(prefix + "objects/00000040/43/00000000"),
+            software.amazon.awssdk.core.sync.RequestBody.fromBytes(bytes("foreign")));
+      }
+      assertEquals(List.of(scope), store.listScopes(), "foreign subtree is skipped, ours is found");
+      try (var stream = store.openRead(scope, 1)) {
+        assertArrayEquals(payload, stream.readAllBytes());
+      }
+    }
+  }
 }

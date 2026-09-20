@@ -250,8 +250,16 @@ public final class S3ObjectStore implements ObjectStore {
    * prefixes naming an 8-hex component are child scopes, visited
    * recursively, and 2-hex prefixes are fanout buckets whose entity keys
    * count as state at this level.
+   *
+   * <p>At the store prefix's top level, foreign names are skipped, not
+   * corruption: S3 physical layouts are backend- and lane-local by design,
+   * and deployments (including certification) may share one bucket and key
+   * prefix across implementations whose mappings differ, for example
+   * another lane's {@code objects/} subtree. Everything below our own scope
+   * tree stays strict.
    */
   private void listScopes(String scopePrefix, List<ScopePath> out) throws StorageException {
+    boolean top = scopePrefix.equals(prefix);
     boolean hasState = false;
     List<String> childScopes = new ArrayList<>();
     List<String> buckets = new ArrayList<>();
@@ -268,18 +276,20 @@ public final class S3ObjectStore implements ObjectStore {
           hasState = true;
           continue;
         }
+        if (top) continue; // foreign layout sharing the prefix, not our state
         throw StorageException.corrupt("unexpected key " + object.key() + " under prefix " + scopePrefix);
       }
       for (CommonPrefix child : response.commonPrefixes()) {
         String remainder = child.prefix().substring(scopePrefix.length());
         if (remainder.matches("[0-9a-f]{2}/")) buckets.add(child.prefix());
         else if (remainder.matches("[0-9a-f]{8}/")) childScopes.add(child.prefix());
-        else throw StorageException.corrupt("unexpected prefix " + child.prefix());
+        else if (!top) throw StorageException.corrupt("unexpected prefix " + child.prefix());
+        // else: another implementation's namespace under the shared prefix; skipped
       }
       continuation = response.isTruncated() ? response.nextContinuationToken() : null;
     } while (continuation != null);
     for (String bucket : buckets) if (bucketHasEntities(bucket)) hasState = true;
-    if (hasState && !scopePrefix.equals(prefix)) {
+    if (hasState && !top) {
       out.add(ScopePath.parse(scopePrefix.substring(prefix.length(), scopePrefix.length() - 1)));
     }
     for (String child : childScopes) listScopes(child, out);
