@@ -437,7 +437,6 @@ fn sweep_spi_orphans(root: &mut Root) -> Result<()> {
     let mut plane = plane
         .lock()
         .map_err(|_| StoreError::Corrupt("payload SPI plane poisoned"))?;
-    let scope = plane_scope();
     let stub_prefixes: std::collections::BTreeSet<String> = {
         let entries = root
             .entries
@@ -445,11 +444,14 @@ fn sweep_spi_orphans(root: &mut Root) -> Result<()> {
             .map_err(|_| StoreError::Corrupt("payload inventory poisoned"))?;
         entries.keys().map(|key| key[..8].to_owned()).collect()
     };
-    for entity in plane.list(&scope).map_err(spi)? {
-        let prefix = format!("{entity:08x}");
+    for scope in plane.list_scopes().map_err(spi)? {
+        if scope.depth() != 1 || scope.components()[0] != 0 {
+            return Err(StoreError::Corrupt("unexpected SPI plane scope"));
+        }
+        let prefix = format!("{:08x}", scope.scope_id());
         if !stub_prefixes.contains(&prefix) {
             // Absent locally: never referenced by an admission.
-            match plane.retire(&scope, u64::from(entity)) {
+            match plane.retire(&scope, 0) {
                 Ok(_) | Err(pipestream_storage::StorageError::NotFound(_)) => {}
                 Err(error) => return Err(spi(error)),
             }
@@ -458,13 +460,19 @@ fn sweep_spi_orphans(root: &mut Root) -> Result<()> {
     Ok(())
 }
 
-/// The SPI plane scope for all payload objects (the plane store is
-/// dedicated to this root; the 256-bucket fanout shards within the scope).
-fn plane_scope() -> pipestream_storage::ScopePath {
+/// The SPI plane scope of one payload object: `root(0)/<key prefix>`. Each
+/// object gets its own child scope holding entity 0, so orphan sweeps and
+/// collection can point-retire one object: the SPI's cursor-based `retire`
+/// has no per-entity delete, and a shared scope would delete every object
+/// below the orphan's id.
+fn plane_scope(key: &str) -> pipestream_storage::ScopePath {
     pipestream_storage::ScopePath::root(0)
+        .child(plane_entity(key))
+        .expect("plane scope is depth 1")
 }
 
-/// The SPI entity id of a payload key: its first 8 hex characters.
+/// The SPI plane entity of an object is always 0; the payload key's first 8
+/// hex characters become the child-scope component.
 fn plane_entity(key: &str) -> u32 {
     u32::from_str_radix(&key[..8], 16).expect("payload keys are 32 lowercase hex")
 }
@@ -823,12 +831,12 @@ impl PayloadStore {
                 continue;
             }
             if let Some(plane) = &self.root.spi {
-                let taken = plane
+                let taken = !plane
                     .lock()
                     .map_err(|_| StoreError::Corrupt("payload SPI plane poisoned"))?
-                    .list(&plane_scope())
+                    .list(&plane_scope(&key))
                     .map_err(spi)?
-                    .contains(&plane_entity(&key));
+                    .is_empty();
                 if taken {
                     continue;
                 }
@@ -858,7 +866,7 @@ impl PayloadStore {
         let mut writer = plane
             .lock()
             .map_err(|_| StoreError::Corrupt("payload SPI plane poisoned"))?
-            .begin_put(&plane_scope(), plane_entity(key), &expected.0)
+            .begin_put(&plane_scope(key), 0, &expected.0)
             .map_err(spi)?;
         let mut chunk = [0u8; 64 * 1024];
         loop {
@@ -882,12 +890,11 @@ impl PayloadStore {
         let Some(plane) = &self.root.spi else {
             return Ok(());
         };
-        let scope = plane_scope();
-        let entity = plane_entity(key);
+        let scope = plane_scope(key);
         match plane
             .lock()
             .map_err(|_| StoreError::Corrupt("payload SPI plane poisoned"))?
-            .retire(&scope, u64::from(entity))
+            .retire(&scope, 0)
         {
             Ok(_) | Err(pipestream_storage::StorageError::NotFound(_)) => Ok(()),
             Err(error) => Err(spi(error)),
@@ -944,7 +951,7 @@ impl PayloadStore {
             let reader = plane
                 .lock()
                 .map_err(|_| StoreError::Corrupt("payload SPI plane poisoned"))?
-                .open_read(&plane_scope(), plane_entity(key))
+                .open_read(&plane_scope(key), 0)
                 .map_err(|_| {
                     protocol(ErrorCode::OutputUnavailable, "retained object absent")
                 })?;

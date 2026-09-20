@@ -92,8 +92,11 @@ fn spi_entities(store: &PayloadStore, dir: &tempfile::TempDir) -> Vec<u32> {
         .unwrap()
         .lock()
         .unwrap()
-        .list(&plane_scope())
+        .list_scopes()
         .unwrap()
+        .iter()
+        .map(|scope| scope.scope_id())
+        .collect()
 }
 
 #[test]
@@ -140,19 +143,23 @@ fn spi_plane_sweeps_orphaned_entities_at_open() {
     let key = installed.key().to_owned();
     drop(installed);
     drop(store);
-    // Simulate a kill after the SPI put but before the stub write: put an
-    // entity with no local object stub.
+    // Simulate two kills after the SPI put but before the stub write:
+    // orphan entities both below AND above the live entity's id (the
+    // original bug retired the live entity whenever the orphan sorted
+    // above it).
     let mut plane =
         pipestream_storage::FsStore::open(dir.path().join("objects").join(SPI_DIR)).unwrap();
-    let orphan = b"orphaned bytes".to_vec();
-    plane
-        .put(
-            &plane_scope(),
-            0x0bad_f00d,
-            &orphan,
-            &pipestream_storage::sha256(&orphan),
-        )
-        .unwrap();
+    for orphan_id in [0x0000_0001u32, 0xffff_ff00] {
+        let orphan = format!("orphaned bytes {orphan_id:08x}").into_bytes();
+        plane
+            .put(
+                &plane_scope(&format!("{orphan_id:08x}000000000000000000000000")),
+                0,
+                &orphan,
+                &pipestream_storage::sha256(&orphan),
+            )
+            .unwrap();
+    }
     drop(plane);
     let reopened = PayloadStore::open_with_backend(
         &dir.path().join("objects"),
