@@ -55,6 +55,15 @@ interlock across languages is fcntl `F_SETLK` on both sides (pinned decision 7).
   driver's per-backend acceptance runs are the follow-on work.
 - Mongo backend tested against mongo:8.2 (8.0 refuses kernels ≥ 6.19,
   SERVER-121912).
+- Row `g2-kill-after-admission-before-publication` (java-client/rust-server
+  direction) is a known host-load flake on any driver build: the fixture kill
+  at EXECUTION_CLAIMED races the Java client's post-receipt detach handshake
+  (strace-verified 2026-09-20; 16-run repro shows both driver builds flaking
+  on both local drives; identical failure exists in pre-change archive
+  durable-18d3ea906e9d11bd). Signature: `admit operation failed` +
+  `LIMIT_EXCEEDED: control response deadline`. Acceptance runs need a quiet
+  host for this row; the fix options are subject/row-side, recorded in the
+  run-2 analysis.
 
 ## Adoption slice 1: SPI over the existing client journals (2026-09-20)
 
