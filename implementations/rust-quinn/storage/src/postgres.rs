@@ -35,8 +35,7 @@
 
 use crate::layout;
 use crate::{
-    Cursor, Digest32, EntityId, Intent, Journal, MAX_RECORD_BYTES, ObjectStore, ReplayEntry,
-    ScopePath, SealRecord, StorageError,
+    BufferedPutWriter, Cursor, Digest32, EntityId, Intent, Journal, MAX_RECORD_BYTES, ObjectStore, ReplayEntry, ScopePath, SealRecord, StorageError,
 };
 use postgres::{Client, GenericClient, NoTls};
 use std::io::{self, Read};
@@ -71,7 +70,7 @@ CREATE TABLE IF NOT EXISTS pipestream_journal (
 /// See the [module documentation](self) for the schema and the durability
 /// configuration.
 pub struct PostgresStore {
-    client: Mutex<Client>,
+    client: std::sync::Arc<Mutex<Client>>,
 }
 
 impl std::fmt::Debug for PostgresStore {
@@ -87,7 +86,7 @@ impl PostgresStore {
         let mut client = Client::connect(url, NoTls).map_err(map_pg_error)?;
         client.batch_execute(SCHEMA).map_err(map_pg_error)?;
         Ok(PostgresStore {
-            client: Mutex::new(client),
+            client: std::sync::Arc::new(Mutex::new(client)),
         })
     }
 
@@ -186,8 +185,78 @@ fn read_seal(
     }
 }
 
+/// Boxed finish closure for the buffering put writer.
+type PgFinish = Box<dyn FnOnce(&[u8]) -> Result<(), StorageError> + Send>;
+
 impl ObjectStore for PostgresStore {
     type Reader = PostgresReader;
+    type PutWriter = BufferedPutWriter<PgFinish>;
+
+    /// Buffers content (Postgres `bytea` inserts are whole-value anyway)
+    /// and commits in one transaction at finish, re-checking the seal.
+    fn begin_put(
+        &mut self,
+        scope: &ScopePath,
+        entity: EntityId,
+        expected_digest: &Digest32,
+    ) -> Result<Self::PutWriter, StorageError> {
+        layout::check_entity_id(entity)?;
+        let scope_key = path_key(scope);
+        let mut client = self.lock()?;
+        require_unsealed(&mut *client, scope)?;
+        let existing: Option<Vec<u8>> = client
+            .query_opt(
+                "SELECT digest FROM pipestream_objects \
+                 WHERE scope_path = $1 AND entity_id = $2",
+                &[&scope_key, &entity_to_row(entity)],
+            )
+            .map_err(map_pg_error)?
+            .map(|row| row.get(0));
+        if let Some(recorded) = existing {
+            if recorded.as_slice() == expected_digest {
+                return Ok(BufferedPutWriter::new(*expected_digest, Box::new(|_| Ok(()))));
+            }
+            return Err(StorageError::corrupt(format!(
+                "conflicting bytes for entity {entity} in {scope}"
+            )));
+        }
+        let writer_client = std::sync::Arc::clone(&self.client);
+        let expected = *expected_digest;
+        let entity_row = entity_to_row(entity);
+        let finish: PgFinish = Box::new(move |bytes: &[u8]| {
+            let mut client = writer_client
+                .lock()
+                .map_err(|_| StorageError::failed("postgres store lock poisoned"))?;
+            let mut tx = client.transaction().map_err(map_pg_error)?;
+            require_unsealed(&mut tx, &ScopePath::parse(&scope_key)?)?;
+            let existing: Option<Vec<u8>> = tx
+                .query_opt(
+                    "SELECT digest FROM pipestream_objects \
+                     WHERE scope_path = $1 AND entity_id = $2",
+                    &[&scope_key, &entity_row],
+                )
+                .map_err(map_pg_error)?
+                .map(|row| row.get(0));
+            match existing {
+                Some(recorded) if recorded.as_slice() == expected => {}
+                Some(_) => {
+                    return Err(StorageError::corrupt(format!(
+                        "conflicting bytes for entity {entity}"
+                    )));
+                }
+                None => {
+                    tx.execute(
+                        "INSERT INTO pipestream_objects (scope_path, entity_id, digest, payload) \
+                         VALUES ($1, $2, $3, $4)",
+                        &[&scope_key, &entity_row, &&expected[..], &bytes],
+                    )
+                    .map_err(map_pg_error)?;
+                }
+            }
+            tx.commit().map_err(map_pg_error)
+        });
+        Ok(BufferedPutWriter::new(expected, finish))
+    }
 
     fn put(
         &mut self,

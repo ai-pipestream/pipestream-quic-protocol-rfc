@@ -42,12 +42,12 @@
 use crate::layout;
 use crate::{
     Cursor, Digest32, EntityId, Intent, Journal, MAX_INTENT_ID_BYTES, MAX_RECORD_BYTES,
-    ObjectStore, ReplayEntry, ScopePath, SealRecord, StorageError,
+    ObjectStore, PutWriter, ReplayEntry, ScopePath, SealRecord, StorageError,
 };
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -328,8 +328,171 @@ impl FsStore {
     }
 }
 
+
+/// Streaming writer for the filesystem backend: content lands in a
+/// `write-*.tmp` scratch file in the target bucket (the same scratch grammar
+/// swept at open), never in memory. Finish patches the length header,
+/// fsyncs, renames into place, and fsyncs the directory.
+#[derive(Debug)]
+pub struct FsPutWriter {
+    file: Option<File>,
+    scratch: PathBuf,
+    target: PathBuf,
+    scope_dir: PathBuf,
+    scope: ScopePath,
+    entity: EntityId,
+    expected: Digest32,
+    written: u64,
+    absorbing: bool,
+}
+
+impl Write for FsPutWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match &mut self.file {
+            Some(file) => {
+                let n = file.write(buf)?;
+                self.written += n as u64;
+                Ok(n)
+            }
+            None => Ok(buf.len()), // absorbing idempotent re-put
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match &mut self.file {
+            Some(file) => file.flush(),
+            None => Ok(()),
+        }
+    }
+}
+
+impl PutWriter for FsPutWriter {
+    fn finish(mut self) -> Result<(), StorageError> {
+        if self.absorbing {
+            return Ok(());
+        }
+        let file = self
+            .file
+            .take()
+            .ok_or_else(|| StorageError::failed("put writer is closed"))?;
+        let result = self.finish_with(file);
+        if result.is_err() {
+            let _ = fs::remove_file(&self.scratch);
+        }
+        result
+    }
+}
+
+impl FsPutWriter {
+    fn finish_with(&self, mut file: File) -> Result<(), StorageError> {
+        // Seal is re-checked: a seal may have landed after the write began.
+        if self.scope_dir.join(SEAL_FILE_NAME).is_file() {
+            return Err(StorageError::already_sealed(format!(
+                "scope {} is sealed",
+                self.scope
+            )));
+        }
+        file.seek(SeekFrom::Start(ENTITY_HEADER_BYTES as u64))?;
+        let digest = layout::sha256_reader(&mut file)?;
+        if digest != self.expected {
+            return Err(StorageError::corrupt(format!(
+                "digest mismatch for entity {} in {}",
+                self.entity, self.scope
+            )));
+        }
+        // Patch the length prefix, then flush, rename, and sync.
+        file.seek(SeekFrom::Start(0))?;
+        Write::write_all(&mut file, &self.written.to_be_bytes())?;
+        file.sync_all()?;
+        if self.target.exists() {
+            let (recorded, _) = read_entity_header(&self.target)?;
+            if recorded == digest {
+                let _ = fs::remove_file(&self.scratch);
+                return Ok(());
+            }
+            return Err(StorageError::corrupt(format!(
+                "conflicting bytes for entity {} in {}",
+                self.entity, self.scope
+            )));
+        }
+        fs::rename(&self.scratch, &self.target)?;
+        if let Some(parent) = self.target.parent() {
+            sync_dir(parent)?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for FsPutWriter {
+    fn drop(&mut self) {
+        if self.file.is_some() {
+            let _ = fs::remove_file(&self.scratch);
+        }
+    }
+}
+
 impl ObjectStore for FsStore {
     type Reader = File;
+    type PutWriter = FsPutWriter;
+
+    fn begin_put(
+        &mut self,
+        scope: &ScopePath,
+        entity: EntityId,
+        expected_digest: &Digest32,
+    ) -> Result<FsPutWriter, StorageError> {
+        layout::check_entity_id(entity)?;
+        let scope_dir = self.scope_dir(scope);
+        if scope_dir.join(SEAL_FILE_NAME).is_file() {
+            return Err(StorageError::already_sealed(format!(
+                "scope {scope} is sealed"
+            )));
+        }
+        let target = self.entity_path(scope, entity);
+        if target.exists() {
+            let (recorded, _) = read_entity_header(&target)?;
+            if recorded != *expected_digest {
+                return Err(StorageError::corrupt(format!(
+                    "conflicting bytes for entity {entity} in {scope}"
+                )));
+            }
+            return Ok(FsPutWriter {
+                file: None,
+                scratch: PathBuf::new(),
+                target,
+                scope_dir,
+                scope: scope.clone(),
+                entity,
+                expected: *expected_digest,
+                written: 0,
+                absorbing: true,
+            });
+        }
+        let bucket_dir = match target.parent() {
+            Some(dir) => dir.to_path_buf(),
+            None => return Err(StorageError::failed("entity path has no parent")),
+        };
+        create_dirs_durable(&bucket_dir)?;
+        let scratch = self.scratch_path(&bucket_dir);
+        let mut file = OpenOptions::new().create_new(true).write(true).read(true).open(&scratch)?;
+        // Reserve [8B length][32B digest] up front; the length is patched
+        // at finish, the digest is the expected one the writer must match.
+        let mut header = Vec::with_capacity(ENTITY_HEADER_BYTES);
+        header.extend_from_slice(&0u64.to_be_bytes());
+        header.extend_from_slice(expected_digest);
+        Write::write_all(&mut file, &header)?;
+        Ok(FsPutWriter {
+            file: Some(file),
+            scratch,
+            target,
+            scope_dir,
+            scope: scope.clone(),
+            entity,
+            expected: *expected_digest,
+            written: 0,
+            absorbing: false,
+        })
+    }
 
     fn put(
         &mut self,

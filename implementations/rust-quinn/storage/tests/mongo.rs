@@ -56,3 +56,24 @@ fn mongo_probe_matches_expected_report_byte_for_byte() {
         .expect("probe");
     assert_eq!(report, expected);
 }
+
+#[test]
+fn mongo_streaming_put_minimal() {
+    use pipestream_storage::{ObjectStore, PutWriter, ScopePath, sha256};
+    use std::io::Write as _;
+    let Some(mongo) = common::MongoContainer::start() else {
+        eprintln!("docker unavailable: skipping");
+        return;
+    };
+    let mut store = open_with_retry(&mongo.fresh_config());
+    let scope = ScopePath::root(1);
+    let payload = b"streamed payload".to_vec();
+    let digest = sha256(&payload);
+    let mut writer = store.begin_put(&scope, 1, &digest).expect("begin_put");
+    writer.write_all(&payload).expect("write");
+    writer.finish().expect("finish");
+    let mut reader = store.open_read(&scope, 1).expect("open_read");
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut reader, &mut bytes).expect("read");
+    assert_eq!(bytes, payload);
+}

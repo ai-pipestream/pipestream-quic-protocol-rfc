@@ -47,6 +47,21 @@ pub fn sha256(bytes: &[u8]) -> Digest32 {
     Sha256::digest(bytes).into()
 }
 
+/// Computes the SHA-256 digest of everything readable from `reader`
+/// (streaming; used where payloads must not be buffered whole).
+pub fn sha256_reader(reader: &mut impl std::io::Read) -> std::io::Result<Digest32> {
+    let mut hasher = Sha256::new();
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        let n = reader.read(&mut chunk)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&chunk[..n]);
+    }
+    Ok(hasher.finalize().into())
+}
+
 /// Validates an entity id for storage.
 pub fn check_entity_id(entity: EntityId) -> Result<(), StorageError> {
     if entity > MAX_ENTITY_ID {

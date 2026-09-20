@@ -31,7 +31,10 @@
 //! and blocks on each call, keeping the SPI synchronous.
 
 use crate::layout;
-use crate::{Digest32, EntityId, ObjectStore, ScopePath, SealRecord, StorageError};
+use crate::{
+    BufferedPutWriter, Digest32, EntityId, ObjectStore, ScopePath, SealRecord,
+    StorageError,
+};
 use aws_sdk_s3::Client;
 use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_s3::primitives::ByteStream;
@@ -63,7 +66,7 @@ pub struct S3Config {
 /// durability configuration.
 pub struct S3Store {
     client: Client,
-    runtime: tokio::runtime::Runtime,
+    runtime: std::sync::Arc<tokio::runtime::Runtime>,
     bucket: String,
     prefix: String,
 }
@@ -85,10 +88,12 @@ const SEAL_RECORD_LEN: usize = 32 + 8;
 impl S3Store {
     /// Connects using `config` and creates the bucket when absent.
     pub fn open(config: &S3Config) -> Result<Self, StorageError> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| StorageError::failed(format!("tokio runtime: {e}")))?;
+        let runtime = std::sync::Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| StorageError::failed(format!("tokio runtime: {e}")))?,
+        );
         let credentials = Credentials::new(
             config.access_key.clone(),
             config.secret_key.clone(),
@@ -387,8 +392,76 @@ impl Read for S3Reader {
     }
 }
 
+/// Boxed finish closure for the buffering put writer.
+type S3Finish = Box<dyn FnOnce(&[u8]) -> Result<(), StorageError> + Send>;
+
 impl ObjectStore for S3Store {
     type Reader = S3Reader;
+    type PutWriter = BufferedPutWriter<S3Finish>;
+
+    /// Buffers content, then issues one PUT at finish. (S3 has no partial
+    /// object visibility; a multipart-upload variant is a follow-up.)
+    fn begin_put(
+        &mut self,
+        scope: &ScopePath,
+        entity: EntityId,
+        expected_digest: &Digest32,
+    ) -> Result<Self::PutWriter, StorageError> {
+        layout::check_entity_id(entity)?;
+        if self.get_object(&self.seal_key(scope))?.is_some() {
+            return Err(StorageError::already_sealed(format!(
+                "scope {scope} is sealed"
+            )));
+        }
+        let key = self.object_key(scope, entity);
+        if let Some(existing) = self.get_object(&key)? {
+            let (recorded, _) = split_object(&existing, scope)?;
+            if recorded == *expected_digest {
+                return Ok(BufferedPutWriter::new(*expected_digest, Box::new(|_| Ok(()))));
+            }
+            return Err(StorageError::corrupt(format!(
+                "conflicting bytes for entity {entity} in {scope}"
+            )));
+        }
+        let client = self.client.clone();
+        let runtime = std::sync::Arc::clone(&self.runtime);
+        let bucket = self.bucket.clone();
+        let seal_key = self.seal_key(scope);
+        let scope = scope.clone();
+        let expected = *expected_digest;
+        let finish: S3Finish = Box::new(move |bytes: &[u8]| {
+            // Seal is re-checked: a seal may have landed after begin.
+            let sealed = runtime
+                .block_on(
+                    client
+                        .get_object()
+                        .bucket(&bucket)
+                        .key(&seal_key)
+                        .send(),
+                )
+                .map(|_| ())
+                .is_ok();
+            if sealed {
+                return Err(StorageError::already_sealed(format!(
+                    "scope {scope} is sealed"
+                )));
+            }
+            runtime
+                .block_on(
+                    client
+                        .put_object()
+                        .bucket(&bucket)
+                        .key(&key)
+                        .body(aws_sdk_s3::primitives::ByteStream::from(
+                            encode_object(bytes, &expected),
+                        ))
+                        .send(),
+                )
+                .map(|_| ())
+                .map_err(|error| map_sdk_error("put object", error))
+        });
+        Ok(BufferedPutWriter::new(expected, finish))
+    }
 
     fn put(
         &mut self,

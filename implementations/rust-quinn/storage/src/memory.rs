@@ -10,11 +10,11 @@
 
 use crate::layout;
 use crate::{
-    Cursor, Digest32, EntityId, Intent, Journal, ObjectStore, ReplayEntry, ScopePath, SealRecord,
-    StorageError,
+    Cursor, Digest32, EntityId, Intent, Journal, ObjectStore, PutWriter, ReplayEntry, ScopePath,
+    SealRecord, StorageError,
 };
 use std::collections::{BTreeMap, HashMap};
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// Per-scope state: the objects and, once sealed, the seal record.
@@ -93,8 +93,110 @@ impl Read for MemoryReader {
     }
 }
 
+
+/// Streaming writer for the in-memory backend: buffers the payload and
+/// inserts it at finish after re-validating seal and digest.
+#[derive(Debug)]
+pub struct MemoryPutWriter {
+    state: Arc<RwLock<State>>,
+    scope: ScopePath,
+    entity: EntityId,
+    expected: Digest32,
+    buffer: Vec<u8>,
+    absorbing: bool,
+}
+
+impl Write for MemoryPutWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if !self.absorbing {
+            self.buffer.extend_from_slice(buf);
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl PutWriter for MemoryPutWriter {
+    fn finish(self) -> Result<(), StorageError> {
+        if self.absorbing {
+            return Ok(());
+        }
+        if layout::sha256(&self.buffer) != self.expected {
+            return Err(StorageError::corrupt(format!(
+                "digest mismatch for entity {} in {}",
+                self.entity, self.scope
+            )));
+        }
+        let mut state = self
+            .state
+            .write()
+            .map_err(|_| StorageError::failed("memory store lock poisoned"))?;
+        let scope_state = state.scopes.entry(self.scope.clone()).or_default();
+        if scope_state.seal.is_some() {
+            return Err(StorageError::already_sealed(format!(
+                "scope {} is sealed",
+                self.scope
+            )));
+        }
+        match scope_state.objects.get(&self.entity) {
+            Some(existing) if existing.bytes == self.buffer => Ok(()),
+            Some(_) => Err(StorageError::corrupt(format!(
+                "conflicting bytes for entity {} in {}",
+                self.entity, self.scope
+            ))),
+            None => {
+                scope_state.objects.insert(
+                    self.entity,
+                    StoredObject {
+                        digest: self.expected,
+                        bytes: self.buffer,
+                    },
+                );
+                Ok(())
+            }
+        }
+    }
+}
+
 impl ObjectStore for MemoryStore {
     type Reader = MemoryReader;
+    type PutWriter = MemoryPutWriter;
+
+    fn begin_put(
+        &mut self,
+        scope: &ScopePath,
+        entity: EntityId,
+        expected_digest: &Digest32,
+    ) -> Result<MemoryPutWriter, StorageError> {
+        layout::check_entity_id(entity)?;
+        let state = self.read()?;
+        let scope_state = state.scopes.get(scope);
+        if scope_state.is_some_and(|s| s.seal.is_some()) {
+            return Err(StorageError::already_sealed(format!(
+                "scope {scope} is sealed"
+            )));
+        }
+        let existing = scope_state.and_then(|s| s.objects.get(&entity));
+        let absorbing = existing.is_some_and(|existing| existing.digest == *expected_digest);
+        if let Some(existing) = existing
+            && existing.digest != *expected_digest
+        {
+            return Err(StorageError::corrupt(format!(
+                "conflicting bytes for entity {entity} in {scope}"
+            )));
+        }
+        Ok(MemoryPutWriter {
+            state: self.state.clone(),
+            scope: scope.clone(),
+            entity,
+            expected: *expected_digest,
+            buffer: Vec::new(),
+            absorbing,
+        })
+    }
 
     fn put(
         &mut self,

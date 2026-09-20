@@ -17,7 +17,8 @@
 
 use crate::layout;
 use crate::{
-    Cursor, Digest32, Intent, Journal, ObjectStore, ScopePath, SealRecord, StorageError, sha256,
+    Cursor, Digest32, Intent, Journal, ObjectStore, PutWriter, ScopePath, SealRecord, StorageError,
+    sha256,
 };
 
 /// A backend under test: both SPI roles on one instance.
@@ -65,6 +66,12 @@ pub fn run_object_store<S: ObjectStore + Send>(
     retire_of_sealed_scope_preserves_child_scopes(&mut fresh());
     concurrent_conflicting_puts_yield_exactly_one_success(&mut fresh());
     put_racing_seal_scope_never_publishes_after_seal(&mut fresh());
+    streaming_put_roundtrip_matches_one_shot(&mut fresh());
+    streaming_put_digest_mismatch_stores_nothing(&mut fresh());
+    streaming_put_into_sealed_scope_is_already_sealed(&mut fresh());
+    streaming_put_conflict_with_existing_is_corrupt_at_begin(&mut fresh());
+    streaming_put_idempotent_absorbing_reput(&mut fresh());
+    streaming_put_invisible_until_finish(&mut fresh());
     object_store_durability_roundtrip(&mut reopen);
 }
 
@@ -969,4 +976,116 @@ fn journal_durability_with<J: Journal>(
     assert!(entries[0].commit_cursor.is_some());
     assert_eq!(entries[1].intent, pending);
     assert!(!entries[1].committed());
+}
+
+/// Streaming put of the same bytes in many small chunks equals one-shot put.
+pub fn streaming_put_roundtrip_matches_one_shot<S: ObjectStore>(store: &mut S) {
+    use std::io::Write as _;
+    let scope = ScopePath::root(50);
+    let payload: Vec<u8> = (0..=255u8).cycle().take(100_000).collect();
+    let digest = sha256(&payload);
+    {
+        let mut writer = store
+            .begin_put(&scope, 1, &digest)
+            .unwrap_or_else(|e| panic!("begin_put: {e}"));
+        for chunk in payload.chunks(997) {
+            writer.write_all(chunk).unwrap_or_else(|e| panic!("write: {e}"));
+        }
+        writer.finish().unwrap_or_else(|e| panic!("finish: {e}"));
+    }
+    let oneshot = ScopePath::root(51);
+    assert!(store.put(&oneshot, 1, &payload, &digest).is_ok());
+    assert_eq!(read_all(store, &scope, 1), payload);
+    assert_eq!(read_all(store, &scope, 1), read_all(store, &oneshot, 1));
+}
+
+/// A stream that does not match its expected digest stores nothing.
+pub fn streaming_put_digest_mismatch_stores_nothing<S: ObjectStore>(store: &mut S) {
+    use std::io::Write as _;
+    let scope = ScopePath::root(52);
+    let wrong = sha256(b"other");
+    let mut writer = store
+        .begin_put(&scope, 1, &wrong)
+        .unwrap_or_else(|e| panic!("begin_put: {e}"));
+    writer.write_all(b"actual").unwrap_or_else(|e| panic!("write: {e}"));
+    match writer.finish() {
+        Err(StorageError::Corrupt(_)) => {}
+        other => panic!("digest mismatch at finish: expected Corrupt, got {other:?}"),
+    }
+    assert!(matches!(
+        store.open_read(&scope, 1),
+        Err(StorageError::NotFound(_))
+    ));
+}
+
+/// begin_put into a sealed scope fails with AlreadySealed.
+pub fn streaming_put_into_sealed_scope_is_already_sealed<S: ObjectStore>(store: &mut S) {
+    let scope = ScopePath::root(53);
+    let payload = bytes("sealed-stream");
+    assert!(store.put(&scope, 1, &payload, &sha256(&payload)).is_ok());
+    assert!(store.seal_scope(&scope, &canonical_digest(&[(1, "sealed-stream")]), 1).is_ok());
+    match store.begin_put(&scope, 2, &sha256(b"anything")) {
+        Err(StorageError::AlreadySealed(_)) => {}
+        Ok(_) => panic!("begin_put into sealed scope must fail"),
+        Err(error) => panic!("expected AlreadySealed, got {error:?}"),
+    }
+}
+
+/// begin_put against an existing entity with a different expected digest
+/// fails with Corrupt before any byte is written.
+pub fn streaming_put_conflict_with_existing_is_corrupt_at_begin<S: ObjectStore>(store: &mut S) {
+    let scope = ScopePath::root(54);
+    let payload = bytes("existing");
+    assert!(store.put(&scope, 1, &payload, &sha256(&payload)).is_ok());
+    match store.begin_put(&scope, 1, &sha256(b"different")) {
+        Err(StorageError::Corrupt(_)) => {}
+        Ok(_) => panic!("begin_put with conflicting digest must fail"),
+        Err(error) => panic!("expected Corrupt, got {error:?}"),
+    }
+    assert_eq!(read_all(store, &scope, 1), payload);
+}
+
+/// Re-putting the same digest through a stream is an absorbing no-op.
+pub fn streaming_put_idempotent_absorbing_reput<S: ObjectStore>(store: &mut S) {
+    use std::io::Write as _;
+    let scope = ScopePath::root(55);
+    let payload = bytes("first");
+    assert!(store.put(&scope, 1, &payload, &sha256(&payload)).is_ok());
+    let writer = store
+        .begin_put(&scope, 1, &sha256(&payload))
+        .unwrap_or_else(|e| panic!("begin_put: {e}"));
+    // The absorbing writer accepts the bytes (they are verified by digest,
+    // not stored twice).
+    let mut writer = writer;
+    writer.write_all(&payload).unwrap_or_else(|e| panic!("write: {e}"));
+    writer.finish().unwrap_or_else(|e| panic!("finish: {e}"));
+    assert_eq!(
+        store.list(&scope).unwrap_or_else(|e| panic!("list: {e}")),
+        vec![1]
+    );
+    assert_eq!(read_all(store, &scope, 1), payload);
+}
+
+/// An unfinished stream is invisible to reads and listings.
+pub fn streaming_put_invisible_until_finish<S: ObjectStore>(store: &mut S) {
+    use std::io::Write as _;
+    let scope = ScopePath::root(56);
+    let payload = bytes("pending");
+    let mut writer = store
+        .begin_put(&scope, 1, &sha256(&payload))
+        .unwrap_or_else(|e| panic!("begin_put: {e}"));
+    writer.write_all(b"pend").unwrap_or_else(|e| panic!("write: {e}"));
+    assert!(matches!(
+        store.open_read(&scope, 1),
+        Err(StorageError::NotFound(_))
+    ));
+    assert!(
+        store
+            .list(&scope)
+            .unwrap_or_else(|e| panic!("list: {e}"))
+            .is_empty()
+    );
+    writer.write_all(b"ing").unwrap_or_else(|e| panic!("write: {e}"));
+    writer.finish().unwrap_or_else(|e| panic!("finish: {e}"));
+    assert_eq!(read_all(store, &scope, 1), payload);
 }

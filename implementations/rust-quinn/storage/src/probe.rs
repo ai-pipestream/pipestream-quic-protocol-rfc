@@ -289,6 +289,16 @@ pub struct StoreOnly<S: ObjectStore>(pub S);
 
 impl<S: ObjectStore> ObjectStore for StoreOnly<S> {
     type Reader = S::Reader;
+    type PutWriter = S::PutWriter;
+
+    fn begin_put(
+        &mut self,
+        scope: &ScopePath,
+        entity: crate::EntityId,
+        expected_digest: &layout::Digest32,
+    ) -> Result<Self::PutWriter, StorageError> {
+        self.0.begin_put(scope, entity, expected_digest)
+    }
 
     fn put(
         &mut self,
@@ -364,6 +374,18 @@ impl<J: Journal> Journal for JournalOnly<J> {
 
 impl<J: Journal> ObjectStore for JournalOnly<J> {
     type Reader = io::Cursor<Vec<u8>>;
+    type PutWriter = crate::BufferedPutWriter<
+        Box<dyn FnOnce(&[u8]) -> Result<(), StorageError> + Send>,
+    >;
+
+    fn begin_put(
+        &mut self,
+        _scope: &ScopePath,
+        _entity: crate::EntityId,
+        _expected_digest: &layout::Digest32,
+    ) -> Result<Self::PutWriter, StorageError> {
+        Err(StorageError::failed("object-store role absent"))
+    }
 
     fn put(
         &mut self,

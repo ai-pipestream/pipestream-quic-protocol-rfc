@@ -26,8 +26,7 @@
 
 use crate::layout;
 use crate::{
-    Cursor, Digest32, EntityId, Intent, Journal, MAX_RECORD_BYTES, ObjectStore, ReplayEntry,
-    ScopePath, SealRecord, StorageError,
+    BufferedPutWriter, Cursor, Digest32, EntityId, Intent, Journal, MAX_RECORD_BYTES, ObjectStore, ReplayEntry, ScopePath, SealRecord, StorageError,
 };
 use mongodb::bson::{Binary, Document, doc, spec::BinarySubtype};
 use mongodb::options::{
@@ -54,7 +53,7 @@ pub struct MongoConfig {
 /// durability configuration.
 pub struct MongoStore {
     client: mongodb::Client,
-    runtime: tokio::runtime::Runtime,
+    runtime: std::sync::Arc<tokio::runtime::Runtime>,
     database: String,
 }
 
@@ -109,10 +108,12 @@ impl MongoStore {
     /// Connects and prepares the SPI collections (indexes are created when
     /// absent).
     pub fn open(config: &MongoConfig) -> Result<Self, StorageError> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| StorageError::failed(format!("tokio runtime: {e}")))?;
+        let runtime = std::sync::Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| StorageError::failed(format!("tokio runtime: {e}")))?,
+        );
         let client = runtime
             .block_on(mongodb::Client::with_uri_str(&config.uri))
             .map_err(map_mongo_error)?;
@@ -316,8 +317,71 @@ fn binary_field(doc: &Document, field: &str, scope: &ScopePath) -> Result<Digest
     Ok(digest)
 }
 
+/// Boxed finish closure for the buffering put writer.
+type MongoFinish = Box<dyn FnOnce(&[u8]) -> Result<(), StorageError> + Send>;
+
 impl ObjectStore for MongoStore {
     type Reader = MongoReader;
+    type PutWriter = BufferedPutWriter<MongoFinish>;
+
+    /// Buffers content (MongoDB document inserts are whole-value anyway)
+    /// and inserts at finish, re-checking the seal and conflicts.
+    fn begin_put(
+        &mut self,
+        scope: &ScopePath,
+        entity: EntityId,
+        expected_digest: &Digest32,
+    ) -> Result<Self::PutWriter, StorageError> {
+        layout::check_entity_id(entity)?;
+        if self.find_seal(scope)?.is_some() {
+            return Err(StorageError::already_sealed(format!(
+                "scope {scope} is sealed"
+            )));
+        }
+        let key = doc! { "s": scope.to_path_string(), "e": entity as i64 };
+        let existing = self
+            .block_on(self.objects().find_one(doc! { "_id": &key }))
+            .map_err(map_mongo_error)?;
+        if let Some(doc) = existing {
+            let recorded = doc
+                .get("d")
+                .and_then(bson_bytes)
+                .ok_or_else(|| {
+                    StorageError::corrupt(format!("malformed digest stored for {scope}"))
+                })?;
+            if recorded.as_slice() == expected_digest {
+                return Ok(BufferedPutWriter::new(*expected_digest, Box::new(|_| Ok(()))));
+            }
+            return Err(StorageError::corrupt(format!(
+                "conflicting bytes for entity {entity} in {scope}"
+            )));
+        }
+        let objects = self.objects();
+        let seals = self.seals();
+        let runtime = std::sync::Arc::clone(&self.runtime);
+        let scope = scope.clone();
+        let expected = *expected_digest;
+        let finish: MongoFinish = Box::new(move |bytes: &[u8]| {
+            let seal_found = runtime
+                .block_on(std::future::IntoFuture::into_future(seals.find_one(doc! { "_id": scope.to_path_string() })))
+                .map_err(map_mongo_error)?;
+            if seal_found.is_some() {
+                return Err(StorageError::already_sealed(format!(
+                    "scope {scope} is sealed"
+                )));
+            }
+            let document = doc! {
+                "_id": key,
+                "d": binary(&expected),
+                "p": binary(bytes),
+            };
+            runtime
+                .block_on(std::future::IntoFuture::into_future(objects.insert_one(document)))
+                .map_err(map_mongo_error)?;
+            Ok(())
+        });
+        Ok(BufferedPutWriter::new(expected, finish))
+    }
 
     fn put(
         &mut self,

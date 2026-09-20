@@ -50,6 +50,6 @@ pub use mongo::{MongoConfig, MongoStore};
 pub use postgres::PostgresStore;
 pub use s3::{S3Config, S3Store};
 pub use spi::{
-    Cursor, Intent, Journal, MAX_INTENT_ID_BYTES, MAX_RECORD_BYTES, ObjectStore, ReplayEntry,
-    SealRecord,
+    BufferedPutWriter, Cursor, Intent, Journal, MAX_INTENT_ID_BYTES, MAX_RECORD_BYTES,
+    ObjectStore, PutWriter, ReplayEntry, SealRecord,
 };

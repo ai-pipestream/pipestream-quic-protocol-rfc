@@ -106,6 +106,26 @@ impl ReplayEntry {
     }
 }
 
+/// A streaming write to a not-yet-visible object, returned by
+/// [`ObjectStore::begin_put`].
+///
+/// The object is never observable before [`finish`](PutWriter::finish):
+/// `open_read` and `list` do not see it, and a kill mid-stream leaves only
+/// backend-local scratch (swept on the next open, like any scratch).
+/// Dropping without finishing aborts the write.
+pub trait PutWriter: std::io::Write {
+    /// Verifies the accumulated content against the expected digest given
+    /// to [`ObjectStore::begin_put`], makes the object durable (the same
+    /// durability rule as [`ObjectStore::put`]: success means it survives a
+    /// process kill), and publishes it.
+    ///
+    /// Fails with [`StorageError::Corrupt`] when the written bytes do not
+    /// match the expected digest, and with [`StorageError::AlreadySealed`]
+    /// when the scope sealed after the write began. On failure nothing is
+    /// visible.
+    fn finish(self) -> Result<(), StorageError>;
+}
+
 /// Sealed, immutable entities and scope metadata.
 ///
 /// Objects are write-once and content-verified: [`put`](ObjectStore::put)
@@ -126,6 +146,28 @@ pub trait ObjectStore {
     /// example through [`retire`](ObjectStore::retire), never invalidates a
     /// read opened before the removal.
     type Reader: Read;
+
+    /// A streaming writer for [`begin_put`](ObjectStore::begin_put).
+    type PutWriter: PutWriter;
+
+    /// Begins a streaming put of `entity` in `scope` with
+    /// `expected_digest` — the bounded-memory counterpart of
+    /// [`put`](ObjectStore::put) for writers that receive content in
+    /// chunks.
+    ///
+    /// The same checks as `put` apply up front: a sealed scope fails with
+    /// [`StorageError::AlreadySealed`]; an existing entity with a different
+    /// recorded digest fails with [`StorageError::Corrupt`]; an existing
+    /// entity with the same digest returns an absorbing writer whose
+    /// finish is a no-op success (idempotent re-put). Content is verified
+    /// against `expected_digest` at finish; a mismatched stream stores
+    /// nothing.
+    fn begin_put(
+        &mut self,
+        scope: &ScopePath,
+        entity: EntityId,
+        expected_digest: &Digest32,
+    ) -> Result<Self::PutWriter, StorageError>;
 
     /// Stores `bytes` for `entity` in `scope`.
     ///
@@ -235,4 +277,57 @@ pub trait Journal {
     /// the last seen intent cursor replays exactly the new intents; passing
     /// `Cursor(0)` replays the whole journal.
     fn replay(&self, since: Cursor) -> Result<Vec<ReplayEntry>, StorageError>;
+}
+
+/// A buffering [`PutWriter`] for backends whose native write API takes
+/// whole payloads (Postgres `bytea`, MongoDB documents, a single S3 PUT).
+/// Content is bounded by the backend's own record limits; the digest is
+/// verified before the closure runs, so a mismatched stream never reaches
+/// the backend. Backends with a true streaming primitive (the filesystem's
+/// scratch file) do not use this.
+///
+/// The closure receives the verified bytes and performs the backend write.
+#[derive(Debug)]
+pub struct BufferedPutWriter<F: FnOnce(&[u8]) -> Result<(), StorageError>> {
+    buffer: Vec<u8>,
+    expected: Digest32,
+    finish: Option<F>,
+}
+
+impl<F: FnOnce(&[u8]) -> Result<(), StorageError>> BufferedPutWriter<F> {
+    /// Creates a buffering writer; `finish` runs at [`PutWriter::finish`]
+    /// after the digest check passes.
+    pub fn new(expected: Digest32, finish: F) -> Self {
+        BufferedPutWriter {
+            buffer: Vec::new(),
+            expected,
+            finish: Some(finish),
+        }
+    }
+}
+
+impl<F: FnOnce(&[u8]) -> Result<(), StorageError>> std::io::Write for BufferedPutWriter<F> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.buffer.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<F: FnOnce(&[u8]) -> Result<(), StorageError>> PutWriter for BufferedPutWriter<F> {
+    fn finish(mut self) -> Result<(), StorageError> {
+        if crate::layout::sha256(&self.buffer) != self.expected {
+            return Err(StorageError::corrupt(
+                "streamed content does not match the expected digest",
+            ));
+        }
+        let finish = match self.finish.take() {
+            Some(finish) => finish,
+            None => return Err(StorageError::failed("put writer is closed")),
+        };
+        finish(&self.buffer)
+    }
 }
