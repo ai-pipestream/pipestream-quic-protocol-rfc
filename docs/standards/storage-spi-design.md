@@ -116,6 +116,37 @@ Durability rule for every backend: an operation returns success only when the
 record survives a process kill. Backends document their flush/fsync/ack
 configuration; the kill/resume conformance rows verify it empirically.
 
+## Pinned decisions (binding on both lanes)
+
+The first implementations (Java: `ai.pipestream.quic.storage`; Rust:
+`pipestream-storage`) pinned what this note deliberately left open. Both lanes
+must match these exactly; they are what the cross-language layout vectors test.
+
+1. **Scope address.** A scope path is 1-8 unsigned 32-bit components (root =
+   depth 0), rendered as zero-padded 8-hex characters per level joined by `/`.
+2. **Fanout bucket.** First byte of SHA-256 over the 8-byte big-endian entity
+   id, rendered as 2 lowercase hex chars (256 buckets).
+3. **Canonical scope digest.** SHA-256 over the concatenation, in ascending
+   entity-id order, of `(0x00 || id-be64 || object-sha256-digest)` per entity;
+   the empty scope's digest is SHA-256 of empty input. `seal_scope` records the
+   caller-supplied digest verbatim; `verify_scope` recomputes per-object
+   digests, the entity count, and this canonical digest — any mismatch is
+   Corrupt.
+4. **Idempotency** covers seal/commit/append as well as put: identical re-seal,
+   re-commit, or re-append is a no-op success; the same key with changed bytes
+   is Corrupt. `put` into a sealed scope is AlwaysSealed regardless of bytes
+   (seal checked before digest).
+5. **Retire cursor.** Unsealed scopes remove entities with
+   `id <= retention_cursor`; retiring an absent or empty unsealed scope is
+   NotFound. Journal commits consume a cursor in the global order.
+6. **Filesystem physical formats** (backend-local, but both lanes match them so
+   stores are cross-language readable): entity file =
+   `[8B length][32B sha256][payload]`; scope seal file = `[32B digest][8B
+   count]`; journal record = `[type][cursor][idLen][payloadLen][id][payload]
+   [sha256 checksum]` under magic `PSJSL01`.
+7. **Error mapping.** I/O failures map to Transient; double-writer and
+   use-after-close map to the general failure category.
+
 ## Certification
 
 No backend ships without passing the full acceptance matrix against it. The
