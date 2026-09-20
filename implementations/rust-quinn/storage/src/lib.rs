@@ -29,6 +29,7 @@ pub mod fs;
 pub mod kafka;
 pub mod layout;
 mod memory;
+pub mod mongo;
 pub mod postgres;
 mod s3;
 mod spi;
@@ -38,6 +39,7 @@ pub use fs::FsStore;
 pub use layout::{Digest32, EntityId, ScopePath, sha256};
 pub use kafka::{KafkaConfig, KafkaJournal};
 pub use memory::MemoryStore;
+pub use mongo::{MongoConfig, MongoStore};
 pub use postgres::PostgresStore;
 pub use s3::{S3Config, S3Store};
 pub use spi::{

@@ -284,3 +284,50 @@ impl KafkaContainer {
         }
     }
 }
+
+/// A running standalone MongoDB container.
+#[derive(Debug)]
+pub struct MongoContainer {
+    // Held for its Drop impl: kills the container when this handle drops.
+    _container: Container,
+    /// Connection URI without database, e.g. `mongodb://127.0.0.1:32902`.
+    pub uri: String,
+    db_seq: std::sync::atomic::AtomicU64,
+}
+
+impl MongoContainer {
+    /// Starts a standalone mongo container (no auth; throwaway test use)
+    /// and waits for the port to accept TCP. Returns None when docker is
+    /// unavailable or startup times out.
+    pub fn start() -> Option<Self> {
+        if !docker_available() {
+            return None;
+        }
+        let container = Container::start("mongo:8.2", &[], &[], 27017)?;
+        let port = container.host_port(27017)?;
+        let uri = format!("mongodb://127.0.0.1:{port}");
+        let ready = container.wait_until(Duration::from_secs(60), || {
+            std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok()
+        });
+        if !ready {
+            eprintln!("mongo container did not become ready");
+            return None;
+        }
+        Some(MongoContainer {
+            _container: container,
+            uri,
+            db_seq: std::sync::atomic::AtomicU64::new(0),
+        })
+    }
+
+    /// A store config pointing at a fresh, uniquely named database.
+    pub fn fresh_config(&self) -> pipestream_storage::MongoConfig {
+        let seq = self
+            .db_seq
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        pipestream_storage::MongoConfig {
+            uri: self.uri.clone(),
+            database: format!("spi_{}_{seq}", std::process::id()),
+        }
+    }
+}
