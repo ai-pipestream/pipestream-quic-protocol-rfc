@@ -35,10 +35,12 @@
 
 use crate::layout;
 use crate::{
-    BufferedPutWriter, Cursor, Digest32, EntityId, Intent, Journal, MAX_RECORD_BYTES, ObjectStore, ReplayEntry, ScopePath, SealRecord, StorageError,
+    Cursor, Digest32, EntityId, Intent, Journal, MAX_RECORD_BYTES, ObjectStore, PutWriter,
+    ReplayEntry, ScopePath, SealRecord, StorageError,
 };
 use postgres::{Client, GenericClient, NoTls};
-use std::io::{self, Read};
+use sha2::Digest as _;
+use std::io::{self, Read, Write};
 use std::sync::{Mutex, MutexGuard};
 
 const KIND_INTENT: i16 = 0;
@@ -49,8 +51,16 @@ CREATE TABLE IF NOT EXISTS pipestream_objects (
     scope_path TEXT NOT NULL,
     entity_id BIGINT NOT NULL,
     digest BYTEA NOT NULL CHECK (length(digest) = 32),
+    chunked BOOLEAN NOT NULL DEFAULT FALSE,
     payload BYTEA NOT NULL,
     PRIMARY KEY (scope_path, entity_id)
+);
+CREATE TABLE IF NOT EXISTS pipestream_object_chunks (
+    scope_path TEXT NOT NULL,
+    entity_id BIGINT NOT NULL,
+    chunk_no BIGINT NOT NULL,
+    payload BYTEA NOT NULL,
+    PRIMARY KEY (scope_path, entity_id, chunk_no)
 );
 CREATE TABLE IF NOT EXISTS pipestream_seals (
     scope_path TEXT PRIMARY KEY,
@@ -103,6 +113,14 @@ impl PostgresStore {
         })
     }
 
+    fn client_arc(&self) -> Result<std::sync::Arc<Mutex<Client>>, StorageError> {
+        Ok(std::sync::Arc::clone(
+            self.client
+                .as_ref()
+                .ok_or_else(|| StorageError::failed("postgres store is closed"))?,
+        ))
+    }
+
     fn lock(&self) -> Result<MutexGuard<'_, Client>, StorageError> {
         self.client
             .as_ref()
@@ -112,15 +130,86 @@ impl PostgresStore {
     }
 }
 
-/// PostgreSQL backend reader: a snapshot of the payload taken at open time.
-#[derive(Debug)]
+/// PostgreSQL backend reader. Inline payloads snapshot at open; chunked
+/// payloads stream chunk-by-chunk, so reads stay bounded in memory.
 pub struct PostgresReader {
-    bytes: io::Cursor<Vec<u8>>,
+    inner: PostgresReaderInner,
+}
+
+impl std::fmt::Debug for PostgresReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PostgresReader").finish_non_exhaustive()
+    }
+}
+
+impl PostgresReader {
+    fn inline(bytes: Vec<u8>) -> Self {
+        PostgresReader {
+            inner: PostgresReaderInner::Inline(io::Cursor::new(bytes)),
+        }
+    }
+
+    fn chunked(
+        client: std::sync::Arc<Mutex<Client>>,
+        scope_key: String,
+        entity: EntityId,
+    ) -> Self {
+        PostgresReader {
+            inner: PostgresReaderInner::Chunked {
+                client,
+                scope_key,
+                entity_row: entity_to_row(entity),
+                next_chunk: 0,
+                current: io::Cursor::new(Vec::new()),
+            },
+        }
+    }
+}
+
+enum PostgresReaderInner {
+    Inline(io::Cursor<Vec<u8>>),
+    Chunked {
+        client: std::sync::Arc<Mutex<Client>>,
+        scope_key: String,
+        entity_row: i64,
+        next_chunk: i64,
+        current: io::Cursor<Vec<u8>>,
+    },
 }
 
 impl Read for PostgresReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.bytes.read(buf)
+        match &mut self.inner {
+            PostgresReaderInner::Inline(cursor) => cursor.read(buf),
+            PostgresReaderInner::Chunked {
+                client,
+                scope_key,
+                entity_row,
+                next_chunk,
+                current,
+            } => {
+                if current.position() == current.get_ref().len() as u64 {
+                    let payload: Option<Vec<u8>> = client
+                        .lock()
+                        .map_err(|_| io::Error::other("postgres store lock poisoned"))?
+                        .query_opt(
+                            "SELECT payload FROM pipestream_object_chunks \
+                             WHERE scope_path = $1 AND entity_id = $2 AND chunk_no = $3",
+                            &[scope_key, entity_row, next_chunk],
+                        )
+                        .map_err(|e| io::Error::other(format!("postgres chunk read: {e}")))?
+                        .map(|row| row.get(0));
+                    match payload {
+                        Some(bytes) => {
+                            *next_chunk += 1;
+                            *current = io::Cursor::new(bytes);
+                        }
+                        None => return Ok(0),
+                    }
+                }
+                current.read(buf)
+            }
+        }
     }
 }
 
@@ -149,6 +238,87 @@ fn entity_from_row(value: i64, scope: &ScopePath) -> Result<EntityId, StorageErr
         )));
     }
     Ok(value as u32)
+}
+
+/// Payloads at or above this size are stored as `pipestream_object_chunks`
+/// rows (1 MiB each) instead of one inline `bytea`, keeping writes bounded
+/// in memory. The row's inline payload is empty when chunked.
+pub const CHUNK_BYTES: usize = 1 << 20;
+
+/// Streams an entity's chunks and compares the recomputed digest against
+/// the recorded one, bounded in memory.
+fn verify_chunked_digest(
+    client: &mut impl GenericClient,
+    scope: &ScopePath,
+    entity: EntityId,
+    recorded: &[u8],
+) -> Result<bool, StorageError> {
+    use sha2::Digest as _;
+    let key = path_key(scope);
+    let entity_row = entity_to_row(entity);
+    let mut hasher = sha2::Sha256::new();
+    let mut chunk_no = 0i64;
+    loop {
+        let payload: Option<Vec<u8>> = client
+            .query_opt(
+                "SELECT payload FROM pipestream_object_chunks \
+                 WHERE scope_path = $1 AND entity_id = $2 AND chunk_no = $3",
+                &[&key, &entity_row, &chunk_no],
+            )
+            .map_err(map_pg_error)?
+            .map(|row| row.get(0));
+        match payload {
+            Some(bytes) => {
+                hasher.update(&bytes);
+                chunk_no += 1;
+            }
+            None => break,
+        }
+    }
+    Ok(hasher.finalize().as_slice() == recorded)
+}
+
+/// Inserts one object row, chunking payloads at or above [`CHUNK_BYTES`].
+/// Stale chunk rows for the entity are removed first so a shorter rewrite
+/// leaves nothing behind.
+fn insert_object(
+    tx: &mut impl GenericClient,
+    scope: &ScopePath,
+    entity: EntityId,
+    digest: &Digest32,
+    bytes: &[u8],
+) -> Result<(), StorageError> {
+    let key = path_key(scope);
+    let entity_row = entity_to_row(entity);
+    tx.execute(
+        "DELETE FROM pipestream_object_chunks WHERE scope_path = $1 AND entity_id = $2",
+        &[&key, &entity_row],
+    )
+    .map_err(map_pg_error)?;
+    if bytes.len() < CHUNK_BYTES {
+        tx.execute(
+            "INSERT INTO pipestream_objects (scope_path, entity_id, digest, chunked, payload) \
+             VALUES ($1, $2, $3, FALSE, $4)",
+            &[&key, &entity_row, &&digest[..], &bytes],
+        )
+        .map_err(map_pg_error)?;
+        return Ok(());
+    }
+    tx.execute(
+        "INSERT INTO pipestream_objects (scope_path, entity_id, digest, chunked, payload) \
+         VALUES ($1, $2, $3, TRUE, $4)",
+        &[&key, &entity_row, &&digest[..], &&b""[..]],
+    )
+    .map_err(map_pg_error)?;
+    for (index, chunk) in bytes.chunks(CHUNK_BYTES).enumerate() {
+        tx.execute(
+            "INSERT INTO pipestream_object_chunks (scope_path, entity_id, chunk_no, payload) \
+             VALUES ($1, $2, $3, $4)",
+            &[&key, &entity_row, &(index as i64), &chunk],
+        )
+        .map_err(map_pg_error)?;
+    }
+    Ok(())
 }
 
 /// Fails with [`StorageError::AlreadySealed`] when the scope has a seal row.
@@ -200,15 +370,170 @@ fn read_seal(
     }
 }
 
-/// Boxed finish closure for the buffering put writer.
-type PgFinish = Box<dyn FnOnce(&[u8]) -> Result<(), StorageError> + Send>;
+/// Streaming put writer for the PostgreSQL backend: content is hashed and
+/// flushed as [`CHUNK_BYTES`] rows as it arrives, never buffered whole.
+/// Small streams (under the threshold) land as one inline row at finish.
+pub struct PgChunkWriter {
+    client: std::sync::Arc<Mutex<Client>>,
+    scope_key: String,
+    entity: EntityId,
+    expected: Digest32,
+    buffer: Vec<u8>,
+    chunk_no: i64,
+    hasher: sha2::Sha256,
+    absorbing: bool,
+    done: bool,
+}
+
+impl PgChunkWriter {
+    fn flush_chunk(&mut self) -> Result<(), StorageError> {
+        if self.buffer.len() < CHUNK_BYTES {
+            return Ok(());
+        }
+        let chunk: Vec<u8> = self.buffer.drain(..CHUNK_BYTES).collect();
+        let mut client = self
+            .client
+            .lock()
+            .map_err(|_| StorageError::failed("postgres store lock poisoned"))?;
+        client
+            .execute(
+                "INSERT INTO pipestream_object_chunks (scope_path, entity_id, chunk_no, payload) \
+                 VALUES ($1, $2, $3, $4)",
+                &[&self.scope_key, &entity_to_row(self.entity), &self.chunk_no, &chunk],
+            )
+            .map_err(map_pg_error)?;
+        self.chunk_no += 1;
+        Ok(())
+    }
+
+    fn delete_chunks(&self) {
+        if self.chunk_no == 0 {
+            return;
+        }
+        if let Ok(mut client) = self.client.lock() {
+            let _ = client.execute(
+                "DELETE FROM pipestream_object_chunks WHERE scope_path = $1 AND entity_id = $2",
+                &[&self.scope_key, &entity_to_row(self.entity)],
+            );
+        }
+    }
+}
+
+impl Write for PgChunkWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.absorbing {
+            return Ok(buf.len());
+        }
+        self.hasher.update(buf);
+        self.buffer.extend_from_slice(buf);
+        self.flush_chunk()
+            .map_err(|e| io::Error::other(format!("postgres chunk write: {e}")))?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl PutWriter for PgChunkWriter {
+    fn finish(mut self) -> Result<(), StorageError> {
+        if self.absorbing {
+            return Ok(());
+        }
+        self.done = true;
+        use sha2::Digest as _;
+        let digest = self.hasher.finalize_reset();
+        if digest[..] != self.expected[..] {
+            self.delete_chunks();
+            return Err(StorageError::corrupt(format!(
+                "digest mismatch for entity {} in {}",
+                self.entity, self.scope_key
+            )));
+        }
+        let mut client = self
+            .client
+            .lock()
+            .map_err(|_| StorageError::failed("postgres store lock poisoned"))?;
+        let mut tx = client.transaction().map_err(map_pg_error)?;
+        // Seal and conflict are re-checked: either may have changed mid-stream.
+        require_unsealed(&mut tx, &ScopePath::parse(&self.scope_key)?)?;
+        let existing: Option<Vec<u8>> = tx
+            .query_opt(
+                "SELECT digest FROM pipestream_objects \
+                 WHERE scope_path = $1 AND entity_id = $2",
+                &[&self.scope_key, &entity_to_row(self.entity)],
+            )
+            .map_err(map_pg_error)?
+            .map(|row| row.get(0));
+        match existing {
+            Some(recorded) if recorded.as_slice() == self.expected => {
+                // Identical rewrite: the streamed chunks are redundant.
+                tx.execute(
+                    "DELETE FROM pipestream_object_chunks WHERE scope_path = $1 AND entity_id = $2",
+                    &[&self.scope_key, &entity_to_row(self.entity)],
+                )
+                .map_err(map_pg_error)?;
+                self.chunk_no = 0;
+            }
+            Some(_) => {
+                return Err(StorageError::corrupt(format!(
+                    "conflicting bytes for entity {} in {}",
+                    self.entity, self.scope_key
+                )));
+            }
+            None => {
+                let chunked = self.chunk_no > 0;
+                if chunked {
+                    // The remainder is the final chunk.
+                    if !self.buffer.is_empty() {
+                        tx.execute(
+                            "INSERT INTO pipestream_object_chunks \
+                             (scope_path, entity_id, chunk_no, payload) VALUES ($1, $2, $3, $4)",
+                            &[
+                                &self.scope_key,
+                                &entity_to_row(self.entity),
+                                &self.chunk_no,
+                                &self.buffer,
+                            ],
+                        )
+                        .map_err(map_pg_error)?;
+                    }
+                }
+                tx.execute(
+                    "INSERT INTO pipestream_objects (scope_path, entity_id, digest, chunked, payload) \
+                     VALUES ($1, $2, $3, $4, $5)",
+                    &[
+                        &self.scope_key,
+                        &entity_to_row(self.entity),
+                        &&self.expected[..],
+                        &chunked,
+                        &&if chunked { &b""[..] } else { &self.buffer[..] },
+                    ],
+                )
+                .map_err(map_pg_error)?;
+            }
+        }
+        self.buffer.clear();
+        self.chunk_no = 0;
+        tx.commit().map_err(map_pg_error)
+    }
+}
+
+impl Drop for PgChunkWriter {
+    /// A kill or abort mid-stream deletes the chunks it wrote; the object is
+    /// never visible before finish.
+    fn drop(&mut self) {
+        if !self.done {
+            self.delete_chunks();
+        }
+    }
+}
 
 impl ObjectStore for PostgresStore {
     type Reader = PostgresReader;
-    type PutWriter = BufferedPutWriter<PgFinish>;
+    type PutWriter = PgChunkWriter;
 
-    /// Buffers content (Postgres `bytea` inserts are whole-value anyway)
-    /// and commits in one transaction at finish, re-checking the seal.
     fn begin_put(
         &mut self,
         scope: &ScopePath,
@@ -229,52 +554,40 @@ impl ObjectStore for PostgresStore {
             .map(|row| row.get(0));
         if let Some(recorded) = existing {
             if recorded.as_slice() == expected_digest {
-                return Ok(BufferedPutWriter::new(*expected_digest, Box::new(|_| Ok(()))));
+                return Ok(PgChunkWriter {
+                    client: self.client_arc()?,
+                    scope_key,
+                    entity,
+                    expected: *expected_digest,
+                    buffer: Vec::new(),
+                    chunk_no: 0,
+                    hasher: sha2::Sha256::new(),
+                    absorbing: true,
+                    done: false,
+                });
             }
             return Err(StorageError::corrupt(format!(
                 "conflicting bytes for entity {entity} in {scope}"
             )));
         }
-        let writer_client = std::sync::Arc::clone(
-            self.client
-                .as_ref()
-                .ok_or_else(|| StorageError::failed("postgres store is closed"))?,
-        );
-        let expected = *expected_digest;
-        let entity_row = entity_to_row(entity);
-        let finish: PgFinish = Box::new(move |bytes: &[u8]| {
-            let mut client = writer_client
-                .lock()
-                .map_err(|_| StorageError::failed("postgres store lock poisoned"))?;
-            let mut tx = client.transaction().map_err(map_pg_error)?;
-            require_unsealed(&mut tx, &ScopePath::parse(&scope_key)?)?;
-            let existing: Option<Vec<u8>> = tx
-                .query_opt(
-                    "SELECT digest FROM pipestream_objects \
-                     WHERE scope_path = $1 AND entity_id = $2",
-                    &[&scope_key, &entity_row],
-                )
-                .map_err(map_pg_error)?
-                .map(|row| row.get(0));
-            match existing {
-                Some(recorded) if recorded.as_slice() == expected => {}
-                Some(_) => {
-                    return Err(StorageError::corrupt(format!(
-                        "conflicting bytes for entity {entity}"
-                    )));
-                }
-                None => {
-                    tx.execute(
-                        "INSERT INTO pipestream_objects (scope_path, entity_id, digest, payload) \
-                         VALUES ($1, $2, $3, $4)",
-                        &[&scope_key, &entity_row, &&expected[..], &bytes],
-                    )
-                    .map_err(map_pg_error)?;
-                }
-            }
-            tx.commit().map_err(map_pg_error)
-        });
-        Ok(BufferedPutWriter::new(expected, finish))
+        // Clean slate for the streamed chunks (and any earlier aborted attempt).
+        client
+            .execute(
+                "DELETE FROM pipestream_object_chunks WHERE scope_path = $1 AND entity_id = $2",
+                &[&scope_key, &entity_to_row(entity)],
+            )
+            .map_err(map_pg_error)?;
+        Ok(PgChunkWriter {
+            client: self.client_arc()?,
+            scope_key,
+            entity,
+            expected: *expected_digest,
+            buffer: Vec::new(),
+            chunk_no: 0,
+            hasher: sha2::Sha256::new(),
+            absorbing: false,
+            done: false,
+        })
     }
 
     fn put(
@@ -312,17 +625,7 @@ impl ObjectStore for PostgresStore {
                 )));
             }
             None => {
-                tx.execute(
-                    "INSERT INTO pipestream_objects (scope_path, entity_id, digest, payload) \
-                     VALUES ($1, $2, $3, $4)",
-                    &[
-                        &path_key(scope),
-                        &entity_to_row(entity),
-                        &&digest[..],
-                        &bytes,
-                    ],
-                )
-                .map_err(map_pg_error)?;
+                insert_object(&mut tx, scope, entity, &digest, bytes)?;
             }
         }
         tx.commit().map_err(map_pg_error)
@@ -334,18 +637,27 @@ impl ObjectStore for PostgresStore {
         entity: EntityId,
     ) -> Result<PostgresReader, StorageError> {
         let mut client = self.lock()?;
-        let payload: Option<Vec<u8>> = client
+        let row = client
             .query_opt(
-                "SELECT payload FROM pipestream_objects \
+                "SELECT chunked, payload FROM pipestream_objects \
                  WHERE scope_path = $1 AND entity_id = $2",
                 &[&path_key(scope), &entity_to_row(entity)],
             )
-            .map_err(map_pg_error)?
-            .map(|row| row.get(0));
-        match payload {
-            Some(bytes) => Ok(PostgresReader {
-                bytes: io::Cursor::new(bytes),
-            }),
+            .map_err(map_pg_error)?;
+        match row {
+            Some(row) => {
+                let chunked: bool = row.get(0);
+                if chunked {
+                    Ok(PostgresReader::chunked(
+                        self.client_arc()?,
+                        path_key(scope),
+                        entity,
+                    ))
+                } else {
+                    let bytes: Vec<u8> = row.get(1);
+                    Ok(PostgresReader::inline(bytes))
+                }
+            }
             None => Err(StorageError::not_found(format!(
                 "entity {entity} is absent from scope {scope}"
             ))),
@@ -388,7 +700,7 @@ impl ObjectStore for PostgresStore {
             .ok_or_else(|| StorageError::not_found(format!("scope {scope} has no seal record")))?;
         let rows = client
             .query(
-                "SELECT entity_id, digest, payload FROM pipestream_objects \
+                "SELECT entity_id, digest, chunked, payload FROM pipestream_objects \
                  WHERE scope_path = $1 ORDER BY entity_id",
                 &[&path_key(scope)],
             )
@@ -396,8 +708,14 @@ impl ObjectStore for PostgresStore {
         for row in &rows {
             let entity = entity_from_row(row.get(0), scope)?;
             let recorded: Vec<u8> = row.get(1);
-            let payload: &[u8] = row.get(2);
-            if layout::sha256(payload) != recorded.as_slice() {
+            let chunked: bool = row.get(2);
+            let matches = if chunked {
+                verify_chunked_digest(&mut *client, scope, entity, &recorded)?
+            } else {
+                let payload: &[u8] = row.get(3);
+                layout::sha256(payload) == recorded.as_slice()
+            };
+            if !matches {
                 return Err(StorageError::corrupt(format!(
                     "entity {entity} in {scope} fails its recorded digest"
                 )));
@@ -455,6 +773,11 @@ impl ObjectStore for PostgresStore {
                 )
                 .map_err(map_pg_error)?;
             tx.execute(
+                "DELETE FROM pipestream_object_chunks WHERE scope_path = $1",
+                &[&path_key(scope)],
+            )
+            .map_err(map_pg_error)?;
+            tx.execute(
                 "DELETE FROM pipestream_seals WHERE scope_path = $1",
                 &[&path_key(scope)],
             )
@@ -479,6 +802,12 @@ impl ObjectStore for PostgresStore {
         let removed = client
             .execute(
                 "DELETE FROM pipestream_objects WHERE scope_path = $1 AND entity_id <= $2",
+                &[&path_key(scope), &cursor],
+            )
+            .map_err(map_pg_error)?;
+        client
+            .execute(
+                "DELETE FROM pipestream_object_chunks WHERE scope_path = $1 AND entity_id <= $2",
                 &[&path_key(scope), &cursor],
             )
             .map_err(map_pg_error)?;

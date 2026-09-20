@@ -71,3 +71,64 @@ fn postgres_probe_matches_expected_report_byte_for_byte() {
     let report = probe::run(&mut store, RoleSelection::BOTH, &script).expect("probe");
     assert_eq!(report, expected);
 }
+
+/// Bounded-memory proof for the streaming writer: a 64 MiB payload written
+/// in 64 KiB calls must not grow RSS by more than the payload size.
+#[test]
+fn postgres_streaming_put_stays_bounded_on_large_payloads() {
+    use pipestream_storage::{ObjectStore, PutWriter, ScopePath, sha256};
+    use std::io::Write as _;
+    let Some(pg) = common::PostgresContainer::start() else {
+        eprintln!("docker unavailable: skipping bounded-memory test");
+        return;
+    };
+    let db = pg.fresh_database();
+    let mut store = PostgresStore::open(&db).expect("open store");
+    let scope = ScopePath::root(1);
+    let total = 64usize << 20;
+    let payload: Vec<u8> = (0..total).map(|i| ((i / 4096) % 251) as u8).collect();
+    let digest = sha256(&payload);
+    let rss_before = vm_rss_kib();
+    {
+        let mut writer = store.begin_put(&scope, 1, &digest).expect("begin_put");
+        for chunk in payload.chunks(64 * 1024) {
+            writer.write_all(chunk).expect("write");
+        }
+        writer.finish().expect("finish");
+    }
+    let rss_after = vm_rss_kib();
+    // The whole payload was resident for the digest computation, but the
+    // writer must not retain a second copy: growth well under one payload.
+    let budget = 48 * 1024;
+    assert!(
+        rss_after.saturating_sub(rss_before) < budget,
+        "RSS grew {} KiB (budget {budget} KiB)",
+        rss_after.saturating_sub(rss_before)
+    );
+    // Read back and verify, including the chunked read path.
+    let mut reader = store.open_read(&scope, 1).expect("open_read");
+    let mut back = Vec::with_capacity(total);
+    std::io::Read::read_to_end(&mut reader, &mut back).expect("read");
+    assert_eq!(sha256(&back), digest);
+    let canonical = pipestream_storage::layout::scope_digest(&[(1, sha256(&payload))]).unwrap();
+    store.seal_scope(&scope, &canonical, 1).expect("seal");
+    store.verify_scope(&scope).expect("verify_scope");
+    drop(store);
+    // Reopen: chunked content survives and re-verifies.
+    let store = PostgresStore::open(&db).unwrap();
+    store.verify_scope(&scope).expect("verify after reopen");
+    let mut reader = store.open_read(&scope, 1).unwrap();
+    let mut back = Vec::new();
+    std::io::Read::read_to_end(&mut reader, &mut back).unwrap();
+    assert_eq!(back.len(), total);
+}
+
+fn vm_rss_kib() -> usize {
+    let status = std::fs::read_to_string("/proc/self/status").expect("status");
+    status
+        .lines()
+        .find(|line| line.starts_with("VmRSS:"))
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|value| value.parse().ok())
+        .expect("VmRSS")
+}

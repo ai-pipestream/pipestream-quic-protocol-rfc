@@ -32,10 +32,10 @@
 
 use crate::layout;
 use crate::{
-    BufferedPutWriter, Digest32, EntityId, ObjectStore, ScopePath, SealRecord,
-    StorageError,
+    Digest32, EntityId, ObjectStore, PutWriter, ScopePath, SealRecord, StorageError,
 };
 use aws_sdk_s3::Client;
+use sha2::Digest as _;
 use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_s3::primitives::ByteStream;
 use std::io::{self, Read};
@@ -201,6 +201,64 @@ impl S3Store {
                     Ok(None)
                 } else {
                     Err(map_sdk_error("get object", error))
+                }
+            }
+        }
+    }
+
+    /// GETs a byte range of an object; None when the key does not exist.
+    fn get_object_range(
+        &self,
+        key: &str,
+        start: u64,
+        end_inclusive: u64,
+    ) -> Result<Option<Vec<u8>>, StorageError> {
+        let result = self.block_on(
+            self.client
+                .get_object()
+                .bucket(&self.bucket)
+                .key(key)
+                .range(format!("bytes={start}-{end_inclusive}"))
+                .send(),
+        );
+        match result {
+            Ok(output) => Ok(Some(
+                self.block_on(output.body.collect())
+                    .map_err(|e| StorageError::transient(format!("s3 body read: {e}")))?
+                    .into_bytes()
+                    .to_vec(),
+            )),
+            Err(error) => {
+                if is_not_found(&error) {
+                    Ok(None)
+                } else {
+                    Err(map_sdk_error("get object range", error))
+                }
+            }
+        }
+    }
+
+    /// Opens a streaming GET from `start` to the end of the object.
+    fn get_object_stream(
+        &self,
+        key: &str,
+        start: u64,
+    ) -> Result<Option<aws_sdk_s3::primitives::ByteStream>, StorageError> {
+        let result = self.block_on(
+            self.client
+                .get_object()
+                .bucket(&self.bucket)
+                .key(key)
+                .range(format!("bytes={start}-"))
+                .send(),
+        );
+        match result {
+            Ok(output) => Ok(Some(output.body)),
+            Err(error) => {
+                if is_not_found(&error) {
+                    Ok(None)
+                } else {
+                    Err(map_sdk_error("get object stream", error))
                 }
             }
         }
@@ -390,27 +448,269 @@ fn split_object<'a>(bytes: &'a [u8], scope: &ScopePath) -> Result<(Digest32, &'a
     Ok((digest, &bytes[ENTITY_HEADER_BYTES..]))
 }
 
-/// S3 backend reader: a snapshot of the object bytes taken at open time.
-#[derive(Debug)]
+/// Minimum multipart part size (S3 requires ≥ 5 MiB for all but the last).
+const PART_BYTES: usize = 5 << 20;
+
+/// Streaming put writer for the S3 backend: payloads at or above
+/// [`PART_BYTES`] go through multipart upload (parts flushed as they fill);
+/// smaller streams land as one PUT at finish. Nothing is visible before
+/// finish; aborts remove the upload.
+pub struct S3PutWriter {
+    client: Client,
+    runtime: std::sync::Arc<tokio::runtime::Runtime>,
+    bucket: String,
+    key: String,
+    seal_key: String,
+    scope: ScopePath,
+    expected: Digest32,
+    /// Part 1 is deferred: it carries the entity header whose length field
+    /// is only known at finish, so it uploads last (parts assemble by
+    /// number, not by upload order).
+    part1: Vec<u8>,
+    pending: Vec<u8>,
+    hasher: sha2::Sha256,
+    upload_id: Option<String>,
+    parts: Vec<aws_sdk_s3::types::CompletedPart>,
+    part_no: i32,
+    total: u64,
+    absorbing: bool,
+    done: bool,
+}
+
+impl S3PutWriter {
+    fn upload_part(
+        &self,
+        upload_id: &str,
+        part_no: i32,
+        body: Vec<u8>,
+    ) -> Result<aws_sdk_s3::types::CompletedPart, StorageError> {
+        let output = self
+            .runtime
+            .block_on(
+                self.client
+                    .upload_part()
+                    .bucket(&self.bucket)
+                    .key(&self.key)
+                    .upload_id(upload_id)
+                    .part_number(part_no)
+                    .body(aws_sdk_s3::primitives::ByteStream::from(body))
+                    .send(),
+            )
+            .map_err(|e| map_sdk_error("upload part", e))?;
+        Ok(aws_sdk_s3::types::CompletedPart::builder()
+            .part_number(part_no)
+            .e_tag(output.e_tag().unwrap_or_default())
+            .build())
+    }
+
+    fn flush_pending(&mut self) -> Result<(), StorageError> {
+        if self.pending.len() < PART_BYTES {
+            return Ok(());
+        }
+        let chunk: Vec<u8> = self.pending.drain(..PART_BYTES).collect();
+        if self.part_no == 0 {
+            // The first part is stashed in memory, not uploaded yet.
+            self.part1 = chunk;
+            self.part_no = 1;
+            return Ok(());
+        }
+        let upload_id = match &self.upload_id {
+            Some(id) => id.clone(),
+            None => {
+                let output = self
+                    .runtime
+                    .block_on(
+                        self.client
+                            .create_multipart_upload()
+                            .bucket(&self.bucket)
+                            .key(&self.key)
+                            .send(),
+                    )
+                    .map_err(|e| map_sdk_error("create multipart upload", e))?;
+                let id = output.upload_id().unwrap_or_default().to_string();
+                self.upload_id = Some(id.clone());
+                id
+            }
+        };
+        self.part_no += 1;
+        let part_no = self.part_no;
+        let part = self.upload_part(&upload_id, part_no, chunk)?;
+        self.parts.push(part);
+        Ok(())
+    }
+
+    fn abort(&mut self) {
+        if let Some(upload_id) = self.upload_id.take() {
+            let _ = self.runtime.block_on(
+                self.client
+                    .abort_multipart_upload()
+                    .bucket(&self.bucket)
+                    .key(&self.key)
+                    .upload_id(upload_id)
+                    .send(),
+            );
+        }
+    }
+}
+
+impl std::io::Write for S3PutWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.absorbing {
+            return Ok(buf.len());
+        }
+        if self.part_no == 0 && self.pending.is_empty() && self.total == 0 {
+            // Reserve the entity header (length patched at finish) ahead of
+            // the payload in part 1.
+            self.pending.extend_from_slice(&0u64.to_be_bytes());
+            self.pending.extend_from_slice(&self.expected);
+        }
+        self.hasher.update(buf);
+        self.total += buf.len() as u64;
+        self.pending.extend_from_slice(buf);
+        self.flush_pending()
+            .map_err(|e| io::Error::other(format!("s3 multipart write: {e}")))?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl PutWriter for S3PutWriter {
+    fn finish(mut self) -> Result<(), StorageError> {
+        if self.absorbing {
+            return Ok(());
+        }
+        let digest = self.hasher.finalize_reset();
+        if digest[..] != self.expected[..] {
+            self.abort();
+            return Err(StorageError::corrupt(format!(
+                "digest mismatch for entity in {}",
+                self.scope
+            )));
+        }
+        self.done = true;
+        // Seal is re-checked: a seal may have landed mid-stream.
+        let sealed = self
+            .runtime
+            .block_on(
+                self.client
+                    .get_object()
+                    .bucket(&self.bucket)
+                    .key(&self.seal_key)
+                    .send(),
+            )
+            .map(|_| ())
+            .is_ok();
+        if sealed {
+            self.abort();
+            return Err(StorageError::already_sealed(format!(
+                "scope {} is sealed",
+                self.scope
+            )));
+        }
+        if self.part_no == 0 {
+            // Small stream: the pending buffer already carries the entity
+            // header; patch its length and PUT as-is.
+            self.pending[..8].copy_from_slice(&self.total.to_be_bytes());
+            let bytes = std::mem::take(&mut self.pending);
+            return self
+                .runtime
+                .block_on(
+                    self.client
+                        .put_object()
+                        .bucket(&self.bucket)
+                        .key(&self.key)
+                        .body(aws_sdk_s3::primitives::ByteStream::from(bytes))
+                        .send(),
+                )
+                .map(|_| ())
+                .map_err(|e| map_sdk_error("put object", e));
+        }
+        // Patch part 1's length field now that the total is known, then
+        // upload deferred part 1 and the remainder as the final part.
+        self.part1[..8].copy_from_slice(&self.total.to_be_bytes());
+        let upload_id = self.upload_id.take().expect("multipart started");
+        let part1 = std::mem::take(&mut self.part1);
+        let first = self.upload_part(&upload_id, 1, part1)?;
+        let mut parts = vec![first];
+        if !self.pending.is_empty() {
+            let part_no = self.part_no + 1;
+            let remainder = std::mem::take(&mut self.pending);
+            parts.push(self.upload_part(&upload_id, part_no, remainder)?);
+        }
+        parts.append(&mut self.parts);
+        parts.sort_by_key(|part| part.part_number());
+        let completed = aws_sdk_s3::types::CompletedMultipartUpload::builder()
+            .set_parts(Some(parts))
+            .build();
+        self.runtime
+            .block_on(
+                self.client
+                    .complete_multipart_upload()
+                    .bucket(&self.bucket)
+                    .key(&self.key)
+                    .upload_id(upload_id)
+                    .multipart_upload(completed)
+                    .send(),
+            )
+            .map(|_| ())
+            .map_err(|e| map_sdk_error("complete multipart upload", e))
+    }
+}
+
+impl Drop for S3PutWriter {
+    fn drop(&mut self) {
+        if !self.done {
+            self.abort();
+        }
+    }
+}
+
+/// S3 backend reader: small objects snapshot at open; large objects stream
+/// the body, so reads stay bounded in memory.
 pub struct S3Reader {
-    bytes: io::Cursor<Vec<u8>>,
+    current: io::Cursor<Vec<u8>>,
+    body: Option<aws_sdk_s3::primitives::ByteStream>,
+    runtime: std::sync::Arc<tokio::runtime::Runtime>,
+}
+
+impl std::fmt::Debug for S3Reader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3Reader").finish_non_exhaustive()
+    }
 }
 
 impl Read for S3Reader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.bytes.read(buf)
+        if self.current.position() == self.current.get_ref().len() as u64 {
+            match &mut self.body {
+                Some(body) => {
+                    let next = self.runtime.block_on(body.next());
+                    match next {
+                        Some(Ok(bytes)) => {
+                            self.current = io::Cursor::new(bytes.to_vec());
+                        }
+                        Some(Err(error)) => {
+                            return Err(io::Error::other(format!("s3 body read: {error}")));
+                        }
+                        None => return Ok(0),
+                    }
+                }
+                None => return Ok(0),
+            }
+        }
+        self.current.read(buf)
     }
 }
 
-/// Boxed finish closure for the buffering put writer.
-type S3Finish = Box<dyn FnOnce(&[u8]) -> Result<(), StorageError> + Send>;
-
 impl ObjectStore for S3Store {
     type Reader = S3Reader;
-    type PutWriter = BufferedPutWriter<S3Finish>;
+    type PutWriter = S3PutWriter;
 
-    /// Buffers content, then issues one PUT at finish. (S3 has no partial
-    /// object visibility; a multipart-upload variant is a follow-up.)
+    /// Buffers content (MongoDB document inserts are whole-value anyway)
+    /// and inserts at finish, re-checking the seal and conflicts.
     fn begin_put(
         &mut self,
         scope: &ScopePath,
@@ -427,52 +727,49 @@ impl ObjectStore for S3Store {
         if let Some(existing) = self.get_object(&key)? {
             let (recorded, _) = split_object(&existing, scope)?;
             if recorded == *expected_digest {
-                return Ok(BufferedPutWriter::new(*expected_digest, Box::new(|_| Ok(()))));
+                return Ok(S3PutWriter {
+                    client: self.client.clone(),
+                    runtime: std::sync::Arc::clone(
+                        self.runtime.as_ref().expect("s3 store runtime"),
+                    ),
+                    bucket: self.bucket.clone(),
+                    key,
+                    seal_key: self.seal_key(scope),
+                    scope: scope.clone(),
+                    expected: *expected_digest,
+                    part1: Vec::new(),
+                    pending: Vec::new(),
+                    hasher: sha2::Sha256::new(),
+                    upload_id: None,
+                    parts: Vec::new(),
+                    part_no: 0,
+                    total: 0,
+                    absorbing: true,
+                    done: false,
+                });
             }
             return Err(StorageError::corrupt(format!(
                 "conflicting bytes for entity {entity} in {scope}"
             )));
         }
-        let client = self.client.clone();
-        let runtime = std::sync::Arc::clone(
-            self.runtime.as_ref().expect("s3 store runtime"),
-        );
-        let bucket = self.bucket.clone();
-        let seal_key = self.seal_key(scope);
-        let scope = scope.clone();
-        let expected = *expected_digest;
-        let finish: S3Finish = Box::new(move |bytes: &[u8]| {
-            // Seal is re-checked: a seal may have landed after begin.
-            let sealed = runtime
-                .block_on(
-                    client
-                        .get_object()
-                        .bucket(&bucket)
-                        .key(&seal_key)
-                        .send(),
-                )
-                .map(|_| ())
-                .is_ok();
-            if sealed {
-                return Err(StorageError::already_sealed(format!(
-                    "scope {scope} is sealed"
-                )));
-            }
-            runtime
-                .block_on(
-                    client
-                        .put_object()
-                        .bucket(&bucket)
-                        .key(&key)
-                        .body(aws_sdk_s3::primitives::ByteStream::from(
-                            encode_object(bytes, &expected),
-                        ))
-                        .send(),
-                )
-                .map(|_| ())
-                .map_err(|error| map_sdk_error("put object", error))
-        });
-        Ok(BufferedPutWriter::new(expected, finish))
+        Ok(S3PutWriter {
+            client: self.client.clone(),
+            runtime: std::sync::Arc::clone(self.runtime.as_ref().expect("s3 store runtime")),
+            bucket: self.bucket.clone(),
+            key,
+            seal_key: self.seal_key(scope),
+            scope: scope.clone(),
+            expected: *expected_digest,
+            part1: Vec::new(),
+            pending: Vec::new(),
+            hasher: sha2::Sha256::new(),
+            upload_id: None,
+            parts: Vec::new(),
+            part_no: 0,
+            total: 0,
+            absorbing: false,
+            done: false,
+        })
     }
 
     fn put(
@@ -511,13 +808,23 @@ impl ObjectStore for S3Store {
 
     fn open_read(&self, scope: &ScopePath, entity: EntityId) -> Result<S3Reader, StorageError> {
         let key = self.object_key(scope, entity);
-        match self.get_object(&key)? {
-            Some(bytes) => {
-                let (_, payload) = split_object(&bytes, scope)?;
-                Ok(S3Reader {
-                    bytes: io::Cursor::new(payload.to_vec()),
-                })
-            }
+        // Header validation needs the digest prefix only; the payload body
+        // streams from the byte after it, bounded in memory.
+        let header = self
+            .get_object_range(&key, 0, (ENTITY_HEADER_BYTES - 1) as u64)?
+            .ok_or_else(|| StorageError::not_found(format!("entity {entity} is absent from scope {scope}")))?;
+        if header.len() != ENTITY_HEADER_BYTES {
+            return Err(StorageError::corrupt(format!(
+                "entity header in {scope} is truncated"
+            )));
+        }
+        let body = self.get_object_stream(&key, ENTITY_HEADER_BYTES as u64)?;
+        match body {
+            Some(body) => Ok(S3Reader {
+                current: io::Cursor::new(Vec::new()),
+                body: Some(body),
+                runtime: std::sync::Arc::clone(self.runtime.as_ref().expect("s3 store runtime")),
+            }),
             None => Err(StorageError::not_found(format!(
                 "entity {entity} is absent from scope {scope}"
             ))),

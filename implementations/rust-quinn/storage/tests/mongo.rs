@@ -77,3 +77,44 @@ fn mongo_streaming_put_minimal() {
     std::io::Read::read_to_end(&mut reader, &mut bytes).expect("read");
     assert_eq!(bytes, payload);
 }
+
+
+/// Chunked roundtrip: a payload above the 1 MiB chunk size lands as chunk
+/// documents and streams back through the lazy reader, bounded in memory.
+#[test]
+fn mongo_chunked_streaming_put_roundtrip() {
+    use pipestream_storage::{ObjectStore, PutWriter, ScopePath, sha256};
+    use std::io::Write as _;
+    let Some(mongo) = common::MongoContainer::start() else {
+        eprintln!("docker unavailable: skipping chunked test");
+        return;
+    };
+    let config = mongo.fresh_config();
+    let mut store = open_with_retry(&config);
+    let scope = ScopePath::root(1);
+    let total = 8usize << 20;
+    let payload: Vec<u8> = (0..total).map(|i| ((i / 4096) % 251) as u8).collect();
+    let digest = sha256(&payload);
+    {
+        let mut writer = store.begin_put(&scope, 1, &digest).expect("begin_put");
+        for chunk in payload.chunks(64 * 1024) {
+            writer.write_all(chunk).expect("write");
+        }
+        writer.finish().expect("finish");
+    }
+    let mut reader = store.open_read(&scope, 1).expect("open_read");
+    let mut back = Vec::with_capacity(total);
+    std::io::Read::read_to_end(&mut reader, &mut back).expect("read");
+    assert_eq!(back.len(), total);
+    assert_eq!(sha256(&back), digest);
+    let canonical = pipestream_storage::layout::scope_digest(&[(1, sha256(&payload))]).unwrap();
+    store.seal_scope(&scope, &canonical, 1).expect("seal");
+    store.verify_scope(&scope).expect("verify_scope");
+    drop(store);
+    let store = open_with_retry(&config);
+    store.verify_scope(&scope).expect("verify after reopen");
+    let mut reader = store.open_read(&scope, 1).unwrap();
+    let mut back = Vec::new();
+    std::io::Read::read_to_end(&mut reader, &mut back).unwrap();
+    assert_eq!(back.len(), total);
+}

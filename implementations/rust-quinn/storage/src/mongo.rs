@@ -26,14 +26,21 @@
 
 use crate::layout;
 use crate::{
-    BufferedPutWriter, Cursor, Digest32, EntityId, Intent, Journal, MAX_RECORD_BYTES, ObjectStore, ReplayEntry, ScopePath, SealRecord, StorageError,
+    Cursor, Digest32, EntityId, Intent, Journal, MAX_RECORD_BYTES, ObjectStore, PutWriter,
+    ReplayEntry, ScopePath, SealRecord, StorageError,
 };
 use mongodb::bson::{Binary, Document, doc, spec::BinarySubtype};
+use sha2::Digest as _;
 use mongodb::options::{
     Acknowledgment, FindOneAndUpdateOptions, FindOptions, InsertOneOptions, ReturnDocument,
     WriteConcern,
 };
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
+
+/// Payloads at or above this size are stored as `chunks` documents
+/// (1 MiB each) instead of one inline binary field, keeping writes and
+/// reads bounded in memory.
+const CHUNK_BYTES: usize = 1 << 20;
 
 const KIND_INTENT: i32 = 0;
 const KIND_COMMIT: i32 = 1;
@@ -65,15 +72,62 @@ impl std::fmt::Debug for MongoStore {
     }
 }
 
-/// MongoDB backend reader: a snapshot of the payload taken at open time.
-#[derive(Debug)]
+/// MongoDB backend reader. Inline payloads snapshot at open; chunked
+/// payloads stream chunk-by-chunk, so reads stay bounded in memory.
 pub struct MongoReader {
-    bytes: io::Cursor<Vec<u8>>,
+    inner: MongoReaderInner,
+}
+
+impl std::fmt::Debug for MongoReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MongoReader").finish_non_exhaustive()
+    }
+}
+
+enum MongoReaderInner {
+    Inline(io::Cursor<Vec<u8>>),
+    Chunked {
+        chunks: mongodb::Collection<Document>,
+        runtime: std::sync::Arc<tokio::runtime::Runtime>,
+        scope_key: String,
+        entity: EntityId,
+        next_chunk: i64,
+        current: io::Cursor<Vec<u8>>,
+    },
 }
 
 impl Read for MongoReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.bytes.read(buf)
+        match &mut self.inner {
+            MongoReaderInner::Inline(cursor) => cursor.read(buf),
+            MongoReaderInner::Chunked {
+                chunks,
+                runtime,
+                scope_key,
+                entity,
+                next_chunk,
+                current,
+            } => {
+                if current.position() == current.get_ref().len() as u64 {
+                    let doc = runtime
+                        .block_on(std::future::IntoFuture::into_future(chunks.find_one(
+                            doc! { "_id.s": scope_key.clone(), "_id.e": *entity as i64, "_id.n": *next_chunk },
+                        )))
+                        .map_err(|e| io::Error::other(format!("mongo chunk read: {e}")))?;
+                    match doc {
+                        Some(doc) => {
+                            let payload = doc.get("p").and_then(bson_bytes).ok_or_else(|| {
+                                io::Error::other("mongo chunk payload missing")
+                            })?;
+                            *next_chunk += 1;
+                            *current = io::Cursor::new(payload);
+                        }
+                        None => return Ok(0),
+                    }
+                }
+                current.read(buf)
+            }
+        }
     }
 }
 
@@ -141,6 +195,16 @@ impl MongoStore {
         self.db()
             .collection_with_options::<Document>(
                 "objects",
+                mongodb::options::CollectionOptions::builder()
+                    .write_concern(journaled())
+                    .build(),
+            )
+    }
+
+    fn chunks(&self) -> mongodb::Collection<Document> {
+        self.db()
+            .collection_with_options::<Document>(
+                "chunks",
                 mongodb::options::CollectionOptions::builder()
                     .write_concern(journaled())
                     .build(),
@@ -244,7 +308,8 @@ impl MongoStore {
     }
 
     /// The entities of one scope, ascending by id: `(id, recorded digest,
-    /// payload)`.
+    /// payload)`. Chunked entities are reassembled; used by `list` and
+    /// `verify_scope` (one entity in flight at a time).
     fn scan_entities(
         &self,
         scope: &ScopePath,
@@ -269,12 +334,16 @@ impl MongoStore {
                     StorageError::corrupt(format!("malformed entity id stored for {scope}"))
                 })?;
             let digest = binary_field(&doc, "d", scope)?;
-            let payload = doc
-                .get("p")
-                .and_then(bson_bytes)
-                .ok_or_else(|| {
-                    StorageError::corrupt(format!("malformed payload stored for {scope}"))
-                })?;
+            let chunked = doc.get("c").and_then(|c| c.as_bool()).unwrap_or(false);
+            let payload = if chunked {
+                self.read_chunked(scope, id)?
+            } else {
+                doc.get("p")
+                    .and_then(bson_bytes)
+                    .ok_or_else(|| {
+                        StorageError::corrupt(format!("malformed payload stored for {scope}"))
+                    })?
+            };
             entities.push((id, digest, payload));
         }
         Ok(entities)
@@ -308,6 +377,31 @@ fn bson_bytes(value: &mongodb::bson::Bson) -> Option<Vec<u8>> {
     }
 }
 
+impl MongoStore {
+    /// Reassembles a chunked entity's payload from its chunk documents.
+    fn read_chunked(&self, scope: &ScopePath, entity: EntityId) -> Result<Vec<u8>, StorageError> {
+        let mut payload = Vec::new();
+        let mut chunk_no = 0i64;
+        loop {
+            let doc = self
+                .block_on(std::future::IntoFuture::into_future(self.chunks().find_one(
+                    doc! { "_id.s": scope.to_path_string(), "_id.e": entity as i64, "_id.n": chunk_no },
+                )))
+                .map_err(map_mongo_error)?;
+            match doc {
+                Some(doc) => {
+                    let bytes = doc.get("p").and_then(bson_bytes).ok_or_else(|| {
+                        StorageError::corrupt(format!("malformed chunk stored for {scope}"))
+                    })?;
+                    payload.extend_from_slice(&bytes);
+                    chunk_no += 1;
+                }
+                None => return Ok(payload),
+            }
+        }
+    }
+}
+
 /// Extracts a 32-byte binary field.
 fn binary_field(doc: &Document, field: &str, scope: &ScopePath) -> Result<Digest32, StorageError> {
     let bytes = doc
@@ -320,12 +414,140 @@ fn binary_field(doc: &Document, field: &str, scope: &ScopePath) -> Result<Digest
     Ok(digest)
 }
 
-/// Boxed finish closure for the buffering put writer.
-type MongoFinish = Box<dyn FnOnce(&[u8]) -> Result<(), StorageError> + Send>;
+/// Streaming put writer for the MongoDB backend: content is hashed and
+/// flushed as [`CHUNK_BYTES`] chunk documents as it arrives, never buffered
+/// whole. Small streams land as one inline document at finish.
+pub struct MongoChunkWriter {
+    objects: mongodb::Collection<Document>,
+    chunks: mongodb::Collection<Document>,
+    seals: mongodb::Collection<Document>,
+    runtime: std::sync::Arc<tokio::runtime::Runtime>,
+    scope: ScopePath,
+    entity: EntityId,
+    expected: Digest32,
+    buffer: Vec<u8>,
+    chunk_no: i64,
+    hasher: sha2::Sha256,
+    absorbing: bool,
+    done: bool,
+}
+
+impl MongoChunkWriter {
+    fn flush_chunk(&mut self) -> Result<(), StorageError> {
+        if self.buffer.len() < CHUNK_BYTES {
+            return Ok(());
+        }
+        let chunk: Vec<u8> = self.buffer.drain(..CHUNK_BYTES).collect();
+        let document = doc! {
+            "_id": { "s": self.scope.to_path_string(), "e": self.entity as i64, "n": self.chunk_no },
+            "p": binary(&chunk),
+        };
+        self.runtime
+            .block_on(std::future::IntoFuture::into_future(
+                self.chunks.insert_one(document),
+            ))
+            .map_err(map_mongo_error)?;
+        self.chunk_no += 1;
+        Ok(())
+    }
+
+    fn delete_chunks(&self) {
+        if self.chunk_no == 0 {
+            return;
+        }
+        let _ = self.runtime.block_on(std::future::IntoFuture::into_future(
+            self.chunks.delete_many(
+                doc! { "_id.s": self.scope.to_path_string(), "_id.e": self.entity as i64 },
+            ),
+        ));
+    }
+}
+
+impl Write for MongoChunkWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.absorbing {
+            return Ok(buf.len());
+        }
+        self.hasher.update(buf);
+        self.buffer.extend_from_slice(buf);
+        self.flush_chunk()
+            .map_err(|e| io::Error::other(format!("mongo chunk write: {e}")))?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl PutWriter for MongoChunkWriter {
+    fn finish(mut self) -> Result<(), StorageError> {
+        if self.absorbing {
+            return Ok(());
+        }
+        self.done = true;
+        let digest = self.hasher.finalize_reset();
+        if digest[..] != self.expected[..] {
+            self.delete_chunks();
+            return Err(StorageError::corrupt(format!(
+                "digest mismatch for entity {} in {}",
+                self.entity, self.scope
+            )));
+        }
+        // Seal is re-checked: a seal may have landed mid-stream.
+        let sealed = self
+            .runtime
+            .block_on(std::future::IntoFuture::into_future(
+                self.seals.find_one(doc! { "_id": self.scope.to_path_string() }),
+            ))
+            .map_err(map_mongo_error)?;
+        if sealed.is_some() {
+            self.delete_chunks();
+            return Err(StorageError::already_sealed(format!(
+                "scope {} is sealed",
+                self.scope
+            )));
+        }
+        let chunked = self.chunk_no > 0;
+        if chunked && !self.buffer.is_empty() {
+            let chunk = std::mem::take(&mut self.buffer);
+            let document = doc! {
+                "_id": { "s": self.scope.to_path_string(), "e": self.entity as i64, "n": self.chunk_no },
+                "p": binary(&chunk),
+            };
+            self.runtime
+                .block_on(std::future::IntoFuture::into_future(
+                    self.chunks.insert_one(document),
+                ))
+                .map_err(map_mongo_error)?;
+        }
+        let key = doc! { "s": self.scope.to_path_string(), "e": self.entity as i64 };
+        let document = doc! {
+            "_id": key,
+            "d": binary(&self.expected),
+            "c": chunked,
+            "p": binary(if chunked { &[][..] } else { &self.buffer[..] }),
+        };
+        self.runtime
+            .block_on(std::future::IntoFuture::into_future(
+                self.objects.insert_one(document),
+            ))
+            .map_err(map_mongo_error)?;
+        Ok(())
+    }
+}
+
+impl Drop for MongoChunkWriter {
+    fn drop(&mut self) {
+        if !self.done {
+            self.delete_chunks();
+        }
+    }
+}
 
 impl ObjectStore for MongoStore {
     type Reader = MongoReader;
-    type PutWriter = BufferedPutWriter<MongoFinish>;
+    type PutWriter = MongoChunkWriter;
 
     /// Buffers content (MongoDB document inserts are whole-value anyway)
     /// and inserts at finish, re-checking the seal and conflicts.
@@ -353,39 +575,46 @@ impl ObjectStore for MongoStore {
                     StorageError::corrupt(format!("malformed digest stored for {scope}"))
                 })?;
             if recorded.as_slice() == expected_digest {
-                return Ok(BufferedPutWriter::new(*expected_digest, Box::new(|_| Ok(()))));
+                return Ok(MongoChunkWriter {
+                    objects: self.objects(),
+                    chunks: self.chunks(),
+                    seals: self.seals(),
+                    runtime: std::sync::Arc::clone(
+                        self.runtime.as_ref().expect("mongo store runtime"),
+                    ),
+                    scope: scope.clone(),
+                    entity,
+                    expected: *expected_digest,
+                    buffer: Vec::new(),
+                    chunk_no: 0,
+                    hasher: sha2::Sha256::new(),
+                    absorbing: true,
+                    done: false,
+                });
             }
             return Err(StorageError::corrupt(format!(
                 "conflicting bytes for entity {entity} in {scope}"
             )));
         }
-        let objects = self.objects();
-        let seals = self.seals();
-        let runtime = std::sync::Arc::clone(
-            self.runtime.as_ref().expect("mongo store runtime"),
-        );
-        let scope = scope.clone();
-        let expected = *expected_digest;
-        let finish: MongoFinish = Box::new(move |bytes: &[u8]| {
-            let seal_found = runtime
-                .block_on(std::future::IntoFuture::into_future(seals.find_one(doc! { "_id": scope.to_path_string() })))
-                .map_err(map_mongo_error)?;
-            if seal_found.is_some() {
-                return Err(StorageError::already_sealed(format!(
-                    "scope {scope} is sealed"
-                )));
-            }
-            let document = doc! {
-                "_id": key,
-                "d": binary(&expected),
-                "p": binary(bytes),
-            };
-            runtime
-                .block_on(std::future::IntoFuture::into_future(objects.insert_one(document)))
-                .map_err(map_mongo_error)?;
-            Ok(())
-        });
-        Ok(BufferedPutWriter::new(expected, finish))
+        // Clean slate for streamed chunks (and any earlier aborted attempt).
+        self.block_on(self.chunks().delete_many(
+            doc! { "_id.s": scope.to_path_string(), "_id.e": entity as i64 },
+        ))
+        .map_err(map_mongo_error)?;
+        Ok(MongoChunkWriter {
+            objects: self.objects(),
+            chunks: self.chunks(),
+            seals: self.seals(),
+            runtime: std::sync::Arc::clone(self.runtime.as_ref().expect("mongo store runtime")),
+            scope: scope.clone(),
+            entity,
+            expected: *expected_digest,
+            buffer: Vec::new(),
+            chunk_no: 0,
+            hasher: sha2::Sha256::new(),
+            absorbing: false,
+            done: false,
+        })
     }
 
     fn put(
@@ -427,10 +656,17 @@ impl ObjectStore for MongoStore {
                 "conflicting bytes for entity {entity} in {scope}"
             )));
         }
+        self.block_on(
+            self.chunks()
+                .delete_many(doc! { "_id.s": scope.to_path_string(), "_id.e": entity as i64 }),
+        )
+        .map_err(map_mongo_error)?;
+        let chunked = bytes.len() >= CHUNK_BYTES;
         let document = doc! {
             "_id": key,
             "d": binary(&digest),
-            "p": binary(bytes),
+            "c": chunked,
+            "p": binary(if chunked { &[][..] } else { bytes }),
         };
         self.block_on(
             self.objects()
@@ -438,6 +674,20 @@ impl ObjectStore for MongoStore {
                 .with_options(InsertOneOptions::default()),
         )
         .map_err(map_mongo_error)?;
+        if chunked {
+            let docs: Vec<Document> = bytes
+                .chunks(CHUNK_BYTES)
+                .enumerate()
+                .map(|(index, chunk)| {
+                    doc! {
+                        "_id": { "s": scope.to_path_string(), "e": entity as i64, "n": index as i64 },
+                        "p": binary(chunk),
+                    }
+                })
+                .collect();
+            self.block_on(self.chunks().insert_many(docs))
+                .map_err(map_mongo_error)?;
+        }
         Ok(())
     }
 
@@ -448,15 +698,31 @@ impl ObjectStore for MongoStore {
             .map_err(map_mongo_error)?;
         match found {
             Some(doc) => {
-                let payload = doc
-                    .get("p")
-                    .and_then(bson_bytes)
-                    .ok_or_else(|| {
-                        StorageError::corrupt(format!("malformed payload stored for {scope}"))
-                    })?;
-                Ok(MongoReader {
-                    bytes: io::Cursor::new(payload),
-                })
+                let chunked = doc.get("c").and_then(|c| c.as_bool()).unwrap_or(false);
+                if chunked {
+                    Ok(MongoReader {
+                        inner: MongoReaderInner::Chunked {
+                            chunks: self.chunks(),
+                            runtime: std::sync::Arc::clone(
+                                self.runtime.as_ref().expect("mongo store runtime"),
+                            ),
+                            scope_key: scope.to_path_string(),
+                            entity,
+                            next_chunk: 0,
+                            current: io::Cursor::new(Vec::new()),
+                        },
+                    })
+                } else {
+                    let payload = doc
+                        .get("p")
+                        .and_then(bson_bytes)
+                        .ok_or_else(|| {
+                            StorageError::corrupt(format!("malformed payload stored for {scope}"))
+                        })?;
+                    Ok(MongoReader {
+                        inner: MongoReaderInner::Inline(io::Cursor::new(payload)),
+                    })
+                }
             }
             None => Err(StorageError::not_found(format!(
                 "entity {entity} is absent from scope {scope}"
@@ -558,6 +824,8 @@ impl ObjectStore for MongoStore {
                 .block_on(self.objects().delete_many(doc! { "_id.s": &key }))
                 .map_err(map_mongo_error)?
                 .deleted_count;
+            self.block_on(self.chunks().delete_many(doc! { "_id.s": &key }))
+                .map_err(map_mongo_error)?;
             self.block_on(self.seals().delete_one(doc! { "_id": &key }))
                 .map_err(map_mongo_error)?;
             return Ok(removed);
@@ -579,6 +847,11 @@ impl ObjectStore for MongoStore {
             )
             .map_err(map_mongo_error)?
             .deleted_count;
+        self.block_on(
+            self.chunks()
+                .delete_many(doc! { "_id.s": &key, "_id.e": { "$lte": cursor } }),
+        )
+        .map_err(map_mongo_error)?;
         Ok(removed)
     }
 }
