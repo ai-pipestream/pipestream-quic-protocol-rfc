@@ -1332,7 +1332,7 @@ public final class DurableHost implements AutoCloseable {
             SpiPlaneStores.open(
                 configuration.spiBackend(), root.resolve(SPI_OBJECTS), spiEnvironment);
       } catch (StorageException | RuntimeException failure) {
-        throw new IOException("SPI payload backend open failed", failure);
+        throw new IOException("SPI payload backend open failed: " + failure, failure);
       }
     }
     try {
@@ -1443,7 +1443,7 @@ public final class DurableHost implements AutoCloseable {
         } catch (SQLException cleanup) {
           // close best effort; the refusal below is the primary failure
         }
-        throw new IOException("SPI payload backend open failed", failure);
+        throw new IOException("SPI payload backend open failed: " + failure, failure);
       }
     }
     try {

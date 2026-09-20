@@ -40,9 +40,20 @@ public final class V2Main {
       System.err.println(
           failure instanceof ProtocolError error
               ? error.code() + ": " + error.getMessage()
-              : failure.getMessage() == null ? failure.toString() : failure.getMessage());
+              : causeChain(failure));
       System.exit(1);
     }
+  }
+
+  /** One line per failure in the causal chain, so a wrapped backend failure names its root. */
+  private static String causeChain(Throwable failure) {
+    StringBuilder out = new StringBuilder();
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (out.length() > 0) out.append(" caused by: ");
+      String message = cause.getMessage();
+      out.append(message == null ? cause.toString() : cause.getClass().getSimpleName() + ": " + message);
+    }
+    return out.toString();
   }
 
   /**

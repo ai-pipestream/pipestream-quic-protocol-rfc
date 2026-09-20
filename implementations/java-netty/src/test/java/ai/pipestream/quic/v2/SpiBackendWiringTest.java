@@ -180,6 +180,62 @@ final class SpiBackendWiringTest {
   }
 
   @Test
+  void s3InitThroughV2MainFlagsAcceptsSchemelessEndpoints() throws Exception {
+    MinioDocker minio = MinioDocker.shared();
+    try {
+      String prefix = "backend-" + UUID.randomUUID() + "/";
+      // Harnesses pass endpoints as host:port without a scheme; the wiring
+      // must normalize (MinIO-style endpoints are HTTP) instead of failing
+      // inside the SDK with an opaque wrapper.
+      String schemeless =
+          "127.0.0.1:" + minio.endpoint().getPort() + minio.endpoint().getPath();
+      Map<String, String> options =
+          Map.of(
+              "authority", "issuer-a",
+              "result-authority", "localhost:7443",
+              "object-plane", "spi",
+              "spi-backend", "s3",
+              "spi-s3-endpoint", schemeless,
+              "spi-s3-bucket", minio.bucket(),
+              "spi-s3-access-key", minio.accessKey(),
+              "spi-s3-secret-key", minio.secretKey());
+      DurableHost.Configuration configuration = V2Main.configuration(options);
+      assertEquals(schemeless, configuration.spiBackend().endpoint(), "raw coordinate is recorded");
+      Map<String, String> environment =
+          V2Main.spiEnvironment(
+              new java.util.HashMap<>(
+                  Map.of(
+                      "spi-s3-access-key", minio.accessKey(),
+                      "spi-s3-secret-key", minio.secretKey(),
+                      "spi-s3-region", "us-east-1",
+                      "spi-s3-prefix", prefix)));
+      Path root = directory.resolve("s3-flags-host");
+      try (DurableHost host =
+          DurableHost.initialize(
+              root,
+              configuration,
+              ReferenceApplications.all(),
+              DurableHost.OwnerPolicy.fromPrincipals(Map::of, false),
+              DurableHost.UtcClock.system(true),
+              environment)) {
+        assertEquals("s3", host.configuration().spiBackend().kind());
+      }
+      try (DurableHost reopened =
+          DurableHost.open(
+              root,
+              configuration,
+              ReferenceApplications.all(),
+              DurableHost.OwnerPolicy.fromPrincipals(Map::of, false),
+              DurableHost.UtcClock.system(true),
+              environment)) {
+        assertEquals("s3", reopened.configuration().spiBackend().kind());
+      }
+    } finally {
+      MinioDocker.releaseShared();
+    }
+  }
+
+  @Test
   void nonFilesystemSelectionRequiresSpiPlaneAndCredentials() {
     DurableHost.SpiObjectBackend missing =
         new DurableHost.SpiObjectBackend("postgres", "jdbc:postgresql://127.0.0.1:1/x", null);
