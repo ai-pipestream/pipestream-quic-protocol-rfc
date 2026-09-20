@@ -229,7 +229,7 @@ final class AdversarialFsLayoutTest {
     }
   }
 
-  @Test void forgedEightHexFileAtScopeLevelIsListedButVerificationMisclassifiesIt() throws Exception {
+  @Test void forgedEightHexFileAtScopeLevelIsCorruptNotRetryable() throws Exception {
     var scope = ScopePath.root(0xc007);
     byte[] payload = bytes("clean");
     try (ObjectStore store = FileObjectStore.open(directory)) {
@@ -237,17 +237,16 @@ final class AdversarialFsLayoutTest {
       store.sealScope(scope, StoreLayout.scopeDigest(
           List.of(new StoreLayout.EntityDigest(1, digest(payload)))), 1);
     }
-    // list() names files by their 8-hex object name without rehashing, so the forged
-    // id appears in the audit listing; verifyScope then looks for that id under its
-    // fanout bucket, finds nothing, and maps the miss to retryable TRANSIENT instead
-    // of CORRUPT — pinned here and listed as a bug (the file is on-disk corruption,
-    // not an I/O failure, and a retry loop would spin forever).
+    // Fixed behavior: an 8-hex regular file directly at scope level is a shape
+    // violation (entities live inside their fanout bucket), so every
+    // enumeration of the scope reports CORRUPT instead of listing the forged
+    // id or mapping the miss to retryable TRANSIENT.
     Path leaf = entityFile(directory, scope, 1).getParent().getParent();
     Files.write(leaf.resolve("deadbeef"), bytes("not an entity file"));
     try (ObjectStore store = FileObjectStore.open(directory)) {
-      assertEquals(List.of(1L, 0xdeadbeefL), store.list(scope));
-      StorageException failure = assertThrows(StorageException.class, () -> store.verifyScope(scope));
-      assertEquals(StorageException.Kind.TRANSIENT, failure.kind(), failure.getMessage());
+      assertStorage(StorageException.Kind.CORRUPT, () -> store.list(scope));
+      assertStorage(StorageException.Kind.CORRUPT, () -> store.verifyScope(scope));
+      assertStorage(StorageException.Kind.CORRUPT, () -> store.listScopes());
     }
   }
 
