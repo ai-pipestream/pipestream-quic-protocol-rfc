@@ -124,14 +124,24 @@ must match these exactly; they are what the cross-language layout vectors test.
 
 1. **Scope address.** A scope path is 1-8 unsigned 32-bit components (root =
    depth 0), rendered as zero-padded 8-hex characters per level joined by `/`.
-2. **Fanout bucket.** First byte of SHA-256 over the 8-byte big-endian entity
-   id, rendered as 2 lowercase hex chars (256 buckets).
-3. **Canonical scope digest.** SHA-256 over the concatenation, in ascending
-   entity-id order, of `(0x00 || id-be64 || object-sha256-digest)` per entity;
-   the empty scope's digest is SHA-256 of empty input. `seal_scope` records the
-   caller-supplied digest verbatim; `verify_scope` recomputes per-object
-   digests, the entity count, and this canonical digest — any mismatch is
-   Corrupt.
+   Scope IDs and entity IDs are unsigned 32-bit integers — Section 6 fixes both
+   at 32 bits on the wire, so the storage layer adopts the same bound.
+2. **Fanout bucket.** First byte of SHA-256 over the 4-octet big-endian entity
+   id, rendered as 2 lowercase hex chars (256 buckets). Entity object names are
+   the id as zero-padded 8-hex characters.
+3. **Seal and verify.** `seal_scope` records the caller-supplied SCOPE_DIGEST
+   verbatim — the store cannot recompute it, because the protocol digest
+   (Section 9.5) covers entity statuses the store does not hold.
+   `verify_scope` verifies what the store owns: every object's payload is
+   rehashed against the digest recorded at `put` time and the live entity
+   count is compared against the sealed count; any mismatch is Corrupt. On
+   success the recorded seal record is returned so the protocol layer compares
+   the SCOPE_DIGEST against its own expectation. Both lanes additionally ship
+   a shared helper computing a canonical *content* digest — SHA-256 over the
+   concatenation, in ascending entity-id order, of `(0x00 || id-be32 ||
+   object-sha256-digest)` per entity, empty scope = SHA-256 of empty input —
+   which callers may use as the seal digest and which the cross-language
+   vectors pin byte-for-byte.
 4. **Idempotency** covers seal/commit/append as well as put: identical re-seal,
    re-commit, or re-append is a no-op success; the same key with changed bytes
    is Corrupt. `put` into a sealed scope is AlwaysSealed regardless of bytes
