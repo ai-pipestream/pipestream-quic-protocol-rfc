@@ -34,6 +34,7 @@ import java.util.UUID;
  */
 final class OutputStore {
   private static final byte[] MAGIC = {'P', 'S', 'J', 'V', '2', 'O', '0', '1'};
+  private static final byte[] SPI_MAGIC = {'P', 'S', 'J', 'V', '2', 'O', 'S', 'P'};
   private static final int PREFIX = 12;
   private static final int CHECKSUM = 32;
   private static final int METADATA_LIMIT = 8192;
@@ -345,12 +346,12 @@ final class OutputStore {
     String reference = name(funding.reference(), index);
     Path path = installed(reference);
     if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return Optional.empty();
-    Metadata metadata = inspect(path, null, false).metadata();
+    Metadata metadata = inspectInstalled(path, null, false).metadata();
     validateFunding(metadata, funding);
     if (!metadata.identity().equals(expected))
       throw conflict("output belongs to another worker identity");
     // Do not hash an untrusted declared body until its complete intent matches funded bounds.
-    inspect(path, metadata, true);
+    inspectInstalled(path, metadata, true);
     force(path);
     sync(root.resolve("outputs"));
     return Optional.of(new Stored(reference, metadata));
@@ -373,7 +374,7 @@ final class OutputStore {
     InputStore.Reservation funding = funding(context, header, lease);
     Identity identity = identity(context, header, lease, expected.index());
     String reference = name(funding.reference(), expected.index());
-    Metadata metadata = inspect(installed(reference), null, false).metadata();
+    Metadata metadata = inspectInstalled(installed(reference), null, false).metadata();
     validateFunding(metadata, funding);
     if (!metadata.identity().equals(identity)
         || metadata.length() != expected.length()
@@ -438,7 +439,7 @@ final class OutputStore {
           if (!path.getFileName().toString().startsWith(prefix)) continue;
           Slot slot = parse(path.getFileName().toString());
           Metadata value =
-              (complete ? inspect(path, null, false) : inspectPending(path)).metadata();
+              (complete ? inspectInstalled(path, null, false) : inspectPending(path)).metadata();
           validateFunding(value, funding);
           if (slot.index() != value.identity().index())
             throw corrupt("orphan filename differs from retained output identity");
@@ -460,7 +461,7 @@ final class OutputStore {
     // This also validates aggregate physical geometry before hashing any installed payload.
     auditFunding(funding);
     for (ReclaimTarget target : targets)
-      if (target.installed()) inspect(target.path(), target.metadata(), true);
+      if (target.installed()) inspectInstalled(target.path(), target.metadata(), true);
     owner.outputPhase(InputStore.Phase.OUTPUT_RECLAIM_AUDITED);
     pendingSyncRequired = true;
     outputsSyncRequired = true;
@@ -473,6 +474,8 @@ final class OutputStore {
     for (ReclaimTarget target : targets) {
       if (!target.installed()) continue;
       Files.delete(target.path());
+      // Sidecar first, payload second: a kill between leaves only a swept orphan payload.
+      if (owner.spiPlane()) retireSpiOutput(target.path());
       owner.outputPhase(InputStore.Phase.OUTPUT_RECLAIM_INSTALLED_REMOVED);
     }
     syncOutputs();
@@ -545,7 +548,8 @@ final class OutputStore {
         if (retained.isEmpty() || !job.outputsLive())
           throw corrupt("output name remains without live funding");
         boolean complete = path.equals(target);
-        Metadata value = (complete ? inspect(path, null, false) : inspectPending(path)).metadata();
+        Metadata value =
+            (complete ? inspectInstalled(path, null, false) : inspectPending(path)).metadata();
         validateFunding(value, retained.get());
         Identity identity = value.identity();
         if (identity.index() != index
@@ -579,7 +583,7 @@ final class OutputStore {
     // Verify bounded aggregate geometry before hashing any retained body.
     if (retained.isPresent()) auditFunding(retained.get());
     for (ReclaimTarget target : targets)
-      if (target.installed()) inspect(target.path(), target.metadata(), true);
+      if (target.installed()) inspectInstalled(target.path(), target.metadata(), true);
     return targets;
   }
 
@@ -607,10 +611,198 @@ final class OutputStore {
     for (ReclaimTarget target : targets) {
       if (!target.installed()) continue;
       Files.delete(target.path());
+      // Sidecar first, payload second: a kill between leaves only a swept orphan payload.
+      if (owner.spiPlane()) retireSpiOutput(target.path());
       owner.outputPhase(InputStore.Phase.OUTPUT_RETENTION_INSTALLED_REMOVED);
     }
     syncOutputs();
     owner.outputPhase(InputStore.Phase.OUTPUT_RETENTION_NAMES_SYNCED);
+  }
+
+  // --- SPI object plane (adoption plan stage 4) --------------------------
+
+  /**
+   * Installed-output inspection dispatch: on the SPI plane the installed name
+   * is a metadata sidecar and payload bytes live in the backend under a
+   * scope derived from the name; {@code hash} audits the payload through the
+   * backend. The returned {@link Inspected#size()} stays the logical v2
+   * equivalent (header plus payload), keeping funded-geometry accounting
+   * plane-neutral.
+   */
+  private Inspected inspectInstalled(Path path, Metadata expected, boolean hash)
+      throws IOException {
+    return owner.spiPlane() ? inspectSidecar(path, expected, hash) : inspect(path, expected, hash);
+  }
+
+  /**
+   * Parses one SPI sidecar: SPI magic, the same metadata CBOR and checksum as
+   * the v2 output, no payload bytes. With {@code verifyPayload}, the retained
+   * payload is rehashed through the backend against the metadata digest.
+   */
+  private Inspected inspectSidecar(Path path, Metadata expected, boolean verifyPayload)
+      throws IOException {
+    if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+      throw corrupt("output sidecar is not a regular file");
+    }
+    try (FileChannel input = FileChannel.open(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+      try {
+        ByteBuffer prefix = ByteBuffer.allocate(PREFIX);
+        readAll(input, prefix);
+        prefix.flip();
+        byte[] magic = new byte[8];
+        prefix.get(magic);
+        int count = prefix.getInt();
+        if (!Arrays.equals(magic, SPI_MAGIC) || count < 1 || count > METADATA_LIMIT) {
+          throw corrupt("invalid output sidecar header");
+        }
+        byte[] encoded = new byte[count];
+        readAll(input, ByteBuffer.wrap(encoded));
+        byte[] checksum = new byte[CHECKSUM];
+        readAll(input, ByteBuffer.wrap(checksum));
+        if (!MessageDigest.isEqual(checksum, Commitments.sha256().digest(encoded))) {
+          throw corrupt("output sidecar metadata checksum differs");
+        }
+        Metadata metadata = decode(encoded);
+        if (expected != null && !metadata.equals(expected)) throw corrupt("output sidecar differs");
+        long headerSize = PREFIX + CHECKSUM + (long) count;
+        if (input.size() != headerSize) throw corrupt("output sidecar geometry differs");
+        if (verifyPayload) {
+          owner.spiVerifyPayload(
+              owner.spiScopeFor(path), metadata.sha256().bytes());
+        }
+        return new Inspected(metadata, headerSize, add(headerSize, metadata.length()));
+      } catch (ProtocolError failure) {
+        throw corrupt("invalid retained output sidecar", failure);
+      }
+    }
+  }
+
+  private Metadata decode(byte[] encoded) throws IOException {
+    try {
+      Cbor.Reader in = new Cbor.Reader(encoded, METADATA_LIMIT);
+      in.exact(13);
+      UUID store = uuid(in.bytes(16)), authority = uuid(in.bytes(16));
+      Commitments.Context context = new Commitments.Context(in.text(128), in.text(128), in.number());
+      InputHeader header = RecordCodec.inputHeader(in);
+      Identity identity =
+          new Identity(
+              store,
+              authority,
+              context,
+              header,
+              in.number(),
+              in.number(),
+              (int) Checks.range(in.number(), 0, 255));
+      Metadata metadata =
+          new Metadata(identity, in.number(), in.text(128), in.number(), new Digest(in.bytes(32)));
+      in.end();
+      if (!identity.store().equals(owner.identity())
+          || !owner.authorityIdentity().filter(identity.authority()::equals).isPresent()
+          || !Arrays.equals(encoded, encode(metadata))) {
+        throw corrupt("output sidecar identity differs");
+      }
+      return metadata;
+    } catch (ProtocolError failure) {
+      throw corrupt("invalid output sidecar metadata", failure);
+    }
+  }
+
+  /** Writes one sidecar durably; reached after the payload is durable in the backend. */
+  private void writeSidecar(Path target, Metadata metadata) throws IOException {
+    byte[] encoded = encode(metadata);
+    try (FileChannel output = create(target)) {
+      writeAll(output, ByteBuffer.allocate(PREFIX).put(SPI_MAGIC).putInt(encoded.length).flip());
+      writeAll(output, ByteBuffer.wrap(encoded));
+      writeAll(output, ByteBuffer.wrap(Commitments.sha256().digest(encoded)));
+      output.force(true);
+    }
+  }
+
+  /** Reads the staged payload for one bounded copy into the backend put. */
+  private static byte[] readStagingPayload(FileChannel staging, long offset, long length)
+      throws IOException {
+    if (length > Integer.MAX_VALUE) throw ProtocolError.limit("output exceeds local object ceiling");
+    if (staging.size() != add(offset, length)) throw corrupt("output staging length differs");
+    staging.position(offset);
+    byte[] payload = new byte[(int) length];
+    readAll(staging, ByteBuffer.wrap(payload));
+    return payload;
+  }
+
+  /** Retires one installed output's payload scope; called after its sidecar was deleted. */
+  private void retireSpiOutput(Path installedSidecar) throws IOException {
+    owner.spiRetireScope(owner.spiScopeFor(installedSidecar));
+  }
+
+  /** Payload-only output reader over the SPI backend; verification completes at end of stream. */
+  private final class SpiOutputReader extends InputStream {
+    private final InputStream input;
+    private final String funding;
+    private final ReaderCredit credit;
+    private final MessageDigest digest = Commitments.sha256();
+    private final byte[] expected;
+    private long remaining;
+    private boolean verified;
+    private boolean ended;
+
+    private SpiOutputReader(
+        InputStream input, long length, String funding, ReaderCredit credit, byte[] expected) {
+      this.input = input;
+      this.funding = funding;
+      this.credit = credit;
+      this.expected = expected;
+      this.remaining = length;
+    }
+
+    @Override
+    public int read() throws IOException {
+      byte[] one = new byte[1];
+      return read(one, 0, 1) == -1 ? -1 : Byte.toUnsignedInt(one[0]);
+    }
+
+    @Override
+    public synchronized int read(byte[] buffer, int offset, int length) throws IOException {
+      Objects.checkFromIndexSize(offset, length, buffer.length);
+      if (ended) throw new IOException("output reader is closed");
+      if (length == 0) return 0;
+      if (remaining == 0 && verified) return -1;
+      int limit = remaining > 0 ? (int) Math.min(length, remaining) : 1;
+      int count = input.read(buffer, offset, limit);
+      if (count < 0) {
+        if (remaining > 0) throw new EOFException("retained output shortened during read");
+        verify();
+        return -1;
+      }
+      if (remaining == 0) throw corrupt("retained output grew during read");
+      digest.update(buffer, offset, count);
+      remaining -= count;
+      if (remaining == 0) verify();
+      return count;
+    }
+
+    private void verify() throws IOException {
+      if (verified) return;
+      verified = true;
+      if (!MessageDigest.isEqual(digest.digest(), expected)) {
+        throw corrupt("retained output payload digest differs");
+      }
+    }
+
+    @Override
+    public synchronized void close() throws IOException {
+      if (ended) return;
+      IOException failure = null;
+      try {
+        input.close();
+      } catch (IOException close) {
+        failure = close;
+      }
+      synchronized (owner) {
+        returnReader(funding, credit);
+      }
+      ended = true;
+      if (failure != null) throw failure;
+    }
   }
 
   /** One streaming output. Close releases its handle or returns its borrowed callback credit. */
@@ -700,12 +892,16 @@ final class OutputStore {
           InputStore.Reservation funding = owner.outputFunding(parse(reference).funding());
           validateFunding(complete, funding);
           Path target = installed(reference);
-          try {
-            Files.createLink(target, pending(reference));
-          } catch (FileAlreadyExistsException duplicate) {
-            throw conflict("immutable output slot was already installed");
+          if (owner.spiPlane()) {
+            installSpi(target, complete);
+          } else {
+            try {
+              Files.createLink(target, pending(reference));
+            } catch (FileAlreadyExistsException duplicate) {
+              throw conflict("immutable output slot was already installed");
+            }
+            owner.outputPhase(InputStore.Phase.OUTPUT_LINKED);
           }
-          owner.outputPhase(InputStore.Phase.OUTPUT_LINKED);
           sync(root.resolve("outputs"));
           owner.outputPhase(InputStore.Phase.OUTPUT_SYNCED);
           Stored result = new Stored(reference, complete);
@@ -716,6 +912,22 @@ final class OutputStore {
         abandon(failure);
         throw failure;
       }
+    }
+
+    /**
+     * Install the validated output on the SPI plane: the bounded payload is
+     * put once with its verified digest, then the metadata sidecar is
+     * written. A kill between the put and the sidecar leaves a swept orphan
+     * payload, exactly like the input plane.
+     */
+    private void installSpi(Path target, Metadata complete) throws IOException {
+      if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+        throw conflict("immutable output slot was already installed");
+      }
+      byte[] payload = readStagingPayload(channel, offset, complete.length());
+      owner.spiPutPayload(owner.spiScopeFor(target), payload, complete.sha256().bytes());
+      owner.outputPhase(InputStore.Phase.OUTPUT_LINKED);
+      writeSidecar(target, complete);
     }
 
     private void abandon(Exception failure) {
@@ -882,6 +1094,16 @@ final class OutputStore {
         validateFunding(metadata, owner.outputFunding(funding));
         if (credit == null) pin(funding);
         else credit.borrow(OutputStore.this, funding);
+        if (owner.spiPlane()) {
+          try {
+            InputStream payload = owner.spiOpenPayload(owner.spiScopeFor(installed(reference)));
+            return new SpiOutputReader(
+                payload, metadata.length(), funding, credit, metadata.sha256().bytes());
+          } catch (IOException | RuntimeException failure) {
+            returnReader(funding, credit);
+            throw failure;
+          }
+        }
         FileChannel input = null;
         try {
           input =
@@ -976,7 +1198,7 @@ final class OutputStore {
               || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
             throw corrupt("output name lacks funded regular-file slot");
           if (namespace.equals("outputs")) {
-            Metadata value = inspect(path, null, false).metadata();
+            Metadata value = inspectInstalled(path, null, false).metadata();
             validateFunding(value, funding);
             if (value.identity().index() != slot.index())
               throw corrupt("output name differs from metadata index");
@@ -985,7 +1207,10 @@ final class OutputStore {
                 > add(funding.header().parameters().outputs().totalBytes(), OVERHEAD))
               throw corrupt("output staging exceeds funded geometry");
             Path target = installed(path.getFileName().toString());
-            if (Files.exists(target, LinkOption.NOFOLLOW_LINKS) && !Files.isSameFile(target, path))
+            // On the SPI plane staging is a complete file and never aliases the sidecar.
+            if (!owner.spiPlane()
+                && Files.exists(target, LinkOption.NOFOLLOW_LINKS)
+                && !Files.isSameFile(target, path))
               throw corrupt("output staging and installed names are not the same immutable file");
           }
         }
@@ -1000,11 +1225,11 @@ final class OutputStore {
       for (Path path : entries) {
         Slot slot = parse(path.getFileName().toString());
         InputStore.Reservation funding = owner.outputFunding(slot.funding());
-        Metadata value = inspect(path, null, false).metadata();
+        Metadata value = inspectInstalled(path, null, false).metadata();
         validateFunding(value, funding);
         if (value.identity().index() != slot.index())
           throw corrupt("output name differs from metadata index");
-        inspect(path, value, true);
+        inspectInstalled(path, value, true);
       }
     }
   }
@@ -1116,7 +1341,7 @@ final class OutputStore {
           throw corrupt("output index exceeds its funding record");
         if (count >= 0 && slot.index() >= count)
           throw conflict("output set contains an unpublished suffix");
-        Metadata value = inspect(path, null, false).metadata();
+        Metadata value = inspectInstalled(path, null, false).metadata();
         validateFunding(value, funding);
         if (slot.index() != value.identity().index()) throw corrupt("output slot identity differs");
         requireWorker(value.identity(), expected);
@@ -1153,7 +1378,7 @@ final class OutputStore {
       String reference = name(funding.reference(), index);
       Path target = installed(reference), staging = pending(reference);
       if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-        Inspected inspected = inspect(target, null, false);
+        Inspected inspected = inspectInstalled(target, null, false);
         Metadata value = inspected.metadata();
         validateFunding(value, funding);
         if (value.identity().index() != index) throw corrupt("retained output slot index differs");

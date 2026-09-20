@@ -1288,12 +1288,7 @@ final class InputStore implements AutoCloseable {
 
   /** Retire one operation's payload scope; an interrupted earlier removal reads as absence. */
   private void retireSpiPayload(Path objectPath) throws IOException {
-    try {
-      spi.retire(spiScope(objectPath), Long.MAX_VALUE);
-    } catch (StorageException failure) {
-      if (failure.kind() == StorageException.Kind.NOT_FOUND) return;
-      throw spiFailure(failure);
-    }
+    spiRetireScope(spiScope(objectPath));
   }
 
   private Path orphanPath(OrphanCandidate candidate) throws IOException {
@@ -2217,20 +2212,18 @@ final class InputStore implements AutoCloseable {
     }
   }
 
-  // --- SPI object plane (adoption plan stage 3) -------------------------
-
-  private boolean spiPlane() {
-    return spi != null;
-  }
+  // --- SPI object plane (adoption plan stages 3 and 4) ------------------
 
   /**
-   * One scope per operation: eight 32-bit components from the object's 64-hex
-   * name, entity {@link #SPI_INPUT_ENTITY} holding the input payload.
+   * One scope per stored payload: eight 32-bit components from the first 64
+   * lowercase hex characters of the object's name (input
+   * {@code <hex64>.input}, output {@code <hex64>-<index>.output}), entity
+   * {@link #SPI_INPUT_ENTITY} holding the payload bytes.
    */
-  private ScopePath spiScope(Path objectPath) throws IOException {
-    String name = objectPath.getFileName().toString();
-    if (!name.endsWith(".input") || name.length() != 64 + ".input".length()) {
-      throw corrupt("SPI scope derivation needs a 64-hex input name");
+  private ScopePath spiScope(Path namedPath) throws IOException {
+    String name = namedPath.getFileName().toString();
+    if (name.length() < 64 || !name.substring(0, 64).matches("[0-9a-f]{64}")) {
+      throw corrupt("SPI scope derivation needs a 64-hex name prefix");
     }
     String hex = name.substring(0, 64);
     long[] components = new long[8];
@@ -2238,6 +2231,60 @@ final class InputStore implements AutoCloseable {
       components[i] = Long.parseUnsignedLong(hex.substring(i * 8, i * 8 + 8), 16);
     }
     return ScopePath.of(components);
+  }
+
+  /** Whether this installation routes payload bytes through the SPI object plane. */
+  boolean spiPlane() {
+    return spi != null;
+  }
+
+  /** Derives the payload scope for one named object; see {@link #spiScope(Path)}. */
+  ScopePath spiScopeFor(Path namedPath) throws IOException {
+    return spiScope(namedPath);
+  }
+
+  /** Puts one bounded payload durably; entity 0 of the derived scope. */
+  void spiPutPayload(ScopePath scope, byte[] payload, byte[] digest) throws IOException {
+    try {
+      spi.put(scope, SPI_INPUT_ENTITY, payload, digest);
+    } catch (StorageException failure) {
+      throw spiFailure(failure);
+    }
+  }
+
+  /** Opens one payload stream; the caller verifies bytes against its recorded digest. */
+  InputStream spiOpenPayload(ScopePath scope) throws IOException {
+    try {
+      return spi.openRead(scope, SPI_INPUT_ENTITY);
+    } catch (StorageException failure) {
+      throw spiFailure(failure);
+    }
+  }
+
+  /** Retires one payload scope; an interrupted earlier removal reads as absence. */
+  void spiRetireScope(ScopePath scope) throws IOException {
+    try {
+      spi.retire(scope, Long.MAX_VALUE);
+    } catch (StorageException failure) {
+      if (failure.kind() == StorageException.Kind.NOT_FOUND) return;
+      throw spiFailure(failure);
+    }
+  }
+
+  /** Full payload audit: rehash the retained bytes against the recorded digest. */
+  void spiVerifyPayload(ScopePath scope, byte[] expectedDigest) throws IOException {
+    try (InputStream payload = spiOpenPayload(scope)) {
+      MessageDigest digest = Commitments.sha256();
+      byte[] block = new byte[BLOCK];
+      while (true) {
+        int read = payload.read(block);
+        if (read < 0) break;
+        digest.update(block, 0, read);
+      }
+      if (!MessageDigest.isEqual(digest.digest(), expectedDigest)) {
+        throw corrupt("retained payload digest differs");
+      }
+    }
   }
 
   private static IOException spiFailure(StorageException failure) {
@@ -2330,20 +2377,7 @@ final class InputStore implements AutoCloseable {
 
   /** Full payload audit through the backend: rehash the retained bytes against the recorded digest. */
   private void verifySpiPayload(Envelope envelope, byte[] expectedDigest) throws IOException {
-    try (InputStream payload = spi.openRead(spiScope(objectPath(envelope)), SPI_INPUT_ENTITY)) {
-      MessageDigest digest = Commitments.sha256();
-      byte[] block = new byte[BLOCK];
-      while (true) {
-        int read = payload.read(block);
-        if (read < 0) break;
-        digest.update(block, 0, read);
-      }
-      if (!MessageDigest.isEqual(digest.digest(), expectedDigest)) {
-        throw corrupt("retained input payload digest differs");
-      }
-    } catch (StorageException failure) {
-      throw spiFailure(failure);
-    }
+    spiVerifyPayload(spiScope(objectPath(envelope)), expectedDigest);
   }
 
   /**
@@ -2408,8 +2442,15 @@ final class InputStore implements AutoCloseable {
       Path relative = base.relativize(directory);
       StringBuilder hex = new StringBuilder(64);
       for (Path level : relative) hex.append(level.toString());
-      Path sidecar = root.resolve("objects").resolve(hex + ".input");
-      if (Files.exists(sidecar, LinkOption.NOFOLLOW_LINKS)) continue;
+      // A scope is owned by an input sidecar or any of its output sidecars.
+      boolean referenced =
+          Files.exists(root.resolve("objects").resolve(hex + ".input"), LinkOption.NOFOLLOW_LINKS);
+      if (!referenced) {
+        try (var entries = Files.newDirectoryStream(root.resolve("outputs"), hex + "-*.output")) {
+          referenced = entries.iterator().hasNext();
+        }
+      }
+      if (referenced) continue;
       long[] components = new long[8];
       for (int i = 0; i < components.length; i++) {
         components[i] = Long.parseUnsignedLong(hex.substring(i * 8, i * 8 + 8), 16);
