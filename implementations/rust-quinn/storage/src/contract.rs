@@ -70,18 +70,97 @@ pub fn run_object_store<S: ObjectStore + Send>(
 
 /// Runs the [`Journal`] contract checks; journal-only backends (Kafka)
 /// certify against this alone.
-pub fn run_journal<J: Journal>(mut fresh: impl FnMut() -> J, mut reopen: impl FnMut() -> J) {
-    append_assigns_strictly_increasing_cursors(&mut fresh());
-    replay_from_zero_returns_intents_in_append_order(&mut fresh());
-    replay_since_cursor_returns_only_the_tail(&mut fresh());
-    append_is_idempotent_for_identical_record(&mut fresh());
-    append_conflicting_record_is_corrupt(&mut fresh());
-    commit_marks_intent_committed_for_replay(&mut fresh());
-    commit_of_unknown_intent_is_not_found(&mut fresh());
-    commit_is_idempotent_and_rejects_conflicting_bytes(&mut fresh());
-    replay_interleaves_commits_in_append_order(&mut fresh());
-    commits_consume_cursors_in_the_global_order(&mut fresh());
-    journal_durability_roundtrip(&mut reopen);
+pub fn run_journal<J: Journal>(fresh: impl FnMut() -> J, reopen: impl FnMut() -> J) {
+    run_journal_with(JournalProfile::DENSE, &mut RawJournalPayloads, fresh, reopen);
+}
+
+/// Behavior profile for [`run_journal_with`], letting adapters document
+/// genuinely unbridgeable semantics instead of faking them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JournalProfile {
+    /// True when commits consume dense cursors in the global append order
+    /// (all six SPI backends). False for adapters over journals that assign
+    /// commits no independent position (e.g. the v2 client journal, whose
+    /// receipts update the intent's row in place): the cursor-density check
+    /// is skipped, and append cursors are required only to strictly
+    /// increase from 1.
+    pub dense_cursors: bool,
+}
+
+impl JournalProfile {
+    /// Dense global cursors (the pinned default).
+    pub const DENSE: JournalProfile = JournalProfile { dense_cursors: true };
+    /// Sparse/mapped cursors for adapters over journals without native
+    /// commit positions.
+    pub const SPARSE: JournalProfile = JournalProfile { dense_cursors: false };
+}
+
+/// Supplies the payloads journal contract checks write. The default
+/// ([`RawJournalPayloads`]) uses opaque byte strings; adapters over typed
+/// journals (whose records must be valid protocol encodings) supply their
+/// own.
+pub trait JournalPayloads {
+    /// A fresh intent for `tag`; each call within a run must produce a
+    /// unique id (a store may reject reused ids with different bytes).
+    fn intent(&mut self, tag: &str) -> Intent;
+    /// An intent with the same id as `base` but different record bytes —
+    /// must be rejected with Corrupt by a conforming journal.
+    fn variant_intent(&mut self, tag: &str, base: &Intent) -> Intent;
+    /// A valid commit record for `intent`; `variant` distinguishes the
+    /// conflicting-commit check (different variants must differ but both
+    /// be valid).
+    fn commit_record(&mut self, intent: &Intent, variant: u32) -> Vec<u8>;
+}
+
+/// Opaque-byte payloads (the default for real SPI backends).
+#[derive(Debug, Default)]
+pub struct RawJournalPayloads;
+
+impl JournalPayloads for RawJournalPayloads {
+    fn intent(&mut self, tag: &str) -> Intent {
+        match Intent::new(tag, tag.as_bytes().to_vec()) {
+            Ok(intent) => intent,
+            Err(error) => panic!("intent construction failed: {error}"),
+        }
+    }
+
+    fn variant_intent(&mut self, tag: &str, base: &Intent) -> Intent {
+        let _ = tag;
+        let mut record = base.record().to_vec();
+        record.push(b'!');
+        match Intent::new(base.id(), record) {
+            Ok(intent) => intent,
+            Err(error) => panic!("intent construction failed: {error}"),
+        }
+    }
+
+    fn commit_record(&mut self, intent: &Intent, variant: u32) -> Vec<u8> {
+        format!("{}-commit-{variant}", intent.id()).into_bytes()
+    }
+}
+
+/// Runs the [`Journal`] contract checks with explicit payload and cursor
+/// profiles — the entry point for adapters over existing typed journals.
+/// See [`run_journal`] for the `fresh`/`reopen` contract.
+pub fn run_journal_with<J: Journal>(
+    profile: JournalProfile,
+    payloads: &mut impl JournalPayloads,
+    mut fresh: impl FnMut() -> J,
+    mut reopen: impl FnMut() -> J,
+) {
+    append_assigns_with(&mut fresh(), payloads, profile.dense_cursors);
+    replay_from_zero_with(&mut fresh(), payloads);
+    replay_since_with(&mut fresh(), payloads);
+    append_idempotent_with(&mut fresh(), payloads);
+    append_conflicting_with(&mut fresh(), payloads);
+    commit_marks_with(&mut fresh(), payloads);
+    commit_unknown_with(&mut fresh(), payloads);
+    commit_idempotent_with(&mut fresh(), payloads);
+    replay_interleaves_with(&mut fresh(), payloads);
+    if profile.dense_cursors {
+        commits_consume_cursors_in_the_global_order(&mut fresh());
+    }
+    journal_durability_with(&mut reopen, payloads);
 }
 
 fn scope(a: u32, b: u32) -> ScopePath {
@@ -93,13 +172,6 @@ fn scope(a: u32, b: u32) -> ScopePath {
 
 fn bytes(text: &str) -> Vec<u8> {
     text.as_bytes().to_vec()
-}
-
-fn intent(id: &str, record: &str) -> Intent {
-    match Intent::new(id, bytes(record)) {
-        Ok(intent) => intent,
-        Err(error) => panic!("intent construction failed: {error}"),
-    }
 }
 
 /// The canonical seal digest for `[(id, payload)]` pairs, as callers are
@@ -661,43 +733,65 @@ pub fn durability_roundtrip<B: Backend>(reopen: &mut impl FnMut() -> B) {
 
 /// Appends get strictly increasing cursors starting at 1.
 pub fn append_assigns_strictly_increasing_cursors<J: Journal>(store: &mut J) {
-    assert_eq!(
-        store.append_intent(&intent("a", "1")).unwrap_or_else(|e| panic!("append: {e}")),
-        Cursor(1)
-    );
-    assert_eq!(
-        store.append_intent(&intent("b", "2")).unwrap_or_else(|e| panic!("append: {e}")),
-        Cursor(2)
-    );
-    assert_eq!(
-        store.append_intent(&intent("c", "3")).unwrap_or_else(|e| panic!("append: {e}")),
-        Cursor(3)
-    );
+    let mut payloads = RawJournalPayloads;
+    append_assigns_with(store, &mut payloads, true);
+}
+
+fn append_assigns_with<J: Journal, P: JournalPayloads>(
+    store: &mut J,
+    payloads: &mut P,
+    dense: bool,
+) {
+    let a = payloads.intent("a");
+    let b = payloads.intent("b");
+    let c = payloads.intent("c");
+    let c1 = store.append_intent(&a).unwrap_or_else(|e| panic!("append: {e}"));
+    let c2 = store.append_intent(&b).unwrap_or_else(|e| panic!("append: {e}"));
+    let c3 = store.append_intent(&c).unwrap_or_else(|e| panic!("append: {e}"));
+    assert_eq!(c1, Cursor(1), "the first cursor is 1");
+    assert!(c1 < c2 && c2 < c3, "cursors strictly increase: {c1:?} {c2:?} {c3:?}");
+    if dense {
+        assert_eq!((c1, c2, c3), (Cursor(1), Cursor(2), Cursor(3)));
+    }
 }
 
 /// replay(0) returns intents in append order with no commit state.
 pub fn replay_from_zero_returns_intents_in_append_order<J: Journal>(store: &mut J) {
-    let first = store.append_intent(&intent("first", "one")).unwrap_or_else(|e| panic!("append: {e}"));
-    let second = store.append_intent(&intent("second", "two")).unwrap_or_else(|e| panic!("append: {e}"));
+    let mut payloads = RawJournalPayloads;
+    replay_from_zero_with(store, &mut payloads);
+}
+
+fn replay_from_zero_with<J: Journal, P: JournalPayloads>(store: &mut J, payloads: &mut P) {
+    let first = payloads.intent("first");
+    let second = payloads.intent("second");
+    let c1 = store.append_intent(&first).unwrap_or_else(|e| panic!("append: {e}"));
+    let c2 = store.append_intent(&second).unwrap_or_else(|e| panic!("append: {e}"));
     let entries = store.replay(Cursor(0)).unwrap_or_else(|e| panic!("replay: {e}"));
     assert_eq!(entries.len(), 2);
-    assert_eq!(entries[0].cursor, first);
-    assert_eq!(entries[0].intent.id(), "first");
-    assert_eq!(entries[0].intent.record(), b"one");
+    assert_eq!(entries[0].cursor, c1);
+    assert_eq!(entries[0].intent, first);
     assert!(!entries[0].committed());
-    assert_eq!(entries[1].cursor, second);
-    assert_eq!(entries[1].intent.id(), "second");
+    assert_eq!(entries[1].cursor, c2);
+    assert_eq!(entries[1].intent, second);
 }
 
 /// replay(since) returns exactly the intents after the cursor.
 pub fn replay_since_cursor_returns_only_the_tail<J: Journal>(store: &mut J) {
-    store.append_intent(&intent("one", "1")).unwrap_or_else(|e| panic!("append: {e}"));
-    let second = store.append_intent(&intent("two", "2")).unwrap_or_else(|e| panic!("append: {e}"));
-    let third = store.append_intent(&intent("three", "3")).unwrap_or_else(|e| panic!("append: {e}"));
+    let mut payloads = RawJournalPayloads;
+    replay_since_with(store, &mut payloads);
+}
+
+fn replay_since_with<J: Journal, P: JournalPayloads>(store: &mut J, payloads: &mut P) {
+    let one = payloads.intent("one");
+    let two = payloads.intent("two");
+    let three = payloads.intent("three");
+    store.append_intent(&one).unwrap_or_else(|e| panic!("append: {e}"));
+    let second = store.append_intent(&two).unwrap_or_else(|e| panic!("append: {e}"));
+    let third = store.append_intent(&three).unwrap_or_else(|e| panic!("append: {e}"));
     let entries = store.replay(second).unwrap_or_else(|e| panic!("replay: {e}"));
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].cursor, third);
-    assert_eq!(entries[0].intent.id(), "three");
+    assert_eq!(entries[0].intent, three);
     assert!(
         store
             .replay(third)
@@ -709,9 +803,15 @@ pub fn replay_since_cursor_returns_only_the_tail<J: Journal>(store: &mut J) {
 /// Re-appending an intent id with identical bytes returns the original
 /// cursor and adds nothing.
 pub fn append_is_idempotent_for_identical_record<J: Journal>(store: &mut J) {
-    let cursor = store.append_intent(&intent("retry", "same")).unwrap_or_else(|e| panic!("append: {e}"));
+    let mut payloads = RawJournalPayloads;
+    append_idempotent_with(store, &mut payloads);
+}
+
+fn append_idempotent_with<J: Journal, P: JournalPayloads>(store: &mut J, payloads: &mut P) {
+    let intent = payloads.intent("retry");
+    let cursor = store.append_intent(&intent).unwrap_or_else(|e| panic!("append: {e}"));
     assert_eq!(
-        store.append_intent(&intent("retry", "same")).unwrap_or_else(|e| panic!("append: {e}")),
+        store.append_intent(&intent).unwrap_or_else(|e| panic!("append: {e}")),
         cursor
     );
     assert_eq!(
@@ -723,67 +823,111 @@ pub fn append_is_idempotent_for_identical_record<J: Journal>(store: &mut J) {
 /// Re-appending an intent id with different bytes is Corrupt and keeps the
 /// original record.
 pub fn append_conflicting_record_is_corrupt<J: Journal>(store: &mut J) {
-    store.append_intent(&intent("fixed", "original")).unwrap_or_else(|e| panic!("append: {e}"));
+    let mut payloads = RawJournalPayloads;
+    append_conflicting_with(store, &mut payloads);
+}
+
+fn append_conflicting_with<J: Journal, P: JournalPayloads>(store: &mut J, payloads: &mut P) {
+    let original = payloads.intent("fixed");
+    let changed = payloads.variant_intent("fixed", &original);
+    store.append_intent(&original).unwrap_or_else(|e| panic!("append: {e}"));
     expect_corrupt(
-        store.append_intent(&intent("fixed", "changed")).map(|_| ()),
+        store.append_intent(&changed).map(|_| ()),
         "conflicting append",
     );
     let entries = store.replay(Cursor(0)).unwrap_or_else(|e| panic!("replay: {e}"));
-    assert_eq!(entries[0].intent.record(), b"original");
+    assert_eq!(entries[0].intent, original);
 }
 
 /// commit folds into the intent's replay entry: the recovery path sees the
 /// intent committed.
 pub fn commit_marks_intent_committed_for_replay<J: Journal>(store: &mut J) {
-    let cursor = store.append_intent(&intent("work", "admitted")).unwrap_or_else(|e| panic!("append: {e}"));
-    assert!(store.commit("work", b"done").is_ok());
+    let mut payloads = RawJournalPayloads;
+    commit_marks_with(store, &mut payloads);
+}
+
+fn commit_marks_with<J: Journal, P: JournalPayloads>(store: &mut J, payloads: &mut P) {
+    let intent = payloads.intent("work");
+    let commit = payloads.commit_record(&intent, 0);
+    let cursor = store.append_intent(&intent).unwrap_or_else(|e| panic!("append: {e}"));
+    assert!(store.commit(intent.id(), &commit).is_ok());
     let before = Cursor(cursor.0 - 1);
     let entries = store.replay(before).unwrap_or_else(|e| panic!("replay: {e}"));
     assert_eq!(entries.len(), 1);
     assert!(entries[0].committed());
-    assert_eq!(entries[0].commit.as_deref(), Some(b"done".as_slice()));
+    assert_eq!(entries[0].commit.as_deref(), Some(commit.as_slice()));
+    assert!(entries[0].commit_cursor.is_some());
 }
 
 /// Committing an unknown intent id fails with NotFound.
 pub fn commit_of_unknown_intent_is_not_found<J: Journal>(store: &mut J) {
-    expect_not_found(store.commit("absent", b"x"), "commit of unknown intent");
+    let mut payloads = RawJournalPayloads;
+    commit_unknown_with(store, &mut payloads);
+}
+
+fn commit_unknown_with<J: Journal, P: JournalPayloads>(store: &mut J, payloads: &mut P) {
+    let phantom = payloads.intent("absent"); // never appended
+    let record = payloads.commit_record(&phantom, 0);
+    expect_not_found(store.commit(phantom.id(), &record), "commit of unknown intent");
 }
 
 /// Re-committing identically is a no-op; conflicting commit bytes are
 /// Corrupt.
 pub fn commit_is_idempotent_and_rejects_conflicting_bytes<J: Journal>(store: &mut J) {
-    store.append_intent(&intent("settled", "record")).unwrap_or_else(|e| panic!("append: {e}"));
-    assert!(store.commit("settled", b"commit").is_ok());
-    assert!(store.commit("settled", b"commit").is_ok());
-    expect_corrupt(store.commit("settled", b"other"), "conflicting commit");
+    let mut payloads = RawJournalPayloads;
+    commit_idempotent_with(store, &mut payloads);
+}
+
+fn commit_idempotent_with<J: Journal, P: JournalPayloads>(store: &mut J, payloads: &mut P) {
+    let intent = payloads.intent("settled");
+    let commit = payloads.commit_record(&intent, 0);
+    let conflicting = payloads.commit_record(&intent, 1);
+    store.append_intent(&intent).unwrap_or_else(|e| panic!("append: {e}"));
+    assert!(store.commit(intent.id(), &commit).is_ok());
+    assert!(store.commit(intent.id(), &commit).is_ok());
+    expect_corrupt(store.commit(intent.id(), &conflicting), "conflicting commit");
     let entries = store.replay(Cursor(0)).unwrap_or_else(|e| panic!("replay: {e}"));
-    assert_eq!(entries[0].commit.as_deref(), Some(b"commit".as_slice()));
+    assert_eq!(entries[0].commit.as_deref(), Some(commit.as_slice()));
 }
 
 /// Replay returns intents in append order with commit state folded in,
 /// however the commits were interleaved.
 pub fn replay_interleaves_commits_in_append_order<J: Journal>(store: &mut J) {
-    store.append_intent(&intent("a", "a")).unwrap_or_else(|e| panic!("append: {e}"));
-    store.append_intent(&intent("b", "b")).unwrap_or_else(|e| panic!("append: {e}"));
-    store.append_intent(&intent("c", "c")).unwrap_or_else(|e| panic!("append: {e}"));
-    assert!(store.commit("a", b"a-done").is_ok());
-    assert!(store.commit("c", b"c-done").is_ok());
+    let mut payloads = RawJournalPayloads;
+    replay_interleaves_with(store, &mut payloads);
+}
+
+fn replay_interleaves_with<J: Journal, P: JournalPayloads>(store: &mut J, payloads: &mut P) {
+    let a = payloads.intent("a");
+    let b = payloads.intent("b");
+    let c = payloads.intent("c");
+    store.append_intent(&a).unwrap_or_else(|e| panic!("append: {e}"));
+    store.append_intent(&b).unwrap_or_else(|e| panic!("append: {e}"));
+    store.append_intent(&c).unwrap_or_else(|e| panic!("append: {e}"));
+    assert!(store.commit(a.id(), &payloads.commit_record(&a, 0)).is_ok());
+    assert!(store.commit(c.id(), &payloads.commit_record(&c, 0)).is_ok());
     let entries = store.replay(Cursor(0)).unwrap_or_else(|e| panic!("replay: {e}"));
     let ids: Vec<&str> = entries.iter().map(|entry| entry.intent.id()).collect();
-    assert_eq!(ids, vec!["a", "b", "c"]);
+    assert_eq!(ids, vec![a.id(), b.id(), c.id()]);
     assert!(entries[0].committed());
     assert!(!entries[1].committed());
     assert!(entries[2].committed());
 }
 
 /// Commits consume cursors in the global append order: intents need not
-/// have contiguous cursors.
+/// have contiguous cursors. Dense backends only — journals whose commits
+/// carry no independent position (the v2 client journal) run under
+/// [`JournalProfile::SPARSE`], which skips this check.
 pub fn commits_consume_cursors_in_the_global_order<J: Journal>(store: &mut J) {
-    let a = store.append_intent(&intent("a", "a")).unwrap_or_else(|e| panic!("append: {e}"));
-    let b = store.append_intent(&intent("b", "b")).unwrap_or_else(|e| panic!("append: {e}"));
-    assert!(store.commit("a", b"a-done").is_ok());
-    let c = store.append_intent(&intent("c", "c")).unwrap_or_else(|e| panic!("append: {e}"));
-    assert_eq!((a, b, c), (Cursor(1), Cursor(2), Cursor(4)));
+    let mut payloads = RawJournalPayloads;
+    let a = payloads.intent("a");
+    let b = payloads.intent("b");
+    let c = payloads.intent("c");
+    let ca = store.append_intent(&a).unwrap_or_else(|e| panic!("append: {e}"));
+    let cb = store.append_intent(&b).unwrap_or_else(|e| panic!("append: {e}"));
+    assert!(store.commit(a.id(), &payloads.commit_record(&a, 0)).is_ok());
+    let cc = store.append_intent(&c).unwrap_or_else(|e| panic!("append: {e}"));
+    assert_eq!((ca, cb, cc), (Cursor(1), Cursor(2), Cursor(4)));
     let entries = store.replay(Cursor(0)).unwrap_or_else(|e| panic!("replay: {e}"));
     let cursors: Vec<Cursor> = entries.iter().map(|entry| entry.cursor).collect();
     assert_eq!(cursors, vec![Cursor(1), Cursor(2), Cursor(4)]);
@@ -795,21 +939,34 @@ pub fn commits_consume_cursors_in_the_global_order<J: Journal>(store: &mut J) {
 
 /// Journal durability-of-return: intents and their commit state survive a
 /// reopen.
-pub fn journal_durability_roundtrip<J: Journal>(reopen: &mut impl FnMut() -> J) {    let cursor;
+pub fn journal_durability_roundtrip<J: Journal>(reopen: &mut impl FnMut() -> J) {
+    let mut payloads = RawJournalPayloads;
+    journal_durability_with(reopen, &mut payloads);
+}
+
+fn journal_durability_with<J: Journal>(
+    reopen: &mut impl FnMut() -> J,
+    payloads: &mut impl JournalPayloads,
+) {
+    let durable = payloads.intent("durable");
+    let commit = payloads.commit_record(&durable, 0);
+    let pending = payloads.intent("pending");
+    let cursor;
     {
         let mut store = reopen();
         cursor = store
-            .append_intent(&intent("durable", "admitted"))
+            .append_intent(&durable)
             .unwrap_or_else(|e| panic!("append: {e}"));
-        assert!(store.commit("durable", b"committed").is_ok());
-        store.append_intent(&intent("pending", "uncommitted")).unwrap_or_else(|e| panic!("append: {e}"));
+        assert!(store.commit(durable.id(), &commit).is_ok());
+        store.append_intent(&pending).unwrap_or_else(|e| panic!("append: {e}"));
     }
     let store = reopen();
     let entries = store.replay(Cursor(0)).unwrap_or_else(|e| panic!("replay: {e}"));
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].cursor, cursor);
-    assert_eq!(entries[0].intent.id(), "durable");
-    assert_eq!(entries[0].commit.as_deref(), Some(b"committed".as_slice()));
-    assert_eq!(entries[1].intent.id(), "pending");
+    assert_eq!(entries[0].intent, durable);
+    assert_eq!(entries[0].commit.as_deref(), Some(commit.as_slice()));
+    assert!(entries[0].commit_cursor.is_some());
+    assert_eq!(entries[1].intent, pending);
     assert!(!entries[1].committed());
 }

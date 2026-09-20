@@ -2542,6 +2542,7 @@ name = "pipestream-core"
 version = "0.1.0"
 dependencies = [
  "minicbor",
+ "pipestream-storage",
  "postcard",
  "rand 0.10.2",
  "rusqlite",
