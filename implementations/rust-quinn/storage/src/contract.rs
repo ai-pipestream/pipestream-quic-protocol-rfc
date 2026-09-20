@@ -2,8 +2,9 @@
 //!
 //! Every backend must pass the suite for each role it implements, and the
 //! checks mirror the Java lane's `ObjectStoreContractTest` /
-//! `JournalContractTest` one-for-one (minus Java's concurrency rows, which
-//! Rust ownership rules make unreachable):
+//! `JournalContractTest` one-for-one, including the concurrency rows
+//! (exercised here behind a `Mutex`, the Rust-side expression of the
+//! pinned thread-safety requirement):
 //!
 //! - [`run_object_store`] for the [`ObjectStore`] role,
 //! - [`run_journal`] for the [`Journal`] role,
@@ -188,7 +189,7 @@ pub fn put_conflicting_bytes_is_corrupt_and_keeps_original<S: ObjectStore>(store
     assert_eq!(read_all(store, &scope, 1), original);
 }
 
-/// Entity ids above the unsigned 63-bit bound are rejected.
+/// Entity ids above the 32-bit protocol bound are rejected.
 pub fn put_rejects_out_of_range_entity_id<S: ObjectStore>(store: &mut S) {
     let scope = ScopePath::root(5);
     let payload = bytes("bounded");

@@ -30,10 +30,10 @@
 //! and is swept on open and on close.
 //!
 //! One cooperating process owns a store root: opening takes an exclusive
-//! advisory lock on both `writer.lock` files, and a second opener fails
-//! with [`StorageError::Failed`]. On Linux this uses `flock(2)`; note that
-//! the Java lane's `FileLock` uses `fcntl(2)` record locks, and the two
-//! families do not interlock — the guard is same-language.
+//! POSIX `fcntl(F_SETLK)` record lock on both `writer.lock` files (the same
+//! lock family as the Java lane's `FileLock`, so the guard is
+//! cross-language), and a second opener fails with
+//! [`StorageError::Failed`].
 //!
 //! Open-read survival relies on POSIX semantics: an open file descriptor
 //! stays valid after the file is unlinked, so retiring an object does not
@@ -182,16 +182,21 @@ fn canonical_key(dir: &Path) -> PathBuf {
     fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())
 }
 
-/// Takes the exclusive advisory lock on `dir/writer.lock`.
+/// Takes the exclusive POSIX `fcntl(F_SETLK)` record lock on
+/// `dir/writer.lock` — the same lock family the Java lane's `FileLock`
+/// uses, so a Java and a Rust writer can never hold one root
+/// simultaneously. (`flock(2)` does not interlock with `fcntl(2)` on Linux
+/// and is not used.) `fcntl` locks are process-associated, so the
+/// in-process registry above covers same-process re-opens.
 #[cfg(unix)]
 fn acquire_one(dir: &Path) -> Result<File, StorageError> {
-    use rustix::fs::{FlockOperation, flock};
+    use rustix::fs::{FlockOperation, fcntl_lock};
     let file = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(false)
         .open(dir.join(WRITER_LOCK_NAME))?;
-    match flock(&file, FlockOperation::NonBlockingLockExclusive) {
+    match fcntl_lock(&file, FlockOperation::NonBlockingLockExclusive) {
         Ok(()) => Ok(file),
         Err(_) => Err(StorageError::failed(format!(
             "store directory {} already has a writer",
@@ -372,13 +377,9 @@ impl ObjectStore for FsStore {
                 "entity {entity} is absent from scope {scope}"
             )));
         }
+        // Validates truncation and the length header against the real size.
+        read_entity_header(&path)?;
         let mut file = File::open(&path)?;
-        if file.metadata()?.len() < ENTITY_HEADER_BYTES as u64 {
-            return Err(StorageError::corrupt(format!(
-                "entity file {} is truncated",
-                path.display()
-            )));
-        }
         file.seek(SeekFrom::Start(ENTITY_HEADER_BYTES as u64))?;
         Ok(file)
     }
@@ -617,19 +618,23 @@ impl Drop for FsStore {
     }
 }
 
-/// Creates `dir` and any missing ancestors, fsyncing each level so the
-/// directory structure itself is durable.
+/// Creates `dir` and any missing ancestors, fsyncing the *parent* after
+/// each creation: a directory entry lives in its parent, so durability of a
+/// newly created directory requires fsyncing the directory that lists it.
 fn create_dirs_durable(dir: &Path) -> Result<(), StorageError> {
-    let mut ancestors: Vec<&Path> = dir.ancestors().collect();
-    ancestors.reverse();
-    let mut created_any = false;
-    for path in ancestors {
-        if !path.exists() {
-            fs::create_dir(path)?;
-            created_any = true;
+    let mut missing = Vec::new();
+    let mut cursor = dir;
+    while !cursor.exists() {
+        missing.push(cursor);
+        match cursor.parent() {
+            Some(parent) => cursor = parent,
+            None => break,
         }
-        if created_any {
-            sync_dir(path)?;
+    }
+    for path in missing.iter().rev() {
+        fs::create_dir(path)?;
+        if let Some(parent) = path.parent() {
+            sync_dir(parent)?;
         }
     }
     Ok(())
@@ -1018,6 +1023,58 @@ mod tests {
         let entries = store.replay(Cursor(0)).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].intent.id(), "kept");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fcntl_writer_lock_is_enforced_across_processes() {
+        const CHILD_ENV: &str = "PIPESTREAM_STORAGE_TEST_FCNTL_LOCK_CHILD";
+        if let Ok(lock_path) = std::env::var(CHILD_ENV) {
+            // Child mode: hold an fcntl(F_SETLK) write lock on the file and
+            // signal readiness through a marker file.
+            let file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(false)
+                .open(&lock_path)
+                .unwrap();
+            rustix::fs::fcntl_lock(&file, rustix::fs::FlockOperation::LockExclusive).unwrap();
+            std::fs::write(format!("{lock_path}.ready"), b"").unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(60));
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let objects = dir.path().join(OBJECTS_DIR);
+        std::fs::create_dir_all(&objects).unwrap();
+        let lock_path = objects.join(WRITER_LOCK_NAME);
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "fs::tests::fcntl_writer_lock_is_enforced_across_processes",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD_ENV, &lock_path)
+            .spawn()
+            .unwrap();
+        let ready = format!("{}.ready", lock_path.display());
+        for _ in 0..200 {
+            if std::path::Path::new(&ready).exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(std::path::Path::new(&ready).exists(), "child never locked");
+        // A second opener — even in-process-registry-clean, because the
+        // holder is another process — must be refused.
+        let result = FsStore::open(dir.path());
+        let _ = child.kill();
+        let _ = child.wait();
+        match result {
+            Err(StorageError::Failed(_)) => {}
+            Ok(_) => panic!("second writer opened a store under a foreign fcntl lock"),
+            Err(error) => panic!("expected Failed, got {error:?}"),
+        }
     }
 
     #[test]

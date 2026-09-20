@@ -178,10 +178,23 @@ impl MongoStore {
         Ok(())
     }
 
+    /// The counters collection, with the same journaled write concern as
+    /// the other SPI collections: a counter `$inc` lost on failover would
+    /// wedge later appends as duplicate `_id`s.
+    fn counters(&self) -> mongodb::Collection<Document> {
+        self.db()
+            .collection_with_options::<Document>(
+                "counters",
+                mongodb::options::CollectionOptions::builder()
+                    .write_concern(journaled())
+                    .build(),
+            )
+    }
+
     /// Allocates the next journal cursor atomically (durable `$inc` on a
     /// counters document).
     fn next_cursor(&self) -> Result<Cursor, StorageError> {
-        let counters = self.db().collection::<Document>("counters");
+        let counters = self.counters();
         let options = FindOneAndUpdateOptions::builder()
             .upsert(true)
             .return_document(ReturnDocument::After)

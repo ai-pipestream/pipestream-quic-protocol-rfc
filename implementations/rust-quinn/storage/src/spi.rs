@@ -136,7 +136,7 @@ pub trait ObjectStore {
     /// content fails with [`StorageError::Corrupt`]. Re-putting identical
     /// bytes with the same digest succeeds as a no-op.
     ///
-    /// [`StorageError::Failed`] when `entity` is exceeds the protocol entity-id bound.
+    /// [`StorageError::Failed`] when `entity` exceeds the protocol entity-id bound.
     fn put(
         &mut self,
         scope: &ScopePath,

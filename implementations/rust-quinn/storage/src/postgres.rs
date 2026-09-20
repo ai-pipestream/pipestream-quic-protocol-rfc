@@ -124,7 +124,7 @@ fn path_key(scope: &ScopePath) -> String {
 }
 
 fn entity_to_row(entity: EntityId) -> i64 {
-    // Entity ids are validated as unsigned 63-bit before any SQL runs.
+    // Entity ids are validated against the 32-bit protocol bound before any SQL runs.
     entity as i64
 }
 
