@@ -26,6 +26,7 @@
 pub mod contract;
 mod error;
 pub mod fs;
+pub mod kafka;
 pub mod layout;
 mod memory;
 pub mod postgres;
@@ -35,6 +36,7 @@ mod spi;
 pub use error::StorageError;
 pub use fs::FsStore;
 pub use layout::{Digest32, EntityId, ScopePath, sha256};
+pub use kafka::{KafkaConfig, KafkaJournal};
 pub use memory::MemoryStore;
 pub use postgres::PostgresStore;
 pub use s3::{S3Config, S3Store};

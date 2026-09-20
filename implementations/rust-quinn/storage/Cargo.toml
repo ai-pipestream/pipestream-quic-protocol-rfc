@@ -11,7 +11,9 @@ name = "pipestream_storage"
 
 [dependencies]
 aws-sdk-s3 = { version = "1.122.0", features = ["behavior-version-latest"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 postgres = "0.19"
+rskafka = "0.6.0"
 sha2 = "0.11.0"
 tokio = { version = "1.53.1", features = ["rt", "macros"] }
 

@@ -33,8 +33,26 @@ impl Container {
     /// ephemeral localhost port. Extra `-e KEY=VAL` environment pairs may
     /// be passed in `env`.
     pub fn start(image: &str, args: &[&str], env: &[&str], container_port: u16) -> Option<Self> {
+        Self::start_mapped(image, args, env, 0, container_port)
+    }
+
+    /// Like [`start`](Self::start) but pins the host port. Needed when the
+    /// service advertises its own listen address (Kafka).
+    pub fn start_mapped(
+        image: &str,
+        args: &[&str],
+        env: &[&str],
+        host_port: u16,
+        container_port: u16,
+    ) -> Option<Self> {
         let mut command = Command::new("docker");
-        command.args(["run", "-d", "--rm", "-p", &format!("127.0.0.1:0:{container_port}")]);
+        command.args([
+            "run",
+            "-d",
+            "--rm",
+            "-p",
+            &format!("127.0.0.1:{host_port}:{container_port}"),
+        ]);
         for pair in env {
             command.args(["-e", pair]);
         }
@@ -203,6 +221,66 @@ impl MinioContainer {
             region: "us-east-1".to_string(),
             access_key: "pipestream".to_string(),
             secret_key: "pipestream-secret".to_string(),
+        }
+    }
+}
+
+/// A running single-broker KRaft Kafka container.
+#[derive(Debug)]
+pub struct KafkaContainer {
+    // Held for its Drop impl: kills the container when this handle drops.
+    _container: Container,
+    /// Bootstrap servers string, e.g. `127.0.0.1:32901`.
+    pub bootstrap_servers: String,
+    topic_seq: std::sync::atomic::AtomicU64,
+}
+
+impl KafkaContainer {
+    /// Starts a single-broker Kafka container with the broker advertised on
+    /// a pinned localhost port. Returns None when docker is unavailable.
+    pub fn start() -> Option<Self> {
+        if !docker_available() {
+            return None;
+        }
+        // Kafka advertises its listen address, so the host port must be
+        // known before the container starts: reserve one, then reuse it.
+        let host_port = std::net::TcpListener::bind("127.0.0.1:0")
+            .ok()?
+            .local_addr()
+            .ok()?
+            .port();
+        let container = Container::start_mapped(
+            "apache/kafka:4.3.1",
+            &[],
+            &[
+                "KAFKA_NODE_ID=1",
+                "KAFKA_PROCESS_ROLES=broker,controller",
+                "KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093",
+                &format!("KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://127.0.0.1:{host_port}"),
+                "KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER",
+                "KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT",
+                "KAFKA_CONTROLLER_QUORUM_VOTERS=1@127.0.0.1:9093",
+                "KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1",
+                "KAFKA_AUTO_CREATE_TOPICS_ENABLE=false",
+            ],
+            host_port,
+            9092,
+        )?;
+        Some(KafkaContainer {
+            _container: container,
+            bootstrap_servers: format!("127.0.0.1:{host_port}"),
+            topic_seq: std::sync::atomic::AtomicU64::new(0),
+        })
+    }
+
+    /// A journal config pointing at a fresh, uniquely named topic.
+    pub fn fresh_config(&self) -> pipestream_storage::KafkaConfig {
+        let seq = self
+            .topic_seq
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        pipestream_storage::KafkaConfig {
+            bootstrap_servers: self.bootstrap_servers.clone(),
+            topic: format!("spi-{}-{seq}", std::process::id()),
         }
     }
 }
