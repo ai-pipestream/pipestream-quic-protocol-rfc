@@ -109,9 +109,10 @@ pub enum Subject {
 /// configuration::Storage). The driver emits the subject's own flag only
 /// when a run selects SPI, so a default run's spawned command lines stay
 /// byte-identical to a run against the merged subjects.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum StoragePlane {
     /// The merged v2 envelope-keyed store; no plane flag is passed.
+    #[default]
     #[value(name = "v2")]
     V2,
     /// The storage-SPI object plane; requires the subjects' storage-branch
@@ -128,6 +129,214 @@ impl StoragePlane {
             Self::Spi => "spi",
         }
     }
+}
+
+/// The SPI object backend a run's subjects store object payloads on. Both
+/// subject types gained the selection on their storage branches (not merged
+/// here): Java spells it `--spi-backend fs|postgres|s3|mongo` on
+/// `init-authority` and `serve` (V2Main/FixtureMain, and a non-fs selection
+/// requires `--object-plane spi`); Rust spells the plane and backend as one
+/// `--payload-backend fs|spi-fs|spi-postgres|spi-s3|spi-mongo` value on the
+/// shared Storage args (server/src/v2.rs, configuration::Storage). `fs` (the
+/// default) is today's stage-file store; a non-fs backend implies the SPI
+/// plane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum StorageBackend {
+    /// The local stage-file store (the merged default).
+    #[default]
+    #[value(name = "fs")]
+    Fs,
+    #[value(name = "postgres")]
+    Postgres,
+    #[value(name = "s3")]
+    S3,
+    #[value(name = "mongo")]
+    Mongo,
+}
+
+impl StorageBackend {
+    /// Run-manifest (run.tsv) spelling of the selection; also the Java
+    /// `--spi-backend` value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Fs => "fs",
+            Self::Postgres => "postgres",
+            Self::S3 => "s3",
+            Self::Mongo => "mongo",
+        }
+    }
+}
+
+/// One PROBE_* coordinate convention and where it surfaces on each subject.
+/// `java_flag`/`rust_flag` are empty when the coordinate is secret (or has
+/// no subject flag): secrets travel through the inherited driver environment
+/// only, never through a spawned command line (spawn failures log the joined
+/// command, so a flag there would leak into run evidence).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CoordinateSpec {
+    pub probe: &'static str,
+    pub java_flag: &'static str,
+    pub rust_flag: &'static str,
+    pub required: bool,
+}
+
+/// The postgres coordinate set. The Rust subject takes credentials inside
+/// the URL; the Java subject resolves PROBE_PG_USER/PROBE_PG_PASSWORD from
+/// the environment at open time.
+const POSTGRES_COORDINATES: &[CoordinateSpec] = &[
+    CoordinateSpec {
+        probe: "PROBE_PG_URL",
+        java_flag: "--spi-pg-url",
+        rust_flag: "--payload-pg-url",
+        required: true,
+    },
+    CoordinateSpec {
+        probe: "PROBE_PG_USER",
+        java_flag: "",
+        rust_flag: "",
+        required: false,
+    },
+    CoordinateSpec {
+        probe: "PROBE_PG_PASSWORD",
+        java_flag: "",
+        rust_flag: "",
+        required: false,
+    },
+];
+
+/// The S3 coordinate set. Region and prefix are optional on both subjects
+/// (each carries its own default); access/secret keys are required but
+/// env-only.
+const S3_COORDINATES: &[CoordinateSpec] = &[
+    CoordinateSpec {
+        probe: "PROBE_S3_ENDPOINT",
+        java_flag: "--spi-s3-endpoint",
+        rust_flag: "--payload-s3-endpoint",
+        required: true,
+    },
+    CoordinateSpec {
+        probe: "PROBE_S3_BUCKET",
+        java_flag: "--spi-s3-bucket",
+        rust_flag: "--payload-s3-bucket",
+        required: true,
+    },
+    CoordinateSpec {
+        probe: "PROBE_S3_REGION",
+        java_flag: "--spi-s3-region",
+        rust_flag: "--payload-s3-region",
+        required: false,
+    },
+    CoordinateSpec {
+        probe: "PROBE_S3_PREFIX",
+        java_flag: "--spi-s3-prefix",
+        rust_flag: "--payload-s3-prefix",
+        required: false,
+    },
+    CoordinateSpec {
+        probe: "PROBE_S3_ACCESS_KEY",
+        java_flag: "",
+        rust_flag: "",
+        required: true,
+    },
+    CoordinateSpec {
+        probe: "PROBE_S3_SECRET_KEY",
+        java_flag: "",
+        rust_flag: "",
+        required: true,
+    },
+];
+
+/// The MongoDB coordinate set.
+const MONGO_COORDINATES: &[CoordinateSpec] = &[
+    CoordinateSpec {
+        probe: "PROBE_MONGO_URI",
+        java_flag: "--spi-mongo-uri",
+        rust_flag: "--payload-mongo-uri",
+        required: true,
+    },
+    CoordinateSpec {
+        probe: "PROBE_MONGO_DATABASE",
+        java_flag: "--spi-mongo-database",
+        rust_flag: "--payload-mongo-database",
+        required: true,
+    },
+];
+
+/// The coordinate conventions for one backend (empty for fs).
+pub fn backend_coordinates(backend: StorageBackend) -> &'static [CoordinateSpec] {
+    match backend {
+        StorageBackend::Fs => &[],
+        StorageBackend::Postgres => POSTGRES_COORDINATES,
+        StorageBackend::S3 => S3_COORDINATES,
+        StorageBackend::Mongo => MONGO_COORDINATES,
+    }
+}
+
+/// Resolve the coordinate set for a backend from the driver's environment
+/// (PROBE_* conventions; run scripts own the service lifecycle and export
+/// these). Every required coordinate must be present — a non-fs selection
+/// with missing coordinates is a usage error, surfaced before anything is
+/// spawned. `lookup` abstracts the environment for testing. The result holds
+/// the non-secret coordinates only, as `(PROBE name, value)` pairs in
+/// convention order; secrets stay in the environment the subjects inherit.
+pub fn resolve_backend_coordinates(
+    backend: StorageBackend,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Result<Vec<(String, String)>> {
+    let mut coordinates = Vec::new();
+    let mut missing = Vec::new();
+    for spec in backend_coordinates(backend) {
+        match lookup(spec.probe) {
+            Some(value) if !spec.java_flag.is_empty() => {
+                coordinates.push((spec.probe.to_owned(), value));
+            }
+            Some(_) => {}
+            None if spec.required => missing.push(spec.probe),
+            None => {}
+        }
+    }
+    ensure!(
+        missing.is_empty(),
+        "storage backend `{}` is missing required coordinate environment: {}; run scripts own \
+         the service lifecycle and export the PROBE_* conventions before the driver starts (the \
+         driver never starts services)",
+        backend.name(),
+        missing.join(", ")
+    );
+    Ok(coordinates)
+}
+
+/// The effective storage plane for a run: an explicit selection wins, `fs`
+/// defaults to the merged v2 plane, and a non-fs backend implies SPI. An
+/// explicit `--storage-plane v2` with a non-fs backend is a usage error —
+/// both subjects refuse that combination (Java: "an SPI backend selection
+/// requires --object-plane spi"; Rust persists the plane in the store
+/// binding), so the driver fails before spawning anything.
+pub fn effective_plane(
+    plane: Option<StoragePlane>,
+    backend: StorageBackend,
+) -> Result<StoragePlane> {
+    match (plane, backend) {
+        (Some(StoragePlane::V2), backend) if backend != StorageBackend::Fs => bail!(
+            "--storage-plane v2 conflicts with --storage-backend {}: a non-fs backend requires \
+             the spi plane",
+            backend.name()
+        ),
+        (Some(plane), _) => Ok(plane),
+        (None, StorageBackend::Fs) => Ok(StoragePlane::V2),
+        (None, _) => Ok(StoragePlane::Spi),
+    }
+}
+
+/// The driver-level storage selection one run executes with: the effective
+/// plane, the backend, and the resolved non-secret coordinates (PROBE name
+/// to value). Carried by the `ScenarioContext` so no row can start a
+/// subject on a different selection than the run recorded.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StorageSelection {
+    pub plane: StoragePlane,
+    pub backend: StorageBackend,
+    pub coordinates: Vec<(String, String)>,
 }
 
 impl Subject {
@@ -192,11 +401,13 @@ pub struct AuthorityFixture {
     /// The durable run this fixture belongs to; keys the Java subjects'
     /// tmp directory (see [`java_tmp_dir`]).
     run_id: String,
-    /// Storage plane the server subject's authority storage runs on. The
-    /// default [`StoragePlane::V2`] emits no flag (byte-identical command
-    /// lines); `spi` appends the subject's plane flag to every
+    /// Storage plane/backend selection with the resolved non-secret
+    /// coordinates. The default (v2 plane, fs backend, no coordinates)
+    /// emits nothing, so every spawned command line stays byte-identical
+    /// to a run against the merged subjects; SPI selections append the
+    /// subject's own plane/backend flags plus coordinate flags to every
     /// storage-opening invocation (see [`AuthorityFixture::storage_args`]).
-    storage_plane: StoragePlane,
+    storage: StorageSelection,
 }
 
 impl AuthorityFixture {
@@ -224,17 +435,19 @@ impl AuthorityFixture {
             client_op_timeout: OP_TIMEOUT,
             authority: AUTHORITY.to_owned(),
             run_id,
-            storage_plane: StoragePlane::V2,
+            storage: StorageSelection::default(),
         })
     }
 
-    /// Run the server subject's authority storage on the storage-SPI plane:
-    /// the subject's own plane flag is appended to `init-authority`, every
+    /// Run the server subject's authority storage with the given plane,
+    /// backend and resolved coordinates: the subject's own plane/backend
+    /// flags plus coordinate flags are appended to `init-authority`, every
     /// `serve` start, and the other storage-opening invocations built from
     /// [`AuthorityFixture::storage_args`]. Requires the subjects'
-    /// storage-branch builds; the default [`StoragePlane::V2`] emits nothing.
-    pub fn with_storage_plane(mut self, plane: StoragePlane) -> Self {
-        self.storage_plane = plane;
+    /// storage-branch builds; the default [`StorageSelection`] (v2 plane,
+    /// fs backend) emits nothing.
+    pub fn with_storage(mut self, storage: StorageSelection) -> Self {
+        self.storage = storage;
         self
     }
 
@@ -329,12 +542,14 @@ impl AuthorityFixture {
     /// (api-plan.md section 1.5: fixed layout root/authority.sqlite +
     /// root/objects, byte-for-byte paired like Rust).
     ///
-    /// This is the single choke point for the storage-plane selection too:
-    /// every storage-opening invocation builds from here — `init-authority`,
-    /// every `serve` start (including the g3 duplicate-server probe and the
-    /// hooked FixtureMain path), and the offline `v2 revoke` — so on an
-    /// SPI-plane run they all name the same backend and a v2 run emits no
-    /// plane flag at all.
+    /// This is the single choke point for the storage-plane/backend
+    /// selection too: every storage-opening invocation builds from here —
+    /// `init-authority`, every `serve` start (including the g3
+    /// duplicate-server probe and the hooked FixtureMain path), and the
+    /// offline `v2 revoke` — so on an SPI run they all name the same
+    /// backend and coordinates, and a v2 run emits no storage flag at all.
+    /// Coordinate flags carry non-secret values only; secrets stay in the
+    /// PROBE_* environment the spawned subjects inherit.
     pub fn storage_args(&self) -> Vec<String> {
         let mut args = match self.server {
             Subject::Rust => vec![
@@ -352,14 +567,44 @@ impl AuthorityFixture {
             path(&self.certs.principal_map),
             "--trust-system-clock".into(),
         ]);
-        if self.storage_plane == StoragePlane::Spi {
-            // The subjects spell the plane differently (Java `--object-plane
-            // v2|spi`, Rust `--payload-backend fs|spi-fs`); both accept the
-            // flag on init-authority and serve.
-            args.extend(match self.server {
-                Subject::Rust => ["--payload-backend".into(), "spi-fs".into()],
-                Subject::Java => ["--object-plane".into(), "spi".into()],
-            });
+        if self.storage.plane == StoragePlane::Spi {
+            // The subjects spell the plane and backend differently (Java
+            // `--object-plane spi --spi-backend <kind>`, Rust
+            // `--payload-backend spi[-<kind>]`), verified against the
+            // unmerged storage branches; both accept the flags on
+            // init-authority and serve.
+            match self.server {
+                Subject::Java => {
+                    args.extend(["--object-plane".into(), "spi".into()]);
+                    args.extend(["--spi-backend".into(), self.storage.backend.name().into()]);
+                }
+                Subject::Rust => {
+                    let backend = match self.storage.backend {
+                        StorageBackend::Fs => "spi-fs",
+                        StorageBackend::Postgres => "spi-postgres",
+                        StorageBackend::S3 => "spi-s3",
+                        StorageBackend::Mongo => "spi-mongo",
+                    };
+                    args.extend(["--payload-backend".into(), backend.into()]);
+                }
+            }
+            for spec in backend_coordinates(self.storage.backend) {
+                let flag = match self.server {
+                    Subject::Java => spec.java_flag,
+                    Subject::Rust => spec.rust_flag,
+                };
+                if flag.is_empty() {
+                    continue;
+                }
+                if let Some((_, value)) = self
+                    .storage
+                    .coordinates
+                    .iter()
+                    .find(|(name, _)| name == spec.probe)
+                {
+                    args.extend([flag.into(), value.clone()]);
+                }
+            }
         }
         args
     }
@@ -1005,17 +1250,19 @@ mod tests {
         assert_eq!(fixture.client_op_timeout, Duration::from_secs(30));
     }
 
-    /// The storage-plane selection is driver-level: an SPI run must pass the
-    /// subject's own plane flag at BOTH storage entry points (init-authority
-    /// and every serve start, hooked or not), and the default v2 plane must
-    /// leave every spawned command line byte-identical — the merged subjects
-    /// do not carry the flag, and clap would refuse an unknown option.
+    /// The storage selection is driver-level: an SPI run must pass the
+    /// subject's own plane/backend/coordinate flags at BOTH storage entry
+    /// points (init-authority and every serve start, hooked or not), and the
+    /// default v2/fs selection must leave every spawned command line
+    /// byte-identical — the merged subjects do not carry the flags, and
+    /// clap would refuse an unknown option.
     #[test]
-    fn storage_plane_flag_is_emitted_only_for_spi_and_at_every_storage_entry_point() {
+    #[allow(clippy::type_complexity)] // the case table is a test literal
+    fn storage_selection_flags_are_emitted_only_for_spi_and_at_every_entry_point() {
         fn fixture_for(
             directory: &tempfile::TempDir,
             server: Subject,
-            plane: StoragePlane,
+            storage: StorageSelection,
         ) -> AuthorityFixture {
             let jar = directory.path().join("subject-all.jar");
             fs::write(&jar, b"not really a jar").unwrap();
@@ -1034,26 +1281,128 @@ mod tests {
                 "java-tmp-test".to_owned(),
             )
             .unwrap()
-            .with_storage_plane(plane)
+            .with_storage(storage)
         }
 
-        fn assert_gains_exactly_the_plane_pair(v2: &[String], spi: &[String], pair: [&str; 2]) {
+        fn assert_gains_exactly(default: &[String], selected: &[String], tokens: &[&str]) {
             assert_eq!(
-                spi.len(),
-                v2.len() + 2,
-                "an SPI command gains exactly the plane pair, nothing else: {spi:?}"
+                selected.len(),
+                default.len() + tokens.len(),
+                "a selected-storage command gains exactly the expected tokens: {selected:?}"
             );
-            let position = spi
-                .windows(2)
-                .position(|window| window == pair)
-                .unwrap_or_else(|| panic!("the SPI command must carry {pair:?}: {spi:?}"));
-            let mut expected = v2.to_vec();
-            expected.splice(position..position, pair.iter().map(|arg| (*arg).to_owned()));
+            let position = selected
+                .windows(tokens.len())
+                .position(|window| window == tokens)
+                .unwrap_or_else(|| panic!("the command must carry {tokens:?}: {selected:?}"));
+            let mut expected = default.to_vec();
+            expected.splice(
+                position..position,
+                tokens.iter().map(|arg| (*arg).to_owned()),
+            );
             assert_eq!(
-                *spi, expected,
-                "the plane pair must sit at the storage boundary"
+                *selected, expected,
+                "the storage tokens must sit at the storage boundary"
             );
         }
+
+        fn selection(backend: StorageBackend, coordinates: &[(&str, &str)]) -> StorageSelection {
+            StorageSelection {
+                plane: StoragePlane::Spi,
+                backend,
+                coordinates: coordinates
+                    .iter()
+                    .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                    .collect(),
+            }
+        }
+
+        // (backend, coordinates, Java token run, Rust token run)
+        let cases: [(StorageBackend, &[(&str, &str)], &[&str], &[&str]); 4] = [
+            (
+                StorageBackend::Fs,
+                &[],
+                &["--object-plane", "spi", "--spi-backend", "fs"],
+                &["--payload-backend", "spi-fs"],
+            ),
+            (
+                StorageBackend::Postgres,
+                &[("PROBE_PG_URL", "postgres://localhost:5432/probe")],
+                &[
+                    "--object-plane",
+                    "spi",
+                    "--spi-backend",
+                    "postgres",
+                    "--spi-pg-url",
+                    "postgres://localhost:5432/probe",
+                ],
+                &[
+                    "--payload-backend",
+                    "spi-postgres",
+                    "--payload-pg-url",
+                    "postgres://localhost:5432/probe",
+                ],
+            ),
+            (
+                StorageBackend::S3,
+                &[
+                    ("PROBE_S3_ENDPOINT", "http://localhost:9000"),
+                    ("PROBE_S3_BUCKET", "probe-bucket"),
+                    ("PROBE_S3_REGION", "probe-region"),
+                    ("PROBE_S3_PREFIX", "probe/prefix/"),
+                ],
+                &[
+                    "--object-plane",
+                    "spi",
+                    "--spi-backend",
+                    "s3",
+                    "--spi-s3-endpoint",
+                    "http://localhost:9000",
+                    "--spi-s3-bucket",
+                    "probe-bucket",
+                    "--spi-s3-region",
+                    "probe-region",
+                    "--spi-s3-prefix",
+                    "probe/prefix/",
+                ],
+                &[
+                    "--payload-backend",
+                    "spi-s3",
+                    "--payload-s3-endpoint",
+                    "http://localhost:9000",
+                    "--payload-s3-bucket",
+                    "probe-bucket",
+                    "--payload-s3-region",
+                    "probe-region",
+                    "--payload-s3-prefix",
+                    "probe/prefix/",
+                ],
+            ),
+            (
+                StorageBackend::Mongo,
+                &[
+                    ("PROBE_MONGO_URI", "mongodb://localhost:27017"),
+                    ("PROBE_MONGO_DATABASE", "probe"),
+                ],
+                &[
+                    "--object-plane",
+                    "spi",
+                    "--spi-backend",
+                    "mongo",
+                    "--spi-mongo-uri",
+                    "mongodb://localhost:27017",
+                    "--spi-mongo-database",
+                    "probe",
+                ],
+                &[
+                    "--payload-backend",
+                    "spi-mongo",
+                    "--payload-mongo-uri",
+                    "mongodb://localhost:27017",
+                    "--payload-mongo-database",
+                    "probe",
+                ],
+            ),
+        ];
 
         let directory = tempfile::tempdir().unwrap();
         let ready = directory.path().join("ready");
@@ -1063,51 +1412,226 @@ mod tests {
             scenario_id: "g2-kill".to_owned(),
             schedule: Some(directory.path().join("schedule.tsv")),
         };
-        for (server, pair) in [
-            (Subject::Java, ["--object-plane", "spi"]),
-            (Subject::Rust, ["--payload-backend", "spi-fs"]),
-        ] {
-            let v2 = fixture_for(&directory, server, StoragePlane::V2);
-            let spi = fixture_for(&directory, server, StoragePlane::Spi);
+        for server in [Subject::Java, Subject::Rust] {
+            let default = fixture_for(&directory, server, StorageSelection::default());
 
-            // The default plane emits no flag at any storage entry point.
+            // The default selection emits no storage flag at any entry point.
             for command in [
-                v2.init_authority_command().unwrap(),
-                v2.serve_command(&ready, None).unwrap(),
-                v2.serve_command(&ready, Some(&arming)).unwrap(),
+                default.init_authority_command().unwrap(),
+                default.serve_command(&ready, None).unwrap(),
+                default.serve_command(&ready, Some(&arming)).unwrap(),
             ] {
-                assert!(
-                    !command
-                        .iter()
-                        .any(|arg| arg == "--object-plane" || arg == "--payload-backend"),
-                    "a default-v2 command must stay byte-identical: {command:?}"
-                );
+                for token in ["--object-plane", "--spi-backend", "--payload-backend"] {
+                    assert!(
+                        !command.iter().any(|arg| arg == token),
+                        "a default run must stay byte-identical: {command:?}"
+                    );
+                }
             }
 
-            // SPI gains the subject's own pair at init-authority and at
-            // every serve start, hooked (Java FixtureMain) and unarmed.
-            assert_gains_exactly_the_plane_pair(
-                &v2.init_authority_command().unwrap(),
-                &spi.init_authority_command().unwrap(),
-                pair,
-            );
-            assert_gains_exactly_the_plane_pair(
-                &v2.serve_command(&ready, None).unwrap(),
-                &spi.serve_command(&ready, None).unwrap(),
-                pair,
-            );
-            let hooked = spi.serve_command(&ready, Some(&arming)).unwrap();
-            assert!(
-                hooked.windows(2).any(|window| window == pair),
-                "the hooked (FixtureMain) serve must carry {pair:?}: {hooked:?}"
-            );
-
-            // The selection travels with the fixture clone a kill row's
-            // restart builds its recovered session from.
-            assert_eq!(spi.clone().storage_plane, StoragePlane::Spi);
-            assert_eq!(StoragePlane::V2.name(), "v2");
-            assert_eq!(StoragePlane::Spi.name(), "spi");
+            for (backend, coordinates, java_tokens, rust_tokens) in cases {
+                let tokens = match server {
+                    Subject::Java => java_tokens,
+                    Subject::Rust => rust_tokens,
+                };
+                let selected = fixture_for(&directory, server, selection(backend, coordinates));
+                // The subject's own token run is appended at init-authority
+                // and at every serve start, exactly, in convention order.
+                assert_gains_exactly(
+                    &default.init_authority_command().unwrap(),
+                    &selected.init_authority_command().unwrap(),
+                    tokens,
+                );
+                assert_gains_exactly(
+                    &default.serve_command(&ready, None).unwrap(),
+                    &selected.serve_command(&ready, None).unwrap(),
+                    tokens,
+                );
+                let hooked = selected.serve_command(&ready, Some(&arming)).unwrap();
+                assert!(
+                    hooked.windows(tokens.len()).any(|window| window == tokens),
+                    "the hooked (FixtureMain) serve must carry {tokens:?}: {hooked:?}"
+                );
+                // The selection travels with the fixture clone a kill row's
+                // restart builds its recovered session from.
+                assert_eq!(selected.clone().storage, selected.storage);
+            }
         }
+        assert_eq!(StoragePlane::V2.name(), "v2");
+        assert_eq!(StoragePlane::Spi.name(), "spi");
+        assert_eq!(StorageBackend::Fs.name(), "fs");
+        assert_eq!(StorageBackend::Postgres.name(), "postgres");
+        assert_eq!(StorageBackend::S3.name(), "s3");
+        assert_eq!(StorageBackend::Mongo.name(), "mongo");
         fs::remove_dir_all(java_tmp_dir("java-tmp-test")).unwrap();
+    }
+
+    /// Coordinates resolve from the PROBE_* environment conventions; every
+    /// required coordinate of the selected backend must be present (a
+    /// clear usage error naming the missing variables), secrets are never
+    /// forwarded onto a command line, and optional coordinates (S3 region,
+    /// prefix) are forwarded only when set.
+    #[test]
+    fn backend_coordinates_resolve_from_probe_env_with_usage_errors() {
+        fn resolve_with(
+            values: &[(&str, &str)],
+            backend: StorageBackend,
+        ) -> Result<Vec<(String, String)>> {
+            let owned: Vec<(String, String)> = values
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+                .collect();
+            resolve_backend_coordinates(backend, |name| {
+                owned
+                    .iter()
+                    .find(|(key, _)| key == name)
+                    .map(|(_, value)| value.clone())
+            })
+        }
+
+        // fs needs nothing and forwards nothing.
+        assert_eq!(resolve_with(&[], StorageBackend::Fs).unwrap(), Vec::new());
+
+        // postgres: the URL is required; user/password are env-only secrets
+        // (never forwarded as flags, never required by the driver).
+        let error = resolve_with(&[], StorageBackend::Postgres)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("postgres"), "{error}");
+        assert!(error.contains("PROBE_PG_URL"), "{error}");
+        let resolved = resolve_with(
+            &[
+                ("PROBE_PG_URL", "postgres://localhost:5432/probe"),
+                ("PROBE_PG_USER", "probe-user"),
+                ("PROBE_PG_PASSWORD", "probe-password"),
+            ],
+            StorageBackend::Postgres,
+        )
+        .unwrap();
+        assert_eq!(
+            resolved,
+            vec![(
+                "PROBE_PG_URL".to_owned(),
+                "postgres://localhost:5432/probe".to_owned()
+            )],
+            "secrets must not be forwarded: {resolved:?}"
+        );
+
+        // s3: endpoint/bucket/access/secret are required; region and prefix
+        // are optional and forwarded only when present.
+        let error = resolve_with(&[("PROBE_S3_BUCKET", "probe-bucket")], StorageBackend::S3)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("PROBE_S3_ENDPOINT"), "{error}");
+        assert!(error.contains("PROBE_S3_ACCESS_KEY"), "{error}");
+        assert!(error.contains("PROBE_S3_SECRET_KEY"), "{error}");
+        let resolved = resolve_with(
+            &[
+                ("PROBE_S3_ENDPOINT", "http://localhost:9000"),
+                ("PROBE_S3_BUCKET", "probe-bucket"),
+                ("PROBE_S3_ACCESS_KEY", "probe-access"),
+                ("PROBE_S3_SECRET_KEY", "probe-secret"),
+            ],
+            StorageBackend::S3,
+        )
+        .unwrap();
+        assert_eq!(
+            resolved,
+            vec![
+                (
+                    "PROBE_S3_ENDPOINT".to_owned(),
+                    "http://localhost:9000".to_owned()
+                ),
+                ("PROBE_S3_BUCKET".to_owned(), "probe-bucket".to_owned()),
+            ],
+            "unset optional coordinates are omitted, secrets never forwarded: {resolved:?}"
+        );
+        let resolved = resolve_with(
+            &[
+                ("PROBE_S3_ENDPOINT", "http://localhost:9000"),
+                ("PROBE_S3_BUCKET", "probe-bucket"),
+                ("PROBE_S3_ACCESS_KEY", "probe-access"),
+                ("PROBE_S3_SECRET_KEY", "probe-secret"),
+                ("PROBE_S3_REGION", "probe-region"),
+                ("PROBE_S3_PREFIX", "probe/prefix/"),
+            ],
+            StorageBackend::S3,
+        )
+        .unwrap();
+        assert_eq!(
+            resolved
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "PROBE_S3_ENDPOINT",
+                "PROBE_S3_BUCKET",
+                "PROBE_S3_REGION",
+                "PROBE_S3_PREFIX"
+            ]
+        );
+
+        // mongo: URI and database are both required.
+        let error = resolve_with(
+            &[("PROBE_MONGO_URI", "mongodb://localhost:27017")],
+            StorageBackend::Mongo,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("PROBE_MONGO_DATABASE"), "{error}");
+        let resolved = resolve_with(
+            &[
+                ("PROBE_MONGO_URI", "mongodb://localhost:27017"),
+                ("PROBE_MONGO_DATABASE", "probe"),
+            ],
+            StorageBackend::Mongo,
+        )
+        .unwrap();
+        assert_eq!(
+            resolved,
+            vec![
+                (
+                    "PROBE_MONGO_URI".to_owned(),
+                    "mongodb://localhost:27017".to_owned()
+                ),
+                ("PROBE_MONGO_DATABASE".to_owned(), "probe".to_owned()),
+            ]
+        );
+    }
+
+    /// Plane selection: fs defaults to v2, a non-fs backend implies SPI,
+    /// an explicit SPI selection wins, and an explicit v2 with a non-fs
+    /// backend is a usage error (both subjects refuse that combination).
+    #[test]
+    fn effective_plane_selection_and_conflicts() {
+        assert_eq!(
+            effective_plane(None, StorageBackend::Fs).unwrap(),
+            StoragePlane::V2
+        );
+        assert_eq!(
+            effective_plane(None, StorageBackend::Postgres).unwrap(),
+            StoragePlane::Spi
+        );
+        assert_eq!(
+            effective_plane(None, StorageBackend::S3).unwrap(),
+            StoragePlane::Spi
+        );
+        assert_eq!(
+            effective_plane(None, StorageBackend::Mongo).unwrap(),
+            StoragePlane::Spi
+        );
+        assert_eq!(
+            effective_plane(Some(StoragePlane::Spi), StorageBackend::Fs).unwrap(),
+            StoragePlane::Spi
+        );
+        assert_eq!(
+            effective_plane(Some(StoragePlane::Spi), StorageBackend::S3).unwrap(),
+            StoragePlane::Spi
+        );
+        let error = effective_plane(Some(StoragePlane::V2), StorageBackend::Mongo)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("--storage-plane v2"), "{error}");
+        assert!(error.contains("mongo"), "{error}");
     }
 }

@@ -265,10 +265,11 @@ pub struct ScenarioContext {
     pub seed: u64,
     pub rust_bin: PathBuf,
     pub java_jar: Option<PathBuf>,
-    /// Driver-level storage-plane selection for every row's subjects; the
-    /// fixtures take it from here so no row can start a subject on a
-    /// different plane than the run recorded.
-    pub storage_plane: crate::durable::process::StoragePlane,
+    /// Driver-level storage selection (plane, backend, resolved non-secret
+    /// coordinates) for every row's subjects; the fixtures take it from
+    /// here so no row can start a subject on a different selection than
+    /// the run recorded.
+    pub storage: crate::durable::process::StorageSelection,
 }
 
 impl ScenarioContext {
@@ -563,7 +564,7 @@ fn setup_session_serve_args(
         client,
         context.run_id.clone(),
     )?
-    .with_storage_plane(context.storage_plane)
+    .with_storage(context.storage.clone())
     .with_extra_serve_args(serve_args);
     fixture.run_init_authority()?;
     let server = fixture.start_server()?;
@@ -651,7 +652,7 @@ fn setup_session_policy(
         client,
         context.run_id.clone(),
     )?
-    .with_storage_plane(context.storage_plane);
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let server = fixture.start_server()?;
     let sequence = fixture.next_sequence(&server, "alice")?;
@@ -4303,7 +4304,7 @@ fn setup_armed(
         client,
         context.run_id.clone(),
     )?
-    .with_storage_plane(context.storage_plane);
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let events = scenario_dir.join("events.tsv");
     let server = fixture.start_server_armed(arming.as_ref(), probe)?;
@@ -12114,7 +12115,7 @@ fn g5_fixture(
         Subject::Rust,
         context.run_id.clone(),
     )?
-    .with_storage_plane(context.storage_plane);
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let server = fixture.start_server()?;
     Ok((fixture, server))
@@ -16002,7 +16003,7 @@ fn setup_raw_probe(
         Subject::Rust,
         context.run_id.clone(),
     )?
-    .with_storage_plane(context.storage_plane);
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let server = fixture.start_server()?;
     let sequence = fixture.next_sequence(&server, "alice")?;
@@ -17617,7 +17618,7 @@ fn r_connection_ceiling_direction(
         Subject::Rust,
         context.run_id.clone(),
     )?
-    .with_storage_plane(context.storage_plane);
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let owned = fixture.start_server()?;
     let sequence = fixture.next_sequence(&owned, "alice")?;
@@ -18153,7 +18154,7 @@ fn r_stalled_principal_progress_direction(
         Subject::Rust,
         context.run_id.clone(),
     )?
-    .with_storage_plane(context.storage_plane);
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let owned = fixture.start_server()?;
     let sequence = fixture.next_sequence(&owned, "alice")?;
@@ -19103,7 +19104,7 @@ fn r_memory_ladder_direction(
         Subject::Rust,
         context.run_id.clone(),
     )?
-    .with_storage_plane(context.storage_plane);
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let owned = fixture.start_server()?;
     let sequence = fixture.next_sequence(&owned, "alice")?;
@@ -20085,7 +20086,7 @@ fn r_staging_and_journal_bounds_direction(
         Subject::Rust,
         context.run_id.clone(),
     )?
-    .with_storage_plane(context.storage_plane);
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let mut owned = fixture.start_server()?;
     ensure!(
@@ -21330,7 +21331,7 @@ fn r_network_bytes_direction(
         Subject::Rust,
         context.run_id.clone(),
     )?
-    .with_storage_plane(context.storage_plane);
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let owned = fixture.start_server()?;
     ensure!(
@@ -21773,7 +21774,7 @@ fn r_native_credit_direction(
         Subject::Rust,
         context.run_id.clone(),
     )?
-    .with_storage_plane(context.storage_plane);
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let owned = fixture.start_server()?;
     ensure!(
@@ -23283,7 +23284,7 @@ fn g5_cross_authority_reference_direction(
         Subject::Rust,
         context.run_id.clone(),
     )?
-    .with_storage_plane(context.storage_plane)
+    .with_storage(context.storage.clone())
     .with_authority(AUTHORITY_Y);
     fixture_y.run_init_authority()?;
     let server_y = fixture_y.start_server()?;
@@ -23529,7 +23530,7 @@ fn g5_expired_identity_direction(
         Subject::Rust,
         context.run_id.clone(),
     )?
-    .with_storage_plane(context.storage_plane);
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let server = fixture.start_server()?;
     let short_identity = fixture.certs.principal("alice")?.clone();
@@ -24684,7 +24685,7 @@ fn subject_schedule_refusal(
         Subject::Rust,
         context.run_id.clone(),
     )?
-    .with_storage_plane(context.storage_plane);
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let schedule_path = direction_dir.join("schedule.tsv");
     fs::write(&schedule_path, schedule::render(rows)?)?;
@@ -25133,7 +25134,7 @@ mod tests {
             seed: 7,
             rust_bin: PathBuf::from("/nonexistent/pipestream-quinn"),
             java_jar: None,
-            storage_plane: crate::durable::process::StoragePlane::V2,
+            storage: crate::durable::process::StorageSelection::default(),
         };
         // The Java FixtureMain consumes one pause row per reached boundary,
         // so attempt 1 takes the first pause and attempt 2 the second; the

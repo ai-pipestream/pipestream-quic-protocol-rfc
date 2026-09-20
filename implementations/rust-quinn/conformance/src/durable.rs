@@ -58,20 +58,31 @@ pub struct DurableArgs {
     waive: Vec<String>,
     /// Storage plane the subject authorities run their storage on, for every
     /// matrix row. `spi` passes each subject's own plane flag at
-    /// init-authority and every serve start (Java `--object-plane spi`, Rust
-    /// `--payload-backend spi-fs`) and requires the subjects'
-    /// storage-branch builds; the default `v2` emits no flag, so every
-    /// spawned command line stays byte-identical to a merged-subject run.
-    /// Recorded in run.tsv so an archived run shows its plane. Like the
-    /// other gated acceptance settings (run_all.sh) it is also settable
-    /// through the environment.
+    /// init-authority and every serve start and requires the subjects'
+    /// storage-branch builds. Unset (the default) selects the merged v2
+    /// plane for `--storage-backend fs` and implies the spi plane for a
+    /// non-fs backend; an explicit `v2` with a non-fs backend is a usage
+    /// error. Recorded in run.tsv so an archived run shows its plane.
+    #[arg(long, value_enum, env = "PIPESTREAM_DURABLE_STORAGE_PLANE")]
+    storage_plane: Option<process::StoragePlane>,
+    /// SPI object backend the subjects store payloads on, for every matrix
+    /// row: `fs` (default; no storage flags, byte-identical command lines)
+    /// or `postgres|s3|mongo` (implies the spi plane). Non-secret coordinates
+    /// are read from the PROBE_* environment conventions (PROBE_PG_URL,
+    /// PROBE_S3_ENDPOINT/BUCKET/REGION/PREFIX, PROBE_MONGO_URI/DATABASE) and
+    /// forwarded as each subject's flags; secrets (PROBE_PG_USER/PASSWORD,
+    /// PROBE_S3_ACCESS_KEY/SECRET_KEY) stay in the environment the spawned
+    /// subjects inherit, never on a command line. Run scripts own the
+    /// service lifecycle (docker containers); the driver never starts
+    /// services, and a non-fs selection with a missing required coordinate
+    /// is a usage error before anything spawns. Recorded in run.tsv.
     #[arg(
         long,
         value_enum,
-        env = "PIPESTREAM_DURABLE_STORAGE_PLANE",
-        default_value = "v2"
+        env = "PIPESTREAM_DURABLE_STORAGE_BACKEND",
+        default_value = "fs"
     )]
-    storage_plane: process::StoragePlane,
+    storage_backend: process::StorageBackend,
 }
 
 /// One `--waive` target: a whole row or one `<row>:<direction>` pair, with
@@ -500,6 +511,20 @@ fn absolutize(path: PathBuf) -> Result<PathBuf> {
 }
 
 pub fn run(args: DurableArgs) -> Result<()> {
+    // Storage selection validation comes first: these are invocation
+    // (usage) errors, so they precede the artifact gates. A non-fs backend
+    // implies the spi plane; coordinates resolve from the PROBE_* env
+    // conventions and must be complete before anything spawns.
+    let plane = process::effective_plane(args.storage_plane, args.storage_backend)?;
+    let coordinates = process::resolve_backend_coordinates(args.storage_backend, |name| {
+        std::env::var(name).ok()
+    })?;
+    let storage = process::StorageSelection {
+        plane,
+        backend: args.storage_backend,
+        coordinates,
+    };
+
     let root = repository_root()?;
     let rust_bin = args
         .rust_bin
@@ -555,6 +580,7 @@ pub fn run(args: DurableArgs) -> Result<()> {
     write_run_manifest(
         &run_root,
         &args,
+        &storage,
         &rust_bin,
         &rust_hash,
         java_hash.as_ref(),
@@ -573,7 +599,7 @@ pub fn run(args: DurableArgs) -> Result<()> {
         seed: args.seed,
         rust_bin: rust_bin.clone(),
         java_jar: java_jar.clone(),
-        storage_plane: args.storage_plane,
+        storage: storage.clone(),
     };
     let mut outcomes: Vec<(&scenarios::Row, scenarios::DirectionOutcome)> = Vec::new();
     for row in &selected {
@@ -797,6 +823,7 @@ fn self_check(rust_bin: &std::path::Path, recorded_hash: &str) -> Result<()> {
 fn write_run_manifest(
     run_root: &std::path::Path,
     args: &DurableArgs,
+    storage: &process::StorageSelection,
     rust_bin: &std::path::Path,
     rust_hash: &str,
     java_hash: Option<&(PathBuf, String)>,
@@ -814,13 +841,14 @@ fn write_run_manifest(
         format!(
             "started_ms\t{started}\nmode\t{}\nseed\t{}\nrust_bin\t{}\trust_sha256\t{}\n\
              java_jar\t{java_path}\tjava_sha256\t{java_sha}\njava_memory_flags\t{}\n\
-             storage_plane\t{}\n{waivers}",
+             storage_plane\t{}\nstorage_backend\t{}\n{waivers}",
             if args.dev { "dev" } else { "acceptance" },
             args.seed,
             path(rust_bin),
             rust_hash,
             process::java_memory_flags_text(),
-            args.storage_plane.name(),
+            storage.plane.name(),
+            storage.backend.name(),
             waivers = render_waivers_tsv(waivers),
         ),
     )?;
@@ -854,7 +882,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn storage_plane_flag_parses_and_defaults_match_an_explicit_v2() {
+    fn storage_selection_flags_parse_with_sane_defaults() {
         use clap::Parser;
 
         let parsed = crate::Cli::try_parse_from([
@@ -862,69 +890,73 @@ mod tests {
             "durable",
             "--storage-plane",
             "spi",
+            "--storage-backend",
+            "postgres",
         ])
         .unwrap();
         let crate::Task::Durable { args } = parsed.command else {
             panic!("expected the durable subcommand")
         };
-        assert_eq!(args.storage_plane, process::StoragePlane::Spi);
+        assert_eq!(args.storage_plane, Some(process::StoragePlane::Spi));
+        assert_eq!(args.storage_backend, process::StorageBackend::Postgres);
 
+        // Absent both flags: no explicit plane (fs implies v2, non-fs
+        // implies spi) and the fs backend — byte-identical command lines.
         let default = crate::Cli::try_parse_from(["pipestream-conformance", "durable"]).unwrap();
         let crate::Task::Durable { args: default_args } = default.command else {
             panic!("expected the durable subcommand")
         };
-        let explicit = crate::Cli::try_parse_from([
-            "pipestream-conformance",
-            "durable",
-            "--storage-plane",
-            "v2",
-        ])
-        .unwrap();
-        let crate::Task::Durable {
-            args: explicit_args,
-        } = explicit.command
-        else {
-            panic!("expected the durable subcommand")
-        };
-        // Absent the flag the run is a v2 run, whatever the outer environment.
-        assert_eq!(default_args.storage_plane, explicit_args.storage_plane);
-        assert_eq!(default_args.storage_plane, process::StoragePlane::V2);
-
-        // An unknown plane spelling is refused, never silently mapped.
-        assert!(
-            crate::Cli::try_parse_from([
-                "pipestream-conformance",
-                "durable",
-                "--storage-plane",
-                "sideways",
-            ])
-            .is_err()
+        assert_eq!(default_args.storage_plane, None);
+        assert_eq!(default_args.storage_backend, process::StorageBackend::Fs);
+        assert_eq!(
+            process::effective_plane(default_args.storage_plane, default_args.storage_backend)
+                .unwrap(),
+            process::StoragePlane::V2
         );
+        assert_eq!(
+            process::effective_plane(args.storage_plane, args.storage_backend).unwrap(),
+            process::StoragePlane::Spi
+        );
+
+        // Unknown spellings are refused, never silently mapped.
+        for (flag, value) in [
+            ("--storage-plane", "sideways"),
+            ("--storage-backend", "sideways"),
+        ] {
+            assert!(
+                crate::Cli::try_parse_from(["pipestream-conformance", "durable", flag, value,])
+                    .is_err(),
+                "{flag} {value} must be refused"
+            );
+        }
     }
 
     /// The env-var arm of the wiring. std::env::set_var is unsafe in edition
     /// 2024, so the env-dependent parse runs in a spawned copy of this test
     /// binary (the crate's established child-arm pattern, see
-    /// main.rs capture_tests) with PIPESTREAM_DURABLE_STORAGE_PLANE set.
+    /// main.rs capture_tests) with PIPESTREAM_DURABLE_STORAGE_PLANE and
+    /// PIPESTREAM_DURABLE_STORAGE_BACKEND set.
     #[test]
-    fn storage_plane_env_var_reaches_the_durable_args() {
+    fn storage_selection_env_vars_reach_the_durable_args() {
         if std::env::var_os("PIPESTREAM_DURABLE_PLANE_ENV_CHILD").is_some() {
             use clap::Parser;
             let parsed = crate::Cli::try_parse_from(["pipestream-conformance", "durable"]).unwrap();
             let crate::Task::Durable { args } = parsed.command else {
                 panic!("expected the durable subcommand")
             };
-            assert_eq!(args.storage_plane, process::StoragePlane::Spi);
+            assert_eq!(args.storage_plane, Some(process::StoragePlane::Spi));
+            assert_eq!(args.storage_backend, process::StorageBackend::Mongo);
             return;
         }
         let child = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "durable::tests::storage_plane_env_var_reaches_the_durable_args",
+                "durable::tests::storage_selection_env_vars_reach_the_durable_args",
                 "--nocapture",
             ])
             .env("PIPESTREAM_DURABLE_PLANE_ENV_CHILD", "1")
             .env("PIPESTREAM_DURABLE_STORAGE_PLANE", "spi")
+            .env("PIPESTREAM_DURABLE_STORAGE_BACKEND", "mongo")
             .output()
             .unwrap();
         assert!(
@@ -935,14 +967,25 @@ mod tests {
         );
     }
 
-    /// The run manifest records the plane next to the subject hashes so an
-    /// archived run shows whether it was an SPI-plane run.
+    /// The run manifest records the plane and backend next to the subject
+    /// hashes so an archived run shows exactly what it selected.
     #[test]
-    fn run_manifest_records_the_storage_plane() {
+    fn run_manifest_records_the_storage_selection() {
         let directory = tempfile::tempdir().unwrap();
-        for (plane, spelling) in [
-            (process::StoragePlane::V2, "v2"),
-            (process::StoragePlane::Spi, "spi"),
+        for (storage, plane, backend) in [
+            (process::StorageSelection::default(), "v2", "fs"),
+            (
+                process::StorageSelection {
+                    plane: process::StoragePlane::Spi,
+                    backend: process::StorageBackend::Postgres,
+                    coordinates: vec![(
+                        "PROBE_PG_URL".to_owned(),
+                        "postgres://localhost:5432/probe".to_owned(),
+                    )],
+                },
+                "spi",
+                "postgres",
+            ),
         ] {
             let args = DurableArgs {
                 dev: true,
@@ -953,13 +996,15 @@ mod tests {
                 java_jar: None,
                 archive: None,
                 waive: Vec::new(),
-                storage_plane: plane,
+                storage_plane: None,
+                storage_backend: process::StorageBackend::Fs,
             };
-            let run_root = directory.path().join(spelling);
+            let run_root = directory.path().join(format!("{plane}-{backend}"));
             fs::create_dir_all(&run_root).unwrap();
             write_run_manifest(
                 &run_root,
                 &args,
+                &storage,
                 std::path::Path::new("/nonexistent/pipestream-quinn"),
                 "rust-sha",
                 None,
@@ -968,8 +1013,12 @@ mod tests {
             .unwrap();
             let manifest = fs::read_to_string(run_root.join("run.tsv")).unwrap();
             assert!(
-                manifest.contains(&format!("storage_plane\t{spelling}\n")),
-                "run.tsv must name the plane: {manifest}"
+                manifest.contains(&format!("storage_plane\t{plane}\n")),
+                "run.tsv must name the effective plane: {manifest}"
+            );
+            assert!(
+                manifest.contains(&format!("storage_backend\t{backend}\n")),
+                "run.tsv must name the backend: {manifest}"
             );
         }
     }
