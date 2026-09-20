@@ -186,23 +186,18 @@ impl ObjectStore for MemoryStore {
         let seal = scope_state
             .seal
             .ok_or_else(|| StorageError::not_found(format!("scope {scope} has no seal record")))?;
-        let mut digests = Vec::with_capacity(scope_state.objects.len());
+        let mut live_count = 0u64;
         for (entity, object) in &scope_state.objects {
             if layout::sha256(&object.bytes) != object.digest {
                 return Err(StorageError::corrupt(format!(
                     "entity {entity} in {scope} fails its recorded digest"
                 )));
             }
-            digests.push((*entity, object.digest));
+            live_count += 1;
         }
-        if digests.len() as u64 != seal.entity_count {
+        if live_count != seal.entity_count {
             return Err(StorageError::corrupt(format!(
                 "scope {scope} entity count differs from its seal"
-            )));
-        }
-        if layout::scope_digest(&digests)? != seal.digest {
-            return Err(StorageError::corrupt(format!(
-                "scope {scope} digest differs from its seal"
             )));
         }
         Ok(seal)
@@ -237,7 +232,7 @@ impl ObjectStore for MemoryStore {
         let doomed: Vec<EntityId> = scope_state
             .objects
             .keys()
-            .filter(|id| **id <= retention_cursor)
+            .filter(|id| u64::from(**id) <= retention_cursor)
             .copied()
             .collect();
         let removed = doomed.len() as u64;

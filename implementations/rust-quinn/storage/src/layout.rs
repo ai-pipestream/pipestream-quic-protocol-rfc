@@ -9,15 +9,16 @@
 //!   field). The rendered form is one lowercase, zero-padded, 8-hex-digit
 //!   component per level, joined by `/`.
 //! - **Leaf fanout.** Within a leaf scope, entities shard into 256 buckets:
-//!   the first byte of `SHA-256(entity_id as 8-octet big-endian)`, rendered
-//!   as 2 lowercase hex characters.
-//! - **Canonical scope digest.** SHA-256 over the concatenation, in
-//!   ascending entity-id order, of `0x00 || id-be64 || object-sha256` per
-//!   entity; the empty scope's digest is SHA-256 of empty input. This is
-//!   the value `seal_scope` conventionally records and `verify_scope`
-//!   recomputes.
-//! - **Entity names.** An entity renders as lowercase, zero-padded,
-//!   16-hex-digit unsigned 63-bit id within its bucket.
+//!   the first byte of `SHA-256(entity_id as 4-octet big-endian)`, rendered
+//!   as 2 lowercase hex characters. Entity object names are the id as
+//!   zero-padded 8-hex characters.
+//! - **Canonical content digest** ([`scope_digest`]): SHA-256 over the
+//!   concatenation, in ascending entity-id order, of `0x00 || id-be32 ||
+//!   object-sha256` per entity; the empty scope's digest is SHA-256 of
+//!   empty input. A shared helper only: callers may use it as the seal
+//!   digest, and the cross-language layout vectors pin it byte-for-byte.
+//!   The store itself never recomputes a seal digest — see
+//!   [`crate::ObjectStore::verify_scope`].
 
 use crate::StorageError;
 use sha2::{Digest, Sha256};
@@ -26,13 +27,14 @@ use std::fmt;
 /// A 32-byte SHA-256 digest.
 pub type Digest32 = [u8; 32];
 
-/// An entity identifier: unsigned 63-bit. (Wider than the protocol's
-/// 32-bit wire Entity ID so backend layouts never need re-keying; callers
-/// operating at protocol scale simply use the low range.)
-pub type EntityId = u64;
+/// An entity identifier: unsigned 32-bit, exactly the protocol's Entity ID
+/// width (Section 6).
+pub type EntityId = u32;
 
-/// Largest assignable entity identifier (`0x7fff_ffff_ffff_ffff`).
-pub const MAX_ENTITY_ID: EntityId = 0x7fff_ffff_ffff_ffff;
+/// Largest assignable entity identifier, mirroring the protocol's
+/// `MAX_ENTITY_ID` (`0xffff_fffc`; the top three values are reserved on the
+/// wire).
+pub const MAX_ENTITY_ID: EntityId = 0xffff_fffc;
 
 /// Maximum protocol scope nesting depth (3-bit depth field, Section 6).
 pub const MAX_SCOPE_DEPTH: usize = 7;
@@ -45,18 +47,18 @@ pub fn sha256(bytes: &[u8]) -> Digest32 {
     Sha256::digest(bytes).into()
 }
 
-/// Validates an entity id for storage: unsigned 63-bit.
+/// Validates an entity id for storage.
 pub fn check_entity_id(entity: EntityId) -> Result<(), StorageError> {
     if entity > MAX_ENTITY_ID {
         return Err(StorageError::failed(format!(
-            "entity id {entity:#x} is not unsigned 63-bit"
+            "entity id {entity:#010x} exceeds MAX_ENTITY_ID"
         )));
     }
     Ok(())
 }
 
 /// Maps an entity id to its fanout bucket within a leaf scope: the first
-/// byte of `SHA-256(entity_id as 8-octet big-endian)`.
+/// byte of `SHA-256(entity_id as 4-octet big-endian)`.
 pub fn bucket(entity: EntityId) -> u8 {
     sha256(&entity.to_be_bytes())[0]
 }
@@ -71,16 +73,20 @@ pub fn scope_component(component: u32) -> String {
     format!("{component:08x}")
 }
 
-/// Renders an entity id as lowercase, zero-padded, 16 hex digits — its
+/// Renders an entity id as lowercase, zero-padded, 8 hex digits — its
 /// unique name within a fanout bucket.
 pub fn entity_component(entity: EntityId) -> String {
-    format!("{entity:016x}")
+    format!("{entity:08x}")
 }
 
-/// Computes the canonical scope content digest: SHA-256 over every direct
-/// entity in strictly ascending identifier order, each mixed in as one
-/// zero domain-separation octet, the 8-octet big-endian identifier, and the
-/// entity's 32-octet content digest. An empty input hashes the empty string.
+/// Computes the canonical scope content digest: SHA-256 over every entity
+/// in strictly ascending identifier order, each mixed in as one zero
+/// domain-separation octet, the 4-octet big-endian identifier, and the
+/// entity's 32-octet content digest. An empty input hashes the empty
+/// string.
+///
+/// This is a shared helper, not a store-side invariant: callers may seal
+/// with it, and the cross-language layout vectors pin it byte-for-byte.
 ///
 /// `entities` may arrive in any order; it is sorted here. A duplicate
 /// entity id is a caller error and fails with [`StorageError::Failed`].
@@ -214,7 +220,7 @@ mod tests {
     #[test]
     fn bucket_spans_all_256_values() {
         let mut seen = std::collections::BTreeSet::new();
-        for entity in 0..4096u64 {
+        for entity in 0..4096u32 {
             seen.insert(bucket(entity));
         }
         assert_eq!(seen.len(), BUCKET_COUNT as usize);
@@ -222,8 +228,8 @@ mod tests {
 
     #[test]
     fn bucket_matches_pinned_derivation() {
-        // First byte of SHA-256 over the 8-octet big-endian id, 2 hex chars.
-        let expected = format!("{:02x}", sha256(&42u64.to_be_bytes())[0]);
+        // First byte of SHA-256 over the 4-octet big-endian id, 2 hex chars.
+        let expected = format!("{:02x}", sha256(&42u32.to_be_bytes())[0]);
         assert_eq!(bucket_hex(42), expected);
     }
 
@@ -231,7 +237,7 @@ mod tests {
     fn components_render_fixed_width_hex() {
         assert_eq!(scope_component(0), "00000000");
         assert_eq!(scope_component(0xdead_beef), "deadbeef");
-        assert_eq!(entity_component(1), "0000000000000001");
+        assert_eq!(entity_component(1), "00000001");
     }
 
     #[test]

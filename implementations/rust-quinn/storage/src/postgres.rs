@@ -129,12 +129,12 @@ fn entity_to_row(entity: EntityId) -> i64 {
 }
 
 fn entity_from_row(value: i64, scope: &ScopePath) -> Result<EntityId, StorageError> {
-    if value < 0 {
+    if value < 0 || value > u32::MAX as i64 {
         return Err(StorageError::corrupt(format!(
-            "negative entity id {value} stored for {scope}"
+            "entity id {value} stored for {scope} is out of range"
         )));
     }
-    Ok(value as u64)
+    Ok(value as u32)
 }
 
 /// Fails with [`StorageError::AlreadySealed`] when the scope has a seal row.
@@ -305,7 +305,6 @@ impl ObjectStore for PostgresStore {
                 &[&path_key(scope)],
             )
             .map_err(map_pg_error)?;
-        let mut digests = Vec::with_capacity(rows.len());
         for row in &rows {
             let entity = entity_from_row(row.get(0), scope)?;
             let recorded: Vec<u8> = row.get(1);
@@ -315,19 +314,10 @@ impl ObjectStore for PostgresStore {
                     "entity {entity} in {scope} fails its recorded digest"
                 )));
             }
-            let recorded: Digest32 = recorded.as_slice().try_into().map_err(|_| {
-                StorageError::corrupt(format!("malformed digest stored for {scope}"))
-            })?;
-            digests.push((entity, recorded));
         }
-        if digests.len() as u64 != seal.entity_count {
+        if rows.len() as u64 != seal.entity_count {
             return Err(StorageError::corrupt(format!(
                 "scope {scope} entity count differs from its seal"
-            )));
-        }
-        if layout::scope_digest(&digests)? != seal.digest {
-            return Err(StorageError::corrupt(format!(
-                "scope {scope} digest differs from its seal"
             )));
         }
         Ok(seal)

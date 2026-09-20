@@ -231,8 +231,8 @@ impl S3Store {
     }
 
     /// Entity ids of a scope: keys directly below the scope prefix whose
-    /// first segment is a 2-hex bucket and whose second is a 16-hex entity
-    /// name. Child scopes (8-hex segments) are skipped.
+    /// first segment is a 2-hex bucket and whose second is an 8-hex entity
+    /// name. Child scopes (deeper keys) are skipped.
     fn list_entities(&self, scope: &ScopePath) -> Result<Vec<EntityId>, StorageError> {
         let prefix = self.scope_prefix(scope);
         let mut entities = Vec::new();
@@ -246,10 +246,10 @@ impl S3Store {
             };
             if bucket.len() == 2
                 && bucket.bytes().all(|b| b.is_ascii_hexdigit())
-                && name.len() == 16
+                && name.len() == 8
                 && name.bytes().all(|b| b.is_ascii_hexdigit())
             {
-                let id = EntityId::from_str_radix(name, 16).map_err(|_| {
+                let id = u32::from_str_radix(name, 16).map_err(|_| {
                     StorageError::corrupt(format!("unparseable entity key {key} in {scope}"))
                 })?;
                 entities.push(id);
@@ -473,7 +473,6 @@ impl ObjectStore for S3Store {
                 "scope {scope} entity count differs from its seal"
             )));
         }
-        let mut digests = Vec::with_capacity(entities.len());
         for entity in entities {
             let bytes = self
                 .get_object(&self.object_key(scope, entity))?
@@ -486,12 +485,6 @@ impl ObjectStore for S3Store {
                     "entity {entity} in {scope} fails its recorded digest"
                 )));
             }
-            digests.push((entity, recorded));
-        }
-        if layout::scope_digest(&digests)? != seal.digest {
-            return Err(StorageError::corrupt(format!(
-                "scope {scope} digest differs from its seal"
-            )));
         }
         Ok(seal)
     }
@@ -516,7 +509,7 @@ impl ObjectStore for S3Store {
         }
         let mut doomed = Vec::new();
         for entity in entities {
-            if entity <= retention_cursor {
+            if u64::from(entity) <= retention_cursor {
                 doomed.push(self.object_key(scope, entity));
             }
         }

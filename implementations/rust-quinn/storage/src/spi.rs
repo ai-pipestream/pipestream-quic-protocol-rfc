@@ -29,11 +29,12 @@ pub struct Cursor(pub u64);
 
 /// A scope's seal record, stored in the scope's container at seal time.
 ///
-/// `digest` is conventionally the canonical scope digest from
-/// [`crate::layout::scope_digest`]; [`ObjectStore::seal_scope`] records the
-/// caller-supplied value verbatim and [`ObjectStore::verify_scope`]
-/// recomputes and compares. `entity_count` is the number of direct entities
-/// the seal records.
+/// `digest` is the scope's SCOPE_DIGEST as supplied by the caller; the
+/// store records it verbatim and cannot recompute it (the protocol digest,
+/// Section 9.5, covers entity statuses the store does not hold). A caller
+/// without statuses may use the canonical content digest
+/// ([`crate::layout::scope_digest`]) as the seal digest. `entity_count` is the
+/// number of direct entities the seal records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SealRecord {
     /// The scope digest as recorded at seal time.
@@ -128,7 +129,7 @@ pub trait ObjectStore {
     /// content fails with [`StorageError::Corrupt`]. Re-putting identical
     /// bytes with the same digest succeeds as a no-op.
     ///
-    /// [`StorageError::Failed`] when `entity` is not unsigned 63-bit.
+    /// [`StorageError::Failed`] when `entity` is exceeds the protocol entity-id bound.
     fn put(
         &mut self,
         scope: &ScopePath,
@@ -148,8 +149,7 @@ pub trait ObjectStore {
     -> Result<Self::Reader, StorageError>;
 
     /// Atomically marks `scope` sealed, recording `digest` and
-    /// `entity_count` verbatim in the scope's own container. `digest` is
-    /// conventionally the canonical digest from [`crate::layout::scope_digest`].
+    /// `entity_count` verbatim in the scope's own container.
     ///
     /// Idempotent: an identical re-seal succeeds as a no-op; a conflicting
     /// digest or count fails with [`StorageError::Corrupt`]. After sealing,
@@ -163,15 +163,19 @@ pub trait ObjectStore {
         entity_count: u64,
     ) -> Result<(), StorageError>;
 
-    /// Verifies one scope against its recorded seal: every stored entity is
-    /// re-hashed and compared with its recorded content digest, the entity
-    /// count is compared with the recorded count, and the canonical scope
-    /// digest is recomputed from the recorded per-entity digests and
-    /// compared with the recorded one. Any mismatch fails with
+    /// Verifies one scope against what the store owns: every object's
+    /// payload is rehashed against the digest recorded at
+    /// [`put`](ObjectStore::put) time, and the live entity count is
+    /// compared against the sealed count. Any mismatch fails with
     /// [`StorageError::Corrupt`].
     ///
-    /// Returns the recorded seal record on success. Fails with
-    /// [`StorageError::NotFound`] when the scope was never sealed.
+    /// The store does not recompute the recorded SCOPE_DIGEST — it covers
+    /// protocol statuses the store does not hold. On success the recorded
+    /// [`SealRecord`] is returned so the protocol layer can compare the
+    /// digest against its own expectation.
+    ///
+    /// Fails with [`StorageError::NotFound`] when the scope was never
+    /// sealed.
     fn verify_scope(&self, scope: &ScopePath) -> Result<SealRecord, StorageError>;
 
     /// Lists the direct entity ids of `scope`, sorted ascending, for audit

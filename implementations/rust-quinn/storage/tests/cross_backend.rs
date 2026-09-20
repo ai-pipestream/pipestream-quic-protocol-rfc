@@ -17,10 +17,10 @@ fn intent(id: &str, record: &str) -> Intent {
 /// Runs one fixed operation script and returns the observable outputs.
 fn script<B: ObjectStore + Journal>(
     store: &mut B,
-) -> (Vec<Cursor>, Vec<u64>, Vec<ReplayEntry>, Vec<ReplayEntry>) {
+) -> (Vec<Cursor>, Vec<u32>, Vec<ReplayEntry>, Vec<ReplayEntry>) {
     let scope = ScopePath::root(40);
     let child = scope.child(1).expect("child");
-    for (entity, payload) in [(1u64, "alpha"), (2, "beta"), (3, "gamma")] {
+    for (entity, payload) in [(1u32, "alpha"), (2, "beta"), (3, "gamma")] {
         store
             .put(&scope, entity, payload.as_bytes(), &sha256(payload.as_bytes()))
             .expect("put");

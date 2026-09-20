@@ -51,7 +51,7 @@ pub fn run_object_store<S: ObjectStore + Send>(
     open_read_survives_retirement_of_unsealed_object(&mut fresh());
     seal_records_digest_and_count_and_verify_scope_matches(&mut fresh());
     seal_is_idempotent_and_rejects_conflicting_seal(&mut fresh());
-    verify_scope_fails_as_corrupt_on_recorded_digest_mismatch(&mut fresh());
+    verify_scope_returns_the_recorded_caller_digest_verbatim(&mut fresh());
     verify_scope_fails_as_corrupt_on_entity_count_mismatch(&mut fresh());
     verify_scope_without_seal_is_not_found(&mut fresh());
     list_returns_ascending_ids_and_empty_for_unknown_scope(&mut fresh());
@@ -102,8 +102,8 @@ fn intent(id: &str, record: &str) -> Intent {
 
 /// The canonical seal digest for `[(id, payload)]` pairs, as callers are
 /// expected to compute it with [`layout::scope_digest`].
-fn canonical_digest(entities: &[(u64, &str)]) -> Digest32 {
-    let digests: Vec<(u64, Digest32)> = entities
+fn canonical_digest(entities: &[(u32, &str)]) -> Digest32 {
+    let digests: Vec<(u32, Digest32)> = entities
         .iter()
         .map(|(id, payload)| (*id, sha256(payload.as_bytes())))
         .collect();
@@ -113,7 +113,7 @@ fn canonical_digest(entities: &[(u64, &str)]) -> Digest32 {
     }
 }
 
-fn read_all<S: ObjectStore>(store: &S, scope: &ScopePath, entity: u64) -> Vec<u8> {
+fn read_all<S: ObjectStore>(store: &S, scope: &ScopePath, entity: u32) -> Vec<u8> {
     use std::io::Read;
     let mut reader = match store.open_read(scope, entity) {
         Ok(reader) => reader,
@@ -265,7 +265,7 @@ pub fn seal_records_digest_and_count_and_verify_scope_matches<S: ObjectStore>(st
     let scope = scope(7, 8);
     let payloads = ["alpha", "beta", "gamma"];
     for (index, payload) in payloads.iter().enumerate() {
-        let entity = index as u64 + 1;
+        let entity = index as u32 + 1;
         assert!(store.put(&scope, entity, &bytes(payload), &sha256(payload.as_bytes())).is_ok());
     }
     let digest = canonical_digest(&[(1, "alpha"), (2, "beta"), (3, "gamma")]);
@@ -294,17 +294,20 @@ pub fn seal_is_idempotent_and_rejects_conflicting_seal<S: ObjectStore>(store: &m
     expect_corrupt(store.seal_scope(&scope, &seal, 2), "conflicting seal count");
 }
 
-/// verify_scope recomputes the canonical digest; a seal whose recorded
-/// digest does not match the content is Corrupt.
-pub fn verify_scope_fails_as_corrupt_on_recorded_digest_mismatch<S: ObjectStore>(store: &mut S) {
+/// verify_scope does not recompute the caller-supplied seal digest (the
+/// protocol digest covers statuses the store does not hold): a seal with a
+/// non-canonical digest verifies fine when every object's recorded digest
+/// and the entity count hold, and the recorded digest is returned verbatim
+/// for the protocol layer to compare.
+pub fn verify_scope_returns_the_recorded_caller_digest_verbatim<S: ObjectStore>(store: &mut S) {
     let scope = ScopePath::root(11);
     let payload = bytes("mismatched");
     assert!(store.put(&scope, 1, &payload, &sha256(&payload)).is_ok());
-    assert!(store.seal_scope(&scope, &[0u8; 32], 1).is_ok());
-    match store.verify_scope(&scope) {
-        Err(StorageError::Corrupt(_)) => {}
-        other => panic!("verify_scope with wrong seal digest: expected Corrupt, got {other:?}"),
-    }
+    assert!(store.seal_scope(&scope, &[7u8; 32], 1).is_ok());
+    let record = store
+        .verify_scope(&scope)
+        .unwrap_or_else(|e| panic!("verify_scope must not recompute the seal digest: {e}"));
+    assert_eq!(record.digest, [7u8; 32]);
 }
 
 /// verify_scope compares the entity count; a count that disagrees with the
@@ -341,7 +344,7 @@ pub fn list_returns_ascending_ids_and_empty_for_unknown_scope<S: ObjectStore>(st
             .unwrap_or_else(|e| panic!("list: {e}"))
             .is_empty()
     );
-    for entity in [9u64, 1, 5] {
+    for entity in [9u32, 1, 5] {
         let payload = bytes(&format!("entity-{entity}"));
         assert!(store.put(&scope, entity, &payload, &sha256(&payload)).is_ok());
     }
@@ -354,7 +357,7 @@ pub fn list_returns_ascending_ids_and_empty_for_unknown_scope<S: ObjectStore>(st
 /// An unsealed scope retires only the entities at or below the cursor.
 pub fn retire_of_unsealed_scope_removes_only_entities_up_to_cursor<S: ObjectStore>(store: &mut S) {
     let scope = ScopePath::root(15);
-    for entity in 1..=5u64 {
+    for entity in 1..=5u32 {
         let payload = bytes(&format!("payload-{entity}"));
         assert!(store.put(&scope, entity, &payload, &sha256(&payload)).is_ok());
     }
@@ -372,7 +375,7 @@ pub fn retire_of_unsealed_scope_removes_only_entities_up_to_cursor<S: ObjectStor
 /// and the scope is writable again afterwards.
 pub fn retire_of_sealed_scope_removes_whole_scope<S: ObjectStore>(store: &mut S) {
     let scope = ScopePath::root(16);
-    for entity in 1..=3u64 {
+    for entity in 1..=3u32 {
         let payload = bytes(&format!("retire-{entity}"));
         assert!(store.put(&scope, entity, &payload, &sha256(&payload)).is_ok());
     }
@@ -547,7 +550,7 @@ pub fn put_racing_seal_scope_never_publishes_after_seal<S: ObjectStore + Send>(s
     let shared = std::sync::Mutex::new(store);
     let barrier = std::sync::Barrier::new(8);
     std::thread::scope(|threads| {
-        let handles: Vec<_> = (0..8u64)
+        let handles: Vec<_> = (0..8u32)
             .map(|variant| {
                 let shared = &shared;
                 let barrier = &barrier;
@@ -564,7 +567,7 @@ pub fn put_racing_seal_scope_never_publishes_after_seal<S: ObjectStore + Send>(s
                 })
             })
             .collect();
-        let published: Vec<u64> = handles
+        let published: Vec<u32> = handles
             .into_iter()
             .filter_map(|handle| {
                 handle
@@ -580,7 +583,7 @@ pub fn put_racing_seal_scope_never_publishes_after_seal<S: ObjectStore + Send>(s
             assert_eq!(read_all(&**guard, &scope, *entity), payload);
         }
         // Seal after the race, recording exactly the winners.
-        let digests: Vec<(u64, Digest32)> = published
+        let digests: Vec<(u32, Digest32)> = published
             .iter()
             .map(|id| (*id, sha256(format!("racing-{}", id - 100).as_bytes())))
             .collect();

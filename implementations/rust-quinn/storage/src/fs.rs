@@ -415,18 +415,15 @@ impl ObjectStore for FsStore {
             )));
         }
         let seal = read_seal_record(&seal_path, scope)?;
-        let mut digests = Vec::new();
-        for entity in self.list(scope)? {
-            digests.push((entity, read_verified_digest(&self.entity_path(scope, entity), entity, scope)?));
+        let ids = self.list(scope)?;
+        let mut live_count = 0u64;
+        for entity in ids {
+            read_verified_digest(&self.entity_path(scope, entity), entity, scope)?;
+            live_count += 1;
         }
-        if digests.len() as u64 != seal.entity_count {
+        if live_count != seal.entity_count {
             return Err(StorageError::corrupt(format!(
                 "scope {scope} entity count differs from its seal"
-            )));
-        }
-        if layout::scope_digest(&digests)? != seal.digest {
-            return Err(StorageError::corrupt(format!(
-                "scope {scope} digest differs from its seal"
             )));
         }
         Ok(seal)
@@ -465,7 +462,7 @@ impl ObjectStore for FsStore {
         }
         let mut removed = 0u64;
         for entity in ids {
-            if entity > retention_cursor {
+            if u64::from(entity) > retention_cursor {
                 continue;
             }
             let target = self.entity_path(scope, entity);
@@ -712,7 +709,7 @@ fn list_entity_ids(scope_dir: &Path, scope: &ScopePath) -> Result<Vec<EntityId>,
             if is_scratch(entity_name) {
                 continue;
             }
-            if !(entity_name.len() == 16
+            if !(entity_name.len() == 8
                 && entity_name.bytes().all(|b| b.is_ascii_hexdigit())
                 && entity.path().is_file())
             {
@@ -720,7 +717,7 @@ fn list_entity_ids(scope_dir: &Path, scope: &ScopePath) -> Result<Vec<EntityId>,
                     "unexpected entry {entity_name} in scope {scope}"
                 )));
             }
-            let id = EntityId::from_str_radix(entity_name, 16).map_err(|_| {
+            let id = u32::from_str_radix(entity_name, 16).map_err(|_| {
                 StorageError::corrupt(format!("unparseable entity name {entity_name} in {scope}"))
             })?;
             ids.push(id);

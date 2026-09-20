@@ -5,16 +5,16 @@
 //! literals and both implementations are proven byte-compatible:
 //!
 //! - scope path rendering (8-hex components joined by `/`),
-//! - fanout bucket (first byte of SHA-256 over the 8-octet big-endian
-//!   entity id, 2 lowercase hex chars) and entity name (16-hex),
-//! - canonical scope digest (SHA-256 over ascending `0x00 || id-be64 ||
-//!   object-sha256`).
+//! - fanout bucket (first byte of SHA-256 over the 4-octet big-endian
+//!   entity id, 2 lowercase hex chars) and entity name (8-hex),
+//! - canonical content digest (SHA-256 over ascending `0x00 || id-be32 ||
+//!   object-sha256`; empty scope = SHA-256 of empty input).
 
 use pipestream_storage::layout::{self, ScopePath, sha256};
 
 struct Vector {
     scope_components: &'static [u32],
-    entities: &'static [(u64, &'static [u8])],
+    entities: &'static [(u32, &'static [u8])],
     expected_path: &'static str,
     expected_objects: &'static [(&'static str, &'static str)], // (bucket, entity name)
     expected_scope_digest: &'static str,
@@ -26,31 +26,31 @@ const VECTORS: &[Vector] = &[
         scope_components: &[0],
         entities: &[(1, b"hello pipestream")],
         expected_path: "00000000",
-        expected_objects: &[("cd", "0000000000000001")],
+        expected_objects: &[("b4", "00000001")],
         expected_scope_digest:
-            "2d499828d0c72e0238e7916e61eebb42f57436070f196d5f90fa0605b99b44d8",
+            "d36301f18759e453c33a9b7ef0b79400d933fcc1d2a32e866e25af091fda419f",
     },
     // v2: nested scope, one entity with an empty payload.
     Vector {
         scope_components: &[0x0a, 0x0b],
         entities: &[(42, b"")],
         expected_path: "0000000a/0000000b",
-        expected_objects: &[("a6", "000000000000002a")],
+        expected_objects: &[("ae", "0000002a")],
         expected_scope_digest:
-            "85c98419a57a8db102224f99a110bff4a76eda68c91910c8989316feda918ec2",
+            "87cd5f2b7c957ae3118cf2b2248a64f0a140a9bbfc3f8b96fe052124415ebc94",
     },
     // v3: two entities (ascending order matters for the digest; the input
-    // here is deliberately unsorted), one id above 32 bits.
+    // here is deliberately unsorted), including a high id.
     Vector {
         scope_components: &[0xdead_beef],
-        entities: &[(0x0102_0304_0506_0708, b"beta"), (5, b"alpha")],
+        entities: &[(0xf0f0_f0f0, b"beta"), (5, b"alpha")],
         expected_path: "deadbeef",
         expected_objects: &[
-            ("66", "0102030405060708"),
-            ("5d", "0000000000000005"),
+            ("72", "f0f0f0f0"),
+            ("22", "00000005"),
         ],
         expected_scope_digest:
-            "fa41e79d5446b0065fd9e6d284c6dd88bf7dc4219c4f73858053c459469d5598",
+            "86a05466dccba33b382a0f1e029d03d6348bb96e7a1465eea4918d8766a0dddc",
     },
 ];
 
@@ -74,19 +74,19 @@ fn layout_vectors_match_independent_python_computation() {
             assert_eq!(
                 layout::bucket_hex(*entity),
                 *bucket,
-                "vector {}: bucket of entity {entity}",
+                "vector {}: bucket of entity {entity:#x}",
                 index + 1
             );
             assert_eq!(
                 layout::entity_component(*entity),
                 *name,
-                "vector {}: name of entity {entity}",
+                "vector {}: name of entity {entity:#x}",
                 index + 1
             );
         }
         // Canonical digest input: ascending id order, content digests. The
         // vectors intentionally list v3's entities out of order.
-        let digests: Vec<(u64, layout::Digest32)> = vector
+        let digests: Vec<(u32, layout::Digest32)> = vector
             .entities
             .iter()
             .map(|(entity, payload)| (*entity, sha256(payload)))
