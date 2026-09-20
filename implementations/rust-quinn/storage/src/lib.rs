@@ -28,12 +28,12 @@ mod error;
 pub mod fs;
 pub mod layout;
 mod memory;
+pub mod postgres;
 mod spi;
 
 pub use error::StorageError;
+pub use fs::FsStore;
 pub use layout::{Digest32, EntityId, ScopePath, sha256};
 pub use memory::MemoryStore;
+pub use postgres::PostgresStore;
 pub use spi::{Cursor, Journal, JournalEntry, JournalKind, ObjectStore, SealRecord};
-
-/// Filesystem backend root type, re-exported for convenience.
-pub use fs::FsStore;
