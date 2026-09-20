@@ -432,8 +432,12 @@ public final class V2Main {
         "        --cert PEM --key PEM --client-ca PEM --principal-map TSV --trust-system-clock");
     lines.add("        [--allow-skip] [--ready-file PATH] [--object-limit BYTES]");
     lines.add(
-        "        [--db-mib MIB] [--wal-mib MIB] [--object-plane v2|spi]  (must repeat the"
-            + " init-authority values)");
+        "        [--db-mib MIB] [--wal-mib MIB] [--object-plane v2|spi]"
+            + " [--spi-backend fs|postgres|s3|mongo]"
+            + " [--spi-pg-url jdbc:postgresql://HOST:PORT/DB|postgres://[USER[:PASS]@]HOST:PORT/DB]"
+            + " [--spi-s3-endpoint URI] [--spi-s3-bucket NAME] [--spi-s3-access-key KEY]"
+            + " [--spi-s3-secret-key KEY] [--spi-mongo-uri URI] [--spi-mongo-database NAME]"
+            + "  (must repeat the init-authority values)");
     lines.addAll(ClientCommands.usage());
     lines.add("Legacy version-1 commands remain in ai.pipestream.quic.Main.");
     for (String line : lines) System.out.println(line);

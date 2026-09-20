@@ -108,3 +108,11 @@ table), the Rust bridge runs sparse. The six certified SPI backends are all
 dense; the profile concept exists so adapters over pre-existing journals can
 declare their cursor shape honestly. `pipestream-core` now depends on
 `pipestream-storage` for SPI types only — no behavior change.
+
+Known finding, plane-independent (not fixed here; pre-existing v2 authority
+behavior): FixedRecords' per-entity WAL charge (~250 KB,
+FixedRecords.java:376-377, 640-667) makes the g1-declaration-capacity funding
+refusal borderline against the physical WAL offset (bounded_vfs.c:130-133),
+so the refusal at the capacity boundary is checkpoint-timing nondeterministic
+on the Java authority (3/6 repro iterations committed instead of refusing).
+The harness is being fixed to source refusal evidence from the first failure.

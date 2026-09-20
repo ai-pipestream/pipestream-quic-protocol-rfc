@@ -43,11 +43,35 @@ public final class PostgresObjectStore implements ObjectStore {
   }
 
   /**
+   * Normalizes one PostgreSQL connection URL to JDBC form. Accepts
+   * {@code jdbc:postgresql://host:port/database} as-is, and translates
+   * libpq forms {@code postgres://[user[:password]@]host[:port]/database}
+   * and {@code postgresql://...} by dropping any user-info (credentials
+   * travel separately) and rewriting the scheme. Unrecognized forms pass
+   * through so the driver reports them.
+   *
+   * @param url JDBC or libpq connection URL
+   * @return JDBC connection URL
+   */
+  public static String normalizeConnectionUrl(String url) {
+    Objects.requireNonNull(url, "url");
+    if (url.startsWith("jdbc:postgresql:")) return url;
+    if (url.startsWith("postgres://") || url.startsWith("postgresql://")) {
+      String rest = url.substring(url.indexOf("://") + 3);
+      int at = rest.lastIndexOf('@');
+      if (at >= 0) rest = rest.substring(at + 1);
+      return "jdbc:postgresql://" + rest;
+    }
+    return url;
+  }
+
+  /**
    * Opens an exclusively owned object store. The schema is created when absent;
    * an existing schema is used as-is (schema management is administrative for
    * this backend).
    *
-   * @param jdbcUrl PostgreSQL JDBC URL, for example {@code jdbc:postgresql://127.0.0.1:5432/pipestream}
+   * @param jdbcUrl PostgreSQL JDBC URL, for example {@code jdbc:postgresql://127.0.0.1:5432/pipestream};
+   *     libpq forms from {@link #normalizeConnectionUrl} are accepted
    * @param user database role
    * @param password database password
    * @return exclusive store handle
@@ -55,6 +79,7 @@ public final class PostgresObjectStore implements ObjectStore {
    */
   public static PostgresObjectStore open(String jdbcUrl, String user, String password)
       throws StorageException {
+    jdbcUrl = normalizeConnectionUrl(jdbcUrl);
     Objects.requireNonNull(jdbcUrl, "jdbcUrl");
     Objects.requireNonNull(user, "user");
     Objects.requireNonNull(password, "password");

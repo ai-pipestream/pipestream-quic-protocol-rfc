@@ -128,6 +128,58 @@ final class SpiBackendWiringTest {
   }
 
   @Test
+  void postgresLibpqUrlFormOpensThroughV2MainFlags() throws Exception {
+    PostgresDocker postgres = PostgresDocker.shared();
+    try {
+      String database = "spibackend" + UUID.randomUUID().toString().replace("-", "");
+      try (java.sql.Connection admin = postgres.connect();
+          java.sql.Statement statement = admin.createStatement()) {
+        statement.execute("CREATE DATABASE \"" + database + "\"");
+      }
+      String serverUrl =
+          postgres.url().substring(0, postgres.url().lastIndexOf('/') + 1);
+      // The conformance harness passes PROBE_PG_URL in libpq form.
+      String authority = postgres.url().substring("jdbc:postgresql://".length());
+      String hostPort = authority.substring(0, authority.indexOf('/'));
+      String libpqUrl = "postgres://ignored:ignored@" + hostPort + "/" + database;
+      Map<String, String> options =
+          Map.of(
+              "authority", "issuer-a",
+              "result-authority", "localhost:7443",
+              "object-plane", "spi",
+              "spi-backend", "postgres",
+              "spi-pg-url", libpqUrl);
+      DurableHost.Configuration configuration = V2Main.configuration(options);
+      assertEquals(libpqUrl, configuration.spiBackend().endpoint());
+      Map<String, String> environment =
+          Map.of("PROBE_PG_USER", postgres.user(), "PROBE_PG_PASSWORD", postgres.password());
+      Path root = directory.resolve("libpq-host");
+      try (DurableHost host =
+          DurableHost.initialize(
+              root,
+              configuration,
+              ReferenceApplications.all(),
+              DurableHost.OwnerPolicy.fromPrincipals(Map::of, false),
+              DurableHost.UtcClock.system(true),
+              environment)) {
+        assertEquals("postgres", host.configuration().spiBackend().kind());
+      }
+      try (DurableHost reopened =
+          DurableHost.open(
+              root,
+              configuration,
+              ReferenceApplications.all(),
+              DurableHost.OwnerPolicy.fromPrincipals(Map::of, false),
+              DurableHost.UtcClock.system(true),
+              environment)) {
+        assertEquals("postgres", reopened.configuration().spiBackend().kind());
+      }
+    } finally {
+      PostgresDocker.releaseShared();
+    }
+  }
+
+  @Test
   void nonFilesystemSelectionRequiresSpiPlaneAndCredentials() {
     DurableHost.SpiObjectBackend missing =
         new DurableHost.SpiObjectBackend("postgres", "jdbc:postgresql://127.0.0.1:1/x", null);
