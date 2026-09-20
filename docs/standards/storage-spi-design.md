@@ -104,6 +104,15 @@ ObjectStore:
 - `retire(scope, retention_cursor)` — remove entities past the retention
   point; sealed scopes retire whole.
 
+Streaming writes: backends may additionally expose a streaming put
+(begin/writer/finish, finish enforces the expected digest) for wire paths
+that must not buffer whole payloads. The Rust lane implements it
+(`begin_put`/`PutWriter`) pinned across all six backends; the Java lane's
+wire path stages via backend-local scratch with a single bounded copy at
+finish and does not need the variant. The variant is optional per language
+but, where present, must satisfy the same idempotency and seal rules as
+`put`.
+
 Journal:
 
 - `append_intent(record)` — durably record admitted-but-uncommitted work.
