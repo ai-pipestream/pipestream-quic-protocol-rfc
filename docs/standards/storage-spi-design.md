@@ -155,7 +155,11 @@ must match these exactly; they are what the cross-language layout vectors test.
    count]`; journal record = `[type][cursor][idLen][payloadLen][id][payload]
    [sha256 checksum]` under magic `PSJSL01`.
 7. **Error mapping.** I/O failures map to Transient; double-writer and
-   use-after-close map to the general failure category.
+   use-after-close map to the general failure category. The double-writer
+   guard must use POSIX `fcntl(F_SETLK)` record locks (not `flock`): on Linux
+   the two families do not interlock, and the filesystem store exists to be
+   cross-language — a Java writer and a Rust writer on one root must actually
+   exclude each other.
 
 ## Certification
 
