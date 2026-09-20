@@ -42,10 +42,11 @@ final class FileObjectStoreBackendTest {
     var scope = ScopePath.of(0x01020304, 0x05060708);
     byte[] payload = bytes("physical-layout");
     try (ObjectStore store = FileObjectStore.open(directory)) {
-      store.put(scope, 0x0102030405060708L, payload, digest(payload));
+      store.put(scope, 0x01020304, payload, digest(payload));
       store.sealScope(scope, digest(payload), 1);
-      Path entity = entityFile(directory, scope, 0x0102030405060708L);
+      Path entity = entityFile(directory, scope, 0x01020304);
       assertTrue(Files.isRegularFile(entity));
+      assertEquals("01020304", entity.getFileName().toString());
       Path leaf = entity.getParent().getParent();
       assertEquals("objects/01020304/05060708", leaf.subpath(directory.getNameCount(), leaf.getNameCount()).toString());
       ByteBuffer file = ByteBuffer.wrap(Files.readAllBytes(entity));
@@ -95,20 +96,26 @@ final class FileObjectStoreBackendTest {
     }
   }
 
-  @Test void tamperedSealRecordFailsVerificationAsCorrupt() throws Exception {
+  @Test void tamperedSealDigestIsReturnedVerbatim() throws Exception {
     var scope = ScopePath.root(0x3333);
     byte[] payload = bytes("sealed-tamper");
+    byte[] callerDigest = StoreLayout.scopeDigest(
+        List.of(new StoreLayout.EntityDigest(1, digest(payload))));
     try (ObjectStore store = FileObjectStore.open(directory)) {
       store.put(scope, 1, payload, digest(payload));
-      store.sealScope(scope, StoreLayout.scopeDigest(
-          List.of(new StoreLayout.EntityDigest(1, digest(payload)))), 1);
+      store.sealScope(scope, callerDigest, 1);
     }
+    // The store verifies only store-owned state; the caller's SCOPE_DIGEST is
+    // opaque, so a tampered digest byte comes back verbatim, not Corrupt.
     Path seal = entityFile(directory, scope, 1).getParent().getParent().resolve(FileObjectStore.SEAL_FILE_NAME);
-    byte[] tampered = Files.readAllBytes(seal);
-    tampered[0] ^= 1;
-    Files.write(seal, tampered);
+    byte[] raw = Files.readAllBytes(seal);
+    raw[0] ^= 1;
+    Files.write(seal, raw);
+    byte[] tampered = java.util.Arrays.copyOf(raw, StoreLayout.DIGEST_BYTES);
     try (ObjectStore reopened = FileObjectStore.open(directory)) {
-      assertStorage(StorageException.Kind.CORRUPT, () -> reopened.verifyScope(scope));
+      ObjectStore.SealRecord record = reopened.verifyScope(scope);
+      assertArrayEquals(tampered, record.digest(), "tampered SCOPE_DIGEST returned verbatim");
+      assertEquals(1, record.entityCount());
     }
   }
 

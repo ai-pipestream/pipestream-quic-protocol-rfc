@@ -137,8 +137,11 @@ abstract class ObjectStoreContractTest {
         digests.add(new StoreLayout.EntityDigest(entityId, digest(payload)));
         entityId++;
       }
-      store.sealScope(scope, StoreLayout.scopeDigest(digests), payloads.size());
-      store.verifyScope(scope);
+      byte[] callerDigest = StoreLayout.scopeDigest(digests);
+      store.sealScope(scope, callerDigest, payloads.size());
+      ObjectStore.SealRecord seal = store.verifyScope(scope);
+      assertArrayEquals(callerDigest, seal.digest(), "the recorded SCOPE_DIGEST comes back verbatim");
+      assertEquals(payloads.size(), seal.entityCount());
       assertArrayEquals(bytes("beta"), readAll(store.openRead(scope, 2)));
       assertEquals(List.of(1L, 2L, 3L), store.list(scope));
     }
@@ -157,13 +160,20 @@ abstract class ObjectStoreContractTest {
     }
   }
 
-  @Test void verifyScopeFailsAsCorruptOnRecordedDigestMismatch() throws Exception {
+  @Test void verifyScopeReturnsRecordedSealWithoutRecomputingCallerDigest() throws Exception {
     try (ObjectStore store = openStore()) {
       var scope = ScopePath.root(10);
       byte[] payload = bytes("mismatched");
       store.put(scope, 1, payload, digest(payload));
-      store.sealScope(scope, new byte[32], 1);
-      assertStorage(StorageException.Kind.CORRUPT, () -> store.verifyScope(scope));
+      // Deliberately not the canonical content digest: the store records the
+      // caller's SCOPE_DIGEST verbatim and returns it; comparing it against
+      // the protocol expectation is the caller's job.
+      byte[] callerDigest = new byte[32];
+      callerDigest[0] = 0x42;
+      store.sealScope(scope, callerDigest, 1);
+      ObjectStore.SealRecord seal = store.verifyScope(scope);
+      assertArrayEquals(callerDigest, seal.digest());
+      assertEquals(1, seal.entityCount());
     }
   }
 
@@ -172,7 +182,8 @@ abstract class ObjectStoreContractTest {
       var scope = ScopePath.root(11);
       byte[] payload = bytes("counted");
       store.put(scope, 1, payload, digest(payload));
-      store.sealScope(scope, StoreLayout.scopeDigest(List.of()), 1);
+      store.sealScope(scope, StoreLayout.scopeDigest(
+          List.of(new StoreLayout.EntityDigest(1, digest(payload)))), 2);
       assertStorage(StorageException.Kind.CORRUPT, () -> store.verifyScope(scope));
     }
   }
@@ -349,7 +360,8 @@ abstract class ObjectStoreContractTest {
               "every racing put is durably readable");
         }
       }
-      store.verifyScope(scope);
+      ObjectStore.SealRecord seal = store.verifyScope(scope);
+      assertEquals(succeeded.size(), seal.entityCount());
       // A put that starts strictly after the seal returned must never publish.
       var gate = new CountDownLatch(1);
       var lateSuccess = new AtomicBoolean();
@@ -412,13 +424,31 @@ abstract class ObjectStoreContractTest {
     }
   }
 
-  /** Whether {@link #tamperRecord} can corrupt one stored record; default false. */
+  @Test void verifyScopeDetectsSealCountTamper() throws Exception {
+    assumeTrue(supportsRecordTamper(), "backend has no physical record to tamper");
+    try (ObjectStore store = openStore()) {
+      var scope = ScopePath.root(0x28);
+      byte[] payload = bytes("count-tampered");
+      store.put(scope, 1, payload, digest(payload));
+      store.sealScope(scope, StoreLayout.scopeDigest(
+          List.of(new StoreLayout.EntityDigest(1, digest(payload)))), 1);
+      tamperSealCount(scope);
+      assertStorage(StorageException.Kind.CORRUPT, () -> store.verifyScope(scope));
+    }
+  }
+
+  /** Whether {@link #tamperRecord} and {@link #tamperSealCount} can corrupt stored records; default false. */
   protected boolean supportsRecordTamper() {
     return false;
   }
 
-  /** Corrupts one stored entity record; only invoked when {@link #supportsRecordTamper()}. */
+  /** Corrupts the stored record of one entity; only invoked when {@link #supportsRecordTamper()}. */
   protected void tamperRecord(ScopePath scope, long entityId) throws Exception {
+    throw new UnsupportedOperationException("backend cannot tamper records");
+  }
+
+  /** Corrupts the recorded entity count of one seal; only invoked when {@link #supportsRecordTamper()}. */
+  protected void tamperSealCount(ScopePath scope) throws Exception {
     throw new UnsupportedOperationException("backend cannot tamper records");
   }
 }

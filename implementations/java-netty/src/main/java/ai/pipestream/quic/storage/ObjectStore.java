@@ -2,6 +2,7 @@ package ai.pipestream.quic.storage;
 
 import java.io.InputStream;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Durable sealed-object storage: write-once, content-verified entities plus
@@ -20,7 +21,7 @@ public interface ObjectStore extends AutoCloseable {
    * scope fails with {@link StorageException.Kind#ALREADY_SEALED}.
    *
    * @param scope logical scope address
-   * @param entityId unsigned 63-bit entity identifier within the scope
+   * @param entityId unsigned 32-bit entity identifier within the scope
    * @param bytes complete entity content, not retained by this call
    * @param expectedDigest exactly {@value StoreLayout#DIGEST_BYTES} octets, the SHA-256 of {@code bytes}
    * @throws StorageException {@code CORRUPT} for a digest or content conflict, {@code ALREADY_SEALED} after sealing
@@ -35,7 +36,7 @@ public interface ObjectStore extends AutoCloseable {
    * the removal.
    *
    * @param scope logical scope address
-   * @param entityId unsigned 63-bit entity identifier within the scope
+   * @param entityId unsigned 32-bit entity identifier within the scope
    * @return stream positioned at the first content octet; closing it releases its handle
    * @throws StorageException {@code NOT_FOUND} if the entity is absent
    */
@@ -47,6 +48,9 @@ public interface ObjectStore extends AutoCloseable {
    * re-seal succeeds as a no-op, while a conflicting digest or count fails
    * with {@code CORRUPT}. After sealing, {@link #put} into the scope fails
    * with {@code ALREADY_SEALED} and {@link #retire} removes the whole scope.
+   * The digest is the caller's SCOPE_DIGEST, recorded verbatim; the store
+   * cannot recompute it because the protocol digest covers entity statuses
+   * the store does not hold.
    *
    * @param scope logical scope address
    * @param digest exactly {@value StoreLayout#DIGEST_BYTES} octets; conventionally the canonical digest from {@link StoreLayout#scopeDigest}
@@ -56,15 +60,20 @@ public interface ObjectStore extends AutoCloseable {
   void sealScope(ScopePath scope, byte[] digest, long entityCount) throws StorageException;
 
   /**
-   * Verifies one scope against its recorded seal: every stored entity is
-   * re-hashed and compared with its recorded content digest, the entity count
-   * is compared with the recorded count, and the canonical scope digest is
-   * recomputed and compared with the recorded one.
+   * Verifies the state the store owns and returns the recorded seal. Every
+   * stored entity payload is re-hashed and compared with the digest recorded
+   * at {@link #put} time, and the live entity count is compared with the count
+   * recorded by {@link #sealScope}. The recorded scope digest is returned
+   * verbatim — it is <em>not</em> recomputed, because the caller's SCOPE_DIGEST
+   * covers entity statuses the store does not hold; comparing it against the
+   * protocol expectation is the caller's job, optionally using the canonical
+   * content digest from {@link StoreLayout#scopeDigest}.
    *
    * @param scope logical scope address
-   * @throws StorageException {@code NOT_FOUND} if the scope was never sealed, {@code CORRUPT} on any mismatch
+   * @return the recorded seal: verbatim digest and entity count
+   * @throws StorageException {@code NOT_FOUND} if the scope was never sealed, {@code CORRUPT} on any store-owned mismatch
    */
-  void verifyScope(ScopePath scope) throws StorageException;
+  SealRecord verifyScope(ScopePath scope) throws StorageException;
 
   /**
    * Lists the direct entity identifiers of one scope in ascending order, for
@@ -97,4 +106,31 @@ public interface ObjectStore extends AutoCloseable {
    * @throws StorageException {@code FAILED} if cleanup itself fails
    */
   @Override void close() throws StorageException;
+
+  /**
+   * The seal record of one scope: the caller's scope digest recorded verbatim
+   * by {@link #sealScope} alongside the recorded direct entity count.
+   * @param digest recorded scope digest, exactly {@value StoreLayout#DIGEST_BYTES} octets
+   * @param entityCount recorded direct entity count, non-negative
+   */
+  record SealRecord(byte[] digest, long entityCount) {
+    /**
+     * Validates and copies the digest.
+     * @param digest recorded scope digest
+     * @param entityCount recorded direct entity count
+     */
+    public SealRecord {
+      Objects.requireNonNull(digest, "digest");
+      if (digest.length != StoreLayout.DIGEST_BYTES) {
+        throw new IllegalArgumentException("digest must be " + StoreLayout.DIGEST_BYTES + " octets");
+      }
+      if (entityCount < 0) throw new IllegalArgumentException("entity count must be non-negative");
+      digest = digest.clone();
+    }
+
+    /** @return defensive digest copy */
+    @Override public byte[] digest() {
+      return digest.clone();
+    }
+  }
 }

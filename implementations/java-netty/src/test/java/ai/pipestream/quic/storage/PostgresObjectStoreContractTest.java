@@ -45,4 +45,13 @@ final class PostgresObjectStoreContractTest extends ObjectStoreContractTest {
       org.junit.jupiter.api.Assertions.assertEquals(1, update.executeUpdate());
     }
   }
+
+  @Override protected void tamperSealCount(ScopePath scope) throws Exception {
+    try (Connection connection = postgres.connect();
+         java.sql.PreparedStatement update = connection.prepareStatement(
+             "UPDATE ps_object_seals SET entity_count = entity_count + 1 WHERE scope_path = ?")) {
+      update.setString(1, scope.render());
+      org.junit.jupiter.api.Assertions.assertEquals(1, update.executeUpdate());
+    }
+  }
 }

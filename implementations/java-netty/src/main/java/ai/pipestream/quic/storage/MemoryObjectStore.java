@@ -3,7 +3,6 @@ package ai.pipestream.quic.storage;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.security.MessageDigest;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -92,7 +91,7 @@ public final class MemoryObjectStore implements ObjectStore {
     }
   }
 
-  @Override public void verifyScope(ScopePath scope) throws StorageException {
+  @Override public SealRecord verifyScope(ScopePath scope) throws StorageException {
     Objects.requireNonNull(scope, "scope");
     checkOpen();
     ScopeState state = scopes.get(scope);
@@ -100,20 +99,16 @@ public final class MemoryObjectStore implements ObjectStore {
     if (seal == null) {
       throw StorageException.notFound("scope " + scope.render() + " has no seal record");
     }
-    List<StoreLayout.EntityDigest> digests = new ArrayList<>(state.entities.size());
     for (Map.Entry<Long, Entity> entity : state.entities.entrySet()) {
       byte[] actual = StoreLayout.sha256().digest(entity.getValue().bytes);
       if (!MessageDigest.isEqual(actual, entity.getValue().digest)) {
         throw StorageException.corrupt("entity " + entity.getKey() + " fails its recorded digest");
       }
-      digests.add(new StoreLayout.EntityDigest(entity.getKey(), entity.getValue().digest));
     }
     if (state.entities.size() != seal.entityCount) {
       throw StorageException.corrupt("scope " + scope.render() + " entity count differs from its seal");
     }
-    if (!MessageDigest.isEqual(StoreLayout.scopeDigest(digests), seal.digest)) {
-      throw StorageException.corrupt("scope " + scope.render() + " digest differs from its seal");
-    }
+    return new SealRecord(seal.digest, seal.entityCount);
   }
 
   @Override public List<Long> list(ScopePath scope) throws StorageException {
@@ -151,7 +146,7 @@ public final class MemoryObjectStore implements ObjectStore {
 
   private static void validateEntityId(long entityId) {
     if (entityId < 0 || entityId > StoreLayout.MAX_ENTITY_ID) {
-      throw new IllegalArgumentException("entity identifier is not unsigned 63-bit");
+      throw new IllegalArgumentException("entity identifier is not unsigned 32-bit");
     }
   }
 

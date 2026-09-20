@@ -13,8 +13,8 @@ import java.util.Objects;
  * store written by one implementation is readable by the other. This class pins:
  * the scope tree naming derived from {@link ScopePath}, the 2-hex-character hash
  * fanout sharding entities within one leaf scope, and the canonical per-scope
- * content digest that seal records and verification compare against. Physical
- * record encodings remain backend-local.
+ * content digest helpers may seal with (verification does not recompute it).
+ * Physical record encodings remain backend-local.
  */
 public final class StoreLayout {
   /** Hex digits of one fanout bucket name; 2 digits address 256 buckets. */
@@ -23,22 +23,22 @@ public final class StoreLayout {
   public static final int FANOUT_BUCKETS = 1 << (4 * FANOUT_HEX_DIGITS);
   /** One content or scope digest, in octets. */
   public static final int DIGEST_BYTES = 32;
-  /** Largest assignable entity identifier; identifiers are unsigned 63-bit. */
-  public static final long MAX_ENTITY_ID = 0x7fff_ffff_ffff_ffffL;
+  /** Largest assignable entity identifier; Section 6 fixes entity ids at 32 bits. */
+  public static final long MAX_ENTITY_ID = 0xffff_ffffL;
 
   /** One entity's recorded content digest, in ascending-identifier order input.
-   * @param entityId unsigned 63-bit entity identifier
+   * @param entityId unsigned 32-bit entity identifier
    * @param digest exactly {@link #DIGEST_BYTES} content octets
    */
   public record EntityDigest(long entityId, byte[] digest) {
     /**
      * Copies the digest.
-     * @param entityId unsigned 63-bit entity identifier
+     * @param entityId unsigned 32-bit entity identifier
      * @param digest exactly {@link #DIGEST_BYTES} content octets
      */
     public EntityDigest {
       if (entityId < 0 || entityId > MAX_ENTITY_ID) {
-        throw new IllegalArgumentException("entity identifier is not unsigned 63-bit");
+        throw new IllegalArgumentException("entity identifier is not unsigned 32-bit");
       }
       Objects.requireNonNull(digest, "digest");
       if (digest.length != DIGEST_BYTES) {
@@ -68,39 +68,39 @@ public final class StoreLayout {
   }
 
   /**
-   * Renders one entity identifier as lowercase zero-padded 16 hex digits, its
-   * unique name within a fanout bucket.
-   * @param entityId unsigned 63-bit entity identifier
-   * @return entity file name
+   * Renders one entity identifier as lowercase zero-padded 8 hex digits, its
+   * unique object name within a fanout bucket.
+   * @param entityId unsigned 32-bit entity identifier
+   * @return entity object name
    */
   public static String entityName(long entityId) {
     if (entityId < 0 || entityId > MAX_ENTITY_ID) {
-      throw new IllegalArgumentException("entity identifier is not unsigned 63-bit");
+      throw new IllegalArgumentException("entity identifier is not unsigned 32-bit");
     }
-    return HexFormat.of().toHexDigits(entityId, 16);
+    return HexFormat.of().toHexDigits(entityId, 8);
   }
 
   /**
    * Selects the fanout bucket of one entity: the first octet of SHA-256 over the
-   * 8-octet big-endian entity identifier, rendered as 2 lowercase hex digits.
-   * @param entityId unsigned 63-bit entity identifier
+   * 4-octet big-endian entity identifier, rendered as 2 lowercase hex digits.
+   * @param entityId unsigned 32-bit entity identifier
    * @return 2-hex-character bucket name within the leaf scope
    */
   public static String fanoutBucket(long entityId) {
     if (entityId < 0 || entityId > MAX_ENTITY_ID) {
-      throw new IllegalArgumentException("entity identifier is not unsigned 63-bit");
+      throw new IllegalArgumentException("entity identifier is not unsigned 32-bit");
     }
-    byte[] hash = sha256().digest(bigEndian(entityId));
+    byte[] hash = sha256().digest(bigEndian32(entityId));
     return HexFormat.of().formatHex(hash, 0, FANOUT_HEX_DIGITS / 2);
   }
 
   /**
    * Computes the canonical scope content digest: SHA-256 over every direct
    * entity in strictly ascending identifier order, each mixed in as one
-   * zero-valued domain-separation octet, the 8-octet big-endian identifier, and
+   * zero-valued domain-separation octet, the 4-octet big-endian identifier, and
    * its {@value #DIGEST_BYTES}-octet content digest. An empty scope hashes the
-   * empty input. This is the value {@code sealScope} records and
-   * {@code verifyScope} recomputes.
+   * empty input. Callers may seal with this value; {@code verifyScope} does not
+   * recompute it.
    * @param entities direct entity content digests in any order
    * @return canonical scope digest
    */
@@ -116,7 +116,7 @@ public final class StoreLayout {
       }
       previous = entity.entityId();
       hash.update((byte) 0);
-      hash.update(bigEndian(entity.entityId()));
+      hash.update(bigEndian32(entity.entityId()));
       hash.update(entity.digest());
     }
     return hash.digest();
@@ -130,8 +130,8 @@ public final class StoreLayout {
     }
   }
 
-  /** Returns the big-endian encoding shared by fanout and digest domain separation. */
-  private static byte[] bigEndian(long value) {
-    return java.nio.ByteBuffer.allocate(8).putLong(value).array();
+  /** Returns the 4-octet big-endian encoding shared by fanout and digest domain separation. */
+  private static byte[] bigEndian32(long value) {
+    return java.nio.ByteBuffer.allocate(4).putInt((int) value).array();
   }
 }

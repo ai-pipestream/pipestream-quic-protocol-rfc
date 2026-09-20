@@ -178,7 +178,7 @@ public final class PostgresObjectStore implements ObjectStore {
     }
   }
 
-  @Override public synchronized void verifyScope(ScopePath scope) throws StorageException {
+  @Override public synchronized SealRecord verifyScope(ScopePath scope) throws StorageException {
     Objects.requireNonNull(scope, "scope");
     checkOpen();
     Connection connection = connection();
@@ -199,7 +199,7 @@ public final class PostgresObjectStore implements ObjectStore {
       if (recorded == null) {
         throw StorageException.notFound("scope " + scopePath + " has no seal record");
       }
-      List<StoreLayout.EntityDigest> digests = new ArrayList<>();
+      long live = 0;
       try (PreparedStatement select = connection.prepareStatement(
           "SELECT entity_id, payload, digest FROM ps_object_entities WHERE scope_path = ? ORDER BY entity_id ASC")) {
         select.setString(1, scopePath);
@@ -211,16 +211,14 @@ public final class PostgresObjectStore implements ObjectStore {
             if (!MessageDigest.isEqual(StoreLayout.sha256().digest(payload), storedDigest)) {
               throw StorageException.corrupt("entity " + entityId + " fails its recorded digest");
             }
-            digests.add(new StoreLayout.EntityDigest(entityId, storedDigest));
+            live++;
           }
         }
       }
-      if (digests.size() != count) {
+      if (live != count) {
         throw StorageException.corrupt("scope " + scopePath + " entity count differs from its seal");
       }
-      if (!MessageDigest.isEqual(StoreLayout.scopeDigest(digests), recorded)) {
-        throw StorageException.corrupt("scope " + scopePath + " digest differs from its seal");
-      }
+      return new SealRecord(recorded, count);
     } catch (SQLException failure) {
       throw PostgresSupport.mapSqlException(failure, "verifyScope");
     }
@@ -335,7 +333,7 @@ public final class PostgresObjectStore implements ObjectStore {
 
   private static void validateEntityId(long entityId) {
     if (entityId < 0 || entityId > StoreLayout.MAX_ENTITY_ID) {
-      throw new IllegalArgumentException("entity identifier is not unsigned 63-bit");
+      throw new IllegalArgumentException("entity identifier is not unsigned 32-bit");
     }
   }
 

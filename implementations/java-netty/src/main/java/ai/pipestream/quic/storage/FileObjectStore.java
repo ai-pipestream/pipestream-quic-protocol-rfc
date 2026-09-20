@@ -219,7 +219,7 @@ public final class FileObjectStore implements ObjectStore {
     }
   }
 
-  @Override public void verifyScope(ScopePath scope) throws StorageException {
+  @Override public SealRecord verifyScope(ScopePath scope) throws StorageException {
     Objects.requireNonNull(scope, "scope");
     checkOpen();
     synchronized (mutationLock) {
@@ -229,17 +229,15 @@ public final class FileObjectStore implements ObjectStore {
       if (seal == null) {
         throw StorageException.notFound("scope " + scope.render() + " has no seal record");
       }
-      List<StoreLayout.EntityDigest> digests = new ArrayList<>();
+      long live = 0;
       for (Long entityId : listEntityIds(scopeDir, true)) {
-        byte[] storedDigest = readEntityDigest(scopeDir, entityId);
-        digests.add(new StoreLayout.EntityDigest(entityId, storedDigest));
+        readEntityDigest(scopeDir, entityId);
+        live++;
       }
-      if (digests.size() != seal.entityCount) {
+      if (live != seal.entityCount) {
         throw StorageException.corrupt("scope " + scope.render() + " entity count differs from its seal");
       }
-      if (!MessageDigest.isEqual(StoreLayout.scopeDigest(digests), seal.digest)) {
-        throw StorageException.corrupt("scope " + scope.render() + " digest differs from its seal");
-      }
+      return new SealRecord(seal.digest, seal.entityCount);
     }
   }
 
@@ -340,10 +338,16 @@ public final class FileObjectStore implements ObjectStore {
       for (Path bucket : buckets) {
         String bucketName = bucket.getFileName().toString();
         if (bucketName.equals(SEAL_FILE_NAME) || isScratch(bucketName)) continue;
-        // Child scopes live inside their parent's container as 8-hex
-        // directories; only 2-hex directories hold this scope's entities.
-        if (bucketName.matches("[0-9a-f]{8}")
-            && Files.isDirectory(bucket, LinkOption.NOFOLLOW_LINKS)) {
+        // 8-hex directories are child scopes (they hold their own entities);
+        // 8-hex regular files are this scope's entities, one per object name.
+        if (bucketName.matches("[0-9a-f]{8}")) {
+          if (Files.isDirectory(bucket, LinkOption.NOFOLLOW_LINKS)) continue;
+          if (!Files.isRegularFile(bucket, LinkOption.NOFOLLOW_LINKS)) {
+            throw StorageException.corrupt("unexpected entry " + bucketName + " in scope " + scopeDir);
+          }
+          long entityId = Long.parseLong(bucketName, 16);
+          ids.add(entityId);
+          if (verifyDigests) readEntityDigest(scopeDir, entityId);
           continue;
         }
         if (!bucketName.matches("[0-9a-f]{2}")
@@ -354,7 +358,7 @@ public final class FileObjectStore implements ObjectStore {
           for (Path entity : entities) {
             String name = entity.getFileName().toString();
             if (isScratch(name)) continue;
-            if (!name.matches("[0-9a-f]{16}") || !Files.isRegularFile(entity, LinkOption.NOFOLLOW_LINKS)) {
+            if (!name.matches("[0-9a-f]{8}") || !Files.isRegularFile(entity, LinkOption.NOFOLLOW_LINKS)) {
               throw StorageException.corrupt("unexpected entry " + name + " in scope " + scopeDir);
             }
             long entityId = Long.parseLong(name, 16);
@@ -506,7 +510,7 @@ public final class FileObjectStore implements ObjectStore {
 
   private static void validateEntityId(long entityId) {
     if (entityId < 0 || entityId > StoreLayout.MAX_ENTITY_ID) {
-      throw new IllegalArgumentException("entity identifier is not unsigned 63-bit");
+      throw new IllegalArgumentException("entity identifier is not unsigned 32-bit");
     }
   }
 
