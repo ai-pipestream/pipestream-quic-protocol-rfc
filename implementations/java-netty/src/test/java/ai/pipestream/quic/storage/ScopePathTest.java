@@ -37,4 +37,16 @@ final class ScopePathTest {
     assertEquals("00000001/00000002/ffffffff", ScopePath.of(1, 2, ScopePath.MAX_COMPONENT).render());
     assertEquals(ScopePath.of(0xdeadbeefL, 0x01020304L).render(), ScopePath.of(0xdeadbeefL, 0x01020304L).toString());
   }
+
+  @Test void parseRoundTripsTheCanonicalRenderAndRejectsForeignForms() {
+    assertEquals(ScopePath.root(0), ScopePath.parse("00000000"));
+    var nested = ScopePath.parse("00000001/00000002/ffffffff");
+    assertEquals(ScopePath.of(1, 2, ScopePath.MAX_COMPONENT), nested);
+    assertEquals(nested, ScopePath.parse(nested.render()));
+    assertThrows(IllegalArgumentException.class, () -> ScopePath.parse(""));
+    assertThrows(IllegalArgumentException.class, () -> ScopePath.parse("1/2"));
+    assertThrows(IllegalArgumentException.class, () -> ScopePath.parse("000000001"));
+    assertThrows(IllegalArgumentException.class, () -> ScopePath.parse("0000000g"));
+    assertThrows(IllegalArgumentException.class, () -> ScopePath.parse("00000001/"));
+  }
 }

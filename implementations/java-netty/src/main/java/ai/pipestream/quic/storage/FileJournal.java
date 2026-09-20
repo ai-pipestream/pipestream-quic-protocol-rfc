@@ -42,6 +42,7 @@ public final class FileJournal implements Journal {
     final String intentId;
     final long cursor;
     final byte[] record;
+    long commitCursor;
     byte[] commit;
 
     EntryState(String intentId, long cursor, byte[] record) {
@@ -181,7 +182,8 @@ public final class FileJournal implements Journal {
       if (Arrays.equals(entry.commit, commitRecord)) return;
       throw StorageException.corrupt("intent " + intentId + " already carries a different commit");
     }
-    appendRecord(TYPE_COMMIT, intentId.getBytes(StandardCharsets.UTF_8), commitRecord);
+    long commitCursor = appendRecord(TYPE_COMMIT, intentId.getBytes(StandardCharsets.UTF_8), commitRecord);
+    entry.commitCursor = commitCursor;
     entry.commit = commitRecord.clone();
   }
 
@@ -192,7 +194,9 @@ public final class FileJournal implements Journal {
     for (EntryState entry : entries) {
       if (entry.cursor > sinceCursor) {
         replayed.add(new ReplayEntry(entry.cursor,
-            new Intent(entry.intentId, entry.record), entry.commit == null ? null : entry.commit.clone()));
+            new Intent(entry.intentId, entry.record),
+            entry.commit == null ? null : entry.commit.clone(),
+            entry.commit == null ? null : entry.commitCursor));
       }
     }
     return List.copyOf(replayed);
@@ -350,6 +354,7 @@ public final class FileJournal implements Journal {
       if (entry == null || entry.commit != null) {
         throw StorageException.corrupt("journal commit has no uncommitted intent " + intentId);
       }
+      entry.commitCursor = cursor;
       entry.commit = payload;
     }
     return recordEnd;

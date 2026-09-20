@@ -17,6 +17,7 @@ public final class MemoryJournal implements Journal {
   private static final class EntryState {
     final Intent intent;
     final long cursor;
+    long commitCursor;
     byte[] commit;
 
     EntryState(Intent intent, long cursor) {
@@ -70,6 +71,7 @@ public final class MemoryJournal implements Journal {
       throw StorageException.corrupt("intent " + intentId + " already carries a different commit");
     }
     lastCursor++;
+    entry.commitCursor = lastCursor;
     entry.commit = commitRecord.clone();
   }
 
@@ -81,7 +83,8 @@ public final class MemoryJournal implements Journal {
       if (entry.cursor > sinceCursor) {
         replayed.add(new ReplayEntry(entry.cursor,
             new Intent(entry.intent.intentId(), entry.intent.record()),
-            entry.commit == null ? null : entry.commit.clone()));
+            entry.commit == null ? null : entry.commit.clone(),
+            entry.commit == null ? null : entry.commitCursor));
       }
     }
     return List.copyOf(replayed);

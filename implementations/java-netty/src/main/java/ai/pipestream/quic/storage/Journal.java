@@ -44,8 +44,9 @@ public interface Journal extends AutoCloseable {
   /**
    * Replays every intent and commit appended after {@code sinceCursor}, in
    * append order. Each returned entry carries the intent's append cursor and,
-   * when committed, the commit bytes. Passing the last seen cursor replays
-   * exactly the new tail; passing 0 replays the whole journal.
+   * when committed, the commit bytes and the cursor the commit consumed.
+   * Passing the last seen cursor replays exactly the new tail; passing 0
+   * replays the whole journal.
    *
    * @param sinceCursor exclusive lower cursor bound; 0 starts at the beginning
    * @return ordered replay entries with a cursor greater than {@code sinceCursor}
@@ -94,26 +95,49 @@ public interface Journal extends AutoCloseable {
    * @param cursor strictly increasing append cursor of the intent
    * @param intent immutable intent record
    * @param commitRecord commit bytes when committed, null when still uncommitted
+   * @param commitCursor cursor the commit record consumed, null when uncommitted
    */
-  record ReplayEntry(long cursor, Intent intent, byte[] commitRecord) {
+  record ReplayEntry(long cursor, Intent intent, byte[] commitRecord, Long commitCursor) {
     /**
      * Validates the entry.
-     * @param cursor positive append cursor
+     * @param cursor positive append cursor of the intent
      * @param intent immutable intent record
      * @param commitRecord commit bytes, or null when uncommitted
+     * @param commitCursor cursor the commit consumed, or null when uncommitted
      */
     public ReplayEntry {
       if (cursor < 1) throw new IllegalArgumentException("replay cursor must be positive");
       Objects.requireNonNull(intent, "intent");
+      if ((commitRecord == null) != (commitCursor == null)) {
+        throw new IllegalArgumentException("commit record and commit cursor must both be present or both be absent");
+      }
       if (commitRecord != null && (commitRecord.length < 1 || commitRecord.length > MAX_RECORD_BYTES)) {
         throw new IllegalArgumentException("commit record must be 1 to " + MAX_RECORD_BYTES + " octets");
       }
+      if (commitCursor != null && commitCursor < 1) {
+        throw new IllegalArgumentException("commit cursor must be positive");
+      }
       commitRecord = commitRecord == null ? null : commitRecord.clone();
+    }
+
+    /**
+     * Creates an uncommitted entry, or an entry whose commit cursor is not needed.
+     * @param cursor positive append cursor of the intent
+     * @param intent immutable intent record
+     * @param commitRecord commit bytes, or null when uncommitted
+     */
+    public ReplayEntry(long cursor, Intent intent, byte[] commitRecord) {
+      this(cursor, intent, commitRecord, null);
     }
 
     /** @return defensive commit copy, or null when uncommitted */
     @Override public byte[] commitRecord() {
       return commitRecord == null ? null : commitRecord.clone();
+    }
+
+    /** @return cursor the commit record consumed in the global order, or null when uncommitted */
+    @Override public Long commitCursor() {
+      return commitCursor;
     }
 
     /** @return whether the intent has a durable commit record */

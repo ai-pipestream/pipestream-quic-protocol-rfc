@@ -175,6 +175,8 @@ public final class MongoJournal implements Journal {
     checkOpen();
     List<ReplayEntry> replayed = new ArrayList<>();
     Map<String, Integer> positionByIntent = new HashMap<>();
+    Map<String, byte[]> commitPayloadByIntent = new HashMap<>();
+    Map<String, Long> commitCursorByIntent = new HashMap<>();
     try {
       FindIterable<Document> rows = collection().find(Filters.gt("_id", sinceCursor)).sort(Sorts.ascending("_id"));
       for (Document row : rows) {
@@ -186,13 +188,19 @@ public final class MongoJournal implements Journal {
           positionByIntent.put(intentId, replayed.size());
           replayed.add(new ReplayEntry(cursor, new Intent(intentId, payload), null));
         } else if (kind == MongoSupport.KIND_COMMIT) {
-          Integer position = positionByIntent.get(intentId);
           // The intent sits at or below sinceCursor, outside this replay
           // window; like the other backends, the commit is invisible.
-          if (position == null) continue;
-          ReplayEntry entry = replayed.get(position);
-          replayed.set(position, new ReplayEntry(entry.cursor(), entry.intent(), payload));
+          if (!positionByIntent.containsKey(intentId)) continue;
+          commitPayloadByIntent.put(intentId, payload);
+          commitCursorByIntent.put(intentId, cursor);
         }
+      }
+      for (var entry : positionByIntent.entrySet()) {
+        Long commitCursor = commitCursorByIntent.get(entry.getKey());
+        if (commitCursor == null) continue;
+        ReplayEntry original = replayed.get(entry.getValue());
+        replayed.set(entry.getValue(), new ReplayEntry(original.cursor(), original.intent(),
+            commitPayloadByIntent.get(entry.getKey()), commitCursor));
       }
       return List.copyOf(replayed);
     } catch (MongoException failure) {

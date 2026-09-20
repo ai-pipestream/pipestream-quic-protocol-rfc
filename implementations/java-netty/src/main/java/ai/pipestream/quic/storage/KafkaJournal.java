@@ -196,7 +196,9 @@ public final class KafkaJournal implements Journal {
     List<ReplayEntry> replayed = new ArrayList<>();
     for (EntryState entry : byCursor.tailMap(sinceCursor, false).values()) {
       replayed.add(new ReplayEntry(entry.cursor,
-          new Intent(entry.intentId, entry.payload), entry.commit == null ? null : entry.commit.clone()));
+          new Intent(entry.intentId, entry.payload),
+          entry.commit == null ? null : entry.commit.clone(),
+          entry.commit == null ? null : entry.commitCursor));
     }
     return List.copyOf(replayed);
   }

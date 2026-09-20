@@ -152,6 +152,7 @@ abstract class JournalContractTest {
       assertArrayEquals(left.intent().record(), right.intent().record());
       assertEquals(left.committed(), right.committed());
       assertArrayEquals(left.commitRecord(), right.commitRecord());
+      assertEquals(left.commitCursor(), right.commitCursor(), "commit cursor " + i);
     }
   }
 
@@ -163,6 +164,10 @@ abstract class JournalContractTest {
       journal.appendIntent(new Journal.Intent("intent-c", bytes("record-c")));
       journal.commit("intent-a", bytes("commit-a"));
       journal.commit("intent-c", bytes("commit-c"));
+      List<Journal.ReplayEntry> replayed = journal.replay(0);
+      assertEquals(4, replayed.get(0).commitCursor(), "commit cursors are part of the identity");
+      assertEquals(5, replayed.get(2).commitCursor(), "commit cursors are part of the identity");
+      assertNull(replayed.get(1).commitCursor());
       assertEquals(6, journal.appendIntent(new Journal.Intent("intent-d", bytes("record-d"))),
           "commits consume cursors in the global append order");
       return journal.replay(0);
