@@ -155,6 +155,10 @@ impl ConnectionArgs {
 
 #[tokio::main]
 async fn main() {
+    // rustls refuses to auto-select a crypto provider when both `ring` and
+    // `aws-lc-rs` are compiled in; the storage SPI's S3 SDK pulls the latter
+    // into the workspace build. Restore the pre-SPI implicit selection.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     if let Err(error) = run(Cli::parse()).await {
         eprintln!("{error:#}");
         std::process::exit(1);

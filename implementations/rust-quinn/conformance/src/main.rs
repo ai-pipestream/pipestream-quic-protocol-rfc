@@ -70,6 +70,9 @@ struct Server {
 }
 
 fn main() {
+    // See server main: pin the ring provider now that the workspace build
+    // also compiles aws-lc-rs (via the storage SPI's S3 SDK).
+    let _ = rustls::crypto::ring::default_provider().install_default();
     if let Err(error) = run(Cli::parse()) {
         eprintln!("{error:#}");
         std::process::exit(1);

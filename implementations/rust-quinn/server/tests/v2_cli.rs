@@ -106,6 +106,11 @@ impl Fixture {
     fn path(&self, name: &str) -> String {
         text(&self.directory.path().join(name))
     }
+    fn storage_with(&self, extra: &[&str]) -> Vec<String> {
+        let mut args = self.storage();
+        args.extend(extra.iter().map(|v| v.to_string()));
+        args
+    }
     fn storage(&self) -> Vec<String> {
         let mut args = vec![
             "--state-db".into(),
@@ -128,15 +133,22 @@ impl Fixture {
         args.extend(self.storage());
         assert!(run(self.directory.path(), &args, true).contains("AUTHORITY_INITIALIZED"));
     }
+    fn start_with(&mut self, extra: &[&str]) -> Server {
+        self.serial += 1;
+        self.start_inner(extra)
+    }
     fn start(&mut self) -> Server {
         self.serial += 1;
+        self.start_inner(&[])
+    }
+    fn start_inner(&mut self, extra: &[&str]) -> Server {
         let ready = self.directory.path().join(format!("ready-{}", self.serial));
         let log = self
             .directory
             .path()
             .join(format!("server-{}.log", self.serial));
         let mut args = vec!["v2".into(), "serve".into()];
-        args.extend(self.storage());
+        args.extend(self.storage_with(extra));
         args.extend([
             "--cert".into(),
             self.path("server.pem"),
@@ -292,6 +304,35 @@ impl Drop for Server {
 const DECLARE: &str = "01010101010101010101010101010101";
 const ADMIT: &str = "02020202020202020202020202020202";
 const CANCEL: &str = "03030303030303030303030303030303";
+
+#[test]
+fn spi_fs_backend_serves_readiness_and_refuses_a_changed_backend() {
+    let mut fixture = Fixture::new();
+    // Initialize the installation under the SPI plane.
+    let mut args = vec!["v2".into(), "init-authority".into()];
+    args.extend(fixture.storage_with(&["--payload-backend", "spi-fs"]));
+    assert!(run(fixture.directory.path(), &args, true).contains("AUTHORITY_INITIALIZED"));
+    // Serve reaches readiness under the SPI plane (this is the certification
+    // smoke check: the subject must not exit before readiness).
+    let server = fixture.start_with(&["--payload-backend", "spi-fs"]);
+    assert!(!server.address.is_empty(), "server reached readiness");
+    drop(server);
+    // Reopening under a changed backend is refused.
+    let mut serve_fs = vec!["v2".into(), "serve".into()];
+    serve_fs.extend(fixture.storage_with(&["--payload-backend", "fs"]));
+    serve_fs.extend([
+        "--cert".into(),
+        fixture.path("server.pem"),
+        "--key".into(),
+        fixture.path("server.key"),
+        "--client-ca".into(),
+        fixture.path("ca.pem"),
+        "--result-authority".into(),
+        "localhost:7443".into(),
+    ]);
+    let output = run(fixture.directory.path(), &serve_fs, false);
+    assert!(output.contains("backend"), "{output}");
+}
 
 #[test]
 fn cli_retry_is_explicit_replayable_and_skip_requires_enabled_policy() {
