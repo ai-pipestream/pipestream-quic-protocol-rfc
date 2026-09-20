@@ -1288,3 +1288,5 @@ impl Drop for ObjectReader {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod grammar_tests;
