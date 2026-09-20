@@ -167,6 +167,22 @@ client on filesystem) must produce byte-identical finals to the filesystem
 baseline. Results per backend are recorded alongside the existing acceptance
 evidence.
 
+## Cross-language verification
+
+Before either lane's SPI lands, both must pass the same layout probe. Each
+implementation ships a small CLI (a test-utility binary, not part of any
+shipped API) that takes a backend configuration and a script file, executes
+the scripted SPI operations in order, and prints a canonical report: every
+scope's path, live entity ids, per-object SHA-256 digests, the canonical
+content digest (pinned decision 3), the seal record when present, and the
+full journal replay with cursors. The script and the report format are
+language-neutral; the report of the Rust probe and the Java probe on the
+same script and the same backend kind must be byte-identical. The probe runs
+against every backend on both lanes, plus crossed physical stores where the
+format allows it (a filesystem store written by Java must verify clean when
+opened by Rust and vice versa). A mismatch stops the landing — the same rule
+as a failing contract test.
+
 Temp-file hygiene is part of this layer: backends place scratch files under a
 configurable base directory, never an ambient shared temp dir, and clean them
 on close. (The Java lane sets `java.io.tmpdir` and `org.sqlite.tmpdir`
