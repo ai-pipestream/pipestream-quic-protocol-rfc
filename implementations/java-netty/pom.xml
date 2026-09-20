@@ -17,6 +17,7 @@
     <jackson.version>2.22.2</jackson.version>
     <junit.version>6.1.3</junit.version>
     <postgresql.version>42.7.13</postgresql.version>
+    <awssdk.version>2.55.1</awssdk.version>
     <sqlite.version>3.53.4.0</sqlite.version>
     <test.excludedGroups>sealed-interop</test.excludedGroups>
   </properties>
@@ -60,6 +61,11 @@
       <groupId>org.postgresql</groupId>
       <artifactId>postgresql</artifactId>
       <version>${postgresql.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>s3</artifactId>
+      <version>${awssdk.version}</version>
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
