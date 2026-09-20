@@ -173,7 +173,7 @@ fn parse_u64(decimal: &str, what: &str) -> Result<u64, StorageError> {
 }
 
 fn parse_hex(hex: &str) -> Result<Vec<u8>, StorageError> {
-    if hex.is_empty() || hex.len() % 2 != 0 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if hex.is_empty() || !hex.len().is_multiple_of(2) || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(StorageError::failed(format!("malformed payload hex {hex:?}")));
     }
     (0..hex.len())
