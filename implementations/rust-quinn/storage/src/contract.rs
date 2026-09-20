@@ -32,6 +32,16 @@ impl<T> Backend for T where T: ObjectStore + Journal {}
 /// should additionally run [`durability_roundtrip`] with a `reopen` that
 /// crosses a real process boundary.
 pub fn run_all<B: Backend>(mut fresh: impl FnMut() -> B, mut reopen: impl FnMut() -> B) {
+    run_object_store(&mut fresh, &mut reopen);
+    run_journal(&mut fresh, &mut reopen);
+}
+
+/// Runs the [`ObjectStore`] contract checks. Use this alone for
+/// object-store-only backends (e.g. S3), [`run_journal`] alone for
+/// journal-only backends (e.g. Kafka), or [`run_all`] for both.
+///
+/// See [`run_all`] for the `fresh`/`reopen` contract.
+pub fn run_object_store<S: ObjectStore>(mut fresh: impl FnMut() -> S, mut reopen: impl FnMut() -> S) {
     put_is_idempotent(&mut fresh());
     put_conflicting_bytes_is_corrupt(&mut fresh());
     put_digest_mismatch_is_corrupt(&mut fresh());
@@ -49,12 +59,17 @@ pub fn run_all<B: Backend>(mut fresh: impl FnMut() -> B, mut reopen: impl FnMut(
     sealed_scope_retires_whole(&mut fresh());
     list_returns_sorted_entity_ids(&mut fresh());
     scopes_are_isolated(&mut fresh());
+    object_store_durability_roundtrip(&mut reopen);
+}
+
+/// Runs the [`Journal`] contract checks; see [`run_object_store`].
+pub fn run_journal<J: Journal>(mut fresh: impl FnMut() -> J, mut reopen: impl FnMut() -> J) {
     journal_replay_is_ordered(&mut fresh());
     journal_replay_resumes_from_cursor(&mut fresh());
     commit_after_intent(&mut fresh());
     commit_unknown_intent_is_not_found(&mut fresh());
     commit_conflict_is_corrupt(&mut fresh());
-    durability_roundtrip(&mut reopen);
+    journal_durability_roundtrip(&mut reopen);
 }
 
 fn nested_scope() -> ScopePath {
@@ -94,7 +109,7 @@ fn expect_corrupt(result: Result<(), StorageError>, what: &str) {
 
 /// `put` of identical bytes with the same digest succeeds as a no-op, and
 /// the object remains readable.
-pub fn put_is_idempotent<B: Backend>(store: &mut B) {
+pub fn put_is_idempotent<S: ObjectStore>(store: &mut S) {
     let scope = ScopePath::root();
     let bytes = payload(1);
     let digest = sha256(&bytes);
@@ -108,7 +123,7 @@ pub fn put_is_idempotent<B: Backend>(store: &mut B) {
 }
 
 /// Re-put of different bytes under the same entity id fails with Corrupt.
-pub fn put_conflicting_bytes_is_corrupt<B: Backend>(store: &mut B) {
+pub fn put_conflicting_bytes_is_corrupt<S: ObjectStore>(store: &mut S) {
     let scope = ScopePath::root();
     let bytes = payload(2);
     assert!(store.put(&scope, 1, &bytes, &sha256(&bytes)).is_ok());
@@ -121,7 +136,7 @@ pub fn put_conflicting_bytes_is_corrupt<B: Backend>(store: &mut B) {
 
 /// A payload that does not match its expected digest fails with Corrupt and
 /// stores nothing.
-pub fn put_digest_mismatch_is_corrupt<B: Backend>(store: &mut B) {
+pub fn put_digest_mismatch_is_corrupt<S: ObjectStore>(store: &mut S) {
     let scope = ScopePath::root();
     let bytes = payload(4);
     let wrong = sha256(b"not the payload");
@@ -133,7 +148,7 @@ pub fn put_digest_mismatch_is_corrupt<B: Backend>(store: &mut B) {
 }
 
 /// Entity ids above the protocol bound are rejected.
-pub fn put_rejects_out_of_range_entity_id<B: Backend>(store: &mut B) {
+pub fn put_rejects_out_of_range_entity_id<S: ObjectStore>(store: &mut S) {
     let scope = ScopePath::root();
     let bytes = payload(5);
     let result = store.put(&scope, crate::layout::MAX_ENTITY_ID + 1, &bytes, &sha256(&bytes));
@@ -141,7 +156,7 @@ pub fn put_rejects_out_of_range_entity_id<B: Backend>(store: &mut B) {
 }
 
 /// After sealing, `put` into the scope fails with AlreadySealed.
-pub fn put_into_sealed_scope_is_already_sealed<B: Backend>(store: &mut B) {
+pub fn put_into_sealed_scope_is_already_sealed<S: ObjectStore>(store: &mut S) {
     let scope = nested_scope();
     let bytes = payload(6);
     assert!(store.put(&scope, 1, &bytes, &sha256(&bytes)).is_ok());
@@ -155,7 +170,7 @@ pub fn put_into_sealed_scope_is_already_sealed<B: Backend>(store: &mut B) {
 
 /// Sealing succeeds atomically and re-sealing with identical arguments is a
 /// no-op.
-pub fn seal_is_atomic_and_idempotent<B: Backend>(store: &mut B) {
+pub fn seal_is_atomic_and_idempotent<S: ObjectStore>(store: &mut S) {
     let scope = nested_scope();
     let bytes = payload(8);
     assert!(store.put(&scope, 1, &bytes, &sha256(&bytes)).is_ok());
@@ -175,7 +190,7 @@ pub fn seal_is_atomic_and_idempotent<B: Backend>(store: &mut B) {
 }
 
 /// Re-sealing with a different digest or count fails with Corrupt.
-pub fn seal_conflict_is_corrupt<B: Backend>(store: &mut B) {
+pub fn seal_conflict_is_corrupt<S: ObjectStore>(store: &mut S) {
     let scope = nested_scope();
     let bytes = payload(9);
     assert!(store.put(&scope, 1, &bytes, &sha256(&bytes)).is_ok());
@@ -189,7 +204,7 @@ pub fn seal_conflict_is_corrupt<B: Backend>(store: &mut B) {
 
 /// `verify_scope` on a sealed, untampered scope returns the recorded digest
 /// and entity count.
-pub fn verify_scope_matches_seal_record<B: Backend>(store: &mut B) {
+pub fn verify_scope_matches_seal_record<S: ObjectStore>(store: &mut S) {
     let scope = nested_scope();
     for entity in 1..=4u32 {
         let bytes = payload(entity as u8);
@@ -206,7 +221,7 @@ pub fn verify_scope_matches_seal_record<B: Backend>(store: &mut B) {
 
 /// `verify_scope` fails with Corrupt when the live entity count disagrees
 /// with the seal record.
-pub fn verify_scope_detects_count_mismatch<B: Backend>(store: &mut B) {
+pub fn verify_scope_detects_count_mismatch<S: ObjectStore>(store: &mut S) {
     let scope = nested_scope();
     let bytes = payload(10);
     assert!(store.put(&scope, 1, &bytes, &sha256(&bytes)).is_ok());
@@ -219,7 +234,7 @@ pub fn verify_scope_detects_count_mismatch<B: Backend>(store: &mut B) {
 }
 
 /// `verify_scope` on an unsealed or unknown scope fails with NotFound.
-pub fn verify_unsealed_scope_is_not_found<B: Backend>(store: &mut B) {
+pub fn verify_unsealed_scope_is_not_found<S: ObjectStore>(store: &mut S) {
     let scope = nested_scope();
     match store.verify_scope(&scope) {
         Err(StorageError::NotFound(_)) => {}
@@ -234,7 +249,7 @@ pub fn verify_unsealed_scope_is_not_found<B: Backend>(store: &mut B) {
 }
 
 /// `open_read` streams exactly the stored payload.
-pub fn open_read_streams_payload<B: Backend>(store: &mut B) {
+pub fn open_read_streams_payload<S: ObjectStore>(store: &mut S) {
     let scope = nested_scope();
     let bytes: Vec<u8> = (0..=255u8).cycle().take(200_000).collect();
     assert!(store.put(&scope, 42, &bytes, &sha256(&bytes)).is_ok());
@@ -242,7 +257,7 @@ pub fn open_read_streams_payload<B: Backend>(store: &mut B) {
 }
 
 /// `open_read` of a missing object fails with NotFound.
-pub fn open_read_missing_is_not_found<B: Backend>(store: &mut B) {
+pub fn open_read_missing_is_not_found<S: ObjectStore>(store: &mut S) {
     let scope = nested_scope();
     match store.open_read(&scope, 99) {
         Err(StorageError::NotFound(_)) => {}
@@ -253,7 +268,7 @@ pub fn open_read_missing_is_not_found<B: Backend>(store: &mut B) {
 
 /// A live read holds the object: retiring the unsealed object under an open
 /// read does not invalidate the read; the object is gone afterwards.
-pub fn open_read_survives_retire_of_unsealed_object<B: Backend>(store: &mut B) {
+pub fn open_read_survives_retire_of_unsealed_object<S: ObjectStore>(store: &mut S) {
     use std::io::Read;
     let scope = nested_scope();
     let bytes = payload(12);
@@ -278,7 +293,7 @@ pub fn open_read_survives_retire_of_unsealed_object<B: Backend>(store: &mut B) {
 }
 
 /// Retire removes entities at or below the cursor and keeps newer ones.
-pub fn retire_removes_only_past_cursor<B: Backend>(store: &mut B) {
+pub fn retire_removes_only_past_cursor<S: ObjectStore>(store: &mut S) {
     let scope = nested_scope();
     for entity in 1..=5u32 {
         let bytes = payload(entity as u8);
@@ -295,7 +310,7 @@ pub fn retire_removes_only_past_cursor<B: Backend>(store: &mut B) {
 }
 
 /// A sealed scope retires whole: every entity and the seal record go away.
-pub fn sealed_scope_retires_whole<B: Backend>(store: &mut B) {
+pub fn sealed_scope_retires_whole<S: ObjectStore>(store: &mut S) {
     let scope = nested_scope();
     for entity in 1..=3u32 {
         let bytes = payload(entity as u8);
@@ -323,7 +338,7 @@ pub fn sealed_scope_retires_whole<B: Backend>(store: &mut B) {
 }
 
 /// `list` returns entity ids sorted ascending; unknown scopes list empty.
-pub fn list_returns_sorted_entity_ids<B: Backend>(store: &mut B) {
+pub fn list_returns_sorted_entity_ids<S: ObjectStore>(store: &mut S) {
     let scope = nested_scope();
     assert!(
         store
@@ -342,7 +357,7 @@ pub fn list_returns_sorted_entity_ids<B: Backend>(store: &mut B) {
 }
 
 /// Entities in different scopes — including nested scopes — never mix.
-pub fn scopes_are_isolated<B: Backend>(store: &mut B) {
+pub fn scopes_are_isolated<S: ObjectStore>(store: &mut S) {
     let parent = ScopePath::root().child(1).unwrap_or_else(|_| panic!("scope"));
     let child = parent.child(2).unwrap_or_else(|_| panic!("scope"));
     let bytes = payload(14);
@@ -356,7 +371,7 @@ pub fn scopes_are_isolated<B: Backend>(store: &mut B) {
 }
 
 /// Replay returns intents and commits in append order.
-pub fn journal_replay_is_ordered<B: Backend>(store: &mut B) {
+pub fn journal_replay_is_ordered<J: Journal>(store: &mut J) {
     let first = store
         .append_intent(b"intent-1")
         .unwrap_or_else(|e| panic!("append_intent: {e}"));
@@ -389,7 +404,7 @@ pub fn journal_replay_is_ordered<B: Backend>(store: &mut B) {
 }
 
 /// Replay from a cursor returns only later entries, in order.
-pub fn journal_replay_resumes_from_cursor<B: Backend>(store: &mut B) {
+pub fn journal_replay_resumes_from_cursor<J: Journal>(store: &mut J) {
     let first = store.append_intent(b"a").unwrap_or_else(|e| panic!("append: {e}"));
     store.append_intent(b"b").unwrap_or_else(|e| panic!("append: {e}"));
     let entries = store.replay(first).unwrap_or_else(|e| panic!("replay: {e}"));
@@ -405,7 +420,7 @@ pub fn journal_replay_resumes_from_cursor<B: Backend>(store: &mut B) {
 
 /// Commit-after-intent: the recovery path sees the intent, then its commit,
 /// and treats objects without a commit as uncommitted.
-pub fn commit_after_intent<B: Backend>(store: &mut B) {
+pub fn commit_after_intent<J: Journal>(store: &mut J) {
     let committed = store.append_intent(b"committed").unwrap_or_else(|e| panic!("append: {e}"));
     store.append_intent(b"uncommitted").unwrap_or_else(|e| panic!("append: {e}"));
     assert!(store.commit(committed, b"ok").is_ok());
@@ -423,7 +438,7 @@ pub fn commit_after_intent<B: Backend>(store: &mut B) {
 }
 
 /// Committing a cursor with no intent fails with NotFound.
-pub fn commit_unknown_intent_is_not_found<B: Backend>(store: &mut B) {
+pub fn commit_unknown_intent_is_not_found<J: Journal>(store: &mut J) {
     match store.commit(Cursor(999), b"nope") {
         Err(StorageError::NotFound(_)) => {}
         other => panic!("commit of unknown intent: expected NotFound, got {other:?}"),
@@ -435,26 +450,30 @@ pub fn commit_unknown_intent_is_not_found<B: Backend>(store: &mut B) {
 }
 
 /// A conflicting commit record for an already-committed intent is Corrupt.
-pub fn commit_conflict_is_corrupt<B: Backend>(store: &mut B) {
+pub fn commit_conflict_is_corrupt<J: Journal>(store: &mut J) {
     let intent = store.append_intent(b"work").unwrap_or_else(|e| panic!("append: {e}"));
     assert!(store.commit(intent, b"result-a").is_ok());
     expect_corrupt(store.commit(intent, b"result-b"), "conflicting commit");
 }
 
-/// Durability-of-return: state written through one handle is fully visible
-/// through a reopened handle — objects, seal records, and journal entries.
+/// Durability-of-return for backends implementing both roles; equivalent
+/// to [`object_store_durability_roundtrip`] + [`journal_durability_roundtrip`].
 pub fn durability_roundtrip<B: Backend>(reopen: &mut impl FnMut() -> B) {
+    object_store_durability_roundtrip(reopen);
+    journal_durability_roundtrip(reopen);
+}
+
+/// Object-store durability-of-return: objects and seal records written
+/// through one handle are fully visible through a reopened handle.
+pub fn object_store_durability_roundtrip<S: ObjectStore>(reopen: &mut impl FnMut() -> S) {
     let scope = nested_scope();
     let digest;
-    let intent;
     {
         let mut store = reopen();
         let bytes = payload(15);
         assert!(store.put(&scope, 1, &bytes, &sha256(&bytes)).is_ok());
         digest = seal_digest("durable");
         assert!(store.seal_scope(&scope, &digest, 1).is_ok());
-        intent = store.append_intent(b"durable-intent").unwrap_or_else(|e| panic!("append: {e}"));
-        assert!(store.commit(intent, b"durable-commit").is_ok());
     }
     let store = reopen();
     let bytes = payload(15);
@@ -463,6 +482,18 @@ pub fn durability_roundtrip<B: Backend>(reopen: &mut impl FnMut() -> B) {
         .verify_scope(&scope)
         .unwrap_or_else(|e| panic!("verify_scope after reopen: {e}"));
     assert_eq!(record.digest, digest);
+}
+
+/// Journal durability-of-return: intents and commits written through one
+/// handle replay, in order, through a reopened handle.
+pub fn journal_durability_roundtrip<J: Journal>(reopen: &mut impl FnMut() -> J) {
+    let intent;
+    {
+        let mut store = reopen();
+        intent = store.append_intent(b"durable-intent").unwrap_or_else(|e| panic!("append: {e}"));
+        assert!(store.commit(intent, b"durable-commit").is_ok());
+    }
+    let store = reopen();
     let entries = store.replay(Cursor(0)).unwrap_or_else(|e| panic!("replay: {e}"));
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].kind, JournalKind::Intent(b"durable-intent".to_vec()));
