@@ -232,6 +232,15 @@ pub trait ObjectStore {
     /// one never written — yields an empty vector.
     fn list(&self, scope: &ScopePath) -> Result<Vec<EntityId>, StorageError>;
 
+    /// Lists every scope path holding any state — entities or a seal
+    /// record — in canonical ascending order (ascending rendered path).
+    ///
+    /// Recovery sweeps and audit enumerate scopes through this, never a
+    /// backend-specific structure. A scope that held entities but was
+    /// retired empty (no entities, no seal) no longer appears; a sealed
+    /// scope appears until it retires whole.
+    fn list_scopes(&self) -> Result<Vec<ScopePath>, StorageError>;
+
     /// Removes retained content and returns how many entities were removed.
     ///
     /// A sealed scope retires whole: every entity and the seal record go

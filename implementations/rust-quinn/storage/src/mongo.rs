@@ -509,6 +509,34 @@ impl ObjectStore for MongoStore {
         Ok(seal)
     }
 
+    fn list_scopes(&self) -> Result<Vec<ScopePath>, StorageError> {
+        let mut paths: Vec<String> = Vec::new();
+        let objects = self
+            .block_on(self.objects().distinct("_id.s", doc! {}))
+            .map_err(map_mongo_error)?;
+        for value in objects {
+            let path = value
+                .as_str()
+                .ok_or_else(|| StorageError::corrupt("non-string scope path in objects"))?;
+            paths.push(path.to_string());
+        }
+        let seals = self
+            .block_on(self.seals().distinct("_id", doc! {}))
+            .map_err(map_mongo_error)?;
+        for value in seals {
+            let path = value
+                .as_str()
+                .ok_or_else(|| StorageError::corrupt("non-string scope path in seals"))?;
+            paths.push(path.to_string());
+        }
+        paths.sort_unstable();
+        paths.dedup();
+        paths
+            .iter()
+            .map(|path| ScopePath::parse(path))
+            .collect()
+    }
+
     fn list(&self, scope: &ScopePath) -> Result<Vec<EntityId>, StorageError> {
         Ok(self
             .scan_entities(scope)?

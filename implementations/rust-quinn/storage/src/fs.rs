@@ -601,6 +601,13 @@ impl ObjectStore for FsStore {
         list_entity_ids(&scope_dir, scope)
     }
 
+    fn list_scopes(&self) -> Result<Vec<ScopePath>, StorageError> {
+        let mut scopes = Vec::new();
+        walk_scope_tree(&self.root.join(OBJECTS_DIR), &mut Vec::new(), &mut scopes)?;
+        scopes.sort_by_key(|scope| scope.to_path_string());
+        Ok(scopes)
+    }
+
     fn retire(&mut self, scope: &ScopePath, retention_cursor: u64) -> Result<u64, StorageError> {
         let scope_dir = self.scope_dir(scope);
         if !scope_dir.is_dir() {
@@ -828,6 +835,60 @@ fn sweep_scratch(dir: &Path) -> Result<(), StorageError> {
             fs::remove_file(&path)?;
             sync_dir(dir)?;
         }
+    }
+    Ok(())
+}
+
+/// Recursively collects scope directories holding state (a seal record or
+/// at least one entity file). Bucket directories (2-hex) are not descended
+/// into; 8-hex directories are child scope components.
+fn walk_scope_tree(
+    dir: &Path,
+    components: &mut Vec<u32>,
+    scopes: &mut Vec<ScopePath>,
+) -> Result<(), StorageError> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    if !components.is_empty() {
+        let mut has_state = dir.join(SEAL_FILE_NAME).is_file();
+        if !has_state {
+            for entry in fs::read_dir(dir)? {
+                let entry = entry?;
+                let name = entry.file_name();
+                let is_bucket = name
+                    .to_str()
+                    .is_some_and(|n| n.len() == 2 && n.bytes().all(|b| b.is_ascii_hexdigit()));
+                if is_bucket && entry.path().is_dir() {
+                    let mut bucket_entries = fs::read_dir(entry.path())?;
+                    if bucket_entries.next().is_some() {
+                        has_state = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if has_state {
+            scopes.push(ScopePath::from_components(components.clone())?);
+        }
+    }
+    let mut entries: Vec<_> = fs::read_dir(dir)?.collect::<Result<_, _>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if name.len() != 8 || !name.bytes().all(|b| b.is_ascii_hexdigit()) {
+            continue;
+        }
+        let component = u32::from_str_radix(name, 16)
+            .map_err(|_| StorageError::corrupt(format!("malformed scope dir {name}")))?;
+        components.push(component);
+        walk_scope_tree(&path, components, scopes)?;
+        components.pop();
     }
     Ok(())
 }

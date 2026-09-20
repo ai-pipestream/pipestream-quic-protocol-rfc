@@ -72,6 +72,9 @@ pub fn run_object_store<S: ObjectStore + Send>(
     streaming_put_conflict_with_existing_is_corrupt_at_begin(&mut fresh());
     streaming_put_idempotent_absorbing_reput(&mut fresh());
     streaming_put_invisible_until_finish(&mut fresh());
+    list_scopes_empty_store(&mut fresh());
+    list_scopes_nested_and_canonically_ordered(&mut fresh());
+    list_scopes_visibility_across_seal_and_retire(&mut fresh());
     object_store_durability_roundtrip(&mut reopen);
 }
 
@@ -1088,4 +1091,76 @@ pub fn streaming_put_invisible_until_finish<S: ObjectStore>(store: &mut S) {
     writer.write_all(b"ing").unwrap_or_else(|e| panic!("write: {e}"));
     writer.finish().unwrap_or_else(|e| panic!("finish: {e}"));
     assert_eq!(read_all(store, &scope, 1), payload);
+}
+
+/// An empty store enumerates no scopes.
+pub fn list_scopes_empty_store<S: ObjectStore>(store: &mut S) {
+    assert!(
+        store
+            .list_scopes()
+            .unwrap_or_else(|e| panic!("list_scopes: {e}"))
+            .is_empty()
+    );
+}
+
+/// Every scope with entities appears once, in canonical ascending rendered
+/// order; scopes that only contain child scopes do not appear.
+pub fn list_scopes_nested_and_canonically_ordered<S: ObjectStore>(store: &mut S) {
+    let rendered = |scopes: Vec<ScopePath>| -> Vec<String> {
+        scopes.iter().map(|s| s.to_path_string()).collect()
+    };
+    let root = ScopePath::root(0);
+    let child = scope(0, 8);
+    let grandchild = child.child(9).unwrap_or_else(|e| panic!("scope: {e}"));
+    let sibling = ScopePath::root(2);
+    let payload = bytes("x");
+    let digest = sha256(&payload);
+    // Write out of order and with a gap (sibling > child).
+    assert!(store.put(&grandchild, 1, &payload, &digest).is_ok());
+    assert!(store.put(&sibling, 1, &payload, &digest).is_ok());
+    assert!(store.put(&child, 1, &payload, &digest).is_ok());
+    assert!(store.put(&root, 1, &payload, &digest).is_ok());
+    assert_eq!(
+        rendered(store.list_scopes().unwrap_or_else(|e| panic!("list_scopes: {e}"))),
+        vec![
+            "00000000",
+            "00000000/00000008",
+            "00000000/00000008/00000009",
+            "00000002"
+        ]
+    );
+}
+
+/// A sealed-but-empty scope appears; an unsealed scope retired empty
+/// disappears; a sealed scope retired whole disappears.
+pub fn list_scopes_visibility_across_seal_and_retire<S: ObjectStore>(store: &mut S) {
+    let rendered = |scopes: &[ScopePath]| -> Vec<String> {
+        scopes.iter().map(|s| s.to_path_string()).collect()
+    };
+    let seal_only = ScopePath::root(60);
+    assert!(store.seal_scope(&seal_only, &canonical_digest(&[]), 0).is_ok());
+    let payload = bytes("y");
+    let digest = sha256(&payload);
+    let emptied = ScopePath::root(61);
+    assert!(store.put(&emptied, 1, &payload, &digest).is_ok());
+    let retired_sealed = ScopePath::root(62);
+    assert!(store.put(&retired_sealed, 1, &payload, &digest).is_ok());
+    assert!(store.seal_scope(&retired_sealed, &canonical_digest(&[(1, "y")]), 1).is_ok());
+    let survivors = store.list_scopes().unwrap_or_else(|e| panic!("list_scopes: {e}"));
+    assert_eq!(
+        rendered(&survivors),
+        vec!["0000003c", "0000003d", "0000003e"],
+        "seal-only and populated scopes are visible"
+    );
+    // Retire the unsealed scope empty: it disappears.
+    assert_eq!(store.retire(&emptied, 1).unwrap_or_else(|e| panic!("retire: {e}")), 1);
+    // Retire the sealed scope whole: it disappears.
+    assert_eq!(
+        store.retire(&retired_sealed, 0).unwrap_or_else(|e| panic!("retire: {e}")),
+        1
+    );
+    assert_eq!(
+        rendered(&store.list_scopes().unwrap_or_else(|e| panic!("list_scopes: {e}"))),
+        vec!["0000003c"]
+    );
 }

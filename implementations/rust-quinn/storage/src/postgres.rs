@@ -392,6 +392,24 @@ impl ObjectStore for PostgresStore {
         Ok(seal)
     }
 
+    fn list_scopes(&self) -> Result<Vec<ScopePath>, StorageError> {
+        let mut client = self.lock()?;
+        let rows = client
+            .query(
+                "SELECT scope_path FROM ( \
+                   SELECT scope_path FROM pipestream_objects \
+                   UNION SELECT scope_path FROM pipestream_seals \
+                 ) scopes ORDER BY scope_path",
+                &[],
+            )
+            .map_err(map_pg_error)?;
+        let mut paths = Vec::new();
+        for row in rows {
+            paths.push(ScopePath::parse(&row.get::<usize, String>(0))?);
+        }
+        Ok(paths)
+    }
+
     fn list(&self, scope: &ScopePath) -> Result<Vec<EntityId>, StorageError> {
         let mut client = self.lock()?;
         let rows = client

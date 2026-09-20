@@ -566,6 +566,38 @@ impl ObjectStore for S3Store {
         self.list_entities(scope)
     }
 
+    fn list_scopes(&self) -> Result<Vec<ScopePath>, StorageError> {
+        // Entity keys:  <prefix>objects/<path>/<bucket>/<entity>
+        // Seal keys:    <prefix>objects/<path>/scope.seal
+        let base = format!("{}{}/", self.prefix, OBJECTS_DIR);
+        let mut paths = std::collections::BTreeSet::new();
+        for key in self.list_keys(&base)? {
+            let relative = &key[base.len()..];
+            let segments: Vec<&str> = relative.split('/').collect();
+            // Scope path = all segments above the bucket/entity pair or the
+            // seal file; empty means the root-adjacent prefix (no scopes).
+            let scope_path: Option<String> = match segments.as_slice() {
+                [rest @ .., bucket, _entity]
+                    if bucket.len() == 2
+                        && bucket.bytes().all(|b| b.is_ascii_hexdigit()) =>
+                {
+                    Some(rest.join("/"))
+                }
+                [rest @ .., seal] if *seal == SEAL_FILE_NAME => Some(rest.join("/")),
+                _ => None,
+            };
+            if let Some(rendered) = scope_path
+                && !rendered.is_empty()
+            {
+                paths.insert(rendered);
+            }
+        }
+        paths
+            .iter()
+            .map(|path| ScopePath::parse(path))
+            .collect()
+    }
+
     fn retire(&mut self, scope: &ScopePath, retention_cursor: u64) -> Result<u64, StorageError> {
         let seal_key = self.seal_key(scope);
         let sealed = self.get_object(&seal_key)?.is_some();

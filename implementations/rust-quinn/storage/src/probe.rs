@@ -335,6 +335,10 @@ impl<S: ObjectStore> ObjectStore for StoreOnly<S> {
         self.0.list(scope)
     }
 
+    fn list_scopes(&self) -> Result<Vec<ScopePath>, StorageError> {
+        self.0.list_scopes()
+    }
+
     fn retire(&mut self, scope: &ScopePath, retention_cursor: u64) -> Result<u64, StorageError> {
         self.0.retire(scope, retention_cursor)
     }
@@ -419,6 +423,10 @@ impl<J: Journal> ObjectStore for JournalOnly<J> {
     }
 
     fn list(&self, _scope: &ScopePath) -> Result<Vec<crate::EntityId>, StorageError> {
+        Err(StorageError::failed("object-store role absent"))
+    }
+
+    fn list_scopes(&self) -> Result<Vec<ScopePath>, StorageError> {
         Err(StorageError::failed("object-store role absent"))
     }
 

@@ -315,6 +315,18 @@ impl ObjectStore for MemoryStore {
         Ok(entities)
     }
 
+    fn list_scopes(&self) -> Result<Vec<ScopePath>, StorageError> {
+        let state = self.read()?;
+        Ok(state
+            .scopes
+            .iter()
+            .filter(|(_, scope_state)| {
+                scope_state.seal.is_some() || !scope_state.objects.is_empty()
+            })
+            .map(|(scope, _)| scope.clone())
+            .collect())
+    }
+
     fn retire(&mut self, scope: &ScopePath, retention_cursor: u64) -> Result<u64, StorageError> {
         let mut state = self.write()?;
         let Some(scope_state) = state.scopes.get_mut(scope) else {
