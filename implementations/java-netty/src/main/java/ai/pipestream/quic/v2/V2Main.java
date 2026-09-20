@@ -80,7 +80,14 @@ public final class V2Main {
     DurableHost.Configuration defaults =
         DurableHost.Configuration.defaults(
             required(options, "authority"), required(options, "result-authority"));
-    if (!options.containsKey("db-mib") && !options.containsKey("wal-mib")) return defaults;
+    DurableHost.ObjectPlane objectPlane =
+        DurableHost.ObjectPlane.parse(
+            options.getOrDefault("object-plane", DurableHost.ObjectPlane.V2.wire()));
+    if (!options.containsKey("db-mib") && !options.containsKey("wal-mib")) {
+      return objectPlane == DurableHost.ObjectPlane.V2
+          ? defaults
+          : new DurableHost.Configuration(defaults, objectPlane);
+    }
     BoundedSqlite.Limits files = defaults.files();
     long walBytes = mebibytes(options, "wal-mib", files.walBytes());
     // The log is only usable as far as its shared-memory index reaches: scale the sidecar with
@@ -110,7 +117,8 @@ public final class V2Main {
         defaults.results(),
         defaults.waits(),
         defaults.storageWorkers(),
-        defaults.producer());
+        defaults.producer(),
+        objectPlane);
   }
 
   /**
@@ -361,12 +369,14 @@ public final class V2Main {
     List<String> lines = new ArrayList<>();
     lines.add("PipeStream V2 durable endpoints (Java/Netty)");
     lines.add("  init-authority --root DIR --authority LABEL --result-authority HOST:PORT");
-    lines.add("        [--db-mib MIB] [--wal-mib MIB]");
+    lines.add("        [--db-mib MIB] [--wal-mib MIB] [--object-plane v2|spi]");
     lines.add("  serve --root DIR --authority LABEL --result-authority HOST:PORT --bind HOST:PORT");
     lines.add(
         "        --cert PEM --key PEM --client-ca PEM --principal-map TSV --trust-system-clock");
     lines.add("        [--allow-skip] [--ready-file PATH] [--object-limit BYTES]");
-    lines.add("        [--db-mib MIB] [--wal-mib MIB]  (must repeat the init-authority values)");
+    lines.add(
+        "        [--db-mib MIB] [--wal-mib MIB] [--object-plane v2|spi]  (must repeat the"
+            + " init-authority values)");
     lines.addAll(ClientCommands.usage());
     lines.add("Legacy version-1 commands remain in ai.pipestream.quic.Main.");
     for (String line : lines) System.out.println(line);

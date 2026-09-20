@@ -390,7 +390,8 @@ final class DurableBranchTest {
             defaults.results(),
             defaults.waits(),
             defaults.storageWorkers(),
-            defaults.producer());
+            defaults.producer(),
+            DurableHost.ObjectPlane.V2);
     try (Session s = new Session("paged-coverage", 1, roomy)) {
       get(s.client.declare(op(1), 0, first, false));
       get(s.client.declare(op(2), 0, List.of(257L), true));

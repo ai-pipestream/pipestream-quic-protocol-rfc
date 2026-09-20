@@ -227,6 +227,7 @@ public final class DurableHost implements AutoCloseable {
    * @param waits control observation limits
    * @param storageWorkers off-loop storage pool limits
    * @param producer local producer-1 limits for authority expansion
+   * @param objectPlane per-installation object payload plane; recorded with the installation
    */
   public record Configuration(
       String authority,
@@ -246,7 +247,8 @@ public final class DurableHost implements AutoCloseable {
       ResultLimits results,
       WaitLimits waits,
       WorkerLimits storageWorkers,
-      ProducerLimits producer) {
+      ProducerLimits producer,
+      ObjectPlane objectPlane) {
     /** Validate every bound and the locator endpoint syntax. */
     public Configuration {
       Checks.identity(authority);
@@ -267,8 +269,38 @@ public final class DurableHost implements AutoCloseable {
       Objects.requireNonNull(waits);
       Objects.requireNonNull(storageWorkers);
       Objects.requireNonNull(producer);
+      Objects.requireNonNull(objectPlane);
       if (execution.workers() > maxJobs || execution.workersPerOwner() > maxJobsPerOwner)
         throw new IllegalArgumentException("execution workers exceed funded job ceilings");
+    }
+
+    /**
+     * Rebuilds a configuration with a different object plane, every other bound retained.
+     *
+     * @param configuration source configuration
+     * @param objectPlane replacement object plane
+     */
+    public Configuration(Configuration configuration, ObjectPlane objectPlane) {
+      this(
+          configuration.authority(),
+          configuration.resultAuthority(),
+          configuration.sessionLimits(),
+          configuration.maximumPolicy(),
+          configuration.maxOwners(),
+          configuration.maxSessions(),
+          configuration.maxSessionsPerOwner(),
+          configuration.files(),
+          configuration.objects(),
+          configuration.maxJobs(),
+          configuration.maxJobsPerOwner(),
+          configuration.execution(),
+          configuration.scheduler(),
+          configuration.retention(),
+          configuration.results(),
+          configuration.waits(),
+          configuration.storageWorkers(),
+          configuration.producer(),
+          objectPlane);
     }
 
     /**
@@ -297,7 +329,8 @@ public final class DurableHost implements AutoCloseable {
           new ResultLimits(128, 32, 65_536, 250),
           new WaitLimits(1024, 64, 4, 50),
           new WorkerLimits(8, 512, 64),
-          new ProducerLimits(1 << 20, 64, 64, 16L << 20, 30_000, 300_000));
+          new ProducerLimits(1 << 20, 64, 64, 16L << 20, 30_000, 300_000),
+          ObjectPlane.V2);
     }
   }
 
@@ -317,6 +350,46 @@ public final class DurableHost implements AutoCloseable {
      */
     AdmissionStore.RestartSafety internal() {
       return AdmissionStore.RestartSafety.values()[ordinal()];
+    }
+  }
+
+  /**
+   * Per-installation object payload plane, recorded durably with the
+   * installation so reopen refuses a changed selection (adoption plan stage 2).
+   * {@link #V2} is today's envelope-keyed filesystem plane and the default;
+   * {@link #SPI} selects the storage-SPI object plane and is refused by this
+   * build until the plane is wired (stage 3).
+   */
+  public enum ObjectPlane {
+    /** The existing v2 envelope-keyed input/output store. */
+    V2("v2"),
+    /** The storage-SPI object plane; not implemented in this build. */
+    SPI("spi");
+
+    private final String wire;
+
+    ObjectPlane(String wire) {
+      this.wire = wire;
+    }
+
+    /**
+     * Persisted representation, as stored in the installation record.
+     *
+     * @return plane name
+     */
+    public String wire() {
+      return wire;
+    }
+
+    /**
+     * Parses the persisted or command-line plane name.
+     *
+     * @param wire plane name
+     * @return plane
+     */
+    public static ObjectPlane parse(String wire) {
+      for (ObjectPlane plane : values()) if (plane.wire.equals(wire)) return plane;
+      throw new IllegalArgumentException("unknown object plane: " + wire);
     }
   }
 
@@ -1157,10 +1230,18 @@ public final class DurableHost implements AutoCloseable {
     Objects.requireNonNull(configuration);
     Objects.requireNonNull(owners);
     Objects.requireNonNull(clock);
+    if (configuration.objectPlane() == ObjectPlane.SPI) {
+      // Stage 3 wires the SPI payload plane; refuse before any file exists.
+      throw new UnsupportedOperationException(
+          "object plane '" + ObjectPlane.SPI.wire() + "' is not implemented in this build");
+    }
     Files.createDirectories(root);
     SessionStore sessions =
         SessionStore.initialize(
             root.resolve(DATABASE), storeConfiguration(configuration, applications));
+    if (configuration.objectPlane() != ObjectPlane.V2) {
+      sessions.recordObjectPlane(configuration.objectPlane());
+    }
     InputStore inputs =
         InputStore.initializeForAuthority(
             root.resolve(OBJECTS), configuration.objects().toStore(), sessions.identity());
@@ -1202,6 +1283,22 @@ public final class DurableHost implements AutoCloseable {
     Objects.requireNonNull(clock);
     SessionStore sessions =
         SessionStore.open(root.resolve(DATABASE), storeConfiguration(configuration, applications));
+    ObjectPlane recordedPlane = sessions.objectPlane();
+    String refusal =
+        recordedPlane != configuration.objectPlane()
+            ? "object plane differs: recorded '" + recordedPlane.wire() + "' but configured '"
+                + configuration.objectPlane().wire() + "'"
+            : configuration.objectPlane() == ObjectPlane.SPI
+                ? "object plane '" + ObjectPlane.SPI.wire() + "' is not implemented in this build"
+                : null;
+    if (refusal != null) {
+      try {
+        sessions.close();
+      } catch (SQLException cleanup) {
+        // close best effort; the refusal below is the primary failure
+      }
+      throw new IOException(refusal);
+    }
     InputStore inputs = InputStore.open(root.resolve(OBJECTS), configuration.objects().toStore());
     try {
       sessions.verifyInputs(inputs);

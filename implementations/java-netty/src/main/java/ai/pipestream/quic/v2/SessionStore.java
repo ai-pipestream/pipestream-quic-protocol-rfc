@@ -43,6 +43,10 @@ final class SessionStore {
           "ps_v2_operations",
           "ps_v2_jobs",
           "ps_v2_slots");
+  /** Installations that record a non-default object plane carry one additive table. */
+  private static final Set<String> TABLES_WITH_OBJECT_PLANE =
+      java.util.stream.Stream.concat(TABLES.stream(), java.util.stream.Stream.of("ps_v2_object_plane"))
+          .collect(java.util.stream.Collectors.toUnmodifiableSet());
   // Bound simultaneous V2 database connections even when callers open multiple store handles.
   private static final Semaphore DATABASE_OPERATIONS = new Semaphore(16);
 
@@ -3332,7 +3336,7 @@ final class SessionStore {
           }
         }
         if (present.isEmpty() && initialize) createSchema(connection);
-        else if (!present.equals(TABLES))
+        else if (!present.equals(TABLES) && !present.equals(TABLES_WITH_OBJECT_PLANE))
           throw corrupt("unknown or incomplete schema; conversion refused");
         meta(connection);
         audit(connection);
@@ -3417,6 +3421,64 @@ final class SessionStore {
       insert.setBytes(3, uuid(identity));
       insert.setBytes(4, identityHash(configBytes, identity, null));
       insert.executeUpdate();
+    }
+  }
+
+  /**
+   * Records the per-installation object plane durably, before the host is
+   * live, so reopen can refuse a changed selection. The plane table is
+   * additive: default v2 installations keep the exact original schema.
+   *
+   * @param plane configured object plane
+   * @throws SQLException failed transaction
+   */
+  synchronized void recordObjectPlane(DurableHost.ObjectPlane plane) throws SQLException {
+    try (Connection connection = database.connect();
+        var statement = connection.createStatement()) {
+      statement.execute("BEGIN IMMEDIATE");
+      try {
+        statement.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ps_v2_object_plane (
+              singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+              plane TEXT NOT NULL CHECK(plane IN ('v2','spi'))
+            ) STRICT
+            """);
+        try (var insert =
+            connection.prepareStatement(
+                "INSERT INTO ps_v2_object_plane (singleton, plane) VALUES (1, ?)")) {
+          insert.setString(1, plane.wire());
+          insert.executeUpdate();
+        }
+        statement.execute("COMMIT");
+      } catch (SQLException | RuntimeException failure) {
+        rollback(connection, failure);
+        throw failure;
+      }
+    }
+  }
+
+  /**
+   * The recorded object plane. Installations predating the plane record
+   * report the v2 default.
+   *
+   * @return recorded plane, or {@link DurableHost.ObjectPlane#V2} when absent
+   * @throws SQLException storage failure
+   */
+  synchronized DurableHost.ObjectPlane objectPlane() throws SQLException {
+    try (Connection connection = database.connect();
+        var statement = connection.createStatement();
+        var row =
+            statement.executeQuery(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='ps_v2_object_plane'")) {
+      if (!row.next() || row.getLong(1) != 1) return DurableHost.ObjectPlane.V2;
+    }
+    try (Connection connection = database.connect();
+        var statement = connection.createStatement();
+        var row =
+            statement.executeQuery("SELECT plane FROM ps_v2_object_plane WHERE singleton=1")) {
+      if (!row.next()) return DurableHost.ObjectPlane.V2;
+      return DurableHost.ObjectPlane.parse(row.getString(1));
     }
   }
 

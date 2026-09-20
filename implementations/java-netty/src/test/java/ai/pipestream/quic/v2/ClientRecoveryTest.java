@@ -82,7 +82,8 @@ final class ClientRecoveryTest {
         defaults.results(),
         defaults.waits(),
         new DurableHost.WorkerLimits(1, 3, 3),
-        defaults.producer());
+        defaults.producer(),
+        DurableHost.ObjectPlane.V2);
   }
 
   /**
