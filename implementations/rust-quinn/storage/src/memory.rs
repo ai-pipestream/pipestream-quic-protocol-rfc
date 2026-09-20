@@ -35,6 +35,7 @@ struct IntentState {
     intent: Intent,
     cursor: Cursor,
     commit: Option<Vec<u8>>,
+    commit_cursor: Option<Cursor>,
 }
 
 #[derive(Debug, Default)]
@@ -265,6 +266,7 @@ impl Journal for MemoryStore {
             intent: intent.clone(),
             cursor,
             commit: None,
+            commit_cursor: None,
         });
         Ok(cursor)
     }
@@ -298,6 +300,7 @@ impl Journal for MemoryStore {
         // A commit consumes a cursor in the global append order.
         state.last_cursor += 1;
         state.intents[index].commit = Some(record.to_vec());
+        state.intents[index].commit_cursor = Some(Cursor(state.last_cursor));
         Ok(())
     }
 
@@ -311,6 +314,7 @@ impl Journal for MemoryStore {
                 cursor: entry.cursor,
                 intent: entry.intent.clone(),
                 commit: entry.commit.clone(),
+                commit_cursor: entry.commit_cursor,
             })
             .collect();
         Ok(entries)

@@ -74,6 +74,7 @@ struct IntentState {
     intent: Intent,
     cursor: Cursor,
     commit: Option<Vec<u8>>,
+    commit_cursor: Option<Cursor>,
 }
 
 impl std::fmt::Debug for KafkaJournal {
@@ -233,6 +234,7 @@ fn fold_record(
                 intent,
                 cursor,
                 commit: None,
+                commit_cursor: None,
             });
         }
         TYPE_COMMIT => {
@@ -248,6 +250,7 @@ fn fold_record(
                 )));
             }
             entry.commit = Some(body.to_vec());
+            entry.commit_cursor = Some(cursor);
         }
         other => return Err(corrupt(format!("unknown record kind {other}"))),
     }
@@ -307,6 +310,7 @@ impl Journal for KafkaJournal {
             intent: intent.clone(),
             cursor,
             commit: None,
+            commit_cursor: None,
         });
         self.index.last_cursor = cursor.0;
         Ok(cursor)
@@ -350,6 +354,7 @@ impl Journal for KafkaJournal {
         }
         let cursor = self.append_record(TYPE_COMMIT, intent_id.as_bytes(), record)?;
         self.index.intents[index].commit = Some(record.to_vec());
+        self.index.intents[index].commit_cursor = Some(cursor);
         self.index.last_cursor = cursor.0;
         Ok(())
     }
@@ -364,6 +369,7 @@ impl Journal for KafkaJournal {
                 cursor: entry.cursor,
                 intent: entry.intent.clone(),
                 commit: entry.commit.clone(),
+                commit_cursor: entry.commit_cursor,
             })
             .collect())
     }

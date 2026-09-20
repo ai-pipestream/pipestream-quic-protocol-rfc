@@ -498,6 +498,7 @@ struct IntentState {
     intent: Intent,
     cursor: Cursor,
     commit: Option<Vec<u8>>,
+    commit_cursor: Option<Cursor>,
 }
 
 impl FsStore {
@@ -559,6 +560,7 @@ impl Journal for FsStore {
             intent: intent.clone(),
             cursor,
             commit: None,
+            commit_cursor: None,
         });
         Ok(cursor)
     }
@@ -586,8 +588,9 @@ impl Journal for FsStore {
                 None => {}
             }
         }
-        self.append_journal_record(TYPE_COMMIT, intent_id.as_bytes(), record)?;
+        let cursor = self.append_journal_record(TYPE_COMMIT, intent_id.as_bytes(), record)?;
         self.journal.intents[index].commit = Some(record.to_vec());
+        self.journal.intents[index].commit_cursor = Some(cursor);
         Ok(())
     }
 
@@ -601,6 +604,7 @@ impl Journal for FsStore {
                 cursor: entry.cursor,
                 intent: entry.intent.clone(),
                 commit: entry.commit.clone(),
+                commit_cursor: entry.commit_cursor,
             })
             .collect())
     }
@@ -895,6 +899,7 @@ fn scan_record(
                 intent,
                 cursor: Cursor(cursor),
                 commit: None,
+                commit_cursor: None,
             });
         }
         _ => {
@@ -910,6 +915,7 @@ fn scan_record(
                 )));
             }
             entry.commit = Some(payload.to_vec());
+            entry.commit_cursor = Some(Cursor(cursor));
         }
     }
     Ok(Some(end))

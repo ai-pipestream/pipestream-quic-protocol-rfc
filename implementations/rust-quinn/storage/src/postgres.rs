@@ -467,7 +467,7 @@ impl Journal for PostgresStore {
         let mut client = self.lock()?;
         let rows = client
             .query(
-                "SELECT i.seq, i.intent_id, i.payload, c.payload \
+                "SELECT i.seq, i.intent_id, i.payload, c.payload, c.seq \
                  FROM pipestream_journal i \
                  LEFT JOIN pipestream_journal c \
                    ON c.kind = $2 AND c.intent_id = i.intent_id \
@@ -485,6 +485,14 @@ impl Journal for PostgresStore {
             let id: String = row.get(1);
             let record: Vec<u8> = row.get(2);
             let commit: Option<Vec<u8>> = row.get(3);
+            let commit_seq: Option<i64> = row.get(4);
+            let commit_cursor = match commit_seq {
+                Some(seq) if seq > 0 => Some(Cursor(seq as u64)),
+                Some(_) => {
+                    return Err(StorageError::corrupt("negative journal sequence".to_string()));
+                }
+                None => None,
+            };
             let intent = Intent::new(id, record).map_err(|_| {
                 StorageError::corrupt("journal intent fails validation".to_string())
             })?;
@@ -492,6 +500,7 @@ impl Journal for PostgresStore {
                 cursor: Cursor(seq as u64),
                 intent,
                 commit,
+                commit_cursor,
             });
         }
         Ok(entries)

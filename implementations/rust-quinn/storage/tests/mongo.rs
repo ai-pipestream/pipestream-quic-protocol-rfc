@@ -33,3 +33,26 @@ fn mongo_backend_passes_the_spi_contract() {
     let reopen = || open_with_retry(&durable_config);
     contract::run_all(fresh, reopen);
 }
+
+
+fn probe_vectors() -> (String, String) {
+    let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../test-vectors/storage-spi");
+    let script = std::fs::read_to_string(format!("{base}/probe-script-v1.txt")).expect("script");
+    let expected =
+        std::fs::read_to_string(format!("{base}/expected-report-v1.txt")).expect("expected");
+    (script, expected)
+}
+
+#[test]
+fn mongo_probe_matches_expected_report_byte_for_byte() {
+    use pipestream_storage::probe::RoleSelection;
+    let Some(mongo) = common::MongoContainer::start() else {
+        eprintln!("docker unavailable: skipping mongo probe");
+        return;
+    };
+    let mut store = open_with_retry(&mongo.fresh_config());
+    let (script, expected) = probe_vectors();
+    let report = pipestream_storage::probe::run(&mut store, RoleSelection::BOTH, &script)
+        .expect("probe");
+    assert_eq!(report, expected);
+}

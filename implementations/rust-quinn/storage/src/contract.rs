@@ -786,6 +786,10 @@ pub fn commits_consume_cursors_in_the_global_order<J: Journal>(store: &mut J) {
     let entries = store.replay(Cursor(0)).unwrap_or_else(|e| panic!("replay: {e}"));
     let cursors: Vec<Cursor> = entries.iter().map(|entry| entry.cursor).collect();
     assert_eq!(cursors, vec![Cursor(1), Cursor(2), Cursor(4)]);
+    // The commit's own cursor is 3, carried on the intent's replay entry.
+    assert_eq!(entries[0].commit_cursor, Some(Cursor(3)));
+    assert_eq!(entries[1].commit_cursor, None);
+    assert_eq!(entries[2].commit_cursor, None);
 }
 
 /// Journal durability-of-return: intents and their commit state survive a

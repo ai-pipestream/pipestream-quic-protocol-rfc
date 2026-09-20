@@ -50,3 +50,24 @@ fn postgres_verify_detects_tampered_payload() {
         other => panic!("expected Corrupt after tampering, got {other:?}"),
     }
 }
+
+fn probe_vectors() -> (String, String) {
+    let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../test-vectors/storage-spi");
+    let script = std::fs::read_to_string(format!("{base}/probe-script-v1.txt")).expect("script");
+    let expected =
+        std::fs::read_to_string(format!("{base}/expected-report-v1.txt")).expect("expected");
+    (script, expected)
+}
+
+#[test]
+fn postgres_probe_matches_expected_report_byte_for_byte() {
+    use pipestream_storage::probe::{self, RoleSelection};
+    let Some(pg) = common::PostgresContainer::start() else {
+        eprintln!("docker unavailable: skipping postgres probe");
+        return;
+    };
+    let mut store = PostgresStore::open(&pg.fresh_database()).expect("open store");
+    let (script, expected) = probe_vectors();
+    let report = probe::run(&mut store, RoleSelection::BOTH, &script).expect("probe");
+    assert_eq!(report, expected);
+}

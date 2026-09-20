@@ -178,6 +178,25 @@ impl ScopePath {
             .collect::<Vec<_>>()
             .join("/")
     }
+
+    /// Parses the rendered form (`8-hex` components joined by `/`).
+    ///
+    /// Fails with [`StorageError::Failed`] on malformed components or a
+    /// component count outside `1..=8`.
+    pub fn parse(rendered: &str) -> Result<Self, StorageError> {
+        let mut components = Vec::new();
+        for part in rendered.split('/') {
+            if part.len() != 8 || !part.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(StorageError::failed(format!(
+                    "malformed scope path component {part:?}"
+                )));
+            }
+            let value = u32::from_str_radix(part, 16)
+                .map_err(|_| StorageError::failed(format!("malformed scope path component {part:?}")))?;
+            components.push(value);
+        }
+        ScopePath::from_components(components)
+    }
 }
 
 impl fmt::Display for ScopePath {

@@ -93,6 +93,10 @@ pub struct ReplayEntry {
     pub intent: Intent,
     /// The commit bytes when committed, `None` while uncommitted.
     pub commit: Option<Vec<u8>>,
+    /// The cursor the commit consumed in the global append order; `None`
+    /// while uncommitted. Lets replay consumers order commit records among
+    /// intents without a second read.
+    pub commit_cursor: Option<Cursor>,
 }
 
 impl ReplayEntry {

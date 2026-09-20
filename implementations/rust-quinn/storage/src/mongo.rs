@@ -589,17 +589,29 @@ impl Journal for MongoStore {
                 .get("p")
                 .and_then(bson_bytes)
                 .ok_or_else(|| StorageError::corrupt("malformed journal payload".to_string()))?;
-            let commit = self
+            let commit_doc = self
                 .block_on(self.journal().find_one(doc! { "k": KIND_COMMIT, "i": &id }))
-                .map_err(map_mongo_error)?
-                .map(|doc| {
-                    doc.get("p")
+                .map_err(map_mongo_error)?;
+            let (commit, commit_cursor) = match commit_doc {
+                Some(doc) => {
+                    let payload = doc
+                        .get("p")
                         .and_then(bson_bytes)
                         .ok_or_else(|| {
                             StorageError::corrupt("malformed journal payload".to_string())
-                        })
-                })
-                .transpose()?;
+                        })?;
+                    let cursor = doc
+                        .get("_id")
+                        .and_then(bson_i64)
+                        .and_then(|s| u64::try_from(s).ok())
+                        .map(Cursor)
+                        .ok_or_else(|| {
+                            StorageError::corrupt("malformed journal cursor".to_string())
+                        })?;
+                    (Some(payload), Some(cursor))
+                }
+                None => (None, None),
+            };
             let intent = Intent::new(id, record).map_err(|_| {
                 StorageError::corrupt("journal intent fails validation".to_string())
             })?;
@@ -607,6 +619,7 @@ impl Journal for MongoStore {
                 cursor: Cursor(seq),
                 intent,
                 commit,
+                commit_cursor,
             });
         }
         Ok(entries)

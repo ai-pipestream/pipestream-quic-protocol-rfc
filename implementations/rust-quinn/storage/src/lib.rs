@@ -37,6 +37,7 @@ pub mod layout;
 mod memory;
 pub mod mongo;
 pub mod postgres;
+pub mod probe;
 mod s3;
 mod spi;
 
