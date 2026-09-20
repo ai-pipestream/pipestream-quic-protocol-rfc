@@ -1,0 +1,16 @@
+[package]
+name = "pipestream-storage"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Pluggable storage SPI (ObjectStore and Journal roles) for PipeStream reference implementations"
+
+[lib]
+name = "pipestream_storage"
+
+[dependencies]
+sha2 = "0.11.0"
+
+[dev-dependencies]
+tempfile = "3.27.0"
