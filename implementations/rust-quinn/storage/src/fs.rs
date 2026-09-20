@@ -444,55 +444,43 @@ impl ObjectStore for FsStore {
                 "scope {scope} holds nothing to retire"
             )));
         }
-        if scope_dir.join(SEAL_FILE_NAME).exists() {
-            // A sealed scope retires whole: every entity and the seal record.
-            let removed = list_entity_ids(&scope_dir, scope)?.len() as u64;
-            fs::remove_dir_all(&scope_dir)?;
-            if let Some(parent) = scope_dir.parent() {
-                sync_dir(parent)?;
-            }
-            self.prune_empty_ancestors(scope);
-            return Ok(removed);
-        }
+        let seal_path = scope_dir.join(SEAL_FILE_NAME);
+        let sealed = seal_path.exists();
         let ids = list_entity_ids(&scope_dir, scope)?;
-        if ids.is_empty() {
+        if ids.is_empty() && !sealed {
             return Err(StorageError::not_found(format!(
                 "scope {scope} holds nothing to retire"
             )));
         }
+        // A sealed scope retires whole — scope-locally: its own entities and
+        // the seal record go away; child-scope containers are untouched.
+        let cursor = if sealed { u64::MAX } else { retention_cursor };
         let mut removed = 0u64;
+        let mut touched_buckets = std::collections::BTreeSet::new();
         for entity in ids {
-            if u64::from(entity) > retention_cursor {
+            if u64::from(entity) > cursor {
                 continue;
             }
             let target = self.entity_path(scope, entity);
             fs::remove_file(&target)?;
             removed += 1;
             if let Some(bucket) = target.parent() {
-                sync_dir(bucket)?;
-                // Remove the bucket directory when it went empty.
-                let _ = fs::remove_dir(bucket);
+                touched_buckets.insert(bucket.to_path_buf());
             }
+        }
+        // Each bucket is fsynced once, removed when empty, and the removal
+        // itself fsynced in the scope directory.
+        for bucket in touched_buckets {
+            sync_dir(&bucket)?;
+            if fs::remove_dir(&bucket).is_ok() {
+                sync_dir(&scope_dir)?;
+            }
+        }
+        if sealed {
+            fs::remove_file(&seal_path)?;
+            sync_dir(&scope_dir)?;
         }
         Ok(removed)
-    }
-}
-
-impl FsStore {
-    /// Removes ancestor scope directories left empty by retiring `scope`,
-    /// stopping at the objects root.
-    fn prune_empty_ancestors(&self, scope: &ScopePath) {
-        let objects_root = self.root.join(OBJECTS_DIR);
-        let mut dir = self.scope_dir(scope);
-        while dir != objects_root {
-            if fs::remove_dir(&dir).is_err() {
-                break;
-            }
-            match dir.parent() {
-                Some(parent) => dir = parent.to_path_buf(),
-                None => break,
-            }
-        }
     }
 }
 
@@ -1049,6 +1037,20 @@ mod tests {
         let store = FsStore::open(dir.path()).unwrap();
         assert!(!scratch.exists(), "open sweeps scratch");
         store.close().unwrap();
+    }
+
+    #[test]
+    fn retire_dedupes_buckets_shared_by_multiple_entities() {
+        let (_dir, mut store) = store();
+        let scope = ScopePath::root(0);
+        // Entities 0 and 85 share fanout bucket "df" (pinned layout vector).
+        assert_eq!(crate::layout::bucket_hex(0), "df");
+        assert_eq!(crate::layout::bucket_hex(85), "df");
+        store.put(&scope, 0, b"zero", &sha256(b"zero")).unwrap();
+        store.put(&scope, 85, b"eighty-five", &sha256(b"eighty-five")).unwrap();
+        assert_eq!(store.retire(&scope, 85).unwrap(), 2);
+        assert!(store.list(&scope).unwrap().is_empty());
+        assert!(!store.entity_path(&scope, 0).parent().unwrap().exists());
     }
 
     #[test]

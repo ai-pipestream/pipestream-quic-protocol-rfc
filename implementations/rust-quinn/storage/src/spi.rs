@@ -110,8 +110,11 @@ impl ReplayEntry {
 /// objects never change and `put` into it fails with
 /// [`StorageError::AlreadySealed`].
 ///
-/// `&mut self` methods mutate; `&self` methods read. Rust ownership rules
-/// provide the mutual exclusion the Java lane gets from internal locks.
+/// `&mut self` methods mutate; `&self` methods read. Thread safety is part
+/// of the contract: implementations must be `Send` and safe to share behind
+/// caller-side synchronization (e.g. `Mutex`), behaving as if calls were
+/// serialized; the contract suite exercises concurrent puts and a
+/// put-vs-seal race on every object backend.
 pub trait ObjectStore {
     /// A streaming reader over a stored object's bytes.
     ///

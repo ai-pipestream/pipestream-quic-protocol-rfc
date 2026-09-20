@@ -102,7 +102,7 @@ impl KafkaJournal {
             index: JournalIndex::default(),
         };
         journal.ensure_topic()?;
-        journal.index = journal.load_index()?;
+        journal.sync_index()?;
         Ok(journal)
     }
 
@@ -132,28 +132,32 @@ impl KafkaJournal {
         .map_err(map_kafka_error)
     }
 
-    /// Fetches the whole partition into the in-memory index.
-    fn load_index(&self) -> Result<JournalIndex, StorageError> {
+    /// Refreshes the in-memory index from the partition, folding in any
+    /// records a previous call produced but never got to index (the
+    /// indeterminate-acknowledgement case: the broker stored the record,
+    /// the reply was lost, and the caller saw Transient). Makes retries
+    /// idempotent instead of duplicating.
+    fn sync_index(&mut self) -> Result<(), StorageError> {
         let partition = self.partition_client()?;
-        let mut index = JournalIndex::default();
-        let mut offset = 0i64;
         loop {
-            let previous_offset = offset;
+            let offset = self.index.last_cursor as i64;
             let (records, high_watermark) = self
                 .block_on(partition.fetch_records(offset, 1..16 * 1024 * 1024, 5_000))
                 .map_err(map_kafka_error)?;
+            let mut progressed = false;
             for entry in records {
                 let payload = entry.record.value.unwrap_or_default();
-                fold_record(&mut index, &self.topic, entry.offset, &payload)?;
+                fold_record(&mut self.index, &self.topic, entry.offset, &payload)?;
+                progressed = true;
             }
-            offset = index.last_cursor as i64;
-            if offset >= high_watermark {
-                return Ok(index);
+            if self.index.last_cursor as i64 >= high_watermark {
+                return Ok(());
             }
-            if offset == previous_offset {
+            if !progressed {
                 return Err(StorageError::transient(format!(
-                    "journal {} fetch made no progress at offset {offset}",
-                    self.topic
+                    "journal {} fetch made no progress at offset {}",
+                    self.topic,
+                    self.index.last_cursor
                 )));
             }
         }
@@ -281,6 +285,20 @@ impl Journal for KafkaJournal {
                 intent.id()
             )));
         }
+        // The id may have landed via an append whose acknowledgement was
+        // lost (the caller saw Transient and is now retrying): heal the
+        // index from the log before producing a duplicate.
+        self.sync_index()?;
+        if let Some(index) = self.index.by_intent_id.get(intent.id()) {
+            let existing = &self.index.intents[*index];
+            if existing.intent.record() == intent.record() {
+                return Ok(existing.cursor);
+            }
+            return Err(StorageError::corrupt(format!(
+                "intent {} already exists with different bytes",
+                intent.id()
+            )));
+        }
         let cursor = self.append_record(TYPE_INTENT, intent.id().as_bytes(), intent.record())?;
         self.index
             .by_intent_id
@@ -300,11 +318,27 @@ impl Journal for KafkaJournal {
                 "commit record must be 1 to {MAX_RECORD_BYTES} octets"
             )));
         }
-        let Some(index) = self.index.by_intent_id.get(intent_id).copied() else {
-            return Err(StorageError::not_found(format!(
-                "intent {intent_id} has no durable append"
-            )));
+        let index = match self.index.by_intent_id.get(intent_id).copied() {
+            Some(index) => index,
+            None => {
+                // The intent may have landed via an append whose
+                // acknowledgement was lost; heal before refusing.
+                self.sync_index()?;
+                match self.index.by_intent_id.get(intent_id).copied() {
+                    Some(index) => index,
+                    None => {
+                        return Err(StorageError::not_found(format!(
+                            "intent {intent_id} has no durable append"
+                        )));
+                    }
+                }
+            }
         };
+        if self.index.intents[index].commit.is_none() {
+            // A prior commit may have landed without its acknowledgement;
+            // heal before appending a duplicate commit record.
+            self.sync_index()?;
+        }
         match &self.index.intents[index].commit {
             Some(existing) if existing == record => return Ok(()),
             Some(_) => {

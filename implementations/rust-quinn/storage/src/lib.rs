@@ -13,12 +13,18 @@
 //!
 //! A backend may implement one or both roles. All backends share the logical
 //! layout in [`layout`], so a store written by one implementation (Rust or
-//! Java) is readable by the other. Slice 1 ships the in-memory
-//! ([`memory`]) and filesystem ([`fs`]) backends plus a reusable
-//! backend-agnostic contract test suite in [`contract`].
+//! Java) is readable by the other. The crate ships backends for in-memory
+//! ([`memory`]), filesystem ([`fs`]), PostgreSQL ([`postgres`]), S3
+//! ([`s3`], object role only), Kafka ([`kafka`], journal role only), and
+//! MongoDB ([`mongo`]), plus the backend-agnostic contract test suite in
+//! [`contract`] that certifies every backend against the pinned semantics.
 //!
 //! The SPI is synchronous: the reference storage model is blocking, and
-//! async-service backends are expected to wrap a blocking core internally.
+//! async-service backends are expected to wrap a blocking core internally
+//! (the S3, Kafka, and MongoDB backends do exactly that, on private
+//! runtimes). Implementations must be safe to share across threads behind
+//! caller-side synchronization (e.g. `Mutex`); the contract suite exercises
+//! every object backend concurrently.
 
 #![deny(missing_docs)]
 #![deny(unsafe_code)]

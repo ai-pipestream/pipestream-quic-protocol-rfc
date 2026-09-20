@@ -61,6 +61,7 @@ pub fn run_object_store<S: ObjectStore + Send>(
     retire_of_empty_but_existing_unsealed_scope_is_not_found(&mut fresh());
     parent_and_child_scopes_hold_independent_entities(&mut fresh());
     child_scope_dirs_coexist_with_entity_buckets(&mut fresh());
+    retire_of_sealed_scope_preserves_child_scopes(&mut fresh());
     concurrent_conflicting_puts_yield_exactly_one_success(&mut fresh());
     put_racing_seal_scope_never_publishes_after_seal(&mut fresh());
     object_store_durability_roundtrip(&mut reopen);
@@ -495,6 +496,45 @@ pub fn child_scope_dirs_coexist_with_entity_buckets<S: ObjectStore>(store: &mut 
     assert!(store.put(&child, 2, &child_payload_2, &sha256(&child_payload_2)).is_ok());
     assert_eq!(read_all(store, &child, 1), child_payload);
     assert_eq!(read_all(store, &grandchild, 1), grandchild_payload);
+}
+
+/// Sealed retire is scope-local: the scope's own entities and seal record
+/// go away; child scopes survive untouched and stay verifiable.
+pub fn retire_of_sealed_scope_preserves_child_scopes<S: ObjectStore>(store: &mut S) {
+    let parent = ScopePath::root(33);
+    let child = match parent.child(2) {
+        Ok(child) => child,
+        Err(error) => panic!("scope: {error}"),
+    };
+    let parent_payload = bytes("parent-object");
+    let child_payload = bytes("child-object");
+    assert!(store.put(&parent, 1, &parent_payload, &sha256(&parent_payload)).is_ok());
+    assert!(store.put(&child, 1, &child_payload, &sha256(&child_payload)).is_ok());
+    let parent_digest = canonical_digest(&[(1, "parent-object")]);
+    let child_digest = canonical_digest(&[(1, "child-object")]);
+    assert!(store.seal_scope(&parent, &parent_digest, 1).is_ok());
+    assert!(store.seal_scope(&child, &child_digest, 1).is_ok());
+
+    assert_eq!(
+        store.retire(&parent, 0).unwrap_or_else(|e| panic!("retire: {e}")),
+        1
+    );
+    // Parent is gone; child survives intact.
+    assert!(
+        store
+            .list(&parent)
+            .unwrap_or_else(|e| panic!("list: {e}"))
+            .is_empty()
+    );
+    assert!(matches!(
+        store.verify_scope(&parent),
+        Err(StorageError::NotFound(_))
+    ));
+    assert_eq!(read_all(store, &child, 1), child_payload);
+    let child_seal = store
+        .verify_scope(&child)
+        .unwrap_or_else(|e| panic!("child scope must survive the parent's retire: {e}"));
+    assert_eq!(child_seal.digest, child_digest);
 }
 
 /// Thread safety: concurrent conflicting puts to one entity id yield

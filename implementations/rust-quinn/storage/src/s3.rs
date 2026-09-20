@@ -494,26 +494,29 @@ impl ObjectStore for S3Store {
     }
 
     fn retire(&mut self, scope: &ScopePath, retention_cursor: u64) -> Result<u64, StorageError> {
-        if self.get_object(&self.seal_key(scope))?.is_some() {
-            // A sealed scope retires whole: every entity and the seal record.
-            let keys = self.list_keys(&self.scope_prefix(scope))?;
-            let removed = self.list_entities(scope)?.len() as u64;
-            self.delete_keys(&keys)?;
-            return Ok(removed);
-        }
+        let seal_key = self.seal_key(scope);
+        let sealed = self.get_object(&seal_key)?.is_some();
         let entities = self.list_entities(scope)?;
-        if entities.is_empty() {
+        if entities.is_empty() && !sealed {
             return Err(StorageError::not_found(format!(
                 "scope {scope} holds nothing to retire"
             )));
         }
-        let mut doomed = Vec::new();
+        // A sealed scope retires whole — scope-locally: only the scope's own
+        // entity keys and the seal key are deleted; child scopes live deeper
+        // under the same prefix and are untouched.
+        let cursor = if sealed { u64::MAX } else { retention_cursor };
+        let mut doomed: Vec<String> = Vec::new();
+        let mut removed = 0u64;
         for entity in entities {
-            if u64::from(entity) <= retention_cursor {
+            if u64::from(entity) <= cursor {
                 doomed.push(self.object_key(scope, entity));
+                removed += 1;
             }
         }
-        let removed = doomed.len() as u64;
+        if sealed {
+            doomed.push(seal_key);
+        }
         self.delete_keys(&doomed)?;
         Ok(removed)
     }
