@@ -1,7 +1,10 @@
 //! Cross-language storage layout probe CLI (test utility; not part of the
 //! shipped SPI surface).
 //!
-//! Usage: `pipestream-storage-probe <backend> <script>`
+//! Usage: `pipestream-storage-probe <backend> <script>` executes a script;
+//! `pipestream-storage-probe fs --report` renders the canonical report of
+//! an existing filesystem store without executing operations
+//! (crossed-store verification).
 //!
 //! Backends: `memory`, `fs`, `postgres`, `mongo` (both roles), `s3`
 //! (object role only), `kafka` (journal role only). Backend configuration
@@ -35,7 +38,7 @@ fn required(name: &str) -> Result<String, String> {
 
 fn usage() {
     eprintln!("usage: pipestream-storage-probe <backend> <script>");
-    eprintln!("       pipestream-storage-probe --report fs   (report-only, existing store)");
+    eprintln!("       pipestream-storage-probe fs --report   (report-only, existing store)");
     eprintln!(
         "backends: memory fs postgres mongo (object store + journal), s3 (object only), kafka (journal only)"
     );
@@ -47,11 +50,12 @@ fn usage() {
 
 fn run() -> Result<String, String> {
     let args: Vec<String> = std::env::args().collect();
-    // Report-only mode: `probe --report fs` renders the canonical report of
-    // an existing store without executing any operations (crossed-store
-    // verification). Only the filesystem layout is enumerable this way.
-    if args.len() == 3 && args[1] == "--report" {
-        if args[2] != "fs" {
+    // Report-only mode: `probe <backend> --report` renders the canonical
+    // report of an existing store without executing any operations
+    // (crossed-store verification). Only the filesystem layout is
+    // enumerable this way.
+    if args.len() == 3 && args[2] == "--report" {
+        if args[1] != "fs" {
             usage();
             return Err("usage".to_string());
         }
