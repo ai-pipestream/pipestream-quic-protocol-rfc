@@ -105,7 +105,14 @@ impl S3Store {
             .behavior_version(BehaviorVersion::latest())
             .region(Region::new(config.region.clone()))
             .credentials_provider(credentials)
-            .force_path_style(true);
+            .force_path_style(true)
+            // Ring-based TLS: the workspace's only provider. The SDK's
+            // default HTTPS client is aws-lc-only; pulling it in makes
+            // rustls refuse to auto-select a provider for the whole
+            // workspace, so we build our own ring client instead.
+            .http_client(
+                aws_smithy_http_client::hyper_014::HyperClientBuilder::new().build_https(),
+            );
         if let Some(endpoint) = &config.endpoint_url {
             builder = builder.endpoint_url(endpoint.clone());
         }

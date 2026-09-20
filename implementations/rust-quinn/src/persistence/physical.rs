@@ -74,7 +74,7 @@ impl PhysicalLimits {
     fn encode(self) -> [u8; POLICY_BYTES as usize] {
         let mut bytes = [0; POLICY_BYTES as usize];
         bytes[..8].copy_from_slice(MAGIC);
-        for (slot, value) in bytes[8..40].chunks_exact_mut(8).zip(self.values()) {
+        for (slot, value) in bytes[8..40].as_chunks_mut::<8>().0.iter_mut().zip(self.values()) {
             slot.copy_from_slice(&value.to_be_bytes());
         }
         let checksum = Sha256::digest(&bytes[..40]);
@@ -97,7 +97,7 @@ impl PhysicalLimits {
             return Err(corrupt("invalid SQLite file policy checksum or version"));
         }
         let mut values = [0; 4];
-        for (value, slot) in values.iter_mut().zip(bytes[8..40].chunks_exact(8)) {
+        for (value, slot) in values.iter_mut().zip(bytes[8..40].as_chunks::<8>().0) {
             let mut octets = [0; 8];
             octets.copy_from_slice(slot);
             *value = u64::from_be_bytes(octets);

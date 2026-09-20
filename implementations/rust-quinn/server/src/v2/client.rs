@@ -6,7 +6,7 @@ pub fn hex<const N: usize>(text: &str) -> Result<[u8; N]> {
         bail!("expected {} hexadecimal digits", N * 2);
     }
     let mut bytes = [0; N];
-    for (byte, pair) in bytes.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
+    for (byte, pair) in bytes.iter_mut().zip(text.as_bytes().as_chunks::<2>().0.iter()) {
         *byte = u8::from_str_radix(std::str::from_utf8(pair)?, 16)?;
     }
     Ok(bytes)

@@ -43,7 +43,9 @@ impl Reservation {
             .unwrap_or(("", ""));
         for (slot, text) in
             bytes[9..396]
-                .chunks_exact_mut(129)
+                .as_chunks_mut::<129>()
+                .0
+                .iter_mut()
                 .zip([self.session.as_str(), authority, principal])
         {
             slot[0] = text.len() as u8;
@@ -57,7 +59,7 @@ impl Reservation {
     fn read(path: &Path) -> io::Result<Self> {
         let bytes = read_fixed::<RECORD_BYTES>(path)?;
         let mut strings = Vec::with_capacity(3);
-        for slot in bytes[9..396].chunks_exact(129) {
+        for slot in bytes[9..396].as_chunks::<129>().0 {
             let length = slot[0] as usize;
             if length > 128 {
                 return Err(corrupt("lineage reservation identity exceeds bound"));

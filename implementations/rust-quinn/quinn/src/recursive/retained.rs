@@ -86,7 +86,7 @@ impl RetainedLimits {
     fn encode(self) -> [u8; POLICY_BYTES] {
         let mut bytes = [0; POLICY_BYTES];
         bytes[..8].copy_from_slice(b"PSRET004");
-        for (slot, value) in bytes[8..64].chunks_exact_mut(8).zip(self.values()) {
+        for (slot, value) in bytes[8..64].as_chunks_mut::<8>().0.iter_mut().zip(self.values()) {
             slot.copy_from_slice(&value.to_be_bytes());
         }
         let hash = Sha256::digest(&bytes[..64]);
@@ -100,7 +100,7 @@ impl RetainedLimits {
             return Err(corrupt("retained policy checksum or version mismatch"));
         }
         let mut values = [0; 7];
-        for (value, slot) in values.iter_mut().zip(bytes[8..64].chunks_exact(8)) {
+        for (value, slot) in values.iter_mut().zip(bytes[8..64].as_chunks::<8>().0) {
             let mut octets = [0; 8];
             octets.copy_from_slice(slot);
             *value = u64::from_be_bytes(octets);
@@ -192,7 +192,9 @@ impl Record {
             .unwrap_or(("", ""));
         for (slot, text) in
             bytes[9..396]
-                .chunks_exact_mut(129)
+                .as_chunks_mut::<129>()
+                .0
+                .iter_mut()
                 .zip([self.key.0.as_str(), authority, principal])
         {
             slot[0] = text.len() as u8;
@@ -214,7 +216,7 @@ impl Record {
     fn read(path: &Path) -> io::Result<Self> {
         let bytes = read_fixed::<RECORD_BYTES>(path)?;
         let mut strings = Vec::with_capacity(3);
-        for slot in bytes[9..396].chunks_exact(129) {
+        for slot in bytes[9..396].as_chunks::<129>().0 {
             let len = slot[0] as usize;
             if len > 128 {
                 return Err(corrupt("retained identity is too long"));
