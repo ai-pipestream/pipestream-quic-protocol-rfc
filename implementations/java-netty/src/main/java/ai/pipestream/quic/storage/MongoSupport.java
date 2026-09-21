@@ -12,6 +12,8 @@ final class MongoSupport {
   static final String OBJECTS_COLLECTION = "objects";
   /** Per-scope seal collection, one document per sealed scope. */
   static final String SEALS_COLLECTION = "seals";
+  /** Chunked-payload collection: 1 MiB documents holding entities at or above the chunk threshold. */
+  static final String CHUNKS_COLLECTION = "chunks";
   /** Append-only journal collection; one document per intent or commit in global cursor order. */
   static final String JOURNAL_COLLECTION = "journal";
   /** Counters collection backing the journal's monotonic global sequence. */

@@ -5,6 +5,7 @@ import com.mongodb.MongoWriteException;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
+import com.mongodb.client.MongoCursor;
 import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.IndexOptions;
@@ -12,6 +13,8 @@ import com.mongodb.client.model.Indexes;
 import com.mongodb.client.model.Projections;
 import com.mongodb.client.model.Sorts;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -21,6 +24,7 @@ import java.util.Objects;
 import java.util.TreeSet;
 import org.bson.BsonType;
 import org.bson.Document;
+import org.bson.conversions.Bson;
 import org.bson.types.Binary;
 
 /**
@@ -29,9 +33,13 @@ import org.bson.types.Binary;
  * its collections form. Entity documents carry the scope path, the 2-hex
  * fanout bucket, and the entity id in the pinned 32-bit formats, with the
  * payload and its put-time SHA-256 as binary data; a unique index pins
- * identity. Every write uses {@code WriteConcern.MAJORITY} with journaling,
- * so an operation returns success only after the server acknowledges the
- * write durably; replication topology is deployment configuration.
+ * identity. Payloads at or above {@value #CHUNK_BYTES} octets are chunked:
+ * the entity document keeps the digest and a {@code chunked} marker while 1
+ * MiB {@code chunks} documents hold the bytes, because one BSON document may
+ * not exceed 16 MiB. Every write uses {@code WriteConcern.MAJORITY} with
+ * journaling, so an operation returns success only after the server
+ * acknowledges the write durably; replication topology is deployment
+ * configuration.
  *
  * <p>The synchronous driver is used, matching the synchronous SPI, and the
  * MongoClient is thread-safe; the store still serializes operations on
@@ -41,6 +49,9 @@ import org.bson.types.Binary;
  * retirement of a parent's entities by construction.
  */
 public final class MongoObjectStore implements ObjectStore {
+  /** Payloads at or above this size are stored as 1 MiB chunk documents, mirroring the Rust lane. */
+  static final int CHUNK_BYTES = 1 << 20;
+
   private final String identity;
   private final MongoClient client;
   private final MongoDatabase database;
@@ -88,6 +99,10 @@ public final class MongoObjectStore implements ObjectStore {
             Indexes.ascending("scope_path"),
             new IndexOptions().unique(true)
                 .partialFilterExpression(Filters.exists("scope_path", true)));
+        // Chunk lookups and retirement filter by these fields; not unique, so
+        // the other lane's chunk-shaped documents index as nulls harmlessly.
+        db.getCollection(MongoSupport.CHUNKS_COLLECTION).createIndex(
+            Indexes.ascending("scope_path", "entity_id", "chunk_no"));
         return new MongoObjectStore(identity, client, db);
       } catch (RuntimeException failure) {
         try {
@@ -122,20 +137,37 @@ public final class MongoObjectStore implements ObjectStore {
       if (!MessageDigest.isEqual(actual, expected)) {
         throw StorageException.corrupt("put digest mismatch for entity " + entityId);
       }
+      Document existing = collection(MongoSupport.OBJECTS_COLLECTION)
+          .find(entityFilter(scopePath, entityId)).first();
+      if (existing != null) {
+        if (Arrays.equals(payloadOf(existing, scopePath, entityId), bytes)) return;
+        throw StorageException.corrupt("conflicting content for entity " + entityId);
+      }
       Document entity = new Document("scope_path", scopePath)
           .append("bucket", StoreLayout.fanoutBucket(entityId))
           .append("entity_id", entityId)
-          .append("payload", new Binary(bytes))
           .append("digest", new Binary(expected));
+      boolean chunked = bytes.length >= CHUNK_BYTES;
+      if (chunked) {
+        entity.append("chunked", true);
+      } else {
+        entity.append("payload", new Binary(bytes));
+      }
+      if (chunked) {
+        // Chunks go in first: a crash between the two writes then leaves
+        // orphans a later put sweeps, never an entity whose chunks are missing.
+        deleteChunks(scopePath, entityId);
+        insertChunks(scopePath, entityId, bytes);
+      }
       try {
         collection(MongoSupport.OBJECTS_COLLECTION).insertOne(entity);
-        return;
       } catch (MongoWriteException conflict) {
         if (conflict.getError().getCode() != MongoSupport.DUPLICATE_KEY) throw conflict;
+        Document raced = collection(MongoSupport.OBJECTS_COLLECTION)
+            .find(entityFilter(scopePath, entityId)).first();
+        if (raced != null && Arrays.equals(payloadOf(raced, scopePath, entityId), bytes)) return;
+        throw StorageException.corrupt("conflicting content for entity " + entityId);
       }
-      byte[] stored = storedPayload(scopePath, entityId);
-      if (Arrays.equals(stored, bytes)) return;
-      throw StorageException.corrupt("conflicting content for entity " + entityId);
     } catch (MongoException failure) {
       throw MongoSupport.mapMongoException(failure, "put");
     }
@@ -146,12 +178,16 @@ public final class MongoObjectStore implements ObjectStore {
     validateEntityId(entityId);
     checkOpen();
     try {
-      Document entity = collection(MongoSupport.OBJECTS_COLLECTION).find(Filters.and(
-          Filters.eq("scope_path", scope.render()),
-          Filters.eq("bucket", StoreLayout.fanoutBucket(entityId)),
-          Filters.eq("entity_id", entityId))).first();
+      Document entity = collection(MongoSupport.OBJECTS_COLLECTION).find(entityFilter(
+          scope.render(), entityId)).first();
       if (entity == null) {
         throw StorageException.notFound("entity " + entityId + " is absent from scope " + scope.render());
+      }
+      // Inline payloads snapshot at open, matching every backend. Chunked
+      // payloads stream chunk by chunk, so reads stay bounded in memory.
+      if (entity.getBoolean("chunked", false)) {
+        return new ChunkedPayloadStream(collection(MongoSupport.CHUNKS_COLLECTION),
+            scope.render(), entityId);
       }
       // The byte array is an independent snapshot per read, so removal after
       // the read never invalidates it.
@@ -206,9 +242,20 @@ public final class MongoObjectStore implements ObjectStore {
       long live = 0;
       for (Document entity : collection(MongoSupport.OBJECTS_COLLECTION).find(Filters.eq("scope_path", scopePath))
           .sort(Sorts.ascending("entity_id"))) {
-        byte[] payload = binary(entity.get("payload"));
         byte[] storedDigest = binary(entity.get("digest"));
-        if (!MessageDigest.isEqual(StoreLayout.sha256().digest(payload), storedDigest)) {
+        MessageDigest hash = StoreLayout.sha256();
+        if (entity.getBoolean("chunked", false)) {
+          // Rehash chunk by chunk, never materializing the whole payload.
+          for (Document chunk : collection(MongoSupport.CHUNKS_COLLECTION)
+              .find(chunkFilter(scopePath, entity.getLong("entity_id")))
+              .projection(Projections.include("payload"))
+              .sort(Sorts.ascending("chunk_no"))) {
+            hash.update(binary(chunk.get("payload")));
+          }
+        } else {
+          hash.update(binary(entity.get("payload")));
+        }
+        if (!MessageDigest.isEqual(hash.digest(), storedDigest)) {
           throw StorageException.corrupt("entity " + entity.getLong("entity_id") + " fails its recorded digest");
         }
         live++;
@@ -275,6 +322,7 @@ public final class MongoObjectStore implements ObjectStore {
       if (seal(scopePath) != null) {
         // Retirement is scope-local: child scopes are separate documents and survive.
         collection(MongoSupport.OBJECTS_COLLECTION).deleteMany(Filters.eq("scope_path", scopePath));
+        collection(MongoSupport.CHUNKS_COLLECTION).deleteMany(Filters.eq("scope_path", scopePath));
         collection(MongoSupport.SEALS_COLLECTION).deleteMany(Filters.eq("scope_path", scopePath));
         return;
       }
@@ -284,6 +332,8 @@ public final class MongoObjectStore implements ObjectStore {
         throw StorageException.notFound("scope " + scopePath + " holds nothing to retire");
       }
       collection(MongoSupport.OBJECTS_COLLECTION).deleteMany(Filters.and(
+          Filters.eq("scope_path", scopePath), Filters.lte("entity_id", retentionCursor)));
+      collection(MongoSupport.CHUNKS_COLLECTION).deleteMany(Filters.and(
           Filters.eq("scope_path", scopePath), Filters.lte("entity_id", retentionCursor)));
     } catch (MongoException failure) {
       throw MongoSupport.mapMongoException(failure, "retire");
@@ -316,13 +366,111 @@ public final class MongoObjectStore implements ObjectStore {
     return collection(MongoSupport.SEALS_COLLECTION).find(Filters.eq("scope_path", scopePath)).first();
   }
 
-  private byte[] storedPayload(String scopePath, long entityId) throws StorageException {
-    Document entity = collection(MongoSupport.OBJECTS_COLLECTION).find(Filters.and(
+  /** The entity lookup, matching the unique index key. */
+  private static Bson entityFilter(String scopePath, long entityId) {
+    return Filters.and(
         Filters.eq("scope_path", scopePath),
         Filters.eq("bucket", StoreLayout.fanoutBucket(entityId)),
-        Filters.eq("entity_id", entityId))).projection(Projections.include("payload")).first();
-    if (entity == null) throw StorageException.failed("put vanished before verification", null);
+        Filters.eq("entity_id", entityId));
+  }
+
+  /** The chunk lookup for one entity, ascending chunk order applied by callers. */
+  private static Bson chunkFilter(String scopePath, long entityId) {
+    return Filters.and(
+        Filters.eq("scope_path", scopePath),
+        Filters.eq("entity_id", entityId));
+  }
+
+  /**
+   * The recorded payload of one entity document: the inline binary field, or
+   * the chunks reassembled in ascending order. Chunked payloads at or above
+   * 1 MiB are materialized only on the idempotency and conflict paths; reads
+   * and verification stream instead.
+   */
+  private byte[] payloadOf(Document entity, String scopePath, long entityId) throws StorageException {
+    if (entity.getBoolean("chunked", false)) return reassemble(scopePath, entityId);
     return binary(entity.get("payload"));
+  }
+
+  private byte[] reassemble(String scopePath, long entityId) throws StorageException {
+    try {
+      ByteArrayOutputStream payload = new ByteArrayOutputStream();
+      for (Document chunk : collection(MongoSupport.CHUNKS_COLLECTION)
+          .find(chunkFilter(scopePath, entityId)).sort(Sorts.ascending("chunk_no"))) {
+        payload.writeBytes(binary(chunk.get("payload")));
+      }
+      return payload.toByteArray();
+    } catch (MongoException failure) {
+      throw MongoSupport.mapMongoException(failure, "chunk reassembly");
+    }
+  }
+
+  private void deleteChunks(String scopePath, long entityId) {
+    collection(MongoSupport.CHUNKS_COLLECTION).deleteMany(chunkFilter(scopePath, entityId));
+  }
+
+  private void insertChunks(String scopePath, long entityId, byte[] bytes) {
+    List<Document> documents = new ArrayList<>((bytes.length + CHUNK_BYTES - 1) / CHUNK_BYTES);
+    for (int offset = 0, chunkNo = 0; offset < bytes.length; offset += CHUNK_BYTES, chunkNo++) {
+      int end = Math.min(offset + CHUNK_BYTES, bytes.length);
+      documents.add(new Document("scope_path", scopePath)
+          .append("entity_id", entityId)
+          .append("chunk_no", chunkNo)
+          .append("payload", new Binary(Arrays.copyOfRange(bytes, offset, end))));
+    }
+    collection(MongoSupport.CHUNKS_COLLECTION).insertMany(documents);
+  }
+
+  /**
+   * Streams one chunked entity chunk by chunk, holding at most one chunk in
+   * memory. Mirrors the Rust lane reader: chunks are read in ascending order
+   * and a missing chunk simply ends the stream, since put writes chunks
+   * before the entity document they belong to.
+   */
+  private static final class ChunkedPayloadStream extends InputStream {
+    private final MongoCursor<Document> chunks;
+    private ByteArrayInputStream current = new ByteArrayInputStream(new byte[0]);
+
+    ChunkedPayloadStream(MongoCollection<Document> chunks, String scopePath, long entityId) {
+      this.chunks = chunks.find(chunkFilter(scopePath, entityId))
+          .projection(Projections.include("payload"))
+          .sort(Sorts.ascending("chunk_no"))
+          .iterator();
+    }
+
+    @Override public int read() throws IOException {
+      byte[] one = new byte[1];
+      return read(one, 0, 1) < 0 ? -1 : one[0] & 0xff;
+    }
+
+    @Override public int read(byte[] buffer, int offset, int length) throws IOException {
+      Objects.checkFromIndexSize(offset, length, buffer.length);
+      if (length == 0) return 0;
+      int total = 0;
+      while (length > 0) {
+        if (current.available() == 0 && !advance()) {
+          return total == 0 ? -1 : total;
+        }
+        int take = Math.min(length, current.available());
+        int got = current.read(buffer, offset, take);
+        offset += got;
+        length -= got;
+        total += got;
+      }
+      return total;
+    }
+
+    @Override public void close() throws IOException {
+      chunks.close();
+    }
+
+    private boolean advance() throws IOException {
+      if (!chunks.hasNext()) return false;
+      Object payload = chunks.next().get("payload");
+      if (!(payload instanceof Binary)) throw new IOException("mongo chunk payload missing");
+      current = new ByteArrayInputStream(((Binary) payload).getData());
+      return true;
+    }
   }
 
   private MongoCollection<Document> collection(String name) {
