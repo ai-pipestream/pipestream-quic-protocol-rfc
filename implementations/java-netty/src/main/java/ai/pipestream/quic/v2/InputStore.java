@@ -2192,22 +2192,36 @@ final class InputStore implements AutoCloseable {
   // --- SPI object plane (adoption plan stages 3 and 4) ------------------
 
   /**
-   * One scope per stored payload: eight 32-bit components from the first 64
-   * lowercase hex characters of the object's name (input
-   * {@code <hex64>.input}, output {@code <hex64>-<index>.output}), entity
-   * {@link #SPI_INPUT_ENTITY} holding the payload bytes.
+   * One scope per stored payload, namespaced to this installation: component 0
+   * is the installation tag (the first four bytes of the store identity) and
+   * components 1-7 come from the first 56 lowercase hex characters of the
+   * object's name (input {@code <hex64>.input}, output {@code
+   * <hex64>-<index>.output}), entity {@link #SPI_INPUT_ENTITY} holding the
+   * payload bytes. The tag keeps installations that share one service
+   * database out of each other's namespace, and bounds the path to the
+   * 8-component layout maximum.
    */
   private ScopePath spiScope(Path namedPath) throws IOException {
     String name = namedPath.getFileName().toString();
-    if (name.length() < 64 || !name.substring(0, 64).matches("[0-9a-f]{64}")) {
-      throw corrupt("SPI scope derivation needs a 64-hex name prefix");
+    if (name.length() < 56 || !name.substring(0, 56).matches("[0-9a-f]{56}")) {
+      throw corrupt("SPI scope derivation needs a 56-hex name prefix");
     }
-    String hex = name.substring(0, 64);
+    String hex = name.substring(0, 56);
     long[] components = new long[8];
-    for (int i = 0; i < components.length; i++) {
-      components[i] = Long.parseUnsignedLong(hex.substring(i * 8, i * 8 + 8), 16);
+    components[0] = spiTag();
+    for (int i = 1; i < components.length; i++) {
+      components[i] = Long.parseUnsignedLong(hex.substring((i - 1) * 8, (i - 1) * 8 + 8), 16);
     }
     return ScopePath.of(components);
+  }
+
+  /**
+   * The installation tag: the first four bytes of this store's identity as an
+   * unsigned 32-bit scope component, mirroring the Rust lane's plane tag so
+   * both lanes namespace a shared service database the same way.
+   */
+  private long spiTag() {
+    return Integer.toUnsignedLong((int) (identity.getMostSignificantBits() >>> 32));
   }
 
   /** Whether this installation routes payload bytes through the SPI object plane. */
@@ -2394,9 +2408,11 @@ final class InputStore implements AutoCloseable {
    * Recovery sweep for payloads orphaned without their sidecar (a kill
    * between the backend put and the sidecar write). Enumerates scopes
    * through {@link ObjectStore#listScopes()}, so it works on every SPI
-   * backend; a scope holding entities whose derived name has neither an
-   * input sidecar nor an output sidecar is retired whole. Seal-only scopes
-   * hold no payload bytes and are left alone.
+   * backend; a scope of this installation's tagged shape holding entities
+   * whose derived name has neither an input sidecar nor an output sidecar is
+   * retired whole. Scopes outside this installation's tag belong to a
+   * sibling sharing the service database and are left alone, never an
+   * error; seal-only scopes hold no payload bytes and are left alone too.
    */
   private void sweepOrphanSpiPayloads() throws IOException {
     if (spi == null) return;
@@ -2406,7 +2422,10 @@ final class InputStore implements AutoCloseable {
     } catch (StorageException failure) {
       throw spiFailure(failure);
     }
+    long tag = spiTag();
     for (ScopePath scope : scopes) {
+      List<Long> components = scope.components();
+      if (components.size() != 8 || components.get(0) != tag) continue;
       List<Long> entities;
       try {
         entities = spi.list(scope);
@@ -2414,11 +2433,18 @@ final class InputStore implements AutoCloseable {
         throw spiFailure(failure);
       }
       if (entities.isEmpty()) continue;
-      String hex = scope.render().replace("/", "");
-      boolean referenced =
-          Files.exists(root.resolve("objects").resolve(hex + ".input"), LinkOption.NOFOLLOW_LINKS);
+      long[] nameComponents = new long[7];
+      for (int i = 0; i < nameComponents.length; i++) nameComponents[i] = components.get(i + 1);
+      // The scope carries the name's first 56 hex characters; the dropped
+      // trailing component is matched with a glob, mirroring the Rust lane's
+      // prefix-based stub check.
+      String hex = ScopePath.of(nameComponents).render().replace("/", "");
+      boolean referenced;
+      try (var entries = Files.newDirectoryStream(root.resolve("objects"), hex + "*.input")) {
+        referenced = entries.iterator().hasNext();
+      }
       if (!referenced) {
-        try (var entries = Files.newDirectoryStream(root.resolve("outputs"), hex + "-*.output")) {
+        try (var entries = Files.newDirectoryStream(root.resolve("outputs"), hex + "*-*.output")) {
           referenced = entries.iterator().hasNext();
         }
       }

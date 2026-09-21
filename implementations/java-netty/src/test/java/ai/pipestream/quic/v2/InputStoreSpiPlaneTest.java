@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import ai.pipestream.quic.storage.FileObjectStore;
 import ai.pipestream.quic.storage.ObjectStore;
+import ai.pipestream.quic.storage.ScopePath;
 import ai.pipestream.quic.storage.StoreLayout;
 import java.io.IOException;
 import java.io.InputStream;
@@ -53,7 +54,7 @@ final class InputStoreSpiPlaneTest {
           new byte[] {'P', 'S', 'J', 'V', '2', 'I', 'S', 'P'}, java.util.Arrays.copyOf(retained, 8),
           "identity sidecar carries the SPI magic");
       assertTrue(retained.length < 512, "sidecar holds metadata only, payload bytes live in the backend");
-      assertArrayEquals(payload, readBackendEntity(spiRoot, sidecar));
+      assertArrayEquals(payload, readBackendEntity(spiRoot, store.spiScopeFor(sidecar)));
     }
     try (ObjectStore reopenedBackend = FileObjectStore.open(spiRoot);
         InputStore reopened =
@@ -105,7 +106,7 @@ final class InputStoreSpiPlaneTest {
       InputStore.Usage before = store.usage();
       assertTrue(store.reclaimInput(context, header));
       assertEquals(0, count(root.resolve("objects"), "*.input"));
-      assertThrows(IOException.class, () -> readBackendEntity(spiRoot, sidecar));
+      assertThrows(IOException.class, () -> readBackendEntity(spiRoot, store.spiScopeFor(sidecar)));
       assertTrue(store.usage().bytes() < before.bytes(), "reclaim refunds the logical charge");
     }
   }
@@ -133,7 +134,7 @@ final class InputStoreSpiPlaneTest {
         assertTrue(store.reclaimOrphan(candidate));
       }
       assertEquals(0, count(root.resolve("objects"), "*.input"));
-      assertThrows(IOException.class, () -> readBackendEntity(spiRoot, sidecar));
+      assertThrows(IOException.class, () -> readBackendEntity(spiRoot, store.spiScopeFor(sidecar)));
     }
   }
 
@@ -160,7 +161,7 @@ final class InputStoreSpiPlaneTest {
         InputStore reopened =
             InputStore.open(root, LIMITS, reopenedBackend, null)) {
       assertTrue(reopened.find(context, header).isEmpty());
-      assertThrows(IOException.class, () -> readBackendEntity(spiRoot, sidecar),
+      assertThrows(IOException.class, () -> readBackendEntity(spiRoot, reopened.spiScopeFor(sidecar)),
           "orphan payload is swept during recovery");
     }
   }
@@ -174,6 +175,7 @@ final class InputStoreSpiPlaneTest {
     Commitments.Context context = context("alice", 1);
     Records.InputHeader header = header(6, payload, "spi-plane");
     Path sidecar;
+    ScopePath scope;
     try (InputStore store =
         InputStore.initializeForAuthority(root, LIMITS, java.util.UUID.randomUUID(), backend)) {
       try (InputStore.Receiver receiver = store.begin(context, header, SELECTED, 1)) {
@@ -181,8 +183,9 @@ final class InputStoreSpiPlaneTest {
         read(receiver.finish(3));
       }
       sidecar = only(root.resolve("objects"), "*.input");
+      scope = store.spiScopeFor(sidecar);
     }
-    deleteBackendEntity(spiRoot, sidecar);
+    deleteBackendEntity(spiRoot, scope);
     try (ObjectStore reopenedBackend = FileObjectStore.open(spiRoot)) {
       assertThrows(IOException.class, () -> InputStore.open(root, LIMITS, reopenedBackend, null));
     }
@@ -278,8 +281,9 @@ final class InputStoreSpiPlaneTest {
   }
 
   /** Reads the payload straight out of the filesystem backend at the derived scope. */
-  private static byte[] readBackendEntity(Path spiRoot, Path sidecar) throws IOException {
-    byte[] file = Files.readAllBytes(entityPath(spiRoot, sidecar));
+  private static byte[] readBackendEntity(Path spiRoot, ScopePath scope)
+      throws IOException {
+    byte[] file = Files.readAllBytes(entityPath(spiRoot, scope));
     ByteBuffer image = ByteBuffer.wrap(file);
     long length = image.getLong();
     byte[] payload = new byte[(int) length];
@@ -288,20 +292,20 @@ final class InputStoreSpiPlaneTest {
     return payload;
   }
 
-  private static void deleteBackendEntity(Path spiRoot, Path sidecar) throws IOException {
-    Files.delete(entityPath(spiRoot, sidecar));
+  private static void deleteBackendEntity(Path spiRoot, ScopePath scope)
+      throws IOException {
+    Files.delete(entityPath(spiRoot, scope));
   }
 
-  private static Path entityPath(Path spiRoot, Path sidecar) throws IOException {
-    String name = sidecar.getFileName().toString();
-    String hex = name.substring(0, name.length() - ".input".length());
+  private static Path entityPath(Path spiRoot, ScopePath scope)
+      throws IOException {
     Path entity = spiRoot.resolve("objects");
-    for (int i = 0; i < 8; i++) {
-      entity = entity.resolve(hex.substring(i * 8, i * 8 + 8));
+    for (long component : scope.components()) {
+      entity = entity.resolve(StoreLayout.scopeComponentName(component));
     }
     entity = entity.resolve(StoreLayout.fanoutBucket(0)).resolve(StoreLayout.entityName(0));
     if (!Files.isRegularFile(entity, LinkOption.NOFOLLOW_LINKS)) {
-      throw new IOException("backend entity is absent for " + name);
+      throw new IOException("backend entity is absent for scope " + scope.render());
     }
     return entity;
   }

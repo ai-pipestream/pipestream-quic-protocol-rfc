@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import ai.pipestream.quic.storage.FileObjectStore;
 import ai.pipestream.quic.storage.ObjectStore;
+import ai.pipestream.quic.storage.ScopePath;
 import ai.pipestream.quic.storage.StoreLayout;
 import java.io.IOException;
 import java.io.InputStream;
@@ -59,7 +60,7 @@ final class OutputStoreSpiPlaneTest {
           new byte[] {'P', 'S', 'J', 'V', '2', 'O', 'S', 'P'}, java.util.Arrays.copyOf(retained, 8),
           "installed output is a metadata sidecar on the SPI plane");
       assertTrue(retained.length < 512, "payload bytes live in the backend");
-      assertArrayEquals(payload, readBackendEntity(spiRoot, sidecar));
+      assertArrayEquals(payload, readBackendEntity(spiRoot, store.spiScopeFor(sidecar)));
       assertArrayEquals(payload, read(published));
 
       OutputStore.Stored found =
@@ -99,7 +100,7 @@ final class OutputStoreSpiPlaneTest {
       Path sidecar = root.resolve("outputs").resolve(reference);
       store.reclaimOutputs(CONTEXT, header, lease(authority, header, 2, 2));
       assertFalse(Files.exists(sidecar, LinkOption.NOFOLLOW_LINKS));
-      assertThrows(IOException.class, () -> readBackendEntity(spiRoot, sidecar));
+      assertThrows(IOException.class, () -> readBackendEntity(spiRoot, store.spiScopeFor(sidecar)));
       assertTrue(
           store.findOutput(CONTEXT, header, lease(authority, header, 2, 1), 0).isEmpty());
     }
@@ -132,7 +133,7 @@ final class OutputStoreSpiPlaneTest {
             InputStore.open(root, LIMITS, reopenedBackend, null)) {
       assertNotNull(reopened);
       assertThrows(
-          IOException.class, () -> readBackendEntity(spiRoot, sidecar),
+          IOException.class, () -> readBackendEntity(spiRoot, reopened.spiScopeFor(sidecar)),
           "orphan output payload is swept during recovery");
     }
   }
@@ -146,6 +147,7 @@ final class OutputStoreSpiPlaneTest {
     byte[] payload = pattern(63, 13);
     Records.InputHeader header = header(4, 1, 4096);
     Path sidecar;
+    ScopePath scope;
     try (InputStore store =
         InputStore.initializeForAuthority(root, LIMITS, authority, backend)) {
       store.reserveOutputs(CONTEXT, header);
@@ -155,9 +157,10 @@ final class OutputStoreSpiPlaneTest {
               "application/octet-stream", 4096)) {
         writer.write(ByteBuffer.wrap(payload));
         sidecar = root.resolve("outputs").resolve(writer.finish().reference());
+        scope = store.spiScopeFor(sidecar);
       }
     }
-    Files.delete(entityPath(spiRoot, sidecar));
+    Files.delete(entityPath(spiRoot, scope));
     try (ObjectStore reopenedBackend = FileObjectStore.open(spiRoot)) {
       assertThrows(
           IOException.class, () -> InputStore.open(root, LIMITS, reopenedBackend, null));
@@ -239,8 +242,8 @@ final class OutputStoreSpiPlaneTest {
     }
   }
 
-  private static byte[] readBackendEntity(Path spiRoot, Path sidecar) throws IOException {
-    byte[] file = Files.readAllBytes(entityPath(spiRoot, sidecar));
+  private static byte[] readBackendEntity(Path spiRoot, ScopePath scope) throws IOException {
+    byte[] file = Files.readAllBytes(entityPath(spiRoot, scope));
     ByteBuffer image = ByteBuffer.wrap(file);
     long length = image.getLong();
     byte[] payload = new byte[(int) length];
@@ -249,16 +252,14 @@ final class OutputStoreSpiPlaneTest {
     return payload;
   }
 
-  private static Path entityPath(Path spiRoot, Path sidecar) throws IOException {
-    String name = sidecar.getFileName().toString();
-    String hex = name.substring(0, 64);
+  private static Path entityPath(Path spiRoot, ScopePath scope) throws IOException {
     Path entity = spiRoot.resolve("objects");
-    for (int i = 0; i < 8; i++) {
-      entity = entity.resolve(hex.substring(i * 8, i * 8 + 8));
+    for (long component : scope.components()) {
+      entity = entity.resolve(StoreLayout.scopeComponentName(component));
     }
     entity = entity.resolve(StoreLayout.fanoutBucket(0)).resolve(StoreLayout.entityName(0));
     if (!Files.isRegularFile(entity, LinkOption.NOFOLLOW_LINKS)) {
-      throw new IOException("backend entity is absent for " + name);
+      throw new IOException("backend entity is absent for scope " + scope.render());
     }
     return entity;
   }
