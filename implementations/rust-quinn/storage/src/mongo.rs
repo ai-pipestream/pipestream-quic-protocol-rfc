@@ -782,8 +782,15 @@ impl ObjectStore for MongoStore {
 
     fn list_scopes(&self) -> Result<Vec<ScopePath>, StorageError> {
         let mut paths: Vec<String> = Vec::new();
+        // Only Rust-schema documents: a shared database may hold another
+        // lane's documents whose _id is not our compound {s, e} shape (or
+        // whose seal _id is an ObjectId); those are excluded by type filter
+        // rather than failing on them.
         let objects = self
-            .block_on(self.objects().distinct("_id.s", doc! {}))
+            .block_on(
+                self.objects()
+                    .distinct("_id.s", doc! { "_id.s": { "$type": "string" } }),
+            )
             .map_err(map_mongo_error)?;
         for value in objects {
             let path = value
@@ -792,7 +799,10 @@ impl ObjectStore for MongoStore {
             paths.push(path.to_string());
         }
         let seals = self
-            .block_on(self.seals().distinct("_id", doc! {}))
+            .block_on(
+                self.seals()
+                    .distinct("_id", doc! { "_id": { "$type": "string" } }),
+            )
             .map_err(map_mongo_error)?;
         for value in seals {
             let path = value

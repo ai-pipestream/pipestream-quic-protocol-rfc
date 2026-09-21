@@ -163,7 +163,7 @@ fn walk_fs_grammar(dir: &Path, slot: Slot, offenders: &mut Vec<PathBuf>) {
             (Slot::Scope, true, _) if is_hex(&name, 2) => Some(Slot::Bucket),
             (Slot::Scope, true, _) if is_hex(&name, 8) => Some(Slot::Scope),
             (Slot::Bucket, false, _) if is_hex(&name, 8) => None,
-            (Slot::Journal, false, "writer.lock" | "journal.log") => None,
+            (Slot::Journal, false, "writer.lock" | "journal.log" | "journal.marker") => None,
             _ => {
                 offenders.push(path);
                 continue;

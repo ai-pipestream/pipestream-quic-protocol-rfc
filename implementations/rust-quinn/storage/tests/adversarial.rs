@@ -82,14 +82,68 @@ fn truncated_magic_is_corrupt_not_transient() {
     }
 }
 
+/// Data-loss guard (pinned cross-language): a wiped log under an
+/// initialized root is Corrupt, never a silent fresh start.
 #[test]
-fn missing_journal_log_reopens_fresh_and_empty() {
+fn wiped_log_on_initialized_root_is_corrupt() {
     let (dir, mut store) = store();
     write_intent(&mut store, "a");
     drop(store);
     std::fs::remove_file(journal_log(dir.path())).unwrap();
+    match FsStore::open(dir.path()) {
+        Err(StorageError::Corrupt(_)) => {}
+        Err(error) => panic!("expected Corrupt for a wiped log, got {error:?}"),
+        Ok(_) => panic!("a wiped log must not open as fresh"),
+    }
+    // Zero-length is the same loss.
+    std::fs::write(journal_log(dir.path()), b"").unwrap();
+    match FsStore::open(dir.path()) {
+        Err(StorageError::Corrupt(_)) => {}
+        Err(error) => panic!("expected Corrupt for an empty log, got {error:?}"),
+        Ok(_) => panic!("an emptied log must not open as fresh"),
+    }
+}
+
+/// A genuinely fresh root creates the log and the marker, and both persist
+/// across reopen.
+#[test]
+fn fresh_root_creates_log_and_marker_and_replays_across_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let _store = FsStore::open(dir.path()).unwrap();
+    }
+    assert!(journal_log(dir.path()).is_file());
+    assert!(dir.path().join("journal").join("journal.marker").is_file());
+    let mut store = FsStore::open(dir.path()).unwrap();
+    write_intent(&mut store, "persisted");
+    drop(store);
     let store = FsStore::open(dir.path()).unwrap();
-    assert!(store.replay(Cursor(0)).unwrap().is_empty());
+    let entries = store.replay(Cursor(0)).unwrap();
+    assert_eq!(entries.len(), 1);
+}
+
+/// A legacy log written before markers exist is adopted once its records
+/// verify; the marker is then created and the journal keeps working.
+#[test]
+fn legacy_log_without_marker_is_adopted_after_verify() {
+    let (dir, mut store) = store();
+    write_intent(&mut store, "legacy");
+    drop(store);
+    // Strip the marker: this log predates the marker rule.
+    std::fs::remove_file(dir.path().join("journal").join("journal.marker")).unwrap();
+    let mut store = FsStore::open(dir.path()).unwrap();
+    let entries = store.replay(Cursor(0)).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].intent.id(), "legacy");
+    // Marker rewritten; a later wipe is detected.
+    assert!(dir.path().join("journal").join("journal.marker").is_file());
+    assert_eq!(write_intent(&mut store, "after-adoption"), Cursor(2));
+    drop(store);
+    std::fs::remove_file(journal_log(dir.path())).unwrap();
+    assert!(matches!(
+        FsStore::open(dir.path()),
+        Err(StorageError::Corrupt(_))
+    ));
 }
 
 #[test]
@@ -255,4 +309,141 @@ fn scope_dir_path(root: &std::path::Path, scope: &ScopePath) -> std::path::PathB
         dir = dir.join(layout::scope_component(*component));
     }
     dir
+}
+
+mod common;
+
+/// MongoDB tamper: rewrite a stored payload behind the backend's back;
+/// verify_scope must report Corrupt.
+#[test]
+fn mongo_verify_detects_tampered_payload() {
+    let Some(mongo) = common::MongoContainer::start() else {
+        eprintln!("docker unavailable: skipping mongo tamper test");
+        return;
+    };
+    let config = mongo.fresh_config();
+    let mut store = open_mongo_retry(&config);
+    let scope = ScopePath::root(0);
+    let payload = b"mongo integrity".to_vec();
+    store.put(&scope, 3, &payload, &sha256(&payload)).unwrap();
+    let digest = layout::scope_digest(&[(3, sha256(&payload))]).unwrap();
+    store.seal_scope(&scope, &digest, 1).unwrap();
+    // Tamper via a direct driver connection.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let client = mongodb::Client::with_uri_str(&config.uri).await.unwrap();
+        let collection = client
+            .database(&config.database)
+            .collection::<mongodb::bson::Document>("objects");
+        collection
+            .update_one(
+                mongodb::bson::doc! {
+                    "_id": { "s": scope.to_path_string(), "e": 3_i64 }
+                },
+                mongodb::bson::doc! {
+                    "$set": { "p": mongodb::bson::Binary {
+                        subtype: mongodb::bson::spec::BinarySubtype::Generic,
+                        bytes: b"forged".to_vec(),
+                    } }
+                },
+            )
+            .await
+            .unwrap();
+    });
+    match store.verify_scope(&scope) {
+        Err(StorageError::Corrupt(_)) => {}
+        other => panic!("expected Corrupt after tampering, got {other:?}"),
+    }
+}
+
+fn open_mongo_retry(config: &pipestream_storage::MongoConfig) -> pipestream_storage::MongoStore {
+    let mut attempt = 0;
+    loop {
+        match pipestream_storage::MongoStore::open(config) {
+            Ok(store) => return store,
+            Err(_) if attempt < 100 => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            Err(error) => panic!("open mongo store: {error}"),
+        }
+    }
+}
+
+/// S3 tamper: overwrite an entity object via a raw SDK client (bypassing
+/// the backend's own conflict checks); verify_scope must report Corrupt.
+#[test]
+fn s3_verify_detects_tampered_payload() {
+    let Some(minio) = common::MinioContainer::start() else {
+        eprintln!("docker unavailable: skipping s3 tamper test");
+        return;
+    };
+    let config = minio.fresh_config();
+    let mut store = open_s3_retry(&config);
+    let scope = ScopePath::root(0);
+    let payload = b"s3 integrity".to_vec();
+    store.put(&scope, 4, &payload, &sha256(&payload)).unwrap();
+    let digest = layout::scope_digest(&[(4, sha256(&payload))]).unwrap();
+    store.seal_scope(&scope, &digest, 1).unwrap();
+    // Tamper via a raw SDK client: overwrite the object key.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let credentials = aws_sdk_s3::config::Credentials::new(
+            &config.access_key,
+            &config.secret_key,
+            None,
+            None,
+            "tamper",
+        );
+        let sdk_config = aws_sdk_s3::Config::builder()
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            .region(aws_sdk_s3::config::Region::new(config.region.clone()))
+            .credentials_provider(credentials)
+            .force_path_style(true)
+            .endpoint_url(config.endpoint_url.clone().unwrap())
+            .http_client(
+                aws_smithy_http_client::hyper_014::HyperClientBuilder::new().build_https(),
+            )
+            .build();
+        let client = aws_sdk_s3::Client::from_conf(sdk_config);
+        let key = format!(
+            "{}objects/{}/{}/{}",
+            config.prefix,
+            scope.to_path_string(),
+            layout::bucket_hex(4),
+            layout::entity_component(4)
+        );
+        client
+            .put_object()
+            .bucket(&config.bucket)
+            .key(&key)
+            .body(aws_sdk_s3::primitives::ByteStream::from(b"forged".to_vec()))
+            .send()
+            .await
+            .unwrap();
+    });
+    match store.verify_scope(&scope) {
+        Err(StorageError::Corrupt(_)) => {}
+        other => panic!("expected Corrupt after tampering, got {other:?}"),
+    }
+}
+
+fn open_s3_retry(config: &pipestream_storage::S3Config) -> pipestream_storage::S3Store {
+    let mut attempt = 0;
+    loop {
+        match pipestream_storage::S3Store::open(config) {
+            Ok(store) => return store,
+            Err(_) if attempt < 100 => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            Err(error) => panic!("open s3 store: {error}"),
+        }
+    }
 }
