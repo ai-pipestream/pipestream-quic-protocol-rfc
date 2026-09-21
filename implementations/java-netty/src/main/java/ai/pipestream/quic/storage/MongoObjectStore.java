@@ -19,6 +19,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.TreeSet;
+import org.bson.BsonType;
 import org.bson.Document;
 import org.bson.types.Binary;
 
@@ -74,10 +75,19 @@ public final class MongoObjectStore implements ObjectStore {
           .build());
       try {
         MongoDatabase db = client.getDatabase(database);
+        // Both lanes share one database in certification, and the other
+        // lane's documents carry no scope_path at all. A unique index over
+        // the full collection would key them all as null and collide, so
+        // the indexes cover only documents that hold a scope_path, same as
+        // the journal's kind-gated intent index.
         db.getCollection(MongoSupport.OBJECTS_COLLECTION).createIndex(
-            Indexes.ascending("scope_path", "bucket", "entity_id"), new IndexOptions().unique(true));
+            Indexes.ascending("scope_path", "bucket", "entity_id"),
+            new IndexOptions().unique(true)
+                .partialFilterExpression(Filters.exists("scope_path", true)));
         db.getCollection(MongoSupport.SEALS_COLLECTION).createIndex(
-            Indexes.ascending("scope_path"), new IndexOptions().unique(true));
+            Indexes.ascending("scope_path"),
+            new IndexOptions().unique(true)
+                .partialFilterExpression(Filters.exists("scope_path", true)));
         return new MongoObjectStore(identity, client, db);
       } catch (RuntimeException failure) {
         try {
@@ -231,13 +241,21 @@ public final class MongoObjectStore implements ObjectStore {
   @Override public synchronized List<ScopePath> listScopes() throws StorageException {
     checkOpen();
     try {
+      // Global enumeration must see only this lane's schema: the same
+      // database can hold another implementation's documents (the Rust lane
+      // keys entities by a compound _id with no top-level scope_path), and
+      // distinct() yields null for documents missing the field, which the
+      // TreeSet rejects. Restricting to string-typed scope_path documents
+      // mirrors the S3 foreign-namespace rule: physical layouts are
+      // lane-local, so per-scope operations stay strict while global
+      // enumeration skips what cannot be ours.
       TreeSet<String> paths = new TreeSet<>();
       for (String path : collection(MongoSupport.OBJECTS_COLLECTION)
-          .distinct("scope_path", String.class)) {
+          .distinct("scope_path", Filters.type("scope_path", BsonType.STRING), String.class)) {
         paths.add(path);
       }
       for (String path : collection(MongoSupport.SEALS_COLLECTION)
-          .distinct("scope_path", String.class)) {
+          .distinct("scope_path", Filters.type("scope_path", BsonType.STRING), String.class)) {
         paths.add(path);
       }
       List<ScopePath> scopes = new ArrayList<>();
