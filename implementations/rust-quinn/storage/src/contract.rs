@@ -73,6 +73,7 @@ pub fn run_object_store<S: ObjectStore + Send>(
     streaming_put_idempotent_absorbing_reput(&mut fresh());
     streaming_put_invisible_until_finish(&mut fresh());
     streaming_put_medium_payload_boundaries(&mut fresh());
+    streaming_put_of_empty_payload_roundtrips(&mut fresh());
     list_scopes_empty_store(&mut fresh());
     list_scopes_nested_and_canonically_ordered(&mut fresh());
     list_scopes_visibility_across_seal_and_retire(&mut fresh());
@@ -1188,4 +1189,19 @@ pub fn streaming_put_medium_payload_boundaries<S: ObjectStore>(store: &mut S) {
         }
         assert_eq!(read_all(store, &scope, entity), payload, "{mib} MiB round-trip");
     }
+}
+
+/// A zero-byte payload through the streaming writer: begin, no writes,
+/// finish. Regression cover for the S3 writer, which staged the entity
+/// header lazily on the first write and panicked at finish when none came.
+pub fn streaming_put_of_empty_payload_roundtrips<S: ObjectStore>(store: &mut S) {
+    let scope = ScopePath::root(58);
+    let digest = sha256(&[]);
+    let writer = store
+        .begin_put(&scope, 1, &digest)
+        .unwrap_or_else(|e| panic!("begin_put empty: {e}"));
+    writer.finish().unwrap_or_else(|e| panic!("finish empty: {e}"));
+    assert_eq!(read_all(store, &scope, 1), Vec::<u8>::new());
+    assert!(store.put(&scope, 2, &[], &digest).is_ok(), "one-shot empty put");
+    assert_eq!(read_all(store, &scope, 2), Vec::<u8>::new());
 }

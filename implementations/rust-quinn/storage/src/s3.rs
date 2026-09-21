@@ -478,6 +478,16 @@ pub struct S3PutWriter {
 }
 
 impl S3PutWriter {
+    /// Stages the entity header (8-byte length, patched at finish, plus the
+    /// expected digest) ahead of the payload in part 1. Must run even for a
+    /// zero-byte payload, whose writer never sees a write() call.
+    fn ensure_header(&mut self) {
+        if self.part_no == 0 && self.pending.is_empty() && self.total == 0 {
+            self.pending.extend_from_slice(&0u64.to_be_bytes());
+            self.pending.extend_from_slice(&self.expected);
+        }
+    }
+
     fn upload_part(
         &self,
         upload_id: &str,
@@ -558,12 +568,7 @@ impl std::io::Write for S3PutWriter {
         if self.absorbing {
             return Ok(buf.len());
         }
-        if self.part_no == 0 && self.pending.is_empty() && self.total == 0 {
-            // Reserve the entity header (length patched at finish) ahead of
-            // the payload in part 1.
-            self.pending.extend_from_slice(&0u64.to_be_bytes());
-            self.pending.extend_from_slice(&self.expected);
-        }
+        self.ensure_header();
         self.hasher.update(buf);
         self.total += buf.len() as u64;
         self.pending.extend_from_slice(buf);
@@ -582,6 +587,7 @@ impl PutWriter for S3PutWriter {
         if self.absorbing {
             return Ok(());
         }
+        self.ensure_header();
         let digest = self.hasher.finalize_reset();
         if digest[..] != self.expected[..] {
             self.abort();
@@ -834,6 +840,16 @@ impl ObjectStore for S3Store {
             return Err(StorageError::corrupt(format!(
                 "entity header in {scope} is truncated"
             )));
+        }
+        // A zero-length payload ends at the header; a ranged GET from the
+        // end of the object is an S3 InvalidRange error, not an empty body.
+        let declared = u64::from_be_bytes(header[..8].try_into().expect("header length field"));
+        if declared == 0 {
+            return Ok(S3Reader {
+                current: io::Cursor::new(Vec::new()),
+                body: None,
+                runtime: std::sync::Arc::clone(self.runtime.as_ref().expect("s3 store runtime")),
+            });
         }
         let body = self.get_object_stream(&key, ENTITY_HEADER_BYTES as u64)?;
         match body {
