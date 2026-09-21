@@ -264,11 +264,9 @@ final class AdversarialFsConcurrencyTest {
             FileObjectStore candidate = FileObjectStore.open(directory);
             if (!opened.compareAndSet(null, candidate)) candidate.close();
           } catch (StorageException raced) {
-            // Losers normally see FAILED (double-writer guard). A racing first open
-            // can instead hit the createDirectories race and see TRANSIENT (both are
-            // pinned in the report's bug list); any other kind is a real failure.
-            if (raced.kind() != StorageException.Kind.FAILED
-                && raced.kind() != StorageException.Kind.TRANSIENT) {
+            // Losers see FAILED from the double-writer guard; the
+            // createDirectoriesDurable race no longer surfaces as TRANSIENT.
+            if (raced.kind() != StorageException.Kind.FAILED) {
               throw new RuntimeException(raced);
             }
             failed.compareAndSet(null, raced);

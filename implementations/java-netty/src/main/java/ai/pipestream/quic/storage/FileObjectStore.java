@@ -8,6 +8,7 @@ import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.DirectoryStream;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -604,7 +605,13 @@ public final class FileObjectStore implements ObjectStore {
     if (cursor == null) throw new IOException("no existing ancestor of " + directory);
     for (int i = missing.size() - 1; i >= 0; i--) {
       Path created = missing.get(i);
-      Files.createDirectory(created);
+      try {
+        Files.createDirectory(created);
+      } catch (FileAlreadyExistsException raced) {
+        // A concurrent creator won this level; only a directory counts as
+        // victory, anything else is a genuine collision.
+        if (!Files.isDirectory(created, LinkOption.NOFOLLOW_LINKS)) throw raced;
+      }
       syncDirectory(created.getParent());
       syncDirectory(created);
     }

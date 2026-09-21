@@ -7,6 +7,7 @@ import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.channels.OverlappingFileLockException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -485,8 +486,14 @@ public final class FileJournal implements Journal {
     if (Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) return;
     Path parent = directory.getParent();
     if (parent != null) createDirectoriesDurable(parent);
-    Files.createDirectory(directory);
-    syncDirectory(parent);
+    try {
+      Files.createDirectory(directory);
+      syncDirectory(parent);
+    } catch (FileAlreadyExistsException raced) {
+      // A concurrent creator won this level; only a directory counts as
+      // victory, anything else is a genuine collision.
+      if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) throw raced;
+    }
   }
 
   private static void syncDirectory(Path directory) throws IOException {
