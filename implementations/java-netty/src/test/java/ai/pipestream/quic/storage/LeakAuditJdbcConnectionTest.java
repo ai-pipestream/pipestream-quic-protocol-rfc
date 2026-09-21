@@ -30,8 +30,8 @@ import org.junit.jupiter.api.Test;
  * the open-error paths (connection refusal, schema failure), the
  * close/idempotency path, and the dead-connection replacement path, and pins
  * the single-writer identity registry so a failed open must not poison later
- * opens. One real defect is characterized here (leaked bootstrap connection
- * on schema failure); see the bug list in the change report.
+ * opens. The schema-failure path closes the bootstrap connection it opened
+ * (LEAK-1) so a failed open leaves nothing behind.
  */
 final class LeakAuditJdbcConnectionTest {
   private static final AtomicInteger opened = new AtomicInteger();
@@ -73,40 +73,38 @@ final class LeakAuditJdbcConnectionTest {
     assertEquals(opened.get(), closed.get(), "every opened connection closes");
   }
 
-  @Test void schemaFailureLeaksTheBootstrapConnection_objectStore() throws Exception {
+  @Test void schemaFailureClosesTheBootstrapConnection_objectStore() throws Exception {
     String url = "jdbc:leakaudit:schema-store";
     failSchema.set(true);
     assertStorage(StorageException.Kind.FAILED,
         () -> PostgresObjectStore.open(url, "user", "password"));
     failSchema.set(false);
-    // BUG LEAK-1 (PostgresSupport.connectAndEnsureSchema, ~line 66): the
-    // bootstrap Connection is never closed when schema creation fails, and
-    // PostgresObjectStore.open does not close it either. Characterization:
-    // flip to assertEquals(0, opened.get() - closed.get()) when fixed.
-    assertEquals(1, opened.get() - closed.get(),
-        "schema failure leaks the bootstrap connection (LEAK-1)");
+    // LEAK-1 fixed (PostgresSupport.connectAndEnsureSchema): a schema
+    // failure closes the bootstrap Connection before the open fails.
+    assertEquals(0, opened.get() - closed.get(),
+        "schema failure closes the bootstrap connection (LEAK-1)");
     try (ObjectStore store = PostgresObjectStore.open(url, "user", "password")) {
       assertNotNull(store);
       assertEquals(2, opened.get(), "identity released despite the failed first open");
     }
-    assertEquals(1, opened.get() - closed.get(), "the leaked connection is never closed");
+    assertEquals(0, opened.get() - closed.get(), "no connection leaks");
   }
 
-  @Test void schemaFailureLeaksTheBootstrapConnection_journal() throws Exception {
+  @Test void schemaFailureClosesTheBootstrapConnection_journal() throws Exception {
     String url = "jdbc:leakaudit:schema-journal";
     failSchema.set(true);
     assertStorage(StorageException.Kind.FAILED,
         () -> PostgresJournal.open(url, "user", "password"));
     failSchema.set(false);
-    // Same LEAK-1 as the object-store variant; the journal open path shares
-    // PostgresSupport.connectAndEnsureSchema.
-    assertEquals(1, opened.get() - closed.get(),
-        "schema failure leaks the bootstrap connection (LEAK-1)");
+    // Same LEAK-1 fix as the object-store variant; the journal open path
+    // shares PostgresSupport.connectAndEnsureSchema.
+    assertEquals(0, opened.get() - closed.get(),
+        "schema failure closes the bootstrap connection (LEAK-1)");
     try (Journal journal = PostgresJournal.open(url, "user", "password")) {
       assertNotNull(journal);
       assertEquals(2, opened.get(), "identity released despite the failed first open");
     }
-    assertEquals(1, opened.get() - closed.get(), "the leaked connection is never closed");
+    assertEquals(0, opened.get() - closed.get(), "no connection leaks");
   }
 
   @Test void closeIsIdempotentAndClosesEachConnectionExactlyOnce() throws Exception {

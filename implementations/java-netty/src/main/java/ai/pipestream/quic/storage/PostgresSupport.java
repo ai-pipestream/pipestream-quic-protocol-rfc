@@ -71,6 +71,9 @@ final class PostgresSupport {
       statement.execute(SEALS_DDL);
       statement.execute(JOURNAL_DDL);
       statement.execute(JOURNAL_INTENT_INDEX);
+    } catch (SQLException | RuntimeException failure) {
+      closeAfterFailure(connection, failure);
+      throw failure;
     }
     return connection;
   }
