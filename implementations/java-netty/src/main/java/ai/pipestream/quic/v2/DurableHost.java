@@ -1168,6 +1168,7 @@ public final class DurableHost implements AutoCloseable {
   private final PublicationStore.Endpoint endpoint;
   private volatile boolean stopping;
   private boolean closed;
+  private boolean closing;
 
   private DurableHost(
       Path root,
@@ -1708,15 +1709,17 @@ public final class DurableHost implements AutoCloseable {
    * abandon control waits, wait for busy workers, then release services and store handles.
    * Listeners must already be closed so no connection-local owner can start new work. A busy result
    * read or callback that does not return within the bounded wait leaves storage open and the close
-   * fails; accepted work remains recoverable on the next open.
+   * fails; accepted work remains recoverable on the next open. Every handle, including the input
+   * store and its SPI payload backend, is released even when an earlier step fails, later failures
+   * are suppressed onto the first, and a failed close stays retryable.
    *
    * @throws IOException an owner remained busy or physical cleanup is still pending
    */
   @Override
   public void close() throws IOException {
     synchronized (this) {
-      if (closed) return;
-      closed = true;
+      if (closed || closing) return;
+      closing = true;
     }
     stopping = true;
     IOException failure = null;
@@ -1725,30 +1728,51 @@ public final class DurableHost implements AutoCloseable {
     waits.close();
     try {
       if (!scheduler.awaitStopped(60_000)) failure = new IOException("callbacks still running");
-      if (!workers.awaitStopped(60_000)) failure = new IOException("storage workers still busy");
+      if (!workers.awaitStopped(60_000)) {
+        failure = recordCloseFailure(failure, new IOException("storage workers still busy"));
+      }
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
-      failure = new IOException("interrupted while draining workers", interrupted);
+      failure = recordCloseFailure(
+          failure, new IOException("interrupted while draining workers", interrupted));
     }
     try {
       results.close();
     } catch (IOException pending) {
-      failure = pending;
+      failure = recordCloseFailure(failure, pending);
     }
     try {
       retention.close();
-      if (!retention.awaitStopped(60_000)) failure = new IOException("retention still busy");
+      if (!retention.awaitStopped(60_000)) {
+        failure = recordCloseFailure(failure, new IOException("retention still busy"));
+      }
     } catch (IOException | InterruptedException pending) {
       if (pending instanceof InterruptedException) Thread.currentThread().interrupt();
-      failure = new IOException("retention shutdown incomplete", pending);
+      failure = recordCloseFailure(
+          failure, new IOException("retention shutdown incomplete", pending));
     }
     try {
       sessions.close();
     } catch (SQLException pending) {
-      failure = new IOException("session store anchor did not close", pending);
+      failure = recordCloseFailure(
+          failure, new IOException("session store anchor did not close", pending));
+    }
+    try {
+      inputs.close();
+    } catch (IOException pending) {
+      failure = recordCloseFailure(failure, pending);
+    }
+    synchronized (this) {
+      closing = false;
+      closed = true;
     }
     if (failure != null) throw failure;
-    inputs.close();
+  }
+
+  private static IOException recordCloseFailure(IOException primary, IOException next) {
+    if (primary == null) return next;
+    primary.addSuppressed(next);
+    return primary;
   }
 
   /** Thread-confined adapter from the internal runtime context to the public processing API. */
