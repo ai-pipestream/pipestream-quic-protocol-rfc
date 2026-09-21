@@ -542,18 +542,25 @@ public final class FileObjectStore implements ObjectStore {
     }
   }
 
-  /** Deletes every entity in one scope's own fanout buckets, leaving child scopes untouched. */
+  /** Deletes one scope's own fanout buckets and any forged sibling files; child scopes survive. */
   private void retireScopeEntities(Path scopeDir) throws IOException {
     try (DirectoryStream<Path> entries = Files.newDirectoryStream(scopeDir)) {
       for (Path entry : entries) {
         String name = entry.getFileName().toString();
-        if (!name.matches("[0-9a-f]{2}") || !Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS)) {
-          continue; // child scopes, the seal record, and foreign names all survive
+        if (Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS)) {
+          // Child scopes are independent containers and survive (pinned
+          // decision 5); only the 2-hex fanout buckets belong to this scope.
+          if (!name.matches("[0-9a-f]{2}")) continue;
+          try (DirectoryStream<Path> entities = Files.newDirectoryStream(entry)) {
+            for (Path entity : entities) Files.delete(entity);
+          }
+          Files.delete(entry);
+          continue;
         }
-        try (DirectoryStream<Path> entities = Files.newDirectoryStream(entry)) {
-          for (Path entity : entities) Files.delete(entity);
-        }
-        Files.delete(entry);
+        // A regular file at scope level is never scope content. The seal
+        // record is removed by the caller; anything else is forged garbage
+        // that would poison scope listing, so retirement heals it.
+        if (!name.equals(SEAL_FILE_NAME)) Files.delete(entry);
       }
     }
   }

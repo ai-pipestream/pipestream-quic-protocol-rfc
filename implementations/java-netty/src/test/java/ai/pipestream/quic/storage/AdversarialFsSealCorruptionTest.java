@@ -192,7 +192,14 @@ final class AdversarialFsSealCorruptionTest {
     Files.write(junk, bytes("garbage"));
     try (ObjectStore store = FileObjectStore.open(directory)) {
       store.retire(scope, 0);
-      assertFalse(Files.exists(leaf));
+      // Scope-local retirement: the forged sibling file goes with the
+      // scope's own content, while child scope directories would survive
+      // (pinned decision 5); only the emptied leaf directory remains.
+      assertFalse(Files.exists(junk));
+      assertFalse(Files.exists(sealFile(directory, scope)), "seal record removed");
+      try (java.util.stream.Stream<Path> remaining = Files.list(leaf)) {
+        assertEquals(0, remaining.count(), "scope-owned content and forged siblings are gone");
+      }
       assertEquals(List.of(), store.listScopes());
       assertStorage(StorageException.Kind.NOT_FOUND, () -> store.verifyScope(scope));
       assertStorage(StorageException.Kind.NOT_FOUND, () -> store.retire(scope, 0));
