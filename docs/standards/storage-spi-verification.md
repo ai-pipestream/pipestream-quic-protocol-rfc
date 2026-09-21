@@ -87,6 +87,23 @@ from `agent/storage-spi-rust` (`06c27638`) and `agent/storage-spi-java`
 | mongo | `durable-18d73c1789d2c4fc` | 61 PASS + 3 FAIL: (1) the Java backend stored payloads inline in one BSON document, so 16 MiB entities exceeded the document limit — fixed by `073c1ce0` (1 MiB chunking, streamed reads/verify, retire sweeps chunks); (2) both r-rows failed at their closing step: the authority SPI plane's orphan sweep treated the shared database as single-owner and a concurrent installation's sweep retired this installation's committed entities — fixed by `dc24816c` (Rust) and `1996085f` (Java mirror): the plane scope's first component is now an installation tag from the store binding, and sweeps skip every other namespace |
 | mongo | `durable-18d753f0bf0b1623` | **GREEN: exit 0, 64 PASS + 4 named waivers, all directions of all rows** — including g2-kill-after-admission-before-publication (quiet host) and the two previously-failing resource rows |
 
+### Final-heads re-certification (2026-09-21)
+
+The installation-namespace change (`dc24816c` / `1996085f`) altered SPI-plane
+scope derivation on every backend, so all four planes were re-certified on the
+final heads (Java `fa72467f`, Rust `1cab5237`):
+
+| Backend | Run | Result |
+|---|---|---|
+| fs | `durable-18d7587e0fa5f8ee` | 63 PASS + g2 flake only |
+| postgres | `durable-18d75ab3097b2c07` | **GREEN: 64 PASS, exit 0** |
+| s3 | `durable-18d75ce790106ebd` | **GREEN: 64 PASS, exit 0** |
+| mongo | `durable-18d753f0bf0b1623` | **GREEN: 64 PASS, exit 0** |
+
+All four SPI object planes are certified equivalent to the v2 baseline on the
+final heads; three of four are fully green including the g2 row, and the fs
+run's only failure is the documented host-load flake.
+
 Postgres certification statement: row-for-row identical to the certified fs
 plane, including the flake pattern; the only backend-caused failure found
 (buffered payloads) was fixed and its fix is matrix-verified.
